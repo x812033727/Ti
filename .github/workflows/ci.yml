@@ -31,4 +31,5 @@ jobs:
           git config --global user.name "CI"
 
       - name: Run tests
-        run: pytest -q
+        # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import
+        run: python -m pytest -q
