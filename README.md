@@ -10,19 +10,28 @@
 ## 工作流程
 
 ```
-需求 → PM 拆解(任務+驗收標準) → 工程師實作 → 驗證工程師測試 → 高級工程師審查
-        ↑__________________ 未通過則退回改進(最多 3 輪) __________________|
-                          → PM 驗收 → 團隊檢討 → 完成
+①需求拆解   PM 拆成結構化任務 + 驗收標準 + 執行指令
+②架構辯論   工程師 ⇄ 高級工程師 來回討論整體做法
+③逐任務迭代  for 每個任務（看板 todo→doing→review→done）：
+              工程師實作（交付前自測）→ smoke-run + git commit
+              → 驗證工程師測試 → 高級工程師審查（帶入測試 log）
+              → 通過？否則把【測試+審查意見】原文回饋，重跑（每任務最多 3 輪）
+④最終 Demo   實際執行整體產出，顯示 stdout/stderr
+⑤驗收+檢討   PM 判定完成 → 團隊回顧 → 完成
 ```
+
+- **人類可中途插話**：執行中於插話框輸入指示，專家會在下一步納入考量；亦可隨時「停止」。
+- **階段性 git**：每輪在 workspace 內的獨立 repo 自動 commit，留下可追蹤歷史。
+- **詳細 log**：自測與 Demo 的完整輸出都會回報到討論串（可展開查看）。
 
 ## 角色
 
 | 角色 | 職責 | 工具 |
 |------|------|------|
-| 🧭 專案經理 | 拆解需求、定驗收標準、判斷完成、主持檢討 | 唯讀 |
-| 👩‍💻 工程師 | 實際撰寫與修改程式碼 | Read/Write/Edit/Bash |
-| 🔬 驗證工程師 | 撰寫並執行測試、回報結果 | Read/Write/Edit/Bash |
-| 🧠 高級工程師 | 審查品質/設計/安全、核可或退回 | 唯讀 + Bash |
+| 🧭 專案經理 | 拆解需求、定驗收標準與執行指令、判斷完成、主持檢討 | 唯讀 |
+| 👩‍💻 工程師 | 實際撰寫/修改程式碼、交付前自測、依意見修正 | Read/Write/Edit/Bash |
+| 🔬 驗證工程師 | 撰寫並執行測試、回報 pass/fail 與 log | Read/Write/Edit/Bash |
+| 🧠 高級工程師 | 參與架構辯論、審查品質/設計/安全、核可或退回 | 唯讀 + Bash |
 
 ## 安裝
 
@@ -45,8 +54,16 @@ python -m studio.server              # 或：uvicorn studio.server:app
 
 ## 設定
 
-可用環境變數（見 `.env.example`）調整：模型（`TI_MODEL_LEAD` / `TI_MODEL_FAST`）、
-最大改進輪數（`TI_MAX_ROUNDS`）、伺服器位址（`TI_HOST` / `TI_PORT`）。
+可用環境變數（見 `.env.example`）調整：
+
+| 變數 | 說明 | 預設 |
+|------|------|------|
+| `TI_MODEL_LEAD` / `TI_MODEL_FAST` | PM/高級工程師 與 工程師/QA 使用的模型 | opus / sonnet |
+| `TI_MAX_ROUNDS` | 每個任務的最大改進輪數 | 3 |
+| `TI_DEBATE_ROUNDS` | 架構辯論來回回合數（0 = 關閉） | 2 |
+| `TI_DEMO_TIMEOUT` / `TI_DEMO_MAX_OUTPUT` | 自測/Demo 的逾時秒數與輸出字數上限 | 60 / 8000 |
+| `TI_ENABLE_GIT` | 是否在 workspace 內做階段性 commit | 1 |
+| `TI_HOST` / `TI_PORT` | 伺服器位址 | 0.0.0.0 / 8000 |
 
 ## 測試
 
@@ -61,18 +78,18 @@ pytest
 
 ```
 studio/
-  config.py        設定（模型、輪數、路徑、伺服器）
+  config.py        設定（模型、輪數、辯論、Demo、git、伺服器）
   roles.py         四位專家的角色與 system prompt
   events.py        StudioEvent 事件（WebSocket 傳輸）
   workspace.py     每個 session 的沙箱工作目錄
   experts.py       Expert：包裝 ClaudeSDKClient，串流回應轉事件
-  orchestrator.py  StudioSession：討論/工作流程狀態機（核心）
-  server.py        FastAPI + WebSocket + 靜態檔
+  orchestrator.py  StudioSession：逐任務工作流程狀態機（核心）
+  runner.py        確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git
+  server.py        FastAPI + 雙向 WebSocket（事件串流 + 人類插話/停止）+ 靜態檔
 web/               免建置的工作室前端（HTML/CSS/JS）
-tests/             以 stub 專家測試狀態機
+tests/             以 stub 專家測試狀態機 + runner 單元測試
 ```
 
 ## 後續可擴充
 
-逐任務迭代多個任務、人類可在討論中插話介入、產出歷史存檔與重播、可切換多家 LLM、
-把成果自動 commit 到 git。
+產出歷史存檔與重播、可切換多家 LLM provider、把整體成果自動 commit 回主 repo。
