@@ -23,6 +23,7 @@
 - **人類可中途插話**：執行中於插話框輸入指示，專家會在下一步納入考量；亦可隨時「停止」。
 - **階段性 git**：每輪在 workspace 內的獨立 repo 自動 commit，留下可追蹤歷史。
 - **詳細 log**：自測與 Demo 的完整輸出都會回報到討論串（可展開查看）。
+- **歷史存檔/重播**：每次 session 的事件自動存檔，可從「📜 歷史」面板挑選並重播當時的討論過程。
 
 ## 角色
 
@@ -85,7 +86,8 @@ studio/
   experts.py       Expert：包裝 ClaudeSDKClient，串流回應轉事件
   orchestrator.py  StudioSession：逐任務工作流程狀態機（核心）
   runner.py        確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git
-  server.py        FastAPI + 雙向 WebSocket（事件串流 + 人類插話/停止）+ 靜態檔
+  history.py       session 事件存檔/讀取（供歷史列表與重播）
+  server.py        FastAPI + 雙向 WebSocket（事件串流 + 人類插話/停止）+ 歷史 API + 靜態檔
 web/               免建置的工作室前端（HTML/CSS/JS）
 tests/             以 stub 專家測試狀態機 + runner 單元測試
 ```

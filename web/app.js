@@ -28,6 +28,12 @@ function clearStream() {
   stream.innerHTML = "";
 }
 
+function clearBoard() {
+  document.querySelectorAll(".col .cards").forEach((c) => (c.innerHTML = ""));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function renderRoster(roster) {
   expertList.innerHTML = "";
   for (const r of roster) {
@@ -226,6 +232,8 @@ function handleEvent(ev) {
 function start() {
   const requirement = reqInput.value.trim();
   if (!requirement) { reqInput.focus(); return; }
+  replaying = false;
+  closeHistory();
   setRunning(true);
   setPhase("連線中…");
 
@@ -248,8 +256,73 @@ function stop() {
   stopBtn.disabled = true;
 }
 
+// --- 歷史存檔 / 重播 ---------------------------------------------------
+const historyPanel = $("#historyPanel");
+const historyList = $("#historyList");
+let replaying = false;
+
+const STATUS_LABEL = {
+  running: "⏳ 執行中", completed: "✅ 完成", incomplete: "⚠️ 未達標",
+  stopped: "⏹ 已停止", error: "❌ 錯誤",
+};
+
+async function openHistory() {
+  historyPanel.classList.remove("hidden");
+  historyList.innerHTML = "<li class='muted'>載入中…</li>";
+  try {
+    const data = await (await fetch("/api/history")).json();
+    renderHistory(data.sessions || []);
+  } catch (e) {
+    historyList.innerHTML = "<li class='muted'>無法載入歷史</li>";
+  }
+}
+
+function renderHistory(sessions) {
+  if (!sessions.length) { historyList.innerHTML = "<li class='muted'>尚無歷史紀錄</li>"; return; }
+  historyList.innerHTML = "";
+  for (const s of sessions) {
+    const li = document.createElement("li");
+    const when = s.started_at ? new Date(s.started_at * 1000).toLocaleString() : "";
+    li.innerHTML = `
+      <div class="h-req"></div>
+      <div class="h-meta"><span>${STATUS_LABEL[s.status] || s.status}</span>
+        <span>${s.n_events || 0} 事件</span><span>${when}</span></div>`;
+    li.querySelector(".h-req").textContent = s.requirement || "(無需求)";
+    li.onclick = () => replaySession(s.session_id);
+    historyList.appendChild(li);
+  }
+}
+
+async function replaySession(sid) {
+  if (replaying) return;
+  historyPanel.classList.add("hidden");
+  if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+  let events = [];
+  try {
+    const data = await (await fetch(`/api/history/${sid}/events`)).json();
+    events = data.events || [];
+  } catch (e) { addSystem("⚠️ 無法載入此 session"); return; }
+
+  replaying = true;
+  setRunning(false);
+  clearStream();
+  clearBoard();
+  addSystem("⏪ 重播 session：" + sid);
+  for (const ev of events) {
+    if (!replaying) break;
+    handleEvent(ev);
+    await sleep(120);
+  }
+  setPhase("⏪ 重播結束");
+  replaying = false;
+}
+
+function closeHistory() { historyPanel.classList.add("hidden"); }
+
 startBtn.onclick = start;
 stopBtn.onclick = stop;
 interjectBtn.onclick = sendInterject;
+$("#historyBtn").onclick = openHistory;
+$("#historyClose").onclick = closeHistory;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
