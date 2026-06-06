@@ -36,7 +36,7 @@ def _run_session(client, requirement: str) -> list[dict]:
 
 
 def test_offline_end_to_end(client):
-    events = _run_session(client, "做一個會打招呼的程式")
+    events = _run_session(client, "做一個四則運算 CLI")
     by_type = {}
     for e in events:
         by_type.setdefault(e["type"], []).append(e)
@@ -47,17 +47,24 @@ def test_offline_end_to_end(client):
     assert done["payload"]["completed"] is True
     sid = done["session_id"]
 
-    # 真的寫出可執行程式碼
-    assert "main.py" in workspace.list_files(sid)
+    # 逐任務寫出多個真實檔案
+    files = workspace.list_files(sid)
+    assert {"calculator.py", "main.py", "README.md", "test_calculator.py"} <= set(files)
 
     # 真的有階段性 git commit
     assert by_type.get("git_commit"), "應有 git commit 事件"
 
-    # 最終 Demo 真的執行並輸出
+    # 三個任務都移到完成
+    done_tasks = [
+        e for e in by_type.get("task_status", []) if e["payload"]["status"] == "done"
+    ]
+    assert len({e["payload"]["id"] for e in done_tasks}) == 3
+
+    # 最終 Demo 真的執行四則運算並輸出 7.0
     assert by_type.get("demo_result"), "應有 demo 結果"
     demo = by_type["demo_result"][-1]
     assert demo["payload"]["passed"] is True
-    assert "Hello, Ti Studio!" in demo["payload"]["output"]
+    assert "7.0" in demo["payload"]["output"]
 
     # 看板最終把任務移到完成
     boards = by_type.get("board_update", [])
