@@ -4,8 +4,9 @@
 **專案經理、工程師、高級工程師、驗證工程師** 就會自己討論、寫程式、測試、審查、
 反覆改進，最後做出可運行的成果 —— 整個過程會在網頁上即時呈現。
 
-由 [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/python) 驅動，
+預設由 [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/python) 驅動，
 專家們使用內建的 Read / Write / Edit / Bash 工具真的去寫檔案、執行程式。
+也可切換到 **OpenAI 或本地相容模型**（透過 function-calling 工具迴圈，同樣能自己 coding）。
 
 ## 工作流程
 
@@ -80,6 +81,18 @@ TI_OFFLINE=1 python -m studio.server
 | `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
 | `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
+| `TI_PROVIDER` | 後端 provider：`claude` 或 `openai` | claude |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 金鑰 / 相容端點（可指向本地模型） | 未設定 |
+| `TI_OPENAI_MODEL_LEAD` / `TI_OPENAI_MODEL_FAST` | OpenAI 主力 / 快速模型 | gpt-4o / gpt-4o-mini |
+
+### 切換到 OpenAI / 本地模型
+
+```bash
+pip install -e ".[openai]"
+TI_PROVIDER=openai OPENAI_API_KEY=sk-xxx python -m studio.server
+# 本地模型（OpenAI 相容，如 Ollama）：
+TI_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 TI_OPENAI_MODEL_LEAD=llama3.1 python -m studio.server
+```
 
 ## 測試
 
@@ -98,7 +111,9 @@ studio/
   roles.py         四位專家的角色與 system prompt
   events.py        StudioEvent 事件（WebSocket 傳輸）
   workspace.py     每個 session 的沙箱工作目錄
-  experts.py       Expert：包裝 ClaudeSDKClient，串流回應轉事件
+  experts.py       Claude 專家：包裝 ClaudeSDKClient，串流回應轉事件
+  providers.py     provider 抽象與工廠（Claude / OpenAI 相容）
+  tools.py         非 Claude provider 的工具層（read/write/edit/bash function-calling）
   orchestrator.py  StudioSession：逐任務工作流程狀態機（核心）
   runner.py        確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git
   history.py       session 事件存檔/讀取（供歷史列表與重播）

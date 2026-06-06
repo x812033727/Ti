@@ -30,6 +30,8 @@ async def health() -> JSONResponse:
         "ok": True,
         "has_api_key": config.has_api_key(),
         "offline": config.OFFLINE_MODE,
+        "provider": config.PROVIDER,
+        "provider_ready": config.provider_ready(),
     })
 
 
@@ -99,9 +101,14 @@ async def ws(websocket: WebSocket) -> None:
             await websocket.close()
             return
 
-        if not config.has_api_key() and not config.OFFLINE_MODE:
+        if not config.provider_ready() and not config.OFFLINE_MODE:
+            hint = (
+                "未設定 OPENAI_API_KEY / OPENAI_BASE_URL"
+                if config.PROVIDER == "openai"
+                else "未設定 ANTHROPIC_API_KEY"
+            )
             await websocket.send_json(
-                {"type": "error", "payload": {"message": "未設定 ANTHROPIC_API_KEY，無法啟動專家"}}
+                {"type": "error", "payload": {"message": f"{hint}，無法啟動專家（或用 TI_OFFLINE=1 試用）"}}
             )
             await websocket.close()
             return

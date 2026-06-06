@@ -9,11 +9,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- 模型 ---------------------------------------------------------------
-# 把模型 ID 集中於此，方便日後更新。PM / 高級工程師需要較強的推理；
-# 工程師 / 驗證工程師偏重速度與大量工具操作。
+# --- Provider / 模型 ----------------------------------------------------
+# 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）或 openai（含 OpenAI 相容/本地模型）。
+PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+
+# Claude 模型 ID。PM / 高級工程師需要較強的推理；工程師 / 驗證工程師偏重速度。
 MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
 MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
+
+# OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")
+OPENAI_MODEL_FAST = os.getenv("TI_OPENAI_MODEL_FAST", "gpt-4o-mini")
+OPENAI_MAX_STEPS = int(os.getenv("TI_OPENAI_MAX_STEPS", "12"))
 
 # --- 流程 ---------------------------------------------------------------
 # 每個任務「實作→驗證→審查」的最大改進輪數，避免無止盡迴圈。
@@ -61,3 +70,10 @@ PORT = int(os.getenv("TI_PORT", "8000"))
 def has_api_key() -> bool:
     """是否設定了 Anthropic 金鑰（端到端執行需要；單元測試不需要）。"""
     return bool(os.getenv("ANTHROPIC_API_KEY"))
+
+
+def provider_ready() -> bool:
+    """目前選定的 provider 是否具備可執行的憑證/設定。"""
+    if PROVIDER == "openai":
+        return bool(OPENAI_API_KEY or OPENAI_BASE_URL)
+    return has_api_key()

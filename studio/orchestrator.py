@@ -72,10 +72,10 @@ def parse_tasks(pm_text: str) -> list[str]:
 
 
 def _build_experts(session_id: str, cwd: Path) -> dict[str, ExpertLike]:
-    # 延後 import，避免單元測試在沒裝 SDK 時就失敗
-    from .experts import Expert
+    # 依設定的 provider 建立專家（延後 import，避免無 SDK 時就失敗）
+    from .providers import make_expert
 
-    return {role.key: Expert(role, session_id, cwd) for role in ROSTER}
+    return {role.key: make_expert(role, session_id, cwd) for role in ROSTER}
 
 
 class StudioSession:
