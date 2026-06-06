@@ -13,6 +13,7 @@
       <input id="requirement" type="text"
              placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
       <button id="startBtn">開始討論</button>
+      <button id="stopBtn" class="ghost" disabled>停止</button>
     </div>
     <div id="phase" class="phase">待命中</div>
   </header>
@@ -29,6 +30,11 @@
       <h2>即時討論</h2>
       <div id="stream" class="stream">
         <div class="placeholder">輸入需求並按「開始討論」，專家們就會開工。</div>
+      </div>
+      <div class="interject">
+        <input id="interjectInput" type="text"
+               placeholder="想插話？在這裡輸入指示，專家會在下一步納入考量…" disabled />
+        <button id="interjectBtn" disabled>插話</button>
       </div>
     </section>
 

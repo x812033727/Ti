@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from studio import events
+from studio import config, events
 from studio.orchestrator import (
     StudioSession,
     parse_tasks,
@@ -16,14 +18,16 @@ from studio.roles import BY_KEY, Role
 
 
 class StubExpert:
-    """依角色給腳本化回應，並記錄被呼叫次數。"""
+    """依角色給腳本化回應，記錄被呼叫次數與收到的 prompt。"""
 
     def __init__(self, role: Role, scripts: list[str]):
         self.role = role
         self._scripts = scripts
         self.calls = 0
+        self.prompts: list[str] = []
 
     async def speak(self, prompt: str, broadcast) -> str:
+        self.prompts.append(prompt)
         text = self._scripts[min(self.calls, len(self._scripts) - 1)]
         self.calls += 1
         await broadcast(
@@ -37,6 +41,12 @@ class StubExpert:
         pass
 
 
+@pytest.fixture(autouse=True)
+def _no_debate(monkeypatch):
+    """預設關閉架構辯論，讓流程測試專注在逐任務迴圈。"""
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
+
+
 def collect():
     bucket: list[events.StudioEvent] = []
 
@@ -48,6 +58,15 @@ def collect():
 
 def types(bucket):
     return [e.type for e in bucket]
+
+
+def _experts(pm, eng, qa, senior):
+    return {
+        "pm": StubExpert(BY_KEY["pm"], pm),
+        "engineer": StubExpert(BY_KEY["engineer"], eng),
+        "qa": StubExpert(BY_KEY["qa"], qa),
+        "senior": StubExpert(BY_KEY["senior"], senior),
+    }
 
 
 # --- 決議解析 -----------------------------------------------------------
@@ -69,7 +88,7 @@ def test_pm_done_parsing():
     assert not pm_done("還缺測試\n決議：未完成")
 
 
-def test_parse_tasks():
+def test_parse_tasks_bullets():
     text = "任務清單:\n- 建立 CLI\n- 加入分類邏輯\n2. 寫說明"
     tasks = parse_tasks(text)
     assert "建立 CLI" in tasks
@@ -77,22 +96,19 @@ def test_parse_tasks():
     assert parse_tasks("沒有條列") == ["實作需求"]
 
 
+def test_parse_tasks_structured():
+    text = "任務: 建立 CLI\n任務: 加入分類\n驗收標準: 能跑\n執行指令: python main.py"
+    tasks = parse_tasks(text)
+    assert tasks == ["建立 CLI", "加入分類"]  # 優先 `任務:`，不含驗收/執行指令
+
+
 # --- 流程 ---------------------------------------------------------------
 
-def _experts(pm, eng, qa, senior):
-    return {
-        "pm": StubExpert(BY_KEY["pm"], pm),
-        "engineer": StubExpert(BY_KEY["engineer"], eng),
-        "qa": StubExpert(BY_KEY["qa"], qa),
-        "senior": StubExpert(BY_KEY["senior"], senior),
-    }
-
-
 @pytest.mark.asyncio
-async def test_happy_path_one_round():
+async def test_happy_path_one_task_one_round():
     bucket, broadcast = collect()
     experts = _experts(
-        pm=["任務清單:\n- 實作 BMI", "決議: 完成", "做得不錯，下次可加更多測試"],
+        pm=["任務: 實作 BMI", "決議: 完成", "做得不錯，下次可加更多測試"],
         eng=["已建立 bmi.py"],
         qa=["測試全過\n驗證: PASS"],
         senior=["品質良好\n決議: 核可"],
@@ -105,7 +121,6 @@ async def test_happy_path_one_round():
     assert events.EventType.DONE in ts
     done = [e for e in bucket if e.type == events.EventType.DONE][0]
     assert done.payload["completed"] is True
-    # 一輪就過：工程師只被呼叫一次
     assert experts["engineer"].calls == 1
 
 
@@ -113,7 +128,7 @@ async def test_happy_path_one_round():
 async def test_retry_then_pass():
     bucket, broadcast = collect()
     experts = _experts(
-        pm=["任務清單:\n- 實作", "決議: 完成", "檢討完畢"],
+        pm=["任務: 實作", "決議: 完成", "檢討完畢"],
         eng=["第一版", "已修正"],
         qa=["有錯\n驗證: FAIL", "修好了\n驗證: PASS"],
         senior=["先不核可\n決議: 退回", "可以了\n決議: 核可"],
@@ -121,11 +136,97 @@ async def test_retry_then_pass():
     session = StudioSession("t", broadcast, experts=experts, cwd=None)
     await session.run("需求")
 
-    # 第一輪失敗 → 工程師應被呼叫兩次
+    # 第一輪失敗 → 工程師應被呼叫兩次（同一任務內改進）
     assert experts["engineer"].calls == 2
     results = [e for e in bucket if e.type == events.EventType.RUN_RESULT]
     assert results[0].payload["passed"] is False
     assert results[1].payload["passed"] is True
+    # 第二輪工程師 prompt 應帶入回饋意見
+    assert "高級工程師審查意見" in experts["engineer"].prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_per_task_iteration_two_tasks():
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 建立 A\n任務: 建立 B", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    # 兩個任務各跑一輪
+    assert experts["engineer"].calls == 2
+    task_done = [
+        e for e in bucket
+        if e.type == events.EventType.TASK_STATUS and e.payload["status"] == "done"
+    ]
+    assert {e.payload["id"] for e in task_done} == {1, 2}
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_debate_runs(monkeypatch):
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["提案", "實作"],
+        qa=["驗證: PASS"],
+        senior=["點評", "決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    phases = [e.payload["phase"] for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "架構討論" in phases
+    # 辯論各多一次發言：工程師提案+實作=2、高級工程師點評+審查=2
+    assert experts["engineer"].calls == 2
+    assert experts["senior"].calls == 2
+
+
+@pytest.mark.asyncio
+async def test_human_intervention():
+    bucket, broadcast = collect()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    queue.put_nowait("請改用公制單位")
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, intervention_queue=queue)
+    await session.run("需求")
+
+    humans = [e for e in bucket if e.type == events.EventType.HUMAN_MESSAGE]
+    assert len(humans) == 1
+    assert "公制" in humans[0].payload["text"]
+    # 插話應前綴進 PM 的拆解 prompt
+    assert "使用者插話" in experts["pm"].prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_stop_marks_stopped():
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    session.request_stop()
+    await session.run("需求")
+
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["stopped"] is True
+    assert done.payload["completed"] is False
+    # 任務迴圈被跳過，工程師不應被呼叫
+    assert experts["engineer"].calls == 0
 
 
 @pytest.mark.asyncio

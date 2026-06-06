@@ -5,12 +5,22 @@ const stream = $("#stream");
 const expertList = $("#expertList");
 const phaseEl = $("#phase");
 const startBtn = $("#startBtn");
+const stopBtn = $("#stopBtn");
 const reqInput = $("#requirement");
+const interjectInput = $("#interjectInput");
+const interjectBtn = $("#interjectBtn");
 
 let ws = null;
 let sessionId = null;
 
 function setPhase(text) { phaseEl.textContent = text; }
+
+function setRunning(running) {
+  startBtn.disabled = running;
+  stopBtn.disabled = !running;
+  interjectInput.disabled = !running;
+  interjectBtn.disabled = !running;
+}
 
 function scrollStream() { stream.scrollTop = stream.scrollHeight; }
 
@@ -69,10 +79,51 @@ function addSystem(text) {
   scrollStream();
 }
 
-function addResult(passed, detail) {
+function addResult(passed, detail, log) {
   const el = document.createElement("div");
   el.className = "result " + (passed ? "pass" : "fail");
   el.textContent = (passed ? "✅ " : "❌ ") + detail;
+  if (log) {
+    const det = document.createElement("details");
+    det.className = "log";
+    det.innerHTML = "<summary>查看 log</summary>";
+    const pre = document.createElement("pre");
+    pre.textContent = log;
+    det.appendChild(pre);
+    el.appendChild(det);
+  }
+  stream.appendChild(el);
+  scrollStream();
+}
+
+function addHuman(text) {
+  const el = document.createElement("div");
+  el.className = "msg human";
+  el.innerHTML = `
+    <div class="av">🙋</div>
+    <div class="body"><div class="who">你（插話）</div><div class="txt"></div></div>`;
+  el.querySelector(".txt").textContent = text;
+  stream.appendChild(el);
+  scrollStream();
+}
+
+function addCommit(p) {
+  const el = document.createElement("div");
+  el.className = "commit";
+  el.innerHTML = `<span class="hash">⎇ ${p.hash}</span><span></span>`;
+  el.querySelector("span:last-child").textContent = p.message;
+  stream.appendChild(el);
+  scrollStream();
+}
+
+function addDemo(p) {
+  const el = document.createElement("div");
+  el.className = "demo " + (p.passed ? "pass" : "fail");
+  el.innerHTML = `<div class="demohead">${p.passed ? "▶️ Demo 執行成功" : "▶️ Demo 執行失敗"} <code></code></div>`;
+  el.querySelector("code").textContent = p.command + "  (exit " + p.exit_code + ")";
+  const pre = document.createElement("pre");
+  pre.textContent = p.output || "（無輸出）";
+  el.appendChild(pre);
   stream.appendChild(el);
   scrollStream();
 }
@@ -141,20 +192,33 @@ function handleEvent(ev) {
       renderBoard(p.columns || {});
       break;
     case "run_result":
-      addResult(p.passed, p.detail);
+      addResult(p.passed, p.detail, p.log);
+      break;
+    case "demo_result":
+      addDemo(p);
+      refreshFiles();
+      break;
+    case "git_commit":
+      addCommit(p);
+      break;
+    case "human_message":
+      addHuman(p.text);
+      break;
+    case "task_status":
+      // 看板由 board_update 全量刷新，這裡不需額外處理
       break;
     case "retrospective":
       addSystem("📋 檢討：" + (p.text || ""));
       break;
     case "done":
-      setPhase(p.completed ? "✅ 已完成" : "⚠️ 結束（未完全達標）");
-      addSystem(p.completed ? "🎉 專案完成！" : "專案結束，仍有未達標項目。");
+      setPhase(p.stopped ? "⏹ 已停止" : (p.completed ? "✅ 已完成" : "⚠️ 結束（未完全達標）"));
+      addSystem(p.stopped ? "已依指示停止。" : (p.completed ? "🎉 專案完成！" : "專案結束，仍有未達標項目。"));
       refreshFiles();
-      startBtn.disabled = false;
+      setRunning(false);
       break;
     case "error":
       addSystem("⚠️ 錯誤：" + (p.message || "未知錯誤"));
-      startBtn.disabled = false;
+      setRunning(false);
       break;
   }
 }
@@ -162,16 +226,30 @@ function handleEvent(ev) {
 function start() {
   const requirement = reqInput.value.trim();
   if (!requirement) { reqInput.focus(); return; }
-  startBtn.disabled = true;
+  setRunning(true);
   setPhase("連線中…");
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onopen = () => ws.send(JSON.stringify({ requirement }));
   ws.onmessage = (e) => handleEvent(JSON.parse(e.data));
-  ws.onerror = () => { addSystem("⚠️ 連線發生錯誤"); startBtn.disabled = false; };
-  ws.onclose = () => { setPhase((t => t)(phaseEl.textContent)); };
+  ws.onerror = () => { addSystem("⚠️ 連線發生錯誤"); setRunning(false); };
+}
+
+function sendInterject() {
+  const text = interjectInput.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "interject", text }));
+  interjectInput.value = "";
+}
+
+function stop() {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" }));
+  stopBtn.disabled = true;
 }
 
 startBtn.onclick = start;
+stopBtn.onclick = stop;
+interjectBtn.onclick = sendInterject;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
+interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
