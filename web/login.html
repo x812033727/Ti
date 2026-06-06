@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登入 — Ti Studio</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="login-brand">🛠️ Ti Studio</div>
+    <div class="login-sub">AI 專家討論工作室</div>
+    <form id="loginForm" class="login-form">
+      <input id="password" type="password" placeholder="請輸入存取密碼" autocomplete="current-password" autofocus />
+      <button id="loginBtn" type="submit">登入</button>
+      <div id="loginError" class="login-error hidden"></div>
+    </form>
+  </div>
+  <script src="/static/login.js"></script>
+</body>
+</html>

@@ -37,7 +37,7 @@ def start_session(session_id: str, requirement: str) -> dict:
         "session_id": _safe_id(session_id),
         "requirement": requirement,
         "started_at": time.time(),
-        "status": "running",   # running / completed / incomplete / stopped / error
+        "status": "running",  # running / completed / incomplete / stopped / error
         "n_events": 0,
     }
     _write_meta(session_id, meta)

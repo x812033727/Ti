@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Awaitable, Callable, Protocol
+from typing import Protocol
 
 from . import config, events, publisher, runner, workspace
 from .roles import ROSTER, Role
@@ -28,6 +29,7 @@ class ExpertLike(Protocol):
 
 
 # --- 決議解析 -----------------------------------------------------------
+
 
 def _last_match(text: str, pattern: str) -> str | None:
     matches = re.findall(pattern, text)
@@ -85,14 +87,14 @@ class StudioSession:
         broadcast: Broadcast,
         experts: dict[str, ExpertLike] | None = None,
         cwd: Path | None = None,
-        intervention_queue: "asyncio.Queue[str] | None" = None,
+        intervention_queue: asyncio.Queue[str] | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
         self.cwd = cwd
         self._experts = experts
         self._intervention = intervention_queue
-        self._tasks: list[dict] = []          # {id, title, status}
+        self._tasks: list[dict] = []  # {id, title, status}
         self._run_command: str | None = None  # PM/工程師宣告的執行指令
         self._requirement = ""
         self._stop = False
@@ -137,9 +139,7 @@ class StudioSession:
 
     async def _set_task_status(self, task: dict, status: str) -> None:
         task["status"] = status
-        await self.broadcast(
-            events.task_status(self.session_id, task["id"], task["title"], status)
-        )
+        await self.broadcast(events.task_status(self.session_id, task["id"], task["title"], status))
         await self._board()
 
     # --- git --------------------------------------------------------------
@@ -191,18 +191,29 @@ class StudioSession:
         self._requirement = requirement
         experts = self._get_experts()
         pm, engineer, qa, senior = (
-            experts["pm"], experts["engineer"], experts["qa"], experts["senior"]
+            experts["pm"],
+            experts["engineer"],
+            experts["qa"],
+            experts["senior"],
         )
 
         await self.broadcast(
             events.StudioEvent(
                 events.EventType.SESSION_STARTED,
                 self.session_id,
-                {"requirement": requirement, "roster": [
-                    {"key": r.key, "name": r.name, "avatar": r.avatar,
-                     "title": r.title, "tags": r.tags}
-                    for r in ROSTER
-                ]},
+                {
+                    "requirement": requirement,
+                    "roster": [
+                        {
+                            "key": r.key,
+                            "name": r.name,
+                            "avatar": r.avatar,
+                            "title": r.title,
+                            "tags": r.tags,
+                        }
+                        for r in ROSTER
+                    ],
+                },
             )
         )
         if self.cwd:
@@ -211,8 +222,7 @@ class StudioSession:
         # 1) 拆解
         await self.broadcast(events.phase_change(self.session_id, "需求拆解", "PM 正在拆解需求"))
         pm_plan = await pm.speak(
-            (await self._human_prefix())
-            + f"使用者的產品需求如下：\n\n{requirement}\n\n"
+            (await self._human_prefix()) + f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請拆解成結構化任務清單與驗收標準，並宣告執行指令。",
             self.broadcast,
         )
@@ -226,7 +236,8 @@ class StudioSession:
 
         # 2) 架構辯論
         await self._debate(
-            engineer, senior,
+            engineer,
+            senior,
             topic=f"我們要實作這個需求：{requirement}\n任務清單：\n{pm_plan}",
             rounds=config.DEBATE_ROUNDS,
         )
@@ -254,8 +265,12 @@ class StudioSession:
         await self._maybe_publish(done)
 
     async def _work_task(
-        self, task: dict, pm_plan: str,
-        engineer: ExpertLike, qa: ExpertLike, senior: ExpertLike,
+        self,
+        task: dict,
+        pm_plan: str,
+        engineer: ExpertLike,
+        qa: ExpertLike,
+        senior: ExpertLike,
     ) -> bool:
         """單一任務的 實作→自測→驗證→審查→改進 迴圈，回傳是否通過。"""
         feedback = ""
@@ -285,7 +300,9 @@ class StudioSession:
 
             # --- 驗證 ---
             await self.broadcast(
-                events.phase_change(self.session_id, "驗證", f"任務 #{task['id']} 驗證中（第 {rnd} 輪）")
+                events.phase_change(
+                    self.session_id, "驗證", f"任務 #{task['id']} 驗證中（第 {rnd} 輪）"
+                )
             )
             qa_text = await qa.speak(
                 f"請針對任務 #{task['id']}：{task['title']} 的程式碼撰寫並執行測試，"
@@ -294,14 +311,14 @@ class StudioSession:
             )
             qa_ok = qa_passed(qa_text)
             await self.broadcast(
-                events.run_result(
-                    self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過"
-                )
+                events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
             )
 
             # --- 審查（帶入 QA 測試結果）---
             await self.broadcast(
-                events.phase_change(self.session_id, "審查", f"任務 #{task['id']} 審查中（第 {rnd} 輪）")
+                events.phase_change(
+                    self.session_id, "審查", f"任務 #{task['id']} 審查中（第 {rnd} 輪）"
+                )
             )
             await self._set_task_status(task, "review")
             senior_text = await senior.speak(
@@ -315,13 +332,11 @@ class StudioSession:
                 return True
 
             # --- 帶意見回饋，準備下一輪 ---
-            feedback = (
-                f"【驗證工程師回報】\n{qa_text}\n\n"
-                f"【高級工程師審查意見】\n{senior_text}"
-            )
+            feedback = f"【驗證工程師回報】\n{qa_text}\n\n【高級工程師審查意見】\n{senior_text}"
             await self.broadcast(
                 events.phase_change(
-                    self.session_id, "改進討論",
+                    self.session_id,
+                    "改進討論",
                     f"任務 #{task['id']} 第 {rnd} 輪未通過，工程師將依意見修正",
                 )
             )
@@ -355,16 +370,13 @@ class StudioSession:
         await self.broadcast(events.phase_change(self.session_id, "Demo", "實際執行成果"))
         result = await runner.run_command(self.cwd, cmd)
         await self.broadcast(
-            events.demo_result(
-                self.session_id, cmd, result.exit_code, result.output, label="Demo"
-            )
+            events.demo_result(self.session_id, cmd, result.exit_code, result.output, label="Demo")
         )
 
     async def _wrap_up(self, pm: ExpertLike, all_ok: bool) -> bool:
         await self.broadcast(events.phase_change(self.session_id, "驗收", "PM 確認驗收標準"))
         verdict = await pm.speak(
-            (await self._human_prefix())
-            + "請依驗收標準檢查目前工作目錄的成果，判斷是否完成"
+            (await self._human_prefix()) + "請依驗收標準檢查目前工作目錄的成果，判斷是否完成"
             "（輸出 `決議: 完成` 或 `決議: 未完成`）。",
             self.broadcast,
         )
@@ -376,9 +388,7 @@ class StudioSession:
             self.broadcast,
         )
         await self.broadcast(
-            events.StudioEvent(
-                events.EventType.RETROSPECTIVE, self.session_id, {"text": retro}
-            )
+            events.StudioEvent(events.EventType.RETROSPECTIVE, self.session_id, {"text": retro})
         )
         await self._commit("完成：交付成果與檢討")
 

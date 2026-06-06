@@ -15,9 +15,9 @@ from . import config
 @dataclass(frozen=True)
 class Role:
     key: str
-    name: str          # 中文顯示名
-    avatar: str        # emoji
-    title: str         # 職稱（英文，給程式/log 用）
+    name: str  # 中文顯示名
+    avatar: str  # emoji
+    title: str  # 職稱（英文，給程式/log 用）
     model: str
     allowed_tools: list[str]
     permission_mode: str
@@ -42,7 +42,8 @@ PM = Role(
     allowed_tools=["Read", "Grep"],
     permission_mode="default",
     tags=["規劃", "驗收", "檢討"],
-    system_prompt=_COMMON + (
+    system_prompt=_COMMON
+    + (
         "\n你的角色：專案經理（PM）。\n"
         "職責：\n"
         "- 拆解需求：把使用者的產品需求拆成清楚的任務清單與明確的『驗收標準』。\n"
@@ -69,7 +70,8 @@ ENGINEER = Role(
     allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     permission_mode="acceptEdits",
     tags=["實作", "修正"],
-    system_prompt=_COMMON + (
+    system_prompt=_COMMON
+    + (
         "\n你的角色：工程師。\n"
         "職責：依當前指派的任務在工作目錄裡實際寫出可運行的程式碼。\n"
         "做法：\n"
@@ -93,7 +95,8 @@ QA = Role(
     allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     permission_mode="acceptEdits",
     tags=["測試", "回報"],
-    system_prompt=_COMMON + (
+    system_prompt=_COMMON
+    + (
         "\n你的角色：驗證工程師（QA）。\n"
         "職責：針對工程師的產出撰寫並執行測試，驗證是否符合驗收標準。\n"
         "做法：\n"
@@ -114,7 +117,8 @@ SENIOR = Role(
     allowed_tools=["Read", "Grep", "Glob", "Bash"],
     permission_mode="default",
     tags=["審查", "把關"],
-    system_prompt=_COMMON + (
+    system_prompt=_COMMON
+    + (
         "\n你的角色：高級工程師（程式碼審查者）。\n"
         "職責：審查工程師的程式碼品質、設計、可維護性與明顯的安全問題。\n"
         "做法：\n"

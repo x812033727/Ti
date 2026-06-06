@@ -62,7 +62,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 '''
 
-_README_MD = '''\
+_README_MD = """\
 # 四則運算 CLI
 
 由 Ti Studio 離線示範產生的小專案。
@@ -73,9 +73,9 @@ _README_MD = '''\
 python main.py add 3 4   # -> 7.0
 python main.py div 1 0   # -> 除數不可為 0
 ```
-'''
+"""
 
-_TEST_PY = '''\
+_TEST_PY = """\
 import pytest
 
 from calculator import add, sub, mul, div
@@ -91,7 +91,7 @@ def test_basic_ops():
 def test_div_zero():
     with pytest.raises(ValueError):
         div(1, 0)
-'''
+"""
 
 
 class FakeExpert:
@@ -101,8 +101,15 @@ class FakeExpert:
     這樣工程師會「逐任務」寫出不同檔案，而辯論等非動作發言不會誤觸。
     """
 
-    def __init__(self, role: Role, session_id: str, cwd: Path, scripts: list[str],
-                 file_queue: list[dict[str, str]] | None = None, action_marker: str = ""):
+    def __init__(
+        self,
+        role: Role,
+        session_id: str,
+        cwd: Path,
+        scripts: list[str],
+        file_queue: list[dict[str, str]] | None = None,
+        action_marker: str = "",
+    ):
         self.role = role
         self.session_id = session_id
         self._cwd = cwd
@@ -135,32 +142,56 @@ class FakeExpert:
 
 def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str, FakeExpert]:
     return {
-        "pm": FakeExpert(BY_KEY["pm"], session_id, cwd, scripts=[
-            f"收到需求：{requirement}。我拆成三個任務循序完成。\n"
-            "任務: 實作四則運算核心 calculator.py\n"
-            "任務: 建立命令列介面 main.py\n"
-            "任務: 補上 README 使用說明\n"
-            "驗收標準: calculator 四則運算正確、除以 0 報錯；main.py 可由命令列執行\n"
-            "執行指令: python main.py add 3 4",
-            "三個任務都完成，測試通過、Demo 可執行。\n決議: 完成",
-            "做得不錯：模組分層清楚、有測試。下次可加更多輸入驗證與互動模式。",
-        ]),
-        "engineer": FakeExpert(BY_KEY["engineer"], session_id, cwd, scripts=[
-            "我建議分成核心模組 calculator.py 與介面 main.py，先核心再介面。",
-            "已完成本任務，並自己跑過確認可執行。",
-        ], action_marker="任務 #", file_queue=[
-            {"calculator.py": _CALCULATOR_PY},
-            {"main.py": _MAIN_PY},
-            {"README.md": _README_MD},
-        ]),
-        "qa": FakeExpert(BY_KEY["qa"], session_id, cwd, scripts=[
-            "已加入 test_calculator.py 覆蓋四則運算與除零情況，測試全過。\n驗證: PASS",
-            "重跑測試，仍全數通過。\n驗證: PASS",
-        ], action_marker="撰寫並執行測試", file_queue=[
-            {"test_calculator.py": _TEST_PY},
-        ]),
-        "senior": FakeExpert(BY_KEY["senior"], session_id, cwd, scripts=[
-            "分層合理，建議介面與核心分開，錯誤處理用例外。",
-            "程式碼品質良好，命名清楚，沒有明顯問題。\n決議: 核可",
-        ]),
+        "pm": FakeExpert(
+            BY_KEY["pm"],
+            session_id,
+            cwd,
+            scripts=[
+                f"收到需求：{requirement}。我拆成三個任務循序完成。\n"
+                "任務: 實作四則運算核心 calculator.py\n"
+                "任務: 建立命令列介面 main.py\n"
+                "任務: 補上 README 使用說明\n"
+                "驗收標準: calculator 四則運算正確、除以 0 報錯；main.py 可由命令列執行\n"
+                "執行指令: python main.py add 3 4",
+                "三個任務都完成，測試通過、Demo 可執行。\n決議: 完成",
+                "做得不錯：模組分層清楚、有測試。下次可加更多輸入驗證與互動模式。",
+            ],
+        ),
+        "engineer": FakeExpert(
+            BY_KEY["engineer"],
+            session_id,
+            cwd,
+            scripts=[
+                "我建議分成核心模組 calculator.py 與介面 main.py，先核心再介面。",
+                "已完成本任務，並自己跑過確認可執行。",
+            ],
+            action_marker="任務 #",
+            file_queue=[
+                {"calculator.py": _CALCULATOR_PY},
+                {"main.py": _MAIN_PY},
+                {"README.md": _README_MD},
+            ],
+        ),
+        "qa": FakeExpert(
+            BY_KEY["qa"],
+            session_id,
+            cwd,
+            scripts=[
+                "已加入 test_calculator.py 覆蓋四則運算與除零情況，測試全過。\n驗證: PASS",
+                "重跑測試，仍全數通過。\n驗證: PASS",
+            ],
+            action_marker="撰寫並執行測試",
+            file_queue=[
+                {"test_calculator.py": _TEST_PY},
+            ],
+        ),
+        "senior": FakeExpert(
+            BY_KEY["senior"],
+            session_id,
+            cwd,
+            scripts=[
+                "分層合理，建議介面與核心分開，錯誤處理用例外。",
+                "程式碼品質良好，命名清楚，沒有明顯問題。\n決議: 核可",
+            ],
+        ),
     }

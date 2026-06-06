@@ -401,5 +401,30 @@ async function loadHealth() {
   } catch (e) { /* 忽略 */ }
 }
 
-loadPublishConfig();
-loadHealth();
+// --- 登入 / 門禁 -------------------------------------------------------
+async function checkAuth() {
+  try {
+    const s = await (await fetch("/api/auth/status")).json();
+    if (s.auth_enabled && !s.authed) {
+      location.href = "/login";
+      return false;
+    }
+    if (s.auth_enabled) {
+      const btn = $("#logoutBtn");
+      btn.classList.remove("hidden");
+      btn.onclick = async () => {
+        try { await fetch("/api/logout", { method: "POST" }); } catch (e) { /* 忽略 */ }
+        location.href = "/login";
+      };
+    }
+  } catch (e) { /* 忽略：門禁狀態無法取得時不阻擋 */ }
+  return true;
+}
+
+async function init() {
+  if (!(await checkAuth())) return;
+  loadPublishConfig();
+  loadHealth();
+}
+
+init();

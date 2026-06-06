@@ -7,8 +7,8 @@ SDK 串流回來的訊息轉成 StudioEvent，透過注入的 broadcast callback
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Awaitable, Callable
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -88,9 +88,7 @@ class Expert:
                                 )
                             )
                     elif isinstance(block, ToolUseBlock):
-                        await broadcast(
-                            events.expert_status(self.session_id, r.key, "working")
-                        )
+                        await broadcast(events.expert_status(self.session_id, r.key, "working"))
                         await broadcast(
                             events.tool_use(
                                 self.session_id,

@@ -19,7 +19,7 @@ from . import config
 class RunOutput:
     command: str
     exit_code: int
-    output: str          # stdout + stderr 合併
+    output: str  # stdout + stderr 合併
     timed_out: bool
 
     @property
@@ -34,9 +34,7 @@ def _truncate(text: str, limit: int | None = None) -> str:
     return text[:limit] + f"\n…（輸出過長，已截斷，共 {len(text)} 字）"
 
 
-async def run_command(
-    cwd: Path | str, command: str, timeout: int | None = None
-) -> RunOutput:
+async def run_command(cwd: Path | str, command: str, timeout: int | None = None) -> RunOutput:
     """在 cwd 執行 shell 指令，合併 stdout/stderr，套用逾時與輸出上限。"""
     timeout = timeout or config.DEMO_TIMEOUT
     proc = await asyncio.create_subprocess_shell(
@@ -80,7 +78,8 @@ def detect_entrypoint(cwd: Path | str) -> str | None:
         if (root / name).is_file():
             return name
     pys = [
-        p for p in root.rglob("*.py")
+        p
+        for p in root.rglob("*.py")
         if "test" not in p.name.lower()
         and not any(part in {"__pycache__", ".git"} for part in p.parts)
     ]
@@ -107,6 +106,7 @@ def resolve_demo_command(cwd: Path | str, declared: str | None) -> str | None:
 
 
 # --- git（workspace 內的獨立 repo）-------------------------------------
+
 
 def _git_available() -> bool:
     return shutil.which("git") is not None
