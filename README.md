@@ -54,6 +54,17 @@ python -m studio.server              # 或：uvicorn studio.server:app
 開啟瀏覽器 http://localhost:8000 ，輸入需求（例如「做一個能計算 BMI 並分類的 Python CLI」），
 按「開始討論」即可觀看專家協作。產出的程式碼會放在 `workspaces/<session_id>/`。
 
+### 離線示範模式（不需 API 金鑰）
+
+想先試用整套流程、或在沒有金鑰的環境驗證，可開啟離線模式：用腳本化的假專家驅動
+**真實的** 流程（真的寫檔、git commit、執行 Demo）。
+
+```bash
+TI_OFFLINE=1 python -m studio.server
+```
+
+輸入任意需求即可看到完整的逐任務協作、看板移動、git 紀錄與真實 Demo 輸出。
+
 ## 設定
 
 可用環境變數（見 `.env.example`）調整：
@@ -68,6 +79,7 @@ python -m studio.server              # 或：uvicorn studio.server:app
 | `TI_HOST` / `TI_PORT` | 伺服器位址 | 0.0.0.0 / 8000 |
 | `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
 | `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
+| `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
 
 ## 測試
 
@@ -91,9 +103,10 @@ studio/
   runner.py        確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git
   history.py       session 事件存檔/讀取（供歷史列表與重播）
   publisher.py     把 workspace 成果推成 GitHub 分支並開 PR（預設關閉）
+  fake_experts.py  離線示範用的假專家（真的寫檔，供無金鑰試用/端到端驗證）
   server.py        FastAPI + 雙向 WebSocket + 歷史 API + 發佈 API + 靜態檔
-web/               免建置的工作室前端（HTML/CSS/JS）
-tests/             以 stub 專家測試狀態機 + runner 單元測試
+web/               免建置的工作室前端（HTML/CSS/JS；含響應式版面與重播）
+tests/             單元測試 + 離線端到端測試（test_offline_e2e.py）
 ```
 
 ## 後續可擴充

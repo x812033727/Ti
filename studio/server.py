@@ -26,7 +26,11 @@ async def index() -> FileResponse:
 
 @app.get("/api/health")
 async def health() -> JSONResponse:
-    return JSONResponse({"ok": True, "has_api_key": config.has_api_key()})
+    return JSONResponse({
+        "ok": True,
+        "has_api_key": config.has_api_key(),
+        "offline": config.OFFLINE_MODE,
+    })
 
 
 @app.get("/api/workspace/{session_id}/files")
@@ -95,7 +99,7 @@ async def ws(websocket: WebSocket) -> None:
             await websocket.close()
             return
 
-        if not config.has_api_key():
+        if not config.has_api_key() and not config.OFFLINE_MODE:
             await websocket.send_json(
                 {"type": "error", "payload": {"message": "未設定 ANTHROPIC_API_KEY，無法啟動專家"}}
             )
@@ -106,7 +110,13 @@ async def ws(websocket: WebSocket) -> None:
         history.start_session(session_id, requirement)
         recording = True
         queue: asyncio.Queue[str] = asyncio.Queue()
-        session = StudioSession(session_id, broadcast, cwd=cwd, intervention_queue=queue)
+        experts = None
+        if config.OFFLINE_MODE:
+            from .fake_experts import build_fake_experts
+            experts = build_fake_experts(session_id, cwd, requirement)
+        session = StudioSession(
+            session_id, broadcast, experts=experts, cwd=cwd, intervention_queue=queue
+        )
 
         # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令
         run_task = asyncio.create_task(session.run(requirement))

@@ -34,6 +34,14 @@ function clearBoard() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function toast(msg, kind = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = msg;
+  $("#toast").appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
 function renderRoster(roster) {
   expertList.innerHTML = "";
   for (const r of roster) {
@@ -228,6 +236,7 @@ function handleEvent(ev) {
       break;
     case "error":
       addSystem("⚠️ 錯誤：" + (p.message || "未知錯誤"));
+      toast(p.message || "發生錯誤", "err");
       setRunning(false);
       break;
   }
@@ -245,7 +254,7 @@ function start() {
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onopen = () => ws.send(JSON.stringify({ requirement }));
   ws.onmessage = (e) => handleEvent(JSON.parse(e.data));
-  ws.onerror = () => { addSystem("⚠️ 連線發生錯誤"); setRunning(false); };
+  ws.onerror = () => { addSystem("⚠️ 連線發生錯誤"); toast("WebSocket 連線錯誤", "err"); setRunning(false); };
 }
 
 function sendInterject() {
@@ -256,8 +265,10 @@ function sendInterject() {
 }
 
 function stop() {
+  if (replaying) { replaying = false; return; }   // 中止重播
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" }));
   stopBtn.disabled = true;
+  toast("已送出停止指令", "");
 }
 
 // --- 歷史存檔 / 重播 ---------------------------------------------------
@@ -309,16 +320,20 @@ async function replaySession(sid) {
 
   replaying = true;
   setRunning(false);
+  stopBtn.disabled = false;          // 重播時「停止」可中止重播
   clearStream();
   clearBoard();
   addSystem("⏪ 重播 session：" + sid);
-  for (const ev of events) {
-    if (!replaying) break;
-    handleEvent(ev);
+  const total = events.length;
+  for (let i = 0; i < total; i++) {
+    if (!replaying) { setPhase("⏪ 已中止重播"); break; }
+    handleEvent(events[i]);
+    setPhase(`⏪ 重播 ${i + 1}/${total}`);
     await sleep(120);
   }
-  setPhase("⏪ 重播結束");
+  if (replaying) setPhase("⏪ 重播結束");
   replaying = false;
+  stopBtn.disabled = true;
 }
 
 function closeHistory() { historyPanel.classList.add("hidden"); }
@@ -374,4 +389,17 @@ $("#historyClose").onclick = closeHistory;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
 
+async function loadHealth() {
+  try {
+    const h = await (await fetch("/api/health")).json();
+    if (h.offline) {
+      $("#offlineBadge").classList.remove("hidden");
+      reqInput.placeholder = "離線示範模式：輸入任意需求即可看完整流程（不需 API 金鑰）";
+    } else if (!h.has_api_key) {
+      toast("未設定 ANTHROPIC_API_KEY；可用 TI_OFFLINE=1 啟動離線示範", "err");
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
 loadPublishConfig();
+loadHealth();
