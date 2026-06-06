@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, workspace
+from . import config, history, workspace
 from .events import StudioEvent
 from .orchestrator import StudioSession
 
@@ -42,13 +42,30 @@ async def workspace_file(session_id: str, path: str) -> JSONResponse:
     return JSONResponse({"path": path, "content": content})
 
 
+@app.get("/api/history")
+async def history_list() -> JSONResponse:
+    return JSONResponse({"sessions": history.list_sessions()})
+
+
+@app.get("/api/history/{session_id}/events")
+async def history_events(session_id: str) -> JSONResponse:
+    meta = history.get_meta(session_id)
+    if meta is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"meta": meta, "events": history.load_events(session_id)})
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
     session_id = uuid.uuid4().hex[:12]
+    recording = False
 
     async def broadcast(event: StudioEvent) -> None:
-        await websocket.send_json(event.to_dict())
+        d = event.to_dict()
+        if recording:
+            history.record_event(session_id, d)
+        await websocket.send_json(d)
 
     try:
         # 第一則訊息為產品需求
@@ -67,6 +84,8 @@ async def ws(websocket: WebSocket) -> None:
             return
 
         cwd = workspace.create_workspace(session_id)
+        history.start_session(session_id, requirement)
+        recording = True
         queue: asyncio.Queue[str] = asyncio.Queue()
         session = StudioSession(session_id, broadcast, cwd=cwd, intervention_queue=queue)
 
@@ -77,6 +96,8 @@ async def ws(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if recording:
+            history.finish_session(session_id)
         try:
             await websocket.close()
         except RuntimeError:

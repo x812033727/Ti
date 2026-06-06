@@ -14,9 +14,19 @@
              placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
       <button id="startBtn">開始討論</button>
       <button id="stopBtn" class="ghost" disabled>停止</button>
+      <button id="historyBtn" class="ghost">📜 歷史</button>
     </div>
     <div id="phase" class="phase">待命中</div>
   </header>
+
+  <!-- 歷史存檔 / 重播 -->
+  <div id="historyPanel" class="history-panel hidden">
+    <div class="history-head">
+      <h2>歷史 session</h2>
+      <button id="historyClose" class="ghost">✕</button>
+    </div>
+    <ul id="historyList" class="history-list"></ul>
+  </div>
 
   <main class="layout">
     <!-- 左：專家名單 -->

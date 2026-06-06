@@ -37,6 +37,7 @@ ENABLE_GIT = os.getenv("TI_ENABLE_GIT", "1") not in ("0", "false", "False", "")
 # --- 路徑 ---------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspaces")))
+HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
 WEB_DIR = PROJECT_ROOT / "web"
 
 # --- 伺服器 -------------------------------------------------------------
