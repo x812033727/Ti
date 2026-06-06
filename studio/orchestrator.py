@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 
-from . import config, events, runner, workspace
+from . import config, events, publisher, runner, workspace
 from .roles import ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
@@ -94,6 +94,7 @@ class StudioSession:
         self._intervention = intervention_queue
         self._tasks: list[dict] = []          # {id, title, status}
         self._run_command: str | None = None  # PM/工程師宣告的執行指令
+        self._requirement = ""
         self._stop = False
 
     # --- 控制 ----------------------------------------------------------
@@ -187,6 +188,7 @@ class StudioSession:
                     pass
 
     async def _run(self, requirement: str) -> None:
+        self._requirement = requirement
         experts = self._get_experts()
         pm, engineer, qa, senior = (
             experts["pm"], experts["engineer"], experts["qa"], experts["senior"]
@@ -246,7 +248,10 @@ class StudioSession:
         await self._final_demo()
 
         # 5) PM 驗收 + 檢討
-        await self._wrap_up(pm, all_ok)
+        done = await self._wrap_up(pm, all_ok)
+
+        # 6) 視設定自動發佈成果到 GitHub
+        await self._maybe_publish(done)
 
     async def _work_task(
         self, task: dict, pm_plan: str,
@@ -355,7 +360,7 @@ class StudioSession:
             )
         )
 
-    async def _wrap_up(self, pm: ExpertLike, all_ok: bool) -> None:
+    async def _wrap_up(self, pm: ExpertLike, all_ok: bool) -> bool:
         await self.broadcast(events.phase_change(self.session_id, "驗收", "PM 確認驗收標準"))
         verdict = await pm.speak(
             (await self._human_prefix())
@@ -385,3 +390,14 @@ class StudioSession:
                 {"completed": done, "stopped": self._stop, "files": files},
             )
         )
+        return done
+
+    async def _maybe_publish(self, done: bool) -> None:
+        """專案完成且設定允許時，自動把成果發佈到 GitHub。"""
+        if not self.cwd or self._stop or not done:
+            return
+        if not (config.PUBLISH_AUTO and publisher.is_configured()):
+            return
+        await self.broadcast(events.phase_change(self.session_id, "發佈", "推送成果到 GitHub"))
+        result = await publisher.publish(self.cwd, self.session_id, self._requirement)
+        await self.broadcast(events.publish_result(self.session_id, result.to_dict()))

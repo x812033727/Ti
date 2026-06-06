@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, history, workspace
+from . import config, history, publisher, workspace
 from .events import StudioEvent
 from .orchestrator import StudioSession
 
@@ -53,6 +53,25 @@ async def history_events(session_id: str) -> JSONResponse:
     if meta is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse({"meta": meta, "events": history.load_events(session_id)})
+
+
+@app.get("/api/publish/config")
+async def publish_config() -> JSONResponse:
+    return JSONResponse(
+        {"configured": publisher.is_configured(), "auto": config.PUBLISH_AUTO,
+         "repo": config.PUBLISH_REPO or None}
+    )
+
+
+@app.post("/api/publish/{session_id}")
+async def publish_now(session_id: str) -> JSONResponse:
+    cwd = workspace.workspace_path(session_id)
+    if not cwd.exists():
+        return JSONResponse({"ok": False, "detail": "找不到此 session 的 workspace"}, status_code=404)
+    meta = history.get_meta(session_id)
+    requirement = meta["requirement"] if meta else "Ti Studio 成果"
+    result = await publisher.publish(cwd, session_id, requirement)
+    return JSONResponse(result.to_dict())
 
 
 @app.websocket("/ws")

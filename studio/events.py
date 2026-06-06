@@ -19,6 +19,7 @@ class EventType(str, Enum):
     RUN_RESULT = "run_result"             # 測試/執行結果（PASS/FAIL）
     DEMO_RESULT = "demo_result"           # 實際執行產出（含 stdout/stderr）
     GIT_COMMIT = "git_commit"             # workspace 內階段性 commit
+    PUBLISH_RESULT = "publish_result"     # 成果發佈到 GitHub 的結果
     HUMAN_MESSAGE = "human_message"       # 人類中途插話
     RETROSPECTIVE = "retrospective"       # 檢討回顧
     DONE = "done"                         # 專案完成
@@ -125,6 +126,10 @@ def git_commit(session_id: str, message: str, commit_hash: str) -> StudioEvent:
 
 def human_message(session_id: str, text: str) -> StudioEvent:
     return StudioEvent(EventType.HUMAN_MESSAGE, session_id, {"text": text})
+
+
+def publish_result(session_id: str, result: dict) -> StudioEvent:
+    return StudioEvent(EventType.PUBLISH_RESULT, session_id, result)
 
 
 def task_status(session_id: str, task_id: int, title: str, status: str) -> StudioEvent:

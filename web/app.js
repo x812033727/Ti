@@ -216,10 +216,14 @@ function handleEvent(ev) {
     case "retrospective":
       addSystem("📋 檢討：" + (p.text || ""));
       break;
+    case "publish_result":
+      renderPublish(p);
+      break;
     case "done":
       setPhase(p.stopped ? "⏹ 已停止" : (p.completed ? "✅ 已完成" : "⚠️ 結束（未完全達標）"));
       addSystem(p.stopped ? "已依指示停止。" : (p.completed ? "🎉 專案完成！" : "專案結束，仍有未達標項目。"));
       refreshFiles();
+      if (!replaying && p.completed && publishConfigured) addPublishButton(sessionId);
       setRunning(false);
       break;
     case "error":
@@ -319,6 +323,49 @@ async function replaySession(sid) {
 
 function closeHistory() { historyPanel.classList.add("hidden"); }
 
+// --- 發佈到 GitHub -----------------------------------------------------
+let publishConfigured = false;
+
+async function loadPublishConfig() {
+  try {
+    const cfg = await (await fetch("/api/publish/config")).json();
+    publishConfigured = !!cfg.configured;
+  } catch (e) { publishConfigured = false; }
+}
+
+function addPublishButton(sid) {
+  const wrap = document.createElement("div");
+  wrap.className = "publish-cta";
+  const btn = document.createElement("button");
+  btn.textContent = "🚀 發佈成果到 GitHub";
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "發佈中…";
+    try {
+      const res = await (await fetch(`/api/publish/${sid}`, { method: "POST" })).json();
+      renderPublish(res);
+    } catch (e) { renderPublish({ ok: false, detail: "發佈請求失敗" }); }
+    btn.remove();
+  };
+  wrap.appendChild(btn);
+  stream.appendChild(wrap);
+  scrollStream();
+}
+
+function renderPublish(p) {
+  const el = document.createElement("div");
+  el.className = "publish " + (p.ok ? "ok" : "fail");
+  let html = (p.ok ? "🚀 " : "⚠️ ") + (p.detail || "");
+  if (p.branch) html += `　<code>${p.branch}</code>`;
+  el.innerHTML = html;
+  if (p.pr_url) {
+    const a = document.createElement("a");
+    a.href = p.pr_url; a.target = "_blank"; a.textContent = "查看 PR ↗";
+    el.appendChild(document.createTextNode("　")); el.appendChild(a);
+  }
+  stream.appendChild(el);
+  scrollStream();
+}
+
 startBtn.onclick = start;
 stopBtn.onclick = stop;
 interjectBtn.onclick = sendInterject;
@@ -326,3 +373,5 @@ $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
+
+loadPublishConfig();
