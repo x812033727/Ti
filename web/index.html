@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ti Studio — AI 專家討論工作室</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🛠️ <span>Ti Studio</span> <small>AI 專家討論工作室</small></div>
+    <div class="launch">
+      <input id="requirement" type="text"
+             placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
+      <button id="startBtn">開始討論</button>
+    </div>
+    <div id="phase" class="phase">待命中</div>
+  </header>
+
+  <main class="layout">
+    <!-- 左：專家名單 -->
+    <aside class="experts" id="experts">
+      <h2>工作室成員</h2>
+      <div id="expertList"></div>
+    </aside>
+
+    <!-- 中：討論串 -->
+    <section class="discussion">
+      <h2>即時討論</h2>
+      <div id="stream" class="stream">
+        <div class="placeholder">輸入需求並按「開始討論」，專家們就會開工。</div>
+      </div>
+    </section>
+
+    <!-- 右：看板 + 檔案 -->
+    <aside class="side">
+      <div class="board">
+        <h2>看板</h2>
+        <div class="columns">
+          <div class="col" data-col="todo"><h3>待辦</h3><div class="cards"></div></div>
+          <div class="col" data-col="doing"><h3>進行中</h3><div class="cards"></div></div>
+          <div class="col" data-col="review"><h3>審查</h3><div class="cards"></div></div>
+          <div class="col" data-col="done"><h3>完成</h3><div class="cards"></div></div>
+        </div>
+      </div>
+      <div class="files">
+        <h2>產出檔案</h2>
+        <div class="filewrap">
+          <ul id="fileList" class="filelist"></ul>
+          <pre id="fileView" class="fileview">（點選左側檔案檢視內容）</pre>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
