@@ -16,11 +16,23 @@ MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
 MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
 
 # --- 流程 ---------------------------------------------------------------
-# 實作→驗證→審查 的最大改進輪數，避免無止盡迴圈。
-MAX_ROUNDS = int(os.getenv("TI_MAX_ROUNDS", "3"))
+# 每個任務「實作→驗證→審查」的最大改進輪數，避免無止盡迴圈。
+TASK_MAX_ROUNDS = int(os.getenv("TI_MAX_ROUNDS", "3"))
+MAX_ROUNDS = TASK_MAX_ROUNDS  # 舊名相容
+
+# 架構辯論的來回回合數（工程師 ⇄ 高級工程師）。
+DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
 
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
+
+# --- 確定性執行（runner）-----------------------------------------------
+# 自測 / Demo 的執行逾時（秒）與輸出字數上限。
+DEMO_TIMEOUT = int(os.getenv("TI_DEMO_TIMEOUT", "60"))
+DEMO_MAX_OUTPUT = int(os.getenv("TI_DEMO_MAX_OUTPUT", "8000"))
+
+# 是否在 workspace 內建立獨立 git repo 並做階段性 commit。
+ENABLE_GIT = os.getenv("TI_ENABLE_GIT", "1") not in ("0", "false", "False", "")
 
 # --- 路徑 ---------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

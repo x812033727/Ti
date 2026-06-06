@@ -83,6 +83,36 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .sys { text-align: center; font-size: 12px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
 .result.pass { color: var(--good); } .result.fail { color: var(--bad); }
 .result { text-align: center; font-weight: 600; font-size: 13px; }
+.result .log { text-align: left; font-weight: 400; margin-top: 6px; }
+.result .log summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.result .log pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 11.5px; overflow: auto; max-height: 220px; color: #c9d1d9; }
+
+/* 人類插話 */
+.msg.human .body { background: #1d2a1d; border-color: #2f5132; }
+.msg.human .who { color: var(--good); }
+
+/* git commit chip */
+.commit { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); padding-left: 34px; }
+.commit .hash { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; color: var(--accent); font-family: monospace; }
+
+/* Demo 區塊 */
+.demo { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--panel-2); }
+.demo.pass { border-color: #2f5132; } .demo.fail { border-color: #5a2a2a; }
+.demo .demohead { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.demo .demohead code { font-weight: 400; font-size: 11.5px; color: var(--muted); }
+.demo pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 11.5px; overflow: auto; max-height: 240px; margin: 0; color: #c9d1d9; }
+
+/* 插話列 */
+.interject { display: flex; gap: 8px; margin-top: 10px; }
+.interject input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
+.interject input:focus { outline: none; border-color: var(--accent); }
+.interject input:disabled { opacity: .5; }
+.interject button { padding: 8px 16px; border: none; border-radius: 8px; background: var(--good); color: white; font-weight: 600; cursor: pointer; }
+.interject button:disabled { opacity: .4; cursor: not-allowed; }
+
+/* topbar 次要按鈕 */
+.launch button.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.launch button.ghost:not(:disabled) { color: var(--bad); border-color: var(--bad); }
 
 /* 看板 */
 .board { flex-shrink: 0; }

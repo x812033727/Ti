@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -66,8 +67,13 @@ async def ws(websocket: WebSocket) -> None:
             return
 
         cwd = workspace.create_workspace(session_id)
-        session = StudioSession(session_id, broadcast, cwd=cwd)
-        await session.run(requirement)
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        session = StudioSession(session_id, broadcast, cwd=cwd, intervention_queue=queue)
+
+        # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令
+        run_task = asyncio.create_task(session.run(requirement))
+        await _pump_interventions(websocket, session, queue, run_task)
+        await run_task
     except WebSocketDisconnect:
         pass
     finally:
@@ -75,6 +81,31 @@ async def ws(websocket: WebSocket) -> None:
             await websocket.close()
         except RuntimeError:
             pass
+
+
+async def _pump_interventions(websocket, session, queue, run_task) -> None:
+    """編排執行期間，持續接收前端訊息並注入 session（插話 / 停止）。"""
+    while not run_task.done():
+        recv = asyncio.ensure_future(websocket.receive_json())
+        done, _pending = await asyncio.wait(
+            {recv, run_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if recv not in done:
+            recv.cancel()
+            break
+        try:
+            msg = recv.result()
+        except WebSocketDisconnect:
+            session.request_stop()
+            break
+        kind = msg.get("type")
+        if kind == "interject":
+            text = (msg.get("text") or "").strip()
+            if text:
+                queue.put_nowait(text)
+        elif kind == "stop":
+            session.request_stop()
+            break
 
 
 def main() -> None:
