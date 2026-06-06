@@ -8,7 +8,9 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">🛠️ <span>Ti Studio</span> <small>AI 專家討論工作室</small></div>
+    <div class="brand">🛠️ <span>Ti Studio</span> <small>AI 專家討論工作室</small>
+      <span id="offlineBadge" class="badge-offline hidden">離線示範</span>
+    </div>
     <div class="launch">
       <input id="requirement" type="text"
              placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
@@ -68,6 +70,8 @@
       </div>
     </aside>
   </main>
+
+  <div id="toast"></div>
 
   <script src="/static/app.js"></script>
 </body>

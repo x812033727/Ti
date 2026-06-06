@@ -156,3 +156,24 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .filelist li { font-size: 12.5px; padding: 4px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .filelist li:hover { border-color: var(--accent); }
 .fileview { flex: 1; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; color: #c9d1d9; margin: 0; }
+
+/* 離線模式徽章 */
+.badge-offline { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #3a2d12; color: var(--warn); border: 1px solid #5a4a1f; white-space: nowrap; }
+.badge-offline.hidden { display: none; }
+
+/* Toast 通知 */
+#toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 100; align-items: center; }
+.toast { padding: 10px 16px; border-radius: 8px; font-size: 13px; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); box-shadow: 0 6px 24px rgba(0,0,0,.45); animation: toastin .2s ease; }
+.toast.err { border-color: var(--bad); color: #ffb4ae; }
+.toast.ok { border-color: var(--good); }
+@keyframes toastin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; } }
+
+/* 窄螢幕 / 手機版面 */
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; }
+  .launch { order: 3; width: 100%; }
+  .layout { grid-template-columns: 1fr; overflow: auto; }
+  .experts, .discussion, .side { overflow: visible; }
+  .stream { max-height: 50vh; }
+  .history-panel { left: 12px; right: 12px; width: auto; }
+}

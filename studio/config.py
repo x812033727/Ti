@@ -34,6 +34,11 @@ DEMO_MAX_OUTPUT = int(os.getenv("TI_DEMO_MAX_OUTPUT", "8000"))
 # 是否在 workspace 內建立獨立 git repo 並做階段性 commit。
 ENABLE_GIT = os.getenv("TI_ENABLE_GIT", "1") not in ("0", "false", "False", "")
 
+# --- 離線示範模式 -------------------------------------------------------
+# 不需 API 金鑰，用腳本化的假專家驅動完整流程（真的寫檔/git/Demo），供試用與端到端驗證。
+OFFLINE_MODE = os.getenv("TI_OFFLINE", "0") not in ("0", "false", "False", "")
+OFFLINE_DELAY = float(os.getenv("TI_OFFLINE_DELAY", "0.4"))  # 每次發言之間的節奏（秒）
+
 # --- 發佈到 GitHub（對外、預設關閉）------------------------------------
 # 需同時設定 GITHUB_TOKEN 與 TI_PUBLISH_REPO（owner/repo）才會啟用。
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
