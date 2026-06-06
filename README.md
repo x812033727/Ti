@@ -1,5 +1,7 @@
 # Ti Studio — AI 專家討論工作室
 
+[![CI](https://github.com/x812033727/Ti/actions/workflows/ci.yml/badge.svg)](https://github.com/x812033727/Ti/actions/workflows/ci.yml)
+
 一個由多位 AI 專家組成的自主軟體開發「工作室」。給它一段產品需求，工作室裡的
 **專案經理、工程師、高級工程師、驗證工程師** 就會自己討論、寫程式、測試、審查、
 反覆改進，最後做出可運行的成果 —— 整個過程會在網頁上即時呈現。
