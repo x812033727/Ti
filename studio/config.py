@@ -34,6 +34,14 @@ DEMO_MAX_OUTPUT = int(os.getenv("TI_DEMO_MAX_OUTPUT", "8000"))
 # 是否在 workspace 內建立獨立 git repo 並做階段性 commit。
 ENABLE_GIT = os.getenv("TI_ENABLE_GIT", "1") not in ("0", "false", "False", "")
 
+# --- 發佈到 GitHub（對外、預設關閉）------------------------------------
+# 需同時設定 GITHUB_TOKEN 與 TI_PUBLISH_REPO（owner/repo）才會啟用。
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")          # 例：octocat/outputs
+PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")      # PR 目標分支
+# 專案完成後是否自動發佈（預設關閉，避免非預期的對外推送）。
+PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", "")
+
 # --- 路徑 ---------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspaces")))

@@ -24,6 +24,7 @@
 - **階段性 git**：每輪在 workspace 內的獨立 repo 自動 commit，留下可追蹤歷史。
 - **詳細 log**：自測與 Demo 的完整輸出都會回報到討論串（可展開查看）。
 - **歷史存檔/重播**：每次 session 的事件自動存檔，可從「📜 歷史」面板挑選並重播當時的討論過程。
+- **成果發佈到 GitHub**：設定 token 與目標 repo 後，可手動（或自動）把 workspace 成果推成分支並開 PR。
 
 ## 角色
 
@@ -65,6 +66,8 @@ python -m studio.server              # 或：uvicorn studio.server:app
 | `TI_DEMO_TIMEOUT` / `TI_DEMO_MAX_OUTPUT` | 自測/Demo 的逾時秒數與輸出字數上限 | 60 / 8000 |
 | `TI_ENABLE_GIT` | 是否在 workspace 內做階段性 commit | 1 |
 | `TI_HOST` / `TI_PORT` | 伺服器位址 | 0.0.0.0 / 8000 |
+| `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
+| `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
 
 ## 測試
 
@@ -87,7 +90,8 @@ studio/
   orchestrator.py  StudioSession：逐任務工作流程狀態機（核心）
   runner.py        確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git
   history.py       session 事件存檔/讀取（供歷史列表與重播）
-  server.py        FastAPI + 雙向 WebSocket（事件串流 + 人類插話/停止）+ 歷史 API + 靜態檔
+  publisher.py     把 workspace 成果推成 GitHub 分支並開 PR（預設關閉）
+  server.py        FastAPI + 雙向 WebSocket + 歷史 API + 發佈 API + 靜態檔
 web/               免建置的工作室前端（HTML/CSS/JS）
 tests/             以 stub 專家測試狀態機 + runner 單元測試
 ```
