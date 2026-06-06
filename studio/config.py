@@ -72,8 +72,14 @@ def has_api_key() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY"))
 
 
+def claude_cli_logged_in() -> bool:
+    """是否已透過 claude CLI 登入（訂閱 OAuth 憑證），SDK 子程序會沿用。"""
+    return (Path.home() / ".claude" / ".credentials.json").exists()
+
+
 def provider_ready() -> bool:
     """目前選定的 provider 是否具備可執行的憑證/設定。"""
     if PROVIDER == "openai":
         return bool(OPENAI_API_KEY or OPENAI_BASE_URL)
-    return has_api_key()
+    # claude provider：環境變數金鑰，或已登入的 claude CLI 訂閱皆可。
+    return has_api_key() or claude_cli_logged_in()
