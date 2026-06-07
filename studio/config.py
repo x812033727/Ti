@@ -184,6 +184,13 @@ AUTOPILOT_PAUSE_FILE = Path(
     os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED"))
 )
 AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "False", "")
+# 推送/合併安全旗標（預設皆取安全側）：
+# AUTOPILOT_FORCE_PUSH：預設非強制推送；遠端已存在同名分支會中止。設 1 才略過中止並改用
+#   `git push --force-with-lease --force-if-includes`（覆寫殘留分支用，絕不用裸 -f）。
+AUTOPILOT_FORCE_PUSH = os.getenv("TI_AUTOPILOT_FORCE_PUSH", "0") not in ("0", "false", "False", "")
+# AUTOPILOT_MERGE_ADMIN：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效。若目標 branch
+#   有保護規則、需維持自動合併，須設 TI_AUTOPILOT_MERGE_ADMIN=1。
+AUTOPILOT_MERGE_ADMIN = os.getenv("TI_AUTOPILOT_MERGE_ADMIN", "0") not in ("0", "false", "False", "")
 
 
 def autopilot_paused() -> bool:
