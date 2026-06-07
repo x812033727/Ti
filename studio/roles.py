@@ -68,7 +68,7 @@ ENGINEER = Role(
     title="Engineer",
     model=config.MODEL_FAST,
     allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
-    permission_mode="acceptEdits",
+    permission_mode="bypassPermissions",
     tags=["實作", "修正"],
     system_prompt=_COMMON
     + (
@@ -93,7 +93,7 @@ QA = Role(
     title="Verification Engineer",
     model=config.MODEL_FAST,
     allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
-    permission_mode="acceptEdits",
+    permission_mode="bypassPermissions",
     tags=["測試", "回報"],
     system_prompt=_COMMON
     + (
@@ -115,7 +115,7 @@ SENIOR = Role(
     title="Senior Engineer",
     model=config.MODEL_LEAD,
     allowed_tools=["Read", "Grep", "Glob", "Bash"],
-    permission_mode="default",
+    permission_mode="bypassPermissions",
     tags=["審查", "把關"],
     system_prompt=_COMMON
     + (
