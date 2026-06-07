@@ -41,6 +41,28 @@ def test_resolve_demo_command(tmp_path):
     assert runner.resolve_demo_command(tmp_path, None) == "python main.py"
 
 
+# --- 直譯器可攜性（python / python3）-----------------------------------
+
+
+def test_executable_command_keeps_existing_interpreter(monkeypatch):
+    # python 在 PATH 時，指令原封不動。
+    monkeypatch.setattr(runner.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert runner._executable_command("python main.py add 3 4") == "python main.py add 3 4"
+
+
+def test_executable_command_falls_back_to_sys_executable(monkeypatch):
+    # python 不在 PATH 時，開頭 token 換成 sys.executable，其餘參數保留。
+    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
+    monkeypatch.setattr(runner.sys, "executable", "/opt/py/python3")
+    out = runner._executable_command("python main.py add 3 4")
+    assert out == "/opt/py/python3 main.py add 3 4"
+
+
+def test_executable_command_ignores_non_python(monkeypatch):
+    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
+    assert runner._executable_command("echo hi") == "echo hi"
+
+
 # --- 執行指令 -----------------------------------------------------------
 
 
