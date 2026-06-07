@@ -183,6 +183,25 @@ async def test_run_command_exec_fail_closed(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_command_fail_closed(tmp_path, monkeypatch):
+    """shell 路徑 fail-closed（PM #1）：沙箱啟用但 bwrap 不存在 → 拒絕執行。
+
+    對稱複製 test_run_command_exec_fail_closed，覆蓋 run_command（shell）路徑。
+    同時 monkeypatch SANDBOX_BWRAP 指向不存在路徑「且」SANDBOX_ENABLED=True，
+    避免 CI 帶 TI_SANDBOX=0 時走裸跑分支致測試失真。
+    """
+    monkeypatch.setattr(runner.config, "SANDBOX_BWRAP", "/nonexistent/bwrap")
+    monkeypatch.setattr(runner.config, "SANDBOX_ENABLED", True)
+    r = await runner.run_command(tmp_path, "touch shouldnt", sandbox=True)
+    assert r.timed_out
+    assert not r.ok
+    assert r.exit_code == -1
+    assert "拒絕執行" in r.output
+    # 確實沒有真的跑
+    assert not (tmp_path / "shouldnt").exists()
+
+
+@pytest.mark.asyncio
 async def test_run_command_exec_sandbox_writes_cwd(tmp_path):
     """沙箱路徑：經 bwrap 執行，cwd 綁定可寫（需環境有 bwrap）。"""
     if not runner.config._sandbox_available():
