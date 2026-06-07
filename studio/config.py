@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import ipaddress
+import logging
 import os
 import secrets
 import shutil
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 
@@ -165,6 +169,52 @@ AUTH_TTL = int(os.getenv("TI_AUTH_TTL", "604800"))
 def auth_enabled() -> bool:
     """是否啟用密碼門禁（設定了 TI_ACCESS_PASSWORD 才啟用）。"""
     return bool(ACCESS_PASSWORD)
+
+
+# --- 可信代理 / 來源 IP（反代下判斷真實 client，預設關閉）-----------------
+# TI_TRUST_PROXY 關閉（預設）時：完全忽略 X-Forwarded-For，只認 socket peer，向後相容。
+# 開啟後：僅當請求來自 TI_TRUSTED_PROXIES 內的受信代理，才採信 XFF 並解析真實來源。
+# ⚠️ 啟用時務必確保 app port 僅受信代理可連，否則 XFF 可被偽造繞過。
+TRUST_PROXY = os.getenv("TI_TRUST_PROXY", "0") not in ("0", "false", "False", "")
+# 受信代理 IP/CIDR 清單（逗號分隔）。預設僅 loopback（同機代理）。
+TRUSTED_PROXIES = os.getenv("TI_TRUSTED_PROXIES", "127.0.0.0/8,::1")
+
+
+def trust_proxy_enabled() -> bool:
+    """是否採信反向代理附加的 X-Forwarded-For（設定 TI_TRUST_PROXY 才啟用）。"""
+    return TRUST_PROXY
+
+
+# 受信代理清單解析後的快取（lazy）；None 代表尚未解析。
+_trusted_proxies_cache: list[ipaddress._BaseNetwork] | None = None
+
+
+def trusted_proxies() -> list[ipaddress._BaseNetwork]:
+    """將 TI_TRUSTED_PROXIES 解析為 ip_network 清單並快取。
+
+    無效項目會 log 警告並略過該項（fail-safe），絕不因單項解析失敗退化為信任全部。
+    正式執行視為程序啟動時固定，不做 runtime 熱更新；測試可用 reset_trusted_proxies() 清快取。
+    """
+    global _trusted_proxies_cache
+    if _trusted_proxies_cache is None:
+        networks: list[ipaddress._BaseNetwork] = []
+        for item in TRUSTED_PROXIES.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                networks.append(ipaddress.ip_network(item, strict=False))
+            except ValueError:
+                logger.warning("TI_TRUSTED_PROXIES 含無效項目，已略過: %r", item)
+        _trusted_proxies_cache = networks
+    return _trusted_proxies_cache
+
+
+def reset_trusted_proxies() -> None:
+    """清掉受信代理清單快取（供單元測試切換 TI_TRUSTED_PROXIES 後重算）。"""
+    global TRUSTED_PROXIES, _trusted_proxies_cache
+    TRUSTED_PROXIES = os.getenv("TI_TRUSTED_PROXIES", "127.0.0.0/8,::1")
+    _trusted_proxies_cache = None
 
 
 # --- 路徑 ---------------------------------------------------------------
