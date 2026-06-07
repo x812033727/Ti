@@ -112,10 +112,13 @@ async def ws(websocket: WebSocket) -> None:
         recording = True
         queue: asyncio.Queue[str] = asyncio.Queue()
         experts = None
+        critics = None
         if config.OFFLINE_MODE:
-            from .fake_experts import build_fake_experts
+            from .fake_experts import build_fake_critics, build_fake_experts
 
             experts = build_fake_experts(session_id, cwd, requirement)
+            # 注入離線 critic，讓 demo 端到端展示一次「內部討論」（critic_review）事件。
+            critics = build_fake_critics(session_id, cwd)
         session = StudioSession(
             session_id,
             broadcast,
@@ -123,6 +126,7 @@ async def ws(websocket: WebSocket) -> None:
             cwd=cwd,
             intervention_queue=queue,
             repo_url=repo_url or None,
+            critics=critics,
         )
 
         # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令。

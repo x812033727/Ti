@@ -9,10 +9,13 @@ import pytest
 from studio import config, events
 from studio.orchestrator import (
     StudioSession,
+    critic_blocks,
+    is_stalled,
     parse_tasks,
     pm_done,
     qa_passed,
     senior_approved,
+    text_similarity,
 )
 from studio.roles import BY_KEY, Role
 
@@ -187,6 +190,335 @@ async def test_debate_runs(monkeypatch):
     # 辯論各多一次發言：工程師提案+實作=2、高級工程師點評+審查=2
     assert experts["engineer"].calls == 2
     assert experts["senior"].calls == 2
+
+
+def test_critic_blocks_parsing():
+    assert critic_blocks("看了一下\n異議: 成立")  # 標記成立 → 退回
+    assert not critic_blocks("沒問題\n異議: 不成立")  # 標記不成立 → 放行
+    assert not critic_blocks("一切都好")  # 後備：無反對字 → 放行
+    assert critic_blocks("這還不算完成")  # 後備：明確反對 → 退回
+
+
+@pytest.mark.asyncio
+async def test_critic_blocks_then_passes(monkeypatch):
+    """critic 第一次異議成立 → 退回再修；第二次不成立 → 放行（退回路徑）。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["第一版", "依異議修正"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {"pm": StubExpert(BY_KEY["pm"], ["異議: 成立，缺錯誤處理", "異議: 不成立"])}
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    # qa/senior 都通過，但 critic 第一次退回 → 工程師被迫再改一輪。
+    assert experts["engineer"].calls == 2
+    assert critics["pm"].calls == 2
+    reviews = [e for e in bucket if e.type == events.EventType.CRITIC_REVIEW]
+    assert reviews[0].payload["passed"] is False
+    assert reviews[-1].payload["passed"] is True
+    assert "異議檢查" in experts["engineer"].prompts[1]
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_critic_passes_first_time(monkeypatch):
+    """critic 一次就放行（放行路徑），不增加工程師輪數。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {
+        "pm": StubExpert(BY_KEY["pm"], ["異議: 不成立"]),
+        "senior": StubExpert(BY_KEY["senior"], ["異議: 不成立"]),
+    }
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    assert experts["engineer"].calls == 1
+    reviews = [e for e in bucket if e.type == events.EventType.CRITIC_REVIEW]
+    assert reviews and all(e.payload["passed"] for e in reviews)
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_critic_final_gate_blocks(monkeypatch):
+    """最終驗收時 senior 視角 critic 異議成立 → 整體未完成。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {
+        "pm": StubExpert(BY_KEY["pm"], ["異議: 不成立"]),  # 任務 gate 放行
+        "senior": StubExpert(BY_KEY["senior"], ["異議: 成立，整合未驗證"]),  # 最終 gate 退回
+    }
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is False
+
+
+@pytest.mark.asyncio
+async def test_critic_disabled_by_default():
+    """預設不啟用 critic：無 CRITIC_REVIEW 事件、不影響既有流程。"""
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {"pm": StubExpert(BY_KEY["pm"], ["異議: 成立"])}
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    assert events.EventType.CRITIC_REVIEW not in types(bucket)
+    assert experts["engineer"].calls == 1
+    assert critics["pm"].calls == 0
+
+
+@pytest.mark.asyncio
+async def test_huddle_triggers_on_stall(monkeypatch):
+    """任務跑滿輪數仍 FAIL → 觸發 huddle、給 1 輪重試、仍失敗標為已知限制。"""
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["第一版", "再試", "還是這樣", "huddle 後重試"],
+        qa=["有錯\n驗證: FAIL"],  # 一律 FAIL（腳本用盡回最後一句）
+        senior=["先不核可\n決議: 退回"],  # 一律退回
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    huddles = [e for e in bucket if e.type == events.EventType.HUDDLE]
+    # 至少有一次討論事件 + 一次「已知限制」事件
+    assert any(not e.payload["limitation"] for e in huddles)
+    assert any(e.payload["limitation"] for e in huddles)
+    # huddle 後有重試 → 工程師被呼叫次數超過 TASK_MAX_ROUNDS（含 huddle 發言與重試）
+    assert experts["engineer"].calls > config.TASK_MAX_ROUNDS
+    # 任務最終維持 review（不消失於看板），且被標記限制
+    assert session._tasks[0].get("limitation") is True
+    task_review = [
+        e
+        for e in bucket
+        if e.type == events.EventType.TASK_STATUS and e.payload["status"] == "review"
+    ]
+    assert task_review
+
+
+@pytest.mark.asyncio
+async def test_huddle_disabled_by_default():
+    """預設不啟用 huddle：滿輪 FAIL 後直接收尾，無 HUDDLE 事件、無重試。"""
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["第一版"],
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    assert events.EventType.HUDDLE not in types(bucket)
+    assert experts["engineer"].calls == config.TASK_MAX_ROUNDS
+
+
+def test_stall_pure_functions():
+    assert text_similarity("一樣的話", "一樣的話") == 1.0
+    assert text_similarity("完全不同 ABC", "毫不相干 XYZ") < 0.5
+    # 連續兩輪幾乎相同 → 停滯
+    assert is_stalled(["改了 X", "還是 X 的內容相同", "還是 X 的內容相同"], rounds=2)
+    # 有實質差異 → 不停滯
+    assert not is_stalled(["第一版實作", "完全改寫的第二版"], rounds=2)
+    # rounds<=1 或歷史不足 → 不判定
+    assert not is_stalled(["a", "a"], rounds=1)
+    assert not is_stalled(["a"], rounds=2)
+
+
+@pytest.mark.asyncio
+async def test_stall_breaks_early(tmp_path, monkeypatch):
+    """連續兩輪只重述 → 提早收斂、發可觀察事件、不跑滿全部輪數。"""
+    from studio import runner, workspace
+
+    async def _noop_init(cwd):
+        return True
+
+    async def _noop_commit(cwd, message):
+        return None  # 無檔案變動 → commit hash 不變
+
+    monkeypatch.setattr(runner, "git_init", _noop_init)
+    monkeypatch.setattr(runner, "git_commit", _noop_commit)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "STALL_ROUNDS", 2)
+    monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 5)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "stallflow"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["我還是用同樣的做法，沒有改變"],  # 每輪重複同一句（腳本用盡回最後一句）
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession(
+        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
+    )
+    await session.run("需求")
+
+    # 第 2 輪偵測到停滯即收斂，不會跑滿 5 輪
+    assert experts["engineer"].calls == 2
+    phases = [e.payload["phase"] for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "停滯收斂" in phases
+
+
+@pytest.mark.asyncio
+async def test_stall_disabled_with_no_cwd():
+    """cwd=None（純單元測試情境）下不偵測停滯，照常跑滿輪數。"""
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["一樣的內容重複出現"],
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+    # cwd=None → _stalled 一律 False → 跑滿 TASK_MAX_ROUNDS
+    assert experts["engineer"].calls == config.TASK_MAX_ROUNDS
+
+
+@pytest.mark.asyncio
+async def test_stall_disabled_when_rounds_le_one(tmp_path, monkeypatch):
+    """STALL_ROUNDS<=1 視為停用：即使連續重述也跑滿輪數、不提早收斂。"""
+    from studio import runner, workspace
+
+    async def _noop_init(cwd):
+        return True
+
+    async def _noop_commit(cwd, message):
+        return None
+
+    monkeypatch.setattr(runner, "git_init", _noop_init)
+    monkeypatch.setattr(runner, "git_commit", _noop_commit)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "STALL_ROUNDS", 1)  # 關閉
+    monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 3)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "nostall"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["重複內容重複內容"],
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession(sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid))
+    await session.run("需求")
+
+    assert experts["engineer"].calls == 3  # 跑滿，未提早收斂
+    phases = [e.payload["phase"] for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "停滯收斂" not in phases
+
+
+@pytest.mark.asyncio
+async def test_all_mechanisms_off_matches_baseline():
+    """四機制全關（含非 offline）時，happy path 不產生任何新機制事件，行為同既有。"""
+    # 直接驗證預設值已是關閉狀態（不靠 monkeypatch，確保預設相容）
+    for name in ("HUDDLE_ENABLED", "CRITIC_ENABLED", "NOTES_ENABLED", "OFFLINE_MODE"):
+        assert getattr(config, name) is False, f"{name} 預設應為 False"
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    ts = types(bucket)
+    assert events.EventType.HUDDLE not in ts
+    assert events.EventType.CRITIC_REVIEW not in ts
+    assert experts["engineer"].calls == 1  # 與 baseline 相同
+
+
+@pytest.mark.asyncio
+async def test_notes_written_and_read_back(tmp_path, monkeypatch):
+    """NOTES.md：第一任務結束摘要寫入 → 第二任務實作 prompt 能讀回；結束後檔案存在。"""
+    from studio import workspace
+
+    monkeypatch.setattr(config, "NOTES_ENABLED", True)
+    monkeypatch.setattr(config, "ENABLE_GIT", False)  # 避免依賴 git
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "notesflow"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 建立 A\n任務: 建立 B", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession(
+        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
+    )
+    await session.run("需求")
+
+    # 第二任務的實作 prompt 應讀回第一任務寫入的知識庫內容
+    second_prompt = experts["engineer"].prompts[1]
+    assert "團隊共用知識庫" in second_prompt
+    assert "建立 A" in second_prompt
+    # session 結束後 NOTES.md 實際存在且含兩任務摘要，但不進交付清單
+    notes = workspace.read_notes(sid)
+    assert "任務 #1 完成" in notes and "任務 #2 完成" in notes
+    assert "NOTES.md" not in workspace.list_files(sid)
+
+
+@pytest.mark.asyncio
+async def test_notes_disabled_by_default(tmp_path, monkeypatch):
+    """預設不啟用：不寫 NOTES.md、實作 prompt 不含知識庫前綴。"""
+    from studio import workspace
+
+    monkeypatch.setattr(config, "ENABLE_GIT", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "nonotes"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 建立 A", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession(
+        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
+    )
+    await session.run("需求")
+
+    assert workspace.read_notes(sid) == ""
+    assert "團隊共用知識庫" not in experts["engineer"].prompts[0]
 
 
 @pytest.mark.asyncio

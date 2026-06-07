@@ -60,6 +60,38 @@ def test_zip_missing_session_returns_none(tmp_path, monkeypatch):
     assert workspace.zip_workspace("nope") is None
 
 
+# --- 共用知識庫 NOTES.md ----------------------------------------------
+def test_notes_append_and_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "notessess"
+    workspace.create_workspace(sid)
+    assert workspace.read_notes(sid) == ""  # 尚未寫入
+    workspace.append_note(sid, "踩到的坑：除數為 0 要報錯")
+    workspace.append_note(sid, "決策：核心與介面分檔")
+    notes = workspace.read_notes(sid)
+    assert "除數為 0" in notes
+    assert "核心與介面分檔" in notes
+    # 空白不寫入
+    workspace.append_note(sid, "   ")
+    assert workspace.read_notes(sid).count("決策") == 1
+
+
+def test_notes_excluded_from_files_and_zip(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "noteszip"
+    root = workspace.create_workspace(sid)
+    (root / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    workspace.append_note(sid, "一些跨任務知識")
+    # 不進檔案清單
+    assert "NOTES.md" not in workspace.list_files(sid)
+    assert "main.py" in workspace.list_files(sid)
+    # 不進打包
+    data = workspace.zip_workspace(sid)
+    names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+    assert "NOTES.md" not in names
+    assert "main.py" in names
+
+
 # --- 路由：下載 --------------------------------------------------------
 def test_download_route_returns_zip(app, session, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
