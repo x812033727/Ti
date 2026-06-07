@@ -59,9 +59,7 @@ MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 # 多一個角色 = 每場討論多幾次 LLM 呼叫（更耗額度、更久），要省可逐一移除。
 OPTIONAL_ROLES = {
     r.strip()
-    for r in os.getenv(
-        "TI_OPTIONAL_ROLES", "researcher,architect,security,devops"
-    ).split(",")
+    for r in os.getenv("TI_OPTIONAL_ROLES", "researcher,architect,security,devops").split(",")
     if r.strip()
 }
 
@@ -132,6 +130,7 @@ def expert_sandbox_settings() -> dict | None:
         },
     }
 
+
 # --- 離線示範模式 -------------------------------------------------------
 # 不需 API 金鑰，用腳本化的假專家驅動完整流程（真的寫檔/git/Demo），供試用與端到端驗證。
 OFFLINE_MODE = os.getenv("TI_OFFLINE", "0") not in ("0", "false", "False", "")
@@ -181,7 +180,9 @@ AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
-AUTOPILOT_PAUSE_FILE = Path(os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED")))
+AUTOPILOT_PAUSE_FILE = Path(
+    os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED"))
+)
 AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "False", "")
 
 

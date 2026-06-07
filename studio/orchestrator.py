@@ -302,9 +302,7 @@ class StudioSession:
         research_notes: str,
     ) -> str:
         """架構師主導設計：提案 → 工程師/高級工程師給意見 → 架構師定案。回傳設計決策文字。"""
-        await self.broadcast(
-            events.phase_change(self.session_id, "架構決策", "架構師主導設計決策")
-        )
+        await self.broadcast(events.phase_change(self.session_id, "架構決策", "架構師主導設計決策"))
         rnote = f"研究員調研供參考：\n{research_notes}\n\n" if research_notes else ""
         proposal = await architect.speak(
             rnote + topic + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
@@ -381,9 +379,7 @@ class StudioSession:
         # 0) 調研（研究員上網查資料，供拆解與設計參考）
         research_notes = ""
         if researcher:
-            await self.broadcast(
-                events.phase_change(self.session_id, "調研", "研究員正在查資料")
-            )
+            await self.broadcast(events.phase_change(self.session_id, "調研", "研究員正在查資料"))
             research_notes = await researcher.speak(
                 f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
                 "查可用套件/函式庫、官方 API 與文件、最佳實踐與常見坑，精簡彙整並附來源。",
@@ -398,9 +394,7 @@ class StudioSession:
             if self._repo_url
             else ""
         )
-        research_note = (
-            f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
-        )
+        research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + repo_note
@@ -455,9 +449,13 @@ class StudioSession:
             if task_ok:
                 self._note(f"## 任務 #{task['id']} 完成：{task['title']}")
             elif task.get("limitation"):
-                self._note(f"## 任務 #{task['id']} 已知限制：{task['title']}（huddle 與重試後仍未通過）")
+                self._note(
+                    f"## 任務 #{task['id']} 已知限制：{task['title']}（huddle 與重試後仍未通過）"
+                )
             else:
-                self._note(f"## 任務 #{task['id']} 未通過：{task['title']}（標記 review，待後續處理）")
+                self._note(
+                    f"## 任務 #{task['id']} 未通過：{task['title']}（標記 review，待後續處理）"
+                )
 
         # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
         if devops:

@@ -179,16 +179,12 @@ async def test_huddle_retry_success_marks_done(monkeypatch):
     await session.run("需求")
 
     # 重試成功 → 沒有「已知限制」事件，任務 done 無 limitation 註記
-    limited = [
-        e for e in bucket if e.type == events.EventType.HUDDLE and e.payload["limitation"]
-    ]
+    limited = [e for e in bucket if e.type == events.EventType.HUDDLE and e.payload["limitation"]]
     assert limited == []
     assert session._tasks[0].get("limitation") is not True
     assert session._tasks[0]["status"] == "done"
     # 仍有一次卡關討論事件（確實觸發過 huddle）
-    assert any(
-        e.type == events.EventType.HUDDLE and not e.payload["limitation"] for e in bucket
-    )
+    assert any(e.type == events.EventType.HUDDLE and not e.payload["limitation"] for e in bucket)
 
 
 # --- 驗收標準 5：開關預設關閉 -------------------------------------------

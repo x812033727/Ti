@@ -377,9 +377,7 @@ async def test_stall_breaks_early(tmp_path, monkeypatch):
         qa=["有錯\n驗證: FAIL"],
         senior=["決議: 退回"],
     )
-    session = StudioSession(
-        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
-    )
+    session = StudioSession(sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid))
     await session.run("需求")
 
     # 第 2 輪偵測到停滯即收斂，不會跑滿 5 輪
@@ -480,9 +478,7 @@ async def test_notes_written_and_read_back(tmp_path, monkeypatch):
         qa=["驗證: PASS"],
         senior=["決議: 核可"],
     )
-    session = StudioSession(
-        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
-    )
+    session = StudioSession(sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid))
     await session.run("需求")
 
     # 第二任務的實作 prompt 應讀回第一任務寫入的知識庫內容
@@ -512,9 +508,7 @@ async def test_notes_disabled_by_default(tmp_path, monkeypatch):
         qa=["驗證: PASS"],
         senior=["決議: 核可"],
     )
-    session = StudioSession(
-        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
-    )
+    session = StudioSession(sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid))
     await session.run("需求")
 
     assert workspace.read_notes(sid) == ""

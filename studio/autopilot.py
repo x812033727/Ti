@@ -94,13 +94,25 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     await _run(["git", "checkout", "-B", branch], cwd=clone, timeout=60)
     await _run(["git", "add", "-A"], cwd=clone, timeout=60)
     rc, out = await _run(
-        ["git", "-c", "user.email=noreply@anthropic.com", "-c", "user.name=Ti Autopilot",
-         "commit", "-m", title, "--author=Claude <noreply@anthropic.com>"],
-        cwd=clone, timeout=60,
+        [
+            "git",
+            "-c",
+            "user.email=noreply@anthropic.com",
+            "-c",
+            "user.name=Ti Autopilot",
+            "commit",
+            "-m",
+            title,
+            "--author=Claude <noreply@anthropic.com>",
+        ],
+        cwd=clone,
+        timeout=60,
     )
     # rc!=0 且訊息為 nothing to commit 仍可能 branch == main，視為無變更
     rc_diff, diff = await _run(
-        ["git", "rev-list", "--count", f"origin/{config.AUTOPILOT_BRANCH}..HEAD"], cwd=clone, timeout=30
+        ["git", "rev-list", "--count", f"origin/{config.AUTOPILOT_BRANCH}..HEAD"],
+        cwd=clone,
+        timeout=30,
     )
     if diff.strip() in ("", "0"):
         return False, "沒有產生任何變更（無 commit 可合併）"
@@ -108,15 +120,37 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     if config.AUTOPILOT_DRYRUN:
         return True, f"[dryrun] 會 push {branch} 並 squash-merge 進 {config.AUTOPILOT_BRANCH}"
 
-    rc, out = await _run(["git", *_GIT_CRED, "push", "-f", "-u", "origin", branch], cwd=clone, timeout=180)
+    rc, out = await _run(
+        ["git", *_GIT_CRED, "push", "-f", "-u", "origin", branch], cwd=clone, timeout=180
+    )
     if rc != 0:
         return False, f"push 失敗：{out[-400:]}"
     repo = config.AUTOPILOT_REPO
-    body = f"autopilot 自動產生：{task['title']}\n\n{task.get('detail','')}".strip()
-    await _run([*_GH, "pr", "create", "-R", repo, "--base", config.AUTOPILOT_BRANCH,
-                "--head", branch, "--title", title, "--body", body], cwd=clone, timeout=120)
-    rc, out = await _run([*_GH, "pr", "merge", "-R", repo, branch,
-                          "--squash", "--admin", "--delete-branch"], cwd=clone, timeout=180)
+    body = f"autopilot 自動產生：{task['title']}\n\n{task.get('detail', '')}".strip()
+    await _run(
+        [
+            *_GH,
+            "pr",
+            "create",
+            "-R",
+            repo,
+            "--base",
+            config.AUTOPILOT_BRANCH,
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            body,
+        ],
+        cwd=clone,
+        timeout=120,
+    )
+    rc, out = await _run(
+        [*_GH, "pr", "merge", "-R", repo, branch, "--squash", "--admin", "--delete-branch"],
+        cwd=clone,
+        timeout=180,
+    )
     if rc != 0:
         return False, f"merge 失敗：{out[-400:]}"
     return True, f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}"
@@ -184,7 +218,9 @@ async def run_one_task(task: dict) -> None:
         history.record_event(sid, event.to_dict())
 
     session = StudioSession(
-        sid, broadcast, cwd=Path(clone),
+        sid,
+        broadcast,
+        cwd=Path(clone),
         repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
     )
     result = await session.run(requirement)

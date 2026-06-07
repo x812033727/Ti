@@ -34,7 +34,9 @@ async def current_head(repo_dir: str) -> str:
     return out.strip()
 
 
-async def health_check(url: str | None = None, attempts: int = 12, delay: int = 3) -> tuple[bool, str]:
+async def health_check(
+    url: str | None = None, attempts: int = 12, delay: int = 3
+) -> tuple[bool, str]:
     """部署後健康檢查：服務回 200，且主機沙箱依賴齊全（避免改動弱化安全）。"""
     url = url or config.AUTOPILOT_HEALTH_URL
     for _ in range(attempts):

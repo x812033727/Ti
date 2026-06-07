@@ -49,6 +49,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" httpx python-dotenv pytest pytest-asyncio pytest-cov
 
+      - name: Install bubblewrap (runner 沙箱所需)
+        # studio/runner.py 用 bwrap 把 Demo/自測指令關進 workspace 沙箱；缺 bwrap 時
+        # run_command fail-closed 拒絕執行，會讓 runner/tools/offline e2e 測試失敗。
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Configure git (for workspace git tests)
         run: |
           git config --global user.email ci@ti.local

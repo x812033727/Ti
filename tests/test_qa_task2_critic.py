@@ -201,9 +201,7 @@ async def test_gate_perspectives_are_split(monkeypatch):
     session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
     await session.run("需求")
 
-    gates = [
-        e.payload["gate"] for e in bucket if e.type == events.EventType.CRITIC_REVIEW
-    ]
+    gates = [e.payload["gate"] for e in bucket if e.type == events.EventType.CRITIC_REVIEW]
     assert "pm" in gates  # 任務審查 gate
     assert "senior" in gates  # 最終驗收 gate
     # 兩個 critic 各自獨立呼叫（不共用對話序號）
