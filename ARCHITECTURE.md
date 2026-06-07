@@ -35,7 +35,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容） |
 | `tools.py` | 非 Claude provider 的 function-calling 工具層（read/write/edit/bash…） |
 | `runner.py` | 確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git |
-| `workspace.py` | 每個 session 的沙箱工作目錄（安全路徑、列檔、讀檔） |
+| `workspace.py` | 每個 session 的沙箱工作目錄（安全路徑、列檔、讀檔、打包 zip 匯出） |
 | `history.py` | session 事件存檔/讀取（JSONL + meta），供歷史列表與重播 |
 | `publisher.py` | 把 workspace 成果推成 GitHub 分支並開 PR（預設關閉） |
 | `fake_experts.py` | 離線示範用的假專家（真的寫檔/commit，供無金鑰試用與 E2E） |
@@ -86,6 +86,16 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
   把 repo `clone` 進該 session 的 workspace（私有 repo 會以 `GITHUB_TOKEN` 注入認證，且輸出/
   指令會遮蔽 token）。`StudioSession(repo_url=...)` 會讓 PM 先閱讀現有結構再拆解任務。
 - 離線示範模式會忽略 `repo_url`（假專家自行寫檔，避免衝突）。
+
+## 成果匯出下載
+
+- `GET /api/workspace/{session_id}/download`（掛 `Depends(auth.require_auth)`）：呼叫
+  `workspace.zip_workspace()` 把該 session 的 workspace 即時打包成記憶體 zip，回 `Response`
+  （`application/zip` + `Content-Disposition: attachment`）。找不到 workspace 或無產出時回 404。
+- 打包內容沿用 `workspace.list_files()`，因此自動排除 `.git` / `__pycache__` / `node_modules` 等
+  雜訊；所有寫入路徑都在 `workspace_path()` 沙箱內，路徑穿越的 `session_id` 會被字元過濾擋下。
+- 前端「產出檔案」面板的「⬇️ 下載成果」按鈕（有產出時才顯示）以隱藏連結觸發瀏覽器下載，
+  同源 cookie 自動帶上（門禁啟用時）。
 
 ## 前端（web/）
 

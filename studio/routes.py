@@ -7,7 +7,7 @@ WebSocket 與應用組裝分別在 ws.py / server.py。
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from . import auth, config, history, publisher, settings, workspace
@@ -89,6 +89,20 @@ async def workspace_file(session_id: str, path: str) -> JSONResponse:
     if content is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse({"path": path, "content": content})
+
+
+@router.get("/api/workspace/{session_id}/download", dependencies=[Depends(auth.require_auth)])
+async def workspace_download(session_id: str) -> Response:
+    data = workspace.zip_workspace(session_id)
+    if data is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # 檔名只保留安全字元，避免 header injection 並讓 session_id 可辨識。
+    safe = "".join(c for c in session_id if c.isalnum() or c in "-_") or "workspace"
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="workspace-{safe}.zip"'},
+    )
 
 
 # --- history（受保護）--------------------------------------------------
