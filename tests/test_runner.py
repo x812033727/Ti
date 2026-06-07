@@ -214,6 +214,32 @@ async def test_git_init_and_commit(tmp_path):
     assert await runner.git_commit(tmp_path, "empty") is None
 
 
+# --- 驗收標準 2：四類字面注入 payload，工作目錄不出現 pwned -------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "`touch pwned`",      # backtick 命令替換
+        "$(touch pwned)",     # $() 命令替換
+        "; touch pwned",      # ; 指令分隔
+        "fix\ntouch pwned",   # 換行：第二行為裸指令
+    ],
+    ids=["backtick", "dollar-paren", "semicolon", "newline"],
+)
+async def test_git_commit_injection_no_pwned_file(tmp_path, evil):
+    """驗收標準 2：commit 訊息含注入向量時，指令不被執行（全樹無 pwned），且 commit 成功。"""
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "f.txt").write_text("data")
+    h = await runner.git_commit(tmp_path, evil)
+    # 指令未被執行：工作目錄（含所有子目錄）皆無 pwned
+    hits = [str(p) for p in tmp_path.rglob("pwned")]
+    assert hits == [], f"注入產生檔案：{hits}（payload={evil!r}）"
+    # 注入不影響正常功能：commit 仍成功回短 hash
+    assert h and len(h) >= 4
+
+
 # --- git_commit shell 注入回歸（任務 #2）-------------------------------
 
 
@@ -261,12 +287,53 @@ async def test_git_commit_multiline_message_preserved(tmp_path):
 
 @pytest.mark.asyncio
 async def test_git_commit_no_message_replace_escaping():
-    """驗收標準 1：原始碼不應殘留 message.replace 跳脫邏輯。"""
+    """驗收標準 1（靜態）：原始碼不殘留 message.replace 跳脫，亦不直接走 shell。"""
     import inspect
 
     src = inspect.getsource(runner.git_commit)
     assert "message.replace" not in src
     assert "create_subprocess_shell" not in src
+    assert "run_command_exec" in src  # 確實改用 exec helper
+
+
+@pytest.mark.asyncio
+async def test_git_commit_routes_through_exec_argv_not_shell(tmp_path, monkeypatch):
+    """驗收標準 1（行為）：三步走 run_command_exec(argv list)、不走 shell 路徑，
+    且 message 為單一 argv 元素原樣傳遞，未被內插進任何字串。"""
+    # .git 已存在 → git_init no-op，排除 git_init 內部的 shell 呼叫干擾
+    await runner.run_command_exec(tmp_path, ["git", "init", "-q"], sandbox=False)
+    (tmp_path / "f.txt").write_text("x")
+
+    exec_calls: list[list] = []
+    shell_calls: list[str] = []
+    orig_exec = runner.run_command_exec
+    orig_shell = runner.run_command
+
+    async def spy_exec(cwd, argv, **kw):
+        exec_calls.append(list(argv))
+        return await orig_exec(cwd, argv, **kw)
+
+    async def spy_shell(cwd, command, **kw):
+        shell_calls.append(command)
+        return await orig_shell(cwd, command, **kw)
+
+    monkeypatch.setattr(runner, "run_command_exec", spy_exec)
+    monkeypatch.setattr(runner, "run_command", spy_shell)
+
+    msg = "feat: `touch pwned` $(touch pwned)\n第二行"
+    h = await runner.git_commit(tmp_path, msg)
+    assert h and len(h) >= 4
+    # 三步（add / commit / rev-parse）全走 exec
+    assert len(exec_calls) == 3, f"exec 呼叫數={len(exec_calls)}"
+    # 完全不走 shell 字串路徑
+    assert shell_calls == [], f"不應走 shell：{shell_calls}"
+    # message 必為某次 argv 的「單一完整元素」（非內插）
+    assert any(msg in call for call in exec_calls), "message 未以單一 argv 元素傳遞"
+    # 且任何 argv 元素都不得把 message 內插進更大的字串
+    for call in exec_calls:
+        for tok in call:
+            if tok != msg:
+                assert msg not in tok, f"message 被內插進字串：{tok!r}"
 
 
 @pytest.mark.asyncio
