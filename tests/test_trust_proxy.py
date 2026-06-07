@@ -371,3 +371,21 @@ def test_is_loopback_link_local_false(proxy):
     """link-local（fe80::1）非 loopback → False。"""
     proxy(False)
     assert netutil.is_loopback(make_request(peer="fe80::1")) is False
+
+
+# ======================================================================
+# 任務 #4：.env.example 文件守門（驗收標準 7 後半）。
+# ======================================================================
+def test_env_example_documents_new_vars():
+    """.env.example 須記載兩個新變數、預設值與安全註記（含 app port 僅代理可連提醒）。"""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent / ".env.example").read_text(encoding="utf-8")
+    # 兩個新變數都出現
+    assert "TI_TRUST_PROXY" in text
+    assert "TI_TRUSTED_PROXIES" in text
+    # 預設值（loopback）有記載
+    assert "127.0.0.0/8" in text and "::1" in text
+    # 安全註記：app port 僅受信代理可連
+    assert "app port" in text
+    assert "X-Forwarded-For" in text or "XFF" in text
