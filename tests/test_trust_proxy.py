@@ -345,3 +345,29 @@ def test_is_loopback_real_client_loopback_via_proxy(proxy):
     proxy(True)
     req = make_request(peer="127.0.0.1", xff="::1")
     assert netutil.is_loopback(req) is True
+
+
+# --- QA 加嚴：fail-closed / 私網不誤判 / IPv4-mapped 經 XFF 偽造防護 ----
+def test_is_loopback_garbage_peer_fail_closed(proxy):
+    """peer 為無法解析的垃圾字串 → 包 try/except，fail-closed False（絕不誤判 loopback）。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="not-an-ip")) is False
+
+
+def test_is_loopback_private_non_loopback_false(proxy):
+    """私網位址（10.0.0.1）非 loopback，務必回 False（與『內網』不可混為一談）。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="10.0.0.1")) is False
+
+
+def test_is_loopback_mapped_loopback_via_xff_not_spoofable(proxy):
+    """受信 peer + XFF 最左偽造 ::ffff:127.0.0.1 → 取最右真實 client，is_loopback False。"""
+    proxy(True, proxies="10.0.0.0/8")
+    req = make_request(peer="10.0.0.1", xff="::ffff:127.0.0.1, 203.0.113.9")
+    assert netutil.is_loopback(req) is False
+
+
+def test_is_loopback_link_local_false(proxy):
+    """link-local（fe80::1）非 loopback → False。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="fe80::1")) is False
