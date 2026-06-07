@@ -64,7 +64,10 @@ def _xff_segments(scope: Request | WebSocket) -> list[str]:
     raw = scope.headers.getlist("x-forwarded-for")
     segments: list[str] = []
     for value in raw:
-        segments.extend(part for part in value.split(","))
+        # 過濾純空段（尾隨逗號/連續逗號產生的 ""/空白）：空段是分隔副產物、非真實跳點，
+        # 不可當斷鏈止點，否則尾逗號的 XFF 會讓外部來源誤回退成 loopback peer。
+        # 垃圾值（無法解析的非空段）仍由 client_ip 當硬止點處理，兩者語意不同。
+        segments.extend(part for part in value.split(",") if part.strip())
     return segments
 
 

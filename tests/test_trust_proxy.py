@@ -138,11 +138,158 @@ def test_reset_trusted_proxies_reparses(monkeypatch):
 
 
 # ======================================================================
-# netutil（任務 #2/#3/#5）：尚未交付則僅此測試 skip，不影響上方 config 驗收。
+# netutil.client_ip（任務 #2）：XFF「由右往左跳過受信代理、取最右非受信」解析。
 # ======================================================================
-def test_netutil_api_present_when_delivered():
-    netutil = pytest.importorskip(
-        "studio.netutil", reason="studio/netutil.py 尚未交付（任務 #2/#3）"
+from fastapi import Request  # noqa: E402
+
+from studio import netutil  # noqa: E402
+
+
+def make_request(peer=None, xff=None):
+    """建構真實 Starlette Request。
+
+    peer: socket peer host 字串；None → scope 不含 client（client is None）。
+    xff:  None / 字串 / list[字串]；多個字串 → 多筆同名 X-Forwarded-For header。
+    """
+    scope = {"type": "http", "headers": []}
+    if peer is not None:
+        scope["client"] = (peer, 12345)
+    if xff is not None:
+        values = [xff] if isinstance(xff, str) else list(xff)
+        scope["headers"] = [(b"x-forwarded-for", v.encode()) for v in values]
+    return Request(scope)
+
+
+@pytest.fixture
+def proxy(monkeypatch):
+    """切換 TI_TRUST_PROXY 與受信代理清單；teardown 自動還原。"""
+
+    def _setup(enabled, proxies="127.0.0.0/8,::1"):
+        monkeypatch.setattr(config, "TRUST_PROXY", enabled)
+        monkeypatch.setenv("TI_TRUSTED_PROXIES", proxies)
+        config.reset_trusted_proxies()
+
+    yield _setup
+    monkeypatch.delenv("TI_TRUSTED_PROXIES", raising=False)
+    config.reset_trusted_proxies()
+
+
+def test_netutil_api_present():
+    assert callable(netutil.client_ip)
+    assert callable(netutil.is_loopback)
+
+
+# --- 入口 guard：peer 不可知 → None -----------------------------------
+def test_client_ip_peer_none_returns_none(proxy):
+    proxy(True)
+    assert netutil.client_ip(make_request(peer=None, xff="1.2.3.4")) is None
+
+
+# --- 驗收標準 1：trust 關閉 → 完全忽略 XFF、只認 socket peer -----------
+def test_client_ip_trust_off_ignores_xff(proxy):
+    proxy(False)
+    req = make_request(peer="127.0.0.1", xff="203.0.113.9, 8.8.8.8")
+    assert netutil.client_ip(req) == "127.0.0.1"
+
+
+def test_client_ip_trust_off_no_xff_returns_peer(proxy):
+    proxy(False)
+    assert netutil.client_ip(make_request(peer="198.51.100.7")) == "198.51.100.7"
+
+
+# --- 驗收標準 2：受信代理 → 由右往左跳過受信、取最右非受信，不採信最左 --
+def test_client_ip_single_hop(proxy):
+    proxy(True)  # 受信清單預設含 127.0.0.0/8
+    req = make_request(peer="127.0.0.1", xff="203.0.113.9")
+    assert netutil.client_ip(req) == "203.0.113.9"
+
+
+def test_client_ip_multi_hop_skips_trusted_not_leftmost(proxy):
+    """最左是偽造值，正解是被代理鏈包住的最右非受信位址。"""
+    proxy(True, proxies="127.0.0.0/8,::1,10.0.0.0/8")
+    # 鏈：[偽造 1.2.3.4] , [真實 203.0.113.9] , [內部代理 10.1.1.1] ; peer=127.0.0.1(受信)
+    req = make_request(peer="127.0.0.1", xff="1.2.3.4, 203.0.113.9, 10.1.1.1")
+    got = netutil.client_ip(req)
+    assert got == "203.0.113.9"
+    assert got != "1.2.3.4"  # 絕不採信最左值
+
+
+def test_client_ip_merges_multiple_xff_headers(proxy):
+    """多筆同名 X-Forwarded-For header 合併後再由右往左解析。"""
+    proxy(True, proxies="127.0.0.0/8,::1,10.0.0.0/8")
+    req = make_request(
+        peer="127.0.0.1",
+        xff=["1.2.3.4", "203.0.113.9, 10.1.1.1"],  # 合併 = 1.2.3.4,203.0.113.9,10.1.1.1
     )
-    assert hasattr(netutil, "client_ip")
-    assert hasattr(netutil, "is_loopback")
+    assert netutil.client_ip(req) == "203.0.113.9"
+
+
+# --- 驗收標準 3（client_ip 層）：最左塞 127.0.0.1 不被冒充取出 --------
+def test_client_ip_malicious_leftmost_loopback_not_returned(proxy):
+    proxy(True, proxies="10.0.0.0/8")
+    req = make_request(peer="10.0.0.1", xff="127.0.0.1, 203.0.113.9")
+    got = netutil.client_ip(req)
+    assert got == "203.0.113.9"
+    assert got != "127.0.0.1"
+
+
+# --- 驗收標準 4：來源非受信代理 → 即使帶 XFF 也以 socket peer 為準 -----
+def test_client_ip_untrusted_peer_ignores_xff(proxy):
+    proxy(True)  # 受信僅 loopback
+    req = make_request(peer="8.8.8.8", xff="203.0.113.9")
+    assert netutil.client_ip(req) == "8.8.8.8"
+
+
+# --- fail-safe：斷鏈止點（右側出現無法解析段）→ 回退 socket peer ------
+def test_client_ip_garbage_breaks_chain_fallback_peer(proxy):
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="203.0.113.9, garbage")
+    # 由右往左：先遇 "garbage" 無法解析 → fail-safe 回退 peer
+    assert netutil.client_ip(req) == "127.0.0.1"
+
+
+def test_client_ip_trailing_comma_not_break_point(proxy):
+    """尾隨逗號/空白產生的純空段須被跳過、不可當斷鏈止點，否則外部來源誤回退成 loopback peer。"""
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="203.0.113.7, ")
+    assert netutil.client_ip(req) == "203.0.113.7"
+    # 安全核心：此外部請求不得被誤判為本機。
+    assert netutil.is_loopback(req) is False
+
+
+def test_client_ip_consecutive_commas_skipped(proxy):
+    """連續逗號產生的空段同樣跳過，仍取真實 client。"""
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="203.0.113.7,,")
+    assert netutil.client_ip(req) == "203.0.113.7"
+
+
+def test_client_ip_all_trusted_chain_fallback_peer(proxy):
+    """全鏈皆受信代理（掃完仍無非受信）→ 回退 socket peer。"""
+    proxy(True)  # 受信含 127.0.0.0/8 與 ::1
+    req = make_request(peer="127.0.0.1", xff="127.0.0.1, ::1")
+    assert netutil.client_ip(req) == "127.0.0.1"
+
+
+def test_client_ip_trusted_peer_no_xff_returns_peer(proxy):
+    proxy(True)
+    assert netutil.client_ip(make_request(peer="127.0.0.1")) == "127.0.0.1"
+
+
+# --- port / IPv6 zone 剝離 --------------------------------------------
+def test_client_ip_strips_ipv4_port(proxy):
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="203.0.113.9:5678")
+    assert netutil.client_ip(req) == "203.0.113.9"
+
+
+def test_client_ip_strips_ipv6_bracket_port(proxy):
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="[2001:db8::1]:443")
+    assert netutil.client_ip(req) == "2001:db8::1"
+
+
+def test_client_ip_strips_ipv6_zone(proxy):
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="fe80::1%eth0")
+    assert netutil.client_ip(req) == "fe80::1"
