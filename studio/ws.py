@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import auth, config, history, workspace
+from . import auth, config, events, history, runner, workspace
 from .events import StudioEvent
 from .orchestrator import StudioSession
 
@@ -39,11 +39,28 @@ async def ws(websocket: WebSocket) -> None:
         await websocket.send_json(d)
 
     try:
-        # 第一則訊息為產品需求
+        # 第一則訊息為產品需求（可選擇附帶要 clone 的 GitHub repo）
         data = await websocket.receive_json()
         requirement = (data.get("requirement") or "").strip()
+        repo_url = (data.get("repo_url") or "").strip()
+        repo_branch = (data.get("repo_branch") or "").strip() or None
         if not requirement:
             await websocket.send_json({"type": "error", "payload": {"message": "需求不可為空"}})
+            await websocket.close()
+            return
+
+        # 離線示範用腳本化假專家，會自己寫檔，因此忽略 repo（避免衝突）。
+        if repo_url and config.OFFLINE_MODE:
+            repo_url = ""
+        if repo_url and not runner.is_valid_repo_url(repo_url):
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "payload": {
+                        "message": "GitHub repo 網址無效（僅支援 github.com 的 https 網址）"
+                    },
+                }
+            )
             await websocket.close()
             return
 
@@ -63,6 +80,20 @@ async def ws(websocket: WebSocket) -> None:
             return
 
         cwd = workspace.create_workspace(session_id)
+
+        # 若指定了 GitHub repo，先 clone 進 workspace，讓專家在現有程式碼上討論/修改。
+        if repo_url:
+            await broadcast(events.phase_change(session_id, "準備", f"正在 clone {repo_url} …"))
+            clone = await runner.git_clone(
+                repo_url, cwd, token=config.GITHUB_TOKEN, branch=repo_branch
+            )
+            if not clone.ok:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"message": "clone 失敗：" + clone.output[:500]}}
+                )
+                await websocket.close()
+                return
+
         history.start_session(session_id, requirement)
         recording = True
         queue: asyncio.Queue[str] = asyncio.Queue()
@@ -72,7 +103,12 @@ async def ws(websocket: WebSocket) -> None:
 
             experts = build_fake_experts(session_id, cwd, requirement)
         session = StudioSession(
-            session_id, broadcast, experts=experts, cwd=cwd, intervention_queue=queue
+            session_id,
+            broadcast,
+            experts=experts,
+            cwd=cwd,
+            intervention_queue=queue,
+            repo_url=repo_url or None,
         )
 
         # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令

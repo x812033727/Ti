@@ -115,6 +115,32 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 #stopBtn.ghost:not(:disabled) { color: var(--bad); border-color: var(--bad); }
 #historyBtn.ghost { color: var(--accent); border-color: var(--border); }
 
+/* repo 網址輸入（launch 列，較窄） */
+.launch .repo-input { flex: .7; }
+
+/* 設定面板 */
+.settings-panel {
+  position: fixed; top: 64px; right: 18px; width: 460px; max-height: 78vh;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.5); z-index: 60; display: flex; flex-direction: column;
+}
+.settings-panel.hidden { display: none; }
+.settings-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.settings-head h2 { margin: 0; }
+.settings-head button { padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.settings-form { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.settings-form h3 { margin: 10px 0 2px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.set-row { display: flex; flex-direction: column; gap: 4px; }
+.set-label { font-size: 12.5px; color: var(--text); }
+.set-row input, .set-row select {
+  padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+.set-row input:focus, .set-row select:focus { outline: none; border-color: var(--accent); }
+.settings-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--border); }
+.settings-foot button { padding: 8px 18px; border: none; border-radius: 8px; cursor: pointer; background: var(--accent); color: white; font-weight: 600; font-size: 14px; }
+.muted { color: var(--muted); font-size: 12px; }
+
 /* 歷史面板 */
 .history-panel {
   position: fixed; top: 64px; right: 18px; width: 420px; max-height: 70vh;

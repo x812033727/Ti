@@ -100,3 +100,26 @@ def provider_ready() -> bool:
         return bool(OPENAI_API_KEY or OPENAI_BASE_URL)
     # claude provider：環境變數金鑰，或已登入的 claude CLI 訂閱皆可。
     return has_api_key() or claude_cli_logged_in()
+
+
+def reload() -> None:
+    """重新從環境變數載入「可由 UI 調整」的設定，讓變更即時生效（無需重啟）。
+
+    僅涵蓋 provider / 模型 / OpenAI / GitHub 發佈這幾組可在設定頁修改的項目；
+    其餘（門禁、流程輪數、路徑、伺服器位址）維持啟動時的值。
+    """
+    global PROVIDER, MODEL_LEAD, MODEL_FAST
+    global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
+    global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO
+    PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+    MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
+    MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+    OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")
+    OPENAI_MODEL_FAST = os.getenv("TI_OPENAI_MODEL_FAST", "gpt-4o-mini")
+    OPENAI_MAX_STEPS = int(os.getenv("TI_OPENAI_MAX_STEPS", "12"))
+    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+    PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")
+    PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")
+    PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", "")

@@ -88,12 +88,14 @@ class StudioSession:
         experts: dict[str, ExpertLike] | None = None,
         cwd: Path | None = None,
         intervention_queue: asyncio.Queue[str] | None = None,
+        repo_url: str | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
         self.cwd = cwd
         self._experts = experts
         self._intervention = intervention_queue
+        self._repo_url = repo_url  # 已 clone 進 workspace 的既有 GitHub repo（可選）
         self._tasks: list[dict] = []  # {id, title, status}
         self._run_command: str | None = None  # PM/工程師宣告的執行指令
         self._requirement = ""
@@ -203,6 +205,7 @@ class StudioSession:
                 self.session_id,
                 {
                     "requirement": requirement,
+                    "repo_url": self._repo_url,
                     "roster": [
                         {
                             "key": r.key,
@@ -221,8 +224,16 @@ class StudioSession:
 
         # 1) 拆解
         await self.broadcast(events.phase_change(self.session_id, "需求拆解", "PM 正在拆解需求"))
+        repo_note = (
+            "我們要在一個現有的 GitHub 專案上工作，原始碼已 clone 到你的工作目錄"
+            f"（{self._repo_url}）。請先用工具瀏覽現有結構與檔案，再依需求拆解任務。\n\n"
+            if self._repo_url
+            else ""
+        )
         pm_plan = await pm.speak(
-            (await self._human_prefix()) + f"使用者的產品需求如下：\n\n{requirement}\n\n"
+            (await self._human_prefix())
+            + repo_note
+            + f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請拆解成結構化任務清單與驗收標準，並宣告執行指令。",
             self.broadcast,
         )

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shlex
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,6 +128,44 @@ async def git_init(cwd: Path | str) -> bool:
     # 關閉 commit 簽章，避免外部簽章環境導致 workspace commit 失敗。
     await run_command(root, "git config commit.gpgsign false", timeout=20)
     return True
+
+
+# --- clone 既有 GitHub 倉庫到 workspace --------------------------------
+
+# 僅接受 github.com 的 https 倉庫網址（避免任意主機 / 路徑，降低風險）。
+_REPO_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?$", re.I)
+_BRANCH_RE = re.compile(r"^[\w./-]{1,200}$")
+
+
+def is_valid_repo_url(url: str) -> bool:
+    return bool(_REPO_RE.match((url or "").strip()))
+
+
+def build_clone_url(url: str, token: str | None) -> str:
+    """私有倉庫時把 token 注入 https URL；否則原樣回傳。"""
+    url = (url or "").strip()
+    if token and url.startswith("https://github.com/"):
+        return url.replace("https://", f"https://x-access-token:{token}@", 1)
+    return url
+
+
+async def git_clone(
+    url: str, dest: Path | str, token: str | None = None, branch: str | None = None
+) -> RunOutput:
+    """把 GitHub 倉庫 clone 到（空的）dest 目錄。回傳 RunOutput（output 已遮蔽 token）。"""
+    if not _git_available():
+        return RunOutput("git clone", -1, "（環境沒有 git，無法 clone）", False)
+    authed = build_clone_url(url, token)
+    parts = ["git", "clone", "--depth", "1"]
+    if branch and _BRANCH_RE.match(branch):
+        parts += ["--branch", branch]
+    cmd = " ".join(shlex.quote(p) for p in parts) + f" {shlex.quote(authed)} ."
+    result = await run_command(dest, cmd, timeout=180)
+    # 避免 token 出現在回報的指令 / 輸出裡
+    if token:
+        result.output = result.output.replace(token, "***")
+    result.command = "git clone " + (url or "").strip()
+    return result
 
 
 async def git_commit(cwd: Path | str, message: str) -> str | None:
