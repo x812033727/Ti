@@ -396,6 +396,52 @@ async function openSettings() {
   } catch (e) {
     settingsForm.innerHTML = "<div class='muted'>無法載入設定</div>";
   }
+  refreshPwStatus();
+}
+
+async function refreshPwStatus() {
+  const status = $("#pwStatus");
+  const curRow = $("#pwCurrentRow");
+  try {
+    const s = await (await fetch("/api/auth/status")).json();
+    if (s.auth_enabled) {
+      status.textContent = "目前已啟用門禁。變更密碼需先輸入目前密碼。";
+      curRow.classList.remove("hidden");
+    } else {
+      status.textContent = "目前未啟用門禁。設定一組密碼即可啟用登入保護。";
+      curRow.classList.add("hidden");
+    }
+  } catch (e) {
+    status.textContent = "";
+  }
+}
+
+async function savePassword() {
+  const hint = $("#pwHint");
+  const cur = $("#pwCurrent").value;
+  const next = $("#pwNew").value;
+  const confirm = $("#pwConfirm").value;
+  if (next.length < 4) { hint.textContent = "新密碼至少 4 個字元"; return; }
+  if (next !== confirm) { hint.textContent = "兩次輸入的新密碼不一致"; return; }
+  hint.textContent = "變更中…";
+  try {
+    const res = await (await fetch("/api/auth/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password: cur, new_password: next }),
+    })).json();
+    if (res.ok) {
+      $("#pwCurrent").value = ""; $("#pwNew").value = ""; $("#pwConfirm").value = "";
+      hint.textContent = "已變更，新密碼即時生效。";
+      toast("存取密碼已變更", "ok");
+      refreshPwStatus();
+      checkAuth();   // 門禁可能剛啟用，更新登出鈕
+    } else {
+      hint.textContent = res.detail || "變更失敗";
+    }
+  } catch (e) {
+    hint.textContent = "變更請求失敗";
+  }
 }
 
 function closeSettings() { settingsPanel.classList.add("hidden"); }
@@ -476,6 +522,7 @@ interjectBtn.onclick = sendInterject;
 $("#settingsBtn").onclick = openSettings;
 $("#settingsClose").onclick = closeSettings;
 $("#settingsSave").onclick = saveSettings;
+$("#pwSave").onclick = savePassword;
 $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });

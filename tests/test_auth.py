@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config
+from studio import auth, config
 
 
 @pytest.fixture
@@ -13,6 +15,18 @@ def app():
     from studio.server import app as fastapi_app
 
     return fastapi_app
+
+
+@pytest.fixture
+def pw_env(tmp_path, monkeypatch):
+    """把 .env 導向暫存目錄，並還原被 set_password 直接改動的環境變數。"""
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    saved = os.environ.get("TI_ACCESS_PASSWORD")
+    yield
+    if saved is None:
+        os.environ.pop("TI_ACCESS_PASSWORD", None)
+    else:
+        os.environ["TI_ACCESS_PASSWORD"] = saved
 
 
 # --- 門禁停用（預設）：一切照舊放行 ------------------------------------
@@ -63,9 +77,50 @@ def test_auth_enabled_websocket_requires_login(app, monkeypatch):
         assert "登入" in ev["payload"]["message"]
 
 
-def test_token_roundtrip_and_tamper(monkeypatch):
-    from studio import auth
+def test_change_password_when_disabled_enables_gate(app, pw_env, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app)
+    # 門禁停用時可直接設定新密碼以首次啟用門禁（無需目前密碼）
+    r = client.post("/api/auth/password", json={"new_password": "newpass"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert config.auth_enabled() is True
+    # 新密碼可登入；附帶的 cookie 也讓操作者保持登入
+    assert client.post("/api/login", json={"password": "newpass"}).status_code == 200
+    assert config.AUTH_COOKIE in client.cookies
 
+
+def test_change_password_when_enabled(app, pw_env, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
+    client = TestClient(app)
+    body = {"current_password": "oldpass", "new_password": "brandnew"}
+
+    # 未登入 → 401
+    assert client.post("/api/auth/password", json=body).status_code == 401
+
+    client.post("/api/login", json={"password": "oldpass"})
+    # 目前密碼錯誤 → 403
+    assert (
+        client.post(
+            "/api/auth/password",
+            json={"current_password": "wrong", "new_password": "brandnew"},
+        ).status_code
+        == 403
+    )
+    # 新密碼太短 → 400
+    assert (
+        client.post(
+            "/api/auth/password",
+            json={"current_password": "oldpass", "new_password": "x"},
+        ).status_code
+        == 400
+    )
+    # 正確 → 200，新密碼即時生效
+    assert client.post("/api/auth/password", json=body).status_code == 200
+    assert auth.check_password("brandnew") is True
+    assert auth.check_password("oldpass") is False
+
+
+def test_token_roundtrip_and_tamper(monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
     token = auth.make_token()
     assert auth.verify_token(token) is True
