@@ -51,6 +51,13 @@ def senior_approved(text: str) -> bool:
     return not re.search(r"(退回|需修改|必須修正)", text)
 
 
+def security_approved(text: str) -> bool:
+    verdict = _last_match(text, r"決議\s*[:：]\s*(安全核可|安全退回)")
+    if verdict:
+        return verdict == "安全核可"
+    return not re.search(r"(安全退回|高風險|不安全|漏洞|injection)", text, re.I)
+
+
 def pm_done(text: str) -> bool:
     verdict = _last_match(text, r"決議\s*[:：]\s*(完成|未完成)")
     if verdict:
@@ -184,6 +191,36 @@ class StudioSession:
                 f"針對以下意見回應並調整你的做法，簡短：\n\n{critique}", self.broadcast
             )
 
+    async def _architecture_decision(
+        self,
+        architect: ExpertLike,
+        engineer: ExpertLike,
+        senior: ExpertLike,
+        topic: str,
+        research_notes: str,
+    ) -> str:
+        """架構師主導設計：提案 → 工程師/高級工程師給意見 → 架構師定案。回傳設計決策文字。"""
+        await self.broadcast(
+            events.phase_change(self.session_id, "架構決策", "架構師主導設計決策")
+        )
+        rnote = f"研究員調研供參考：\n{research_notes}\n\n" if research_notes else ""
+        proposal = await architect.speak(
+            rnote + topic + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
+            self.broadcast,
+        )
+        eng_view = await engineer.speak(
+            f"針對以下架構設計，從實作可行性給簡短意見：\n\n{proposal}", self.broadcast
+        )
+        senior_view = await senior.speak(
+            f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}", self.broadcast
+        )
+        decision = await architect.speak(
+            "綜合以下意見定案，逐行輸出 `設計決策: <決策>`：\n\n"
+            f"【工程師】{eng_view}\n\n【高級工程師】{senior_view}",
+            self.broadcast,
+        )
+        return decision
+
     # --- 主流程 --------------------------------------------------------
     async def run(self, requirement: str) -> dict:
         """執行整場討論。回傳結果摘要供 autopilot 使用（前端走 broadcast，不需回傳值）。"""
@@ -209,6 +246,11 @@ class StudioSession:
             experts["qa"],
             experts["senior"],
         )
+        # 可選角色：不存在（offline 或被 TI_OPTIONAL_ROLES 關閉）就跳過對應階段。
+        researcher = experts.get("researcher")
+        architect = experts.get("architect")
+        security = experts.get("security")
+        devops = experts.get("devops")
 
         await self.broadcast(
             events.StudioEvent(
@@ -217,21 +259,34 @@ class StudioSession:
                 {
                     "requirement": requirement,
                     "repo_url": self._repo_url,
+                    # 以實際建立的專家為準（offline 顯示 4 位、正式顯示全部）。
                     "roster": [
                         {
-                            "key": r.key,
-                            "name": r.name,
-                            "avatar": r.avatar,
-                            "title": r.title,
-                            "tags": r.tags,
+                            "key": ex.role.key,
+                            "name": ex.role.name,
+                            "avatar": ex.role.avatar,
+                            "title": ex.role.title,
+                            "tags": ex.role.tags,
                         }
-                        for r in ROSTER
+                        for ex in experts.values()
                     ],
                 },
             )
         )
         if self.cwd:
             await runner.git_init(self.cwd)
+
+        # 0) 調研（研究員上網查資料，供拆解與設計參考）
+        research_notes = ""
+        if researcher:
+            await self.broadcast(
+                events.phase_change(self.session_id, "調研", "研究員正在查資料")
+            )
+            research_notes = await researcher.speak(
+                f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
+                "查可用套件/函式庫、官方 API 與文件、最佳實踐與常見坑，精簡彙整並附來源。",
+                self.broadcast,
+            )
 
         # 1) 拆解
         await self.broadcast(events.phase_change(self.session_id, "需求拆解", "PM 正在拆解需求"))
@@ -241,9 +296,13 @@ class StudioSession:
             if self._repo_url
             else ""
         )
+        research_note = (
+            f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
+        )
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + repo_note
+            + research_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請拆解成結構化任務清單與驗收標準，並宣告執行指令。",
             self.broadcast,
@@ -256,13 +315,22 @@ class StudioSession:
         await self._board()
         await self._commit("PM 規劃：建立任務清單與驗收標準")
 
-        # 2) 架構辯論
-        await self._debate(
-            engineer,
-            senior,
-            topic=f"我們要實作這個需求：{requirement}\n任務清單：\n{pm_plan}",
-            rounds=config.DEBATE_ROUNDS,
-        )
+        # 2) 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論
+        design_note = ""
+        topic = f"我們要實作這個需求：{requirement}\n任務清單：\n{pm_plan}"
+        if architect:
+            design_note = await self._architecture_decision(
+                architect, engineer, senior, topic, research_notes
+            )
+        else:
+            await self._debate(engineer, senior, topic=topic, rounds=config.DEBATE_ROUNDS)
+
+        # 供每個任務實作時參考的脈絡（調研 + 設計決策）
+        context = ""
+        if research_notes:
+            context += f"\n【研究員調研】\n{research_notes}\n"
+        if design_note:
+            context += f"\n【架構決策】\n{design_note}\n"
 
         # 3) 逐任務迭代
         all_ok = True
@@ -273,9 +341,20 @@ class StudioSession:
                 events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
             )
             await self._set_task_status(task, "doing")
-            task_ok = await self._work_task(task, pm_plan, engineer, qa, senior)
+            task_ok = await self._work_task(task, pm_plan + context, engineer, qa, senior, security)
             all_ok = all_ok and task_ok
             await self._set_task_status(task, "done" if task_ok else "review")
+
+        # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
+        if devops:
+            await self.broadcast(
+                events.phase_change(self.session_id, "整合驗證", "維運工程師驗證整合與環境")
+            )
+            await devops.speak(
+                "請確保整體成果能在乾淨環境跑起來：安裝相依、設定必要環境、實際啟動或跑整合測試，"
+                f"並回報結果。整體計畫供參考：\n{pm_plan}",
+                self.broadcast,
+            )
 
         # 4) 最終 Demo（實際執行整體產出）
         await self._final_demo()
@@ -295,6 +374,7 @@ class StudioSession:
         engineer: ExpertLike,
         qa: ExpertLike,
         senior: ExpertLike,
+        security: ExpertLike | None = None,
     ) -> bool:
         """單一任務的 實作→自測→驗證→審查→改進 迴圈，回傳是否通過。"""
         feedback = ""
@@ -352,11 +432,29 @@ class StudioSession:
             )
             senior_ok = senior_approved(senior_text)
 
-            if qa_ok and senior_ok:
+            # --- 資安審查（有資安審查員時，為通過的必要條件）---
+            sec_text = ""
+            security_ok = True
+            if security:
+                await self.broadcast(
+                    events.phase_change(
+                        self.session_id, "資安審查", f"任務 #{task['id']} 資安把關（第 {rnd} 輪）"
+                    )
+                )
+                sec_text = await security.speak(
+                    f"請對任務 #{task['id']}：{task['title']} 的程式碼做資安審查，"
+                    "輸出 `決議: 安全核可` 或 `決議: 安全退回`（退回時列具體風險）。",
+                    self.broadcast,
+                )
+                security_ok = security_approved(sec_text)
+
+            if qa_ok and senior_ok and security_ok:
                 return True
 
             # --- 帶意見回饋，準備下一輪 ---
             feedback = f"【驗證工程師回報】\n{qa_text}\n\n【高級工程師審查意見】\n{senior_text}"
+            if sec_text:
+                feedback += f"\n\n【資安審查意見】\n{sec_text}"
             await self.broadcast(
                 events.phase_change(
                     self.session_id,

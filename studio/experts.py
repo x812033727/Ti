@@ -27,7 +27,7 @@ from .roles import Role
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
 # PM 與高級工程師用主力（推理強）模型，其餘用快速模型。
-_LEAD_ROLES = {"pm", "senior"}
+_LEAD_ROLES = {"pm", "senior", "architect", "security"}
 
 
 async def _auto_allow_tool(

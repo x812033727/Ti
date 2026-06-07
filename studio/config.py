@@ -37,6 +37,16 @@ DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 
+# 啟用哪些「可選角色」（核心 4 角色永遠在）。逗號分隔；清空則只剩核心 4 角色。
+# 多一個角色 = 每場討論多幾次 LLM 呼叫（更耗額度、更久），要省可逐一移除。
+OPTIONAL_ROLES = {
+    r.strip()
+    for r in os.getenv(
+        "TI_OPTIONAL_ROLES", "researcher,architect,security,devops"
+    ).split(",")
+    if r.strip()
+}
+
 # --- 確定性執行（runner）-----------------------------------------------
 # 自測 / Demo 的執行逾時（秒）與輸出字數上限。
 DEMO_TIMEOUT = int(os.getenv("TI_DEMO_TIMEOUT", "60"))

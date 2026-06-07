@@ -13,7 +13,7 @@ from pathlib import Path
 from . import config, events, tools
 from .roles import Role
 
-_LEAD_ROLES = {"pm", "senior"}
+_LEAD_ROLES = {"pm", "senior", "architect", "security"}
 
 
 def openai_model_for(role: Role) -> str:
