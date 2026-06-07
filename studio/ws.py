@@ -147,7 +147,9 @@ async def _pump_interventions(websocket, session, queue, run_task) -> None:
         try:
             msg = recv.result()
         except WebSocketDisconnect:
-            session.request_stop()
+            # 客戶端斷線（重整頁面／關分頁／網路斷）時，不要把討論當成「停止」。
+            # 讓編排在背景繼續跑到完成，事件照常寫進 history（broadcast 對已關連線會
+            # 安靜略過），使用者事後可從歷史看完整結果。只有前端明確送 stop 才中止。
             break
         kind = msg.get("type")
         if kind == "interject":
