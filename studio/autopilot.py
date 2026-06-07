@@ -120,8 +120,28 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     if config.AUTOPILOT_DRYRUN:
         return True, f"[dryrun] 會 push {branch} 並 squash-merge 進 {config.AUTOPILOT_BRANCH}"
 
+    # push 前防呆：每個 task 都是全新分支，遠端不該已存在同名分支。三態判定——
+    #   rc!=0：ls-remote 本身失敗（網路/認證），視為錯誤中止，不可 fall-through 當「不存在」。
+    #   rc==0 且有輸出：遠端已存在同名分支（task 重跑或殘留），預設中止；FORCE_PUSH 為真才放行覆寫。
+    #   rc==0 且空輸出：遠端不存在，放行。
     rc, out = await _run(
-        ["git", *_GIT_CRED, "push", "-f", "-u", "origin", branch], cwd=clone, timeout=180
+        ["git", *_GIT_CRED, "ls-remote", "--heads", "origin", branch], cwd=clone, timeout=60
+    )
+    if rc != 0:
+        return False, f"ls-remote 檢查失敗（無法確認遠端狀態，已中止）：{out[-400:]}"
+    if out.strip() and not config.AUTOPILOT_FORCE_PUSH:
+        return False, (
+            f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
+            f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
+        )
+
+    # 預設非強制推送（全新分支即可成功）；僅 FORCE_PUSH 開啟才用 --force-with-lease
+    # 搭配 --force-if-includes（杜絕背景 fetch 讓 lease 退化成裸 force）。絕不用裸 -f。
+    push_flags = (
+        ["--force-with-lease", "--force-if-includes"] if config.AUTOPILOT_FORCE_PUSH else []
+    )
+    rc, out = await _run(
+        ["git", *_GIT_CRED, "push", *push_flags, "-u", "origin", branch], cwd=clone, timeout=180
     )
     if rc != 0:
         return False, f"push 失敗：{out[-400:]}"
@@ -146,8 +166,10 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         cwd=clone,
         timeout=120,
     )
+    # 預設不帶 --admin，讓 GitHub 分支保護/必過檢查生效；僅 MERGE_ADMIN 為真才繞過保護。
+    admin_flag = ["--admin"] if config.AUTOPILOT_MERGE_ADMIN else []
     rc, out = await _run(
-        [*_GH, "pr", "merge", "-R", repo, branch, "--squash", "--admin", "--delete-branch"],
+        [*_GH, "pr", "merge", "-R", repo, branch, "--squash", *admin_flag, "--delete-branch"],
         cwd=clone,
         timeout=180,
     )
