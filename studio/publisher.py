@@ -67,10 +67,12 @@ def pr_payload(requirement: str, branch: str, base: str) -> dict:
 
 
 async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
-    await runner.run_command(cwd, f"git branch -M {branch}", timeout=30)
-    await runner.run_command(cwd, "git remote remove ti_publish", timeout=20)
-    await runner.run_command(cwd, f"git remote add ti_publish {url}", timeout=20)
-    return await runner.run_command(cwd, f"git push -u ti_publish {branch}", timeout=120)
+    await runner.run_command(cwd, f"git branch -M {branch}", timeout=30, sandbox=False)
+    await runner.run_command(cwd, "git remote remove ti_publish", timeout=20, sandbox=False)
+    await runner.run_command(cwd, f"git remote add ti_publish {url}", timeout=20, sandbox=False)
+    return await runner.run_command(
+        cwd, f"git push -u ti_publish {branch}", timeout=120, sandbox=False
+    )
 
 
 async def _open_pr(payload: dict) -> tuple[bool, str]:

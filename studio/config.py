@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,6 +44,65 @@ DEMO_MAX_OUTPUT = int(os.getenv("TI_DEMO_MAX_OUTPUT", "8000"))
 
 # 是否在 workspace 內建立獨立 git repo 並做階段性 commit。
 ENABLE_GIT = os.getenv("TI_ENABLE_GIT", "1") not in ("0", "false", "False", "")
+
+# --- 沙箱（隔離專家 / Demo 的指令執行，避免以 root 誤傷主機）---------------
+# 開啟後：專家 bash 走 SDK 原生 sandbox（bubblewrap）、Demo 執行由 runner 用 bwrap
+# 包住（新 PID namespace + 只有 workspace 可寫）。一鍵還原：TI_SANDBOX=0。
+SANDBOX_ENABLED = os.getenv("TI_SANDBOX", "1") not in ("0", "false", "False", "")
+# Demo 執行預設「無網路」；需要時設 TI_SANDBOX_NET=1（PID 隔離仍保護主機）。
+SANDBOX_NET = os.getenv("TI_SANDBOX_NET", "0") not in ("0", "false", "False", "")
+SANDBOX_BWRAP = os.getenv("TI_SANDBOX_BWRAP", "/usr/bin/bwrap")
+_DEFAULT_SANDBOX_DOMAINS = (
+    "pypi.org,files.pythonhosted.org,registry.npmjs.org,"
+    "github.com,codeload.github.com,objects.githubusercontent.com"
+)
+SANDBOX_ALLOWED_DOMAINS = [
+    d.strip()
+    for d in os.getenv("TI_SANDBOX_ALLOWED_DOMAINS", _DEFAULT_SANDBOX_DOMAINS).split(",")
+    if d.strip()
+]
+
+
+def _sandbox_available() -> bool:
+    """bwrap 是否存在（runner 的 Demo 層用來 fail-closed）。"""
+    return os.path.exists(SANDBOX_BWRAP)
+
+
+def sandbox_missing_deps() -> list[str]:
+    """沙箱啟用時所需的外部工具中缺少的項目。
+
+    ⚠️ 重要：CLI 的原生沙箱在缺 socat/bwrap 時是「fail-open」——會【靜默停用沙箱、
+    照常無限制執行】。所以伺服器啟動時要據此發出明顯警告，避免重佈後缺套件卻無人察覺。
+    """
+    if not SANDBOX_ENABLED:
+        return []
+    missing = []
+    if not os.path.exists(SANDBOX_BWRAP):
+        missing.append("bwrap")
+    if shutil.which("socat") is None:
+        missing.append("socat")
+    return missing
+
+
+def expert_sandbox_settings() -> dict | None:
+    """給 ClaudeAgentOptions 的 SandboxSettings；停用時回 None（行為與改動前完全相同）。
+
+    `enabled` 讓 CLI 用 bubblewrap 把專家的 bash 關進 PID namespace（殺不到主機進程）；
+    `allowUnsandboxedCommands=False` 移除 dangerouslyDisableSandbox 逃生門；
+    network.allowedDomains 僅放行套件來源（CLI 沙箱層才支援 per-domain）。
+    """
+    if not SANDBOX_ENABLED:
+        return None
+    return {
+        "enabled": True,
+        "autoAllowBashIfSandboxed": True,
+        "allowUnsandboxedCommands": False,
+        "excludedCommands": [],
+        "network": {
+            "allowedDomains": SANDBOX_ALLOWED_DOMAINS,
+            "allowUnixSockets": [],
+        },
+    }
 
 # --- 離線示範模式 -------------------------------------------------------
 # 不需 API 金鑰，用腳本化的假專家驅動完整流程（真的寫檔/git/Demo），供試用與端到端驗證。

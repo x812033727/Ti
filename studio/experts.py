@@ -72,6 +72,7 @@ class Expert:
                 allowed_tools=role.allowed_tools,
                 permission_mode=role.permission_mode,
                 can_use_tool=_auto_allow_tool,
+                sandbox=config.expert_sandbox_settings(),
                 cwd=str(cwd),
                 model=_model_for(role),
                 max_turns=config.MAX_TURNS_PER_TURN,

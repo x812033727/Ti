@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shlex
 import shutil
@@ -53,15 +54,68 @@ def _truncate(text: str, limit: int | None = None) -> str:
     return text[:limit] + f"\n…（輸出過長，已截斷，共 {len(text)} 字）"
 
 
-async def run_command(cwd: Path | str, command: str, timeout: int | None = None) -> RunOutput:
-    """在 cwd 執行 shell 指令，合併 stdout/stderr，套用逾時與輸出上限。"""
+def _bwrap_prefix(cwd: Path | str) -> list[str]:
+    """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
+
+    新 PID namespace 讓沙箱內的指令看不到也殺不到主機進程（含正式服務）；
+    `--ro-bind / /` 讓 python/node/git 等執行檔可用但主機檔系唯讀。預設 `--unshare-net`
+    斷網（Demo 不需網路），設 TI_SANDBOX_NET=1 可放行。
+    """
+    cwd = str(cwd)
+    cache = os.path.join(os.path.expanduser("~"), ".cache")
+    args = [
+        config.SANDBOX_BWRAP,
+        "--ro-bind", "/", "/",
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--tmpfs", "/tmp",
+        "--tmpfs", cache,
+        "--bind", cwd, cwd,
+        "--chdir", cwd,
+        "--unshare-pid",
+        "--die-with-parent",
+        "--new-session",
+    ]
+    if not config.SANDBOX_NET:
+        args.append("--unshare-net")
+    return args
+
+
+async def run_command(
+    cwd: Path | str, command: str, timeout: int | None = None, sandbox: bool | None = None
+) -> RunOutput:
+    """在 cwd 執行 shell 指令，合併 stdout/stderr，套用逾時與輸出上限。
+
+    sandbox=None 時取 config.SANDBOX_ENABLED；啟用時用 bubblewrap 把指令關進
+    workspace 沙箱（新 PID namespace、host 唯讀）。沙箱啟用但 bwrap 不存在則
+    fail-closed：拒絕執行，絕不以 root 裸跑。
+    """
     timeout = timeout or config.DEMO_TIMEOUT
-    proc = await asyncio.create_subprocess_shell(
-        _executable_command(command),
-        cwd=str(cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
+    use_sandbox = config.SANDBOX_ENABLED if sandbox is None else sandbox
+    inner = _executable_command(command)
+    if use_sandbox:
+        if not config._sandbox_available():
+            return RunOutput(
+                command=command,
+                exit_code=-1,
+                output=f"（沙箱已啟用但找不到 {config.SANDBOX_BWRAP}，為安全拒絕執行）",
+                timed_out=True,
+            )
+        proc = await asyncio.create_subprocess_exec(
+            *_bwrap_prefix(cwd),
+            "/bin/sh",
+            "-c",
+            inner,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    else:
+        proc = await asyncio.create_subprocess_shell(
+            inner,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return RunOutput(
@@ -138,13 +192,13 @@ async def git_init(cwd: Path | str) -> bool:
     root = Path(cwd)
     if (root / ".git").exists():
         return True
-    r = await run_command(root, "git init -q", timeout=20)
+    r = await run_command(root, "git init -q", timeout=20, sandbox=False)
     if not r.ok:
         return False
-    await run_command(root, "git config user.email studio@ti.local", timeout=20)
-    await run_command(root, "git config user.name 'Ti Studio'", timeout=20)
+    await run_command(root, "git config user.email studio@ti.local", timeout=20, sandbox=False)
+    await run_command(root, "git config user.name 'Ti Studio'", timeout=20, sandbox=False)
     # 關閉 commit 簽章，避免外部簽章環境導致 workspace commit 失敗。
-    await run_command(root, "git config commit.gpgsign false", timeout=20)
+    await run_command(root, "git config commit.gpgsign false", timeout=20, sandbox=False)
     return True
 
 
@@ -178,7 +232,7 @@ async def git_clone(
     if branch and _BRANCH_RE.match(branch):
         parts += ["--branch", branch]
     cmd = " ".join(shlex.quote(p) for p in parts) + f" {shlex.quote(authed)} ."
-    result = await run_command(dest, cmd, timeout=180)
+    result = await run_command(dest, cmd, timeout=180, sandbox=False)
     # 避免 token 出現在回報的指令 / 輸出裡
     if token:
         result.output = result.output.replace(token, "***")
@@ -194,11 +248,11 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
     if not (root / ".git").exists():
         if not await git_init(root):
             return None
-    await run_command(root, "git add -A", timeout=30)
+    await run_command(root, "git add -A", timeout=30, sandbox=False)
     # 安全處理訊息中的引號
     safe = message.replace('"', "'")
-    r = await run_command(root, f'git commit -q -m "{safe}"', timeout=30)
+    r = await run_command(root, f'git commit -q -m "{safe}"', timeout=30, sandbox=False)
     if not r.ok:
         return None  # 通常是「無變更可提交」
-    h = await run_command(root, "git rev-parse --short HEAD", timeout=20)
+    h = await run_command(root, "git rev-parse --short HEAD", timeout=20, sandbox=False)
     return h.output.strip() if h.ok else None

@@ -6,11 +6,22 @@ REST 路由在 routes.py、WebSocket 在 ws.py、認證在 auth.py。
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth, config, routes, ws
+
+# 沙箱啟用但缺依賴時 CLI 會靜默 fail-open（無沙箱執行），啟動時大聲示警。
+_sandbox_missing = config.sandbox_missing_deps()
+if _sandbox_missing:
+    logging.getLogger("ti.sandbox").warning(
+        "⚠️ 沙箱已啟用(TI_SANDBOX)但缺少 %s：專家 bash 會在【無沙箱】下以 root 執行"
+        "(CLI fail-open)。請 `apt install bubblewrap socat`，或設 TI_SANDBOX=0 明確關閉。",
+        ", ".join(_sandbox_missing),
+    )
 
 app = FastAPI(title="Ti Studio — AI 專家討論工作室")
 
