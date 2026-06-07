@@ -342,6 +342,11 @@ class StudioSession:
             )
             await self._set_task_status(task, "doing")
             task_ok = await self._work_task(task, pm_plan + context, engineer, qa, senior, security)
+            # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
+            if not task_ok and config.HUDDLE_ENABLED and not self._stop:
+                task_ok = await self._huddle_and_retry(
+                    task, pm_plan + context, pm, architect, engineer, qa, senior, security
+                )
             all_ok = all_ok and task_ok
             await self._set_task_status(task, "done" if task_ok else "review")
 
@@ -375,16 +380,24 @@ class StudioSession:
         qa: ExpertLike,
         senior: ExpertLike,
         security: ExpertLike | None = None,
+        *,
+        max_rounds: int | None = None,
+        seed_feedback: str = "",
     ) -> bool:
-        """單一任務的 實作→自測→驗證→審查→改進 迴圈，回傳是否通過。"""
-        feedback = ""
-        for rnd in range(1, config.TASK_MAX_ROUNDS + 1):
+        """單一任務的 實作→自測→驗證→審查→改進 迴圈，回傳是否通過。
+
+        max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
+        seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
+        """
+        feedback = seed_feedback
+        rounds = max_rounds if max_rounds is not None else config.TASK_MAX_ROUNDS
+        for rnd in range(1, rounds + 1):
             if self._stop:
                 return False
             human = await self._human_prefix()
 
             # --- 實作 ---
-            if rnd == 1:
+            if not feedback:
                 impl_prompt = (
                     f"{human}目前要完成的任務 #{task['id']}：{task['title']}\n\n"
                     f"整體計畫供參考：\n{pm_plan}\n\n"
@@ -463,6 +476,94 @@ class StudioSession:
                 )
             )
         return False
+
+    async def _huddle_and_retry(
+        self,
+        task: dict,
+        context: str,
+        pm: ExpertLike,
+        architect: ExpertLike | None,
+        engineer: ExpertLike,
+        qa: ExpertLike,
+        senior: ExpertLike,
+        security: ExpertLike | None,
+    ) -> bool:
+        """卡關升級：召集團隊 huddle 找替代方案 → 給 1 輪重試。
+
+        重試仍失敗則把 task 標為「已知限制」（註記 + 事件），status 由呼叫端維持 review。
+        """
+        conclusion = await self._huddle(task, context, pm, architect, engineer, senior)
+        task_ok = await self._work_task(
+            task,
+            context,
+            engineer,
+            qa,
+            senior,
+            security,
+            max_rounds=1,
+            seed_feedback=f"【卡關 huddle 替代方案，請據此突破】\n{conclusion}",
+        )
+        if not task_ok:
+            task["limitation"] = True
+            await self.broadcast(
+                events.huddle(
+                    self.session_id,
+                    task["id"],
+                    task["title"],
+                    [],
+                    "huddle 與重試後仍未通過，標記為『已知限制』，不靜默帶過。",
+                    limitation=True,
+                )
+            )
+        return task_ok
+
+    async def _huddle(
+        self,
+        task: dict,
+        context: str,
+        pm: ExpertLike,
+        architect: ExpertLike | None,
+        engineer: ExpertLike,
+        senior: ExpertLike,
+    ) -> str:
+        """召集卡關討論：依序讓在場角色針對 blocker 提替代方案。回傳彙整結論。
+
+        召集 PM＋架構師＋工程師＋高級工程師，缺席角色（如 offline 無架構師）自動略過。
+        """
+        roster = [("pm", pm), ("architect", architect), ("engineer", engineer), ("senior", senior)]
+        present = [(key, ex) for key, ex in roster if ex is not None]
+        await self.broadcast(
+            events.phase_change(
+                self.session_id,
+                "卡關討論",
+                f"任務 #{task['id']} 連續失敗，召集團隊討論替代方案",
+            )
+        )
+        blocker = (
+            f"任務 #{task['id']}：{task['title']} 連續 {config.TASK_MAX_ROUNDS} 輪未通過，卡關了。\n"
+            f"整體計畫供參考：\n{context}\n\n"
+        )
+        notes: list[str] = []
+        for _key, ex in present:
+            prior = ("\n團隊目前的討論：\n" + "\n".join(notes)) if notes else ""
+            view = await ex.speak(
+                blocker
+                + "請針對這個 blocker 提出可突破的替代做法或拆解方式，簡短具體、可立即執行。"
+                + prior,
+                self.broadcast,
+            )
+            notes.append(f"【{ex.role.name}】{view}")
+        conclusion = "\n".join(notes)
+        await self.broadcast(
+            events.huddle(
+                self.session_id,
+                task["id"],
+                task["title"],
+                [key for key, _ in present],
+                conclusion,
+            )
+        )
+        return conclusion
 
     async def _self_test(self, impl_text: str) -> None:
         """工程師交付前的確定性 smoke-run，把完整 log 回報。"""

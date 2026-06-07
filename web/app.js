@@ -232,6 +232,15 @@ function handleEvent(ev) {
     case "human_message":
       addHuman(p.text);
       break;
+    case "huddle":
+      if (p.limitation) {
+        addSystem("🚧 已知限制：任務「" + (p.title || "") + "」huddle 後仍未通過。");
+      } else {
+        const who = (p.participants || []).join("、");
+        addSystem("🧩 卡關討論：任務「" + (p.title || "") + "」召集 " + who + " 找替代方案。");
+        if (p.conclusion) addSystem(p.conclusion);
+      }
+      break;
     case "task_status":
       // 看板由 board_update 全量刷新，這裡不需額外處理
       break;

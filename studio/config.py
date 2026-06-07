@@ -34,6 +34,11 @@ MAX_ROUNDS = TASK_MAX_ROUNDS  # 舊名相容
 # 架構辯論的來回回合數（工程師 ⇄ 高級工程師）。
 DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
 
+# --- 內部討論機制（卡關 huddle，預設關閉以保既有測試/行為向後相容）---------
+# 開啟後：任務跑滿 TASK_MAX_ROUNDS 仍未通過時，召集團隊 huddle 找替代方案並給 1 輪重試，
+# 仍失敗則明確標記為「已知限制」而非靜默帶過。離線 demo 由腳本自行開啟此開關展示。
+HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 

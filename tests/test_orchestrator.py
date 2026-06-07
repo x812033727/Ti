@@ -190,6 +190,53 @@ async def test_debate_runs(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_huddle_triggers_on_stall(monkeypatch):
+    """任務跑滿輪數仍 FAIL → 觸發 huddle、給 1 輪重試、仍失敗標為已知限制。"""
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["第一版", "再試", "還是這樣", "huddle 後重試"],
+        qa=["有錯\n驗證: FAIL"],  # 一律 FAIL（腳本用盡回最後一句）
+        senior=["先不核可\n決議: 退回"],  # 一律退回
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    huddles = [e for e in bucket if e.type == events.EventType.HUDDLE]
+    # 至少有一次討論事件 + 一次「已知限制」事件
+    assert any(not e.payload["limitation"] for e in huddles)
+    assert any(e.payload["limitation"] for e in huddles)
+    # huddle 後有重試 → 工程師被呼叫次數超過 TASK_MAX_ROUNDS（含 huddle 發言與重試）
+    assert experts["engineer"].calls > config.TASK_MAX_ROUNDS
+    # 任務最終維持 review（不消失於看板），且被標記限制
+    assert session._tasks[0].get("limitation") is True
+    task_review = [
+        e
+        for e in bucket
+        if e.type == events.EventType.TASK_STATUS and e.payload["status"] == "review"
+    ]
+    assert task_review
+
+
+@pytest.mark.asyncio
+async def test_huddle_disabled_by_default():
+    """預設不啟用 huddle：滿輪 FAIL 後直接收尾，無 HUDDLE 事件、無重試。"""
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["第一版"],
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    assert events.EventType.HUDDLE not in types(bucket)
+    assert experts["engineer"].calls == config.TASK_MAX_ROUNDS
+
+
+@pytest.mark.asyncio
 async def test_human_intervention():
     bucket, broadcast = collect()
     queue: asyncio.Queue[str] = asyncio.Queue()
