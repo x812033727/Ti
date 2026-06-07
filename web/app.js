@@ -353,6 +353,57 @@ async function replaySession(sid) {
 
 function closeHistory() { historyPanel.classList.add("hidden"); }
 
+// --- Autopilot 自主迴圈 ------------------------------------------------
+const autopilotPanel = $("#autopilotPanel");
+
+async function openAutopilot() {
+  autopilotPanel.classList.remove("hidden");
+  await refreshAutopilot();
+}
+
+function closeAutopilot() { autopilotPanel.classList.add("hidden"); }
+
+async function refreshAutopilot() {
+  try {
+    const st = await (await fetch("/api/autopilot")).json();
+    const c = st.counts || {};
+    $("#apState").textContent =
+      `${st.paused ? "⏸ 已暫停" : "▶ 執行中"}　待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
+      `完成 ${c.done || 0}・失敗 ${c.failed || 0}${st.dryrun ? "　(dryrun)" : ""}`;
+    $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
+    $("#apToggle").dataset.paused = st.paused ? "1" : "0";
+    const list = await (await fetch("/api/autopilot/backlog")).json();
+    const ul = $("#apBacklog");
+    ul.innerHTML = "";
+    (list.tasks || []).slice().reverse().forEach((t) => {
+      const li = document.createElement("li");
+      const icon = { pending: "🕓", in_progress: "⚙️", done: "✅", failed: "❌" }[t.status] || "•";
+      li.textContent = `${icon} #${t.id} ${t.title}　[${t.source}]`;
+      ul.appendChild(li);
+    });
+  } catch (e) {
+    $("#apState").textContent = "讀取失敗（autopilot 服務可能未啟動）";
+  }
+}
+
+async function toggleAutopilot() {
+  const paused = $("#apToggle").dataset.paused === "1";
+  await fetch(paused ? "/api/autopilot/resume" : "/api/autopilot/pause", { method: "POST" });
+  await refreshAutopilot();
+}
+
+async function addAutopilotTask() {
+  const title = $("#apTaskTitle").value.trim();
+  if (!title) return;
+  await fetch("/api/autopilot/task", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  $("#apTaskTitle").value = "";
+  await refreshAutopilot();
+}
+
 // --- 發佈到 GitHub -----------------------------------------------------
 let publishConfigured = false;
 
@@ -539,6 +590,10 @@ $("#pwSave").onclick = savePassword;
 $("#downloadBtn").onclick = downloadWorkspace;
 $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
+$("#autopilotBtn").onclick = openAutopilot;
+$("#autopilotClose").onclick = closeAutopilot;
+$("#apToggle").onclick = toggleAutopilot;
+$("#apAddBtn").onclick = addAutopilotTask;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
 

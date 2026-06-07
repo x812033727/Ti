@@ -20,6 +20,7 @@
       <button id="stopBtn" class="ghost" disabled>停止</button>
       <button id="settingsBtn" class="ghost">⚙️ 設定</button>
       <button id="historyBtn" class="ghost">📜 歷史</button>
+      <button id="autopilotBtn" class="ghost">🤖 Autopilot</button>
       <button id="logoutBtn" class="ghost hidden">登出</button>
     </div>
     <div id="phase" class="phase">待命中</div>
@@ -68,6 +69,23 @@
       <button id="historyClose" class="ghost">✕</button>
     </div>
     <ul id="historyList" class="history-list"></ul>
+  </div>
+
+  <!-- Autopilot 自主自我改善迴圈 -->
+  <div id="autopilotPanel" class="history-panel hidden">
+    <div class="history-head">
+      <h2>🤖 Autopilot</h2>
+      <button id="autopilotClose" class="ghost">✕</button>
+    </div>
+    <div class="ap-status">
+      <span id="apState" class="muted">載入中…</span>
+      <button id="apToggle" class="ghost">暫停 / 恢復</button>
+    </div>
+    <div class="ap-add">
+      <input id="apTaskTitle" type="text" placeholder="新增一個自我改善任務（標題）" />
+      <button id="apAddBtn">加任務</button>
+    </div>
+    <ul id="apBacklog" class="history-list"></ul>
   </div>
 
   <main class="layout">

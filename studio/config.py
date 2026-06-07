@@ -143,6 +143,26 @@ WEB_DIR = PROJECT_ROOT / "web"
 HOST = os.getenv("TI_HOST", "0.0.0.0")
 PORT = int(os.getenv("TI_PORT", "8000"))
 
+# --- Autopilot（自主自我改善迴圈，由獨立的 ti-autopilot.service 跑）-------
+# 持久任務 backlog 與狀態存這裡；working clone 與部署目標分開（避免改到正在跑的服務）。
+AUTOPILOT_STATE_DIR = Path(os.getenv("TI_AUTOPILOT_STATE_DIR", str(PROJECT_ROOT / "autopilot")))
+AUTOPILOT_WORK_DIR = Path(os.getenv("TI_AUTOPILOT_WORK_DIR", "/opt/ti-autopilot-work"))
+AUTOPILOT_DEPLOY_DIR = Path(os.getenv("TI_AUTOPILOT_DEPLOY_DIR", str(PROJECT_ROOT)))
+AUTOPILOT_REPO = os.getenv("TI_AUTOPILOT_REPO", "x812033727/Ti")  # owner/repo
+AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
+AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
+AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
+AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
+AUTOPILOT_PAUSE_FILE = Path(os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED")))
+AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "False", "")
+
+
+def autopilot_paused() -> bool:
+    """暫停開關：pause 檔存在、或 env TI_AUTOPILOT_PAUSED 為真，即暫停迴圈。"""
+    if os.getenv("TI_AUTOPILOT_PAUSED", "0") not in ("0", "false", "False", ""):
+        return True
+    return AUTOPILOT_PAUSE_FILE.exists()
+
 
 def has_api_key() -> bool:
     """是否設定了 Anthropic 金鑰（端到端執行需要；單元測試不需要）。"""

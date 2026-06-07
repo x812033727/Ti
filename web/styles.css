@@ -251,3 +251,8 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
   vertical-align: middle;
 }
 .download-btn:hover { opacity: .9; }
+
+/* Autopilot 面板 */
+.ap-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.ap-add { display: flex; gap: 8px; margin: 8px 0; }
+.ap-add input { flex: 1; }

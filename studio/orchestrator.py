@@ -73,6 +73,11 @@ def parse_tasks(pm_text: str) -> list[str]:
     return tasks[:12] or ["實作需求"]
 
 
+def parse_followups(text: str) -> list[str]:
+    """從檢討文字抽出 `後續任務: ...` 行（供 autopilot 回寫 backlog）。"""
+    return [m.strip() for m in re.findall(r"^\s*後續任務\s*[:：]\s*(.+)$", text, re.M)][:10]
+
+
 def _build_experts(session_id: str, cwd: Path) -> dict[str, ExpertLike]:
     # 依設定的 provider 建立專家（延後 import，避免無 SDK 時就失敗）
     from .providers import make_expert
@@ -100,6 +105,8 @@ class StudioSession:
         self._run_command: str | None = None  # PM/工程師宣告的執行指令
         self._requirement = ""
         self._stop = False
+        self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
+        self._last_commit: str | None = None  # 最近一次 workspace commit 短 hash
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -150,6 +157,7 @@ class StudioSession:
             return
         h = await runner.git_commit(self.cwd, message)
         if h:
+            self._last_commit = h
             await self.broadcast(events.git_commit(self.session_id, message, h))
 
     # --- 辯論 ----------------------------------------------------------
@@ -177,9 +185,11 @@ class StudioSession:
             )
 
     # --- 主流程 --------------------------------------------------------
-    async def run(self, requirement: str) -> None:
+    async def run(self, requirement: str) -> dict:
+        """執行整場討論。回傳結果摘要供 autopilot 使用（前端走 broadcast，不需回傳值）。"""
+        result = {"completed": False, "followups": [], "commit": None}
         try:
-            await self._run(requirement)
+            result = await self._run(requirement)
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
             await self.broadcast(events.error(self.session_id, f"{type(exc).__name__}: {exc}"))
         finally:
@@ -188,6 +198,7 @@ class StudioSession:
                     await ex.stop()
                 except Exception:  # noqa: BLE001
                     pass
+        return result
 
     async def _run(self, requirement: str) -> None:
         self._requirement = requirement
@@ -274,6 +285,8 @@ class StudioSession:
 
         # 6) 視設定自動發佈成果到 GitHub
         await self._maybe_publish(done)
+
+        return {"completed": done, "followups": self._followups, "commit": self._last_commit}
 
     async def _work_task(
         self,
@@ -395,9 +408,12 @@ class StudioSession:
 
         await self.broadcast(events.phase_change(self.session_id, "檢討", "團隊進行回顧"))
         retro = await pm.speak(
-            "請帶領團隊做一段簡短檢討：這次做得好的地方、可以改進的地方、以及後續建議。",
+            "請帶領團隊做一段簡短檢討：這次做得好的地方、可以改進的地方、以及後續建議。\n"
+            "若過程中發現尚未解決的問題或值得改善之處，請在最後逐行列出後續任務，"
+            "每行格式固定為 `後續任務: <動詞開頭的具體任務>`（沒有就不必列）。",
             self.broadcast,
         )
+        self._followups = parse_followups(retro)
         await self.broadcast(
             events.StudioEvent(events.EventType.RETROSPECTIVE, self.session_id, {"text": retro})
         )

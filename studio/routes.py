@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import auth, config, history, publisher, settings, workspace
+from . import auth, backlog, config, history, publisher, settings, workspace
 
 router = APIRouter()
 
@@ -172,3 +172,46 @@ async def publish_now(session_id: str) -> JSONResponse:
     requirement = meta["requirement"] if meta else "Ti Studio 成果"
     result = await publisher.publish(cwd, session_id, requirement)
     return JSONResponse(result.to_dict())
+
+
+# --- autopilot（受保護）------------------------------------------------
+class TaskBody(BaseModel):
+    title: str = ""
+    detail: str = ""
+
+
+@router.get("/api/autopilot", dependencies=[Depends(auth.require_auth)])
+async def autopilot_status() -> JSONResponse:
+    return JSONResponse(
+        {
+            "paused": config.autopilot_paused(),
+            "counts": backlog.counts(),
+            "dryrun": config.AUTOPILOT_DRYRUN,
+            "repo": config.AUTOPILOT_REPO,
+        }
+    )
+
+
+@router.get("/api/autopilot/backlog", dependencies=[Depends(auth.require_auth)])
+async def autopilot_backlog() -> JSONResponse:
+    return JSONResponse({"tasks": backlog.list_tasks()})
+
+
+@router.post("/api/autopilot/pause", dependencies=[Depends(auth.require_auth)])
+async def autopilot_pause() -> JSONResponse:
+    config.AUTOPILOT_PAUSE_FILE.write_text("paused via UI\n", encoding="utf-8")
+    return JSONResponse({"ok": True, "paused": True})
+
+
+@router.post("/api/autopilot/resume", dependencies=[Depends(auth.require_auth)])
+async def autopilot_resume() -> JSONResponse:
+    config.AUTOPILOT_PAUSE_FILE.unlink(missing_ok=True)
+    return JSONResponse({"ok": True, "paused": config.autopilot_paused()})
+
+
+@router.post("/api/autopilot/task", dependencies=[Depends(auth.require_auth)])
+async def autopilot_add_task(body: TaskBody) -> JSONResponse:
+    task = backlog.add(body.title, body.detail, source="manual")
+    if task is None:
+        return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
+    return JSONResponse({"ok": True, "task": task})

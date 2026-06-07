@@ -1,0 +1,25 @@
+[Unit]
+Description=Ti Studio Autopilot — 自主自我改善迴圈
+After=network-online.target ti.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# 走 Claude 訂閱（沿用 /root/.claude 憑證），刻意不設 ANTHROPIC_API_KEY。
+Environment=HOME=/root
+Environment=PATH=/usr/bin:/bin:/usr/local/bin
+WorkingDirectory=/opt/ti
+ExecStart=/opt/ti/.venv/bin/python -m studio.autopilot
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+# 安裝：
+#   cp /opt/ti/deploy/ti-autopilot.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now ti-autopilot.service
+# 暫停：touch /opt/ti/AUTOPILOT_PAUSED  （或網頁 Autopilot 面板按「暫停」）
+# 恢復：rm /opt/ti/AUTOPILOT_PAUSED
+# 觀察：journalctl -u ti-autopilot.service -f
