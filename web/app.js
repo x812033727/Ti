@@ -169,6 +169,14 @@ async function refreshFiles() {
       li.onclick = () => viewFile(f);
       list.appendChild(li);
     }
+    const btn = $("#downloadZip");
+    if (btn) {
+      const hasFiles = (data.files || []).length > 0;
+      btn.classList.toggle("hidden", !hasFiles);
+      btn.onclick = () => {
+        if (sessionId) window.location.href = `/api/workspace/${sessionId}/download`;
+      };
+    }
   } catch (e) { /* 忽略 */ }
 }
 

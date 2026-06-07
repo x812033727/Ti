@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import shutil
+import zipfile
 from pathlib import Path
 
 from . import config
@@ -40,6 +42,27 @@ def list_files(session_id: str) -> list[str]:
             continue
         files.append(str(p.relative_to(root)))
     return files
+
+
+def zip_bytes(session_id: str) -> bytes | None:
+    """把整個 session workspace 打包成 zip（排除雜訊目錄如 .git），回傳 bytes。
+
+    workspace 不存在或沒有任何可打包檔案時回 None。檔名以相對路徑保留目錄結構。
+
+    TODO(記憶體): 目前整包進 BytesIO，大 build 產物會吃記憶體；可改 StreamingResponse 串流。
+    TODO(symlink): zf.write 會跟隨 symlink 讀目標；與 read_file 一併統一阻擋外部連結。
+    """
+    root = workspace_path(session_id)
+    if not root.exists():
+        return None
+    rels = list_files(session_id)
+    if not rels:
+        return None
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for rel in rels:
+            zf.write(root / rel, arcname=rel)
+    return buf.getvalue()
 
 
 def read_file(session_id: str, rel_path: str) -> str | None:
