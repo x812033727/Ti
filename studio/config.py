@@ -63,6 +63,13 @@ OPTIONAL_ROLES = {
     if r.strip()
 }
 
+# 哪些角色用「主力（強但慢）」模型 MODEL_LEAD，其餘一律用 MODEL_FAST（快）。
+# 為加速,預設只剩 pm（規劃/驗收需強推理）；要重品質可加 senior,architect,security。
+LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if r.strip()}
+
+# PM 拆解出的任務數上限（autopilot 單一 backlog 任務不該再炸成超多子任務 → 控時間）。
+MAX_TASKS = int(os.getenv("TI_MAX_TASKS", "5"))
+
 # --- 確定性執行（runner）-----------------------------------------------
 # 自測 / Demo 的執行逾時（秒）與輸出字數上限。
 DEMO_TIMEOUT = int(os.getenv("TI_DEMO_TIMEOUT", "60"))
@@ -227,7 +234,17 @@ def reload() -> None:
     global PROVIDER, MODEL_LEAD, MODEL_FAST
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO
+    global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+    LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if r.strip()}
+    OPTIONAL_ROLES = {
+        r.strip()
+        for r in os.getenv("TI_OPTIONAL_ROLES", "researcher,architect,security,devops").split(",")
+        if r.strip()
+    }
+    MAX_TASKS = int(os.getenv("TI_MAX_TASKS", "5"))
+    TASK_MAX_ROUNDS = int(os.getenv("TI_MAX_ROUNDS", "3"))
+    DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
     MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

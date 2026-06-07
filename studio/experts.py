@@ -26,8 +26,7 @@ from .roles import Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
-# PM 與高級工程師用主力（推理強）模型，其餘用快速模型。
-_LEAD_ROLES = {"pm", "senior", "architect", "security"}
+# 哪些角色用主力（強但慢）模型，由 config.LEAD_ROLES 控制（可調、可在設定頁改）。
 
 
 async def _auto_allow_tool(
@@ -45,7 +44,7 @@ async def _auto_allow_tool(
 
 def _model_for(role: Role) -> str:
     """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。"""
-    return config.MODEL_LEAD if role.key in _LEAD_ROLES else config.MODEL_FAST
+    return config.MODEL_LEAD if role.key in config.LEAD_ROLES else config.MODEL_FAST
 
 
 def _summarize_tool(name: str, tool_input: dict) -> str:

@@ -35,6 +35,9 @@ def _source_files():
             continue
         if "ti_studio.egg-info" in parts or ".git" in parts:
             continue
+        # 排除 ephemeral 的工作區/autopilot 狀態（內含舊版 clone,非專案原始碼）
+        if "workspaces" in parts or "autopilot" in parts:
+            continue
         yield p
 
 

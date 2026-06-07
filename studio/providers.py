@@ -13,11 +13,12 @@ from pathlib import Path
 from . import config, events, tools
 from .roles import Role
 
-_LEAD_ROLES = {"pm", "senior", "architect", "security"}
-
-
 def openai_model_for(role: Role) -> str:
-    return config.OPENAI_MODEL_LEAD if role.key in _LEAD_ROLES else config.OPENAI_MODEL_FAST
+    return (
+        config.OPENAI_MODEL_LEAD
+        if role.key in config.LEAD_ROLES
+        else config.OPENAI_MODEL_FAST
+    )
 
 
 class OpenAIExpert:

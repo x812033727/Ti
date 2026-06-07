@@ -97,9 +97,10 @@ def pm_done(text: str) -> bool:
 
 def parse_tasks(pm_text: str) -> list[str]:
     """從 PM 的拆解文字抽出任務條目。優先 `任務: ...`，否則退回條列項目。"""
+    cap = config.MAX_TASKS
     explicit = [m.strip() for m in re.findall(r"^\s*任務\s*[:：]\s*(.+)$", pm_text, re.M)]
     if explicit:
-        return explicit[:12]
+        return explicit[:cap]
     tasks: list[str] = []
     for line in pm_text.splitlines():
         m = re.match(r"^\s*(?:[-*•]|\d+[.)、])\s+(.*)$", line)
@@ -107,7 +108,7 @@ def parse_tasks(pm_text: str) -> list[str]:
             item = m.group(1).strip()
             if item and len(item) < 200 and not re.search(r"(執行指令|執行命令)", item):
                 tasks.append(item)
-    return tasks[:12] or ["實作需求"]
+    return tasks[:cap] or ["實作需求"]
 
 
 def parse_followups(text: str) -> list[str]:
@@ -308,11 +309,14 @@ class StudioSession:
             rnote + topic + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
             self.broadcast,
         )
-        eng_view = await engineer.speak(
-            f"針對以下架構設計，從實作可行性給簡短意見：\n\n{proposal}", self.broadcast
-        )
-        senior_view = await senior.speak(
-            f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}", self.broadcast
+        # 工程師與高級工程師對同一份提案各自給意見，互相獨立 → 並行以省時。
+        eng_view, senior_view = await asyncio.gather(
+            engineer.speak(
+                f"針對以下架構設計，從實作可行性給簡短意見：\n\n{proposal}", self.broadcast
+            ),
+            senior.speak(
+                f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}", self.broadcast
+            ),
         )
         decision = await architect.speak(
             "綜合以下意見定案，逐行輸出 `設計決策: <決策>`：\n\n"
@@ -543,51 +547,44 @@ class StudioSession:
                 )
                 return False
 
-            # --- 驗證 ---
+            # --- 驗證 + 審查 + 資安：三者都評同一份已 commit 的實作、互相獨立 → 並行省時 ---
             await self.broadcast(
                 events.phase_change(
-                    self.session_id, "驗證", f"任務 #{task['id']} 驗證中（第 {rnd} 輪）"
-                )
-            )
-            qa_text = await qa.speak(
-                f"請針對任務 #{task['id']}：{task['title']} 的程式碼撰寫並執行測試，"
-                f"驗證是否符合驗收標準：\n\n{pm_plan}",
-                self.broadcast,
-            )
-            qa_ok = qa_passed(qa_text)
-            await self.broadcast(
-                events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
-            )
-
-            # --- 審查（帶入 QA 測試結果）---
-            await self.broadcast(
-                events.phase_change(
-                    self.session_id, "審查", f"任務 #{task['id']} 審查中（第 {rnd} 輪）"
+                    self.session_id,
+                    "驗證與審查",
+                    f"任務 #{task['id']} 並行驗證/審查/資安（第 {rnd} 輪）",
                 )
             )
             await self._set_task_status(task, "review")
-            senior_text = await senior.speak(
-                f"請審查任務 #{task['id']}：{task['title']} 的程式碼（品質、設計、安全），並給出決議。\n\n"
-                f"驗證工程師的測試結果如下，請納入判斷：\n{qa_text}",
-                self.broadcast,
-            )
-            senior_ok = senior_approved(senior_text)
-
-            # --- 資安審查（有資安審查員時，為通過的必要條件）---
-            sec_text = ""
-            security_ok = True
+            review_calls = [
+                qa.speak(
+                    f"請針對任務 #{task['id']}：{task['title']} 的程式碼撰寫並執行測試，"
+                    f"驗證是否符合驗收標準：\n\n{pm_plan}",
+                    self.broadcast,
+                ),
+                senior.speak(
+                    f"請審查任務 #{task['id']}：{task['title']} 的程式碼（品質、設計、安全），"
+                    "並給出決議（`決議: 核可` 或 `決議: 退回`）。",
+                    self.broadcast,
+                ),
+            ]
             if security:
-                await self.broadcast(
-                    events.phase_change(
-                        self.session_id, "資安審查", f"任務 #{task['id']} 資安把關（第 {rnd} 輪）"
+                review_calls.append(
+                    security.speak(
+                        f"請對任務 #{task['id']}：{task['title']} 的程式碼做資安審查，"
+                        "輸出 `決議: 安全核可` 或 `決議: 安全退回`（退回時列具體風險）。",
+                        self.broadcast,
                     )
                 )
-                sec_text = await security.speak(
-                    f"請對任務 #{task['id']}：{task['title']} 的程式碼做資安審查，"
-                    "輸出 `決議: 安全核可` 或 `決議: 安全退回`（退回時列具體風險）。",
-                    self.broadcast,
-                )
-                security_ok = security_approved(sec_text)
+            results = await asyncio.gather(*review_calls)
+            qa_text, senior_text = results[0], results[1]
+            sec_text = results[2] if security else ""
+            qa_ok = qa_passed(qa_text)
+            senior_ok = senior_approved(senior_text)
+            security_ok = security_approved(sec_text) if security else True
+            await self.broadcast(
+                events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
+            )
 
             if qa_ok and senior_ok and security_ok:
                 # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
