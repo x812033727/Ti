@@ -125,7 +125,13 @@ jobs:
         # TI_SANDBOX_NET=1）驗證 bwrap 真的可用；失敗即中止 job 並給清楚訊息。
         # 禁用 continue-on-error，這是設計的安全閥而非可選項。
         run: |
-          if ! bwrap --ro-bind / / --unshare-pid --die-with-parent --new-session true; then
+          # 對齊 _bwrap_prefix 的關鍵 flag：--ro-bind / /（host 唯讀）、--bind+--chdir
+          # 綁定可寫 workspace、--unshare-pid（不含 --unshare-net，對齊 TI_SANDBOX_NET=1），
+          # 並在沙箱內實際寫檔，比單跑 true 更貼近實跑路徑。
+          ws=$(mktemp -d)
+          if ! bwrap --ro-bind / / --bind "$ws" "$ws" --chdir "$ws" \
+                 --unshare-pid --die-with-parent --new-session \
+                 sh -c 'echo ok > probe.txt && grep -q ok probe.txt'; then
             echo "::error::bwrap smoke 失敗——AppArmor userns profile 未生效，沙箱不可用。"
             echo "請檢查上一步的 apparmor_parser 是否成功載入 bwrap-userns-restrict profile。"
             exit 1
@@ -155,12 +161,33 @@ jobs:
         run: |
           set -o pipefail
           SEL="test_run_command_exec_sandbox_writes_cwd or test_git_commit_three_steps_go_through_sandbox or test_git_commit_no_injection_in_real_sandbox or test_sandbox_exec_resolves_python or test_gate_tests_real_sandbox_run"
-          # GitHub Actions 預設 shell 為 bash -eo pipefail；測試失敗時 $(...) 會非 0，
-          # 加 || true 避免在賦值處就中止，讓下方 grep 檢查成為權威閘門並印出清楚訊息。
-          out=$(python -m pytest tests/test_runner.py tests/test_qa_task3_autopilot_pytest_exec.py \
-                  -q -rsp -p no:cacheprovider -k "$SEL" 2>&1) || true
+          FILES="tests/test_runner.py tests/test_qa_task3_autopilot_pytest_exec.py"
+
+          # 步驟 A：先用 --collect-only 動態取得「選中數」作為預期 PASSED 數。
+          # 不硬編 8——參數化條數一旦變動會在 collect 階段同步反映，避免假綠。
+          # 直接數選中的 node-id 行（每行一條，含參數化），不解析摘要——
+          # 摘要是 "8/62 tests collected (54 deselected)"，其中 62 是去重前總數，
+          # 8 才是 -k 實際選中數；數 "^檔名::" 行最穩且不受摘要格式變動影響。
+          collect=$(python -m pytest $FILES --collect-only -q -p no:cacheprovider -k "$SEL" 2>&1) || true
+          EXPECTED=$(echo "$collect" | grep -cE "^[A-Za-z0-9_./-]+::")
+          if ! echo "${EXPECTED:-}" | grep -qE "^[1-9][0-9]*$"; then
+            echo "::error::collect-only 未取得有效選中數（collection error 或 -k 全數漏選）。"
+            echo "$collect"
+            exit 1
+          fi
+          echo "預期 PASSED 數（collect-only）：$EXPECTED"
+
+          # 步驟 B：實跑。GitHub Actions 預設 shell 為 bash -eo pipefail；測試非 0 時
+          # $(...) 會中止賦值，加 || true 讓下方斷言成為權威閘門並印出清楚訊息。
+          out=$(python -m pytest $FILES -q -rsp -p no:cacheprovider -k "$SEL" 2>&1) || true
           echo "$out"
-          # exit code 非 0（失敗）→ 上面 pipefail/set -e 不適用，明確判斷
+
+          # collection error 的 summary 是 "X error(s)"——不含 failed，舊版三道 grep 會放行
+          # 而假綠（測試根本沒跑）。優先攔截 error 態。
+          if echo "$out" | grep -qiE "[0-9]+ errors?"; then
+            echo "::error::沙箱測試出現 collection/執行 error（測試未真正執行），視為失敗。"
+            exit 1
+          fi
           if echo "$out" | grep -qiE "[0-9]+ failed"; then
             echo "::error::沙箱測試有 FAILED——bwrap 可執行但測試未通過，請檢查上方輸出。"
             exit 1
@@ -170,8 +197,11 @@ jobs:
             echo "::error::沙箱測試被 skip——能力偵測未解除（bwrap 未裝好或 profile 未生效）。"
             exit 1
           fi
-          if ! echo "$out" | grep -qiE "[0-9]+ passed"; then
-            echo "::error::未偵測到任何 PASSED，沙箱測試可能未被選中或環境異常。"
+          # 步驟 C：數量斷言。實際 PASSED 必須等於 collect-only 選中數，
+          # 確保 N 條全跑到而非 -k 漏選/部分沒跑卻仍有零星 passed 而假綠。
+          ACTUAL=$(echo "$out" | grep -oE "[0-9]+ passed" | grep -oE "^[0-9]+" | head -1)
+          if [ -z "${ACTUAL:-}" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::PASSED 數量不符：預期 $EXPECTED，實際 ${ACTUAL:-0}（疑似漏選或部分未跑）。"
             exit 1
           fi
-          echo "沙箱測試全數 PASSED、無 skip ✅"
+          echo "沙箱測試 $ACTUAL/$EXPECTED 全數 PASSED、無 skip/error ✅"
