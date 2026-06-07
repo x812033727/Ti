@@ -67,11 +67,22 @@ def pr_payload(requirement: str, branch: str, base: str) -> dict:
 
 
 async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
-    await runner.run_command(cwd, f"git branch -M {branch}", timeout=30, sandbox=False)
-    await runner.run_command(cwd, "git remote remove ti_publish", timeout=20, sandbox=False)
-    await runner.run_command(cwd, f"git remote add ti_publish {url}", timeout=20, sandbox=False)
-    return await runner.run_command(
-        cwd, f"git push -u ti_publish {branch}", timeout=120, sandbox=False
+    # 全程走參數式 exec：branch/url 當單一 argv，免 shell 解析（防注入）；
+    # 且用簡短 label，避免帶 token 的 remote url 出現在 RunOutput.command。
+    await runner.run_command_exec(
+        cwd, ["git", "branch", "-M", branch], timeout=30, sandbox=False, label="git branch"
+    )
+    await runner.run_command_exec(
+        cwd, ["git", "remote", "remove", "ti_publish"], timeout=20, sandbox=False,
+        label="git remote remove",
+    )
+    await runner.run_command_exec(
+        cwd, ["git", "remote", "add", "ti_publish", url], timeout=20, sandbox=False,
+        label="git remote add",
+    )
+    return await runner.run_command_exec(
+        cwd, ["git", "push", "-u", "ti_publish", branch], timeout=120, sandbox=False,
+        label="git push",
     )
 
 

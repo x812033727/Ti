@@ -473,6 +473,23 @@ async def test_git_commit_fail_closed_when_bwrap_missing(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_git_commit_fail_closed_logs_warning(tmp_path, monkeypatch, caplog):
+    """驗收標準 5：fail-closed 分支須 log 一筆 warning，便於排查（設計決策要求）。"""
+    import logging
+
+    await runner.run_command_exec(tmp_path, ["git", "init", "-q"], sandbox=False)
+    (tmp_path / "f.txt").write_text("data")
+    monkeypatch.setattr(runner.config, "SANDBOX_ENABLED", True)
+    monkeypatch.setattr(runner.config, "SANDBOX_BWRAP", "/nonexistent/bwrap")
+    with caplog.at_level(logging.WARNING, logger="ti.runner"):
+        assert await runner.git_commit(tmp_path, "x") is None
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "fail-closed 應記一筆 warning"
+    assert any("git add" in r.getMessage() for r in warnings), \
+        f"warning 應點名失敗步驟：{[r.getMessage() for r in warnings]}"
+
+
+@pytest.mark.asyncio
 async def test_git_commit_three_steps_go_through_sandbox(tmp_path, monkeypatch):
     """任務 #3：SANDBOX_ENABLED 時三步 git 操作都經 bwrap 沙箱，且沙箱內 identity 可用。"""
     if not runner.config._sandbox_available():
