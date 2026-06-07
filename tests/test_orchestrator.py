@@ -31,9 +31,7 @@ class StubExpert:
         text = self._scripts[min(self.calls, len(self._scripts) - 1)]
         self.calls += 1
         await broadcast(
-            events.expert_message(
-                "t", self.role.key, self.role.name, self.role.avatar, text
-            )
+            events.expert_message("t", self.role.key, self.role.name, self.role.avatar, text)
         )
         return text
 
@@ -71,11 +69,12 @@ def _experts(pm, eng, qa, senior):
 
 # --- 決議解析 -----------------------------------------------------------
 
+
 def test_qa_passed_parsing():
     assert qa_passed("跑了測試\n驗證: PASS")
     assert not qa_passed("有錯\n驗證：FAIL")
-    assert qa_passed("一切正常")          # 後備：無明顯失敗字
-    assert not qa_passed("test failed")   # 後備：偵測到失敗
+    assert qa_passed("一切正常")  # 後備：無明顯失敗字
+    assert not qa_passed("test failed")  # 後備：偵測到失敗
 
 
 def test_senior_parsing():
@@ -103,6 +102,7 @@ def test_parse_tasks_structured():
 
 
 # --- 流程 ---------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_happy_path_one_task_one_round():
@@ -160,7 +160,8 @@ async def test_per_task_iteration_two_tasks():
     # 兩個任務各跑一輪
     assert experts["engineer"].calls == 2
     task_done = [
-        e for e in bucket
+        e
+        for e in bucket
         if e.type == events.EventType.TASK_STATUS and e.payload["status"] == "done"
     ]
     assert {e.payload["id"] for e in task_done} == {1, 2}

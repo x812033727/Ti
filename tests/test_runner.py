@@ -6,8 +6,8 @@ import pytest
 
 from studio import runner
 
-
 # --- 解析執行指令 -------------------------------------------------------
+
 
 def test_parse_run_command():
     assert runner.parse_run_command("總結…\n執行指令: python main.py") == "python main.py"
@@ -16,6 +16,7 @@ def test_parse_run_command():
 
 
 # --- 偵測入口 -----------------------------------------------------------
+
 
 def test_detect_entrypoint_prefers_main(tmp_path):
     (tmp_path / "main.py").write_text("print('hi')")
@@ -42,6 +43,7 @@ def test_resolve_demo_command(tmp_path):
 
 # --- 執行指令 -----------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_run_command_ok(tmp_path):
     r = await runner.run_command(tmp_path, "echo hello")
@@ -65,6 +67,7 @@ async def test_run_command_timeout(tmp_path):
 
 
 # --- git ----------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_git_init_and_commit(tmp_path):

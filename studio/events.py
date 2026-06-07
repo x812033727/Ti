@@ -9,21 +9,21 @@ from typing import Any
 
 
 class EventType(str, Enum):
-    SESSION_STARTED = "session_started"   # 工作室開工
-    PHASE_CHANGE = "phase_change"         # 進入新階段（拆解/實作/驗證/審查/檢討…）
-    EXPERT_MESSAGE = "expert_message"     # 某位專家發言（可為串流片段）
-    EXPERT_STATUS = "expert_status"       # 專家狀態燈（idle/thinking/working）
-    TOOL_USE = "tool_use"                 # 專家使用工具（寫檔/執行指令…）
-    BOARD_UPDATE = "board_update"         # 看板整體更新
-    TASK_STATUS = "task_status"           # 單一任務狀態變更
-    RUN_RESULT = "run_result"             # 測試/執行結果（PASS/FAIL）
-    DEMO_RESULT = "demo_result"           # 實際執行產出（含 stdout/stderr）
-    GIT_COMMIT = "git_commit"             # workspace 內階段性 commit
-    PUBLISH_RESULT = "publish_result"     # 成果發佈到 GitHub 的結果
-    HUMAN_MESSAGE = "human_message"       # 人類中途插話
-    RETROSPECTIVE = "retrospective"       # 檢討回顧
-    DONE = "done"                         # 專案完成
-    ERROR = "error"                       # 錯誤
+    SESSION_STARTED = "session_started"  # 工作室開工
+    PHASE_CHANGE = "phase_change"  # 進入新階段（拆解/實作/驗證/審查/檢討…）
+    EXPERT_MESSAGE = "expert_message"  # 某位專家發言（可為串流片段）
+    EXPERT_STATUS = "expert_status"  # 專家狀態燈（idle/thinking/working）
+    TOOL_USE = "tool_use"  # 專家使用工具（寫檔/執行指令…）
+    BOARD_UPDATE = "board_update"  # 看板整體更新
+    TASK_STATUS = "task_status"  # 單一任務狀態變更
+    RUN_RESULT = "run_result"  # 測試/執行結果（PASS/FAIL）
+    DEMO_RESULT = "demo_result"  # 實際執行產出（含 stdout/stderr）
+    GIT_COMMIT = "git_commit"  # workspace 內階段性 commit
+    PUBLISH_RESULT = "publish_result"  # 成果發佈到 GitHub 的結果
+    HUMAN_MESSAGE = "human_message"  # 人類中途插話
+    RETROSPECTIVE = "retrospective"  # 檢討回顧
+    DONE = "done"  # 專案完成
+    ERROR = "error"  # 錯誤
 
 
 @dataclass
@@ -43,6 +43,7 @@ class StudioEvent:
 
 
 # --- 建構小幫手 ---------------------------------------------------------
+
 
 def expert_message(
     session_id: str,
@@ -74,9 +75,7 @@ def expert_status(session_id: str, speaker_key: str, status: str) -> StudioEvent
     )
 
 
-def tool_use(
-    session_id: str, speaker_key: str, tool: str, summary: str
-) -> StudioEvent:
+def tool_use(session_id: str, speaker_key: str, tool: str, summary: str) -> StudioEvent:
     return StudioEvent(
         EventType.TOOL_USE,
         session_id,
@@ -85,9 +84,7 @@ def tool_use(
 
 
 def phase_change(session_id: str, phase: str, detail: str = "") -> StudioEvent:
-    return StudioEvent(
-        EventType.PHASE_CHANGE, session_id, {"phase": phase, "detail": detail}
-    )
+    return StudioEvent(EventType.PHASE_CHANGE, session_id, {"phase": phase, "detail": detail})
 
 
 def board_update(session_id: str, columns: dict[str, list[dict]]) -> StudioEvent:
@@ -119,9 +116,7 @@ def demo_result(
 
 
 def git_commit(session_id: str, message: str, commit_hash: str) -> StudioEvent:
-    return StudioEvent(
-        EventType.GIT_COMMIT, session_id, {"message": message, "hash": commit_hash}
-    )
+    return StudioEvent(EventType.GIT_COMMIT, session_id, {"message": message, "hash": commit_hash})
 
 
 def human_message(session_id: str, text: str) -> StudioEvent:

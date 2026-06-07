@@ -57,6 +57,18 @@ python -m studio.server              # 或：uvicorn studio.server:app
 開啟瀏覽器 http://localhost:8000 ，輸入需求（例如「做一個能計算 BMI 並分類的 Python CLI」），
 按「開始討論」即可觀看專家協作。產出的程式碼會放在 `workspaces/<session_id>/`。
 
+### 登入 / 門禁（選填）
+
+預設不需登入。若要讓工作室只開放給知道密碼的人，設定一組共用密碼即可：
+
+```bash
+TI_ACCESS_PASSWORD=你的密碼 python -m studio.server
+```
+
+啟用後，未登入者會被導向登入頁，所有 API 與 WebSocket 都需登入才能使用；右上角會出現
+「登出」按鈕。登入狀態以簽章 cookie 維持（預設 7 天，見 `TI_AUTH_TTL`）。
+未設定 `TI_ACCESS_PASSWORD` 時門禁完全停用，本地開發與離線示範不受影響。
+
 ### 離線示範模式（不需 API 金鑰）
 
 想先試用整套流程、或在沒有金鑰的環境驗證，可開啟離線模式：用腳本化的假專家驅動
@@ -82,6 +94,8 @@ TI_OFFLINE=1 python -m studio.server
 | `TI_DEMO_TIMEOUT` / `TI_DEMO_MAX_OUTPUT` | 自測/Demo 的逾時秒數與輸出字數上限 | 60 / 8000 |
 | `TI_ENABLE_GIT` | 是否在 workspace 內做階段性 commit | 1 |
 | `TI_HOST` / `TI_PORT` | 伺服器位址 | 0.0.0.0 / 8000 |
+| `TI_ACCESS_PASSWORD` | 設定後啟用登入門禁（共用密碼） | 未設定（停用） |
+| `TI_AUTH_SECRET` / `TI_AUTH_TTL` | cookie 簽章密鑰 / 登入有效秒數 | 隨機 / 604800 |
 | `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
 | `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
@@ -104,14 +118,20 @@ TI_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 TI_OPENAI_MODEL_LEA
 
 ```bash
 pip install -e ".[dev]"
-pytest
+pytest                 # 跑測試
+ruff check . && ruff format --check .   # 跑 lint / 格式檢查
+pre-commit install     # （選填）裝 git hook，提交前自動 lint
 ```
+
+開發流程、分支與提交慣例見 [CONTRIBUTING.md](CONTRIBUTING.md)；
+模組與資料流的完整說明見 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 架構
 
 ```
 studio/
-  config.py        設定（模型、輪數、辯論、Demo、git、伺服器）
+  config.py        設定（模型、輪數、辯論、Demo、git、門禁、伺服器）
+  auth.py          單一密碼門禁：cookie 簽章/驗證、FastAPI 依賴與 WS 檢查
   roles.py         四位專家的角色與 system prompt
   events.py        StudioEvent 事件（WebSocket 傳輸）
   workspace.py     每個 session 的沙箱工作目錄
@@ -123,10 +143,14 @@ studio/
   history.py       session 事件存檔/讀取（供歷史列表與重播）
   publisher.py     把 workspace 成果推成 GitHub 分支並開 PR（預設關閉）
   fake_experts.py  離線示範用的假專家（真的寫檔，供無金鑰試用/端到端驗證）
-  server.py        FastAPI + 雙向 WebSocket + 歷史 API + 發佈 API + 靜態檔
-web/               免建置的工作室前端（HTML/CSS/JS；含響應式版面與重播）
-tests/             單元測試 + 離線端到端測試（test_offline_e2e.py）
+  routes.py        REST API 路由（health / 登入 / workspace / history / publish）
+  ws.py            WebSocket 端點（即時串流 + 人類插話/停止）
+  server.py        應用組裝：建立 FastAPI app、掛載靜態檔與路由、頁面入口
+web/               免建置的工作室前端（HTML/CSS/JS；含登入頁、響應式版面與重播）
+tests/             單元測試 + 離線端到端測試（test_offline_e2e.py、test_auth.py）
 ```
+
+更完整的模組地圖與資料流請見 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 後續可擴充
 

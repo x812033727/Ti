@@ -11,8 +11,9 @@ from studio.roles import BY_KEY
 
 
 def _msg(content=None, tool_calls=None):
-    return SimpleNamespace(choices=[SimpleNamespace(
-        message=SimpleNamespace(content=content, tool_calls=tool_calls))])
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=tool_calls))]
+    )
 
 
 def _tc(id, name, arguments):
@@ -34,7 +35,10 @@ class FakeChat:
 
 def collect():
     bucket = []
-    async def broadcast(ev): bucket.append(ev)
+
+    async def broadcast(ev):
+        bucket.append(ev)
+
     return bucket, broadcast
 
 
@@ -45,10 +49,14 @@ def test_openai_model_for():
 
 @pytest.mark.asyncio
 async def test_tool_loop_writes_file_then_answers(tmp_path):
-    chat = FakeChat([
-        _msg(tool_calls=[_tc("c1", "write_file", '{"path": "main.py", "content": "print(1)"}')]),
-        _msg(content="已建立 main.py"),
-    ])
+    chat = FakeChat(
+        [
+            _msg(
+                tool_calls=[_tc("c1", "write_file", '{"path": "main.py", "content": "print(1)"}')]
+            ),
+            _msg(content="已建立 main.py"),
+        ]
+    )
     expert = providers.OpenAIExpert(BY_KEY["engineer"], "t", tmp_path, chat=chat, model="m")
     bucket, broadcast = collect()
 

@@ -20,6 +20,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
     from studio.server import app
+
     return TestClient(app)
 
 
@@ -55,9 +56,7 @@ def test_offline_end_to_end(client):
     assert by_type.get("git_commit"), "應有 git commit 事件"
 
     # 三個任務都移到完成
-    done_tasks = [
-        e for e in by_type.get("task_status", []) if e["payload"]["status"] == "done"
-    ]
+    done_tasks = [e for e in by_type.get("task_status", []) if e["payload"]["status"] == "done"]
     assert len({e["payload"]["id"] for e in done_tasks}) == 3
 
     # 最終 Demo 真的執行四則運算並輸出 7.0

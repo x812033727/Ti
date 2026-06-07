@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from . import config, runner
 
@@ -23,12 +23,17 @@ class PublishResult:
 
     def to_dict(self) -> dict:
         return {
-            "ok": self.ok, "detail": self.detail, "branch": self.branch,
-            "repo": self.repo, "pushed": self.pushed, "pr_url": self.pr_url,
+            "ok": self.ok,
+            "detail": self.detail,
+            "branch": self.branch,
+            "repo": self.repo,
+            "pushed": self.pushed,
+            "pr_url": self.pr_url,
         }
 
 
 # --- 純邏輯（可單測）---------------------------------------------------
+
 
 def is_configured() -> bool:
     return bool(config.GITHUB_TOKEN and config.PUBLISH_REPO)
@@ -53,13 +58,13 @@ def redact(text: str, token: str | None = None) -> str:
 def pr_payload(requirement: str, branch: str, base: str) -> dict:
     title = "Ti Studio 成果：" + (requirement or "").strip()[:60]
     body = (
-        "此 PR 由 Ti Studio AI 專家工作室自動產生。\n\n"
-        f"**原始需求**：{requirement or '(未提供)'}\n"
+        f"此 PR 由 Ti Studio AI 專家工作室自動產生。\n\n**原始需求**：{requirement or '(未提供)'}\n"
     )
     return {"title": title, "head": branch, "base": base, "body": body}
 
 
 # --- 實際發佈 ----------------------------------------------------------
+
 
 async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
     await runner.run_command(cwd, f"git branch -M {branch}", timeout=30)
@@ -97,15 +102,14 @@ async def publish(cwd, session_id: str, requirement: str, *, make_pr: bool = Tru
 
     push = await _push(cwd, branch, remote_url(repo, config.GITHUB_TOKEN))
     if not push.ok:
-        return PublishResult(
-            False, "push 失敗：" + redact(push.output), branch=branch, repo=repo
-        )
+        return PublishResult(False, "push 失敗：" + redact(push.output), branch=branch, repo=repo)
 
     if not make_pr:
         return PublishResult(True, "已 push", branch=branch, repo=repo, pushed=True)
 
     ok, info = await _open_pr(pr_payload(requirement, branch, config.PUBLISH_BASE))
     if ok:
-        return PublishResult(True, "已 push 並建立 PR", branch=branch, repo=repo,
-                             pushed=True, pr_url=info)
+        return PublishResult(
+            True, "已 push 並建立 PR", branch=branch, repo=repo, pushed=True, pr_url=info
+        )
     return PublishResult(True, "已 push，但 " + info, branch=branch, repo=repo, pushed=True)

@@ -6,8 +6,8 @@ import pytest
 
 from studio import config, publisher, runner
 
-
 # --- 純邏輯 -------------------------------------------------------------
+
 
 def test_is_configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "")
@@ -39,14 +39,17 @@ def test_pr_payload():
 
 # --- publish 流程（mock IO）-------------------------------------------
 
+
 @pytest.fixture
 def _configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+
     # 跳過實際 git init/commit
     async def _noop(*a, **k):
         return True
+
     monkeypatch.setattr(runner, "git_init", _noop)
     monkeypatch.setattr(runner, "git_commit", _noop)
 
@@ -81,8 +84,10 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
 async def test_publish_push_fail(monkeypatch, _configured):
     async def fake_push(cwd, branch, url):
         return runner.RunOutput(
-            command="git push", exit_code=1,
-            output="remote: token tok denied", timed_out=False,
+            command="git push",
+            exit_code=1,
+            output="remote: token tok denied",
+            timed_out=False,
         )
 
     monkeypatch.setattr(publisher, "_push", fake_push)

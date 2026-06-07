@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,12 +18,36 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Install ruff
+        run: python -m pip install --upgrade pip ruff
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
       - name: Install dependencies
         # 測試不需 claude-agent-sdk（orchestrator 延後 import），僅裝測試實際用到的依賴，
         # 讓 CI 快速且不受 SDK 打包差異影響。
         run: |
           python -m pip install --upgrade pip
-          pip install fastapi "uvicorn[standard]" httpx python-dotenv pytest pytest-asyncio
+          pip install fastapi "uvicorn[standard]" httpx python-dotenv pytest pytest-asyncio pytest-cov
 
       - name: Configure git (for workspace git tests)
         run: |
@@ -32,4 +56,4 @@ jobs:
 
       - name: Run tests
         # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=studio --cov-report=term-missing
