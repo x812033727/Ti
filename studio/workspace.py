@@ -16,6 +16,33 @@ NOTES_FILE = "NOTES.md"
 _IGNORE = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv", NOTES_FILE}
 
 
+def safe_resolve(root: Path, rel: str, *, must_exist: bool = True) -> Path | None:
+    """把相對路徑 rel 安全解析到 root 之內，回傳解析後的絕對 Path；逃出範圍回 None。
+
+    這是全專案 containment 判斷的單一真實來源：
+    1. fail-fast 拒絕絕對路徑與含 `..` 的輸入；
+    2. `(root/rel).resolve(strict=must_exist)` 正規化並展開 symlink；
+    3. `is_relative_to(root)` 確認仍落在 root 之內。
+
+    讀取類呼叫端傳 `must_exist=True`（strict 解析，順帶擋不存在路徑與外部 symlink）。
+    `must_exist=False` 給「寫新檔」場景，避免尚未存在的目標被誤擋——注意此時 resolve
+    不對「不存在的尾段」展開 symlink，故「parent 為外部 symlink、往其中寫新檔」這條
+    逃逸路徑無法在此被完整擋下（已知缺口，見 tests）。
+    """
+    try:
+        p = Path(rel)
+        if p.is_absolute() or ".." in p.parts:
+            return None
+        root = root.resolve()
+        target = (root / rel).resolve(strict=must_exist)
+        if not target.is_relative_to(root):
+            return None
+        return target
+    except (FileNotFoundError, OSError, RuntimeError, ValueError):
+        # RuntimeError 涵蓋 symlink loop；其餘為不存在/權限/非法路徑。
+        return None
+
+
 def create_workspace(session_id: str) -> Path:
     """建立（或清空重建）一個乾淨的 session 工作目錄，回傳其路徑。"""
     path = workspace_path(session_id)
@@ -49,11 +76,9 @@ def list_files(session_id: str) -> list[str]:
 
 def read_file(session_id: str, rel_path: str) -> str | None:
     """安全地讀取 workspace 內某檔案內容；超出範圍或不存在則回 None。"""
-    root = workspace_path(session_id).resolve()
-    target = (root / rel_path).resolve()
-    if root not in target.parents and target != root:
-        return None  # 路徑穿越
-    if not target.is_file():
+    root = workspace_path(session_id)
+    target = safe_resolve(root, rel_path)
+    if target is None or not target.is_file():
         return None
     try:
         return target.read_text(encoding="utf-8", errors="replace")
@@ -72,8 +97,9 @@ def append_note(session_id: str, note: str) -> None:
     root = workspace_path(session_id)
     root.mkdir(parents=True, exist_ok=True)
     safe_root = root.resolve()
-    target = (safe_root / NOTES_FILE).resolve()
-    if target.parent != safe_root:  # 防護：固定檔名，理應落在 root 之下
+    # 寫入：檔案可能尚未存在，故 must_exist=False；保留單層判斷（固定檔名理應落在 root 下）。
+    target = safe_resolve(safe_root, NOTES_FILE, must_exist=False)
+    if target is None or target.parent != safe_root:
         return
     with target.open("a", encoding="utf-8") as f:
         f.write(text + "\n\n")
@@ -82,8 +108,9 @@ def append_note(session_id: str, note: str) -> None:
 def read_notes(session_id: str) -> str:
     """讀回 workspace 內 NOTES.md 的全部內容；不存在或超出範圍回空字串。"""
     safe_root = workspace_path(session_id).resolve()
-    target = (safe_root / NOTES_FILE).resolve()
-    if target.parent != safe_root or not target.is_file():
+    target = safe_resolve(safe_root, NOTES_FILE)
+    # 保留 NOTES 的特例語意：只准單層（直接落在 root 之下）。
+    if target is None or target.parent != safe_root or not target.is_file():
         return ""
     try:
         return target.read_text(encoding="utf-8", errors="replace")
@@ -108,9 +135,9 @@ def zip_workspace(session_id: str) -> bytes | None:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel in files:
-            target = (root / rel).resolve()
             # 與 read_file 對齊：跳過指向沙箱外的 symlink，避免外洩。
-            if safe_root not in target.parents:
+            target = safe_resolve(safe_root, rel)
+            if target is None:
                 continue
             zf.write(target, arcname=rel)
     return buf.getvalue()

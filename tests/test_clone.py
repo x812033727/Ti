@@ -42,9 +42,7 @@ class CloneSpy:
     calls: list[dict] = field(default_factory=list)
 
     async def __call__(self, cwd, command, timeout=None, sandbox=None):
-        self.calls.append(
-            {"cwd": cwd, "command": command, "timeout": timeout, "sandbox": sandbox}
-        )
+        self.calls.append({"cwd": cwd, "command": command, "timeout": timeout, "sandbox": sandbox})
         # 回傳的 command 故意給「非還原值」，以證明 git_clone 會無條件重設它（L313）
         return runner.RunOutput(
             command=self.command_label,
@@ -107,9 +105,7 @@ async def test_git_clone_masks_token(clone_spy, tmp_path):
     # spy 回傳的假 output 同時塞「裸 token」與「含 token 的 authed url」，
     # 確保 git_clone 的 result.output.replace(token, "***")（L312）兩處都清掉。
     clone_spy.output = (
-        f"Cloning into '.'...\n"
-        f"fatal: could not read from {authed}\n"
-        f"raw token leaked: {token}\n"
+        f"Cloning into '.'...\nfatal: could not read from {authed}\nraw token leaked: {token}\n"
     )
 
     result = await runner.git_clone(url, tmp_path, token=token)

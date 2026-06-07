@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import re
 from pathlib import Path
 
@@ -41,9 +40,7 @@ async def test_real_clone_path_is_tripwired(monkeypatch, tmp_path):
     """
     monkeypatch.setattr(runner, "_git_available", lambda: True)
     with pytest.raises(RuntimeError, match="no network"):
-        await runner.git_clone(
-            "https://github.com/owner/repo.git", tmp_path, token=None
-        )
+        await runner.git_clone("https://github.com/owner/repo.git", tmp_path, token=None)
     # 絆線在「建立子程序」當下就炸 → tmp_path 不會有任何 clone 痕跡。
     assert not (tmp_path / ".git").exists()
     assert list(tmp_path.iterdir()) == []

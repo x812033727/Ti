@@ -47,6 +47,41 @@ async def test_path_traversal_blocked(tmp_path):
     )
 
 
+@pytest.mark.asyncio
+async def test_absolute_path_blocked(tmp_path):
+    assert "超出" in await tools.execute(
+        "write_file", {"path": "/etc/evil.txt", "content": "x"}, tmp_path
+    )
+
+
+@pytest.mark.asyncio
+async def test_target_equals_root_allowed_for_write(tmp_path):
+    # rel="" → target == root（目錄），_safe_path 應放行（與原行為一致），
+    # 但寫入目錄會失敗 → 落到工具執行錯誤而非「超出」。
+    out = await tools.execute("write_file", {"path": "", "content": "x"}, tmp_path)
+    assert "超出" not in out
+
+
+def test_safe_path_target_equals_root(tmp_path):
+    assert tools._safe_path(tmp_path, "") == tmp_path.resolve()
+
+
+def test_safe_path_inner_symlink_allowed(tmp_path):
+    (tmp_path / "real.txt").write_text("hi", encoding="utf-8")
+    (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
+    # symlink 指回 workspace 內 → 放行
+    assert tools._safe_path(tmp_path, "link.txt") == (tmp_path / "real.txt").resolve()
+
+
+def test_safe_path_external_symlink_blocked(tmp_path):
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "leak").symlink_to(outside)
+    assert tools._safe_path(ws, "leak") is None
+
+
 def test_specs_for_by_role():
     from studio.roles import ENGINEER, PM
 

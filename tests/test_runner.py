@@ -134,7 +134,12 @@ async def test_run_command_exec_no_shell_injection(tmp_path):
     # 把 payload 當單一參數寫進檔案，驗證它原樣保留、且未觸發任何子指令
     r = await runner.run_command_exec(
         tmp_path,
-        ["python3", "-c", "import sys,pathlib;pathlib.Path('out.txt').write_text(sys.argv[1])", payload],
+        [
+            "python3",
+            "-c",
+            "import sys,pathlib;pathlib.Path('out.txt').write_text(sys.argv[1])",
+            payload,
+        ],
         sandbox=False,
     )
     assert r.ok, r.output
@@ -163,9 +168,7 @@ async def test_run_command_exec_label(tmp_path):
     r = await runner.run_command_exec(tmp_path, ["echo", "hi"], sandbox=False)
     assert r.command == "echo"
     # 可覆寫為簡短顯示標籤
-    r2 = await runner.run_command_exec(
-        tmp_path, ["echo", "hi"], sandbox=False, label="git commit"
-    )
+    r2 = await runner.run_command_exec(tmp_path, ["echo", "hi"], sandbox=False, label="git commit")
     assert r2.command == "git commit"
 
 
@@ -292,10 +295,10 @@ async def test_git_commit_disabled_returns_none(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "evil",
     [
-        "`touch pwned`",      # backtick 命令替換
-        "$(touch pwned)",     # $() 命令替換
-        "; touch pwned",      # ; 指令分隔
-        "fix\ntouch pwned",   # 換行：第二行為裸指令
+        "`touch pwned`",  # backtick 命令替換
+        "$(touch pwned)",  # $() 命令替換
+        "; touch pwned",  # ; 指令分隔
+        "fix\ntouch pwned",  # 換行：第二行為裸指令
     ],
     ids=["backtick", "dollar-paren", "semicolon", "newline"],
 )
@@ -504,8 +507,9 @@ async def test_git_commit_fail_closed_logs_warning(tmp_path, monkeypatch, caplog
         assert await runner.git_commit(tmp_path, "x") is None
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings, "fail-closed 應記一筆 warning"
-    assert any("git add" in r.getMessage() for r in warnings), \
+    assert any("git add" in r.getMessage() for r in warnings), (
         f"warning 應點名失敗步驟：{[r.getMessage() for r in warnings]}"
+    )
 
 
 @pytest.mark.asyncio

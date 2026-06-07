@@ -73,15 +73,24 @@ async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
         cwd, ["git", "branch", "-M", branch], timeout=30, sandbox=False, label="git branch"
     )
     await runner.run_command_exec(
-        cwd, ["git", "remote", "remove", "ti_publish"], timeout=20, sandbox=False,
+        cwd,
+        ["git", "remote", "remove", "ti_publish"],
+        timeout=20,
+        sandbox=False,
         label="git remote remove",
     )
     await runner.run_command_exec(
-        cwd, ["git", "remote", "add", "ti_publish", url], timeout=20, sandbox=False,
+        cwd,
+        ["git", "remote", "add", "ti_publish", url],
+        timeout=20,
+        sandbox=False,
         label="git remote add",
     )
     return await runner.run_command_exec(
-        cwd, ["git", "push", "-u", "ti_publish", branch], timeout=120, sandbox=False,
+        cwd,
+        ["git", "push", "-u", "ti_publish", branch],
+        timeout=120,
+        sandbox=False,
         label="git push",
     )
 

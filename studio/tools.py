@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from . import runner
+from .workspace import safe_resolve
 
 # OpenAI function-calling 工具規格
 _SPECS: dict[str, dict] = {
@@ -88,12 +89,12 @@ def specs_for(allowed_claude_tools: list[str]) -> list[dict]:
     return [_SPECS[n] for n in _SPECS if n in names]
 
 
-def _safe_path(cwd: Path, rel: str) -> Path | None:
-    root = Path(cwd).resolve()
-    target = (root / rel).resolve()
-    if target != root and root not in target.parents:
-        return None
-    return target
+def _safe_path(cwd: Path, rel: str, *, must_exist: bool = True) -> Path | None:
+    """薄包裝 workspace.safe_resolve；維持單一 containment 真實來源。
+
+    讀取/編輯預設 must_exist=True；write_file 傳 False，避免尚未存在的新檔被誤擋。
+    """
+    return safe_resolve(Path(cwd), rel, must_exist=must_exist)
 
 
 async def execute(name: str, args: dict, cwd: Path) -> str:
@@ -107,7 +108,8 @@ async def execute(name: str, args: dict, cwd: Path) -> str:
             return target.read_text(encoding="utf-8", errors="replace")
 
         if name == "write_file":
-            target = _safe_path(cwd, args.get("path", ""))
+            # 寫新檔：目標可能尚未存在，必須 must_exist=False 否則一律被擋。
+            target = _safe_path(cwd, args.get("path", ""), must_exist=False)
             if not target:
                 return "錯誤：路徑超出 workspace"
             target.parent.mkdir(parents=True, exist_ok=True)

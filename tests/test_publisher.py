@@ -30,7 +30,7 @@ def test_branch_name_strips_shell_metachars():
     out = publisher.branch_name(evil)
     # 僅保留白名單字元（前綴 + alnum / - / _）
     assert out.startswith("ti-studio/")
-    tail = out[len("ti-studio/"):]
+    tail = out[len("ti-studio/") :]
     assert all(c.isalnum() or c in "-_" for c in tail), f"殘留危險字元：{out!r}"
     # 明確不含任一 shell metacharacter
     for ch in ";`$()&|><\n\t '\"/\\":

@@ -108,9 +108,7 @@ def _sandbox_blocked(label: str) -> RunOutput:
     )
 
 
-async def _finalize_proc(
-    proc: asyncio.subprocess.Process, label: str, timeout: int
-) -> RunOutput:
+async def _finalize_proc(proc: asyncio.subprocess.Process, label: str, timeout: int) -> RunOutput:
     """共用收尾：communicate + 逾時 kill + 輸出截斷。
 
     `label` 為 RunOutput.command 顯示用字串，由呼叫端決定（shell 傳原始指令、
@@ -333,8 +331,9 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
     add = await run_command_exec(root, ["git", "add", "-A"], timeout=30, label="git add")
     if not add.ok:
         # 沙箱啟用但 bwrap 缺失會在此 fail-closed；記一筆便於排查。
-        log.warning("git add 失敗（exit=%s, timed_out=%s）：%s",
-                    add.exit_code, add.timed_out, add.output)
+        log.warning(
+            "git add 失敗（exit=%s, timed_out=%s）：%s", add.exit_code, add.timed_out, add.output
+        )
         return None
 
     # commit 直接帶 git identity 兜底，消滅 clone 流程下 identity 缺失整類失敗。
@@ -342,10 +341,16 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
         root,
         [
             "git",
-            "-c", f"user.name={_GIT_USER_NAME}",
-            "-c", f"user.email={_GIT_USER_EMAIL}",
-            "-c", "commit.gpgsign=false",
-            "commit", "-q", "-m", message,
+            "-c",
+            f"user.name={_GIT_USER_NAME}",
+            "-c",
+            f"user.email={_GIT_USER_EMAIL}",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            message,
         ],
         timeout=30,
         label="git commit",
