@@ -9,8 +9,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import os
 import time
 
+from dotenv import set_key
 from fastapi import HTTPException, Request, WebSocket
 
 from . import config
@@ -46,6 +48,18 @@ def verify_token(token: str | None) -> bool:
 def check_password(password: str) -> bool:
     """常數時間比較使用者輸入的密碼與設定的密碼。"""
     return hmac.compare_digest(password or "", config.ACCESS_PASSWORD)
+
+
+def set_password(new_password: str) -> None:
+    """設定 / 變更存取密碼：寫入 .env、更新環境變數與 config（即時生效，無需重啟）。
+
+    設為非空字串即啟用門禁；設為空字串則停用門禁。既有的登入 cookie 以 AUTH_SECRET
+    簽章、與密碼無關，因此變更密碼不會把目前使用者登出（新登入才需要用新密碼）。
+    """
+    new_password = (new_password or "").strip()
+    set_key(str(config.PROJECT_ROOT / ".env"), "TI_ACCESS_PASSWORD", new_password)
+    os.environ["TI_ACCESS_PASSWORD"] = new_password
+    config.ACCESS_PASSWORD = new_password
 
 
 def is_authed(scope: Request | WebSocket) -> bool:

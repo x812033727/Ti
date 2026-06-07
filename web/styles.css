@@ -137,6 +137,14 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
   background: var(--bg); color: var(--text); font-size: 13px;
 }
 .set-row input:focus, .set-row select:focus { outline: none; border-color: var(--accent); }
+/* 變更門禁密碼區塊 */
+.settings-pw { padding: 4px 14px 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
+.settings-pw h3 { margin: 12px 0 2px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.settings-pw input { padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
+.settings-pw input:focus { outline: none; border-color: var(--accent); }
+.pw-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+.pw-actions button { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; background: var(--good); color: white; font-weight: 600; font-size: 13px; }
+
 .settings-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--border); }
 .settings-foot button { padding: 8px 18px; border: none; border-radius: 8px; cursor: pointer; background: var(--accent); color: white; font-weight: 600; font-size: 14px; }
 .muted { color: var(--muted); font-size: 12px; }

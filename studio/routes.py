@@ -63,6 +63,36 @@ async def logout() -> JSONResponse:
     return response
 
 
+class PasswordBody(BaseModel):
+    current_password: str = ""
+    new_password: str = ""
+
+
+@router.post("/api/auth/password", dependencies=[Depends(auth.require_auth)])
+async def change_password(body: PasswordBody) -> JSONResponse:
+    """變更 / 設定存取密碼。
+
+    - 門禁已啟用：require_auth 確保已登入，再驗證『目前密碼』正確才放行。
+    - 門禁未啟用：可直接設定一組新密碼以首次啟用門禁（此時無需目前密碼）。
+    成功後回應會附上新的登入 cookie，避免操作者在啟用門禁的當下被登出。
+    """
+    if config.auth_enabled() and not auth.check_password(body.current_password):
+        return JSONResponse({"ok": False, "detail": "目前密碼錯誤"}, status_code=403)
+    new = (body.new_password or "").strip()
+    if len(new) < 4:
+        return JSONResponse({"ok": False, "detail": "新密碼至少 4 個字元"}, status_code=400)
+    auth.set_password(new)
+    response = JSONResponse({"ok": True, "auth_enabled": config.auth_enabled()})
+    response.set_cookie(
+        config.AUTH_COOKIE,
+        auth.make_token(),
+        max_age=config.AUTH_TTL,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
 # --- 設定（受保護）----------------------------------------------------
 @router.get("/api/settings", dependencies=[Depends(auth.require_auth)])
 async def get_settings() -> JSONResponse:
