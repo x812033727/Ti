@@ -49,16 +49,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" httpx python-dotenv pytest pytest-asyncio pytest-cov
 
-      - name: Install bubblewrap (runner 沙箱所需)
-        # studio/runner.py 用 bwrap 把 Demo/自測指令關進 workspace 沙箱；缺 bwrap 時
-        # run_command fail-closed 拒絕執行，會讓 runner/tools/offline e2e 測試失敗。
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
-
       - name: Configure git (for workspace git tests)
         run: |
           git config --global user.email ci@ti.local
           git config --global user.name "CI"
 
       - name: Run tests
-        # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import
+        # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import。
+        # CI runner 無法執行 bubblewrap（Ubuntu 24.04 限制 unprivileged user/net
+        # namespace，--unshare-net 會 "loopback: RTM_NEWADDR Operation not permitted"），
+        # 故用官方逃生口 TI_SANDBOX=0 關閉沙箱。沙箱只是執行外層包裝，run_command 的
+        # 行為與測試覆蓋不變；正式環境預設 TI_SANDBOX=1 仍開啟。
+        env:
+          TI_SANDBOX: "0"
         run: python -m pytest -q --cov=studio --cov-report=term-missing
