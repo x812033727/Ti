@@ -214,6 +214,58 @@ async def test_git_init_and_commit(tmp_path):
     assert await runner.git_commit(tmp_path, "empty") is None
 
 
+# --- 驗收標準 3：功能不退化（正常 commit / 無變更回 None）---------------
+
+
+@pytest.mark.asyncio
+async def test_git_commit_normal_returns_valid_hash(tmp_path):
+    """正常訊息成功 commit，回傳短 hash 為 hex 且與實際 HEAD 一致。"""
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "a.txt").write_text("v1")
+    h = await runner.git_commit(tmp_path, "正常 commit 訊息")
+    assert h and 4 <= len(h) <= 40
+    assert all(c in "0123456789abcdef" for c in h), f"非 hex 短 hash：{h!r}"
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == h
+
+
+@pytest.mark.asyncio
+async def test_git_commit_no_change_returns_none_head_unmoved(tmp_path):
+    """無變更時回 None，且 HEAD 不移動（不產生空 commit）。"""
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "a.txt").write_text("v1")
+    h1 = await runner.git_commit(tmp_path, "first")
+    assert h1
+    assert await runner.git_commit(tmp_path, "no change") is None
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == h1, "無變更不應移動 HEAD"
+
+
+@pytest.mark.asyncio
+async def test_git_commit_sequential_distinct_hashes(tmp_path):
+    """連續多次有變更的 commit 各回不同短 hash。"""
+    assert await runner.git_init(tmp_path) is True
+    hashes = []
+    for i in range(3):
+        (tmp_path / f"f{i}.txt").write_text(str(i))
+        h = await runner.git_commit(tmp_path, f"commit {i}")
+        assert h, f"第 {i} 次 commit 失敗"
+        hashes.append(h)
+    assert len(set(hashes)) == 3, f"hash 應各異：{hashes}"
+
+
+@pytest.mark.asyncio
+async def test_git_commit_disabled_returns_none(tmp_path, monkeypatch):
+    """ENABLE_GIT 關閉時直接回 None（介面契約不變）。"""
+    monkeypatch.setattr(runner.config, "ENABLE_GIT", False)
+    (tmp_path / "a.txt").write_text("v1")
+    assert await runner.git_commit(tmp_path, "msg") is None
+
+
 # --- 驗收標準 2：四類字面注入 payload，工作目錄不出現 pwned -------------
 
 
