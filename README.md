@@ -144,10 +144,10 @@ TI_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 TI_OPENAI_MODEL_LEA
 
 ## 測試
 
-不需 API 金鑰的流程狀態機單元測試：
+不需 API 金鑰的流程狀態機單元測試（指令以 Linux/macOS 為準；假設已依 [CONTRIBUTING.md](CONTRIBUTING.md) 建好 `.venv`。Windows 請改用 `.venv\Scripts\python`）：
 
 ```bash
-pip install -e ".[dev]"
+.venv/bin/python -m pip install -e ".[dev]"
 .venv/bin/python -m pytest                 # 跑測試
 ruff check . && ruff format --check .   # 跑 lint / 格式檢查
 pre-commit install     # （選填）裝 git hook，提交前自動 lint
