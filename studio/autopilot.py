@@ -120,6 +120,21 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     if config.AUTOPILOT_DRYRUN:
         return True, f"[dryrun] 會 push {branch} 並 squash-merge 進 {config.AUTOPILOT_BRANCH}"
 
+    # push 前防呆：每個 task 都是全新分支，遠端不該已存在同名分支。三態判定——
+    #   rc!=0：ls-remote 本身失敗（網路/認證），視為錯誤中止，不可 fall-through 當「不存在」。
+    #   rc==0 且有輸出：遠端已存在同名分支（task 重跑或殘留），預設中止；FORCE_PUSH 為真才放行覆寫。
+    #   rc==0 且空輸出：遠端不存在，放行。
+    rc, out = await _run(
+        ["git", *_GIT_CRED, "ls-remote", "--heads", "origin", branch], cwd=clone, timeout=60
+    )
+    if rc != 0:
+        return False, f"ls-remote 檢查失敗（無法確認遠端狀態，已中止）：{out[-400:]}"
+    if out.strip() and not config.AUTOPILOT_FORCE_PUSH:
+        return False, (
+            f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
+            f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
+        )
+
     rc, out = await _run(
         ["git", *_GIT_CRED, "push", "-f", "-u", "origin", branch], cwd=clone, timeout=180
     )
