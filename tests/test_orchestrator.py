@@ -405,6 +405,64 @@ async def test_stall_disabled_with_no_cwd():
 
 
 @pytest.mark.asyncio
+async def test_stall_disabled_when_rounds_le_one(tmp_path, monkeypatch):
+    """STALL_ROUNDS<=1 視為停用：即使連續重述也跑滿輪數、不提早收斂。"""
+    from studio import runner, workspace
+
+    async def _noop_init(cwd):
+        return True
+
+    async def _noop_commit(cwd, message):
+        return None
+
+    monkeypatch.setattr(runner, "git_init", _noop_init)
+    monkeypatch.setattr(runner, "git_commit", _noop_commit)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "STALL_ROUNDS", 1)  # 關閉
+    monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 3)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "nostall"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["重複內容重複內容"],
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession(sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid))
+    await session.run("需求")
+
+    assert experts["engineer"].calls == 3  # 跑滿，未提早收斂
+    phases = [e.payload["phase"] for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "停滯收斂" not in phases
+
+
+@pytest.mark.asyncio
+async def test_all_mechanisms_off_matches_baseline():
+    """四機制全關（含非 offline）時，happy path 不產生任何新機制事件，行為同既有。"""
+    # 直接驗證預設值已是關閉狀態（不靠 monkeypatch，確保預設相容）
+    for name in ("HUDDLE_ENABLED", "CRITIC_ENABLED", "NOTES_ENABLED", "OFFLINE_MODE"):
+        assert getattr(config, name) is False, f"{name} 預設應為 False"
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    ts = types(bucket)
+    assert events.EventType.HUDDLE not in ts
+    assert events.EventType.CRITIC_REVIEW not in ts
+    assert experts["engineer"].calls == 1  # 與 baseline 相同
+
+
+@pytest.mark.asyncio
 async def test_notes_written_and_read_back(tmp_path, monkeypatch):
     """NOTES.md：第一任務結束摘要寫入 → 第二任務實作 prompt 能讀回；結束後檔案存在。"""
     from studio import workspace
