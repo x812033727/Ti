@@ -249,3 +249,26 @@ async def test_git_clone_branch_re_accepts(clone_spy, tmp_path, good_branch):
     tokens = shlex.split(cmd)
     idx = tokens.index("--branch")
     assert tokens[idx + 1] == good_branch
+
+
+# --- 任務 #4：強制非沙箱（PM #5）---------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "token, branch",
+    [
+        (None, None),  # 公開倉庫、無 branch
+        ("ghp_xxx", None),  # 私有倉庫
+        (None, "main"),  # 帶 branch
+        ("ghp_xxx", "feat/x"),  # token + branch 全帶
+    ],
+)
+async def test_git_clone_forces_no_sandbox(clone_spy, tmp_path, token, branch):
+    """git_clone 必須一律以 sandbox=False 呼叫 run_command。
+
+    clone 需要網路，而沙箱預設斷網（--unshare-net），若進沙箱會直接失敗。
+    對應 runner.git_clone L309 的硬編 `sandbox=False`，任何參數組合都不得改變。
+    """
+    await runner.git_clone(
+        "https://github.com/owner/repo.git", tmp_path, token=token, branch=branch
+    )
+    assert clone_spy.last["sandbox"] is False
