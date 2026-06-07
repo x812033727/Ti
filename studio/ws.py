@@ -31,12 +31,22 @@ async def ws(websocket: WebSocket) -> None:
 
     session_id = uuid.uuid4().hex[:12]
     recording = False
+    connected = True
 
     async def broadcast(event: StudioEvent) -> None:
+        nonlocal connected
         d = event.to_dict()
         if recording:
             history.record_event(session_id, d)
-        await websocket.send_json(d)
+        # 客戶端可能在討論進行中斷線（關分頁／網路斷）。連線已關後若再 send_json
+        # 會丟 RuntimeError("websocket.send after close")。一旦偵測到關閉就停止再送，
+        # 歷史仍照常記錄，事件不會遺失。
+        if not connected:
+            return
+        try:
+            await websocket.send_json(d)
+        except (RuntimeError, WebSocketDisconnect):
+            connected = False
 
     try:
         # 第一則訊息為產品需求（可選擇附帶要 clone 的 GitHub repo）
