@@ -58,6 +58,9 @@ python -m studio.server              # 或：uvicorn studio.server:app
 開啟瀏覽器 http://localhost:8000 ，輸入需求（例如「做一個能計算 BMI 並分類的 Python CLI」），
 按「開始討論」即可觀看專家協作。產出的程式碼會放在 `workspaces/<session_id>/`。
 
+討論產出檔案後，右側「產出檔案」面板會出現「⬇️ 下載成果」按鈕，點擊即可把整個 workspace
+打包成 `workspace-<session_id>.zip` 下載到本機（自動排除 `.git/` 等雜訊；門禁啟用時需先登入）。
+
 ### 登入 / 門禁（選填）
 
 預設不需登入。若要讓工作室只開放給知道密碼的人，設定一組共用密碼即可：

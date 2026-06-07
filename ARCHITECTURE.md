@@ -26,7 +26,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `config.py` | 集中設定：模型、輪數、辯論、Demo、git、門禁、路徑、伺服器；`reload()` 供執行期套用變更 |
 | `auth.py` | 單一密碼門禁：cookie token 簽章/驗證、`require_auth` 依賴、WS 檢查 |
 | `settings.py` | UI 可調設定（API key / provider / 模型 / GitHub token）：白名單、遮蔽秘密、寫入 .env、`config.reload()` |
-| `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace、history、publish |
+| `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish |
 | `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
 | `orchestrator.py` | `StudioSession`：需求拆解 → 架構辯論 → 逐任務迭代 → Demo → 驗收/檢討 |
