@@ -14,8 +14,10 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    PermissionResultAllow,
     ResultMessage,
     TextBlock,
+    ToolPermissionContext,
     ToolUseBlock,
 )
 
@@ -26,6 +28,19 @@ Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
 # PM 與高級工程師用主力（推理強）模型，其餘用快速模型。
 _LEAD_ROLES = {"pm", "senior"}
+
+
+async def _auto_allow_tool(
+    tool_name: str, tool_input: dict, context: ToolPermissionContext
+) -> PermissionResultAllow:
+    """自動核可專家請求的工具。
+
+    工作室是無人值守後端，沒有真人能回答 SDK 的權限詢問；改用此回呼放行，取代
+    bypassPermissions（後者會傳 --dangerously-skip-permissions，在 root 服務下被
+    Claude CLI 拒絕）。每位專家可用的工具已由 role.allowed_tools 白名單限制，且各自
+    跑在獨立 workspace（cwd）內。
+    """
+    return PermissionResultAllow()
 
 
 def _model_for(role: Role) -> str:
@@ -56,6 +71,7 @@ class Expert:
                 system_prompt=role.system_prompt,
                 allowed_tools=role.allowed_tools,
                 permission_mode=role.permission_mode,
+                can_use_tool=_auto_allow_tool,
                 cwd=str(cwd),
                 model=_model_for(role),
                 max_turns=config.MAX_TURNS_PER_TURN,
