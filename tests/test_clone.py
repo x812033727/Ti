@@ -7,12 +7,29 @@ runner.run_command，記錄 git_clone 實際組出的指令字串並回傳可控
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 from dataclasses import dataclass, field
 
 import pytest
 
 from studio import runner
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_subprocess(monkeypatch):
+    """保險絲（PM #6 不碰網路）：本檔全程禁止啟動真實子程序。
+
+    autouse 對本檔每個測試生效——把 asyncio 的 subprocess 建立函式換成會爆炸的
+    版本。攔截 run_command 的測試根本走不到這裡；萬一日後有人誤加「真跑 clone」
+    的測試，會立刻在此炸開而非默默連網，釘死「所有驗證僅靠攔截字串與 tmp_path」。
+    """
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("test forbids spawning a real subprocess (no network)")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", _boom)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
 
 
 @dataclass
@@ -272,3 +289,22 @@ async def test_git_clone_forces_no_sandbox(clone_spy, tmp_path, token, branch):
         "https://github.com/owner/repo.git", tmp_path, token=token, branch=branch
     )
     assert clone_spy.last["sandbox"] is False
+
+
+# --- 任務 #5：不碰網路（PM #6）-----------------------------------------
+@pytest.mark.asyncio
+async def test_git_clone_never_spawns_real_subprocess(monkeypatch, tmp_path):
+    """釘死「不碰網路」：故意「不」攔截 run_command，讓 git_clone 走真實路徑。
+
+    唯一對外（連網）的途徑就是 run_command 內的 asyncio 子程序；本檔的 autouse
+    保險絲已把它換成會炸的版本。因此 git_clone 必然在嘗試 spawn 時 RuntimeError，
+    證明：(1) 對外只有子程序這一條路、(2) 本檔已封死、(3) tmp_path 無任何 clone 產物。
+    """
+    # 強制 _git_available()=True 確保走到 spawn 點（與環境是否裝 git 脫鉤）。
+    monkeypatch.setattr(runner, "_git_available", lambda: True)
+
+    with pytest.raises(RuntimeError, match="real subprocess"):
+        await runner.git_clone("https://github.com/owner/repo.git", tmp_path)
+
+    # 沒有任何 clone 產物落地。
+    assert list(tmp_path.iterdir()) == []
