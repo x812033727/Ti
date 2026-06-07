@@ -337,6 +337,58 @@ async def test_git_commit_multiline_message_preserved(tmp_path):
     assert body.output.rstrip("\n") == msg.rstrip("\n")
 
 
+# --- 驗收標準 4：多行／特殊字元訊息原樣寫入 ----------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "簡單標題",
+        "含特殊字元 $VAR `cmd` ;&|<>() \"雙引號\" 'single' \\反斜線",
+        "emoji 🚀 與中文標點，。！？ 混排 #hashtag @at %pct",
+        "行內 tab\t與 = 號 ~ ^ * ? [ ] { }",
+    ],
+    ids=["plain", "shell-metachars", "unicode-emoji", "symbols"],
+)
+async def test_git_commit_singleline_special_chars_verbatim(tmp_path, msg):
+    """單行含大量特殊字元，commit message 完全原樣（git -m 不改動單行內容）。"""
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "f.txt").write_text("payload")
+    h = await runner.git_commit(tmp_path, msg)
+    assert h
+    body = await runner.run_command_exec(
+        tmp_path, ["git", "log", "-1", "--format=%B"], sandbox=False
+    )
+    assert body.output.rstrip("\n") == msg, f"訊息未原樣保留：{body.output!r}"
+
+
+@pytest.mark.asyncio
+async def test_git_commit_multiline_body_with_blank_lines_verbatim(tmp_path):
+    """多行 body（含中間空行、特殊字元）完整、原樣、逐行保留。"""
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "f.txt").write_text("data")
+    msg = (
+        "標題：修正 $bug 與 `race`\n"
+        "\n"
+        "詳述：\n"
+        "- 項目 `a` 用 $(cmd)\n"
+        "- 項目 \"b\" 與 'c'；含 & | ; 符號\n"
+        "\n"
+        "結尾段落。"
+    )
+    h = await runner.git_commit(tmp_path, msg)
+    assert h
+    body = await runner.run_command_exec(
+        tmp_path, ["git", "log", "-1", "--format=%B"], sandbox=False
+    )
+    # git 僅正規化結尾換行；標題、空行、各行特殊字元一字不差
+    assert body.output.rstrip("\n") == msg.rstrip("\n")
+    # 逐行確認每一行都完整存在且順序正確
+    got_lines = body.output.rstrip("\n").split("\n")
+    assert got_lines == msg.split("\n")
+
+
 @pytest.mark.asyncio
 async def test_git_commit_no_message_replace_escaping():
     """驗收標準 1（靜態）：原始碼不殘留 message.replace 跳脫，亦不直接走 shell。"""
