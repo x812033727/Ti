@@ -299,3 +299,68 @@ async def test_git_commit_fail_closed_when_bwrap_missing(tmp_path, monkeypatch):
         tmp_path, ["git", "rev-parse", "--verify", "-q", "HEAD"], sandbox=False
     )
     assert not log.ok
+
+
+@pytest.mark.asyncio
+async def test_git_commit_three_steps_go_through_sandbox(tmp_path, monkeypatch):
+    """任務 #3：SANDBOX_ENABLED 時三步 git 操作都經 bwrap 沙箱，且沙箱內 identity 可用。"""
+    if not runner.config._sandbox_available():
+        pytest.skip("環境無 bwrap，略過沙箱實跑")
+    # 先 init 好（.git 已存在）→ git_init no-op，只剩 git_commit 三步會打沙箱
+    await runner.run_command_exec(tmp_path, ["git", "init", "-q"], sandbox=False)
+    (tmp_path / "f.txt").write_text("data")
+    monkeypatch.setattr(runner.config, "SANDBOX_ENABLED", True)
+
+    calls: list[str] = []
+    orig = runner._bwrap_prefix
+
+    def spy(cwd):
+        calls.append(str(cwd))
+        return orig(cwd)
+
+    monkeypatch.setattr(runner, "_bwrap_prefix", spy)
+    h = await runner.git_commit(tmp_path, "sandbox 三步")
+    # 沙箱內 identity 兜底生效 → commit 成功
+    assert h and len(h) >= 4
+    # add / commit / rev-parse 三步都走沙箱分支
+    assert len(calls) == 3, f"預期三步進沙箱，實際 {len(calls)} 次"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "fix `touch pwned`",
+        "fix $(touch pwned)",
+        "fix ; touch pwned",
+        "head\nbody `touch pwned`",
+    ],
+)
+async def test_git_commit_no_injection_in_real_sandbox(tmp_path, monkeypatch, evil):
+    """端到端：SANDBOX_ENABLED 時，惡意訊息經 bwrap 沙箱仍不被執行且 commit 成功。"""
+    if not runner.config._sandbox_available():
+        pytest.skip("環境無 bwrap，略過沙箱實跑")
+    await runner.run_command_exec(tmp_path, ["git", "init", "-q"], sandbox=False)
+    (tmp_path / "f.txt").write_text("data")
+    monkeypatch.setattr(runner.config, "SANDBOX_ENABLED", True)
+    h = await runner.git_commit(tmp_path, evil)
+    assert h and len(h) >= 4
+    assert not (tmp_path / "pwned").exists(), f"沙箱內注入被執行：{evil!r}"
+    body = await runner.run_command_exec(
+        tmp_path, ["git", "log", "-1", "--format=%B"], sandbox=False
+    )
+    assert body.output.rstrip("\n") == evil.rstrip("\n")
+
+
+@pytest.mark.asyncio
+async def test_git_commit_respects_sandbox_disabled(tmp_path, monkeypatch):
+    """SANDBOX_ENABLED=False 時三步不進沙箱（沿用 config，非寫死）。"""
+    await runner.run_command_exec(tmp_path, ["git", "init", "-q"], sandbox=False)
+    (tmp_path / "f.txt").write_text("data")
+    monkeypatch.setattr(runner.config, "SANDBOX_ENABLED", False)
+
+    calls: list[str] = []
+    monkeypatch.setattr(runner, "_bwrap_prefix", lambda cwd: calls.append(str(cwd)) or [])
+    h = await runner.git_commit(tmp_path, "no sandbox")
+    assert h and len(h) >= 4
+    assert calls == [], "SANDBOX_ENABLED=False 時不應呼叫 bwrap"
