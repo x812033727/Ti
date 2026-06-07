@@ -187,7 +187,8 @@ class StudioSession:
         """
         if self._critics is not None:
             return self._critics.get(role_key)
-        if self.cwd is None:
+        # 離線示範未注入 critics 時不走真 provider（無金鑰），直接放行不報錯。
+        if self.cwd is None or config.OFFLINE_MODE:
             return None
         from .providers import make_expert
         from .roles import BY_KEY
@@ -201,7 +202,8 @@ class StudioSession:
 
         刻意只餵標的與驗收標準、不餵當事人剛才的核可理由以降低錨定；停用或無 critic 時放行。
         """
-        if not config.CRITIC_ENABLED or self._stop:
+        # 離線示範（OFFLINE_MODE）視為 demo 情境自動啟用，以展示「內部討論」事件。
+        if not (config.CRITIC_ENABLED or config.OFFLINE_MODE) or self._stop:
             return True, ""
         critic = self._get_critic(role_key)
         if critic is None:

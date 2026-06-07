@@ -72,6 +72,23 @@ def test_offline_end_to_end(client):
     assert boards and boards[-1]["payload"]["columns"]["done"]
 
 
+def test_offline_shows_internal_discussion(client):
+    """離線端到端：流程跑完，且至少出現一次「內部討論」事件（critic 或 huddle）。"""
+    events = _run_session(client, "做一個四則運算 CLI")
+    by_type = {}
+    for e in events:
+        by_type.setdefault(e["type"], []).append(e)
+
+    # 流程跑完並達標
+    assert by_type["done"][-1]["payload"]["completed"] is True
+    # 至少一次內部討論事件
+    discussions = by_type.get("critic_review", []) + by_type.get("huddle", [])
+    assert discussions, "離線示範應展示至少一次內部討論事件（critic_review/huddle）"
+    # critic 在主路徑放行（不阻斷流程）
+    critics = by_type.get("critic_review", [])
+    assert critics and any(e["payload"]["passed"] for e in critics)
+
+
 def test_offline_history_recorded(client):
     events = _run_session(client, "需求 X")
     sid = events[-1]["session_id"]
