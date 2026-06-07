@@ -10,10 +10,28 @@ import asyncio
 import re
 import shlex
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import config
+
+# 解析「以 python 開頭」的指令用：把直譯器 token 換成實際可用的執行檔。
+_PY_PREFIX = re.compile(r"\s*(python3?|py)\b")
+
+
+def _executable_command(command: str) -> str:
+    """若指令以 python/python3 開頭但該名稱不在 PATH，改用 sys.executable 執行。
+
+    確保在只有 `python3`（無 `python`）的環境也能跑自測 / Demo；顯示用的原始指令不變。
+    """
+    m = _PY_PREFIX.match(command)
+    if not m:
+        return command
+    tok = m.group(1)
+    if shutil.which(tok):
+        return command
+    return command[: m.start(1)] + shlex.quote(sys.executable) + command[m.end(1) :]
 
 
 @dataclass
@@ -39,7 +57,7 @@ async def run_command(cwd: Path | str, command: str, timeout: int | None = None)
     """在 cwd 執行 shell 指令，合併 stdout/stderr，套用逾時與輸出上限。"""
     timeout = timeout or config.DEMO_TIMEOUT
     proc = await asyncio.create_subprocess_shell(
-        command,
+        _executable_command(command),
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
