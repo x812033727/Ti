@@ -97,8 +97,9 @@ def append_note(session_id: str, note: str) -> None:
     root = workspace_path(session_id)
     root.mkdir(parents=True, exist_ok=True)
     safe_root = root.resolve()
-    target = (safe_root / NOTES_FILE).resolve()
-    if target.parent != safe_root:  # 防護：固定檔名，理應落在 root 之下
+    # 寫入：檔案可能尚未存在，故 must_exist=False；保留單層判斷（固定檔名理應落在 root 下）。
+    target = safe_resolve(safe_root, NOTES_FILE, must_exist=False)
+    if target is None or target.parent != safe_root:
         return
     with target.open("a", encoding="utf-8") as f:
         f.write(text + "\n\n")
