@@ -166,8 +166,10 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         cwd=clone,
         timeout=120,
     )
+    # 預設不帶 --admin，讓 GitHub 分支保護/必過檢查生效；僅 MERGE_ADMIN 為真才繞過保護。
+    admin_flag = ["--admin"] if config.AUTOPILOT_MERGE_ADMIN else []
     rc, out = await _run(
-        [*_GH, "pr", "merge", "-R", repo, branch, "--squash", "--admin", "--delete-branch"],
+        [*_GH, "pr", "merge", "-R", repo, branch, "--squash", *admin_flag, "--delete-branch"],
         cwd=clone,
         timeout=180,
     )

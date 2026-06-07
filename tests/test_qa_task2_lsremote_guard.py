@@ -97,8 +97,8 @@ async def test_lsremote_called_before_push_when_remote_absent(monkeypatch):
     assert spy.called(f"ls-remote --heads origin {_BRANCH}")
     # push 有被呼叫（遠端不存在 → 放行）
     assert spy.called(f"push") and spy.called(_BRANCH)
-    # 順序：ls-remote 在 push 之前
-    assert spy.index_of("ls-remote") < spy.index_of("push -f")
+    # 順序：ls-remote 在 push 之前（push 已改為非強制，不再帶 -f）
+    assert spy.index_of("ls-remote") < spy.index_of("push")
     assert ok is True
 
 
