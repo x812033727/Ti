@@ -58,6 +58,15 @@ def security_approved(text: str) -> bool:
     return not re.search(r"(安全退回|高風險|不安全|漏洞|injection)", text, re.I)
 
 
+def critic_blocks(text: str) -> bool:
+    """異議檢查判定：critic 是否提出『成立』的異議（True=需退回，False=放行）。"""
+    verdict = _last_match(text, r"異議\s*[:：]\s*(成立|不成立)")
+    if verdict:
+        return verdict == "成立"
+    # 後備：無標記時偏向放行，僅在出現明確反對字樣時才退回，避免誤擋。
+    return bool(re.search(r"(異議成立|不應通過|尚未完成|還不算完成)", text))
+
+
 def pm_done(text: str) -> bool:
     verdict = _last_match(text, r"決議\s*[:：]\s*(完成|未完成)")
     if verdict:
@@ -101,11 +110,14 @@ class StudioSession:
         cwd: Path | None = None,
         intervention_queue: asyncio.Queue[str] | None = None,
         repo_url: str | None = None,
+        critics: dict[str, ExpertLike] | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
         self.cwd = cwd
         self._experts = experts
+        # 異議檢查用的獨立 expert 實例（不與主 experts 共用對話/calls 序號）。
+        self._critics = critics
         self._intervention = intervention_queue
         self._repo_url = repo_url  # 已 clone 進 workspace 的既有 GitHub repo（可選）
         self._tasks: list[dict] = []  # {id, title, status}
@@ -144,6 +156,45 @@ class StudioSession:
             assert self.cwd is not None
             self._experts = _build_experts(self.session_id, self.cwd)
         return self._experts
+
+    # --- 異議檢查（critic）-------------------------------------------------
+    def _get_critic(self, role_key: str) -> ExpertLike | None:
+        """取得指定視角的獨立 critic expert。
+
+        優先用注入的 critics（測試/離線）；否則在有 cwd 時以獨立 session 建一個新實例，
+        確保不污染主 experts 的對話與 calls 序號。都無法取得時回 None（呼叫端視為放行）。
+        """
+        if self._critics is not None:
+            return self._critics.get(role_key)
+        if self.cwd is None:
+            return None
+        from .providers import make_expert
+        from .roles import BY_KEY
+
+        critic = make_expert(BY_KEY[role_key], f"{self.session_id}:critic:{role_key}", self.cwd)
+        self._critics = {role_key: critic}
+        return critic
+
+    async def _critic_gate(self, role_key: str, subject: str, acceptance: str) -> tuple[bool, str]:
+        """放行前的異議關卡。回傳 (是否放行, critic 文字)。
+
+        刻意只餵標的與驗收標準、不餵當事人剛才的核可理由以降低錨定；停用或無 critic 時放行。
+        """
+        if not config.CRITIC_ENABLED or self._stop:
+            return True, ""
+        critic = self._get_critic(role_key)
+        if critic is None:
+            return True, ""
+        text = await critic.speak(
+            "你是獨立的異議檢查者，專挑『為何這還不算完成』，以防團隊形成錯誤共識。\n"
+            f"檢查標的：{subject}\n\n驗收標準：\n{acceptance}\n\n"
+            "請只根據標的與驗收標準判斷，提出具體、實質的反對；找不到實質問題就放行。\n"
+            "最後一行明確輸出：`異議: 成立`（需退回）或 `異議: 不成立`（放行）。",
+            self.broadcast,
+        )
+        blocks = critic_blocks(text)
+        await self.broadcast(events.critic_review(self.session_id, role_key, not blocks, text))
+        return (not blocks), text
 
     # --- 看板 ----------------------------------------------------------
     async def _board(self) -> None:
@@ -230,7 +281,7 @@ class StudioSession:
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
             await self.broadcast(events.error(self.session_id, f"{type(exc).__name__}: {exc}"))
         finally:
-            for ex in (self._experts or {}).values():
+            for ex in list((self._experts or {}).values()) + list((self._critics or {}).values()):
                 try:
                     await ex.stop()
                 except Exception:  # noqa: BLE001
@@ -462,7 +513,21 @@ class StudioSession:
                 security_ok = security_approved(sec_text)
 
             if qa_ok and senior_ok and security_ok:
-                return True
+                # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
+                subject = f"任務 #{task['id']}：{task['title']}"
+                critic_ok, critic_text = await self._critic_gate("pm", subject, pm_plan)
+                if critic_ok:
+                    return True
+                # 異議成立 → 退回再修，把反對理由帶進下一輪。
+                feedback = f"【異議檢查（critic）退回理由】\n{critic_text}"
+                await self.broadcast(
+                    events.phase_change(
+                        self.session_id,
+                        "異議退回",
+                        f"任務 #{task['id']} 表面通過但 critic 提出實質反對，退回修正",
+                    )
+                )
+                continue
 
             # --- 帶意見回饋，準備下一輪 ---
             feedback = f"【驗證工程師回報】\n{qa_text}\n\n【高級工程師審查意見】\n{senior_text}"
@@ -604,6 +669,13 @@ class StudioSession:
             self.broadcast,
         )
         done = pm_done(verdict) and all_ok and not self._stop
+
+        # 最終驗收放行前的異議關卡：用 senior 視角（避開剛驗收表態的 pm）。
+        if done:
+            critic_ok, _ = await self._critic_gate(
+                "senior", "整體最終交付成果", "PM 宣告的驗收標準與整體需求"
+            )
+            done = critic_ok
 
         await self.broadcast(events.phase_change(self.session_id, "檢討", "團隊進行回顧"))
         retro = await pm.speak(

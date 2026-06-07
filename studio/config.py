@@ -39,6 +39,10 @@ DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
 # 仍失敗則明確標記為「已知限制」而非靜默帶過。離線 demo 由腳本自行開啟此開關展示。
 HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
 
+# 異議檢查（critic）：放行前由獨立 critic 專挑「為何還不算完成」，提出實質反對才退回。
+# 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角），預設關閉。
+CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
+
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 

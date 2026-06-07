@@ -22,6 +22,7 @@ class EventType(str, Enum):
     PUBLISH_RESULT = "publish_result"  # 成果發佈到 GitHub 的結果
     HUMAN_MESSAGE = "human_message"  # 人類中途插話
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
+    CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
     DONE = "done"  # 專案完成
     ERROR = "error"  # 錯誤
@@ -148,6 +149,15 @@ def huddle(
             "conclusion": conclusion,
             "limitation": limitation,
         },
+    )
+
+
+def critic_review(session_id: str, gate: str, passed: bool, text: str) -> StudioEvent:
+    """異議檢查結果。gate 標示視角（如 pm／senior）；passed=False 代表 critic 異議成立、退回。"""
+    return StudioEvent(
+        EventType.CRITIC_REVIEW,
+        session_id,
+        {"gate": gate, "passed": passed, "text": text},
     )
 
 

@@ -9,6 +9,7 @@ import pytest
 from studio import config, events
 from studio.orchestrator import (
     StudioSession,
+    critic_blocks,
     parse_tasks,
     pm_done,
     qa_passed,
@@ -187,6 +188,105 @@ async def test_debate_runs(monkeypatch):
     # 辯論各多一次發言：工程師提案+實作=2、高級工程師點評+審查=2
     assert experts["engineer"].calls == 2
     assert experts["senior"].calls == 2
+
+
+def test_critic_blocks_parsing():
+    assert critic_blocks("看了一下\n異議: 成立")  # 標記成立 → 退回
+    assert not critic_blocks("沒問題\n異議: 不成立")  # 標記不成立 → 放行
+    assert not critic_blocks("一切都好")  # 後備：無反對字 → 放行
+    assert critic_blocks("這還不算完成")  # 後備：明確反對 → 退回
+
+
+@pytest.mark.asyncio
+async def test_critic_blocks_then_passes(monkeypatch):
+    """critic 第一次異議成立 → 退回再修；第二次不成立 → 放行（退回路徑）。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["第一版", "依異議修正"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {"pm": StubExpert(BY_KEY["pm"], ["異議: 成立，缺錯誤處理", "異議: 不成立"])}
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    # qa/senior 都通過，但 critic 第一次退回 → 工程師被迫再改一輪。
+    assert experts["engineer"].calls == 2
+    assert critics["pm"].calls == 2
+    reviews = [e for e in bucket if e.type == events.EventType.CRITIC_REVIEW]
+    assert reviews[0].payload["passed"] is False
+    assert reviews[-1].payload["passed"] is True
+    assert "異議檢查" in experts["engineer"].prompts[1]
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_critic_passes_first_time(monkeypatch):
+    """critic 一次就放行（放行路徑），不增加工程師輪數。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {
+        "pm": StubExpert(BY_KEY["pm"], ["異議: 不成立"]),
+        "senior": StubExpert(BY_KEY["senior"], ["異議: 不成立"]),
+    }
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    assert experts["engineer"].calls == 1
+    reviews = [e for e in bucket if e.type == events.EventType.CRITIC_REVIEW]
+    assert reviews and all(e.payload["passed"] for e in reviews)
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_critic_final_gate_blocks(monkeypatch):
+    """最終驗收時 senior 視角 critic 異議成立 → 整體未完成。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {
+        "pm": StubExpert(BY_KEY["pm"], ["異議: 不成立"]),  # 任務 gate 放行
+        "senior": StubExpert(BY_KEY["senior"], ["異議: 成立，整合未驗證"]),  # 最終 gate 退回
+    }
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is False
+
+
+@pytest.mark.asyncio
+async def test_critic_disabled_by_default():
+    """預設不啟用 critic：無 CRITIC_REVIEW 事件、不影響既有流程。"""
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    critics = {"pm": StubExpert(BY_KEY["pm"], ["異議: 成立"])}
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    assert events.EventType.CRITIC_REVIEW not in types(bucket)
+    assert experts["engineer"].calls == 1
+    assert critics["pm"].calls == 0
 
 
 @pytest.mark.asyncio

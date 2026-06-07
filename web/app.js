@@ -232,6 +232,13 @@ function handleEvent(ev) {
     case "human_message":
       addHuman(p.text);
       break;
+    case "critic_review":
+      if (p.passed) {
+        addSystem("🔍 異議檢查放行（" + (p.gate || "") + " 視角）");
+      } else {
+        addSystem("🛑 異議檢查退回（" + (p.gate || "") + " 視角）：" + (p.text || ""));
+      }
+      break;
     case "huddle":
       if (p.limitation) {
         addSystem("🚧 已知限制：任務「" + (p.title || "") + "」huddle 後仍未通過。");
