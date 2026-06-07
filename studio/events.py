@@ -21,6 +21,8 @@ class EventType(str, Enum):
     GIT_COMMIT = "git_commit"  # workspace 內階段性 commit
     PUBLISH_RESULT = "publish_result"  # 成果發佈到 GitHub 的結果
     HUMAN_MESSAGE = "human_message"  # 人類中途插話
+    HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
+    CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
     DONE = "done"  # 專案完成
     ERROR = "error"  # 錯誤
@@ -125,6 +127,38 @@ def human_message(session_id: str, text: str) -> StudioEvent:
 
 def publish_result(session_id: str, result: dict) -> StudioEvent:
     return StudioEvent(EventType.PUBLISH_RESULT, session_id, result)
+
+
+def huddle(
+    session_id: str,
+    task_id: int,
+    title: str,
+    participants: list[str],
+    conclusion: str,
+    *,
+    limitation: bool = False,
+) -> StudioEvent:
+    """卡關討論事件。limitation=True 代表 huddle 後仍未解決、標記為『已知限制』。"""
+    return StudioEvent(
+        EventType.HUDDLE,
+        session_id,
+        {
+            "task_id": task_id,
+            "title": title,
+            "participants": participants,
+            "conclusion": conclusion,
+            "limitation": limitation,
+        },
+    )
+
+
+def critic_review(session_id: str, gate: str, passed: bool, text: str) -> StudioEvent:
+    """異議檢查結果。gate 標示視角（如 pm／senior）；passed=False 代表 critic 異議成立、退回。"""
+    return StudioEvent(
+        EventType.CRITIC_REVIEW,
+        session_id,
+        {"gate": gate, "passed": passed, "text": text},
+    )
 
 
 def task_status(session_id: str, task_id: int, title: str, status: str) -> StudioEvent:

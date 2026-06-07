@@ -34,6 +34,24 @@ MAX_ROUNDS = TASK_MAX_ROUNDS  # 舊名相容
 # 架構辯論的來回回合數（工程師 ⇄ 高級工程師）。
 DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
 
+# --- 內部討論機制（卡關 huddle，預設關閉以保既有測試/行為向後相容）---------
+# 開啟後：任務跑滿 TASK_MAX_ROUNDS 仍未通過時，召集團隊 huddle 找替代方案並給 1 輪重試，
+# 仍失敗則明確標記為「已知限制」而非靜默帶過。離線 demo 由腳本自行開啟此開關展示。
+HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+
+# 異議檢查（critic）：放行前由獨立 critic 專挑「為何還不算完成」，提出實質反對才退回。
+# 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角），預設關閉。
+CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
+
+# 共用知識庫（workspace 內 NOTES.md）：跨任務累積踩過的坑/決策/後續，實作時讀回、結束時寫入。
+# 不進交付物與檔案清單（見 workspace._IGNORE）。預設關閉以保既有行為。
+NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
+
+# 停滯守門：改進迴圈連續 STALL_ROUNDS 輪只重述（文字高度相似且無檔案變動）就提早收斂，
+# 避免燒 token。<=1 視為停用。預設值刻意大於離線示範每任務實際圈數，使既有流程不誤觸；
+# 且 _stalled 在無 cwd 或關閉 git 時一律不偵測（保護 cwd=None 的單元測試）。
+STALL_ROUNDS = int(os.getenv("TI_STALL_ROUNDS", "3"))
+
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 
@@ -41,9 +59,7 @@ MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 # 多一個角色 = 每場討論多幾次 LLM 呼叫（更耗額度、更久），要省可逐一移除。
 OPTIONAL_ROLES = {
     r.strip()
-    for r in os.getenv(
-        "TI_OPTIONAL_ROLES", "researcher,architect,security,devops"
-    ).split(",")
+    for r in os.getenv("TI_OPTIONAL_ROLES", "researcher,architect,security,devops").split(",")
     if r.strip()
 }
 
@@ -114,6 +130,7 @@ def expert_sandbox_settings() -> dict | None:
         },
     }
 
+
 # --- 離線示範模式 -------------------------------------------------------
 # 不需 API 金鑰，用腳本化的假專家驅動完整流程（真的寫檔/git/Demo），供試用與端到端驗證。
 OFFLINE_MODE = os.getenv("TI_OFFLINE", "0") not in ("0", "false", "False", "")
@@ -163,7 +180,9 @@ AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
-AUTOPILOT_PAUSE_FILE = Path(os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED")))
+AUTOPILOT_PAUSE_FILE = Path(
+    os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED"))
+)
 AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "False", "")
 
 

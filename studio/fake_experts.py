@@ -140,6 +140,28 @@ class FakeExpert:
         pass
 
 
+def build_fake_critics(session_id: str, cwd: Path) -> dict[str, FakeExpert]:
+    """離線示範用的異議檢查者（critic）：獨立實例、不寫檔，固定『不成立』放行。
+
+    對應「換人」原則：任務審查 gate 用 pm 視角、最終驗收 gate 用 senior 視角。
+    這讓離線端到端流程能跑完、又展示至少一次「內部討論」事件（critic_review）。
+    """
+    return {
+        "pm": FakeExpert(
+            BY_KEY["pm"],
+            session_id,
+            cwd,
+            scripts=["以驗收標準逐項檢查，找不到實質問題。\n異議: 不成立"],
+        ),
+        "senior": FakeExpert(
+            BY_KEY["senior"],
+            session_id,
+            cwd,
+            scripts=["整體交付對齊需求與驗收標準，沒有實質反對。\n異議: 不成立"],
+        ),
+    }
+
+
 def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str, FakeExpert]:
     return {
         "pm": FakeExpert(

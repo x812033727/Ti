@@ -95,8 +95,7 @@ def add_many(titles: list[str], source: str = "discovered") -> int:
 def _is_duplicate(tasks: list[dict], title: str) -> bool:
     """同標題且仍 pending/in_progress 視為重複，避免回饋迴圈讓 backlog 暴增。"""
     return any(
-        t["title"].strip() == title and t["status"] in ("pending", "in_progress")
-        for t in tasks
+        t["title"].strip() == title and t["status"] in ("pending", "in_progress") for t in tasks
     )
 
 
