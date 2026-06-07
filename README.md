@@ -148,7 +148,7 @@ TI_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 TI_OPENAI_MODEL_LEA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 跑測試
+.venv/bin/python -m pytest                 # 跑測試
 ruff check . && ruff format --check .   # 跑 lint / 格式檢查
 pre-commit install     # （選填）裝 git hook，提交前自動 lint
 ```
