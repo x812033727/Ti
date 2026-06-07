@@ -23,6 +23,25 @@ def test_branch_name():
     assert publisher.branch_name("../evil id") == "ti-studio/evilid"
 
 
+def test_branch_name_strips_shell_metachars():
+    """巡檢 #5：branch 會內插進 `git branch -M {branch}` shell，
+    上游 branch_name 須濾掉所有 shell metacharacter，杜絕注入。"""
+    evil = "s1; touch pwned $(touch x) `id` && rm -rf / | cat > /etc/x \n\t'\""
+    out = publisher.branch_name(evil)
+    # 僅保留白名單字元（前綴 + alnum / - / _）
+    assert out.startswith("ti-studio/")
+    tail = out[len("ti-studio/"):]
+    assert all(c.isalnum() or c in "-_" for c in tail), f"殘留危險字元：{out!r}"
+    # 明確不含任一 shell metacharacter
+    for ch in ";`$()&|><\n\t '\"/\\":
+        assert ch not in tail, f"未濾除：{ch!r} in {out!r}"
+
+
+def test_branch_name_empty_fallback():
+    # 全是非法字元時退回 'session'，不產生空 branch
+    assert publisher.branch_name("@#%/. ") == "ti-studio/session"
+
+
 def test_remote_url_and_redact():
     url = publisher.remote_url("octo/repo", "secrettoken")
     assert url == "https://x-access-token:secrettoken@github.com/octo/repo.git"

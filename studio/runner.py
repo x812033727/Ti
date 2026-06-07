@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import shlex
@@ -16,6 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import config
+
+log = logging.getLogger("ti.runner")
+
+# workspace 內 git 身分（git_init 寫入 .git/config；commit 另帶 -c 兜底，
+# 涵蓋 clone 流程下 .git 已存在、git_init no-op 而 local identity 缺失的情形）。
+_GIT_USER_NAME = "Ti Studio"
+_GIT_USER_EMAIL = "studio@ti.local"
 
 # 解析「以 python 開頭」的指令用：把直譯器 token 換成實際可用的執行檔。
 _PY_PREFIX = re.compile(r"\s*(python3?|py)\b")
@@ -81,6 +89,46 @@ def _bwrap_prefix(cwd: Path | str) -> list[str]:
     return args
 
 
+def _sandbox_blocked(label: str) -> RunOutput:
+    """沙箱啟用但 bwrap 不存在時的 fail-closed 結果（shell/exec 兩路共用）。"""
+    return RunOutput(
+        command=label,
+        exit_code=-1,
+        output=f"（沙箱已啟用但找不到 {config.SANDBOX_BWRAP}，為安全拒絕執行）",
+        timed_out=True,
+    )
+
+
+async def _finalize_proc(
+    proc: asyncio.subprocess.Process, label: str, timeout: int
+) -> RunOutput:
+    """共用收尾：communicate + 逾時 kill + 輸出截斷。
+
+    `label` 為 RunOutput.command 顯示用字串，由呼叫端決定（shell 傳原始指令、
+    exec 傳簡短標籤），不在此寫死，避免兩路邏輯分叉。
+    """
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return RunOutput(
+            command=label,
+            exit_code=proc.returncode if proc.returncode is not None else -1,
+            output=_truncate(stdout.decode("utf-8", errors="replace")),
+            timed_out=False,
+        )
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+            await proc.wait()
+        except ProcessLookupError:
+            pass
+        return RunOutput(
+            command=label,
+            exit_code=-1,
+            output=f"（執行超過 {timeout} 秒逾時，已中止）",
+            timed_out=True,
+        )
+
+
 async def run_command(
     cwd: Path | str, command: str, timeout: int | None = None, sandbox: bool | None = None
 ) -> RunOutput:
@@ -95,12 +143,7 @@ async def run_command(
     inner = _executable_command(command)
     if use_sandbox:
         if not config._sandbox_available():
-            return RunOutput(
-                command=command,
-                exit_code=-1,
-                output=f"（沙箱已啟用但找不到 {config.SANDBOX_BWRAP}，為安全拒絕執行）",
-                timed_out=True,
-            )
+            return _sandbox_blocked(command)
         proc = await asyncio.create_subprocess_exec(
             *_bwrap_prefix(cwd),
             "/bin/sh",
@@ -116,26 +159,48 @@ async def run_command(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return RunOutput(
-            command=command,
-            exit_code=proc.returncode if proc.returncode is not None else -1,
-            output=_truncate(stdout.decode("utf-8", errors="replace")),
-            timed_out=False,
+    return await _finalize_proc(proc, command, timeout)
+
+
+async def run_command_exec(
+    cwd: Path | str,
+    argv: list[str],
+    timeout: int | None = None,
+    sandbox: bool | None = None,
+    label: str | None = None,
+) -> RunOutput:
+    """以參數式（argv list）執行指令，不經 /bin/sh，shell metacharacters 天然安全。
+
+    與 run_command 並存、共用收尾邏輯；訊息／參數以 argv 單一元素傳遞，免跳脫、
+    多行與特殊字元原樣保留。沙箱時前置 _bwrap_prefix 後直接接 argv（不再包
+    /bin/sh -c）；非沙箱時以 cwd=str(cwd) 執行。沙箱啟用但 bwrap 不存在則
+    fail-closed，語意與 run_command 一致。
+
+    label 為 RunOutput.command 的顯示標籤（如 "git commit"），預設取 argv[0]，
+    不內插完整參數，避免多行訊息污染日誌。
+    """
+    if not argv:
+        raise ValueError("run_command_exec 需要非空的 argv")
+    timeout = timeout or config.DEMO_TIMEOUT
+    use_sandbox = config.SANDBOX_ENABLED if sandbox is None else sandbox
+    display = label or argv[0]
+    if use_sandbox:
+        if not config._sandbox_available():
+            return _sandbox_blocked(display)
+        proc = await asyncio.create_subprocess_exec(
+            *_bwrap_prefix(cwd),
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-            await proc.wait()
-        except ProcessLookupError:
-            pass
-        return RunOutput(
-            command=command,
-            exit_code=-1,
-            output=f"（執行超過 {timeout} 秒逾時，已中止）",
-            timed_out=True,
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
+    return await _finalize_proc(proc, display, timeout)
 
 
 # 常見入口檔（依優先序）
@@ -241,18 +306,43 @@ async def git_clone(
 
 
 async def git_commit(cwd: Path | str, message: str) -> str | None:
-    """把 workspace 全部變更 commit，回傳短 hash；無變更或失敗回 None。"""
+    """把 workspace 全部變更 commit，回傳短 hash；無變更或失敗回 None。
+
+    三步全走參數式 exec（`run_command_exec`），commit 訊息以 argv 單一元素傳遞，
+    shell 不參與解析——backtick / `$(...)` / `;` / 換行 等一律當純文字，免跳脫、
+    多行原樣保留。沙箱沿用 `SANDBOX_ENABLED`；bwrap 缺失則 fail-closed 回 None。
+    """
     if not config.ENABLE_GIT or not _git_available():
         return None
     root = Path(cwd)
     if not (root / ".git").exists():
         if not await git_init(root):
             return None
-    await run_command(root, "git add -A", timeout=30, sandbox=False)
-    # 安全處理訊息中的引號
-    safe = message.replace('"', "'")
-    r = await run_command(root, f'git commit -q -m "{safe}"', timeout=30, sandbox=False)
+
+    add = await run_command_exec(root, ["git", "add", "-A"], timeout=30, label="git add")
+    if not add.ok:
+        # 沙箱啟用但 bwrap 缺失會在此 fail-closed；記一筆便於排查。
+        log.warning("git add 失敗（exit=%s, timed_out=%s）：%s",
+                    add.exit_code, add.timed_out, add.output)
+        return None
+
+    # commit 直接帶 git identity 兜底，消滅 clone 流程下 identity 缺失整類失敗。
+    r = await run_command_exec(
+        root,
+        [
+            "git",
+            "-c", f"user.name={_GIT_USER_NAME}",
+            "-c", f"user.email={_GIT_USER_EMAIL}",
+            "-c", "commit.gpgsign=false",
+            "commit", "-q", "-m", message,
+        ],
+        timeout=30,
+        label="git commit",
+    )
     if not r.ok:
         return None  # 通常是「無變更可提交」
-    h = await run_command(root, "git rev-parse --short HEAD", timeout=20, sandbox=False)
+
+    h = await run_command_exec(
+        root, ["git", "rev-parse", "--short", "HEAD"], timeout=20, label="git rev-parse"
+    )
     return h.output.strip() if h.ok else None
