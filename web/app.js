@@ -355,21 +355,24 @@ function closeHistory() { historyPanel.classList.add("hidden"); }
 
 // --- 發佈到 GitHub -----------------------------------------------------
 let publishConfigured = false;
+let mergeEnabled = false;
 
 async function loadPublishConfig() {
   try {
     const cfg = await (await fetch("/api/publish/config")).json();
     publishConfigured = !!cfg.configured;
-  } catch (e) { publishConfigured = false; }
+    mergeEnabled = !!cfg.merge;
+  } catch (e) { publishConfigured = false; mergeEnabled = false; }
 }
 
 function addPublishButton(sid) {
   const wrap = document.createElement("div");
   wrap.className = "publish-cta";
   const btn = document.createElement("button");
-  btn.textContent = "🚀 發佈成果到 GitHub";
+  // merge 開關開啟時，明示這顆按鈕會「發佈並合併」（合併後可再一鍵重啟）。
+  btn.textContent = mergeEnabled ? "🚀 發佈並合併到 GitHub" : "🚀 發佈成果到 GitHub";
   btn.onclick = async () => {
-    btn.disabled = true; btn.textContent = "發佈中…";
+    btn.disabled = true; btn.textContent = mergeEnabled ? "發佈並合併中…" : "發佈中…";
     try {
       const res = await (await fetch(`/api/publish/${sid}`, { method: "POST" })).json();
       renderPublish(res);
