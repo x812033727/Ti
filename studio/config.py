@@ -56,6 +56,8 @@ PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")  # 例：octocat/outputs
 PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")  # PR 目標分支
 # 專案完成後是否自動發佈（預設關閉，避免非預期的對外推送）。
 PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", "")
+# push 並開 PR 後是否自動合併進 base 分支（預設關閉，向後相容；開啟才形成自我改進閉環）。
+PUBLISH_MERGE = os.getenv("TI_PUBLISH_MERGE", "0") not in ("0", "false", "False", "")
 
 # --- 登入 / 門禁（單一共用密碼，預設關閉）------------------------------
 # 設定 TI_ACCESS_PASSWORD 後即啟用門禁：使用者需在登入頁輸入正確密碼才能進入工作室。
@@ -110,7 +112,7 @@ def reload() -> None:
     """
     global PROVIDER, MODEL_LEAD, MODEL_FAST
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
-    global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO
+    global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
@@ -123,3 +125,4 @@ def reload() -> None:
     PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")
     PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")
     PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", "")
+    PUBLISH_MERGE = os.getenv("TI_PUBLISH_MERGE", "0") not in ("0", "false", "False", "")

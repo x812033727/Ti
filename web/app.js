@@ -386,12 +386,41 @@ function renderPublish(p) {
   el.className = "publish " + (p.ok ? "ok" : "fail");
   let html = (p.ok ? "🚀 " : "⚠️ ") + (p.detail || "");
   if (p.branch) html += `　<code>${p.branch}</code>`;
+  if (p.merged) html += "　✅ 已合併";
   el.innerHTML = html;
   if (p.pr_url) {
     const a = document.createElement("a");
     a.href = p.pr_url; a.target = "_blank"; a.textContent = "查看 PR ↗";
     el.appendChild(document.createTextNode("　")); el.appendChild(a);
   }
+  stream.appendChild(el);
+  // 合併成功後提供「重新佈署重啟」入口，讓新程式碼生效。
+  if (p.merged) addRedeployButton();
+  scrollStream();
+}
+
+function addRedeployButton() {
+  const wrap = document.createElement("div");
+  wrap.className = "publish-cta";
+  const btn = document.createElement("button");
+  btn.textContent = "♻️ 重新佈署並重啟";
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "重新佈署中…";
+    try {
+      const res = await (await fetch("/api/redeploy", { method: "POST" })).json();
+      renderRedeploy(res);
+    } catch (e) { renderRedeploy({ ok: false, detail: "重新佈署請求失敗（服務可能正在重啟）" }); }
+    btn.remove();
+  };
+  wrap.appendChild(btn);
+  stream.appendChild(wrap);
+  scrollStream();
+}
+
+function renderRedeploy(r) {
+  const el = document.createElement("div");
+  el.className = "publish " + (r.ok ? "ok" : "fail");
+  el.innerHTML = (r.ok ? "♻️ " : "⚠️ ") + (r.detail || "");
   stream.appendChild(el);
   scrollStream();
 }

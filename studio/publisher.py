@@ -7,9 +7,12 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from . import config, runner
+
+_PR_NUM_RE = re.compile(r"/pull/(\d+)")
 
 
 @dataclass
@@ -20,6 +23,8 @@ class PublishResult:
     repo: str | None = None
     pushed: bool = False
     pr_url: str | None = None
+    pr_number: int | None = None
+    merged: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -29,6 +34,8 @@ class PublishResult:
             "repo": self.repo,
             "pushed": self.pushed,
             "pr_url": self.pr_url,
+            "pr_number": self.pr_number,
+            "merged": self.merged,
         }
 
 
@@ -63,6 +70,21 @@ def pr_payload(requirement: str, branch: str, base: str) -> dict:
     return {"title": title, "head": branch, "base": base, "body": body}
 
 
+def parse_pr_number(url: str | None) -> int | None:
+    """從 PR 的 html_url（…/pull/123）解析出 PR 編號；解析不到回 None。"""
+    if not url:
+        return None
+    m = _PR_NUM_RE.search(url)
+    return int(m.group(1)) if m else None
+
+
+def merge_payload(branch: str, method: str = "merge") -> dict:
+    return {
+        "commit_title": f"Merge {branch} (Ti Studio)",
+        "merge_method": method,
+    }
+
+
 # --- 實際發佈 ----------------------------------------------------------
 
 
@@ -89,7 +111,33 @@ async def _open_pr(payload: dict) -> tuple[bool, str]:
     return False, f"PR 建立失敗（{r.status_code}）：{r.text[:200]}"
 
 
-async def publish(cwd, session_id: str, requirement: str, *, make_pr: bool = True) -> PublishResult:
+async def _merge_pr(number: int, payload: dict) -> tuple[bool, str]:
+    """呼叫 GitHub REST 合併指定 PR；回傳 (是否成功, sha 或錯誤訊息)。
+
+    不丟例外：衝突（405 不可合併 / 409 SHA 不符）或其他失敗皆回 (False, 錯誤訊息)。
+    """
+    import httpx
+
+    url = f"https://api.github.com/repos/{config.PUBLISH_REPO}/pulls/{number}/merge"
+    headers = {
+        "Authorization": f"Bearer {config.GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.put(url, json=payload, headers=headers)
+    except Exception as e:  # 網路等例外也不外拋，轉成可讀錯誤
+        return False, f"merge 請求失敗：{type(e).__name__}"
+    if r.status_code == 200:
+        return True, r.json().get("sha", "")
+    if r.status_code in (405, 409):
+        return False, f"merge 衝突／不可合併（{r.status_code}）：{r.text[:200]}"
+    return False, f"merge 失敗（{r.status_code}）：{r.text[:200]}"
+
+
+async def publish(
+    cwd, session_id: str, requirement: str, *, make_pr: bool = True, merge: bool = False
+) -> PublishResult:
     if not is_configured():
         return PublishResult(False, "未設定 GITHUB_TOKEN 或 TI_PUBLISH_REPO，無法發佈")
 
@@ -108,8 +156,31 @@ async def publish(cwd, session_id: str, requirement: str, *, make_pr: bool = Tru
         return PublishResult(True, "已 push", branch=branch, repo=repo, pushed=True)
 
     ok, info = await _open_pr(pr_payload(requirement, branch, config.PUBLISH_BASE))
-    if ok:
+    if not ok:
         return PublishResult(
-            True, "已 push 並建立 PR", branch=branch, repo=repo, pushed=True, pr_url=info
+            True, "已 push，但 " + redact(info), branch=branch, repo=repo, pushed=True
         )
-    return PublishResult(True, "已 push，但 " + info, branch=branch, repo=repo, pushed=True)
+
+    res = PublishResult(
+        True,
+        "已 push 並建立 PR",
+        branch=branch,
+        repo=repo,
+        pushed=True,
+        pr_url=info,
+        pr_number=parse_pr_number(info),
+    )
+    if not merge:
+        return res
+
+    # 自動合併（TI_PUBLISH_MERGE 開啟時）。任何失敗皆不丟例外，回 merged=False。
+    if res.pr_number is None:
+        res.detail = "已 push 並建立 PR，但無法解析 PR 編號，未自動合併"
+        return res
+    mok, minfo = await _merge_pr(res.pr_number, merge_payload(branch))
+    if mok:
+        res.merged = True
+        res.detail = "已 push、建立 PR 並合併"
+    else:
+        res.detail = "已 push 並建立 PR，但 " + redact(minfo)
+    return res
