@@ -82,7 +82,17 @@ async def _prepare_clone() -> str:
 
 async def _gate_tests(clone: str) -> tuple[bool, str]:
     """在 working clone 跑完整 pytest（沙箱內）。綠才回 True。"""
-    result = await runner.run_command(clone, "python -m pytest -q", timeout=600, sandbox=True)
+    # 固定指令走參數式 exec：argv 不經 shell，metacharacter 天然安全。
+    # 用 sys.executable（當前直譯器絕對路徑）而非裸 "python"：避免 PATH 無 `python`
+    # （多數環境僅有 `python3`）導致 exec 解析失敗；同時保證用同一直譯器跑 pytest。
+    # timeout/sandbox 顯式帶齊（run_command_exec 預設 sandbox=None 會走 fail-closed）。
+    result = await runner.run_command_exec(
+        clone,
+        [sys.executable, "-m", "pytest", "-q"],
+        timeout=600,
+        sandbox=True,
+        label="pytest gate",
+    )
     return result.ok, result.output[-1500:]
 
 

@@ -33,9 +33,9 @@ def _forbid_real_subprocess(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_real_clone_path_is_tripwired(monkeypatch, tmp_path):
-    """繞過 spy 走真實 run_command：git_clone 必被絆線擋下、絕不連網。
+    """繞過 spy 走真實 run_command_exec：git_clone 必被絆線擋下、絕不連網。
 
-    git_clone(sandbox=False) → run_command → asyncio.create_subprocess_shell，
+    git_clone(sandbox=False) → run_command_exec → asyncio.create_subprocess_exec，
     該函式已被換成 _boom；例外無人攔截，故 git_clone 會拋 RuntimeError。
     """
     monkeypatch.setattr(runner, "_git_available", lambda: True)
@@ -48,14 +48,17 @@ async def test_real_clone_path_is_tripwired(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_spy_path_has_zero_side_effects(monkeypatch, tmp_path):
-    """spy 攔截路徑：tmp_path 全程零副作用，且未啟動任何子程序。"""
+    """spy 攔截路徑：tmp_path 全程零副作用，且未啟動任何子程序。
+
+    git_clone 已遷移為參數式 exec，故攔截目標為 run_command_exec（argv 簽名）。
+    """
     calls = []
 
-    async def spy(cwd, command, timeout=None, sandbox=None):
-        calls.append(command)
+    async def spy(cwd, argv, timeout=None, sandbox=None, label=None):
+        calls.append(argv)
         return runner.RunOutput("git clone (fake)", 0, "ok", False)
 
-    monkeypatch.setattr(runner, "run_command", spy)
+    monkeypatch.setattr(runner, "run_command_exec", spy)
     monkeypatch.setattr(runner, "_git_available", lambda: True)
 
     result = await runner.git_clone(
@@ -96,8 +99,11 @@ def test_all_git_clone_tests_use_clone_spy():
 
 
 def test_clone_spy_fixture_blocks_real_run_command():
-    """確認 clone_spy fixture 確實 monkeypatch 掉 runner.run_command（攔截就位）。"""
+    """確認 clone_spy fixture 確實 monkeypatch 掉 runner 的 clone 執行路徑（攔截就位）。
+
+    git_clone 已遷移為參數式 exec，攔截目標為 run_command_exec。
+    """
     src = Path(__file__).with_name("test_clone.py").read_text(encoding="utf-8")
-    assert 'monkeypatch.setattr(runner, "run_command", spy)' in src
+    assert 'monkeypatch.setattr(runner, "run_command_exec", spy)' in src
     assert 'monkeypatch.setattr(asyncio, "create_subprocess_shell"' in src
     assert 'monkeypatch.setattr(asyncio, "create_subprocess_exec"' in src

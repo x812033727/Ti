@@ -715,7 +715,10 @@ class StudioSession:
         )
         if not cmd:
             return
-        result = await runner.run_command(self.cwd, cmd)
+        # 刻意保留 shell（run_command，非 run_command_exec）：cmd 來自 PM/工程師宣告的
+        # 自測指令（parse_run_command / resolve_demo_command 動態解析），可能含 pipe /
+        # && / glob / 重導向等 shell 語法，須經 /bin/sh 解析；非固定指令、無法 argv 化。
+        result = await runner.run_command(self.cwd, cmd)  # nosec B602
         await self.broadcast(
             events.run_result(
                 self.session_id,
@@ -732,7 +735,9 @@ class StudioSession:
         if not cmd:
             return
         await self.broadcast(events.phase_change(self.session_id, "Demo", "實際執行成果"))
-        result = await runner.run_command(self.cwd, cmd)
+        # 刻意保留 shell：同 _self_test，cmd 為 demo 指令（resolve_demo_command 動態解析），
+        # 可能含 shell 語法，必須經 /bin/sh，無法 argv 化。
+        result = await runner.run_command(self.cwd, cmd)  # nosec B602
         await self.broadcast(
             events.demo_result(self.session_id, cmd, result.exit_code, result.output, label="Demo")
         )
