@@ -9,8 +9,11 @@ from pathlib import Path
 
 from . import config
 
-# 不顯示在檔案面板的雜訊
-_IGNORE = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv"}
+# 團隊共用知識庫檔名（跨任務知識，不算交付物，不進檔案面板/打包）。
+NOTES_FILE = "NOTES.md"
+
+# 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔
+_IGNORE = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv", NOTES_FILE}
 
 
 def create_workspace(session_id: str) -> Path:
@@ -56,6 +59,36 @@ def read_file(session_id: str, rel_path: str) -> str | None:
         return target.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+
+
+def append_note(session_id: str, note: str) -> None:
+    """把一段跨任務知識追加到 workspace 內的 NOTES.md（不存在則建立）。
+
+    沿用 workspace_path 的路徑穿越防護；空字串忽略。NOTES.md 不會進 list_files／zip。
+    """
+    text = note.strip()
+    if not text:
+        return
+    root = workspace_path(session_id)
+    root.mkdir(parents=True, exist_ok=True)
+    safe_root = root.resolve()
+    target = (safe_root / NOTES_FILE).resolve()
+    if target.parent != safe_root:  # 防護：固定檔名，理應落在 root 之下
+        return
+    with target.open("a", encoding="utf-8") as f:
+        f.write(text + "\n\n")
+
+
+def read_notes(session_id: str) -> str:
+    """讀回 workspace 內 NOTES.md 的全部內容；不存在或超出範圍回空字串。"""
+    safe_root = workspace_path(session_id).resolve()
+    target = (safe_root / NOTES_FILE).resolve()
+    if target.parent != safe_root or not target.is_file():
+        return ""
+    try:
+        return target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def zip_workspace(session_id: str) -> bytes | None:

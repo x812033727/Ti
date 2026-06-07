@@ -43,6 +43,10 @@ HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
 # 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角），預設關閉。
 CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 
+# 共用知識庫（workspace 內 NOTES.md）：跨任務累積踩過的坑/決策/後續，實作時讀回、結束時寫入。
+# 不進交付物與檔案清單（見 workspace._IGNORE）。預設關閉以保既有行為。
+NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
+
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 

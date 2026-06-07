@@ -196,6 +196,21 @@ class StudioSession:
         await self.broadcast(events.critic_review(self.session_id, role_key, not blocks, text))
         return (not blocks), text
 
+    # --- 共用知識庫（NOTES.md）----------------------------------------
+    def _note(self, text: str) -> None:
+        """把一段跨任務知識寫進 workspace 的 NOTES.md（停用或無 cwd 時略過）。"""
+        if config.NOTES_ENABLED and self.cwd:
+            workspace.append_note(self.session_id, text)
+
+    def _notes_context(self) -> str:
+        """讀回 NOTES.md，組成要注入實作 prompt 的前綴（停用/空白時回空字串）。"""
+        if not (config.NOTES_ENABLED and self.cwd):
+            return ""
+        notes = workspace.read_notes(self.session_id)
+        if not notes.strip():
+            return ""
+        return f"【團隊共用知識庫 NOTES.md（過往踩過的坑／決策／後續）】\n{notes}\n\n"
+
     # --- 看板 ----------------------------------------------------------
     async def _board(self) -> None:
         """依各任務的 status 分欄，發看板更新事件。"""
@@ -400,6 +415,13 @@ class StudioSession:
                 )
             all_ok = all_ok and task_ok
             await self._set_task_status(task, "done" if task_ok else "review")
+            # 每任務結束摘要寫回知識庫，供後續任務讀回。
+            if task_ok:
+                self._note(f"## 任務 #{task['id']} 完成：{task['title']}")
+            elif task.get("limitation"):
+                self._note(f"## 任務 #{task['id']} 已知限制：{task['title']}（huddle 與重試後仍未通過）")
+            else:
+                self._note(f"## 任務 #{task['id']} 未通過：{task['title']}（標記 review，待後續處理）")
 
         # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
         if devops:
@@ -450,7 +472,8 @@ class StudioSession:
             # --- 實作 ---
             if not feedback:
                 impl_prompt = (
-                    f"{human}目前要完成的任務 #{task['id']}：{task['title']}\n\n"
+                    f"{human}{self._notes_context()}"
+                    f"目前要完成的任務 #{task['id']}：{task['title']}\n\n"
                     f"整體計畫供參考：\n{pm_plan}\n\n"
                     "請在工作目錄裡實作，並在交付前自己跑過一次確認能執行。"
                 )
@@ -518,8 +541,9 @@ class StudioSession:
                 critic_ok, critic_text = await self._critic_gate("pm", subject, pm_plan)
                 if critic_ok:
                     return True
-                # 異議成立 → 退回再修，把反對理由帶進下一輪。
+                # 異議成立 → 退回再修，把反對理由帶進下一輪並記入知識庫。
                 feedback = f"【異議檢查（critic）退回理由】\n{critic_text}"
+                self._note(f"## 異議退回 任務 #{task['id']}：{task['title']}\n{critic_text}")
                 await self.broadcast(
                     events.phase_change(
                         self.session_id,
@@ -628,6 +652,7 @@ class StudioSession:
                 conclusion,
             )
         )
+        self._note(f"## 卡關討論 任務 #{task['id']}：{task['title']}\n{conclusion}")
         return conclusion
 
     async def _self_test(self, impl_text: str) -> None:

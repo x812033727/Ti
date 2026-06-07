@@ -337,6 +337,65 @@ async def test_huddle_disabled_by_default():
 
 
 @pytest.mark.asyncio
+async def test_notes_written_and_read_back(tmp_path, monkeypatch):
+    """NOTES.md：第一任務結束摘要寫入 → 第二任務實作 prompt 能讀回；結束後檔案存在。"""
+    from studio import workspace
+
+    monkeypatch.setattr(config, "NOTES_ENABLED", True)
+    monkeypatch.setattr(config, "ENABLE_GIT", False)  # 避免依賴 git
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "notesflow"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 建立 A\n任務: 建立 B", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession(
+        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
+    )
+    await session.run("需求")
+
+    # 第二任務的實作 prompt 應讀回第一任務寫入的知識庫內容
+    second_prompt = experts["engineer"].prompts[1]
+    assert "團隊共用知識庫" in second_prompt
+    assert "建立 A" in second_prompt
+    # session 結束後 NOTES.md 實際存在且含兩任務摘要，但不進交付清單
+    notes = workspace.read_notes(sid)
+    assert "任務 #1 完成" in notes and "任務 #2 完成" in notes
+    assert "NOTES.md" not in workspace.list_files(sid)
+
+
+@pytest.mark.asyncio
+async def test_notes_disabled_by_default(tmp_path, monkeypatch):
+    """預設不啟用：不寫 NOTES.md、實作 prompt 不含知識庫前綴。"""
+    from studio import workspace
+
+    monkeypatch.setattr(config, "ENABLE_GIT", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "nonotes"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 建立 A", "決議: 完成", "檢討"],
+        eng=["做好了"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    session = StudioSession(
+        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
+    )
+    await session.run("需求")
+
+    assert workspace.read_notes(sid) == ""
+    assert "團隊共用知識庫" not in experts["engineer"].prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_human_intervention():
     bucket, broadcast = collect()
     queue: asyncio.Queue[str] = asyncio.Queue()
