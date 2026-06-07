@@ -16,6 +16,9 @@ from .orchestrator import StudioSession
 
 router = APIRouter()
 
+# 客戶端斷線後仍在背景跑完的討論任務（持有參考避免被 GC 回收）。
+_detached: set[asyncio.Task] = set()
+
 
 @router.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
@@ -32,6 +35,7 @@ async def ws(websocket: WebSocket) -> None:
     session_id = uuid.uuid4().hex[:12]
     recording = False
     connected = True
+    run_task: asyncio.Task | None = None
 
     async def broadcast(event: StudioEvent) -> None:
         nonlocal connected
@@ -121,14 +125,28 @@ async def ws(websocket: WebSocket) -> None:
             repo_url=repo_url or None,
         )
 
-        # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令
+        # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令。
+        # 任務生命週期與這條連線解耦：用 done callback 負責收尾（finish_session），
+        # 即使客戶端中途斷線，討論仍能在背景跑到完成，事件照寫 history。
         run_task = asyncio.create_task(session.run(requirement))
         await _pump_interventions(websocket, session, queue, run_task)
-        await run_task
+        if not run_task.done():
+            # 客戶端已斷線（或按 stop 後尚未結束）：把討論留在背景跑完，handler 立即
+            # 返回，不阻塞 uvicorn 關閉、也不把斷線當成停止。收尾交給 callback。
+            _detached.add(run_task)
+
+            def _finish(task: asyncio.Task) -> None:
+                if recording:
+                    history.finish_session(session_id)
+                _detached.discard(task)
+
+            run_task.add_done_callback(_finish)
     except WebSocketDisconnect:
         pass
     finally:
-        if recording:
+        # 已 detach（背景跑、尚未結束）的任務由 callback 收尾；其餘（正常跑完、或在
+        # 建立任務前就出錯）在此同步收尾，確保歷史狀態即時更新、不被重複呼叫。
+        if recording and (run_task is None or run_task.done()):
             history.finish_session(session_id)
         try:
             await websocket.close()
