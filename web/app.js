@@ -169,7 +169,20 @@ async function refreshFiles() {
       li.onclick = () => viewFile(f);
       list.appendChild(li);
     }
+    const btn = $("#downloadBtn");
+    if (btn) btn.classList.toggle("hidden", data.files.length === 0);
   } catch (e) { /* 忽略 */ }
+}
+
+function downloadWorkspace() {
+  if (!sessionId) return;
+  // 透過隱藏連結觸發瀏覽器下載；同源 cookie 會自動帶上（門禁啟用時）。
+  const a = document.createElement("a");
+  a.href = `/api/workspace/${sessionId}/download`;
+  a.download = `workspace-${sessionId}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 async function viewFile(path) {
@@ -523,6 +536,7 @@ $("#settingsBtn").onclick = openSettings;
 $("#settingsClose").onclick = closeSettings;
 $("#settingsSave").onclick = saveSettings;
 $("#pwSave").onclick = savePassword;
+$("#downloadBtn").onclick = downloadWorkspace;
 $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });

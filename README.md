@@ -28,6 +28,7 @@
 - **詳細 log**：自測與 Demo 的完整輸出都會回報到討論串（可展開查看）。
 - **歷史存檔/重播**：每次 session 的事件自動存檔，可從「📜 歷史」面板挑選並重播當時的討論過程。
 - **成果發佈到 GitHub**：設定 token 與目標 repo 後，可手動（或自動）把 workspace 成果推成分支並開 PR。
+- **成果匯出下載**：產出檔案面板的「⬇️ 下載成果」按鈕會把該 session 的 workspace 打包成 zip 下載（自動排除 `.git/` 等雜訊）。
 
 ## 角色
 
@@ -56,6 +57,9 @@ python -m studio.server              # 或：uvicorn studio.server:app
 
 開啟瀏覽器 http://localhost:8000 ，輸入需求（例如「做一個能計算 BMI 並分類的 Python CLI」），
 按「開始討論」即可觀看專家協作。產出的程式碼會放在 `workspaces/<session_id>/`。
+
+討論產出檔案後，右側「產出檔案」面板會出現「⬇️ 下載成果」按鈕，點擊即可把整個 workspace
+打包成 `workspace-<session_id>.zip` 下載到本機（自動排除 `.git/` 等雜訊；門禁啟用時需先登入）。
 
 ### 登入 / 門禁（選填）
 

@@ -14,6 +14,8 @@ from studio import config, workspace
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    # 停用門禁，讓 e2e 不受環境變數 TI_ACCESS_PASSWORD 影響（否則 WS 握手會被擋）。
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     monkeypatch.setattr(config, "OFFLINE_MODE", True)
     monkeypatch.setattr(config, "OFFLINE_DELAY", 0.0)
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
