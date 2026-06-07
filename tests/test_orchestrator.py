@@ -10,10 +10,12 @@ from studio import config, events
 from studio.orchestrator import (
     StudioSession,
     critic_blocks,
+    is_stalled,
     parse_tasks,
     pm_done,
     qa_passed,
     senior_approved,
+    text_similarity,
 )
 from studio.roles import BY_KEY, Role
 
@@ -333,6 +335,72 @@ async def test_huddle_disabled_by_default():
     await session.run("需求")
 
     assert events.EventType.HUDDLE not in types(bucket)
+    assert experts["engineer"].calls == config.TASK_MAX_ROUNDS
+
+
+def test_stall_pure_functions():
+    assert text_similarity("一樣的話", "一樣的話") == 1.0
+    assert text_similarity("完全不同 ABC", "毫不相干 XYZ") < 0.5
+    # 連續兩輪幾乎相同 → 停滯
+    assert is_stalled(["改了 X", "還是 X 的內容相同", "還是 X 的內容相同"], rounds=2)
+    # 有實質差異 → 不停滯
+    assert not is_stalled(["第一版實作", "完全改寫的第二版"], rounds=2)
+    # rounds<=1 或歷史不足 → 不判定
+    assert not is_stalled(["a", "a"], rounds=1)
+    assert not is_stalled(["a"], rounds=2)
+
+
+@pytest.mark.asyncio
+async def test_stall_breaks_early(tmp_path, monkeypatch):
+    """連續兩輪只重述 → 提早收斂、發可觀察事件、不跑滿全部輪數。"""
+    from studio import runner, workspace
+
+    async def _noop_init(cwd):
+        return True
+
+    async def _noop_commit(cwd, message):
+        return None  # 無檔案變動 → commit hash 不變
+
+    monkeypatch.setattr(runner, "git_init", _noop_init)
+    monkeypatch.setattr(runner, "git_commit", _noop_commit)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "STALL_ROUNDS", 2)
+    monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 5)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "stallflow"
+    workspace.create_workspace(sid)
+
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["我還是用同樣的做法，沒有改變"],  # 每輪重複同一句（腳本用盡回最後一句）
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession(
+        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid)
+    )
+    await session.run("需求")
+
+    # 第 2 輪偵測到停滯即收斂，不會跑滿 5 輪
+    assert experts["engineer"].calls == 2
+    phases = [e.payload["phase"] for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "停滯收斂" in phases
+
+
+@pytest.mark.asyncio
+async def test_stall_disabled_with_no_cwd():
+    """cwd=None（純單元測試情境）下不偵測停滯，照常跑滿輪數。"""
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["一樣的內容重複出現"],
+        qa=["有錯\n驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+    # cwd=None → _stalled 一律 False → 跑滿 TASK_MAX_ROUNDS
     assert experts["engineer"].calls == config.TASK_MAX_ROUNDS
 
 

@@ -47,6 +47,11 @@ CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 # 不進交付物與檔案清單（見 workspace._IGNORE）。預設關閉以保既有行為。
 NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
 
+# 停滯守門：改進迴圈連續 STALL_ROUNDS 輪只重述（文字高度相似且無檔案變動）就提早收斂，
+# 避免燒 token。<=1 視為停用。預設值刻意大於離線示範每任務實際圈數，使既有流程不誤觸；
+# 且 _stalled 在無 cwd 或關閉 git 時一律不偵測（保護 cwd=None 的單元測試）。
+STALL_ROUNDS = int(os.getenv("TI_STALL_ROUNDS", "3"))
+
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 
