@@ -135,8 +135,13 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
         )
 
+    # 預設非強制推送（全新分支即可成功）；僅 FORCE_PUSH 開啟才用 --force-with-lease
+    # 搭配 --force-if-includes（杜絕背景 fetch 讓 lease 退化成裸 force）。絕不用裸 -f。
+    push_flags = (
+        ["--force-with-lease", "--force-if-includes"] if config.AUTOPILOT_FORCE_PUSH else []
+    )
     rc, out = await _run(
-        ["git", *_GIT_CRED, "push", "-f", "-u", "origin", branch], cwd=clone, timeout=180
+        ["git", *_GIT_CRED, "push", *push_flags, "-u", "origin", branch], cwd=clone, timeout=180
     )
     if rc != 0:
         return False, f"push 失敗：{out[-400:]}"
