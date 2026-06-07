@@ -71,3 +71,72 @@ def test_zip_excludes_symlink_escaping_sandbox(root, tmp_path):
     names = _names(workspace.zip_workspace("qa-sess"))
     assert "real.py" in names
     assert "leak" not in names
+
+
+def test_zip_keeps_internal_symlink(root):
+    # symlink 指回 workspace 內 → 應保留（放行）。
+    (root / "real.py").write_text("ok\n", encoding="utf-8")
+    (root / "alias.py").symlink_to(root / "real.py")
+    names = _names(workspace.zip_workspace("qa-sess"))
+    assert "real.py" in names
+    assert "alias.py" in names
+
+
+# --- safe_resolve 單元測試：containment 真實來源的 5 類邊界 ---
+
+
+def test_safe_resolve_rejects_dotdot(tmp_path):
+    assert workspace.safe_resolve(tmp_path, "../evil.txt") is None
+    assert workspace.safe_resolve(tmp_path, "a/../../evil.txt") is None
+
+
+def test_safe_resolve_rejects_absolute(tmp_path):
+    assert workspace.safe_resolve(tmp_path, "/etc/passwd") is None
+
+
+def test_safe_resolve_rejects_missing_when_must_exist(tmp_path):
+    # 不存在 → 回 None 而非丟例外
+    assert workspace.safe_resolve(tmp_path, "nope.txt") is None
+
+
+def test_safe_resolve_allows_missing_when_not_must_exist(tmp_path):
+    # 寫新檔場景：尚未存在也放行
+    target = workspace.safe_resolve(tmp_path, "new/file.txt", must_exist=False)
+    assert target == (tmp_path / "new" / "file.txt").resolve()
+
+
+def test_safe_resolve_external_symlink_blocked(tmp_path):
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "leak").symlink_to(outside)
+    assert workspace.safe_resolve(ws, "leak") is None
+
+
+def test_safe_resolve_internal_symlink_allowed(tmp_path):
+    (tmp_path / "real.txt").write_text("hi", encoding="utf-8")
+    (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
+    assert workspace.safe_resolve(tmp_path, "link.txt") == (tmp_path / "real.txt").resolve()
+
+
+def test_safe_resolve_symlink_loop_returns_none(tmp_path):
+    (tmp_path / "a").symlink_to(tmp_path / "b")
+    (tmp_path / "b").symlink_to(tmp_path / "a")
+    assert workspace.safe_resolve(tmp_path, "a") is None
+
+
+def test_safe_resolve_target_equals_root(tmp_path):
+    assert workspace.safe_resolve(tmp_path, "") == tmp_path.resolve()
+
+
+def test_safe_resolve_write_through_existing_parent_symlink_blocked(tmp_path):
+    """root 下放指向外部的 symlink 目錄、往其中寫『新檔』，仍應回 None：
+    resolve(strict=False) 會展開『已存在』的前綴 symlink，故此逃逸被擋。
+    （已知缺口僅限前綴 symlink『尚不存在』的尾段情形，見 safe_resolve docstring。）"""
+    outside = tmp_path.parent / "outside_dir"
+    outside.mkdir()
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "linkdir").symlink_to(outside)  # 外部目錄 symlink，已存在
+    assert workspace.safe_resolve(ws, "linkdir/new.txt", must_exist=False) is None
