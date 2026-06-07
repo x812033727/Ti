@@ -187,6 +187,7 @@ function handleEvent(ev) {
       clearStream();
       renderRoster(p.roster || []);
       addSystem("🛠️ 工作室開工：" + (p.requirement || ""));
+      if (p.repo_url) addSystem("📦 既有專案：" + p.repo_url);
       break;
     case "phase_change":
       setPhase(p.phase);
@@ -245,6 +246,7 @@ function handleEvent(ev) {
 function start() {
   const requirement = reqInput.value.trim();
   if (!requirement) { reqInput.focus(); return; }
+  const repoUrl = $("#repoUrl").value.trim();
   replaying = false;
   closeHistory();
   setRunning(true);
@@ -252,7 +254,7 @@ function start() {
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => ws.send(JSON.stringify({ requirement }));
+  ws.onopen = () => ws.send(JSON.stringify({ requirement, repo_url: repoUrl }));
   ws.onmessage = (e) => handleEvent(JSON.parse(e.data));
   ws.onerror = () => { addSystem("⚠️ 連線發生錯誤"); toast("WebSocket 連線錯誤", "err"); setRunning(false); };
 }
@@ -381,9 +383,99 @@ function renderPublish(p) {
   scrollStream();
 }
 
+// --- 設定（API key / provider / 模型 / GitHub token）-------------------
+const settingsPanel = $("#settingsPanel");
+const settingsForm = $("#settingsForm");
+
+async function openSettings() {
+  settingsPanel.classList.remove("hidden");
+  settingsForm.innerHTML = "<div class='muted'>載入中…</div>";
+  try {
+    const data = await (await fetch("/api/settings")).json();
+    renderSettings(data.fields || []);
+  } catch (e) {
+    settingsForm.innerHTML = "<div class='muted'>無法載入設定</div>";
+  }
+}
+
+function closeSettings() { settingsPanel.classList.add("hidden"); }
+
+function renderSettings(fields) {
+  settingsForm.innerHTML = "";
+  let lastGroup = null;
+  for (const f of fields) {
+    if (f.group && f.group !== lastGroup) {
+      const h = document.createElement("h3");
+      h.textContent = f.group;
+      settingsForm.appendChild(h);
+      lastGroup = f.group;
+    }
+    const row = document.createElement("label");
+    row.className = "set-row";
+    const cap = document.createElement("span");
+    cap.className = "set-label";
+    cap.textContent = f.label;
+    row.appendChild(cap);
+
+    let input;
+    if (f.kind === "select") {
+      input = document.createElement("select");
+      for (const opt of f.options) {
+        const o = document.createElement("option");
+        o.value = opt; o.textContent = opt;
+        if (opt === f.value) o.selected = true;
+        input.appendChild(o);
+      }
+    } else {
+      input = document.createElement("input");
+      input.type = f.kind === "password" ? "password" : "text";
+      input.value = f.secret ? "" : (f.value || "");
+      input.placeholder = f.secret && f.set
+        ? "已設定（留空＝不變更）"
+        : (f.placeholder || "");
+    }
+    input.dataset.env = f.env;
+    input.dataset.secret = f.secret ? "1" : "";
+    row.appendChild(input);
+    settingsForm.appendChild(row);
+  }
+}
+
+async function saveSettings() {
+  const payload = {};
+  settingsForm.querySelectorAll("[data-env]").forEach((el) => {
+    const val = el.value.trim();
+    // 秘密欄位留空＝不變更，不送出
+    if (el.dataset.secret && val === "") return;
+    payload[el.dataset.env] = val;
+  });
+  const hint = $("#settingsHint");
+  hint.textContent = "儲存中…";
+  try {
+    const res = await (await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })).json();
+    if (res.ok) {
+      renderSettings(res.fields || []);
+      hint.textContent = "已儲存，下次討論即生效。";
+      toast("設定已儲存", "ok");
+      loadHealth();
+    } else {
+      hint.textContent = res.detail || "儲存失敗";
+    }
+  } catch (e) {
+    hint.textContent = "儲存請求失敗";
+  }
+}
+
 startBtn.onclick = start;
 stopBtn.onclick = stop;
 interjectBtn.onclick = sendInterject;
+$("#settingsBtn").onclick = openSettings;
+$("#settingsClose").onclick = closeSettings;
+$("#settingsSave").onclick = saveSettings;
 $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });

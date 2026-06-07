@@ -12,15 +12,31 @@
       <span id="offlineBadge" class="badge-offline hidden">離線示範</span>
     </div>
     <div class="launch">
+      <input id="repoUrl" type="text" class="repo-input"
+             placeholder="（選填）GitHub repo 網址，會 clone 進來一起討論" />
       <input id="requirement" type="text"
              placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
       <button id="startBtn">開始討論</button>
       <button id="stopBtn" class="ghost" disabled>停止</button>
+      <button id="settingsBtn" class="ghost">⚙️ 設定</button>
       <button id="historyBtn" class="ghost">📜 歷史</button>
       <button id="logoutBtn" class="ghost hidden">登出</button>
     </div>
     <div id="phase" class="phase">待命中</div>
   </header>
+
+  <!-- 設定（API key / provider / 模型 / GitHub token） -->
+  <div id="settingsPanel" class="settings-panel hidden">
+    <div class="settings-head">
+      <h2>設定</h2>
+      <button id="settingsClose" class="ghost">✕</button>
+    </div>
+    <form id="settingsForm" class="settings-form"></form>
+    <div class="settings-foot">
+      <span id="settingsHint" class="muted">設定會寫入伺服器的 .env，下次討論即生效。</span>
+      <button id="settingsSave">儲存</button>
+    </div>
+  </div>
 
   <!-- 歷史存檔 / 重播 -->
   <div id="historyPanel" class="history-panel hidden">

@@ -69,6 +69,25 @@ TI_ACCESS_PASSWORD=你的密碼 python -m studio.server
 「登出」按鈕。登入狀態以簽章 cookie 維持（預設 7 天，見 `TI_AUTH_TTL`）。
 未設定 `TI_ACCESS_PASSWORD` 時門禁完全停用，本地開發與離線示範不受影響。
 
+### ⚙️ 設定頁（API key / provider / 模型 / GitHub token）
+
+不想改環境變數也可以直接在網頁上設定：按右上角「⚙️ 設定」，即可填入
+
+- 後端 provider（claude / openai）
+- Claude API key、Claude 主力 / 快速模型
+- OpenAI API key、Base URL（可指向本地模型）、OpenAI 模型
+- GitHub token、發佈目標 repo
+
+儲存後會寫入伺服器的 `.env` 檔（已被 git 忽略），並**於下次討論即時生效，無需重啟**。
+秘密欄位（key / token）在頁面上不會回顯明文，留空代表「不變更」。
+
+### 在現有的 GitHub 專案上工作
+
+想讓專家討論 / 修改一個現有專案，而不是從零開始：在頂部「GitHub repo 網址」欄位填入
+倉庫網址（例如 `https://github.com/owner/repo`），按「開始討論」即可。系統會先把該 repo
+**clone 進這次的 workspace**，PM 會先閱讀現有結構再拆解任務。私有倉庫請先在設定頁填入
+GitHub token。（僅支援 github.com 的 https 網址；離線示範模式會忽略此欄位。）
+
 ### 離線示範模式（不需 API 金鑰）
 
 想先試用整套流程、或在沒有金鑰的環境驗證，可開啟離線模式：用腳本化的假專家驅動
@@ -130,8 +149,9 @@ pre-commit install     # （選填）裝 git hook，提交前自動 lint
 
 ```
 studio/
-  config.py        設定（模型、輪數、辯論、Demo、git、門禁、伺服器）
+  config.py        設定（模型、輪數、辯論、Demo、git、門禁、伺服器）+ 執行期 reload
   auth.py          單一密碼門禁：cookie 簽章/驗證、FastAPI 依賴與 WS 檢查
+  settings.py      可由 UI 調整的設定（API key / provider / 模型 / GitHub），持久化到 .env
   roles.py         四位專家的角色與 system prompt
   events.py        StudioEvent 事件（WebSocket 傳輸）
   workspace.py     每個 session 的沙箱工作目錄

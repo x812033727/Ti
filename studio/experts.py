@@ -24,6 +24,14 @@ from .roles import Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
+# PM 與高級工程師用主力（推理強）模型，其餘用快速模型。
+_LEAD_ROLES = {"pm", "senior"}
+
+
+def _model_for(role: Role) -> str:
+    """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。"""
+    return config.MODEL_LEAD if role.key in _LEAD_ROLES else config.MODEL_FAST
+
 
 def _summarize_tool(name: str, tool_input: dict) -> str:
     """把工具呼叫變成人類可讀的一行摘要，給 UI 顯示。"""
@@ -49,7 +57,7 @@ class Expert:
                 allowed_tools=role.allowed_tools,
                 permission_mode=role.permission_mode,
                 cwd=str(cwd),
-                model=role.model,
+                model=_model_for(role),
                 max_turns=config.MAX_TURNS_PER_TURN,
             )
         )

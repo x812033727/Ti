@@ -23,8 +23,9 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 
 | 模組 | 職責 |
 |------|------|
-| `config.py` | 集中設定：模型、輪數、辯論、Demo、git、門禁、路徑、伺服器 |
+| `config.py` | 集中設定：模型、輪數、辯論、Demo、git、門禁、路徑、伺服器；`reload()` 供執行期套用變更 |
 | `auth.py` | 單一密碼門禁：cookie token 簽章/驗證、`require_auth` 依賴、WS 檢查 |
+| `settings.py` | UI 可調設定（API key / provider / 模型 / GitHub token）：白名單、遮蔽秘密、寫入 .env、`config.reload()` |
 | `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace、history、publish |
 | `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
@@ -70,12 +71,28 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為 `TI_AUTH_SECRET`
 （留空則每次啟動隨機產生，重啟即讓所有登入失效）。
 
+## 設定流程（UI 設定 API key / provider / 模型 / GitHub）
+
+- `GET /api/settings`：回傳 `settings.FIELDS` 的目前狀態；秘密欄位**不含明文**，只回報 `set`。
+- `POST /api/settings`：只接受白名單（`settings.ALLOWED`）內的鍵；秘密欄位留空＝不變更、
+  select 欄位驗證選項。寫入專案根目錄 `.env`（`dotenv.set_key`）並更新 `os.environ`，
+  最後呼叫 `config.reload()` 重新載入可調設定，**下次討論即生效，無需重啟**。
+- Claude 模型選擇靠 `experts._model_for(role)` 在每個 session 建立專家時即時讀取 `config`。
+
+## 指定 GitHub repo（在現有專案上工作）
+
+- WebSocket 第一則訊息除了 `requirement`，可附 `repo_url`（與選用的 `repo_branch`）。
+- `runner.is_valid_repo_url` 僅放行 github.com 的 https 網址；`runner.git_clone` 在啟動討論前
+  把 repo `clone` 進該 session 的 workspace（私有 repo 會以 `GITHUB_TOKEN` 注入認證，且輸出/
+  指令會遮蔽 token）。`StudioSession(repo_url=...)` 會讓 PM 先閱讀現有結構再拆解任務。
+- 離線示範模式會忽略 `repo_url`（假專家自行寫檔，避免衝突）。
+
 ## 前端（web/）
 
 免建置、無框架：
 
-- `index.html` / `app.js` / `styles.css`：工作室主頁（討論串、看板、檔案、歷史、重播）。
-  `app.js` 載入時先打 `/api/auth/status`，門禁啟用且未登入則導向 `/login`。
+- `index.html` / `app.js` / `styles.css`：工作室主頁（討論串、看板、檔案、歷史、重播、設定面板、
+  GitHub repo 網址輸入）。`app.js` 載入時先打 `/api/auth/status`，門禁啟用且未登入則導向 `/login`。
 - `login.html` / `login.js`：登入頁，送 `/api/login` 後導回 `/`。
 
 ## 資料夾

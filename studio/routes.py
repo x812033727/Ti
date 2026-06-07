@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from . import auth, config, history, publisher, workspace
+from . import auth, config, history, publisher, settings, workspace
 
 router = APIRouter()
 
@@ -61,6 +61,20 @@ async def logout() -> JSONResponse:
     response = JSONResponse({"ok": True})
     response.delete_cookie(config.AUTH_COOKIE)
     return response
+
+
+# --- 設定（受保護）----------------------------------------------------
+@router.get("/api/settings", dependencies=[Depends(auth.require_auth)])
+async def get_settings() -> JSONResponse:
+    return JSONResponse(settings.read())
+
+
+@router.post("/api/settings", dependencies=[Depends(auth.require_auth)])
+async def post_settings(request: Request) -> JSONResponse:
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "detail": "格式錯誤"}, status_code=400)
+    return JSONResponse({"ok": True, **settings.update(body)})
 
 
 # --- workspace（受保護）------------------------------------------------
