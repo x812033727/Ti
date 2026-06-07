@@ -280,7 +280,9 @@ async def git_init(cwd: Path | str) -> bool:
 
 # 僅接受 github.com 的 https 倉庫網址（避免任意主機 / 路徑，降低風險）。
 _REPO_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?$", re.I)
-_BRANCH_RE = re.compile(r"^[\w./-]{1,200}$")
+# 首字元不允許 '-'：避免 `--foo` / `-o` 這類「以選項開頭」的 branch 通過過濾，
+# 進而在 `git clone ... --branch <branch>` 被 git 當成參數注入（如 --upload-pack）。
+_BRANCH_RE = re.compile(r"^[\w./][\w./-]{0,199}$")
 
 
 def is_valid_repo_url(url: str) -> bool:
