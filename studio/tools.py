@@ -128,7 +128,9 @@ async def execute(name: str, args: dict, cwd: Path) -> str:
             return f"已修改 {args.get('path')}"
 
         if name == "run_bash":
-            result = await runner.run_command(cwd, args.get("command", ""))
+            # 刻意保留 shell：run_bash 工具的本質就是執行呼叫端給定的任意 bash 指令
+            # （可能含 pipe / && / 重導向 / glob），必須經 /bin/sh 解析，無法 argv 化。
+            result = await runner.run_command(cwd, args.get("command", ""))  # nosec B602
             return f"exit={result.exit_code}\n{result.output}"
 
         return f"錯誤：未知工具 {name}"

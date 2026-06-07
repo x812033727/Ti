@@ -28,8 +28,8 @@ EXPECTED = {
     "runner.py git init/config": ("a", {269, 272, 276, 280}),
     "runner.py git_clone": ("a", {320}),
     "autopilot.py pytest gate": ("a", {89}),
-    "orchestrator.py demo/self-test": ("c", {718, 735}),
-    "tools.py run_bash": ("c", {131}),
+    "orchestrator.py demo/self-test": ("c", {721, 740}),
+    "tools.py run_bash": ("c", {133}),
 }
 
 
@@ -204,11 +204,11 @@ def test_classification_matches_code_reality():
     ), "autopilot pytest gate 應為固定 pytest 指令 (a 類，shell 或 exec 皆可)"
 
     # --- c 類：傳入的是變數（cmd / args.get(...)），必須仍走 shell run_command ---
-    for ln in (718, 735):
+    for ln in (721, 740):
         assert "run_command(self.cwd, cmd)" in orch[ln - 1], (
             f"orchestrator.py:{ln} 預期傳動態 cmd 變數、保留 shell (c 類)"
         )
-    assert 'args.get("command"' in tools[130], "tools.py:131 預期傳使用者輸入、保留 shell (c 類)"
+    assert 'args.get("command"' in tools[132], "tools.py:133 預期傳使用者輸入、保留 shell (c 類)"
 
 
 def test_logical_caller_count_is_five(inventory_rows: list[dict]):
