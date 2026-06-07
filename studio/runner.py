@@ -264,13 +264,22 @@ async def git_init(cwd: Path | str) -> bool:
     root = Path(cwd)
     if (root / ".git").exists():
         return True
-    r = await run_command(root, "git init -q", timeout=20, sandbox=False)
+    # 全程走參數式 exec：固定 git 指令拆成 argv，shell 不參與解析（防注入）。
+    # sandbox 顯式帶 False（run_command_exec 預設 None 會走 fail-closed）。
+    r = await run_command_exec(root, ["git", "init", "-q"], timeout=20, sandbox=False)
     if not r.ok:
         return False
-    await run_command(root, "git config user.email studio@ti.local", timeout=20, sandbox=False)
-    await run_command(root, "git config user.name 'Ti Studio'", timeout=20, sandbox=False)
+    await run_command_exec(
+        root, ["git", "config", "user.email", "studio@ti.local"], timeout=20, sandbox=False
+    )
+    # 值為 "Ti Studio"（不帶單引號——引號是 shell 產物，argv 不需要）。
+    await run_command_exec(
+        root, ["git", "config", "user.name", "Ti Studio"], timeout=20, sandbox=False
+    )
     # 關閉 commit 簽章，避免外部簽章環境導致 workspace commit 失敗。
-    await run_command(root, "git config commit.gpgsign false", timeout=20, sandbox=False)
+    await run_command_exec(
+        root, ["git", "config", "commit.gpgsign", "false"], timeout=20, sandbox=False
+    )
     return True
 
 
@@ -305,9 +314,11 @@ async def git_clone(
     parts = ["git", "clone", "--depth", "1"]
     if branch and _BRANCH_RE.match(branch):
         parts += ["--branch", branch]
-    cmd = " ".join(shlex.quote(p) for p in parts) + f" {shlex.quote(authed)} ."
-    result = await run_command(dest, cmd, timeout=180, sandbox=False)
-    # 避免 token 出現在回報的指令 / 輸出裡
+    # 直接組 argv 走 exec，shell 不參與解析（authed url / branch 一律當純文字）。
+    # label 固定為 "git clone"，嚴禁帶含 token 的 authed，避免 token 寫進日誌。
+    argv = parts + [authed, "."]
+    result = await run_command_exec(dest, argv, timeout=180, sandbox=False, label="git clone")
+    # 避免 token 出現在回報的指令 / 輸出裡（保持在遮蔽之後、return 之前）
     if token:
         result.output = result.output.replace(token, "***")
     result.command = "git clone " + (url or "").strip()
