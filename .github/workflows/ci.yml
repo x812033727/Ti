@@ -63,3 +63,145 @@ jobs:
         env:
           TI_SANDBOX: "0"
         run: python -m pytest -q --cov=studio --cov-report=term-missing
+
+  # 獨立沙箱實跑 job：在 runner 上裝 bubblewrap + 載入 AppArmor userns profile，
+  # 讓 tests/ 中以 config._sandbox_available()（純檢查 bwrap 是否存在）為 skip 條件
+  # 的沙箱測試「真的跑起來」而非被 skip。不動上面 lint/test job（test 仍 TI_SANDBOX=0）。
+  #
+  # 涵蓋的沙箱實跑測試（兩檔共 8 條，含參數化）：
+  #   tests/test_runner.py::test_run_command_exec_sandbox_writes_cwd
+  #   tests/test_runner.py::test_git_commit_three_steps_go_through_sandbox
+  #   tests/test_runner.py::test_git_commit_no_injection_in_real_sandbox[4 參數]
+  #   tests/test_qa_task3_autopilot_pytest_exec.py::test_sandbox_exec_resolves_python
+  #   tests/test_qa_task3_autopilot_pytest_exec.py::test_gate_tests_real_sandbox_run
+  sandbox-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system deps (bubblewrap / socat / apparmor)
+        # socat 必裝：config.sandbox_missing_deps() 會檢查 socat，缺了 CLI 沙箱會
+        # fail-open 靜默裸跑 → 測試「假 PASS」。apparmor-* 提供 userns profile。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat apparmor-profiles apparmor-utils
+
+      - name: Enable bubblewrap (AppArmor userns profile)
+        # Ubuntu 23.10+/24.04 預設 kernel.apparmor_restrict_unprivileged_userns=1，
+        # 用 AppArmor 擋掉非特權 user namespace，bwrap 因此無法建沙箱。
+        # 載入發行版自帶的 bwrap-userns-restrict profile 放行 bwrap 自身建立 userns，
+        # 維持安全模型（禁止沙箱內巢狀 namespace）。套件版本若無此 profile，寫入等效
+        # 自訂 profile 後 reload 作為備援。
+        run: |
+          set -euo pipefail
+          SRC=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          DST=/etc/apparmor.d/bwrap-userns-restrict
+          if [ -f "$SRC" ]; then
+            echo "使用發行版自帶 profile：$SRC"
+            sudo install -m 0644 "$SRC" "$DST"
+          else
+            echo "找不到 $SRC，寫入自訂備援 profile"
+            sudo tee "$DST" >/dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          EOF
+          fi
+          sudo apparmor_parser -r "$DST"
+
+      - name: Bubblewrap smoke (安全閥)
+        # config._sandbox_available() 只驗「bwrap 檔存在」，不驗「能不能跑」。
+        # 若 AppArmor profile 未生效，skip 雖解除但 bwrap 會執行失敗。此 smoke 在
+        # 跑測試前先以實跑路徑同款 flag（--unshare-pid，且不含 --unshare-net，對齊
+        # TI_SANDBOX_NET=1）驗證 bwrap 真的可用；失敗即中止 job 並給清楚訊息。
+        # 禁用 continue-on-error，這是設計的安全閥而非可選項。
+        run: |
+          # 對齊 _bwrap_prefix 的關鍵 flag：--ro-bind / /（host 唯讀）、--bind+--chdir
+          # 綁定可寫 workspace、--unshare-pid（不含 --unshare-net，對齊 TI_SANDBOX_NET=1），
+          # 並在沙箱內實際寫檔，比單跑 true 更貼近實跑路徑。
+          ws=$(mktemp -d)
+          if ! bwrap --ro-bind / / --bind "$ws" "$ws" --chdir "$ws" \
+                 --unshare-pid --die-with-parent --new-session \
+                 sh -c 'echo ok > probe.txt && grep -q ok probe.txt'; then
+            echo "::error::bwrap smoke 失敗——AppArmor userns profile 未生效，沙箱不可用。"
+            echo "請檢查上一步的 apparmor_parser 是否成功載入 bwrap-userns-restrict profile。"
+            exit 1
+          fi
+          echo "bwrap smoke OK"
+
+      - name: Install Python deps
+        # 與 test job 一致：不裝 claude-agent-sdk（autopilot 延後 import），僅裝測試
+        # 實際用到的依賴。用 python -m pytest 讓 repo 根在 sys.path，studio 可被 import。
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi "uvicorn[standard]" httpx python-dotenv pytest pytest-asyncio pytest-cov
+
+      - name: Configure git (for workspace git tests)
+        run: |
+          git config --global user.email ci@ti.local
+          git config --global user.name "CI"
+
+      - name: Run sandbox tests (and assert NOT skipped)
+        # TI_SANDBOX=1 開沙箱；TI_SANDBOX_NET=1 是關鍵——現行 runner._bwrap_prefix 在
+        # SANDBOX_NET=False 時才 append --unshare-net，會觸發 loopback
+        # "RTM_NEWADDR Operation not permitted"。設 NET=1 走 --unshare-pid 但不 unshare-net，
+        # 繞開此 EPERM。-rsp 列出每條結果；之後斷言摘要無 skipped 且 exit 0（全 PASSED）。
+        env:
+          TI_SANDBOX: "1"
+          TI_SANDBOX_NET: "1"
+        run: |
+          set -o pipefail
+          SEL="test_run_command_exec_sandbox_writes_cwd or test_git_commit_three_steps_go_through_sandbox or test_git_commit_no_injection_in_real_sandbox or test_sandbox_exec_resolves_python or test_gate_tests_real_sandbox_run"
+          FILES="tests/test_runner.py tests/test_qa_task3_autopilot_pytest_exec.py"
+
+          # 步驟 A：先用 --collect-only 動態取得「選中數」作為預期 PASSED 數。
+          # 不硬編 8——參數化條數一旦變動會在 collect 階段同步反映，避免假綠。
+          # 直接數選中的 node-id 行（每行一條，含參數化），不解析摘要——
+          # 摘要是 "8/62 tests collected (54 deselected)"，其中 62 是去重前總數，
+          # 8 才是 -k 實際選中數；數 "^檔名::" 行最穩且不受摘要格式變動影響。
+          collect=$(python -m pytest $FILES --collect-only -q -p no:cacheprovider -k "$SEL" 2>&1) || true
+          EXPECTED=$(echo "$collect" | grep -cE "^[A-Za-z0-9_./-]+::")
+          if ! echo "${EXPECTED:-}" | grep -qE "^[1-9][0-9]*$"; then
+            echo "::error::collect-only 未取得有效選中數（collection error 或 -k 全數漏選）。"
+            echo "$collect"
+            exit 1
+          fi
+          echo "預期 PASSED 數（collect-only）：$EXPECTED"
+
+          # 步驟 B：實跑。GitHub Actions 預設 shell 為 bash -eo pipefail；測試非 0 時
+          # $(...) 會中止賦值，加 || true 讓下方斷言成為權威閘門並印出清楚訊息。
+          out=$(python -m pytest $FILES -q -rsp -p no:cacheprovider -k "$SEL" 2>&1) || true
+          echo "$out"
+
+          # collection error 的 summary 是 "X error(s)"——不含 failed，舊版三道 grep 會放行
+          # 而假綠（測試根本沒跑）。優先攔截 error 態。
+          if echo "$out" | grep -qiE "[0-9]+ errors?"; then
+            echo "::error::沙箱測試出現 collection/執行 error（測試未真正執行），視為失敗。"
+            exit 1
+          fi
+          if echo "$out" | grep -qiE "[0-9]+ failed"; then
+            echo "::error::沙箱測試有 FAILED——bwrap 可執行但測試未通過，請檢查上方輸出。"
+            exit 1
+          fi
+          # 被 skip 代表能力偵測未解除（bwrap/profile 問題），驗收要求須 PASSED 而非 skipped
+          if echo "$out" | grep -qiE "[0-9]+ skipped"; then
+            echo "::error::沙箱測試被 skip——能力偵測未解除（bwrap 未裝好或 profile 未生效）。"
+            exit 1
+          fi
+          # 步驟 C：數量斷言。實際 PASSED 必須等於 collect-only 選中數，
+          # 確保 N 條全跑到而非 -k 漏選/部分沒跑卻仍有零星 passed 而假綠。
+          ACTUAL=$(echo "$out" | grep -oE "[0-9]+ passed" | grep -oE "^[0-9]+" | head -1)
+          if [ -z "${ACTUAL:-}" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::PASSED 數量不符：預期 $EXPECTED，實際 ${ACTUAL:-0}（疑似漏選或部分未跑）。"
+            exit 1
+          fi
+          echo "沙箱測試 $ACTUAL/$EXPECTED 全數 PASSED、無 skip/error ✅"
