@@ -293,3 +293,55 @@ def test_client_ip_strips_ipv6_zone(proxy):
     proxy(True)
     req = make_request(peer="127.0.0.1", xff="fe80::1%eth0")
     assert netutil.client_ip(req) == "fe80::1"
+
+
+# ======================================================================
+# netutil.is_loopback（任務 #3）：建在 client_ip 上、用 ipaddress.is_loopback、fail-closed。
+# ======================================================================
+def test_is_loopback_ipv4_peer(proxy):
+    """trust 關閉時 peer=127.0.0.1 → loopback True（涵蓋 127.0.0.0/8）。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="127.0.0.1")) is True
+
+
+def test_is_loopback_ipv4_127_subnet(proxy):
+    """127.0.0.0/8 全段皆 loopback，非僅 127.0.0.1（禁字串比對的關鍵）。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="127.1.2.3")) is True
+
+
+def test_is_loopback_ipv6_peer(proxy):
+    """peer=::1 → loopback True。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="::1")) is True
+
+
+def test_is_loopback_ipv4_mapped_ipv6(proxy):
+    """::ffff:127.0.0.1（IPv4-mapped）須還原後判為 loopback，避免被當繞過漏洞。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="::ffff:127.0.0.1")) is True
+
+
+def test_is_loopback_public_peer_false(proxy):
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer="203.0.113.9")) is False
+
+
+def test_is_loopback_peer_none_false(proxy):
+    """peer 不可知 → fail-closed False。"""
+    proxy(False)
+    assert netutil.is_loopback(make_request(peer=None)) is False
+
+
+def test_is_loopback_malicious_leftmost_not_spoofable(proxy):
+    """偽造防護：受信 peer + XFF 最左塞 127.0.0.1 → 取真實 client，is_loopback False。"""
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="127.0.0.1, 203.0.113.9")
+    assert netutil.is_loopback(req) is False
+
+
+def test_is_loopback_real_client_loopback_via_proxy(proxy):
+    """受信 peer + XFF 真實 client 為 ::1 → loopback True（正向走 XFF）。"""
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="::1")
+    assert netutil.is_loopback(req) is True
