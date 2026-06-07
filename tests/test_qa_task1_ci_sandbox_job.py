@@ -56,12 +56,20 @@ def test_sandbox_job_has_smoke_step_no_continue_on_error(doc):
     assert "bwrap" in s["run"] and "exit 1" in s["run"], "smoke 應於失敗時 exit 1"
 
 
+def _strip_comments(run: str) -> str:
+    """只保留實際指令行，去掉 shell 註解（# 開頭）——避免註解文字誤判旗標。"""
+    return "\n".join(
+        ln for ln in run.splitlines() if not ln.strip().startswith("#")
+    )
+
+
 def test_smoke_flags_align_with_real_run(doc):
     """驗收3/4：smoke flag 對齊實跑路徑——含 --unshare-pid，不含 --unshare-net。"""
     steps = doc["jobs"]["sandbox-test"]["steps"]
     smoke = [s for s in steps if "smoke" in s.get("name", "").lower()][0]["run"]
-    assert "--unshare-pid" in smoke
-    assert "--unshare-net" not in smoke, "NET=1 實跑不 unshare-net，smoke 也不該"
+    code = _strip_comments(smoke)  # 註解裡會提到 --unshare-net，需排除
+    assert "--unshare-pid" in code
+    assert "--unshare-net" not in code, "NET=1 實跑不 unshare-net，smoke 也不該"
 
 
 def test_installs_socat_and_apparmor(doc):
