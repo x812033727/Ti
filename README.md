@@ -146,6 +146,9 @@ TI_OFFLINE=1 python -m studio.server
   `git push --force-with-lease --force-if-includes` 覆寫。若該分支上有他人 commit，**會被直接覆蓋**；
   且 `--force-with-lease` 在背景 `git fetch`（例如 cron）默默更新本地 ref 後可能失效，安全性退化為形同裸 force。
   事後救援僅能靠**本機 reflog**，已 push 出去而隊友端沒有的 commit 無法復原。故僅建議用於覆寫 autopilot 自己殘留的分支。
+- **`MERGE_ADMIN` 前提**：帶 `gh pr merge --admin` 以管理員權限立即合併、繞過分支保護，因此**呼叫者本身需具該 repo 的 admin 權限**，否則指令會失敗。
+  另注意若該 repo 採用較新的 **Rulesets**（而非 classic branch protection），`--admin` 可能**無法繞過**「至少一個 approval」等規則而仍被擋下；
+  此時需改走 `gh api .../pulls/{n}/merge -X PUT` 之類的 workaround。設 `1` 不代表保證能自動合併，實際以該 repo 的權限與保護設定為準。
 
 ### 切換到 OpenAI / 本地模型
 
