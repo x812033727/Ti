@@ -149,6 +149,9 @@ TI_OFFLINE=1 python -m studio.server
 - **`MERGE_ADMIN` 前提**：帶 `gh pr merge --admin` 以管理員權限立即合併、繞過分支保護，因此**呼叫者本身需具該 repo 的 admin 權限**，否則指令會失敗。
   另注意若該 repo 採用較新的 **Rulesets**（而非 classic branch protection），`--admin` 可能**無法繞過**「至少一個 approval」等規則而仍被擋下；
   此時需改走 `gh api .../pulls/{n}/merge -X PUT` 之類的 workaround。設 `1` 不代表保證能自動合併，實際以該 repo 的權限與保護設定為準。
+- **解析規則**：兩旗標只有 `0`、`false`、`False`、空值、未設定這五種會判為「關閉」，**其餘任何值一律視為開啟**。
+  此比對是**字面完全相符、區分大小寫**（程式為 `not in ("0","false","False","")`，無 `.lower()`），
+  所以 `FALSE`（全大寫）、`no`、`off`、`disable` 等都**不在關閉集合內，會被當成開啟**。要關閉請固定填 `0`。
 
 ### 切換到 OpenAI / 本地模型
 
