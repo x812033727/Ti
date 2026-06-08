@@ -3,6 +3,7 @@
 - README 明確提到 `.venv/` 已在 `.gitignore`、不提交；且 .gitignore 實際含 .venv/。
 - 文件聲明與「執行環境前置」段對齊，並對齊當前執行環境（≥3.10）。
 """
+
 import re
 import sys
 from pathlib import Path
@@ -14,8 +15,7 @@ PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
 def _env_section() -> str:
-    m = re.search(r"^##\s+執行環境前置\s*$(.*?)(?=^##\s|\Z)",
-                  README, re.MULTILINE | re.DOTALL)
+    m = re.search(r"^##\s+執行環境前置\s*$(.*?)(?=^##\s|\Z)", README, re.MULTILINE | re.DOTALL)
     assert m, "找不到『執行環境前置』段落"
     return m.group(1)
 
@@ -27,8 +27,7 @@ def test_pyproject_requires_310():
 def test_readme_states_python_310_in_env_section():
     """前置段須標明 Python ≥3.10（容許 ≥/>=/3.10+ 等寫法）。"""
     sec = _env_section()
-    assert re.search(r"Python\s*(≥|>=)?\s*3\.10|3\.10\s*\+", sec), \
-        "前置段未明確標明 Python 3.10"
+    assert re.search(r"Python\s*(≥|>=)?\s*3\.10|3\.10\s*\+", sec), "前置段未明確標明 Python 3.10"
 
 
 def test_readme_version_consistent_with_pyproject():

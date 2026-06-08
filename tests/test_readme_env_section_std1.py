@@ -2,6 +2,7 @@
 完整包含四要素——建立 venv、跨平台啟動（mac/Linux + Windows）、
 安裝 .[dev]、並標注 .[openai] 為選用。
 """
+
 import re
 from pathlib import Path
 
@@ -10,8 +11,7 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 
 def _env_section() -> str:
-    m = re.search(r"^(##\s+執行環境前置\s*$.*?)(?=^##\s|\Z)",
-                  README, re.MULTILINE | re.DOTALL)
+    m = re.search(r"^(##\s+執行環境前置\s*$.*?)(?=^##\s|\Z)", README, re.MULTILINE | re.DOTALL)
     assert m, "找不到獨立『## 執行環境前置』段落"
     return m.group(1)
 
@@ -49,7 +49,7 @@ def test_openai_marked_optional():
             return
     # 退而求其次：openai 行的後續 80 字內含『選用』
     idx = SEC.find(".[openai]")
-    assert "選用" in SEC[idx - 40: idx + 80], ".[openai] 未標注為選用"
+    assert "選用" in SEC[idx - 40 : idx + 80], ".[openai] 未標注為選用"
 
 
 def test_section_order_create_then_activate_then_install():
@@ -57,8 +57,9 @@ def test_section_order_create_then_activate_then_install():
     i_create = SEC.find("python3 -m venv .venv")
     i_activate = SEC.find("source .venv/bin/activate")
     i_install = SEC.find('pip install -e ".[dev]"')
-    assert -1 < i_create < i_activate < i_install, \
+    assert -1 < i_create < i_activate < i_install, (
         f"步驟順序錯誤: create={i_create}, activate={i_activate}, install={i_install}"
+    )
 
 
 def test_section_located_between_roles_and_install():
@@ -66,5 +67,6 @@ def test_section_located_between_roles_and_install():
     i_roles = README.find("## 角色")
     i_env = README.find("## 執行環境前置")
     i_install = README.find("## 安裝")
-    assert -1 < i_roles < i_env < i_install, \
+    assert -1 < i_roles < i_env < i_install, (
         f"段落位置不符: roles={i_roles}, env={i_env}, install={i_install}"
+    )

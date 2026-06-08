@@ -2,6 +2,7 @@
 
 純文字結構檢查（不需網路），對應 PM 驗收標準 1~5。
 """
+
 import re
 from pathlib import Path
 
@@ -13,8 +14,9 @@ PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 def _section(title: str) -> str:
     """擷取某個 ## 標題到下一個 ## 之間的內容。"""
-    m = re.search(rf"^##\s+{re.escape(title)}\s*$(.*?)(?=^##\s|\Z)",
-                  README, re.MULTILINE | re.DOTALL)
+    m = re.search(
+        rf"^##\s+{re.escape(title)}\s*$(.*?)(?=^##\s|\Z)", README, re.MULTILINE | re.DOTALL
+    )
     assert m, f"找不到段落: ## {title}"
     return m.group(1)
 
@@ -56,7 +58,7 @@ def test_studio_server_entry_consistent():
 # ---- 驗收標準 3：一行可複製驗證指令 + 預期輸出 ----
 def test_verify_command_present():
     sec = _section("執行環境前置")
-    assert '.venv/bin/python3 -c "import studio; print(\'ok\')"' in sec
+    assert ".venv/bin/python3 -c \"import studio; print('ok')\"" in sec
     # 預期輸出 ok 要寫明
     assert "ok" in sec
 
