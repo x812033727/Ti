@@ -186,13 +186,48 @@ async def test_wait_for_ci_pending_then_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_wait_for_ci_fetch_error(monkeypatch, _no_sleep):
+async def test_wait_for_ci_persistent_fetch_error_bounded(monkeypatch, _no_sleep):
+    """持續查詢失敗 → 連續上限後回 error（有界，不無限重試）。"""
+    calls = {"n": 0}
+
     async def fake_fetch(sha):
+        calls["n"] += 1
         return None
 
     monkeypatch.setattr(publisher, "_fetch_ci", fake_fetch)
-    state, _ = await publisher._wait_for_ci("sha", timeout=30, interval=10, sleep=_no_sleep)
-    assert state == "error"
+    state, detail = await publisher._wait_for_ci(
+        "sha", timeout=600, interval=10, sleep=_no_sleep, max_fetch_errors=3
+    )
+    assert state == "error" and "連續失敗" in detail
+    assert calls["n"] == 3  # 連續 3 次失敗即放棄，未因大 timeout 而暴衝
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ci_transient_error_then_pass(monkeypatch, _no_sleep):
+    """單次查詢抖動後恢復 → 不誤判 error，續等到 pass。"""
+    seq = [None, ([{"name": "a", "status": "in_progress", "conclusion": None}], {}),
+           ([{"name": "a", "status": "completed", "conclusion": "success"}], {})]
+    idx = {"i": 0}
+
+    async def fake_fetch(sha):
+        r = seq[idx["i"]]
+        idx["i"] += 1
+        return r
+
+    monkeypatch.setattr(publisher, "_fetch_ci", fake_fetch)
+    state, _ = await publisher._wait_for_ci("sha", timeout=600, interval=10, sleep=_no_sleep)
+    assert state == "pass"  # 第一次 None 被容忍，最終 pass
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ci_zero_interval_no_infinite_loop(monkeypatch, _no_sleep):
+    """interval<=0 且持續 pending → 一輪即視為逾時，不無限迴圈。"""
+    async def fake_fetch(sha):
+        return ([{"name": "a", "status": "in_progress", "conclusion": None}], {})
+
+    monkeypatch.setattr(publisher, "_fetch_ci", fake_fetch)
+    state, _ = await publisher._wait_for_ci("sha", timeout=30, interval=0, sleep=_no_sleep)
+    assert state == "timeout"
 
 
 # --- _merge_flow 六結局 ----------------------------------------------

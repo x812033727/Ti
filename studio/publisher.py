@@ -347,18 +347,43 @@ async def _fetch_ci(head_sha: str) -> tuple[list, dict] | None:
 
 
 async def _wait_for_ci(
-    head_sha: str, *, timeout: float, interval: float, sleep=asyncio.sleep
+    head_sha: str,
+    *,
+    timeout: float,
+    interval: float,
+    sleep=asyncio.sleep,
+    max_fetch_errors: int = 3,
 ) -> tuple[str, str]:
     """輪詢 head sha 的 CI，直到 pass/fail 或逾時。回傳 (state, detail)。
 
     state ∈ {"pass", "fail", "timeout", "error"}：pending 續等、fail 早退、逾時早退。
+
+    韌性：
+    - 單次查詢失敗（API／網路抖動）不立即放棄——容忍連續 `max_fetch_errors` 次後才回 error，
+      期間仍計入 timeout，故失敗也不會無限重試。
+    - interval ≤ 0 時，pending 一輪即視為已達 timeout，避免 waited 永不增加的無限迴圈。
     """
+    # 防 interval 非正導致 waited 永不增加：用一個正的步進來累計等待時間。
+    step = interval if interval > 0 else (timeout + 1)
     waited = 0.0
     last_detail = "未知"
+    fetch_errors = 0
     while True:
         fetched = await _fetch_ci(head_sha)
         if fetched is None:
-            return "error", "查詢 CI 狀態失敗（API／網路錯誤）"
+            fetch_errors += 1
+            last_detail = f"查詢 CI 狀態失敗（第 {fetch_errors} 次）"
+            # 連續多次失敗、或已耗盡 timeout 才放棄，避免單次抖動誤判 ERROR、也不無限重試。
+            if fetch_errors >= max_fetch_errors or waited >= timeout:
+                return (
+                    "error",
+                    f"查詢 CI 狀態連續失敗（API／網路錯誤，已重試 {fetch_errors} 次）",
+                )
+            await sleep(interval)
+            waited += step
+            continue
+
+        fetch_errors = 0  # 查詢成功就重置連續失敗計數
         state, last_detail = summarize_checks(*fetched)
         if state in ("pass", "fail"):
             return state, last_detail
@@ -366,7 +391,7 @@ async def _wait_for_ci(
         if waited >= timeout:
             return "timeout", f"等待 CI 逾時（已等待 {int(waited)}s，最後狀態：{last_detail}）"
         await sleep(interval)
-        waited += interval
+        waited += step
 
 
 async def _update_branch(number: int) -> bool:
