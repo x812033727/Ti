@@ -5,6 +5,7 @@
 皆存在）。本測試把這些關鍵字逐一釘死，並守住 test_qa_task6_docs 賴以運作的
 next() 取行不變量（README 首個含變數名的行必須是表格行，同行含 0/安全側）。
 """
+
 from pathlib import Path
 
 import pytest
@@ -35,5 +36,4 @@ def test_first_mention_is_table_row(var):
     """守住 next() 取行不變量：首個含變數名之行＝KV 表格行，同行有 0 與安全/預設。"""
     line = next(ln for ln in README.splitlines() if var in ln)
     assert line.lstrip().startswith("|"), f"{var} 首次出現非表格行：{line!r}"
-    assert "0" in line and ("安全" in line or "預設" in line), \
-        f"{var} 表格行未標明預設值：{line!r}"
+    assert "0" in line and ("安全" in line or "預設" in line), f"{var} 表格行未標明預設值：{line!r}"

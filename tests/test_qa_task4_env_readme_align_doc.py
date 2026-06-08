@@ -7,6 +7,7 @@
 - 兩處兩變數預設值一致（皆 0），不矛盾。
 - .env.example 精簡（不重複 README 的長段風險敘述），並指向 README 補充區塊。
 """
+
 import re
 from pathlib import Path
 
@@ -36,8 +37,9 @@ def _autopilot_block(env_text):
 def test_env_has_default_off_principle(env_text):
     """.env.example 含『兩者預設皆關閉/安全側』原則句。"""
     blk = _autopilot_block(env_text)
-    assert re.search(r"預設.{0,4}皆?.{0,4}(關閉|安全)", blk), \
+    assert re.search(r"預設.{0,4}皆?.{0,4}(關閉|安全)", blk), (
         ".env.example 缺少『預設關閉/安全側』原則句"
+    )
 
 
 def test_env_mentions_branch_protection_and_ci(env_text):
@@ -65,12 +67,13 @@ def test_no_contradiction_default_off(env_text, readme_text):
     """兩處皆稱預設關閉/安全側，無矛盾。"""
     # README 表格兩行預設皆 0（安全側）
     for var in ("TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN"):
-        row = next(ln for ln in readme_text.splitlines() if var in ln and ln.lstrip().startswith("|"))
+        row = next(
+            ln for ln in readme_text.splitlines() if var in ln and ln.lstrip().startswith("|")
+        )
         assert "0" in row and "安全" in row, f"README 表格 {var} 行未標 0/安全側"
     # .env.example 不得出現把預設講成 1/開啟的矛盾敘述
     blk = _autopilot_block(env_text)
-    assert "預設皆關閉" in blk or re.search(r"預設.{0,4}關閉", blk), \
-        ".env.example 未明示預設關閉"
+    assert "預設皆關閉" in blk or re.search(r"預設.{0,4}關閉", blk), ".env.example 未明示預設關閉"
 
 
 def test_env_points_to_readme_not_duplicating(env_text):

@@ -7,6 +7,7 @@
 - 不寫成程式未實作的保證（不暗示工具自動偵測權限/Rulesets）。
 - 不破壞 test_qa_task6_docs 取行邏輯（首個完整變數名行＝KV 表格行、同行含 0 與安全側）。
 """
+
 import re
 from pathlib import Path
 
@@ -49,8 +50,10 @@ def test_merge_admin_rulesets_limitation(text):
     """限制：Rulesets 下 --admin 可能不生效。"""
     assert "Rulesets" in text, "缺少 Rulesets 字樣"
     # Rulesets 與 --admin 失效需在同段點明
-    assert re.search(r"--admin.{0,40}(無法繞過|不生效|被擋|失效)|Rulesets.{0,60}(無法繞過|不生效|被擋|失效)", text), \
-        "缺少『Rulesets 下 --admin 可能不生效』的限制敘述"
+    assert re.search(
+        r"--admin.{0,40}(無法繞過|不生效|被擋|失效)|Rulesets.{0,60}(無法繞過|不生效|被擋|失效)",
+        text,
+    ), "缺少『Rulesets 下 --admin 可能不生效』的限制敘述"
 
 
 def test_merge_admin_prereq_below_table(lines):
@@ -63,8 +66,9 @@ def test_merge_admin_prereq_below_table(lines):
 def test_no_overpromise(text):
     """不得寫成未實作的保證：設 1 不代表保證能自動合併。"""
     # 文件須明說「不代表保證」之類語意，避免使用者誤解
-    assert re.search(r"不(代表|保證|等於).{0,12}(保證|自動合併|一定)", text), \
+    assert re.search(r"不(代表|保證|等於).{0,12}(保證|自動合併|一定)", text), (
         "缺少『設 1 不保證自動合併』的去除過度承諾敘述"
+    )
 
 
 def test_uses_gh_pr_merge_admin(text):

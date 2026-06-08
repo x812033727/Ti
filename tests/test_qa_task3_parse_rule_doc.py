@@ -6,6 +6,7 @@
 - 點明陷阱：FALSE（全大寫）/ no / off 等不在關閉集合內，會被當成開啟。
 - 明說區分大小寫、無 .lower()，與 config.py 字面一致（不撒謊）。
 """
+
 import re
 from pathlib import Path
 
@@ -35,43 +36,43 @@ def test_parse_rule_section_exists(text):
 
 def test_parse_rule_lists_off_set(text):
     """關閉集合需列出 0 / false / False / 空值/未設。"""
-    seg = text[text.index(RULE_MARK):]
+    seg = text[text.index(RULE_MARK) :]
     for token in ("0", "false", "False"):
         assert token in seg, f"解析規則未列出關閉值 {token!r}"
-    assert ("空值" in seg or "空字串" in seg), "解析規則未提及空值"
+    assert "空值" in seg or "空字串" in seg, "解析規則未提及空值"
     assert "未設" in seg, "解析規則未提及未設定"
 
 
 def test_parse_rule_else_is_true(text):
     """非關閉集合一律視為開啟。"""
-    seg = text[text.index(RULE_MARK):]
-    assert re.search(r"其餘.{0,8}(視為|當成|判為|皆).{0,4}開啟|皆.{0,4}開啟", seg), \
+    seg = text[text.index(RULE_MARK) :]
+    assert re.search(r"其餘.{0,8}(視為|當成|判為|皆).{0,4}開啟|皆.{0,4}開啟", seg), (
         "解析規則未說明『其餘皆視為開啟』"
+    )
 
 
 def test_parse_rule_warns_case_sensitive_traps(text):
     """陷阱：FALSE/no/off 等不在關閉集合，會被當開啟；且區分大小寫。"""
-    seg = text[text.index(RULE_MARK):]
+    seg = text[text.index(RULE_MARK) :]
     assert "FALSE" in seg, "未點出 FALSE（全大寫）陷阱"
-    assert ("no" in seg or "off" in seg), "未點出 no/off 等誤填陷阱"
-    assert re.search(r"區分大小寫|大小寫敏感|無\s*\.?lower", seg), \
-        "未說明區分大小寫（無 .lower()）"
+    assert "no" in seg or "off" in seg, "未點出 no/off 等誤填陷阱"
+    assert re.search(r"區分大小寫|大小寫敏感|無\s*\.?lower", seg), "未說明區分大小寫（無 .lower()）"
 
 
 def test_doc_matches_config_literal(text):
     """文件描述的關閉集合須與 config.py 字面一致（不撒謊）。"""
     cfg = CONFIG.read_text(encoding="utf-8")
     # 取 FORCE_PUSH 該行的字面集合
-    m = re.search(r'TI_AUTOPILOT_FORCE_PUSH.*?not in \(([^)]*)\)', cfg, re.S)
+    m = re.search(r"TI_AUTOPILOT_FORCE_PUSH.*?not in \(([^)]*)\)", cfg, re.S)
     assert m, "config.py 找不到 FORCE_PUSH 的 not in (...) 字面"
     literals = re.findall(r'"([^"]*)"', m.group(1))
-    assert literals == ["0", "false", "False", ""], \
-        f"config 關閉集合與預期不符：{literals}"
+    assert literals == ["0", "false", "False", ""], f"config 關閉集合與預期不符：{literals}"
     # 確認 config 無 .lower() 套在該變數（文件聲稱區分大小寫）
     assert ".lower()" not in m.group(0), "config FORCE_PUSH 竟有 .lower()，文件區分大小寫敘述會失準"
     # 文件須照同樣字面列舉，且不可暗示大小寫不敏感
-    assert "not in" in text and '("0", "false", "False", "")'.replace(" ", "") in text.replace(" ", ""), \
-        "README 未照 config 字面列出判斷式"
+    assert "not in" in text and '("0", "false", "False", "")'.replace(" ", "") in text.replace(
+        " ", ""
+    ), "README 未照 config 字面列出判斷式"
 
 
 def test_parse_rule_below_table(lines):
