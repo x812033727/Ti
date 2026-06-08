@@ -788,5 +788,7 @@ class StudioSession:
         if not (config.PUBLISH_AUTO and publisher.is_configured()):
             return
         await self.broadcast(events.phase_change(self.session_id, "發佈", "推送成果到 GitHub"))
-        result = await publisher.publish(self.cwd, self.session_id, self._requirement)
+        result = await publisher.publish(
+            self.cwd, self.session_id, self._requirement, merge=config.PUBLISH_MERGE
+        )
         await self.broadcast(events.publish_result(self.session_id, result.to_dict()))
