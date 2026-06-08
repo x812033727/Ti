@@ -17,7 +17,6 @@ import pytest
 from studio import config, publisher
 from studio.publisher import MergeOutcome
 
-
 # === _backoff 純函式：指數 + 封頂 =========================================
 
 
@@ -36,7 +35,7 @@ def test_backoff_capped_at_60():
 def test_backoff_is_monotonic_nondecreasing():
     base = 3
     vals = [publisher._backoff(a, base) for a in range(8)]
-    assert all(b >= a for a, b in zip(vals, vals[1:]))
+    assert all(b >= a for a, b in zip(vals, vals[1:], strict=False))
 
 
 # === _merge_pr：完整分流矩陣（mock httpx PUT）=============================

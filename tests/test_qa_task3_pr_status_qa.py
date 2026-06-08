@@ -16,7 +16,6 @@ import pytest
 from studio import config, publisher
 from studio.publisher import MergeOutcome
 
-
 # === 卡關原因四分類：語意完整 + 兩兩可區分 ==================================
 
 
