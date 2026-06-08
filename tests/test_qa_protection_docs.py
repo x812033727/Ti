@@ -1,10 +1,15 @@
 """QA 驗收：任務「更新文件說明分支保護檢查所需權限與無權限時的保守行為」一致性測試。
 
-對應驗收標準 #7：README/.env.example 須註明
+對應驗收標準 #7：文件須註明
   - 環境變數 TI_AUTOPILOT_PROTECTION_CHECK（含預設啟用）；
   - 所需 token 權限 Administration:read（讀舊 protection 端點才需）；
   - 無權限／無法確認時的保守行為——一律「中止」、回含「無法確認保護狀態」字樣、不誤判放行；
   - 明確逃生口：設 0 整段跳過。
+
+權責分工（比照 .env.example 既有慣例：精簡並指向 README，避免雙處維護漂移）：
+  - 完整原理／權限／保守行為長敘述放 README；
+  - .env.example 僅精簡列出變數、點出 fail-safe 中止語意並指向 README，
+    不重複 Rulesets 等長段風險敘述（呼應 test_qa_task4_env_readme_align_doc）。
 
 本測試屬文件一致性檢查，釘住成果避免日後文件腐化或與程式碼預設脫節。
 
@@ -61,7 +66,22 @@ def test_readme_states_default_enabled():
     assert "1" in line and ("啟用" in line or "預設" in line), line
 
 
-# === .env.example：列出變數並涵蓋權限/保守行為/逃生口 ===================
+# === .env.example：精簡列出變數、點出 fail-safe 中止語意並指向 README ====
+# 慣例：詳細權限/原理長敘述留 README，.env.example 不重複（見 docstring 權責分工）。
+
+
+def _env_protection_block() -> str:
+    """擷取 .env.example 中 PROTECTION_CHECK 變數起、到下一個變數/空白行止的註解段落。"""
+    lines = _ENV_EXAMPLE.splitlines()
+    start = next(i for i, ln in enumerate(lines) if _VAR in ln)
+    block = [lines[start]]
+    for ln in lines[start + 1 :]:
+        # 後續縮排註解（以 "#" 起頭且非新變數）屬同段
+        if ln.lstrip().startswith("#") and "=" not in ln:
+            block.append(ln)
+        else:
+            break
+    return "\n".join(block)
 
 
 def test_env_example_lists_protection_check_var():
@@ -71,15 +91,20 @@ def test_env_example_lists_protection_check_var():
 @pytest.mark.parametrize(
     "needle,why",
     [
-        ("Administration:read", "須註明所需權限"),
-        ("無法確認保護狀態", "須說明訊息字樣"),
-        ("中止", "須說明保守中止行為"),
-        ("逃生口", "須說明設 0 整段跳過的逃生口"),
-        ("Rulesets", "須說明優先打 Rulesets 端點"),
+        ("中止", "須點出無法確認時的保守中止行為"),
+        ("0", "須示範逃生口：設 0 整段跳過"),
+        ("README", "須指向 README 取得完整說明（避免雙處維護漂移）"),
     ],
 )
 def test_env_example_covers(needle, why):
-    assert needle in _ENV_EXAMPLE, f".env.example 缺『{needle}』（{why}）"
+    blk = _env_protection_block()
+    assert needle in blk, f".env.example PROTECTION_CHECK 段缺『{needle}』（{why}）：{blk}"
+
+
+def test_env_example_does_not_duplicate_long_narrative():
+    """呼應 test_qa_task4：.env.example 不得重複 README 的 Rulesets 長段風險敘述。"""
+    blk = _env_protection_block()
+    assert "Rulesets" not in blk, ".env.example 不應重複 README 的 Rulesets 長敘述"
 
 
 # === 一致性：文件宣稱「預設啟用」必須等於程式碼預設 True ================
