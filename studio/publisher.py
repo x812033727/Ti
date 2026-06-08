@@ -213,7 +213,10 @@ def summarize_checks(check_runs: list | None, status: dict | None) -> tuple[str,
     if failed or status_state == "failure":
         names = [r.get("name", "?") for r in failed][:3]
         suffix = ("：" + ", ".join(names)) if names else ""
-        return "fail", f"CI 失敗（{len(failed)} 個 check 失敗{('／legacy status failure' if status_state == 'failure' else '')}）{suffix}"
+        return (
+            "fail",
+            f"CI 失敗（{len(failed)} 個 check 失敗{('／legacy status failure' if status_state == 'failure' else '')}）{suffix}",
+        )
 
     # 2) 任一未完成（或 legacy status pending）即 pending。
     pending = [r for r in runs if r.get("status") != "completed"]

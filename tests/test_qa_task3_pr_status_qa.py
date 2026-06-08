@@ -23,11 +23,11 @@ from studio.publisher import MergeOutcome
     "state,check_state,expected_cat,label_kw",
     [
         ("dirty", None, "conflict", "衝突"),
-        ("dirty", "pass", "conflict", "衝突"),       # 衝突與 CI 無關，仍 conflict
+        ("dirty", "pass", "conflict", "衝突"),  # 衝突與 CI 無關，仍 conflict
         ("behind", None, "stale", "落後"),
-        ("blocked", "fail", "ci_failed", "CI"),       # 必要檢查未過
+        ("blocked", "fail", "ci_failed", "CI"),  # 必要檢查未過
         ("blocked", "pass", "needs_review", "審核"),  # CI 已過 → 真正原因是缺審核
-        ("blocked", None, "needs_review", "審核"),    # 無 CI 資訊 → 預設缺審核
+        ("blocked", None, "needs_review", "審核"),  # 無 CI 資訊 → 預設缺審核
         ("unstable", "fail", "ci_failed", "CI"),
         ("unstable", "pass", "needs_review", "審核"),
         ("draft", "fail", "ci_failed", "CI"),
@@ -52,10 +52,10 @@ def test_classify_block_reason_none_and_empty():
 def test_four_required_categories_distinct():
     """驗收 1 核心：CI未過／缺審核／stale／衝突 四類兩兩可區分（非糊成一團）。"""
     cats = {
-        publisher.classify_block_reason({"mergeable_state": "blocked"}, "fail")[0],   # CI 未過
-        publisher.classify_block_reason({"mergeable_state": "blocked"}, "pass")[0],   # 缺審核
-        publisher.classify_block_reason({"mergeable_state": "behind"})[0],            # stale
-        publisher.classify_block_reason({"mergeable_state": "dirty"})[0],             # 衝突
+        publisher.classify_block_reason({"mergeable_state": "blocked"}, "fail")[0],  # CI 未過
+        publisher.classify_block_reason({"mergeable_state": "blocked"}, "pass")[0],  # 缺審核
+        publisher.classify_block_reason({"mergeable_state": "behind"})[0],  # stale
+        publisher.classify_block_reason({"mergeable_state": "dirty"})[0],  # 衝突
     }
     assert cats == {"ci_failed", "needs_review", "stale", "conflict"}
     assert len(cats) == 4
@@ -149,7 +149,9 @@ async def test_get_pr_status_unknown_then_converge(monkeypatch, _cfg):
         [
             _FakeResp(200, {"mergeable": None, "mergeable_state": "unknown"}),
             _FakeResp(200, {"mergeable": None, "mergeable_state": "unknown"}),
-            _FakeResp(200, {"mergeable": False, "mergeable_state": "blocked", "head": {"sha": "s"}}),
+            _FakeResp(
+                200, {"mergeable": False, "mergeable_state": "blocked", "head": {"sha": "s"}}
+            ),
         ],
         calls,
     )
@@ -215,7 +217,11 @@ async def test_get_pr_status_exposes_head_sha(monkeypatch, _cfg):
     calls = {"n": 0}
     _patch_get_sequence(
         monkeypatch,
-        [_FakeResp(200, {"mergeable": True, "mergeable_state": "clean", "head": {"sha": "deadbeef"}})],
+        [
+            _FakeResp(
+                200, {"mergeable": True, "mergeable_state": "clean", "head": {"sha": "deadbeef"}}
+            )
+        ],
         calls,
     )
     data = await publisher._get_pr_status(7, sleep=_no_sleep, retries=2, interval=1)

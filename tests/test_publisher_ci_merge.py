@@ -205,8 +205,11 @@ async def test_wait_for_ci_persistent_fetch_error_bounded(monkeypatch, _no_sleep
 @pytest.mark.asyncio
 async def test_wait_for_ci_transient_error_then_pass(monkeypatch, _no_sleep):
     """單次查詢抖動後恢復 → 不誤判 error，續等到 pass。"""
-    seq = [None, ([{"name": "a", "status": "in_progress", "conclusion": None}], {}),
-           ([{"name": "a", "status": "completed", "conclusion": "success"}], {})]
+    seq = [
+        None,
+        ([{"name": "a", "status": "in_progress", "conclusion": None}], {}),
+        ([{"name": "a", "status": "completed", "conclusion": "success"}], {}),
+    ]
     idx = {"i": 0}
 
     async def fake_fetch(sha):
@@ -222,6 +225,7 @@ async def test_wait_for_ci_transient_error_then_pass(monkeypatch, _no_sleep):
 @pytest.mark.asyncio
 async def test_wait_for_ci_zero_interval_no_infinite_loop(monkeypatch, _no_sleep):
     """interval<=0 且持續 pending → 一輪即視為逾時，不無限迴圈。"""
+
     async def fake_fetch(sha):
         return ([{"name": "a", "status": "in_progress", "conclusion": None}], {})
 

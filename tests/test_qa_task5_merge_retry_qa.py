@@ -211,7 +211,7 @@ async def test_non_behind_retry_skips_update_branch(_flow):
     outcome, _ = await _run(_flow, retries=3)
     assert outcome is MergeOutcome.MERGED
     assert _flow["update_calls"] == 0  # 不 update-branch
-    assert _flow["sleeps"] == [5]      # 仍有一次 backoff 退避
+    assert _flow["sleeps"] == [5]  # 仍有一次 backoff 退避
 
 
 @pytest.mark.asyncio
@@ -222,8 +222,8 @@ async def test_retry_finite_then_give_up_with_detail(_flow):
     outcome, detail = await _run(_flow, retries=2)
     assert outcome is MergeOutcome.CONFLICT
     assert "重試上限" in detail
-    assert _flow["merge_calls"] == 3   # retries=2 → 1 + 2 重試 = 3 次
-    assert len(_flow["sleeps"]) == 2   # 兩次重試前各退避一次（有界）
+    assert _flow["merge_calls"] == 3  # retries=2 → 1 + 2 重試 = 3 次
+    assert len(_flow["sleeps"]) == 2  # 兩次重試前各退避一次（有界）
 
 
 @pytest.mark.asyncio

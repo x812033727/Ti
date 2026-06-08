@@ -46,8 +46,7 @@ async def test_failure_outcomes_distinguishable_despite_same_merged_false():
         MergeOutcome.TIMEOUT,
     ]
     dicts = [
-        PublishResult(True, f"d-{o.value}", merged=False, outcome=o).to_dict()
-        for o in outcomes
+        PublishResult(True, f"d-{o.value}", merged=False, outcome=o).to_dict() for o in outcomes
     ]
     # 全部 merged=False（證明舊信號無法區分）
     assert all(d["merged"] is False for d in dicts)
@@ -119,8 +118,8 @@ def _make_orch(captured):
 
 
 @pytest.mark.parametrize(
-    "outcome", [MergeOutcome.MERGED, MergeOutcome.CI_FAILED,
-                MergeOutcome.BLOCKED, MergeOutcome.TIMEOUT]
+    "outcome",
+    [MergeOutcome.MERGED, MergeOutcome.CI_FAILED, MergeOutcome.BLOCKED, MergeOutcome.TIMEOUT],
 )
 async def test_maybe_publish_broadcasts_outcome_in_event(monkeypatch, outcome):
     """orchestrator 自動發佈時，廣播的 publish_result 事件 payload 必帶 outcome。"""

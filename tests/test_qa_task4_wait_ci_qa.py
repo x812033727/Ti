@@ -23,7 +23,8 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.mark.parametrize(
-    "conclusion", ["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"]
+    "conclusion",
+    ["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"],
 )
 async def test_summarize_each_fail_conclusion_is_fail(conclusion):
     runs = [{"name": "x", "status": "completed", "conclusion": conclusion}]
@@ -95,7 +96,7 @@ async def test_wait_pending_then_pass(monkeypatch):
     state, _ = await publisher._wait_for_ci("sha", timeout=100, interval=10, sleep=sleep)
     assert state == "pass"
     assert calls["n"] == 3  # 兩輪 pending 後第三輪 pass
-    assert st["n"] == 2     # 等待了兩次
+    assert st["n"] == 2  # 等待了兩次
 
 
 async def test_wait_fail_fast_does_not_wait_full_timeout(monkeypatch):

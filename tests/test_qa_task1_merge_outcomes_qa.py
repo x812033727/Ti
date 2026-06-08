@@ -108,8 +108,13 @@ async def test_publish_four_outcomes_are_distinct(_ready):
 
 async def test_publish_no_silent_failure_outcome_always_set(_ready):
     """任何失敗結局都必須有 outcome 與非空 detail（不得 silent failed）。"""
-    for oc in (MergeOutcome.CI_FAILED, MergeOutcome.BLOCKED, MergeOutcome.CONFLICT,
-               MergeOutcome.TIMEOUT, MergeOutcome.ERROR):
+    for oc in (
+        MergeOutcome.CI_FAILED,
+        MergeOutcome.BLOCKED,
+        MergeOutcome.CONFLICT,
+        MergeOutcome.TIMEOUT,
+        MergeOutcome.ERROR,
+    ):
         res = await _publish_with_flow(_ready, oc, f"detail-{oc.value}")
         assert res.outcome is oc
         assert res.to_dict()["outcome"] is not None
@@ -169,7 +174,9 @@ async def _run_flow(st, retries=3, ci_timeout=60, ci_interval=1):
 async def test_blocked_detail_names_cause_category_not_raw_text(_flow_stub):
     """CI 已過卻被擋（mergeable_state=blocked）→ 回報含結構化類別線索，而非只丟 405 文字。"""
     _flow_stub["pr"] = {"head": {"sha": "s"}, "mergeable": True, "mergeable_state": "blocked"}
-    _flow_stub["merge_seq"] = [(MergeOutcome.BLOCKED, "不可合併／受保護（405）：raw github text", False)]
+    _flow_stub["merge_seq"] = [
+        (MergeOutcome.BLOCKED, "不可合併／受保護（405）：raw github text", False)
+    ]
     outcome, detail = await _run_flow(_flow_stub)
     assert outcome is MergeOutcome.BLOCKED
     # 不再只回原始 text：detail 帶上結構化 mergeable_state 供分辨缺審核/規則
@@ -249,6 +256,7 @@ async def test_backoff_is_exponential_and_capped():
 
 async def test_wait_for_ci_pending_then_timeout(monkeypatch):
     """CI 一直 pending → 在 timeout 內回 timeout，且回報含已等待秒數，不無限等。"""
+
     async def always_pending(sha):
         return [], {"state": "pending", "total_count": 1}
 
@@ -258,9 +266,7 @@ async def test_wait_for_ci_pending_then_timeout(monkeypatch):
         slept["n"] += 1
 
     monkeypatch.setattr(publisher, "_fetch_ci", lambda sha: always_pending(sha))
-    state, detail = await publisher._wait_for_ci(
-        "sha", timeout=5, interval=1, sleep=fake_sleep
-    )
+    state, detail = await publisher._wait_for_ci("sha", timeout=5, interval=1, sleep=fake_sleep)
     assert state == "timeout"
     assert "逾時" in detail
     assert slept["n"] <= 6  # 有界，不無限輪詢
