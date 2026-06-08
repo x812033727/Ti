@@ -126,6 +126,9 @@ TI_OFFLINE=1 python -m studio.server
 | `TI_AUTH_SECRET` / `TI_AUTH_TTL` | cookie 簽章密鑰 / 登入有效秒數 | 隨機 / 604800 |
 | `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
 | `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
+| `TI_PUBLISH_MERGE` | push／開 PR 後是否自動合併（先等 CI 通過才合併） | 0 |
+| `TI_PUBLISH_CI_TIMEOUT` / `TI_PUBLISH_CI_INTERVAL` | 自動合併前等待 CI 的最長秒數 / 輪詢間隔 | 600 / 10 |
+| `TI_PUBLISH_MERGE_RETRIES` | 對 stale／`Base branch was modified`（409）的重試次數 | 3 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
 | `TI_PROVIDER` | 後端 provider：`claude` 或 `openai` | claude |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 金鑰 / 相容端點（可指向本地模型） | 未設定 |

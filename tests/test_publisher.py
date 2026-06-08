@@ -165,40 +165,44 @@ def _ok_push_pr(monkeypatch):
 async def test_publish_merge_off_does_not_merge(monkeypatch, _configured, _ok_push_pr):
     called = {"n": 0}
 
-    async def fake_merge(number, payload):
+    async def fake_flow(number, payload, **kw):
         called["n"] += 1
-        return True, "deadbeef"
+        return publisher.MergeOutcome.MERGED, "deadbeef"
 
-    monkeypatch.setattr(publisher, "_merge_pr", fake_merge)
-    # 預設 merge=False → 不應呼叫 _merge_pr，行為與現在相同
+    monkeypatch.setattr(publisher, "_merge_flow", fake_flow)
+    # 預設 merge=False → 不應呼叫 _merge_flow，行為與現在相同
     res = await publisher.publish("/tmp", "s1", "需求")
     assert res.ok and res.pushed and not res.merged
     assert res.pr_url.endswith("/pull/7")
     assert called["n"] == 0
+    assert res.outcome is None  # 未嘗試合併
 
 
 @pytest.mark.asyncio
 async def test_publish_merge_success(monkeypatch, _configured, _ok_push_pr):
-    async def fake_merge(number, payload):
+    async def fake_flow(number, payload, **kw):
         assert number == 7
-        return True, "deadbeef"
+        return publisher.MergeOutcome.MERGED, "deadbeef"
 
-    monkeypatch.setattr(publisher, "_merge_pr", fake_merge)
+    monkeypatch.setattr(publisher, "_merge_flow", fake_flow)
     res = await publisher.publish("/tmp", "s1", "需求", merge=True)
     assert res.ok and res.merged
     assert res.pr_number == 7
     assert "合併" in res.detail
+    assert res.outcome == publisher.MergeOutcome.MERGED
+    assert res.to_dict()["outcome"] == "merged"
 
 
 @pytest.mark.asyncio
 async def test_publish_merge_conflict_no_raise(monkeypatch, _configured, _ok_push_pr):
-    async def fake_merge(number, payload):
-        return False, "merge 衝突／不可合併（405）：not mergeable"
+    async def fake_flow(number, payload, **kw):
+        return publisher.MergeOutcome.CONFLICT, "分支落後或 base 已變動（409）：not mergeable"
 
-    monkeypatch.setattr(publisher, "_merge_pr", fake_merge)
+    monkeypatch.setattr(publisher, "_merge_flow", fake_flow)
     res = await publisher.publish("/tmp", "s1", "需求", merge=True)
-    # 衝突不丟例外：仍 ok（已 push/開 PR），但 merged=False 且帶可讀錯誤
+    # 衝突不丟例外：仍 ok（已 push/開 PR），但 merged=False 且帶可讀結局
     assert res.ok and res.pushed and not res.merged
     assert res.pr_url.endswith("/pull/7")
-    assert "衝突" in res.detail
+    assert res.outcome == publisher.MergeOutcome.CONFLICT
+    assert "未合併" in res.detail
     assert "tok" not in res.detail  # token 已遮蔽
