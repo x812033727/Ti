@@ -451,12 +451,25 @@ function addPublishButton(sid) {
   scrollStream();
 }
 
+// 合併結局 → 可視化徽章（對應 publisher.MergeOutcome，讓四／六種結局清楚可區分，
+// 不再只看 merged=false 糊成一團）。
+const OUTCOME_BADGE = {
+  merged: "✅ 已合併",
+  ci_failed: "❌ CI 未過",
+  blocked: "🚫 被保護擋下",
+  conflict: "⚠️ 衝突／分支落後",
+  timeout: "⏱️ 等待 CI 逾時",
+  error: "🛑 API／網路錯誤",
+};
+
 function renderPublish(p) {
   const el = document.createElement("div");
   el.className = "publish " + (p.ok ? "ok" : "fail");
   let html = (p.ok ? "🚀 " : "⚠️ ") + (p.detail || "");
   if (p.branch) html += `　<code>${p.branch}</code>`;
-  if (p.merged) html += "　✅ 已合併";
+  // 優先依 outcome 顯示明確徽章；無 outcome（未嘗試合併）時退回舊的 merged 判斷。
+  const badge = p.outcome ? OUTCOME_BADGE[p.outcome] : (p.merged ? OUTCOME_BADGE.merged : "");
+  if (badge) html += `　<span class="merge-outcome ${p.outcome || (p.merged ? "merged" : "")}">${badge}</span>`;
   el.innerHTML = html;
   if (p.pr_url) {
     const a = document.createElement("a");
