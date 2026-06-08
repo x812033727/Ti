@@ -111,8 +111,9 @@ async def test_unprotected_empty_rules_and_404(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unprotected_rules_404_then_protection_404(monkeypatch):
-    """Rulesets 端點本身 404（非 403/逾時）→ 不下定論，續查舊端點；舊端點亦 404 → unprotected。"""
+async def test_rules_404_is_uncertain_not_unprotected(monkeypatch):
+    """Rulesets 端點本身 404 屬「未乾淨確認」（該端點正常回空陣列而非 404）→ 即使舊端點
+    亦 404 也不得放行，落 unknown（fail-safe：絕不憑異常主端點 + 舊端點 404 誤判無保護）。"""
     state, detail, _ = await _check(
         monkeypatch,
         {
@@ -120,7 +121,8 @@ async def test_unprotected_rules_404_then_protection_404(monkeypatch):
             "/protection": (1, "gh: Not Found (HTTP 404)"),
         },
     )
-    assert state == "unprotected", detail
+    assert state == "unknown", detail
+    assert state != "unprotected"
 
 
 # === 態 3：403 無權限 → unknown（fail-safe，絕不誤判放行）=================
@@ -196,7 +198,8 @@ async def test_unknown_default_on_weird_combo(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unknown_on_invalid_json(monkeypatch):
-    """Rulesets rc==0 但回非 JSON / 非 list → 不據此判 protected，續查舊端點；舊端點 404 → unprotected。"""
+    """Rulesets rc==0 但回非 JSON / 非 list → rulesets 未乾淨確認，不據此判 protected；
+    此時即使舊端點 404 也不得放行，落 unknown（fail-safe，絕不 fall-through 當無保護）。"""
     state, detail, _ = await _check(
         monkeypatch,
         {
@@ -204,7 +207,8 @@ async def test_unknown_on_invalid_json(monkeypatch):
             "/protection": (1, "gh: Not Found (HTTP 404)"),
         },
     )
-    assert state == "unprotected", detail
+    assert state == "unknown", detail
+    assert state != "unprotected"
 
 
 # === 端點/目標分支正確性 ================================================
