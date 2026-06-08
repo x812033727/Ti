@@ -9,6 +9,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
 CONTRIB = ROOT / "CONTRIBUTING.md"
@@ -86,6 +88,9 @@ def test_inventory_untouched():
 # 標準 7：驗收指令路徑有效（.venv/bin/python 存在且可呼叫）
 def test_venv_python_exists_and_runs():
     py = ROOT / ".venv" / "bin" / "python"
-    assert py.exists(), ".venv/bin/python 不存在"
+    if not py.exists():
+        # CI（actions/setup-python 直跑）等環境不依文件建立 .venv；此檢查只在
+        # 依 CONTRIBUTING 建好 .venv 的環境（本地 / autopilot gate）才有意義。
+        pytest.skip(".venv 未建立（如 CI 用 setup-python 直跑），略過驗收指令路徑檢查")
     r = subprocess.run([str(py), "--version"], capture_output=True, text=True)
     assert r.returncode == 0, f".venv/bin/python 無法執行: {r.stderr}"
