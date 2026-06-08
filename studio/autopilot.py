@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
@@ -141,6 +142,73 @@ async def _gate_collect_without_sdk(clone: str) -> tuple[bool, str]:
     return r.ok, r.output[-1200:]
 
 
+async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
+    """查詢 `branch`（應傳合併目標 main）的保護狀態，回傳三態 (state, detail)。
+
+    state ∈ {"protected", "unprotected", "unknown"}：
+      - protected：偵測到分支保護規則（Rulesets 非空 或 舊 protection 200）。
+      - unprotected：明確無保護（Rulesets 回空陣列 `[]`，或舊端點 HTTP 404）。
+      - unknown：無法確認（HTTP 403 無權限／網路失敗／逾時 rc=-1／其他）。
+
+    優先打新一代 Rulesets 端點 `repos/{repo}/rules/branches/{branch}`（現代設定、
+    無 404 陷阱、多半不需 Administration:read）；舊 `branches/{branch}/protection`
+    為輔。任一端點判定 protected 即回 protected。
+
+    判讀優先序寫死——先看 rc==0 的內容，再看字串：
+      rc==0 → 解析 JSON，空陣列→unprotected、非空→protected；
+      rc≠0 → 含「HTTP 404」→unprotected、含「HTTP 403」或逾時/其他→unknown。
+    未匹配任何已知狀況一律 default 落 unknown（保守兜底）。
+    """
+    repo = config.AUTOPILOT_REPO
+
+    # --- 主：Rulesets 端點 ---------------------------------------------------
+    # rules_clean 追蹤「Rulesets 是否被乾淨確認為空」：唯有主端點 rc==0 且回合法空 list
+    # 才為 True。只有 rules_clean 時，後續舊端點 404 才允許判 unprotected——主端點任何
+    # 錯誤（5xx／連線中斷等非 403、非逾時、非 404）即使舊端點恰好 404 也絕不放行。
+    rules_clean = False
+    rc, out = await _run(
+        [*_GH, "api", f"repos/{repo}/rules/branches/{branch}"], cwd=clone, timeout=60
+    )
+    if rc == 0:
+        try:
+            rules = json.loads(out)
+        except (ValueError, TypeError):
+            rules = None
+        if isinstance(rules, list):
+            if rules:
+                return "protected", f"Rulesets：{len(rules)} 條規則套用於 {branch}"
+            # 空陣列＝Rulesets 乾淨確認無規則；仍以舊 protection 端點兜傳統保護設定
+            rules_clean = True
+        # 非 list（非預期格式）→ rules 未乾淨確認，往下用舊端點且不得單憑 404 放行
+    elif "HTTP 403" in out:
+        return "unknown", f"Rulesets 端點 403（無 Administration:read 權限？）：{out[-200:]}"
+    elif rc == -1 or "逾時" in out:
+        return "unknown", f"Rulesets 端點逾時/網路失敗：{out[-200:]}"
+    # 其餘 rc≠0（5xx／連線錯誤／404 等）：rules 未乾淨確認，續查舊端點但保守不放行
+
+    # --- 輔：舊 branch-protection 端點 --------------------------------------
+    rc2, out2 = await _run(
+        [*_GH, "api", f"repos/{repo}/branches/{branch}/protection"], cwd=clone, timeout=60
+    )
+    if rc2 == 0:
+        # 200＝有傳統分支保護（明確正向訊號，與 rules_clean 無關）
+        return "protected", f"舊 protection 端點回 200（{branch} 受傳統分支保護）"
+    # 唯一放行（unprotected）出口：三重條件——(1) 主端點 Rulesets 已乾淨確認為空、
+    # (2) 舊端點失敗 rc、(3) 明確 HTTP 404（且不含 403，避免單一輸出雙碼誤判）。
+    # 主端點若是 5xx／連線錯誤等未乾淨確認，即使舊端點 404 也落 unknown，不 fall-through。
+    if rules_clean and rc2 != 0 and "HTTP 404" in out2 and "403" not in out2:
+        return "unprotected", f"{branch} 無 Rulesets 規則且無傳統分支保護（404）"
+    if "HTTP 403" in out2:
+        return "unknown", f"舊 protection 端點 403（無 admin 權限？）：{out2[-200:]}"
+    if rc2 == -1 or "逾時" in out2:
+        return "unknown", f"舊 protection 端點逾時/網路失敗：{out2[-200:]}"
+
+    # 兜底：Rulesets 未乾淨確認（主端點錯誤）、或舊端點非 404/403/逾時的未知組合 → 保守 unknown
+    return "unknown", (
+        f"無法確認保護狀態（rules rc={rc} clean={rules_clean}, protection rc={rc2}）：{out2[-200:]}"
+    )
+
+
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     """把成果開分支、push、squash-merge 進 main。dryrun 只回報。"""
     branch = f"autopilot/task-{task['id']}"
@@ -189,6 +257,20 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
             f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
         )
+
+    # 第二道防線（與上方 ls-remote 防覆寫各自獨立）：merge 進 main 前，主動查「合併目標
+    # AUTOPILOT_BRANCH」的保護狀態。放在 push 之前——unknown 時 fail-safe 中止且尚未 push，
+    # 不留遠端孤兒分支。dryrun 已於前面提早 return，此處天然不打 API。
+    # 唯一硬規則：state=="unknown" 一律中止（絕不 fall-through 當無保護）；protected/
+    # unprotected 皆放行（受保護分支由既有不帶 --admin 的 pr merge 自然攔下，不重複把關）。
+    if config.AUTOPILOT_PROTECTION_CHECK:
+        state, detail = await _check_branch_protection(clone, config.AUTOPILOT_BRANCH)
+        if state == "unknown":
+            return False, (
+                f"無法確認保護狀態（{config.AUTOPILOT_BRANCH}），fail-safe 已中止：{detail}；"
+                f"若部署環境缺 Administration:read 權限而持續卡此，設 "
+                f"TI_AUTOPILOT_PROTECTION_CHECK=0 跳過此檢查"
+            )
 
     # 預設非強制推送（全新分支即可成功）；僅 FORCE_PUSH 開啟才用 --force-with-lease
     # 搭配 --force-if-includes（杜絕背景 fetch 讓 lease 退化成裸 force）。絕不用裸 -f。
