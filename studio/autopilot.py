@@ -96,6 +96,51 @@ async def _gate_tests(clone: str) -> tuple[bool, str]:
     return result.ok, result.output[-1500:]
 
 
+async def _gate_lint(clone: str) -> tuple[bool, str]:
+    """對齊 CI lint job：ruff check + ruff format --check。
+
+    討論／pytest 閘門都不跑 ruff，lint 問題（未用 import、格式漂移等）會一路綠燈進
+    main 卻在 GitHub CI 紅。此閘門補上。ruff 未安裝時 fail-open（只記警告不擋），避免
+    部署環境缺 ruff 害死所有任務；裝了 ruff 才硬性把關。
+    """
+    probe = await runner.run_command_exec(
+        clone,
+        [sys.executable, "-m", "ruff", "--version"],
+        timeout=30,
+        sandbox=True,
+        label="ruff probe",
+    )
+    if not probe.ok:
+        log.warning("ruff 未安裝，略過 lint 閘門（請在部署環境 pip install ruff 以啟用）")
+        return True, "ruff 缺失，略過 lint 閘門"
+    for argv, name in (
+        ([sys.executable, "-m", "ruff", "check", "."], "ruff check"),
+        ([sys.executable, "-m", "ruff", "format", "--check", "."], "ruff format --check"),
+    ):
+        r = await runner.run_command_exec(clone, argv, timeout=120, sandbox=True, label=name)
+        if not r.ok:
+            return False, f"{name} 未過：\n{r.output[-1200:]}"
+    return True, "ruff OK"
+
+
+async def _gate_collect_without_sdk(clone: str) -> tuple[bool, str]:
+    """對齊 CI test job 環境（刻意不裝 claude_agent_sdk）跑 pytest collection。
+
+    autopilot 自身環境裝了 SDK，故 gate 的 pytest collection 永遠成功，對「頂層 import
+    SDK 才會炸」的 CI collection error 是盲的。此閘門用 sys.modules 封鎖 SDK 重現該環境，
+    及早攔截模組級 import 耦合。
+    """
+    code = (
+        "import sys; sys.modules['claude_agent_sdk'] = None; "
+        "sys.exit(__import__('pytest').main("
+        "['--collect-only', '-q', '-p', 'no:cacheprovider', 'tests/']))"
+    )
+    r = await runner.run_command_exec(
+        clone, [sys.executable, "-c", code], timeout=180, sandbox=True, label="collect (no SDK)"
+    )
+    return r.ok, r.output[-1200:]
+
+
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     """把成果開分支、push、squash-merge 進 main。dryrun 只回報。"""
     branch = f"autopilot/task-{task['id']}"
@@ -268,7 +313,25 @@ async def run_one_task(task: dict) -> None:
         log.info("任務 #%s 未完成,標 failed", task["id"])
         return
 
-    # 閘門：完整測試必須全綠
+    # 閘門 1：lint（對齊 CI lint job）—— ruff check + format
+    ok, out = await _gate_lint(clone)
+    if not ok:
+        backlog.set_status(task["id"], "failed", note="lint 未通過")
+        backlog.add(f"修復 lint 失敗：{task['title']}", detail=out[-500:], source="discovered")
+        log.info("任務 #%s lint 未過,標 failed 並補修復任務", task["id"])
+        return
+
+    # 閘門 2：無 SDK collection（對齊 CI test job 環境）
+    ok, out = await _gate_collect_without_sdk(clone)
+    if not ok:
+        backlog.set_status(task["id"], "failed", note="無 SDK collection 失敗")
+        backlog.add(
+            f"修復缺 SDK collection：{task['title']}", detail=out[-500:], source="discovered"
+        )
+        log.info("任務 #%s 無 SDK collection 失敗,標 failed 並補修復任務", task["id"])
+        return
+
+    # 閘門 3：完整測試必須全綠
     ok, out = await _gate_tests(clone)
     if not ok:
         backlog.set_status(task["id"], "failed", note="測試未通過")
