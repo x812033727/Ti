@@ -39,6 +39,49 @@
 | 🔬 驗證工程師 | 撰寫並執行測試、回報 pass/fail 與 log | Read/Write/Edit/Bash |
 | 🧠 高級工程師 | 參與架構辯論、審查品質/設計/安全、核可或退回 | 唯讀 + Bash |
 
+## 執行環境前置
+
+零先備知識也能照做。本專案統一使用專案內的虛擬環境 `.venv`，**需 Python ≥ 3.10**
+（對齊 `pyproject.toml` 的 `requires-python`）。下列範例以 macOS / Linux 為主，
+完整路徑寫法 `.venv/bin/python3` 可**免 activate**直接使用（避免誤用系統 Python）；
+**Windows 對應為 `.venv\Scripts\python`**（啟動則為 `.venv\Scripts\activate`）。
+
+### 1. 建立虛擬環境
+
+```bash
+python3 -m venv .venv
+```
+
+> 預期結果：專案根目錄出現 `.venv/` 目錄。`.venv/` 已列入 `.gitignore`，**不會進版控**。
+
+### 2. 啟動（互動開發用，跨平台）
+
+```bash
+source .venv/bin/activate        # macOS / Linux
+.venv\Scripts\activate           # Windows（PowerShell / CMD）
+```
+
+> 預期結果：終端機提示符前出現 `(.venv)`。
+> 文件其餘範例一律用 `.venv/bin/python3` 完整路徑，故此步可省略；CI 或腳本建議免 activate。
+
+### 3. 安裝套件（含開發工具 extras）
+
+```bash
+.venv/bin/python3 -m pip install -e ".[dev]"     # 開發必裝（pytest / ruff / pre-commit）
+.venv/bin/python3 -m pip install -e ".[openai]"  # 選用：要切到 OpenAI / 本地模型再裝
+```
+
+> 預期結果：`.venv/bin/python3 -m pip list` 列表中可看到 `ti-studio`（editable）。
+
+### 4. 驗證環境
+
+```bash
+.venv/bin/python3 -c "import studio; print('ok')"     # macOS / Linux
+.venv\Scripts\python -c "import studio; print('ok')"  # Windows
+```
+
+> 預期結果：輸出 `ok`，代表 `.venv` 與套件安裝皆正確，可進入下方「安裝 / 啟動」。
+
 ## 安裝
 
 需要 Python 3.10+ 與 [Claude Code](https://code.claude.com) 執行環境。
