@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
@@ -139,6 +140,64 @@ async def _gate_collect_without_sdk(clone: str) -> tuple[bool, str]:
         clone, [sys.executable, "-c", code], timeout=180, sandbox=True, label="collect (no SDK)"
     )
     return r.ok, r.output[-1200:]
+
+
+async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
+    """查詢 `branch`（應傳合併目標 main）的保護狀態，回傳三態 (state, detail)。
+
+    state ∈ {"protected", "unprotected", "unknown"}：
+      - protected：偵測到分支保護規則（Rulesets 非空 或 舊 protection 200）。
+      - unprotected：明確無保護（Rulesets 回空陣列 `[]`，或舊端點 HTTP 404）。
+      - unknown：無法確認（HTTP 403 無權限／網路失敗／逾時 rc=-1／其他）。
+
+    優先打新一代 Rulesets 端點 `repos/{repo}/rules/branches/{branch}`（現代設定、
+    無 404 陷阱、多半不需 Administration:read）；舊 `branches/{branch}/protection`
+    為輔。任一端點判定 protected 即回 protected。
+
+    判讀優先序寫死——先看 rc==0 的內容，再看字串：
+      rc==0 → 解析 JSON，空陣列→unprotected、非空→protected；
+      rc≠0 → 含「HTTP 404」→unprotected、含「HTTP 403」或逾時/其他→unknown。
+    未匹配任何已知狀況一律 default 落 unknown（保守兜底）。
+    """
+    repo = config.AUTOPILOT_REPO
+
+    # --- 主：Rulesets 端點 ---------------------------------------------------
+    rc, out = await _run(
+        [*_GH, "api", f"repos/{repo}/rules/branches/{branch}"], cwd=clone, timeout=60
+    )
+    if rc == 0:
+        try:
+            rules = json.loads(out)
+        except (ValueError, TypeError):
+            rules = None
+        if isinstance(rules, list):
+            if rules:
+                return "protected", f"Rulesets：{len(rules)} 條規則套用於 {branch}"
+            # 空陣列＝明確無保護；但仍以舊 protection 端點兜一刀（涵蓋傳統保護設定）
+        # 非 list（非預期格式）→ 不據此判 protected，往下用舊端點確認
+    elif "HTTP 403" in out:
+        return "unknown", f"Rulesets 端點 403（無 Administration:read 權限？）：{out[-200:]}"
+    elif rc == -1 or "逾時" in out:
+        return "unknown", f"Rulesets 端點逾時/網路失敗：{out[-200:]}"
+    # 其餘 rc≠0（如 404/其他）不在此處下定論，續查舊端點
+
+    # --- 輔：舊 branch-protection 端點 --------------------------------------
+    rc2, out2 = await _run(
+        [*_GH, "api", f"repos/{repo}/branches/{branch}/protection"], cwd=clone, timeout=60
+    )
+    if rc2 == 0:
+        # 200＝有傳統分支保護
+        return "protected", f"舊 protection 端點回 200（{branch} 受傳統分支保護）"
+    if "HTTP 404" in out2:
+        # 兩端點都無保護：Rulesets 空陣列 + 舊端點 404 → 明確無保護
+        return "unprotected", f"{branch} 無 Rulesets 規則且無傳統分支保護（404）"
+    if "HTTP 403" in out2:
+        return "unknown", f"舊 protection 端點 403（無 admin 權限？）：{out2[-200:]}"
+    if rc2 == -1 or "逾時" in out2:
+        return "unknown", f"舊 protection 端點逾時/網路失敗：{out2[-200:]}"
+
+    # 走到這裡：Rulesets 曾回空陣列但舊端點非 404/403/逾時，或其他未知組合 → 保守兜底
+    return "unknown", f"無法確認保護狀態（rules rc={rc}, protection rc={rc2}）：{out2[-200:]}"
 
 
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
