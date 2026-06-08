@@ -249,6 +249,20 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
         )
 
+    # 第二道防線（與上方 ls-remote 防覆寫各自獨立）：merge 進 main 前，主動查「合併目標
+    # AUTOPILOT_BRANCH」的保護狀態。放在 push 之前——unknown 時 fail-safe 中止且尚未 push，
+    # 不留遠端孤兒分支。dryrun 已於前面提早 return，此處天然不打 API。
+    # 唯一硬規則：state=="unknown" 一律中止（絕不 fall-through 當無保護）；protected/
+    # unprotected 皆放行（受保護分支由既有不帶 --admin 的 pr merge 自然攔下，不重複把關）。
+    if config.AUTOPILOT_PROTECTION_CHECK:
+        state, detail = await _check_branch_protection(clone, config.AUTOPILOT_BRANCH)
+        if state == "unknown":
+            return False, (
+                f"無法確認保護狀態（{config.AUTOPILOT_BRANCH}），fail-safe 已中止：{detail}；"
+                f"若部署環境缺 Administration:read 權限而持續卡此，設 "
+                f"TI_AUTOPILOT_PROTECTION_CHECK=0 跳過此檢查"
+            )
+
     # 預設非強制推送（全新分支即可成功）；僅 FORCE_PUSH 開啟才用 --force-with-lease
     # 搭配 --force-if-includes（杜絕背景 fetch 讓 lease 退化成裸 force）。絕不用裸 -f。
     push_flags = (

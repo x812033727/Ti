@@ -255,6 +255,16 @@ AUTOPILOT_MERGE_ADMIN = os.getenv("TI_AUTOPILOT_MERGE_ADMIN", "0") not in (
     "False",
     "",
 )
+# AUTOPILOT_PROTECTION_CHECK：第二道防線——squash-merge 前主動查合併目標（AUTOPILOT_BRANCH）
+#   的分支保護狀態，「無法確認（403 無權限／網路／逾時）」一律 fail-safe 中止。預設啟用；
+#   無 Administration:read 權限而每次卡在「無法確認」的環境，可設 TI_AUTOPILOT_PROTECTION_CHECK=0
+#   整段跳過（明確逃生口）。
+AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 
 
 def autopilot_paused() -> bool:
