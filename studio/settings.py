@@ -79,6 +79,13 @@ FIELDS: tuple[Field, ...] = (
     Field(
         "TI_PUBLISH_REPO", "發佈目標 repo（owner/repo）", placeholder="owner/repo", group="GitHub"
     ),
+    Field(
+        "TI_PUBLISH_MERGE",
+        "發佈後自動合併 PR（1 開／0 關）",
+        kind="select",
+        options=("0", "1"),
+        group="GitHub",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}
