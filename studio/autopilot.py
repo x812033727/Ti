@@ -162,6 +162,10 @@ async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
     repo = config.AUTOPILOT_REPO
 
     # --- 主：Rulesets 端點 ---------------------------------------------------
+    # rules_clean 追蹤「Rulesets 是否被乾淨確認為空」：唯有主端點 rc==0 且回合法空 list
+    # 才為 True。只有 rules_clean 時，後續舊端點 404 才允許判 unprotected——主端點任何
+    # 錯誤（5xx／連線中斷等非 403、非逾時、非 404）即使舊端點恰好 404 也絕不放行。
+    rules_clean = False
     rc, out = await _run(
         [*_GH, "api", f"repos/{repo}/rules/branches/{branch}"], cwd=clone, timeout=60
     )
@@ -173,33 +177,36 @@ async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
         if isinstance(rules, list):
             if rules:
                 return "protected", f"Rulesets：{len(rules)} 條規則套用於 {branch}"
-            # 空陣列＝明確無保護；但仍以舊 protection 端點兜一刀（涵蓋傳統保護設定）
-        # 非 list（非預期格式）→ 不據此判 protected，往下用舊端點確認
+            # 空陣列＝Rulesets 乾淨確認無規則；仍以舊 protection 端點兜傳統保護設定
+            rules_clean = True
+        # 非 list（非預期格式）→ rules 未乾淨確認，往下用舊端點且不得單憑 404 放行
     elif "HTTP 403" in out:
         return "unknown", f"Rulesets 端點 403（無 Administration:read 權限？）：{out[-200:]}"
     elif rc == -1 or "逾時" in out:
         return "unknown", f"Rulesets 端點逾時/網路失敗：{out[-200:]}"
-    # 其餘 rc≠0（如 404/其他）不在此處下定論，續查舊端點
+    # 其餘 rc≠0（5xx／連線錯誤／404 等）：rules 未乾淨確認，續查舊端點但保守不放行
 
     # --- 輔：舊 branch-protection 端點 --------------------------------------
     rc2, out2 = await _run(
         [*_GH, "api", f"repos/{repo}/branches/{branch}/protection"], cwd=clone, timeout=60
     )
     if rc2 == 0:
-        # 200＝有傳統分支保護
+        # 200＝有傳統分支保護（明確正向訊號，與 rules_clean 無關）
         return "protected", f"舊 protection 端點回 200（{branch} 受傳統分支保護）"
-    # 唯一放行（unprotected）出口：必須是「失敗 rc + 明確 HTTP 404」雙訊號，杜絕網路錯誤
-    # 訊息巧合含 "404" 就 fall-through 成放行。fail-safe 鐵則——寧可 unknown 中止。
-    if rc2 != 0 and "HTTP 404" in out2:
-        # 兩端點都無保護：Rulesets 空陣列 + 舊端點 404 → 明確無保護
+    # 唯一放行（unprotected）出口：三重條件——(1) 主端點 Rulesets 已乾淨確認為空、
+    # (2) 舊端點失敗 rc、(3) 明確 HTTP 404（且不含 403，避免單一輸出雙碼誤判）。
+    # 主端點若是 5xx／連線錯誤等未乾淨確認，即使舊端點 404 也落 unknown，不 fall-through。
+    if rules_clean and rc2 != 0 and "HTTP 404" in out2 and "403" not in out2:
         return "unprotected", f"{branch} 無 Rulesets 規則且無傳統分支保護（404）"
     if "HTTP 403" in out2:
         return "unknown", f"舊 protection 端點 403（無 admin 權限？）：{out2[-200:]}"
     if rc2 == -1 or "逾時" in out2:
         return "unknown", f"舊 protection 端點逾時/網路失敗：{out2[-200:]}"
 
-    # 走到這裡：Rulesets 曾回空陣列但舊端點非 404/403/逾時，或其他未知組合 → 保守兜底
-    return "unknown", f"無法確認保護狀態（rules rc={rc}, protection rc={rc2}）：{out2[-200:]}"
+    # 兜底：Rulesets 未乾淨確認（主端點錯誤）、或舊端點非 404/403/逾時的未知組合 → 保守 unknown
+    return "unknown", (
+        f"無法確認保護狀態（rules rc={rc} clean={rules_clean}, protection rc={rc2}）：{out2[-200:]}"
+    )
 
 
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
