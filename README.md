@@ -114,6 +114,11 @@ TI_OFFLINE=1 python -m studio.server
 
 可用環境變數（見 `.env.example`）調整：
 
+<!-- 維護注意：勿在此環境變數表「之前」出現 TI_AUTOPILOT_* 完整變數名。
+     tests/test_qa_task6_docs.py 以 next() 取首個含該變數名的行做同行斷言，
+     表格行必須是檔案中首個含完整變數名之處，否則測試會誤判預設值。
+     旗標的風險／前提／解析規則一律寫在表格「下方」的補充區塊，並以簡稱（反引號）引用。 -->
+
 | 變數 | 說明 | 預設 |
 |------|------|------|
 | `TI_MODEL_LEAD` / `TI_MODEL_FAST` | PM/高級工程師 與 工程師/QA 使用的模型 | opus / sonnet |
@@ -132,6 +137,15 @@ TI_OFFLINE=1 python -m studio.server
 | `TI_OPENAI_MODEL_LEAD` / `TI_OPENAI_MODEL_FAST` | OpenAI 主力 / 快速模型 | gpt-4o / gpt-4o-mini |
 | `TI_AUTOPILOT_FORCE_PUSH` | Autopilot 推送策略：預設非強制（`git push`），遠端已存在同名分支時中止；設 `1` 才略過中止並改用 `--force-with-lease --force-if-includes` 覆寫殘留分支（絕不用裸 `-f`） | 0（安全側） |
 | `TI_AUTOPILOT_MERGE_ADMIN` | Autopilot 合併策略：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效；目標 branch 有保護規則且需維持自動合併時設 `1` | 0（安全側） |
+
+#### Autopilot 安全旗標補充
+
+上表兩個旗標預設皆為安全側（`0`），啟用前請先確認已設好分支保護與 CI gating。
+
+- **`FORCE_PUSH` 風險**：開啟後，遠端已存在同名分支時不再中止，改以
+  `git push --force-with-lease --force-if-includes` 覆寫。若該分支上有他人 commit，**會被直接覆蓋**；
+  且 `--force-with-lease` 在背景 `git fetch`（例如 cron）默默更新本地 ref 後可能失效，安全性退化為形同裸 force。
+  事後救援僅能靠**本機 reflog**，已 push 出去而隊友端沒有的 commit 無法復原。故僅建議用於覆寫 autopilot 自己殘留的分支。
 
 ### 切換到 OpenAI / 本地模型
 
