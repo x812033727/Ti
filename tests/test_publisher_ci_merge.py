@@ -329,8 +329,10 @@ async def test_flow_error_on_status_failure(_patch_flow, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_flow_behind_retries_with_update_branch(_patch_flow):
-    """behind（stale）→ 409 可重試：呼叫 update-branch 後重試，最終合併成功。"""
+async def test_flow_behind_retries_with_update_branch(monkeypatch, _patch_flow):
+    """behind（stale）→ 可重試：先 update-branch 修分支再重試，最終合併成功。"""
+    # PR 處於 behind（落後 base）狀態，重試前才該 update-branch
+    _patch_flow["pr"] = {"head": {"sha": "s"}, "mergeable": True, "mergeable_state": "behind"}
     calls = {"n": 0}
 
     async def flaky_merge(number, payload):
@@ -339,13 +341,55 @@ async def test_flow_behind_retries_with_update_branch(_patch_flow):
             return MergeOutcome.CONFLICT, "Base branch was modified（409）", True
         return MergeOutcome.MERGED, "sha-final", False
 
-    import studio.publisher as p
-
-    p._merge_pr = flaky_merge  # 直接覆蓋（fixture 已 monkeypatch，測後自動還原）
+    monkeypatch.setattr(publisher, "_merge_pr", flaky_merge)
     outcome, _ = await _run_flow(_patch_flow, retries=3)
     assert outcome == MergeOutcome.MERGED
     assert calls["n"] == 3
-    assert _patch_flow["updates"] == 2  # 前兩次失敗各 update-branch 一次
+    assert _patch_flow["updates"] == 2  # 前兩次失敗各 update-branch 一次（因為 behind）
+
+
+@pytest.mark.asyncio
+async def test_flow_transient_error_retries_without_update_branch(monkeypatch, _patch_flow):
+    """暫時性 ERROR（5xx/網路，PR 非 behind）→ 純 backoff 重試，不做多餘 update-branch。"""
+    # PR 是 clean（非 stale），只是 merge 請求暫時性失敗
+    _patch_flow["pr"] = {"head": {"sha": "s"}, "mergeable": True, "mergeable_state": "clean"}
+    calls = {"n": 0}
+
+    async def flaky_merge(number, payload):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return MergeOutcome.ERROR, "GitHub 伺服器錯誤（502）", True
+        return MergeOutcome.MERGED, "sha-final", False
+
+    monkeypatch.setattr(publisher, "_merge_pr", flaky_merge)
+    outcome, _ = await _run_flow(_patch_flow, retries=3)
+    assert outcome == MergeOutcome.MERGED
+    assert calls["n"] == 2
+    assert _patch_flow["updates"] == 0  # 非 behind → 絕不呼叫 update-branch
+
+
+@pytest.mark.asyncio
+async def test_flow_backoff_is_applied(monkeypatch, _patch_flow):
+    """重試之間有指數 backoff：記錄 sleep 參數，驗證遞增。"""
+    _patch_flow["pr"] = {"head": {"sha": "s"}, "mergeable": True, "mergeable_state": "behind"}
+    _patch_flow["merge"] = (MergeOutcome.CONFLICT, "Base branch was modified（409）", True)
+    slept = []
+
+    async def rec_sleep(sec):
+        slept.append(sec)
+
+    monkeypatch.setattr(publisher, "_get_pr_status", lambda number, **kw: _async(_patch_flow["pr"]))
+    monkeypatch.setattr(publisher, "_wait_for_ci", lambda sha, **kw: _async(("pass", "ok")))
+    monkeypatch.setattr(publisher, "_update_branch", lambda number: _async(True))
+    out, _ = await publisher._merge_flow(
+        7, {}, ci_timeout=60, ci_interval=10, retries=2, sleep=rec_sleep
+    )
+    # ci_interval=10 → backoff 應為 10, 20（attempt 0,1，指數成長）
+    assert slept == [10, 20]
+
+
+async def _async(v):
+    return v
 
 
 @pytest.mark.asyncio
@@ -357,6 +401,15 @@ async def test_flow_retry_exhausted(_patch_flow):
     assert "重試上限" in detail
     # retries=2 → 共嘗試 3 次合併
     assert _patch_flow["merge_calls"] == 3
+
+
+def test_backoff_exponential_and_capped():
+    """_backoff：指數成長且封頂 60 秒。"""
+    assert publisher._backoff(0, 10) == 10
+    assert publisher._backoff(1, 10) == 20
+    assert publisher._backoff(2, 10) == 40
+    assert publisher._backoff(3, 10) == 60  # 80 → 封頂 60
+    assert publisher._backoff(10, 10) == 60
 
 
 # --- config 連動 -----------------------------------------------------

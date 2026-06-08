@@ -449,8 +449,12 @@ async def _merge_flow(
 
     - 先 `_wait_for_ci`：CI fail → CI_FAILED 早退；逾時 → TIMEOUT 早退；查詢失敗 → ERROR。
     - 再 `_merge_pr`：成功 → MERGED；不可重試 → 用 `classify_merge_state` 精準回報 BLOCKED／CONFLICT。
-    - 可重試（409／behind）→ `_update_branch` 修 stale 後退避重試；下一輪會重抓 head sha 並
-      重新等該 sha 的 CI（update-branch 會產生新 commit）。超過次數才放棄。
+    - 可重試：
+        - `behind`（stale）→ 先 `_update_branch` 把 base 併進來真正修分支，再退避重試；
+          下一輪重抓 head sha 並重等該（新）sha 的 CI（update-branch 會產生新 commit）。
+        - 其餘暫時性錯誤（409 race／5xx／網路）→ 純指數 backoff 重試，不做多餘的 update-branch
+          （避免製造多餘 merge commit 與整輪 CI 重跑）。
+      超過次數才放棄並回報。
     """
     last_outcome, last_detail = MergeOutcome.ERROR, "未知錯誤"
     for attempt in range(retries + 1):
@@ -488,8 +492,9 @@ async def _merge_flow(
                 detail = f"{detail}（已達重試上限 {retries} 次）"
             return outcome, detail
 
-        # 可重試：先修 stale（update-branch），退避後重試（下一輪重抓 sha 並重等 CI）。
-        await _update_branch(number)
+        # 可重試：只有 stale（behind）才 update-branch 真正修分支；其餘暫時性錯誤純退避重試。
+        if (status.get("mergeable_state") or "") == "behind":
+            await _update_branch(number)
         await sleep(_backoff(attempt, ci_interval))
 
     return last_outcome, last_detail
