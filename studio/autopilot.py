@@ -188,7 +188,9 @@ async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
     if rc2 == 0:
         # 200＝有傳統分支保護
         return "protected", f"舊 protection 端點回 200（{branch} 受傳統分支保護）"
-    if "HTTP 404" in out2:
+    # 唯一放行（unprotected）出口：必須是「失敗 rc + 明確 HTTP 404」雙訊號，杜絕網路錯誤
+    # 訊息巧合含 "404" 就 fall-through 成放行。fail-safe 鐵則——寧可 unknown 中止。
+    if rc2 != 0 and "HTTP 404" in out2:
         # 兩端點都無保護：Rulesets 空陣列 + 舊端點 404 → 明確無保護
         return "unprotected", f"{branch} 無 Rulesets 規則且無傳統分支保護（404）"
     if "HTTP 403" in out2:
