@@ -9,20 +9,16 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    ClaudeSDKClient,
-    PermissionResultAllow,
-    ResultMessage,
-    TextBlock,
-    ToolPermissionContext,
-    ToolUseBlock,
-)
+from typing import TYPE_CHECKING
 
 from . import config, events
 from .roles import Role
+
+if TYPE_CHECKING:
+    # 僅供型別檢查與註記用；執行期改在各函式內 local import，讓不需要 SDK 的
+    # 輕量用途（如 _model_for、import studio.experts）在未安裝 claude-agent-sdk
+    # 的環境（CI test job）也能載入。
+    from claude_agent_sdk import PermissionResultAllow, ToolPermissionContext
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
@@ -39,6 +35,8 @@ async def _auto_allow_tool(
     Claude CLI 拒絕）。每位專家可用的工具已由 role.allowed_tools 白名單限制，且各自
     跑在獨立 workspace（cwd）內。
     """
+    from claude_agent_sdk import PermissionResultAllow
+
     return PermissionResultAllow()
 
 
@@ -63,6 +61,8 @@ def _summarize_tool(name: str, tool_input: dict) -> str:
 
 class Expert:
     def __init__(self, role: Role, session_id: str, cwd: Path):
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
         self.role = role
         self.session_id = session_id
         self._client = ClaudeSDKClient(
@@ -93,6 +93,8 @@ class Expert:
 
     async def speak(self, prompt: str, broadcast: Broadcast) -> str:
         """送出 prompt，串流回應為事件，回傳完整文字。"""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+
         await self.start()
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))

@@ -32,6 +32,7 @@ STUDIO = Path(__file__).resolve().parent.parent / "studio"
 @pytest.fixture(autouse=True)
 def _no_shell(monkeypatch):
     """保險絲：_gate_tests 不得開出 shell 子程序。"""
+
     async def _boom_shell(*a, **k):
         raise AssertionError("不應呼叫 create_subprocess_shell：pytest gate 必須走 exec")
 

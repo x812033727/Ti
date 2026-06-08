@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import os
 from pathlib import Path
 
 import pytest
@@ -82,7 +81,14 @@ async def test_default_merge_exact_argv(monkeypatch):
     assert ok is True
     repo = config.AUTOPILOT_REPO
     assert spy.merge_argv == [
-        *_GH, "pr", "merge", "-R", repo, _BRANCH, "--squash", "--delete-branch",
+        *_GH,
+        "pr",
+        "merge",
+        "-R",
+        repo,
+        _BRANCH,
+        "--squash",
+        "--delete-branch",
     ]
     assert "--admin" not in spy.merge_argv
 
@@ -98,7 +104,15 @@ async def test_admin_on_exact_argv(monkeypatch):
     assert ok is True
     repo = config.AUTOPILOT_REPO
     assert spy.merge_argv == [
-        *_GH, "pr", "merge", "-R", repo, _BRANCH, "--squash", "--admin", "--delete-branch",
+        *_GH,
+        "pr",
+        "merge",
+        "-R",
+        repo,
+        _BRANCH,
+        "--squash",
+        "--admin",
+        "--delete-branch",
     ]
     # --admin 緊接在 --squash 之後、--delete-branch 之前
     argv = spy.merge_argv
@@ -110,7 +124,9 @@ async def test_admin_on_exact_argv(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("env_val,expect_admin", [("0", False), ("", False), ("1", True), ("true", True)])
+@pytest.mark.parametrize(
+    "env_val,expect_admin", [("0", False), ("", False), ("1", True), ("true", True)]
+)
 async def test_env_drives_admin_flag(monkeypatch, env_val, expect_admin):
     """TI_AUTOPILOT_MERGE_ADMIN 由環境變數 reload config 後，直接決定 argv 是否含 --admin。"""
     monkeypatch.setenv("TI_AUTOPILOT_MERGE_ADMIN", env_val)

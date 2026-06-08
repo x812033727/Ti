@@ -115,7 +115,7 @@ async def test_merge_failure_keeps_gh_output(monkeypatch):
     """預設無 --admin 時若被分支保護擋下，回 (False, ...) 且保留 gh 原始輸出便於診斷。"""
     monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", False)
     gh_err = "GraphQL: Branch protection rules not satisfied"
-    spy = _install(monkeypatch, {**_HAS_CHANGE, "pr merge": (1, gh_err)})
+    _install(monkeypatch, {**_HAS_CHANGE, "pr merge": (1, gh_err)})
     ok, msg = await autopilot._commit_push_merge("/clone", _TASK)
 
     assert ok is False

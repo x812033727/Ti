@@ -86,6 +86,7 @@ async def test_git_init_uses_exec_with_correct_argv(monkeypatch, tmp_path):
     """git_init 四個固定指令皆以 argv 走 run_command_exec、sandbox=False、timeout=20。"""
     spy = ExecSpy(output="", ok=True)
     monkeypatch.setattr(runner, "run_command_exec", spy)
+
     # run_command（shell）若被呼叫即視為遷移失敗。
     async def _boom_rc(*a, **k):
         raise AssertionError("git_init 不應呼叫 shell 版 run_command")
@@ -137,9 +138,7 @@ async def test_git_clone_branch_appended_as_argv(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "run_command_exec", spy)
     monkeypatch.setattr(runner, "_git_available", lambda: True)
 
-    await runner.git_clone(
-        "https://github.com/owner/repo.git", tmp_path, token=None, branch="main"
-    )
+    await runner.git_clone("https://github.com/owner/repo.git", tmp_path, token=None, branch="main")
     argv = spy.calls[0]["argv"]
     assert "--branch" in argv and argv[argv.index("--branch") + 1] == "main"
 

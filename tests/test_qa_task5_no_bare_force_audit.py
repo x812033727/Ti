@@ -40,6 +40,7 @@ def _func_string_constants(src: str, func_name: str) -> list[str]:
 
 # ---- (1) AST 靜態稽核 ------------------------------------------------------
 
+
 def test_ast_no_bare_force_literal_in_function():
     consts = _func_string_constants(_SRC, "_commit_push_merge")
     assert consts, "未解析到 _commit_push_merge 函式體字串"
@@ -54,14 +55,13 @@ def test_ast_function_exists_and_isolated():
     # 確認確實在分析目標函式（避免函式改名造成假綠）
     tree = ast.parse(_SRC)
     names = {
-        n.name
-        for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert "_commit_push_merge" in names
 
 
 # ---- (2) 動態：蒐集所有 push argv -----------------------------------------
+
 
 class RunSpy:
     def __init__(self, overrides=None):

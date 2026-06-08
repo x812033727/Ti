@@ -70,6 +70,7 @@ def _spy(monkeypatch, overrides=None):
 
 # ---- 預設不帶 --admin ------------------------------------------------------
 
+
 def test_default_merge_has_no_admin(monkeypatch):
     spy = _spy(monkeypatch)
     ok, msg = asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
@@ -83,6 +84,7 @@ def test_default_merge_has_no_admin(monkeypatch):
 
 # ---- MERGE_ADMIN=1 才帶 --admin -------------------------------------------
 
+
 def test_merge_admin_flag_adds_admin(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", True)
     spy = _spy(monkeypatch)
@@ -94,17 +96,20 @@ def test_merge_admin_flag_adds_admin(monkeypatch):
 
 # ---- source-level：--admin 由 config gate，非寫死 -------------------------
 
+
 def test_admin_flag_is_gated_by_config():
     assert "config.AUTOPILOT_MERGE_ADMIN" in _SRC
     # --admin 只能出現在條件式裡（admin_flag），不可無條件寫死於 merge 指令
-    assert re.search(r'\["--admin"\]\s+if\s+config\.AUTOPILOT_MERGE_ADMIN', _SRC), \
+    assert re.search(r'\["--admin"\]\s+if\s+config\.AUTOPILOT_MERGE_ADMIN', _SRC), (
         "--admin 必須由 config.AUTOPILOT_MERGE_ADMIN 條件控制"
+    )
 
 
 # ---- merge 失敗時回報失敗 --------------------------------------------------
 
+
 def test_merge_failure_reported(monkeypatch):
-    spy = _spy(monkeypatch, {"pr merge": (1, "protected branch hook failed")})
+    _spy(monkeypatch, {"pr merge": (1, "protected branch hook failed")})
     ok, msg = asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
     assert not ok
     assert "merge 失敗" in msg

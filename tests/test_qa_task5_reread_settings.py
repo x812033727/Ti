@@ -45,7 +45,9 @@ def _get(path, timeout=3.0):
 
 def _post(path, body, timeout=3.0):
     req = urllib.request.Request(
-        BASE + path, data=json.dumps(body).encode(), method="POST",
+        BASE + path,
+        data=json.dumps(body).encode(),
+        method="POST",
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -64,8 +66,11 @@ def reread():
     env["TI_PORT"] = str(PORT)
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
-        cwd=str(ROOT), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     try:
         deadline = time.time() + 30
@@ -83,10 +88,15 @@ def reread():
             out = proc.stdout.read() if proc.poll() is not None and proc.stdout else ""
             pytest.fail(f"服務未就緒。輸出：\n{out}")
         # 寫入秘密 + 非秘密
-        _post("/api/settings", {
-            "GITHUB_TOKEN": GH, "ANTHROPIC_API_KEY": ANT,
-            "TI_MODEL_LEAD": LEAD, "TI_PUBLISH_REPO": REPO,
-        })
+        _post(
+            "/api/settings",
+            {
+                "GITHUB_TOKEN": GH,
+                "ANTHROPIC_API_KEY": ANT,
+                "TI_MODEL_LEAD": LEAD,
+                "TI_PUBLISH_REPO": REPO,
+            },
+        )
         # 重新讀取
         _, raw = _get("/api/settings")
         yield raw, json.loads(raw)["fields"]
@@ -147,7 +157,9 @@ def test_frontend_renders_configured_secret(reread, tmp_path):
     harness = ROOT / "tests" / "frontend_settings_render_test.mjs"
     result = subprocess.run(
         [node, str(harness), str(fpath)],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     out = (result.stdout + result.stderr).strip()
     assert result.returncode == 0, f"前端渲染驗證失敗：\n{out}"

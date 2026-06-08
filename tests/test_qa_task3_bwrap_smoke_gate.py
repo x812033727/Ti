@@ -9,6 +9,7 @@
   (行為) 抽出 smoke 的 shell 邏輯，實跑成功路徑(exit 0)與
          模擬 bwrap 不可用的失敗路徑(exit 1 + 含 ::error:: 訊息)。
 """
+
 import pathlib
 import shutil
 import subprocess
@@ -104,7 +105,7 @@ def test_smoke_gate_fails_when_bwrap_unusable(tmp_path):
     fake.chmod(0o755)
     # 與 ci.yml 同構的 gate 片段（行為等價）
     gate = (
-        'if ! bwrap --ro-bind / / --unshare-pid --die-with-parent --new-session true; then\n'
+        "if ! bwrap --ro-bind / / --unshare-pid --die-with-parent --new-session true; then\n"
         '  echo "::error::bwrap smoke 失敗——AppArmor userns profile 未生效，沙箱不可用。"\n'
         "  exit 1\n"
         "fi\n"

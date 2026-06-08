@@ -11,6 +11,7 @@
   (行為) 抽出 ci.yml 內真實斷言區塊，注入各種 pytest 摘要字串，驗 exit code：
          全 PASSED 且數量相符→0；skipped/failed/errors/數量不符→1。
 """
+
 import pathlib
 import subprocess
 
@@ -70,16 +71,14 @@ def test_step_targets_right_tests(step):
 def _extract_decision_block(run: str) -> str:
     """抽出步驟C的判斷邏輯（從第一道 errors 閘門到結尾），供注入 out/EXPECTED 測試。"""
     lines = run.splitlines()
-    start = next(
-        i for i, ln in enumerate(lines) if 'grep -qiE "[0-9]+ errors?"' in ln
-    )
+    start = next(i for i, ln in enumerate(lines) if 'grep -qiE "[0-9]+ errors?"' in ln)
     # 往前包含該 if 的開頭（start 行本身就是 `if echo "$out" | grep ...`）
     return "\n".join(lines[start:])
 
 
 def _run_gate(decision: str, out: str, expected: str):
     """以注入的 out/EXPECTED 跑真實斷言區塊，回傳 (exit_code, stdout)。"""
-    script = f'set -o pipefail\nEXPECTED={expected}\nout={out!r}\n{decision}\n'
+    script = f"set -o pipefail\nEXPECTED={expected}\nout={out!r}\n{decision}\n"
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
     return r.returncode, r.stdout
 

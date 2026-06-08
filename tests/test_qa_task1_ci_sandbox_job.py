@@ -2,6 +2,7 @@
 
 只驗 CI 設定的結構與不變式，沙箱實跑由 tests/test_runner.py 等負責。
 """
+
 import pathlib
 
 import pytest
@@ -58,9 +59,7 @@ def test_sandbox_job_has_smoke_step_no_continue_on_error(doc):
 
 def _strip_comments(run: str) -> str:
     """只保留實際指令行，去掉 shell 註解（# 開頭）——避免註解文字誤判旗標。"""
-    return "\n".join(
-        ln for ln in run.splitlines() if not ln.strip().startswith("#")
-    )
+    return "\n".join(ln for ln in run.splitlines() if not ln.strip().startswith("#"))
 
 
 def test_smoke_flags_align_with_real_run(doc):

@@ -61,8 +61,11 @@ def fields():
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
-        cwd=str(ROOT), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     try:
         deadline = time.time() + 30
@@ -145,7 +148,9 @@ def test_frontend_renders_password_inputs(fields, tmp_path):
     harness = ROOT / "tests" / "frontend_settings_render_test.mjs"
     result = subprocess.run(
         [node, str(harness), str(fpath)],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     out = (result.stdout + result.stderr).strip()
     assert result.returncode == 0, f"前端渲染驗證失敗：\n{out}"
