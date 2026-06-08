@@ -47,6 +47,18 @@ def fields():
     env["TI_HOST"] = HOST
     env["TI_PORT"] = str(PORT)
 
+    # config.py 的 load_dotenv() 會在 server import 時把 .env 內的值補回
+    # os.environ；光從子程序 env dict 移除秘密欄位並不夠——必須同步把這些 key
+    # 從 .env 暫時拿掉，否則「未設定」前提失效（set 會變 True、門禁被重新啟用）。
+    # finally 區段會還原原始 .env。
+    if backup is not None:
+        kept = [
+            ln
+            for ln in backup.decode("utf-8", "replace").splitlines(keepends=True)
+            if ln.split("=", 1)[0].strip() not in (SECRET_ENVS | {"TI_ACCESS_PASSWORD"})
+        ]
+        ENV.write_text("".join(kept), encoding="utf-8")
+
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
         cwd=str(ROOT), env=env,
