@@ -71,6 +71,7 @@ def _spy(monkeypatch, overrides=None):
 
 # ---- 態 A：rc!=0 → 中止 ----------------------------------------------------
 
+
 def test_state_a_rc_nonzero_with_output_aborts(monkeypatch):
     spy = _spy(monkeypatch, {"ls-remote": (128, "fatal: could not read from remote")})
     ok, msg = asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
@@ -90,6 +91,7 @@ def test_state_a_rc_nonzero_empty_output_still_aborts(monkeypatch):
 
 # ---- 態 B：rc==0 且有輸出 → 預設中止；FORCE_PUSH 才放行 --------------------
 
+
 def test_state_b_exists_default_aborts(monkeypatch):
     spy = _spy(monkeypatch, {"ls-remote": (0, "deadbeef\trefs/heads/" + _BRANCH)})
     ok, msg = asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
@@ -108,6 +110,7 @@ def test_state_b_exists_with_force_push_proceeds(monkeypatch):
 
 # ---- 態 C：rc==0 且空輸出 → 放行 ------------------------------------------
 
+
 def test_state_c_absent_proceeds(monkeypatch):
     spy = _spy(monkeypatch, {"ls-remote": (0, "")})
     ok, msg = asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
@@ -124,6 +127,7 @@ def test_state_c_whitespace_only_output_treated_as_absent(monkeypatch):
 
 
 # ---- 三態互斥：rc 與輸出分開判斷（不可併入同一條件） ----------------------
+
 
 def test_rc_checked_before_output(monkeypatch):
     # rc!=0 且有「看似分支」輸出時，仍走「檢查失敗」分支而非「已存在」分支

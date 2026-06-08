@@ -9,9 +9,9 @@ import secrets
 import shutil
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -247,7 +247,12 @@ AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "
 AUTOPILOT_FORCE_PUSH = os.getenv("TI_AUTOPILOT_FORCE_PUSH", "0") not in ("0", "false", "False", "")
 # AUTOPILOT_MERGE_ADMIN：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效。若目標 branch
 #   有保護規則、需維持自動合併，須設 TI_AUTOPILOT_MERGE_ADMIN=1。
-AUTOPILOT_MERGE_ADMIN = os.getenv("TI_AUTOPILOT_MERGE_ADMIN", "0") not in ("0", "false", "False", "")
+AUTOPILOT_MERGE_ADMIN = os.getenv("TI_AUTOPILOT_MERGE_ADMIN", "0") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 
 
 def autopilot_paused() -> bool:

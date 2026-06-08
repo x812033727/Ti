@@ -86,6 +86,7 @@ def _spy_for(monkeypatch, overrides=None):
 
 # ---- 標準 1：靜態防線 -------------------------------------------------------
 
+
 def test_std1_no_bare_force_in_source():
     assert not re.search(r"push[^\n]*\s-f(\s|\")", _SRC), "出現裸 push -f"
     # 單獨 --force（非 --force-with-lease / --force-if-includes）
@@ -95,6 +96,7 @@ def test_std1_no_bare_force_in_source():
 
 
 # ---- 標準 2：預設非強制 + 遠端同名分支中止 ---------------------------------
+
 
 def test_std2_default_push_no_force_flags(monkeypatch):
     spy = _spy_for(monkeypatch)  # ls-remote 預設回 (0, "") → 不存在
@@ -117,6 +119,7 @@ def test_std2_existing_remote_branch_aborts(monkeypatch):
 
 # ---- 標準 3：FORCE_PUSH 開啟 → lease + if-includes 兩者並存 ----------------
 
+
 def test_std3_force_push_uses_lease_and_if_includes(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", True)
     spy = _spy_for(monkeypatch, {"ls-remote": (0, "abc\trefs/heads/" + _BRANCH)})
@@ -130,6 +133,7 @@ def test_std3_force_push_uses_lease_and_if_includes(monkeypatch):
 
 # ---- 標準 4：ls-remote rc!=0 → 中止 ----------------------------------------
 
+
 def test_std4_lsremote_failure_aborts(monkeypatch):
     spy = _spy_for(monkeypatch, {"ls-remote": (128, "fatal: auth failed")})
     ok, msg = asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
@@ -139,6 +143,7 @@ def test_std4_lsremote_failure_aborts(monkeypatch):
 
 
 # ---- 標準 5：merge --admin gate -------------------------------------------
+
 
 def test_std5_merge_default_no_admin(monkeypatch):
     spy = _spy_for(monkeypatch)
@@ -154,6 +159,7 @@ def test_std5_merge_admin_when_flag_set(monkeypatch):
 
 
 # ---- 標準 6：publisher push 屬範圍外（註記） ------------------------------
+
 
 def test_std6_publisher_push_out_of_scope():
     pub = (_ROOT / "studio" / "publisher.py").read_text(encoding="utf-8")

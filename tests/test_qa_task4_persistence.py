@@ -92,7 +92,9 @@ def _get(path, timeout=3.0):
 
 def _post(path, body, timeout=3.0):
     req = urllib.request.Request(
-        BASE + path, data=json.dumps(body).encode(), method="POST",
+        BASE + path,
+        data=json.dumps(body).encode(),
+        method="POST",
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -112,8 +114,11 @@ def live():
     env["TI_PORT"] = str(PORT)
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
-        cwd=str(ROOT), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     try:
         deadline = time.time() + 30

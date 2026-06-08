@@ -41,7 +41,9 @@ def _get(path: str, timeout: float = 3.0):
 def _post(path: str, body, timeout: float = 3.0):
     data = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode()
     req = urllib.request.Request(
-        BASE + path, data=data, method="POST",
+        BASE + path,
+        data=data,
+        method="POST",
         headers={"Content-Type": "application/json"},
     )
     try:
@@ -62,8 +64,11 @@ def server():
     env["TI_PORT"] = str(PORT)
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
-        cwd=str(ROOT), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
     try:
         deadline = time.time() + 30
@@ -127,7 +132,9 @@ def test_frontend_fill_and_save(server, tmp_path):
     harness = ROOT / "tests" / "frontend_settings_save_test.mjs"
     result = subprocess.run(
         [node, str(harness), str(fpath)],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     out = (result.stdout + result.stderr).strip()
     assert result.returncode == 0, f"前端送出驗證失敗：\n{out}"

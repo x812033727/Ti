@@ -94,7 +94,9 @@ def inventory_rows(inventory_text: str) -> list[dict]:
             else:
                 lines.add(int(part))
         cls_cell = cells[3].lower()
-        cls = "a" if re.search(r"\ba\b", cls_cell) else ("c" if re.search(r"\bc\b", cls_cell) else "")
+        cls = (
+            "a" if re.search(r"\ba\b", cls_cell) else ("c" if re.search(r"\bc\b", cls_cell) else "")
+        )
         rows.append(
             {"file": fname, "lines": lines, "cls": cls, "reason": cells[4], "raw_lines": file_line}
         )
@@ -161,9 +163,7 @@ def test_expected_caller_present_with_correct_class(name: str, inventory_rows: l
     want_cls, want_lines = EXPECTED[name]
     # 找出涵蓋這些行的清冊列
     matched = [
-        r
-        for r in inventory_rows
-        if (r["lines"] & want_lines) and r["file"] == name.split()[0]
+        r for r in inventory_rows if (r["lines"] & want_lines) and r["file"] == name.split()[0]
     ]
     assert matched, f"清冊缺少呼叫端：{name}（行 {sorted(want_lines)}）"
     for r in matched:
@@ -200,7 +200,8 @@ def test_classification_matches_code_reality():
     # --- a 類 autopilot：pytest gate 為固定指令，shell（待遷移）或 exec（已遷移）皆可 ---
     assert (
         '"python -m pytest -q"' in autopilot_src  # 待遷移：shell 字串
-        or '"-m", "pytest", "-q"' in autopilot_src  # 已遷移：exec argv（python / sys.executable 皆可）
+        or '"-m", "pytest", "-q"'
+        in autopilot_src  # 已遷移：exec argv（python / sys.executable 皆可）
     ), "autopilot pytest gate 應為固定 pytest 指令 (a 類，shell 或 exec 皆可)"
 
     # --- c 類：傳入的是變數（cmd / args.get(...)），必須仍走 shell run_command ---

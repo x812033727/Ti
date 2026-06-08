@@ -59,9 +59,9 @@ def test_no_bare_push_f_anywhere_in_source():
 def test_autopilot_push_command_has_no_bare_force():
     """autopilot.py 的 push 指令字面不得含獨立的 '-f' 或裸 '--force' token。"""
     text = (_ROOT / "studio" / "autopilot.py").read_text(encoding="utf-8")
-    assert '"-f"' not in text, "autopilot.py 不應出現獨立 \"-f\" token"
+    assert '"-f"' not in text, 'autopilot.py 不應出現獨立 "-f" token'
     # 裸 "--force"（後面緊接結束引號）不該存在；--force-with-lease/-if-includes 是合法的不同 token
-    assert '"--force"' not in text, "autopilot.py 不應出現裸 \"--force\" token"
+    assert '"--force"' not in text, 'autopilot.py 不應出現裸 "--force" token'
 
 
 # === Runtime：預設 push argv 無任何 force 旗標 =========================

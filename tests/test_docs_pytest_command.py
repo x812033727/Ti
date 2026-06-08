@@ -2,6 +2,7 @@
 
 逐條對照任務驗收標準 1~7。敘述性提及（非可複製執行指令）保留。
 """
+
 from __future__ import annotations
 
 import re
@@ -20,11 +21,7 @@ def lines(p: Path) -> list[str]:
 
 # 標準 1：README 不再有單獨成行的執行指令 `pytest`
 def test_readme_no_bare_pytest_command():
-    bad = [
-        (i + 1, ln)
-        for i, ln in enumerate(lines(README))
-        if re.match(r"^\s*pytest(\s|$)", ln)
-    ]
+    bad = [(i + 1, ln) for i, ln in enumerate(lines(README)) if re.match(r"^\s*pytest(\s|$)", ln)]
     assert not bad, f"README 仍有裸 pytest 執行指令: {bad}"
 
 
@@ -79,7 +76,9 @@ def test_inventory_untouched():
     assert INVENTORY.exists(), "inventory 檔不應消失"
     r = subprocess.run(
         ["git", "status", "--short", str(INVENTORY)],
-        cwd=ROOT, capture_output=True, text=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
     assert r.stdout.strip() == "", f"inventory 不應被更動: {r.stdout!r}"
 

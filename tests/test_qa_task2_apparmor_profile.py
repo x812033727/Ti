@@ -8,6 +8,7 @@ apparmor_parser 屬 root/kernel 工具，本機 sandbox 無法載入；故此處
   (d) 備援 profile 字串的 AppArmor 語法結構正確（heredoc EOF 落行首、含 abi/
       profile bwrap /usr/bin/bwrap/userns 規則、各規則結尾逗號）
 """
+
 import pathlib
 import re
 
@@ -113,9 +114,9 @@ def test_fallback_profile_syntax_structure(steps):
     # tunables include
     assert re.search(r"include\s+<tunables/global>", prof), "缺 include <tunables/global>"
     # profile 標頭：名稱 bwrap、路徑 /usr/bin/bwrap、flags=(unconfined)
-    assert re.search(
-        r"profile\s+bwrap\s+/usr/bin/bwrap\s+flags=\(unconfined\)\s*\{", prof
-    ), "profile 標頭格式不符"
+    assert re.search(r"profile\s+bwrap\s+/usr/bin/bwrap\s+flags=\(unconfined\)\s*\{", prof), (
+        "profile 標頭格式不符"
+    )
     # userns 規則（放行 bwrap 自建 user namespace）須以逗號結尾
     assert re.search(r"\buserns\s*,", prof), "缺 userns, 規則（逗號結尾）"
     # local include 收尾
