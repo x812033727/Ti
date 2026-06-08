@@ -119,9 +119,7 @@ async def test_state_protected_via_rulesets(monkeypatch):
 @pytest.mark.asyncio
 async def test_state_protected_via_legacy_protection(monkeypatch):
     """Rulesets 空但舊 protection 端點回 200 → protected（涵蓋傳統保護設定）。"""
-    state, detail, _ = await _check(
-        monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _PROT_200}
-    )
+    state, detail, _ = await _check(monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _PROT_200})
     assert state == "protected", detail
 
 
@@ -129,9 +127,7 @@ async def test_state_protected_via_legacy_protection(monkeypatch):
 @pytest.mark.asyncio
 async def test_state_unprotected_empty_rules_and_404(monkeypatch):
     """Rulesets 乾淨空陣列 + 舊端點 404 → unprotected（雙重確認無保護）。"""
-    state, detail, _ = await _check(
-        monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _PROT_404}
-    )
+    state, detail, _ = await _check(monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _PROT_404})
     assert state == "unprotected", detail
 
 
@@ -146,9 +142,7 @@ async def test_state_unknown_rules_403(monkeypatch):
 @pytest.mark.asyncio
 async def test_state_unknown_legacy_403(monkeypatch):
     """主端點空、舊端點 403 → unknown（傳統保護無法確認）。"""
-    state, detail, _ = await _check(
-        monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _HTTP_403}
-    )
+    state, detail, _ = await _check(monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _HTTP_403})
     assert state == "unknown", detail
 
 
@@ -173,9 +167,7 @@ async def test_state_unknown_network_failure(monkeypatch, label, resp):
 @pytest.mark.asyncio
 async def test_targets_main_branch_and_rulesets_first(monkeypatch):
     """查的是合併目標 main（非 task 分支），且 Rulesets 端點先於舊端點被呼叫。"""
-    state, _, spy = await _check(
-        monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _PROT_404}
-    )
+    state, _, spy = await _check(monkeypatch, {_RULES_EP: _RULES_EMPTY, _PROT_EP: _PROT_404})
     # 端點都針對 main
     assert spy.called(f"repos/{_REPO}/{_RULES_EP}")
     assert spy.called(f"repos/{_REPO}/{_PROT_EP}")
