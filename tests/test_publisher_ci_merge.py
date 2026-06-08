@@ -41,6 +41,53 @@ def test_classify_merge_state_unknown_value_falls_back_to_error():
     assert publisher.classify_merge_state(None) == MergeOutcome.ERROR
 
 
+# --- 純函式：classify_block_reason（四類卡關原因）-------------------
+
+
+def test_block_reason_conflict():
+    cat, label = publisher.classify_block_reason({"mergeable_state": "dirty"})
+    assert cat == "conflict" and "衝突" in label
+
+
+def test_block_reason_stale():
+    cat, label = publisher.classify_block_reason({"mergeable_state": "behind"})
+    assert cat == "stale" and "落後" in label
+
+
+def test_block_reason_blocked_with_ci_fail_is_ci_failed():
+    """blocked + CI 失敗 → 區分為「CI 未過」。"""
+    cat, label = publisher.classify_block_reason({"mergeable_state": "blocked"}, "fail")
+    assert cat == "ci_failed" and "CI" in label
+
+
+def test_block_reason_blocked_with_ci_pass_is_needs_review():
+    """blocked + CI 已過 → 區分為「缺審核」（這是 405 含糊文字最常見的真實原因）。"""
+    cat, label = publisher.classify_block_reason({"mergeable_state": "blocked"}, "pass")
+    assert cat == "needs_review" and "審核" in label
+
+
+def test_block_reason_unstable_no_ci_state_defaults_needs_review():
+    cat, _ = publisher.classify_block_reason({"mergeable_state": "unstable"})
+    assert cat == "needs_review"
+
+
+def test_block_reason_mergeable_and_unknown():
+    assert publisher.classify_block_reason({"mergeable_state": "clean"})[0] == "mergeable"
+    assert publisher.classify_block_reason({"mergeable_state": "wat"})[0] == "unknown"
+    assert publisher.classify_block_reason(None)[0] == "unknown"
+
+
+def test_block_reason_four_categories_are_distinct():
+    """驗收 1：CI未過／缺審核／stale／衝突 四類必須兩兩可區分。"""
+    cats = {
+        publisher.classify_block_reason({"mergeable_state": "blocked"}, "fail")[0],
+        publisher.classify_block_reason({"mergeable_state": "blocked"}, "pass")[0],
+        publisher.classify_block_reason({"mergeable_state": "behind"})[0],
+        publisher.classify_block_reason({"mergeable_state": "dirty"})[0],
+    }
+    assert cats == {"ci_failed", "needs_review", "stale", "conflict"}
+
+
 # --- 純函式：summarize_checks ----------------------------------------
 
 
@@ -223,6 +270,8 @@ async def test_flow_blocked(_patch_flow):
     _patch_flow["merge"] = (MergeOutcome.BLOCKED, "不可合併／受保護（405）", False)
     outcome, detail = await _run_flow(_patch_flow)
     assert outcome == MergeOutcome.BLOCKED
+    # 驗收 1：CI 已過卻 blocked → detail 明確指出「缺審核」，不再只回原始 405 text
+    assert "審核" in detail
 
 
 @pytest.mark.asyncio

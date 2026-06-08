@@ -140,6 +140,48 @@ def classify_merge_state(pr: dict | None) -> MergeOutcome:
     return _MERGE_STATE_OUTCOME.get(state, MergeOutcome.ERROR)
 
 
+# 卡關原因類別（人類可讀標籤）。`mergeable_state == blocked` 在 GitHub 同時涵蓋
+# 「required check 未過」與「缺審核／不符保護規則」，光看狀態無法區分——必須結合
+# CI 摘要狀態（summarize_checks 的 state）才能細分，故本函式同時吃 PR 與 check_state。
+_BLOCK_REASON_LABEL: dict[str, str] = {
+    "ci_failed": "CI 未過",
+    "needs_review": "缺審核或不符分支保護規則",
+    "stale": "分支落後 base（stale，需更新分支）",
+    "conflict": "合併衝突",
+    "mergeable": "可合併（無卡關）",
+    "unknown": "狀態未知（GitHub 計算中或未預期狀態）",
+}
+
+
+def classify_block_reason(pr: dict | None, check_state: str | None = None) -> tuple[str, str]:
+    """把「為何無法合併」精準分類為四類之一，回傳 (category, 人類可讀說明)。
+
+    category ∈ {"ci_failed", "needs_review", "stale", "conflict", "mergeable", "unknown"}：
+    - dirty                 → conflict（真實合併衝突）
+    - behind                → stale（落後 base，需 update-branch）
+    - blocked/unstable/draft：
+        - check_state == "fail" → ci_failed（必要檢查未過）
+        - 否則（CI 已過／無 CI／進行中）→ needs_review（缺審核／不符保護規則）
+    - clean/has_hooks       → mergeable
+    - 其餘（unknown／未知值）→ unknown
+
+    解決原始 405 HTTP text 含糊的問題：blocked 不再一律報「被保護擋下」，而是依
+    CI 狀態區分「CI 未過」與「缺審核」。
+    """
+    state = (pr or {}).get("mergeable_state") or "unknown"
+    if state == "dirty":
+        category = "conflict"
+    elif state == "behind":
+        category = "stale"
+    elif state in ("blocked", "unstable", "draft"):
+        category = "ci_failed" if check_state == "fail" else "needs_review"
+    elif state in ("clean", "has_hooks"):
+        category = "mergeable"
+    else:
+        category = "unknown"
+    return category, _BLOCK_REASON_LABEL[category]
+
+
 # check-run 的 conclusion 視為失敗的集合（保守：不確定狀態不放行合併）。
 _FAIL_CONCLUSIONS = {
     "failure",
@@ -413,7 +455,9 @@ async def _merge_flow(
             # 用結構化狀態精準分類卡關原因（CI 已過卻 BLOCKED → 多半是缺審核／保護規則）。
             refined = classify_merge_state(status)
             if refined in (MergeOutcome.BLOCKED, MergeOutcome.CONFLICT):
-                detail = f"{detail}（mergeable_state={status.get('mergeable_state')}）"
+                # 結合 CI 摘要狀態細分「CI 未過／缺審核／stale／衝突」，取代含糊的 HTTP text。
+                _, reason = classify_block_reason(status, ci_state)
+                detail = f"{reason}（mergeable_state={status.get('mergeable_state')}；{detail}）"
                 outcome = refined
             if retryable and exhausted:
                 detail = f"{detail}（已達重試上限 {retries} 次）"
