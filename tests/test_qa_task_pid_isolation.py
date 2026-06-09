@@ -54,9 +54,7 @@ async def sandbox_cwd(tmp_path, net_enabled):
         str(tmp_path), ["true"], timeout=30, sandbox=True, label="smoke"
     )
     if not smoke.ok:
-        pytest.skip(
-            f"bwrap 無法實跑（userns 被擋？）：exit={smoke.exit_code} out={smoke.output!r}"
-        )
+        pytest.skip(f"bwrap 無法實跑（userns 被擋？）：exit={smoke.exit_code} out={smoke.output!r}")
     return str(tmp_path)
 
 
