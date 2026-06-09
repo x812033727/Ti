@@ -213,6 +213,44 @@ def test_settings_update_writes_0600_env(sandbox):
     )
 
 
+def test_settings_update_tightens_existing_0644_env(sandbox):
+    """真實破口：既存 0644 的 .env 經 settings.update（呼叫端）後須收緊為 0600。
+
+    這是上一輪的失敗點——若 settings.update 仍裸用 set_key，既存 0644 不會收緊。
+    """
+    tmp_path, settings, config = sandbox
+    env = tmp_path / ".env"
+    env.write_text("OPENAI_API_KEY=preexisting\n")
+    os.chmod(str(env), 0o644)
+    assert _mode(str(env)) == 0o644
+
+    settings.update({"GITHUB_TOKEN": "ghp_tighten_via_api"})
+
+    assert _mode(str(env)) == 0o600, (
+        f"既存 0644 經 settings.update 後應收緊為 0600，實為 {oct(_mode(str(env)))}"
+    )
+    body = env.read_text()
+    assert "ghp_tighten_via_api" in body and "preexisting" in body
+
+
+def test_auth_set_password_writes_0600_env(sandbox):
+    """auth.set_password 接線檢查：寫密碼亦走安全寫入，既存 0644 收緊為 0600。"""
+    tmp_path, settings, config = sandbox
+    from studio import auth
+
+    env = tmp_path / ".env"
+    env.write_text("FOO=bar\n")
+    os.chmod(str(env), 0o644)
+
+    auth.set_password("s3cret-pw")
+
+    assert _mode(str(env)) == 0o600, (
+        f"auth.set_password 後 .env 應為 0600，實為 {oct(_mode(str(env)))}"
+    )
+    assert "TI_ACCESS_PASSWORD" in env.read_text()
+    assert os.environ["TI_ACCESS_PASSWORD"] == "s3cret-pw"
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))
