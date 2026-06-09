@@ -15,5 +15,9 @@ venv/
 # Generated agent workspaces
 workspaces/
 
+# Autopilot 執行期狀態目錄（AUTOPILOT_STATE_DIR，預設 PROJECT_ROOT/autopilot）
+# 含 deploy.lock / backlog.json / backlog.lock 等運維狀態，不得進版控。
+autopilot/
+
 # Session history archive
 history/
