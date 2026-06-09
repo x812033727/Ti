@@ -279,3 +279,8 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .ap-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
 .ap-add { display: flex; gap: 8px; margin: 8px 0; }
 .ap-add input { flex: 1; }
+
+.metrics-body { padding: 10px 14px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.metric-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 13px; }
+.metric-k { color: var(--muted); white-space: nowrap; }
+.metric-v { color: var(--text); text-align: right; }

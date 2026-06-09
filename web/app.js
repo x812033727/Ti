@@ -479,6 +479,53 @@ async function addAutopilotTask() {
   await refreshAutopilot();
 }
 
+// --- 運維指標 ----------------------------------------------------------
+const metricsPanel = $("#metricsPanel");
+
+async function openMetrics() {
+  metricsPanel.classList.remove("hidden");
+  await refreshMetrics();
+}
+
+function closeMetrics() { metricsPanel.classList.add("hidden"); }
+
+async function refreshMetrics() {
+  const body = $("#metricsBody");
+  try {
+    const m = await (await fetch("/api/metrics")).json();
+    const s = m.sessions || {};
+    const h = m.history || {};
+    const r = h.retention || {};
+    const byStatus = h.by_status || {};
+    const statusLine = Object.keys(byStatus).length
+      ? Object.entries(byStatus).map(([k, v]) => `${k} ${v}`).join("・")
+      : "（無）";
+    const cap = s.max_concurrent ? `／上限 ${s.max_concurrent}` : "（不限）";
+    const rows = [
+      ["活躍場次", `${s.active ?? "?"}${cap}`],
+      ["歷史場次", `${h.total ?? "?"}`],
+      ["各狀態", statusLine],
+      ["保留策略", `數量 ${r.max_count ? r.max_count : "不限"}・年齡 ${r.max_age_s ? r.max_age_s + "s" : "停用"}`],
+      ["workspace 目錄", `${(m.workspaces || {}).count ?? "?"}`],
+    ];
+    body.innerHTML = "";
+    rows.forEach(([k, v]) => {
+      const row = document.createElement("div");
+      row.className = "metric-row";
+      const ks = document.createElement("span");
+      ks.className = "metric-k";
+      ks.textContent = k;
+      const vs = document.createElement("span");
+      vs.className = "metric-v";
+      vs.textContent = v;
+      row.append(ks, vs);
+      body.appendChild(row);
+    });
+  } catch (e) {
+    body.innerHTML = `<span class="muted">讀取失敗</span>`;
+  }
+}
+
 // --- 發佈到 GitHub -----------------------------------------------------
 let publishConfigured = false;
 let mergeEnabled = false;
@@ -716,6 +763,9 @@ $("#autopilotBtn").onclick = openAutopilot;
 $("#autopilotClose").onclick = closeAutopilot;
 $("#apToggle").onclick = toggleAutopilot;
 $("#apAddBtn").onclick = addAutopilotTask;
+$("#metricsBtn").onclick = openMetrics;
+$("#metricsClose").onclick = closeMetrics;
+$("#metricsRefresh").onclick = refreshMetrics;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
 
