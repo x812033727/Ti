@@ -224,8 +224,11 @@ def summarize_checks(check_runs: list | None, status: dict | None) -> tuple[str,
         )
 
     # 2) 任一未完成（或 legacy status pending）即 pending。
+    # 注意：GitHub combined-status 端點在「零個 legacy status」時聚合 state 仍預設回 "pending"
+    # （total_count==0、contexts==[]）。此 pending 不帶任何資訊，不可壓過已完成的 check-runs，
+    # 否則純用 Actions（無 legacy status）的倉庫會永遠 pending 到逾時。故僅在 total_count>0 才採信。
     pending = [r for r in runs if r.get("status") != "completed"]
-    if pending or status_state == "pending":
+    if pending or (status_state == "pending" and status_total > 0):
         names = [r.get("name", "?") for r in pending][:3]
         suffix = ("：" + ", ".join(names)) if names else ""
         return "pending", f"CI 進行中（{len(pending)} 個 check 未完成{suffix}）"
