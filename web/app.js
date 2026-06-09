@@ -24,8 +24,36 @@ function setRunning(running) {
 
 function scrollStream() { stream.scrollTop = stream.scrollHeight; }
 
+// 並行支線多欄渲染：帶 task_id 的發言/工具進各自的欄位，其餘事件照常進主時間軸。
+let laneBoard = null;
+const laneCols = {};
+
 function clearStream() {
   stream.innerHTML = "";
+  laneBoard = null;
+  for (const k of Object.keys(laneCols)) delete laneCols[k];
+}
+
+// 取得某支線欄位的內容容器（首次出現時建立「支線看板」與該欄）。
+function laneBody(taskId) {
+  if (!laneBoard) {
+    laneBoard = document.createElement("div");
+    laneBoard.className = "lanes-board";
+    stream.appendChild(laneBoard);
+  }
+  if (!laneCols[taskId]) {
+    const col = document.createElement("div");
+    col.className = "lane-col lane-" + (taskId % 6);
+    col.innerHTML = `<div class="lane-col-head">支線 #${taskId}</div><div class="lane-col-body"></div>`;
+    laneBoard.appendChild(col);
+    laneCols[taskId] = col.querySelector(".lane-col-body");
+  }
+  return laneCols[taskId];
+}
+
+// 事件落點：帶 task_id → 對應支線欄；否則 → 主時間軸。
+function sink(p) {
+  return p && p.task_id != null ? laneBody(p.task_id) : stream;
 }
 
 function clearBoard() {
@@ -65,28 +93,23 @@ function setExpertStatus(key, status) {
   if (status !== "idle") el.classList.add("active");
 }
 
-// 並行支線標籤：事件帶 task_id（並行模式）時回傳一枚色彩標記，讓多支線發言可辨識來源。
-function laneTag(p) {
-  return p.task_id != null ? `<span class="lanetag lane-${p.task_id % 6}">支線 #${p.task_id}</span>` : "";
-}
-
 function addMessage(p) {
   const el = document.createElement("div");
   el.className = "msg" + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
   el.innerHTML = `
     <div class="av">${p.avatar}</div>
-    <div class="body">${laneTag(p)}<div class="who">${p.name}</div><div class="txt"></div></div>`;
+    <div class="body"><div class="who">${p.name}</div><div class="txt"></div></div>`;
   el.querySelector(".txt").textContent = p.text;
-  stream.appendChild(el);
+  sink(p).appendChild(el);
   scrollStream();
 }
 
 function addTool(p) {
   const el = document.createElement("div");
   el.className = "tool" + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
-  el.innerHTML = `${laneTag(p)}<span class="badge">${p.tool}</span><span></span>`;
+  el.innerHTML = `<span class="badge">${p.tool}</span><span></span>`;
   el.querySelector("span:last-child").textContent = p.summary;
-  stream.appendChild(el);
+  sink(p).appendChild(el);
   scrollStream();
 }
 
