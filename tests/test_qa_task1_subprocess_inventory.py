@@ -25,9 +25,9 @@ INVENTORY = STUDIO / "docs" / "subprocess_migration_inventory.md"
 # 註：a 類為「遷移目標」，會在 PR2/PR3 陸續改為 run_command_exec（行號隨之漂移，
 # 已更新為遷移後位置）；c 類永久保留 shell。
 EXPECTED = {
-    "runner.py git init/config": ("a", {269, 272, 276, 280}),
-    "runner.py git_clone": ("a", {320}),
-    "autopilot.py pytest gate": ("a", {90}),
+    "runner.py git init/config": ("a", {296, 299, 303, 307}),
+    "runner.py git_clone": ("a", {347}),
+    "autopilot.py pytest gate": ("a", {93}),
     "orchestrator.py demo/self-test": ("c", {721, 740}),
     "tools.py run_bash": ("c", {133}),
 }

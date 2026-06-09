@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import fcntl
 
-from . import config
+from . import config, runner
 
 
 def _lock_path():
@@ -48,12 +48,12 @@ async def _run(cmd: list[str], cwd: str | None = None, timeout: int = 600) -> tu
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        start_new_session=True,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        with __import__("contextlib").suppress(ProcessLookupError):
-            proc.kill()
+        runner.kill_process_group(proc)
         return -1, f"(逾時 {timeout}s)"
     return proc.returncode if proc.returncode is not None else -1, out.decode("utf-8", "replace")
 

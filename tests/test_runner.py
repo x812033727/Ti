@@ -88,6 +88,26 @@ async def test_run_command_timeout(tmp_path):
     assert not r.ok
 
 
+@pytest.mark.asyncio
+async def test_run_command_timeout_kills_grandchild(tmp_path):
+    """逾時收尾須殺掉整個 process group，孫程序不可變孤兒存活。
+
+    指令讓 /bin/sh 背景起一個「3 秒後建檔」的 python 孫程序並 wait；timeout=1 觸發收尾。
+    只殺直屬 sh（舊行為）→ 孫程序變孤兒、3 秒後仍建出 LEAKED；killpg 整組（修後）→
+    孫程序一併被殺，LEAKED 永不出現。明確走非沙箱路徑（sandbox=False）。
+    """
+    import asyncio as _asyncio
+
+    (tmp_path / "leak.py").write_text(
+        "import time, pathlib\ntime.sleep(3)\npathlib.Path('LEAKED').write_text('x')\n",
+        encoding="utf-8",
+    )
+    r = await runner.run_command(tmp_path, "python3 leak.py & wait", timeout=1, sandbox=False)
+    assert r.timed_out
+    await _asyncio.sleep(3.5)  # 給「若存活」的孫程序足夠時間建檔
+    assert not (tmp_path / "LEAKED").exists(), "孫程序逾時後未被殺，變成孤兒繼續執行"
+
+
 # --- run_command_exec（任務 #1：參數式 exec helper）-------------------
 
 
