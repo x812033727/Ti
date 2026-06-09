@@ -445,6 +445,59 @@ async def git_worktree_add(
     return r.ok
 
 
+async def git_ensure_initial_commit(repo: Path | str) -> str | None:
+    """確保 repo 至少有一個 commit（並行 worktree 需要可分支的 base）。回傳 HEAD 短 hash。
+
+    已有 commit 直接回傳其短 hash；HEAD 未誕生（剛 init、PM 規劃無實質檔案）時建一個空的
+    初始 commit。帶 git identity + gpgsign=false（與 git_commit 一致）。git 不可用回 None。
+    """
+    if not config.ENABLE_GIT or not _git_available():
+        return None
+    root = Path(repo)
+    if not (root / ".git").exists() and not await git_init(root):
+        return None
+    h = await git_head_short(root)
+    if h:
+        return h
+    r = await run_command_exec(
+        root,
+        [
+            "git",
+            "-c",
+            f"user.name={_GIT_USER_NAME}",
+            "-c",
+            f"user.email={_GIT_USER_EMAIL}",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "init",
+        ],
+        timeout=30,
+        sandbox=False,
+        label="git commit",
+    )
+    if not r.ok:
+        return None
+    return await git_head_short(root)
+
+
+async def git_head_short(repo: Path | str) -> str | None:
+    """回傳 repo 當前 HEAD 的短 hash（失敗回 None）。合併後更新 last_commit 用。"""
+    if not _git_available():
+        return None
+    r = await run_command_exec(
+        Path(repo),
+        ["git", "rev-parse", "--short", "HEAD"],
+        timeout=20,
+        sandbox=False,
+        label="git rev-parse",
+    )
+    return r.output.strip() if r.ok else None
+
+
 async def git_current_branch(repo: Path | str) -> str | None:
     """回傳 repo 目前所在分支名（detached / 失敗回 None）。merge 目標即主分支。"""
     if not _git_available():

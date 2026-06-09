@@ -74,6 +74,16 @@ LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if 
 # PM 拆解出的任務數上限（autopilot 單一 backlog 任務不該再炸成超多子任務 → 控時間）。
 MAX_TASKS = int(os.getenv("TI_MAX_TASKS", "5"))
 
+# --- 任務並行（多支線 lane）---------------------------------------------
+# 開啟後：PM 標注依賴 → 獨立任務分「波次」，每波最多 PARALLEL_LANES 條支線並行，每條各有
+# 獨立 git worktree 分支與專家團隊，完工依序合併回主分支。預設關閉以保既有循序行為與測試。
+PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "0") not in ("0", "false", "False", "")
+# 單一波次內同時並行的支線數上限（含 1 = 退化為循序）。
+PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
+# 全域同時進行中的 LLM 發言數上限（節流：N 條 lane × 各自驗證/審查/資安 gather 可能爆量）。
+# 下限會在使用時夾到 ≥ 單一 lane 內最大 gather 數（4），避免單 lane 內 gather 自我死鎖。
+LLM_MAX_CONCURRENCY = int(os.getenv("TI_LLM_MAX_CONCURRENCY", "9"))
+
 # --- 確定性執行（runner）-----------------------------------------------
 # 自測 / Demo 的執行逾時（秒）與輸出字數上限。
 DEMO_TIMEOUT = int(os.getenv("TI_DEMO_TIMEOUT", "60"))
@@ -329,7 +339,11 @@ def reload() -> None:
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
+    global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+    PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "0") not in ("0", "false", "False", "")
+    PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
+    LLM_MAX_CONCURRENCY = int(os.getenv("TI_LLM_MAX_CONCURRENCY", "9"))
     LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if r.strip()}
     OPTIONAL_ROLES = {
         r.strip()

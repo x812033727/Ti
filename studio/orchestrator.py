@@ -48,6 +48,15 @@ class LaneContext:
     notes_buffer: list[str] = field(default_factory=list)
 
 
+@dataclass
+class LaneResult:
+    """一條 lane 跑完一波內配給任務後的結果，供波次收尾（合併/flush/清理）使用。"""
+
+    ctx: LaneContext
+    tasks: list[dict]
+    ok: bool
+
+
 # --- 決議解析 -----------------------------------------------------------
 
 
@@ -226,6 +235,11 @@ class StudioSession:
         self._intervention = intervention_queue
         self._repo_url = repo_url  # 已 clone 進 workspace 的既有 GitHub repo（可選）
         self._tasks: list[dict] = []  # {id, title, status}
+        self._edges: list[tuple[int, int]] = []  # 任務依賴邊 (after, before)，並行分波用
+        # 全域 LLM 並發節流（lazy 建立，綁當前 event loop）；多 lane × 多 reviewer 時生效。
+        self._llm_sem: asyncio.Semaphore | None = None
+        # 並行 lane 的專家工廠（測試可注入 stub）；None 時用 providers.make_expert。
+        self._lane_expert_factory = None
         self._run_command: str | None = None  # PM/工程師宣告的執行指令
         self._requirement = ""
         self._stop = False
@@ -298,13 +312,14 @@ class StudioSession:
         critic = self._get_critic(ctx, role_key)
         if critic is None:
             return True, ""
-        text = await critic.speak(
-            "你是獨立的異議檢查者，專挑『為何這還不算完成』，以防團隊形成錯誤共識。\n"
-            f"檢查標的：{subject}\n\n驗收標準：\n{acceptance}\n\n"
-            "請只根據標的與驗收標準判斷，提出具體、實質的反對；找不到實質問題就放行。\n"
-            "最後一行明確輸出：`異議: 成立`（需退回）或 `異議: 不成立`（放行）。",
-            self.broadcast,
-        )
+        async with self._llm_semaphore():
+            text = await critic.speak(
+                "你是獨立的異議檢查者，專挑『為何這還不算完成』，以防團隊形成錯誤共識。\n"
+                f"檢查標的：{subject}\n\n驗收標準：\n{acceptance}\n\n"
+                "請只根據標的與驗收標準判斷，提出具體、實質的反對；找不到實質問題就放行。\n"
+                "最後一行明確輸出：`異議: 成立`（需退回）或 `異議: 不成立`（放行）。",
+                self.broadcast,
+            )
         blocks = critic_blocks(text)
         await self.broadcast(events.critic_review(self.session_id, role_key, not blocks, text))
         return (not blocks), text
@@ -525,10 +540,15 @@ class StudioSession:
             self.broadcast,
         )
         self._run_command = runner.parse_run_command(pm_plan)
-        self._tasks = [
-            {"id": i, "title": t, "status": "todo"}
-            for i, t in enumerate(parse_tasks(pm_plan), start=1)
-        ]
+        if config.PARALLEL_TASKS_ENABLED:
+            # 並行：解析任務 + 依賴邊，供拓撲分波。
+            self._tasks, self._edges = parse_tasks_with_deps(pm_plan)
+        else:
+            self._tasks = [
+                {"id": i, "title": t, "status": "todo"}
+                for i, t in enumerate(parse_tasks(pm_plan), start=1)
+            ]
+            self._edges = []
         await self._board()
         await self._commit(self._main_ctx, "PM 規劃：建立任務清單與驗收標準")
 
@@ -549,36 +569,8 @@ class StudioSession:
         if design_note:
             context += f"\n【架構決策】\n{design_note}\n"
 
-        # 3) 逐任務迭代
-        all_ok = True
-        for task in self._tasks:
-            if self._stop:
-                break
-            await self.broadcast(
-                events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
-            )
-            await self._set_task_status(task, "doing")
-            task_ok = await self._work_task(self._main_ctx, task, pm_plan + context)
-            # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
-            if not task_ok and config.HUDDLE_ENABLED and not self._stop:
-                task_ok = await self._huddle_and_retry(self._main_ctx, task, pm_plan + context)
-            all_ok = all_ok and task_ok
-            await self._set_task_status(task, "done" if task_ok else "review")
-            # 每任務結束摘要寫回知識庫，供後續任務讀回。
-            if task_ok:
-                self._note(self._main_ctx, f"## 任務 #{task['id']} 完成：{task['title']}")
-            elif task.get("limitation"):
-                self._note(
-                    self._main_ctx,
-                    f"## 任務 #{task['id']} 已知限制：{task['title']}（huddle 與重試後仍未通過）",
-                )
-            else:
-                self._note(
-                    self._main_ctx,
-                    f"## 任務 #{task['id']} 未通過：{task['title']}（標記 review，待後續處理）",
-                )
-            # 循序模式每任務結束即 flush，保住「下一任務讀得回本任務知識」的既有語意。
-            self._flush_lane_notes(self._main_ctx)
+        # 3) 逐任務迭代：依設定走「波次並行」或循序，兩者共用同一條波次主迴圈。
+        all_ok = await self._run_waves(pm_plan + context)
 
         # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
         if devops:
@@ -602,6 +594,224 @@ class StudioSession:
 
         return {"completed": done, "followups": self._followups, "commit": self._last_commit}
 
+    # --- 波次排程（並行支線）------------------------------------------
+    def _llm_semaphore(self) -> asyncio.Semaphore:
+        """全域 LLM 並發節流號誌。下限夾到 4，避免單一 lane 內 review 三人 gather 自我死鎖。"""
+        if self._llm_sem is None:
+            self._llm_sem = asyncio.Semaphore(max(config.LLM_MAX_CONCURRENCY, 4))
+        return self._llm_sem
+
+    def _tagged_broadcast(self, task_id: int | None) -> Broadcast:
+        """包裝 broadcast：並行 lane 的事件補上 task_id 供前端分流；task_id=None 時原樣直送。"""
+        if task_id is None:
+            return self.broadcast
+
+        async def _bc(ev: events.StudioEvent) -> None:
+            ev.payload.setdefault("task_id", task_id)
+            await self.broadcast(ev)
+
+        return _bc
+
+    async def _speak(
+        self, ctx: LaneContext, role_key: str, prompt: str, task_id: int | None
+    ) -> str:
+        """經號誌節流 + 標籤化 broadcast 呼叫某 lane 的專家發言。"""
+        async with self._llm_semaphore():
+            return await ctx.experts[role_key].speak(prompt, self._tagged_broadcast(task_id))
+
+    def _lane_tag(self, ctx: LaneContext, task: dict) -> int | None:
+        """並行 lane（branch 不為 None）回 task id 供事件標籤；主 lane 回 None（行為不變）。"""
+        return task["id"] if ctx.branch is not None else None
+
+    async def _run_waves(self, plan_ctx: str) -> bool:
+        """把任務分波執行：波次之間循序（尊重依賴），波次之內最多 PARALLEL_LANES 條支線並行。
+
+        關閉並行或無 cwd 時退化成「每任務一波、單一主 lane」，與重構前逐任務循序逐字等價。
+        """
+        parallel = config.PARALLEL_TASKS_ENABLED and bool(self.cwd)
+        # 並行 lane 各自 worktree 需要可分支的 base commit；PM 規劃常無實質檔案（commit 為空），
+        # 故先確保主分支有初始 commit。失敗（git 壞）時 worktree 會開不起來 → 走序列化 fallback。
+        if parallel and self._last_commit is None:
+            self._last_commit = await runner.git_ensure_initial_commit(self.cwd)
+        waves = (
+            build_waves(self._tasks, self._edges)
+            if config.PARALLEL_TASKS_ENABLED
+            else [[t] for t in self._tasks]
+        )
+        all_ok = True
+        for wave in waves:
+            if self._stop:
+                break
+            lanes = self._plan_lanes(wave)
+            # 序列化開 worktree（git worktree add 不宜並發）；無法隔離者留待序列化重跑。
+            opened: list[tuple[LaneContext, list[dict]]] = []
+            deferred: list[dict] = []
+            for lane_tasks in lanes:
+                ctx = await self._open_lane(lane_tasks) if parallel else self._main_ctx
+                if ctx is None:
+                    deferred.extend(lane_tasks)
+                else:
+                    opened.append((ctx, lane_tasks))
+            results = await asyncio.gather(
+                *(self._run_lane(ctx, tasks, plan_ctx) for ctx, tasks in opened),
+                return_exceptions=True,
+            )
+            all_ok = await self._integrate_wave(results, deferred, plan_ctx) and all_ok
+        return all_ok
+
+    def _plan_lanes(self, wave: list[dict]) -> list[list[dict]]:
+        """把一波任務切成至多 PARALLEL_LANES 條支線（round-robin）。關閉並行/無 cwd 時整波一條。"""
+        if not (config.PARALLEL_TASKS_ENABLED and self.cwd):
+            return [wave]
+        n = max(1, min(config.PARALLEL_LANES, len(wave)))
+        lanes: list[list[dict]] = [[] for _ in range(n)]
+        for i, task in enumerate(wave):
+            lanes[i % n].append(task)
+        return [ln for ln in lanes if ln]
+
+    def _lane_worktree_path(self, branch: str) -> Path:
+        assert self.cwd is not None
+        safe = "".join(c for c in branch if c.isalnum() or c in "-_") or "lane"
+        return self.cwd.parent / f"{self.cwd.name}.lanes" / safe
+
+    async def _open_lane(self, lane_tasks: list[dict]) -> LaneContext | None:
+        """為一條支線開 git worktree 分支 + 獨立專家團隊。失敗回 None（交由序列化重跑）。"""
+        branch = "task-" + "-".join(str(t["id"]) for t in lane_tasks)
+        wt = self._lane_worktree_path(branch)
+        base = self._last_commit or "HEAD"
+        if not await runner.git_worktree_add(self.cwd, wt, branch, base=base):
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id, "並行降級", f"{branch} 無法建立 worktree，改序列化重跑"
+                )
+            )
+            return None
+        ctx = LaneContext(branch, wt, {}, branch=branch)
+        ctx.experts = self._build_lane_experts(branch, wt)
+        self._lane_ctxs.append(ctx)
+        return ctx
+
+    def _build_lane_experts(self, suffix: str, cwd: Path) -> dict[str, ExpertLike]:
+        """為一條 lane 建一套獨立專家（鏡射主 experts 的角色集合），避免共用對話累積互相污染。"""
+        experts = self._get_experts()
+        if self._lane_expert_factory is not None:
+            factory = self._lane_expert_factory
+        else:
+            from .providers import make_expert
+
+            factory = make_expert
+        return {
+            key: factory(experts[key].role, f"{self.session_id}:{suffix}", cwd) for key in experts
+        }
+
+    async def _teardown_lane(self, ctx: LaneContext) -> None:
+        """收掉一條並行 lane 的專家連線與 worktree（best-effort）。"""
+        for ex in list(ctx.experts.values()) + list((ctx.critics or {}).values()):
+            try:
+                await ex.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        if self.cwd and ctx.cwd and ctx.branch:
+            await runner.git_worktree_remove(self.cwd, ctx.cwd, ctx.branch)
+
+    async def _run_lane(
+        self, ctx: LaneContext, lane_tasks: list[dict], plan_ctx: str
+    ) -> LaneResult:
+        """在指定 lane 依序跑完配給的任務（lane 之間由 _run_waves 以 gather 並行）。"""
+        lane_ok = True
+        for task in lane_tasks:
+            if self._stop:
+                lane_ok = False
+                break
+            lane_ok = await self._run_task_in_lane(ctx, task, plan_ctx) and lane_ok
+        return LaneResult(ctx=ctx, tasks=lane_tasks, ok=lane_ok)
+
+    async def _run_task_in_lane(self, ctx: LaneContext, task: dict, plan_ctx: str) -> bool:
+        """在指定 lane 跑單一任務（實作→驗證→審查→huddle），更新看板與 lane 知識緩衝。"""
+        await self.broadcast(
+            events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
+        )
+        await self._set_task_status(task, "doing")
+        task_ok = await self._work_task(ctx, task, plan_ctx)
+        # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
+        if not task_ok and config.HUDDLE_ENABLED and not self._stop:
+            task_ok = await self._huddle_and_retry(ctx, task, plan_ctx)
+        await self._set_task_status(task, "done" if task_ok else "review")
+        # 每任務結束摘要寫進 lane 知識緩衝（波末序列化 flush，供後續波次讀回）。
+        if task_ok:
+            self._note(ctx, f"## 任務 #{task['id']} 完成：{task['title']}")
+        elif task.get("limitation"):
+            self._note(
+                ctx, f"## 任務 #{task['id']} 已知限制：{task['title']}（huddle 與重試後仍未通過）"
+            )
+        else:
+            self._note(
+                ctx, f"## 任務 #{task['id']} 未通過：{task['title']}（標記 review，待後續處理）"
+            )
+        return task_ok
+
+    async def _integrate_wave(self, results: list, deferred: list[dict], plan_ctx: str) -> bool:
+        """波次收尾（全序列化、無競態）：合併各 lane 回主分支 → flush 知識 → 清 worktree。"""
+        all_ok = True
+        lane_results: list[LaneResult] = []
+        for r in results:
+            if isinstance(r, BaseException):
+                all_ok = False
+                await self.broadcast(
+                    events.error(self.session_id, f"lane 例外：{type(r).__name__}: {r}")
+                )
+            else:
+                lane_results.append(r)
+        # 依 lane_id 穩定排序，逐一合併（主 repo 單一 working tree → 合併必須序列化）。
+        for lr in sorted(lane_results, key=lambda x: x.ctx.lane_id):
+            if lr.ctx is self._main_ctx:
+                all_ok = all_ok and lr.ok
+            else:
+                all_ok = await self._merge_lane(lr, plan_ctx) and all_ok
+                self._flush_lane_notes(lr.ctx)
+                await self._teardown_lane(lr.ctx)
+        # 無法隔離（worktree 開失敗）的任務：序列化重跑在主 lane。
+        for task in deferred:
+            if self._stop:
+                break
+            all_ok = await self._run_task_in_lane(self._main_ctx, task, plan_ctx) and all_ok
+        # 主 lane 緩衝（含序列化重跑/降級/循序模式）一併 flush。
+        self._flush_lane_notes(self._main_ctx)
+        return all_ok
+
+    async def _merge_lane(self, lr: LaneResult, plan_ctx: str) -> bool:
+        """把一條並行 lane 的分支合併回主分支；衝突則 abort 後在最新主 HEAD 序列化重跑。"""
+        res = await runner.git_merge_worktree(self.cwd, lr.ctx.branch)
+        if res.ok:
+            h = await runner.git_head_short(self.cwd)
+            if h:
+                self._last_commit = h  # 下一波 worktree 以此為 base，必含本波已合併變更。
+                await self.broadcast(
+                    events.git_commit(self.session_id, f"合併支線 {lr.ctx.branch}", h)
+                )
+            return lr.ok
+        if res.conflict:
+            await runner.git_merge_abort(self.cwd)
+            lr.ctx.notes_buffer.clear()  # 丟棄 lane 嘗試的筆記，改以序列化重跑為準。
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id,
+                    "合併衝突",
+                    f"支線 {lr.ctx.branch} 與既有變更衝突，於最新主幹序列化重跑",
+                )
+            )
+            ok = True
+            for task in lr.tasks:
+                if self._stop:
+                    ok = False
+                    break
+                ok = await self._run_task_in_lane(self._main_ctx, task, plan_ctx) and ok
+            return ok
+        await self.broadcast(
+            events.error(self.session_id, f"支線 {lr.ctx.branch} 合併失敗：{res.output[:200]}")
+        )
+        return False
+
     async def _work_task(
         self,
         ctx: LaneContext,
@@ -618,8 +828,8 @@ class StudioSession:
         max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
         seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
         """
-        engineer, qa, senior = ctx.experts["engineer"], ctx.experts["qa"], ctx.experts["senior"]
-        security = ctx.experts.get("security")
+        has_security = "security" in ctx.experts
+        tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。
         feedback = seed_feedback
         rounds = max_rounds if max_rounds is not None else config.TASK_MAX_ROUNDS
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
@@ -643,7 +853,7 @@ class StudioSession:
                     f"請根據以下意見逐項修正（第 {rnd} 輪）：\n\n{feedback}\n\n"
                     "修正後請自己再跑一次確認。"
                 )
-            impl_text = await engineer.speak(impl_prompt, self.broadcast)
+            impl_text = await self._speak(ctx, "engineer", impl_prompt, tag)
 
             # --- 交付前自測（確定性 smoke-run）---
             await self._self_test(ctx, impl_text)
@@ -678,31 +888,37 @@ class StudioSession:
             )
             await self._set_task_status(task, "review")
             review_calls = [
-                qa.speak(
+                self._speak(
+                    ctx,
+                    "qa",
                     f"請針對任務 #{task['id']}：{task['title']} 的程式碼撰寫並執行測試，"
                     f"驗證是否符合驗收標準：\n\n{pm_plan}",
-                    self.broadcast,
+                    tag,
                 ),
-                senior.speak(
+                self._speak(
+                    ctx,
+                    "senior",
                     f"請審查任務 #{task['id']}：{task['title']} 的程式碼（品質、設計、安全），"
                     "並給出決議（`決議: 核可` 或 `決議: 退回`）。",
-                    self.broadcast,
+                    tag,
                 ),
             ]
-            if security:
+            if has_security:
                 review_calls.append(
-                    security.speak(
+                    self._speak(
+                        ctx,
+                        "security",
                         f"請對任務 #{task['id']}：{task['title']} 的程式碼做資安審查，"
                         "輸出 `決議: 安全核可` 或 `決議: 安全退回`（退回時列具體風險）。",
-                        self.broadcast,
+                        tag,
                     )
                 )
             results = await asyncio.gather(*review_calls)
             qa_text, senior_text = results[0], results[1]
-            sec_text = results[2] if security else ""
+            sec_text = results[2] if has_security else ""
             qa_ok = qa_passed(qa_text)
             senior_ok = senior_approved(senior_text)
-            security_ok = security_approved(sec_text) if security else True
+            security_ok = security_approved(sec_text) if has_security else True
             await self.broadcast(
                 events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
             )
@@ -789,14 +1005,17 @@ class StudioSession:
             f"任務 #{task['id']}：{task['title']} 連續 {config.TASK_MAX_ROUNDS} 輪未通過，卡關了。\n"
             f"整體計畫供參考：\n{context}\n\n"
         )
+        tag = self._lane_tag(ctx, task)
         notes: list[str] = []
-        for _key, ex in present:
+        for key, ex in present:
             prior = ("\n團隊目前的討論：\n" + "\n".join(notes)) if notes else ""
-            view = await ex.speak(
+            view = await self._speak(
+                ctx,
+                key,
                 blocker
                 + "請針對這個 blocker 提出可突破的替代做法或拆解方式，簡短具體、可立即執行。"
                 + prior,
-                self.broadcast,
+                tag,
             )
             notes.append(f"【{ex.role.name}】{view}")
         conclusion = "\n".join(notes)
