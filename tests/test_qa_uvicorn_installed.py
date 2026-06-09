@@ -9,14 +9,15 @@
 
 import re
 from importlib.metadata import PackageNotFoundError, version
-from pathlib import Path
+
+from _repo import REPO_ROOT
 
 try:
     import tomllib  # py3.11+
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 PYPROJECT = ROOT / "pyproject.toml"
 
 

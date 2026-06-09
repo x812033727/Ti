@@ -11,8 +11,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = REPO_ROOT
 _APP_JS = _ROOT / "web" / "app.js"
 _SMOKE = Path(__file__).resolve().parent / "frontend_handleevent_smoke.mjs"
 

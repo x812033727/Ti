@@ -12,14 +12,14 @@
          全 PASSED 且數量相符→0；skipped/failed/errors/數量不符→1。
 """
 
-import pathlib
 import subprocess
 
 import pytest
+from _repo import REPO_ROOT
 
 yaml = pytest.importorskip("yaml")
 
-CI = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 @pytest.fixture(scope="module")

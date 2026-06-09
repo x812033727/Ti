@@ -10,8 +10,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 README = ROOT / "README.md"
 CONTRIB = ROOT / "CONTRIBUTING.md"
 INVENTORY = ROOT / "studio" / "docs" / "subprocess_migration_inventory.md"

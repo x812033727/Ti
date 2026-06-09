@@ -11,9 +11,9 @@
 import os
 import re
 import subprocess
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 try:
     import tomllib  # Python 3.11+
@@ -23,7 +23,7 @@ except ModuleNotFoundError:  # Python 3.10 無 tomllib
 # 用到 tomllib 解析 pyproject 的測試，在 3.10 上略過（3.11/3.12 仍涵蓋）。
 requires_tomllib = pytest.mark.skipif(tomllib is None, reason="tomllib 需 Python 3.11+")
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = REPO_ROOT
 PYPROJECT = REPO / "pyproject.toml"
 
 

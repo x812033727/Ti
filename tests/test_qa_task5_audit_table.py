@@ -10,14 +10,14 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 from fastapi.routing import APIRoute
 from starlette.routing import WebSocketRoute
 
-AUDIT = Path(__file__).resolve().parent.parent / "docs" / "loopback-endpoint-audit.md"
-WS_SRC = Path(__file__).resolve().parent.parent / "studio" / "ws.py"
+AUDIT = REPO_ROOT / "docs" / "loopback-endpoint-audit.md"
+WS_SRC = REPO_ROOT / "studio" / "ws.py"
 HTTP_METHODS = {"GET", "POST", "DELETE", "PUT", "PATCH"}
 
 

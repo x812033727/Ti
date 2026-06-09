@@ -13,10 +13,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 yaml = pytest.importorskip("yaml")
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = REPO_ROOT
 SCRIPT = REPO / "scripts" / "scan_shell_usage.sh"
 CI_YML = REPO / ".github" / "workflows" / "ci.yml"
 PRECOMMIT = REPO / ".pre-commit-config.yaml"

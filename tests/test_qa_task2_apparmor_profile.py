@@ -9,14 +9,14 @@ apparmor_parser 屬 root/kernel 工具，本機 sandbox 無法載入；故此處
       profile bwrap /usr/bin/bwrap/userns 規則、各規則結尾逗號）
 """
 
-import pathlib
 import re
 
 import pytest
+from _repo import REPO_ROOT
 
 yaml = pytest.importorskip("yaml")
 
-CI = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 @pytest.fixture(scope="module")

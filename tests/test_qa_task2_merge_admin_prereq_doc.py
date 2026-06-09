@@ -9,11 +9,11 @@
 """
 
 import re
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
-README = Path(__file__).resolve().parent.parent / "README.md"
+README = REPO_ROOT / "README.md"
 
 
 @pytest.fixture(scope="module")

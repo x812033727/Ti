@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
+from _repo import REPO_ROOT
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 ARCH = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 

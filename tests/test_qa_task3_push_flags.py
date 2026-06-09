@@ -12,15 +12,15 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import autopilot, config
 
 _TASK = {"id": "7", "title": "示範任務", "detail": ""}
 _BRANCH = "autopilot/task-7"
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = REPO_ROOT
 
 
 class RunSpy:

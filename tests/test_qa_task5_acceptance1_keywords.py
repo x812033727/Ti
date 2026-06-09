@@ -6,11 +6,10 @@
 next() 取行不變量（README 首個含變數名的行必須是表格行，同行含 0/安全側）。
 """
 
-from pathlib import Path
-
 import pytest
+from _repo import REPO_ROOT
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 CONFIG = (ROOT / "studio" / "config.py").read_text(encoding="utf-8")
 AUTOPILOT = (ROOT / "studio" / "autopilot.py").read_text(encoding="utf-8")

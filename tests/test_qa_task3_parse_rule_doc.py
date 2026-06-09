@@ -8,11 +8,11 @@
 """
 
 import re
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 README = ROOT / "README.md"
 CONFIG = ROOT / "studio" / "config.py"
 

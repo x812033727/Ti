@@ -10,15 +10,15 @@
          模擬 bwrap 不可用的失敗路徑(exit 1 + 含 ::error:: 訊息)。
 """
 
-import pathlib
 import shutil
 import subprocess
 
 import pytest
+from _repo import REPO_ROOT
 
 yaml = pytest.importorskip("yaml")
 
-CI = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 @pytest.fixture(scope="module")

@@ -12,15 +12,15 @@ studio/runner.py:96-97 是：
 """
 
 import importlib
-import pathlib
 
 import pytest
+from _repo import REPO_ROOT
 
 yaml = pytest.importorskip("yaml")
 
 from studio import runner  # noqa: E402
 
-CI = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 @pytest.fixture(scope="module")
