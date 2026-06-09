@@ -42,6 +42,11 @@ def _release_session_slot() -> None:
         _active_sessions -= 1
 
 
+def active_session_count() -> int:
+    """目前進行中的討論場次數（供運維可視化 /api/metrics）。"""
+    return _active_sessions
+
+
 @router.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()

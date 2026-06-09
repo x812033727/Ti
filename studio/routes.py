@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import auth, backlog, config, history, publisher, redeploy, settings, workspace
+from . import auth, backlog, config, history, publisher, redeploy, settings, workspace, ws
 
 router = APIRouter()
 
@@ -29,6 +29,34 @@ async def health() -> JSONResponse:
             "offline": config.OFFLINE_MODE,
             "provider": config.PROVIDER,
             "provider_ready": config.provider_ready(),
+        }
+    )
+
+
+# --- 運維可視化（受保護）----------------------------------------------
+@router.get("/api/metrics", dependencies=[Depends(auth.require_auth)])
+async def metrics() -> JSONResponse:
+    """運維指標：活躍場次 / 並發上限、history 各狀態數與保留策略、workspace 目錄數。"""
+    sessions = history.list_sessions()
+    by_status: dict[str, int] = {}
+    for m in sessions:
+        s = m.get("status", "unknown")
+        by_status[s] = by_status.get(s, 0) + 1
+    return JSONResponse(
+        {
+            "sessions": {
+                "active": ws.active_session_count(),
+                "max_concurrent": config.MAX_CONCURRENT_SESSIONS,
+            },
+            "history": {
+                "total": len(sessions),
+                "by_status": by_status,
+                "retention": {
+                    "max_count": config.HISTORY_MAX_COUNT,
+                    "max_age_s": config.HISTORY_MAX_AGE,
+                },
+            },
+            "workspaces": {"count": workspace.count_workspaces()},
         }
     )
 

@@ -31,6 +31,7 @@
 | GET  | `/api/workspace/{session_id}/file` | auth | ➖ | 讀取單一檔案內容 |
 | GET  | `/api/workspace/{session_id}/download` | auth | ➖ | 下載工作區壓縮檔 |
 | GET  | `/api/publish/config` | auth | ➖ | 讀取發佈設定 |
+| GET  | `/api/metrics` | auth | ➖ | 讀取運維指標（活躍場次/並發上限/history 計數/保留策略/workspace 數），無秘密 |
 | POST | `/api/login` | — | ➖ | 認證握手，必須對外可達才能登入 |
 | POST | `/api/logout` | — | ➖ | 認證握手 |
 | GET  | `/api/auth/status` | — | ➖ | 公開狀態查詢（前端判斷是否需登入） |
