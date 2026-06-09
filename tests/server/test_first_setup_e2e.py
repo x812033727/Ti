@@ -229,11 +229,26 @@ def test_enabled_wrong_current_password_returns_403(app, pw_env, monkeypatch):
     assert r.json()["detail"] == "目前密碼錯誤"
 
 
-def test_new_password_too_short_returns_400(app, pw_env, monkeypatch):
-    """新密碼 <4 字元：400（門禁停用時跳過 current 檢查，直接驗長度）。"""
+def test_disabled_short_new_password_returns_400(app, pw_env, monkeypatch):
+    """門禁停用態首次設定，新密碼 <4 字元：400（跳過 current 檢查，直接驗長度）。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     client = _loopback_client(app)
     r = client.post("/api/auth/password", json={"new_password": "x"})
+    assert r.status_code == 400
+
+
+def test_enabled_short_new_password_returns_400(app, pw_env, monkeypatch):
+    """門禁已啟用、current 正確但新密碼 <4 字元：400。
+
+    驗證短路順序末段——current 正確才走到長度檢查（非被 403 提早攔下）。
+    """
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
+    client = _loopback_client(app)
+    client.post("/api/login", json={"password": "secret"})  # 先登入越過 require_auth
+    r = client.post(
+        "/api/auth/password",
+        json={"current_password": "secret", "new_password": "x"},
+    )
     assert r.status_code == 400
 
 
