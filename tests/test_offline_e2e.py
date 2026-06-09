@@ -23,7 +23,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
     from studio.server import app
 
-    return TestClient(app)
+    # /ws 已限定本機（handler 內 is_loopback 檢查）：以 loopback peer 連入握手。
+    return TestClient(app, client=("127.0.0.1", 12345))
 
 
 def _run_session(client, requirement: str) -> list[dict]:

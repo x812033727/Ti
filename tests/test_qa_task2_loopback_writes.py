@@ -22,8 +22,8 @@ TASK2_WRITES = [
 ]
 # 讀取類：維持不變，不得掛 require_loopback
 READ_ONLY = [
-    "/api/settings",       # GET
-    "/api/autopilot",      # GET
+    "/api/settings",  # GET
+    "/api/autopilot",  # GET
     "/api/autopilot/backlog",  # GET
 ]
 

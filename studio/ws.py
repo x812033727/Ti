@@ -27,9 +27,7 @@ async def ws(websocket: WebSocket) -> None:
     # 來源前置於身分：非本機連線直接拒絕（依賴注入對 WS 不生效，於 handler 內檢查）。
     # 與 HTTP require_loopback 同一信任模型（spoof-safe、fail-closed）。
     if not netutil.is_loopback(websocket):
-        await websocket.send_json(
-            {"type": "error", "payload": {"message": "僅限本機存取"}}
-        )
+        await websocket.send_json({"type": "error", "payload": {"message": "僅限本機存取"}})
         await websocket.close(code=1008)
         return
 

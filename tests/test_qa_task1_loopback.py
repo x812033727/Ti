@@ -158,8 +158,14 @@ def test_no_new_third_party_import():
     src = Path(auth.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
     allowed_top = {
-        "base64", "hashlib", "hmac", "os", "time", "__future__",
-        "dotenv", "fastapi",  # 既有相依
+        "base64",
+        "hashlib",
+        "hmac",
+        "os",
+        "time",
+        "__future__",
+        "dotenv",
+        "fastapi",  # 既有相依
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

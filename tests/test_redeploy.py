@@ -12,7 +12,8 @@ from studio import config, redeploy, runner
 def client():
     from studio.server import app
 
-    return TestClient(app)
+    # 這些寫入端點已限定本機（require_loopback）：以 loopback peer 連入測端點合約。
+    return TestClient(app, client=("127.0.0.1", 12345))
 
 
 @pytest.fixture(autouse=True)
