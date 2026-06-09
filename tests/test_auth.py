@@ -122,13 +122,21 @@ def test_change_password_when_enabled(app, pw_env, monkeypatch):
     assert auth.check_password("oldpass") is False
 
 
-# --- 任務 #1：高危寫入端點限定本機（require_loopback） -----------------
-HIGH_RISK_WRITE_ENDPOINTS = ["/api/redeploy", "/api/auth/password"]
+# --- 任務 #1/#2：敏感寫入端點限定本機（require_loopback） ----------------
+# 守門清單：列舉所有 WRITE_DEPS 端點，任一漏掛或未來新增未掛皆會被本測試攔下。
+LOOPBACK_WRITE_ENDPOINTS = [
+    "/api/redeploy",
+    "/api/auth/password",
+    "/api/settings",
+    "/api/autopilot/pause",
+    "/api/autopilot/resume",
+    "/api/autopilot/task",
+]
 
 
-@pytest.mark.parametrize("path", HIGH_RISK_WRITE_ENDPOINTS)
+@pytest.mark.parametrize("path", LOOPBACK_WRITE_ENDPOINTS)
 def test_high_risk_endpoint_blocks_public_peer(app, monkeypatch, path):
-    """公網來源對高危寫入端點一律 403，且獨立於門禁狀態（loopback 在 auth 之前短路）。"""
+    """公網來源對敏感寫入端點一律 403，且獨立於門禁狀態（loopback 在 auth 之前短路）。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用也不得放行
     client = TestClient(app, client=("203.0.113.5", 40000))
     r = client.post(path, json={})
@@ -136,7 +144,7 @@ def test_high_risk_endpoint_blocks_public_peer(app, monkeypatch, path):
     assert r.json()["detail"] == "僅限本機存取"
 
 
-@pytest.mark.parametrize("path", HIGH_RISK_WRITE_ENDPOINTS)
+@pytest.mark.parametrize("path", LOOPBACK_WRITE_ENDPOINTS)
 def test_high_risk_endpoint_blocks_unknown_peer(app, monkeypatch, path):
     """來源不可知（TestClient 預設 host 非 IP）→ fail-closed 回 403。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
@@ -150,6 +158,24 @@ def test_high_risk_endpoint_allows_loopback_peer(app, pw_env, monkeypatch):
     client = TestClient(app, client=("127.0.0.1", 12345))
     r = client.post("/api/auth/password", json={"new_password": "loopok"})
     assert r.status_code == 200  # 通過 loopback + auth，進入 handler
+
+
+@pytest.mark.parametrize("path", LOOPBACK_WRITE_ENDPOINTS)
+def test_high_risk_endpoint_rejects_spoofed_xff(app, monkeypatch, path):
+    """裸 XFF 偽造：trust_proxy 預設關閉時，公網 peer 偽造 X-Forwarded-For: 127.0.0.1 仍 403。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    r = client.post(path, json={}, headers={"X-Forwarded-For": "127.0.0.1"})
+    assert r.status_code == 403  # XFF 被忽略，採信 socket peer（公網）
+
+
+def test_read_endpoints_not_loopback_restricted(app, monkeypatch):
+    """讀取類 GET 不受 loopback 限定：公網來源於門禁停用時仍可存取。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    assert client.get("/api/settings").status_code == 200
+    assert client.get("/api/autopilot").status_code == 200
+    assert client.get("/api/history").status_code == 200
 
 
 def test_token_roundtrip_and_tamper(monkeypatch):

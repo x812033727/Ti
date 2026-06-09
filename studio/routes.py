@@ -103,7 +103,7 @@ async def get_settings() -> JSONResponse:
     return JSONResponse(settings.read())
 
 
-@router.post("/api/settings", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/settings", dependencies=WRITE_DEPS)
 async def post_settings(request: Request) -> JSONResponse:
     body = await request.json()
     if not isinstance(body, dict):
@@ -223,19 +223,19 @@ async def autopilot_backlog() -> JSONResponse:
     return JSONResponse({"tasks": backlog.list_tasks()})
 
 
-@router.post("/api/autopilot/pause", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/autopilot/pause", dependencies=WRITE_DEPS)
 async def autopilot_pause() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.write_text("paused via UI\n", encoding="utf-8")
     return JSONResponse({"ok": True, "paused": True})
 
 
-@router.post("/api/autopilot/resume", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/autopilot/resume", dependencies=WRITE_DEPS)
 async def autopilot_resume() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.unlink(missing_ok=True)
     return JSONResponse({"ok": True, "paused": config.autopilot_paused()})
 
 
-@router.post("/api/autopilot/task", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/autopilot/task", dependencies=WRITE_DEPS)
 async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     task = backlog.add(body.title, body.detail, source="manual")
     if task is None:
