@@ -233,6 +233,15 @@ WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspa
 HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
 WEB_DIR = PROJECT_ROOT / "web"
 
+# --- 歷史 / 工作區保留（GC，避免自托管長跑下 history/ 與 workspaces/ 只增不減）----
+# 每次 session 結束（finish_session）順手做一次輕量回收：刪掉「非 running」且超量/過舊的
+# session（含 meta、events 與其 workspace 產出）。running 中的 session 一律保留。
+# 兩規則取聯集（任一超標即回收）；設 0 = 該規則停用。MAX_COUNT 預設啟用（夠寬、足以保留
+# 近期歷史，又能封住無上限成長）；MAX_AGE 預設停用（opt-in）。設 TI_HISTORY_MAX_COUNT=0
+# 即完全還原成不自動回收。屬「啟動時固定」、非 UI 可調，故不納入 config.reload()。
+HISTORY_MAX_COUNT = int(os.getenv("TI_HISTORY_MAX_COUNT", "200"))  # 最多保留幾個非 running session
+HISTORY_MAX_AGE = int(os.getenv("TI_HISTORY_MAX_AGE", "0"))  # 最後活動超過幾秒即回收（0=停用）
+
 # --- 伺服器 -------------------------------------------------------------
 HOST = os.getenv("TI_HOST", "0.0.0.0")
 PORT = int(os.getenv("TI_PORT", "8000"))

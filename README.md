@@ -186,6 +186,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_AUTOPILOT_FORCE_PUSH` | Autopilot 推送策略：預設非強制（`git push`），遠端已存在同名分支時中止；設 `1` 才略過中止並改用 `--force-with-lease --force-if-includes` 覆寫殘留分支（絕不用裸 `-f`） | 0（安全側） |
 | `TI_AUTOPILOT_MERGE_ADMIN` | Autopilot 合併策略：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效；目標 branch 有保護規則且需維持自動合併時設 `1` | 0（安全側） |
 | `TI_AUTOPILOT_PROTECTION_CHECK` | 第二道防線：squash-merge 前主動查「合併目標分支（`TI_AUTOPILOT_BRANCH`，預設 `main`）」的保護狀態。優先打 Rulesets 端點（classic token 即可讀、**多半不需 `Administration:read`**），舊 branch protection 端點為輔。三態 fail-safe——受保護/無保護皆放行，唯「無法確認」（403 無權／網路／逾時）一律**中止**並回含「無法確認保護狀態」字樣的訊息，絕不誤判為無保護而放行。讀舊 protection 端點才需 `Administration:read`；無此權限而持續卡「無法確認」的環境，設 `0` 整段跳過（明確逃生口） | 1（啟用） |
+| `TI_HISTORY_MAX_COUNT` / `TI_HISTORY_MAX_AGE` | 自動回收：最多保留幾個非 running session ／ 最後活動超過幾秒即回收（含 history 的 meta+events 與其 workspace 產出）；0=該規則停用 | 200 / 0 |
 
 #### Autopilot 安全旗標補充
 

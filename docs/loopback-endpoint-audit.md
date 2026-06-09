@@ -44,8 +44,9 @@
 | POST | `/api/publish/{session_id}` | auth | session 結束後一次性「等 CI→合併」，僅作用於該 session 工作區、不改機器設定面；不在架構決策納管清單 |
 | DELETE | `/api/history/{session_id}` | auth | 刪除歷史紀錄，作用於資料而非機器控制面；門禁已足夠 |
 | POST | `/api/history/cleanup/completed` | auth | 清理已完成歷史，同上 |
+| POST | `/api/history/cleanup/retention` | auth | 依保留策略回收超量/過舊歷史，作用於資料面而非機器控制面；同上 |
 
-> 註：此三者屬「資料面寫入」，架構決策的納管邊界限定在「會改機器狀態的控制面/秘密寫入」。
+> 註：此四者屬「資料面寫入」，架構決策的納管邊界限定在「會改機器狀態的控制面/秘密寫入」。
 > 若後續威脅模型升級，可比照 `WRITE_DEPS` 一行掛上，已有守門測試結構可直接擴充。
 
 ## WebSocket 端點
