@@ -12,9 +12,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from dotenv import set_key
-
 from . import config
+from .secretfile import write_secret_file
 
 
 @dataclass(frozen=True)
@@ -93,7 +92,7 @@ _BY_ENV = {f.env: f for f in FIELDS}
 
 
 def env_path() -> str:
-    return str(config.PROJECT_ROOT / ".env")
+    return config.env_path()
 
 
 def read() -> dict:
@@ -129,7 +128,7 @@ def update(payload: dict) -> dict:
             continue  # 秘密留空＝不變更
         if f.kind == "select" and f.options and val not in f.options:
             continue  # 不接受非法選項
-        set_key(path, key, val)
+        write_secret_file(path, key, val)
         os.environ[key] = val
     config.reload()
     return read()

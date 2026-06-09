@@ -75,8 +75,10 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
 
 - `GET /api/settings`：回傳 `settings.FIELDS` 的目前狀態；秘密欄位**不含明文**，只回報 `set`。
 - `POST /api/settings`：只接受白名單（`settings.ALLOWED`）內的鍵；秘密欄位留空＝不變更、
-  select 欄位驗證選項。寫入專案根目錄 `.env`（`dotenv.set_key`）並更新 `os.environ`，
+  select 欄位驗證選項。寫入專案根目錄 `.env` 經 `secretfile.write_secret_file`（安全寫法：
+  與 umask 脫鉤、保證檔案 0600、收緊既存寬鬆權限）並更新 `os.environ`，
   最後呼叫 `config.reload()` 重新載入可調設定，**下次討論即生效，無需重啟**。
+  存取密碼（`auth.set_password`）亦走同一安全寫入路徑。
 - Claude 模型選擇靠 `experts._model_for(role)` 在每個 session 建立專家時即時讀取 `config`。
 
 ## 指定 GitHub repo（在現有專案上工作）
