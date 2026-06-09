@@ -178,6 +178,45 @@ def test_read_endpoints_not_loopback_restricted(app, monkeypatch):
     assert client.get("/api/history").status_code == 200
 
 
+# --- 任務 #3：讀取類端點不納管本機限定，但仍保有門禁 --------------------
+# settings GET、workspace 查詢、history 查詢等讀取面：不掛 require_loopback，
+# 維持 require_auth。以結構反查鎖死，防止未來誤把 loopback 掛到讀取端點。
+READ_ENDPOINTS = [
+    ("GET", "/api/settings"),
+    ("GET", "/api/autopilot"),
+    ("GET", "/api/autopilot/backlog"),
+    ("GET", "/api/history"),
+    ("GET", "/api/history/{session_id}/events"),
+    ("GET", "/api/workspace/{session_id}/files"),
+    ("GET", "/api/workspace/{session_id}/file"),
+    ("GET", "/api/workspace/{session_id}/download"),
+    ("GET", "/api/publish/config"),
+]
+
+
+def _route_dep_names(app, method, path):
+    for r in app.routes:
+        if getattr(r, "path", None) == path and method in getattr(r, "methods", set()):
+            return [d.call.__name__ for d in r.dependant.dependencies]
+    raise AssertionError(f"route not found: {method} {path}")
+
+
+@pytest.mark.parametrize("method,path", READ_ENDPOINTS)
+def test_read_endpoint_keeps_auth_without_loopback(app, method, path):
+    """讀取類端點：不含 require_loopback（不納管），但仍含 require_auth（門禁照舊）。"""
+    deps = _route_dep_names(app, method, path)
+    assert "require_loopback" not in deps, f"{method} {path} 不應被 loopback 限定"
+    assert "require_auth" in deps, f"{method} {path} 應維持門禁保護"
+
+
+def test_read_endpoint_blocked_when_auth_enabled(app, monkeypatch):
+    """門禁啟用且未登入時，讀取類仍回 401（證明 require_auth 仍生效，非被 loopback 取代）。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
+    client = TestClient(app, client=("203.0.113.5", 40000))  # 公網來源也只受 auth 約束
+    assert client.get("/api/settings").status_code == 401
+    assert client.get("/api/history").status_code == 401
+
+
 def test_token_roundtrip_and_tamper(monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
     token = auth.make_token()
