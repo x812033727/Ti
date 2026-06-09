@@ -111,3 +111,27 @@ def test_retention_endpoint(monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == {"deleted": 2}
     assert _ids() == {"s3", "s2"}
+
+
+def test_startup_sweep_reclaims_via_lifespan(monkeypatch):
+    """以 `with TestClient(app)` 觸發 lifespan startup，驗證啟動時掃一次保留策略。"""
+    from fastapi.testclient import TestClient
+
+    from studio.server import app
+
+    monkeypatch.setattr(config, "HISTORY_MAX_COUNT", 2)
+    monkeypatch.setattr(config, "HISTORY_MAX_AGE", 0)
+    for i in range(5):
+        _make(f"s{i}", started_at=float(i))
+    assert len(history.list_sessions()) == 5
+    with TestClient(app):  # 進入 = 觸發 lifespan startup → 啟動掃描
+        pass
+    assert _ids() == {"s4", "s3"}
+
+
+def test_reclaim_emits_log(caplog):
+    for i in range(4):
+        _make(f"s{i}", started_at=float(i))
+    with caplog.at_level("INFO", logger="ti.history"):
+        history.enforce_retention(max_count=2, max_age_s=0)
+    assert "保留策略回收" in caplog.text

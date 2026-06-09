@@ -7,12 +7,13 @@ REST 路由在 routes.py、WebSocket 在 ws.py、認證在 auth.py。
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, routes, ws
+from . import auth, config, history, routes, ws
 
 # 沙箱啟用但缺依賴時 CLI 會靜默 fail-open（無沙箱執行），啟動時大聲示警。
 _sandbox_missing = config.sandbox_missing_deps()
@@ -23,7 +24,19 @@ if _sandbox_missing:
         ", ".join(_sandbox_missing),
     )
 
-app = FastAPI(title="Ti Studio — AI 專家討論工作室")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # 啟動時掃一次 history 保留策略：把「停用回收期間／升級前」累積的舊 session 立即壓回上限內
+    # （session 收尾時也會各自掃一次）。失敗絕不可擋住服務啟動。
+    try:
+        history.enforce_retention()
+    except Exception:  # noqa: BLE001
+        logging.getLogger("ti.history").warning("啟動回收失敗（略過，不影響啟動）", exc_info=True)
+    yield
+
+
+app = FastAPI(title="Ti Studio — AI 專家討論工作室", lifespan=_lifespan)
 
 if config.WEB_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(config.WEB_DIR)), name="static")
