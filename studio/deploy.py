@@ -8,8 +8,37 @@ autopilot 的暫停開關）一起弄死。由 autopilot 程序以 root 呼叫�
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import fcntl
 
 from . import config
+
+
+def _lock_path():
+    return config.AUTOPILOT_STATE_DIR / "deploy.lock"
+
+
+@contextlib.contextmanager
+def _deploy_lock():
+    """跨程序序列化部署：autopilot、autodeploy timer、/api/redeploy 共用同一把 flock。
+
+    非阻塞（LOCK_NB）：取不到鎖即代表已有部署進行中 → yield False，呼叫端應略過本輪
+    （下一輪 timer/任務會自然補上）。取到鎖 → yield True，離開時釋放。
+    """
+    config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    lock = _lock_path().open("w")
+    acquired = False
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError:
+            acquired = False
+        yield acquired
+    finally:
+        if acquired:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
 
 
 async def _run(cmd: list[str], cwd: str | None = None, timeout: int = 600) -> tuple[int, str]:
@@ -76,25 +105,32 @@ async def redeploy() -> tuple[bool, str]:
     if config.AUTOPILOT_DRYRUN:
         return True, f"[dryrun] 會把 {deploy_dir} 重佈到 origin/{branch} 並重啟 {service}"
 
-    last_good = await current_head(deploy_dir)
+    # 跨程序互斥：避免 autopilot / autodeploy timer / /api/redeploy 同時 reset+pip+restart 互撞。
+    with _deploy_lock() as acquired:
+        if not acquired:
+            return False, "另一個部署進行中，略過本輪"
 
-    rc, out = await _run(["git", "fetch", "origin", branch], cwd=deploy_dir, timeout=120)
-    if rc != 0:
-        return False, f"git fetch 失敗：\n{out[-400:]}"
-    rc, out = await _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=deploy_dir, timeout=60)
-    if rc != 0:
-        return False, f"git reset 失敗：\n{out[-400:]}"
-    new_head = await current_head(deploy_dir)
+        last_good = await current_head(deploy_dir)
 
-    ok, msg = await _reinstall_and_restart(deploy_dir, service)
-    if ok:
-        ok, msg = await health_check()
+        rc, out = await _run(["git", "fetch", "origin", branch], cwd=deploy_dir, timeout=120)
+        if rc != 0:
+            return False, f"git fetch 失敗：\n{out[-400:]}"
+        rc, out = await _run(
+            ["git", "reset", "--hard", f"origin/{branch}"], cwd=deploy_dir, timeout=60
+        )
+        if rc != 0:
+            return False, f"git reset 失敗：\n{out[-400:]}"
+        new_head = await current_head(deploy_dir)
 
-    if not ok:
-        rb_ok, rb_msg = await rollback(last_good)
-        return False, f"重佈失敗（{msg}）→ 回滾{'成功' if rb_ok else '也失敗'}：{rb_msg}"
+        ok, msg = await _reinstall_and_restart(deploy_dir, service)
+        if ok:
+            ok, msg = await health_check()
 
-    return True, f"重佈成功：{last_good[:8]} → {new_head[:8]}"
+        if not ok:
+            rb_ok, rb_msg = await rollback(last_good)
+            return False, f"重佈失敗（{msg}）→ 回滾{'成功' if rb_ok else '也失敗'}：{rb_msg}"
+
+        return True, f"重佈成功：{last_good[:8]} → {new_head[:8]}"
 
 
 async def rollback(last_good: str) -> tuple[bool, str]:

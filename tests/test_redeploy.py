@@ -17,8 +17,14 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _no_real_restart(monkeypatch):
-    """確保測試永遠不會真的 exec 掉行程。"""
+    """確保測試永遠不會真的 exec 掉行程；並讓 exec 前的 import smoke 預設通過
+    （個別測試可再覆寫成失敗）。"""
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
+
+    async def _smoke_ok():
+        return runner.RunOutput("import smoke", 0, "", False)
+
+    monkeypatch.setattr(redeploy, "import_smoke", _smoke_ok)
 
 
 def test_redact_masks_token(monkeypatch):
@@ -56,6 +62,28 @@ async def test_redeploy_pull_failure_no_restart(monkeypatch):
     res = await redeploy.redeploy()
     assert not res["ok"] and not res["pulled"] and not res["restarting"]
     assert calls["n"] == 0
+    assert "ghp_secret" not in res["detail"]  # token 已遮蔽
+
+
+@pytest.mark.asyncio
+async def test_redeploy_import_smoke_failure_no_restart(monkeypatch):
+    """新版 import 檢查失敗時，必須取消重啟、不丟例外、不外洩 token，服務維持舊版。"""
+    monkeypatch.setattr(config, "GITHUB_TOKEN", "ghp_secret")
+
+    async def fake_pull():
+        return runner.RunOutput("git pull", 0, "Updating to broken main", False)
+
+    async def fake_smoke_fail():
+        return runner.RunOutput("import smoke", 1, "SyntaxError in studio/foo.py ghp_secret", False)
+
+    monkeypatch.setattr(redeploy, "pull_main", fake_pull)
+    monkeypatch.setattr(redeploy, "import_smoke", fake_smoke_fail)
+    calls = {"n": 0}
+    monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: calls.__setitem__("n", 1))
+
+    res = await redeploy.redeploy()
+    assert not res["ok"] and not res["restarting"]
+    assert calls["n"] == 0  # 沒有排程重啟
     assert "ghp_secret" not in res["detail"]  # token 已遮蔽
 
 

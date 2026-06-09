@@ -13,7 +13,7 @@ import asyncio
 import os
 import sys
 
-from . import config, runner
+from . import config, deploy, runner
 
 
 def _redact(text: str) -> str:
@@ -39,6 +39,21 @@ async def pull_main() -> runner.RunOutput:
     )
 
 
+async def import_smoke() -> runner.RunOutput:
+    """exec 前的安全健檢：用子程序 import 服務進入點，確認新碼至少能 import。
+
+    擋掉「pull 進語法/import 壞掉的 main → os.execv 進壞碼 → 服務起不來且無回滾」這條路
+    （deploy.redeploy() 有 health+rollback，但本路徑走 os.execv 沒有，故先 import 驗一道）。
+    """
+    return await runner.run_command_exec(
+        config.PROJECT_ROOT,
+        [sys.executable, "-c", "import studio.server"],
+        timeout=60,
+        sandbox=False,
+        label="import smoke",
+    )
+
+
 def _do_restart() -> None:  # pragma: no cover - 真的會替換掉行程，測試以 monkeypatch 取代
     """以原始啟動參數重新 exec 自己，達成自我重啟。
 
@@ -59,18 +74,37 @@ async def redeploy(*, restart: bool = True) -> dict:
 
     回傳 dict：{ok, pulled, restarting, detail}。任何失敗皆不丟例外。
     """
-    pull = await pull_main()
-    detail = _redact(pull.output).strip()
-    result = {"ok": pull.ok, "pulled": pull.ok, "restarting": False, "detail": detail}
-    if not pull.ok:
-        result["detail"] = "git pull 失敗：" + detail
+    # 與 autopilot / autodeploy timer 的 deploy.redeploy() 共用同一把 flock，避免並行部署互撞。
+    with deploy._deploy_lock() as acquired:
+        if not acquired:
+            return {
+                "ok": False,
+                "pulled": False,
+                "restarting": False,
+                "detail": "另一個部署進行中，請稍後再試",
+            }
+        pull = await pull_main()
+        detail = _redact(pull.output).strip()
+        result = {"ok": pull.ok, "pulled": pull.ok, "restarting": False, "detail": detail}
+        if not pull.ok:
+            result["detail"] = "git pull 失敗：" + detail
+            return result
+        if restart:
+            smoke = await import_smoke()
+            if not smoke.ok:
+                # 新碼 import 失敗：不重啟，服務維持舊版（已 pull 的新檔等人工修正再起）。
+                result["ok"] = False
+                result["detail"] = (
+                    "已拉取最新 main，但新版 import 檢查失敗，已取消重啟（服務維持運行中的舊版）：\n"
+                    + _redact(smoke.output)[-800:]
+                )
+                return result
+            result["restarting"] = True
+            result["detail"] = (
+                "已拉取最新 main 且 import 檢查通過，服務即將重啟以套用新版程式碼"
+                "（進行中的工作／連線會中斷）…"
+            )
+            schedule_restart()
+        else:
+            result["detail"] = "已拉取最新 main（未重啟）"
         return result
-    if restart:
-        result["restarting"] = True
-        result["detail"] = (
-            "已拉取最新 main，服務即將重啟以套用新版程式碼（進行中的工作／連線會中斷）…"
-        )
-        schedule_restart()
-    else:
-        result["detail"] = "已拉取最新 main（未重啟）"
-    return result
