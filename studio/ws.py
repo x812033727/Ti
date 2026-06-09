@@ -19,6 +19,28 @@ router = APIRouter()
 # 客戶端斷線後仍在背景跑完的討論任務（持有參考避免被 GC 回收）。
 _detached: set[asyncio.Task] = set()
 
+# 同時進行中的討論場次數（並發上限用）。每場占一個 slot，隨 run_task 完成釋放
+# （含客戶端斷線後背景續跑）。單執行緒 event loop 內，slot 的 check 與增減之間無
+# await，故為原子操作、不需鎖。
+_active_sessions = 0
+
+
+def _acquire_session_slot() -> bool:
+    """嘗試占用一個並發 slot；達 config.MAX_CONCURRENT_SESSIONS 上限回 False。0 = 不限。"""
+    global _active_sessions
+    limit = config.MAX_CONCURRENT_SESSIONS
+    if limit > 0 and _active_sessions >= limit:
+        return False
+    _active_sessions += 1
+    return True
+
+
+def _release_session_slot() -> None:
+    """釋放一個並發 slot（夾在 0 以上，防重複釋放造成負數）。"""
+    global _active_sessions
+    if _active_sessions > 0:
+        _active_sessions -= 1
+
 
 @router.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
@@ -42,6 +64,7 @@ async def ws(websocket: WebSocket) -> None:
     session_id = uuid.uuid4().hex[:12]
     recording = False
     connected = True
+    slot_held = False
     run_task: asyncio.Task | None = None
 
     async def broadcast(event: StudioEvent) -> None:
@@ -100,6 +123,24 @@ async def ws(websocket: WebSocket) -> None:
             await websocket.close()
             return
 
+        # 並發上限：避免大量同時連線各自起一堆專家子程序 / LLM 連線而耗盡資源/額度。
+        # slot 隨 run_task 完成釋放（含斷線後背景續跑）；0 = 不限。
+        if not _acquire_session_slot():
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "payload": {
+                        "message": (
+                            f"目前同時進行的討論已達上限（{config.MAX_CONCURRENT_SESSIONS}），"
+                            "請稍後再試"
+                        )
+                    },
+                }
+            )
+            await websocket.close(code=1013)  # 1013 = Try Again Later
+            return
+        slot_held = True
+
         cwd = workspace.create_workspace(session_id)
 
         # 若指定了 GitHub repo，先 clone 進 workspace，讓專家在現有程式碼上討論/修改。
@@ -140,6 +181,8 @@ async def ws(websocket: WebSocket) -> None:
         # 任務生命週期與這條連線解耦：用 done callback 負責收尾（finish_session），
         # 即使客戶端中途斷線，討論仍能在背景跑到完成，事件照寫 history。
         run_task = asyncio.create_task(session.run(requirement))
+        # slot 隨 run_task 完成釋放（無論是否 detach、是否斷線），一次性、不重複。
+        run_task.add_done_callback(lambda _t: _release_session_slot())
         await _pump_interventions(websocket, session, queue, run_task)
         if not run_task.done():
             # 客戶端已斷線（或按 stop 後尚未結束）：把討論留在背景跑完，handler 立即
@@ -155,6 +198,10 @@ async def ws(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        # slot：已建 run_task 者由其 done-callback 釋放；若占用後在建 task 前就 return
+        # （驗證失敗 / 例外），在此補釋放，避免 slot 永久洩漏。
+        if slot_held and run_task is None:
+            _release_session_slot()
         # 已 detach（背景跑、尚未結束）的任務由 callback 收尾；其餘（正常跑完、或在
         # 建立任務前就出錯）在此同步收尾，確保歷史狀態即時更新、不被重複呼叫。
         if recording and (run_task is None or run_task.done()):
