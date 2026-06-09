@@ -95,6 +95,31 @@ def list_sessions() -> list[dict]:
     return metas
 
 
+def _last_activity_ts(meta: dict) -> float:
+    """session 最後活動時間：以 events 檔 mtime 為準（每則事件 append 都會更新它，O(1) 免解析）；
+    取不到則退回 meta 的 finished_at / started_at。"""
+    p = _events_path(meta.get("session_id", ""))
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return meta.get("finished_at") or meta.get("started_at") or 0.0
+
+
+def busy_sessions(stale_after_s: float) -> list[dict]:
+    """回傳『真正進行中』的 session：status==running 且最後活動在 stale_after_s 秒內。
+
+    超過 stale_after_s 仍無動靜者視為 stale（討論崩潰／沒收尾、meta 卡在 running），
+    不算 busy——否則一場死掉的討論會讓 idle 守衛永久延後部署（autodeploy timer /
+    autopilot `_wait_until_idle` 共用此判定）。
+    """
+    now = time.time()
+    return [
+        m
+        for m in list_sessions()
+        if m.get("status") == "running" and now - _last_activity_ts(m) <= stale_after_s
+    ]
+
+
 def get_meta(session_id: str) -> dict | None:
     path = _meta_path(session_id)
     if not path.is_file():

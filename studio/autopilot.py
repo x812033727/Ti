@@ -319,10 +319,14 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
 
 
 async def _wait_until_idle(timeout: int = 600) -> bool:
-    """重佈會 restart ti.service，先等手動討論結束（history 無其他 running session）。"""
+    """重佈會 restart ti.service，先等手動討論結束（無『真正進行中』的 session）。
+
+    用 history.busy_sessions(stale 門檻) 而非裸 status==running，避免崩潰沒收尾、
+    卡在 running 的死 session 讓守衛永久延後重佈。
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        running = [m for m in history.list_sessions() if m.get("status") == "running"]
+        running = history.busy_sessions(config.DEPLOY_STALE_AFTER)
         if not running:
             return True
         log.info("有進行中的討論，延後重佈…(%d)", len(running))
