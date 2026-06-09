@@ -64,6 +64,12 @@ def finish_session(session_id: str) -> dict | None:
     meta["finished_at"] = time.time()
     meta["status"] = _derive_status(events)
     _write_meta(session_id, meta)
+    # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
+    # 自己回收掉）；回收失敗絕不影響本次收尾。
+    try:
+        enforce_retention()
+    except Exception:  # noqa: BLE001 — 回收失敗不可影響本次收尾
+        pass
     return meta
 
 
@@ -170,6 +176,34 @@ def delete_completed_sessions() -> int:
     deleted = 0
     for meta in list_sessions():
         if meta.get("status") == "completed" and delete_session(meta["session_id"]):
+            deleted += 1
+    return deleted
+
+
+def enforce_retention(max_count: int | None = None, max_age_s: float | None = None) -> int:
+    """依保留策略回收「非 running」且超量/過舊的 session（含 meta、events 與 workspace），
+    回傳實際刪除筆數。
+
+    - 數量上限 max_count：保留最新 max_count 個非 running session，其餘較舊者刪除。
+    - 年齡上限 max_age_s：最後活動（_last_activity_ts）超過 max_age_s 秒的非 running 刪除。
+    兩規則取聯集（任一超標即回收）；對應上限 <=0 視為停用。running 中的 session 由
+    delete_session 守門，永不刪。max_count / max_age_s 省略時讀 config 的對應預設。
+    """
+    max_count = config.HISTORY_MAX_COUNT if max_count is None else max_count
+    max_age_s = config.HISTORY_MAX_AGE if max_age_s is None else max_age_s
+    keepable = [m for m in list_sessions() if m.get("status") != "running"]  # 已新→舊
+    now = time.time()
+    victims: dict[str, dict] = {}  # 以 session_id 去重（兩規則可能同時命中）
+    if max_count and max_count > 0:
+        for m in keepable[int(max_count) :]:
+            victims[m["session_id"]] = m
+    if max_age_s and max_age_s > 0:
+        for m in keepable:
+            if now - _last_activity_ts(m) > max_age_s:
+                victims[m["session_id"]] = m
+    deleted = 0
+    for sid in victims:
+        if delete_session(sid):
             deleted += 1
     return deleted
 

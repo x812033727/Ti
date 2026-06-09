@@ -164,6 +164,12 @@ async def history_cleanup_completed() -> JSONResponse:
     return JSONResponse({"deleted": history.delete_completed_sessions()})
 
 
+@router.post("/api/history/cleanup/retention", dependencies=[Depends(auth.require_auth)])
+async def history_cleanup_retention() -> JSONResponse:
+    """依保留策略（TI_HISTORY_MAX_COUNT / TI_HISTORY_MAX_AGE）手動觸發一次回收。"""
+    return JSONResponse({"deleted": history.enforce_retention()})
+
+
 # --- publish（受保護）--------------------------------------------------
 @router.get("/api/publish/config", dependencies=[Depends(auth.require_auth)])
 async def publish_config() -> JSONResponse:
