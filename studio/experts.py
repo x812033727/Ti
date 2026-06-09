@@ -59,24 +59,71 @@ def _summarize_tool(name: str, tool_input: dict) -> str:
     return name
 
 
+def _build_client(role: Role, session_id: str, cwd: Path):
+    """建立該專家的 ClaudeSDKClient。
+
+    抽成模組級函式以開出注入縫：測試可 monkeypatch 本函式回傳假 client，
+    從而在未安裝 claude-agent-sdk、不連線的情況下驗證 Expert 生命週期。
+    執行期內容與原 __init__ 完全相同。
+    """
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+    return ClaudeSDKClient(
+        options=ClaudeAgentOptions(
+            system_prompt=role.system_prompt,
+            allowed_tools=role.allowed_tools,
+            permission_mode=role.permission_mode,
+            can_use_tool=_auto_allow_tool,
+            sandbox=config.expert_sandbox_settings(),
+            cwd=str(cwd),
+            model=_model_for(role),
+            max_turns=config.MAX_TURNS_PER_TURN,
+        )
+    )
+
+
+async def stream_to_events(messages, session_id: str, role: Role, broadcast: Broadcast) -> str:
+    """把 SDK 串流訊息翻譯成 StudioEvent，回傳整段發言文字。
+
+    抽成模組級 async 函式以開出注入縫：messages 接任意 async 可迭代，測試餵假訊息
+    即可驗證事件序列與回傳文字，無需真正的 SDK 連線。判型語義（isinstance）與 SDK
+    類別來源皆與原 speak() 迴圈完全相同。
+    """
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+
+    collected: list[str] = []
+    async for msg in messages:
+        if isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    text = block.text.strip()
+                    if text:
+                        collected.append(text)
+                        await broadcast(
+                            events.expert_message(
+                                session_id, role.key, role.name, role.avatar, text
+                            )
+                        )
+                elif isinstance(block, ToolUseBlock):
+                    await broadcast(events.expert_status(session_id, role.key, "working"))
+                    await broadcast(
+                        events.tool_use(
+                            session_id,
+                            role.key,
+                            block.name,
+                            _summarize_tool(block.name, block.input or {}),
+                        )
+                    )
+        elif isinstance(msg, ResultMessage):
+            break
+    return "\n".join(collected)
+
+
 class Expert:
     def __init__(self, role: Role, session_id: str, cwd: Path):
-        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-
         self.role = role
         self.session_id = session_id
-        self._client = ClaudeSDKClient(
-            options=ClaudeAgentOptions(
-                system_prompt=role.system_prompt,
-                allowed_tools=role.allowed_tools,
-                permission_mode=role.permission_mode,
-                can_use_tool=_auto_allow_tool,
-                sandbox=config.expert_sandbox_settings(),
-                cwd=str(cwd),
-                model=_model_for(role),
-                max_turns=config.MAX_TURNS_PER_TURN,
-            )
-        )
+        self._client = _build_client(role, session_id, cwd)
         self._connected = False
 
     async def start(self) -> None:
@@ -93,38 +140,14 @@ class Expert:
 
     async def speak(self, prompt: str, broadcast: Broadcast) -> str:
         """送出 prompt，串流回應為事件，回傳完整文字。"""
-        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
-
         await self.start()
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
 
-        collected: list[str] = []
         await self._client.query(prompt)
-        async for msg in self._client.receive_response():
-            if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        text = block.text.strip()
-                        if text:
-                            collected.append(text)
-                            await broadcast(
-                                events.expert_message(
-                                    self.session_id, r.key, r.name, r.avatar, text
-                                )
-                            )
-                    elif isinstance(block, ToolUseBlock):
-                        await broadcast(events.expert_status(self.session_id, r.key, "working"))
-                        await broadcast(
-                            events.tool_use(
-                                self.session_id,
-                                r.key,
-                                block.name,
-                                _summarize_tool(block.name, block.input or {}),
-                            )
-                        )
-            elif isinstance(msg, ResultMessage):
-                break
+        text = await stream_to_events(
+            self._client.receive_response(), self.session_id, r, broadcast
+        )
 
         await broadcast(events.expert_status(self.session_id, r.key, "idle"))
-        return "\n".join(collected)
+        return text
