@@ -79,7 +79,8 @@ def test_auth_enabled_websocket_requires_login(app, monkeypatch):
 
 def test_change_password_when_disabled_enables_gate(app, pw_env, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
-    client = TestClient(app)
+    # password 端點限定本機，TestClient 預設 host 非 IP（fail-closed），需指定 loopback client
+    client = TestClient(app, client=("127.0.0.1", 12345))
     # 門禁停用時可直接設定新密碼以首次啟用門禁（無需目前密碼）
     r = client.post("/api/auth/password", json={"new_password": "newpass"})
     assert r.status_code == 200 and r.json()["ok"] is True
@@ -91,7 +92,8 @@ def test_change_password_when_disabled_enables_gate(app, pw_env, monkeypatch):
 
 def test_change_password_when_enabled(app, pw_env, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
-    client = TestClient(app)
+    # password 端點限定本機，需指定 loopback client 才能測到 401/403/400 等下游邏輯
+    client = TestClient(app, client=("127.0.0.1", 12345))
     body = {"current_password": "oldpass", "new_password": "brandnew"}
 
     # 未登入 → 401
@@ -118,6 +120,36 @@ def test_change_password_when_enabled(app, pw_env, monkeypatch):
     assert client.post("/api/auth/password", json=body).status_code == 200
     assert auth.check_password("brandnew") is True
     assert auth.check_password("oldpass") is False
+
+
+# --- 任務 #1：高危寫入端點限定本機（require_loopback） -----------------
+HIGH_RISK_WRITE_ENDPOINTS = ["/api/redeploy", "/api/auth/password"]
+
+
+@pytest.mark.parametrize("path", HIGH_RISK_WRITE_ENDPOINTS)
+def test_high_risk_endpoint_blocks_public_peer(app, monkeypatch, path):
+    """公網來源對高危寫入端點一律 403，且獨立於門禁狀態（loopback 在 auth 之前短路）。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用也不得放行
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    r = client.post(path, json={})
+    assert r.status_code == 403
+    assert r.json()["detail"] == "僅限本機存取"
+
+
+@pytest.mark.parametrize("path", HIGH_RISK_WRITE_ENDPOINTS)
+def test_high_risk_endpoint_blocks_unknown_peer(app, monkeypatch, path):
+    """來源不可知（TestClient 預設 host 非 IP）→ fail-closed 回 403。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app)  # 預設 client host = "testclient"，無法解析為 IP
+    assert client.post(path, json={}).status_code == 403
+
+
+def test_high_risk_endpoint_allows_loopback_peer(app, pw_env, monkeypatch):
+    """loopback 來源放行 require_loopback：以 password 端點驗證（不觸發實際重啟）。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app, client=("127.0.0.1", 12345))
+    r = client.post("/api/auth/password", json={"new_password": "loopok"})
+    assert r.status_code == 200  # 通過 loopback + auth，進入 handler
 
 
 def test_token_roundtrip_and_tamper(monkeypatch):
