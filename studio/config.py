@@ -247,6 +247,9 @@ AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
+# 部署 idle 守衛的 stale 門檻（秒）：status 卡在 running 但最後活動超過此值的討論視為死掉、
+# 不再算「進行中」，避免崩潰沒收尾的 session 永久擋住 autodeploy / autopilot 重佈。預設 30 分。
+DEPLOY_STALE_AFTER = int(os.getenv("TI_DEPLOY_STALE_AFTER", "1800"))
 AUTOPILOT_PAUSE_FILE = Path(
     os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED"))
 )
