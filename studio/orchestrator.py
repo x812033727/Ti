@@ -135,6 +135,70 @@ def parse_followups(text: str) -> list[str]:
     return [m.strip() for m in re.findall(r"^\s*後續任務\s*[:：]\s*(.+)$", text, re.M)][:10]
 
 
+def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:
+    """從 PM 拆解文字抽出任務（含可選 `#id`）與依賴邊，供並行分波使用。
+
+    任務行：`任務: [#<id>] <title>`（`#id` 可選，缺則依出現序自動編號，1-based）。
+    依賴行：`依賴: #<after> -> #<before>`（after 須在 before 完成後才做）。
+    無顯式 `任務:` 行時退回 `parse_tasks` 的條列解析（自動編號、無依賴），與循序行為一致。
+    指向不存在任務 id 的依賴邊一律丟棄（防懸空）。任務數沿用 `MAX_TASKS` 上限。
+    """
+    cap = config.MAX_TASKS
+    tasks: list[dict] = []
+    explicit = re.findall(r"^\s*任務\s*[:：]\s*(?:#(\d+)\s+)?(.+?)\s*$", pm_text, re.M)
+    if explicit:
+        used: set[int] = set()
+        for pos, (rid, title) in enumerate(explicit[:cap], start=1):
+            tid = int(rid) if rid else pos
+            while tid in used:  # 顯式 id 與自動序衝突時往後讓位，保證 id 唯一。
+                tid = max(used) + 1
+            used.add(tid)
+            tasks.append({"id": tid, "title": title.strip(), "status": "todo"})
+    else:
+        for pos, title in enumerate(parse_tasks(pm_text)[:cap], start=1):
+            tasks.append({"id": pos, "title": title, "status": "todo"})
+
+    valid_ids = {t["id"] for t in tasks}
+    edges: list[tuple[int, int]] = []
+    for after, before in re.findall(r"^\s*依賴\s*[:：]\s*#(\d+)\s*->\s*#(\d+)\s*$", pm_text, re.M):
+        a, b = int(after), int(before)
+        if a in valid_ids and b in valid_ids and a != b:
+            edges.append((a, b))
+    return tasks, edges
+
+
+def build_waves(tasks: list[dict], edges: list[tuple[int, int]]) -> list[list[dict]]:
+    """依依賴邊把任務拓撲分層成「波次」：同一波內任務彼此獨立、可並行；波次之間循序。
+
+    邊 (after, before) 表示 after 須在 before 完成後才做。以 Kahn 演算法逐層取出入度 0 的
+    任務（穩定按 id 排序，結果可重現）。偵測到循環依賴時，剩餘任務退回「每任務一波」的純
+    循序 fallback，確保永遠有解、不卡死。指向未知 id 的邊忽略（防懸空）。
+    """
+    by_id = {t["id"]: t for t in tasks}
+    indeg = {tid: 0 for tid in by_id}
+    adj: dict[int, list[int]] = {tid: [] for tid in by_id}
+    for after, before in edges:
+        if after in by_id and before in by_id and after != before:
+            adj[before].append(after)
+            indeg[after] += 1
+
+    waves: list[list[dict]] = []
+    remaining = set(by_id)
+    while remaining:
+        layer = sorted(tid for tid in remaining if indeg[tid] == 0)
+        if not layer:
+            # 循環依賴：剩餘任務退回每任務一波（按 id 序），保證收斂、不靜默卡死。
+            for tid in sorted(remaining):
+                waves.append([by_id[tid]])
+            break
+        waves.append([by_id[tid] for tid in layer])
+        for tid in layer:
+            remaining.discard(tid)
+            for nxt in adj[tid]:
+                indeg[nxt] -= 1
+    return waves
+
+
 def _build_experts(session_id: str, cwd: Path) -> dict[str, ExpertLike]:
     # 依設定的 provider 建立專家（延後 import，避免無 SDK 時就失敗）
     from .providers import make_expert
