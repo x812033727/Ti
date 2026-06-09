@@ -29,7 +29,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish |
 | `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
-| `orchestrator.py` | `StudioSession`：需求拆解 → 架構辯論 → 逐任務迭代 → Demo → 驗收/檢討 |
+| `orchestrator.py` | `StudioSession`：需求拆解 → 架構辯論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討 |
 | `roles.py` | 四位專家的角色定義與 system prompt |
 | `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，把串流回應轉成事件 |
 | `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容） |
@@ -54,6 +54,22 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 
 事件型別是前後端的契約，定義集中在 `events.py`，前端在 `web/app.js` 的
 `handleEvent()` 對應處理。
+
+## 任務並行（多支線 lane，預設關閉）
+
+`TI_PARALLEL_TASKS=1` 時，「逐任務迭代」改走**波次排程**：PM 拆解時可宣告
+`依賴: #後 -> #前`，`build_waves()` 以拓撲分層把彼此獨立的任務排進同一波次，
+波次之間循序（尊重依賴）、波次之內最多 `TI_PARALLEL_LANES` 條支線並行。
+
+每條支線（lane）由 `LaneContext` 隔離：各自一個 **git worktree 分支**
+（`runner.git_worktree_add`）與**獨立專家團隊**（避免共用實例的對話累積互相污染），
+在自己的工作目錄實作/自測/commit。一波結束時 `_integrate_wave()` 全序列化收尾——
+依序把各支線分支合併回主分支（`runner.git_merge_worktree`，衝突則 abort 後於最新主幹
+序列化重跑）、把各 lane 的 `NOTES` 緩衝 flush 進共享 `NOTES.md`（單一寫入點、無競態）、
+清掉 worktree。並行 lane 的事件會帶 `task_id`，前端據此把多支線發言分色標示。
+
+關閉（預設）時退化成「每任務一波、單一主 lane」，與循序逐任務迭代逐字等價。
+全域 `TI_LLM_MAX_CONCURRENCY` 節流同時進行的 LLM 發言數。
 
 ## 認證 / 門禁流程
 
