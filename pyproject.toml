@@ -11,7 +11,9 @@ requires-python = ">=3.10"
 dependencies = [
     "claude-agent-sdk>=0.1.0",
     "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
+    # 鎖定 uvicorn>=0.30 以強化 ProxyHeaders 信任鏈、避免 X-Forwarded-For 取最左值偽造 client IP。
+    # 注意：版本鎖僅為基線，實際防護需部署端設定 forwarded_allow_ips 為 proxy 私網範圍、嚴禁 "*"。
+    "uvicorn[standard]>=0.30,<0.50",
     "python-dotenv>=1.0",
     "httpx>=0.27",
 ]
