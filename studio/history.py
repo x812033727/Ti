@@ -10,11 +10,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import time
 from pathlib import Path
 
 from . import config, workspace
+
+log = logging.getLogger("ti.history")
 
 
 def _safe_id(session_id: str) -> str:
@@ -205,6 +208,13 @@ def enforce_retention(max_count: int | None = None, max_age_s: float | None = No
     for sid in victims:
         if delete_session(sid):
             deleted += 1
+    if deleted:
+        log.info(
+            "history 保留策略回收 %d 個 session（max_count=%s, max_age_s=%s）",
+            deleted,
+            max_count,
+            max_age_s,
+        )
     return deleted
 
 
