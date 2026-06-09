@@ -198,6 +198,7 @@ def test_first_setup_cookie_security_flags(app, pw_env, monkeypatch):
     resp = client.post("/api/auth/password", json={"new_password": "newpass"})
     assert resp.status_code == 200
     raw = resp.headers["set-cookie"].lower()
+    assert config.AUTH_COOKIE.lower() in raw
     assert "httponly" in raw
     assert "samesite=lax" in raw
     assert "path=/" in raw
