@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +109,28 @@ def _sandbox_blocked(label: str) -> RunOutput:
     )
 
 
+def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """逾時時 SIGKILL 整個 process group。
+
+    只 `proc.kill()` 殺得到直屬子程序（非沙箱下是 `/bin/sh`），它再 spawn 的工作程序
+    （python/node…）是孫程序，會變孤兒繼續吃資源——長跑的自托管/autopilot 上每個逾時
+    的 Demo 就洩漏一個。子程序皆以 start_new_session=True 啟動、自成 group leader，故可
+    對整組送訊號。取不到 pgid（已歿）或平台不支援（如 Windows 無 killpg）時，退回只殺
+    直屬子程序。沙箱路徑殺 bwrap 即可，其 `--die-with-parent`＋PID namespace 會連帶清掉。
+    """
+    pid = proc.pid
+    if pid is not None and hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+
+
 async def _finalize_proc(proc: asyncio.subprocess.Process, label: str, timeout: int) -> RunOutput:
     """共用收尾：communicate + 逾時 kill + 輸出截斷。
 
@@ -123,8 +146,8 @@ async def _finalize_proc(proc: asyncio.subprocess.Process, label: str, timeout: 
             timed_out=False,
         )
     except asyncio.TimeoutError:
+        _kill_process_group(proc)
         try:
-            proc.kill()
             await proc.wait()
         except ProcessLookupError:
             pass
@@ -158,6 +181,7 @@ async def run_command(
             inner,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
     else:
         proc = await asyncio.create_subprocess_shell(
@@ -165,6 +189,7 @@ async def run_command(
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
     return await _finalize_proc(proc, command, timeout)
 
@@ -199,6 +224,7 @@ async def run_command_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
     else:
         proc = await asyncio.create_subprocess_exec(
@@ -206,6 +232,7 @@ async def run_command_exec(
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
     return await _finalize_proc(proc, display, timeout)
 

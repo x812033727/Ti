@@ -4,8 +4,8 @@
 `run_command_exec`、帶固定 `label`、顯式帶齊 `timeout`/`sandbox`。
 
 雙路徑並存：
-- `run_command`（`runner.py:139`）→ `create_subprocess_shell`（`/bin/sh -c`，解析 metacharacter）
-- `run_command_exec`（`runner.py:172`）→ `create_subprocess_exec`（argv 陣列，shell 不參與解析）
+- `run_command`（`runner.py:162`）→ `create_subprocess_shell`（`/bin/sh -c`，解析 metacharacter）
+- `run_command_exec`（`runner.py:197`）→ `create_subprocess_exec`（argv 陣列，shell 不參與解析）
 
 分類定義：
 - **(a) 可直接 argv 化**：固定字串或已是 list、無 pipe/glob/`&&`/變數展開等 shell 語法 → 遷移到 `run_command_exec`。
@@ -17,8 +17,8 @@
 
 | # | 檔案:行 | 內容 | 分類 | 理由 | 遷移注意 |
 |---|---|---|---|---|---|
-| 1 | `runner.py:269-280` | `git init -q` / `git config user.email …` / `git config user.name 'Ti Studio'` / `git config commit.gpgsign false` 四行固定 git init/config（**已遷移 exec**） | **a** | 全為固定字串，無任何動態輸入或 shell 語法 | ✅ 已遷移：四行逐行手寫 argv 改 `run_command_exec`；各帶 `sandbox=False`、`timeout=20`（不得依賴預設 `sandbox=None`，會走 fail-closed）；`user.name` 值改為 `"Ti Studio"`（去掉單引號，引號是 shell 產物，argv 不需要） |
-| 2 | `runner.py:320` (`git_clone`) | `git clone --depth 1 [--branch <b>] <authed_url> .`（**已遷移 exec**） | **a** | `parts` 本就是 list，原先只是 `shlex.quote`+`join` 又組回字串，等於白繞一圈 | ✅ 已遷移：用 `parts + [authed, "."]` 直接組 argv，刪除 `shlex.quote`+`join`；`run_command_exec` 只帶固定 `label="git clone"`（嚴禁把含 token 的 `authed`/`cmd` 傳入 label）；`timeout=180, sandbox=False`；token 遮蔽（`replace(token,"***")`）與 `result.command` 覆寫保持原順序、原位置不動 |
+| 1 | `runner.py:296-307` | `git init -q` / `git config user.email …` / `git config user.name 'Ti Studio'` / `git config commit.gpgsign false` 四行固定 git init/config（**已遷移 exec**） | **a** | 全為固定字串，無任何動態輸入或 shell 語法 | ✅ 已遷移：四行逐行手寫 argv 改 `run_command_exec`；各帶 `sandbox=False`、`timeout=20`（不得依賴預設 `sandbox=None`，會走 fail-closed）；`user.name` 值改為 `"Ti Studio"`（去掉單引號，引號是 shell 產物，argv 不需要） |
+| 2 | `runner.py:347` (`git_clone`) | `git clone --depth 1 [--branch <b>] <authed_url> .`（**已遷移 exec**） | **a** | `parts` 本就是 list，原先只是 `shlex.quote`+`join` 又組回字串，等於白繞一圈 | ✅ 已遷移：用 `parts + [authed, "."]` 直接組 argv，刪除 `shlex.quote`+`join`；`run_command_exec` 只帶固定 `label="git clone"`（嚴禁把含 token 的 `authed`/`cmd` 傳入 label）；`timeout=180, sandbox=False`；token 遮蔽（`replace(token,"***")`）與 `result.command` 覆寫保持原順序、原位置不動 |
 | 3 | `autopilot.py:90` (`_gate_tests`) | `python -m pytest -q`（**已遷移 exec**） | **a** | 固定字串，無 shell 語法 | ✅ 已遷移：argv `[sys.executable,"-m","pytest","-q"]` 走 `run_command_exec`，`label="pytest gate"`；保留 `timeout=600, sandbox=True`。⚠️ 用 `sys.executable` 而非裸 `"python"`：多數環境（含本 CI）PATH 僅有 `python3`，裸 `python` 在 exec/sandbox 下會 `execvp: No such file` ——sys.executable 落實設計「避免 PATH 問題」意圖（已 sandbox 實跑驗證） |
 | 4 | `orchestrator.py:721` (`_self_test`) | `run_command(self.cwd, cmd)`，`cmd` 來自 `parse_run_command(impl_text)` 或 `resolve_demo_command(...)` | **c** | `cmd` 是 PM/工程師宣告的自測指令，動態解析而來，可能含 pipe/`&&`/glob 等 shell 語法 | ✅ 已標註：維持 `run_command`，加說明註解「刻意保留 shell」+ 行尾 `# nosec B602` |
 | 5 | `orchestrator.py:740` (`_final_demo`) | `run_command(self.cwd, cmd)`，`cmd` 來自 `resolve_demo_command(...)` | **c** | 同上，demo 指令動態解析，可能含 shell 語法 | ✅ 已標註：同 #4 |
