@@ -136,6 +136,44 @@ def test_first_setup_enables_gate_and_writes_env(app, pw_env, monkeypatch):
     assert _read_env_password(config.env_path()) == "newpass"
 
 
+# --- 任務 #3：登入流程——未登入 401 → 登入放行 → 登出再 401 -------------
+def test_login_flow_grants_then_revokes_access(app, pw_env, monkeypatch):
+    """門禁啟用態下：未登入受保護 API 401 → 登入取 cookie → 放行 → 登出 → 401。
+
+    身分階段分離：未登入與已登入各用獨立 TestClient 隔離 cookie 殘留；登出刻意
+    沿用同一已登入 client，真正驗證 delete_cookie 生效（而非換 client 的假象）。
+    """
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "newpass")  # 模擬門禁已啟用
+
+    # 未登入階段：獨立乾淨 client，受保護 API 一律 401
+    unauth = _loopback_client(app)
+    assert unauth.get("/api/history").status_code == 401
+    assert unauth.get("/api/settings").status_code == 401
+    assert unauth.get("/api/auth/status").json() == {"auth_enabled": True, "authed": False}
+
+    # 已登入階段：另開獨立 client，用新密碼登入取得 cookie
+    session = _loopback_client(app)
+    login = session.post("/api/login", json={"password": "newpass"})
+    assert login.status_code == 200 and login.json()["ok"] is True
+    assert config.AUTH_COOKIE in session.cookies
+
+    # 受保護 API / GET /api/settings / WS 皆放行
+    assert session.get("/api/history").status_code == 200
+    assert session.get("/api/settings").status_code == 200
+    assert session.get("/api/auth/status").json()["authed"] is True
+    with session.websocket_connect("/ws") as ws:
+        ws.send_json({"requirement": ""})  # 過 loopback+auth 進 handler
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert ev["payload"]["message"] == "需求不可為空"
+
+    # 登出沿用同一已登入 client：delete_cookie 生效 → 受保護 API 再次 401
+    session.post("/api/logout")
+    assert config.AUTH_COOKIE not in session.cookies
+    assert session.get("/api/history").status_code == 401
+    assert session.get("/api/settings").status_code == 401
+
+
 # --- cookie 安全旗標 ---------------------------------------------------
 def test_login_cookie_security_flags(app, pw_env, monkeypatch):
     """登入回應的 set-cookie raw header 應含 HttpOnly / SameSite=lax / Path=/。"""
