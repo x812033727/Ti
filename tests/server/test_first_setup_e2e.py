@@ -18,7 +18,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config
+from studio import auth, config
 
 # 寫入端點 / WS 需 loopback 來源；TestClient 預設 host 非 IP（fail-closed）。
 PORT = 12345
@@ -94,6 +94,46 @@ def test_first_setup_full_lifecycle(app, pw_env, monkeypatch):
     # ⑦ 登出沿用同一已登入 client，驗證 delete_cookie 生效 → 再次 401
     fresh.post("/api/logout")
     assert fresh.get("/api/history").status_code == 401
+
+
+def _read_env_password(path: str) -> str | None:
+    """從 .env 解析 TI_ACCESS_PASSWORD 的值（不存在回 None）。"""
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            key, _, value = line.partition("=")
+            if key.strip() == "TI_ACCESS_PASSWORD":
+                # write_secret_file 會以引號包住值，去掉外層引號再比對
+                return value.strip().strip("\"'")
+    return None
+
+
+# --- 任務 #2：首次設定段——停用 → 設新密碼啟用 + .env 寫入 ----------------
+def test_first_setup_enables_gate_and_writes_env(app, pw_env, monkeypatch):
+    """門禁停用起始 → 不帶目前密碼設新密碼 → 門禁轉啟用且 .env 首次寫入密碼。
+
+    以設定前後的 .env 對比，證明這確為『首次寫入』而非沿用既有值；並驗證
+    `config.ACCESS_PASSWORD` 即時生效（無需重啟），對齊 set_password 語義。
+    """
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用起始
+
+    # 前置：起始狀態確為停用，且 .env（導向 tmp_path）尚未含密碼
+    client = _loopback_client(app)
+    assert client.get("/api/auth/status").json() == {"auth_enabled": False, "authed": True}
+    assert _read_env_password(config.env_path()) is None
+
+    # 動作：不帶 current_password 直接設定新密碼以首次啟用門禁
+    r = client.post("/api/auth/password", json={"new_password": "newpass"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["auth_enabled"] is True
+
+    # 斷言：門禁轉啟用、執行期變數即時生效、.env 確實寫入新密碼值
+    assert config.auth_enabled() is True
+    assert config.ACCESS_PASSWORD == "newpass"
+    assert auth.check_password("newpass") is True
+    assert _read_env_password(config.env_path()) == "newpass"
 
 
 # --- cookie 安全旗標 ---------------------------------------------------
