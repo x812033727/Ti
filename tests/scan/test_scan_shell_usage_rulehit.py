@@ -12,8 +12,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = REPO_ROOT
 SCRIPT = REPO / "scripts" / "scan_shell_usage.sh"
 
 SHELL_TRUE_SAMPLE = "import subprocess\ndef run(cmd):\n    return subprocess.run(cmd, shell=True)\n"

@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import importlib
 import os
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import config
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = REPO_ROOT
 _README = (_ROOT / "README.md").read_text(encoding="utf-8")
 _ENV_EXAMPLE = (_ROOT / ".env.example").read_text(encoding="utf-8")
 _CONFIG_PY = (_ROOT / "studio" / "config.py").read_text(encoding="utf-8")

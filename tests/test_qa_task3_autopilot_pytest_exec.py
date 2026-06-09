@@ -19,14 +19,14 @@ import asyncio
 import inspect
 import re
 import sys
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import autopilot, config, runner
 from studio.runner import RunOutput
 
-STUDIO = Path(__file__).resolve().parent.parent / "studio"
+STUDIO = REPO_ROOT / "studio"
 
 
 @pytest.fixture(autouse=True)

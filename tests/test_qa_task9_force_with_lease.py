@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import autopilot, config
 
 _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = REPO_ROOT
 _TASK = {"id": "9", "title": "t", "detail": ""}
 _BRANCH = "autopilot/task-9"
 

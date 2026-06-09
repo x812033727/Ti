@@ -5,9 +5,10 @@
 import re
 import subprocess
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from _repo import REPO_ROOT
+
+ROOT = REPO_ROOT
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 VERIFY_LINUX = ".venv/bin/python3 -c \"import studio; print('ok')\""

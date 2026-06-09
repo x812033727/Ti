@@ -19,13 +19,13 @@ ro-bind 在擋，而非整個沙箱寫不進」。
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import runner
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = REPO_ROOT
 TIMEOUT = 30  # 秒；避免 bwrap 卡死拖垮 CI
 
 needs_bwrap = pytest.mark.skipif(

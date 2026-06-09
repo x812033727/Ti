@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import re
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import autopilot, config
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = REPO_ROOT
 _SRC = (_ROOT / "studio" / "autopilot.py").read_text(encoding="utf-8")
 _TASK = {"id": "3", "title": "t", "detail": "d"}
 _BRANCH = "autopilot/task-3"

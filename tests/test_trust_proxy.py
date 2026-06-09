@@ -12,6 +12,7 @@ import importlib
 import ipaddress
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import config
 
@@ -378,9 +379,8 @@ def test_is_loopback_link_local_false(proxy):
 # ======================================================================
 def test_env_example_documents_new_vars():
     """.env.example 須記載兩個新變數、預設值與安全註記（含 app port 僅代理可連提醒）。"""
-    from pathlib import Path
 
-    text = (Path(__file__).resolve().parent.parent / ".env.example").read_text(encoding="utf-8")
+    text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
     # 兩個新變數都出現
     assert "TI_TRUST_PROXY" in text
     assert "TI_TRUSTED_PROXIES" in text

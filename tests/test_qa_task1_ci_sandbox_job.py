@@ -3,13 +3,12 @@
 只驗 CI 設定的結構與不變式，沙箱實跑由 tests/test_runner.py 等負責。
 """
 
-import pathlib
-
 import pytest
+from _repo import REPO_ROOT
 
 yaml = pytest.importorskip("yaml")
 
-CI = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 @pytest.fixture(scope="module")

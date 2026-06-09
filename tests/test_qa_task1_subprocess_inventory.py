@@ -13,11 +13,11 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 STUDIO = ROOT / "studio"
 INVENTORY = STUDIO / "docs" / "subprocess_migration_inventory.md"
 

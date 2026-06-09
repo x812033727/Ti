@@ -18,13 +18,13 @@ import subprocess
 import sys
 import time
 import urllib.request
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import config, settings
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 ENV = ROOT / ".env"
 HOST = "127.0.0.1"
 PORT = 8013

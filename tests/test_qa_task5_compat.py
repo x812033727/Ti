@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
+from _repo import REPO_ROOT
 
 from studio import events
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT
 
 
 # === 事件向後相容契約 ==================================================

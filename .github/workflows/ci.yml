@@ -56,7 +56,7 @@ jobs:
         # 讓 CI 快速且不受 SDK 打包差異影響。
         run: |
           python -m pip install --upgrade pip
-          # ruff：tests/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
+          # ruff：tests/scan/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
           pip install fastapi "uvicorn[standard]>=0.30,<0.50" httpx python-dotenv pytest pytest-asyncio pytest-cov ruff
 
       - name: Configure git (for workspace git tests)
@@ -153,7 +153,7 @@ jobs:
         # 實際用到的依賴。用 python -m pytest 讓 repo 根在 sys.path，studio 可被 import。
         run: |
           python -m pip install --upgrade pip
-          # ruff：tests/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
+          # ruff：tests/scan/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
           pip install fastapi "uvicorn[standard]>=0.30,<0.50" httpx python-dotenv pytest pytest-asyncio pytest-cov ruff
 
       - name: Configure git (for workspace git tests)
