@@ -36,8 +36,9 @@ def test_impl_no_umask_swap_and_has_fchmod_or_chmod():
     # 不得有 os.umask( 的暫存交換寫法
     assert "os.umask(" not in src, "實作不應使用 os.umask 暫存交換寫法"
     # 必須有 fchmod 或 (mkstemp/replace) 或結尾 chmod 0o600 之一保證權限
-    assert ("fchmod" in src) or ("mkstemp" in src and "replace" in src), \
+    assert ("fchmod" in src) or ("mkstemp" in src and "replace" in src), (
         "需有 os.fchmod 或 mkstemp+os.replace 的安全建檔"
+    )
     assert "0o600" in src
 
 
@@ -253,4 +254,5 @@ def test_auth_set_password_writes_0600_env(sandbox):
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__, "-v"]))
