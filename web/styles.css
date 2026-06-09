@@ -194,6 +194,10 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .publish.ok { border-color: #2f5132; } .publish.fail { border-color: #5a2a2a; color: var(--bad); }
 .publish code { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
 .publish a { color: var(--accent); }
+.merge-outcome { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
+.merge-outcome.merged { background: #1d3a23; border-color: #2f5132; }
+.merge-outcome.ci_failed, .merge-outcome.error { background: #3a1d1d; border-color: #5a2a2a; }
+.merge-outcome.blocked, .merge-outcome.conflict, .merge-outcome.timeout { background: #3a341d; border-color: #5a522a; }
 
 /* 看板 */
 .board { flex-shrink: 0; }

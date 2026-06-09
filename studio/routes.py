@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import auth, backlog, config, history, publisher, settings, workspace
+from . import auth, backlog, config, history, publisher, redeploy, settings, workspace
 
 router = APIRouter()
 
@@ -167,6 +167,7 @@ async def publish_config() -> JSONResponse:
         {
             "configured": publisher.is_configured(),
             "auto": config.PUBLISH_AUTO,
+            "merge": config.PUBLISH_MERGE,
             "repo": config.PUBLISH_REPO or None,
         }
     )
@@ -181,18 +182,18 @@ async def publish_now(session_id: str) -> JSONResponse:
         )
     meta = history.get_meta(session_id)
     requirement = meta["requirement"] if meta else "Ti Studio 成果"
-    result = await publisher.publish(cwd, session_id, requirement)
-    payload = result.to_dict()
-    # 手動發佈：session 已結束、團隊已散，只做「過就合併」，不過僅回報、不自動修。
-    if result.pushed and config.PUBLISH_MERGE:
-        state, detail = await publisher.check_ci(result.repo, result.branch)
-        payload["ci_state"] = state
-        payload["ci_detail"] = detail
-        if state in ("pass", "none"):
-            ok, md = await publisher.merge_pr(result.repo, result.branch)
-            payload["merged"] = ok
-            payload["merge_detail"] = md
-    return JSONResponse(payload)
+    # 手動發佈：session 已結束、團隊已散，無法自我修復；走 publish(merge=) 一次性「等 CI→合併」，
+    # 結局（outcome）寫進 to_dict 供前端徽章顯示，不另起修正迴圈。
+    result = await publisher.publish(cwd, session_id, requirement, merge=config.PUBLISH_MERGE)
+    return JSONResponse(result.to_dict())
+
+
+# --- 重新佈署重啟（受保護）--------------------------------------------
+@router.post("/api/redeploy", dependencies=[Depends(auth.require_auth)])
+async def redeploy_now() -> JSONResponse:
+    """拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。"""
+    result = await redeploy.redeploy()
+    return JSONResponse(result)
 
 
 # --- autopilot（受保護）------------------------------------------------

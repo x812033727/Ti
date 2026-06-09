@@ -481,30 +481,28 @@ async function addAutopilotTask() {
 
 // --- 發佈到 GitHub -----------------------------------------------------
 let publishConfigured = false;
+let mergeEnabled = false;
 
 async function loadPublishConfig() {
   try {
     const cfg = await (await fetch("/api/publish/config")).json();
     publishConfigured = !!cfg.configured;
-  } catch (e) { publishConfigured = false; }
+    mergeEnabled = !!cfg.merge;
+  } catch (e) { publishConfigured = false; mergeEnabled = false; }
 }
 
 function addPublishButton(sid) {
   const wrap = document.createElement("div");
   wrap.className = "publish-cta";
   const btn = document.createElement("button");
-  btn.textContent = "🚀 發佈成果到 GitHub";
+  // merge 開關開啟時，明示這顆按鈕會「發佈並合併」（合併後可再一鍵重啟）。
+  btn.textContent = mergeEnabled ? "🚀 發佈並合併到 GitHub" : "🚀 發佈成果到 GitHub";
   btn.onclick = async () => {
-    btn.disabled = true; btn.textContent = "發佈中…";
+    btn.disabled = true; btn.textContent = mergeEnabled ? "發佈並合併中…" : "發佈中…";
     try {
       const res = await (await fetch(`/api/publish/${sid}`, { method: "POST" })).json();
+      // 手動發佈回傳 publisher 的 to_dict()，renderPublish 會依 outcome 顯示合併結局徽章。
       renderPublish(res);
-      if (res.ci_state) {
-        addCI({ state: res.ci_state, detail: res.ci_detail });
-        if (res.merged !== undefined) {
-          addCI({ state: res.merged ? "merged" : "merge_failed", detail: res.merge_detail });
-        }
-      }
     } catch (e) { renderPublish({ ok: false, detail: "發佈請求失敗" }); }
     btn.remove();
   };
@@ -513,17 +511,59 @@ function addPublishButton(sid) {
   scrollStream();
 }
 
+// 合併結局 → 可視化徽章（對應 publisher.MergeOutcome，讓四／六種結局清楚可區分，
+// 不再只看 merged=false 糊成一團）。
+const OUTCOME_BADGE = {
+  merged: "✅ 已合併",
+  ci_failed: "❌ CI 未過",
+  blocked: "🚫 被保護擋下",
+  conflict: "⚠️ 衝突／分支落後",
+  timeout: "⏱️ 等待 CI 逾時",
+  error: "🛑 API／網路錯誤",
+};
+
 function renderPublish(p) {
   const el = document.createElement("div");
   el.className = "publish " + (p.ok ? "ok" : "fail");
   let html = (p.ok ? "🚀 " : "⚠️ ") + (p.detail || "");
   if (p.branch) html += `　<code>${p.branch}</code>`;
+  // 優先依 outcome 顯示明確徽章；無 outcome（未嘗試合併）時退回舊的 merged 判斷。
+  const badge = p.outcome ? OUTCOME_BADGE[p.outcome] : (p.merged ? OUTCOME_BADGE.merged : "");
+  if (badge) html += `　<span class="merge-outcome ${p.outcome || (p.merged ? "merged" : "")}">${badge}</span>`;
   el.innerHTML = html;
   if (p.pr_url) {
     const a = document.createElement("a");
     a.href = p.pr_url; a.target = "_blank"; a.textContent = "查看 PR ↗";
     el.appendChild(document.createTextNode("　")); el.appendChild(a);
   }
+  stream.appendChild(el);
+  // 合併成功後提供「重新佈署重啟」入口，讓新程式碼生效。
+  if (p.merged) addRedeployButton();
+  scrollStream();
+}
+
+function addRedeployButton() {
+  const wrap = document.createElement("div");
+  wrap.className = "publish-cta";
+  const btn = document.createElement("button");
+  btn.textContent = "♻️ 重新佈署並重啟";
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "重新佈署中…";
+    try {
+      const res = await (await fetch("/api/redeploy", { method: "POST" })).json();
+      renderRedeploy(res);
+    } catch (e) { renderRedeploy({ ok: false, detail: "重新佈署請求失敗（服務可能正在重啟）" }); }
+    btn.remove();
+  };
+  wrap.appendChild(btn);
+  stream.appendChild(wrap);
+  scrollStream();
+}
+
+function renderRedeploy(r) {
+  const el = document.createElement("div");
+  el.className = "publish " + (r.ok ? "ok" : "fail");
+  el.innerHTML = (r.ok ? "♻️ " : "⚠️ ") + (r.detail || "");
   stream.appendChild(el);
   scrollStream();
 }

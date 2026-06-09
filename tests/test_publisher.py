@@ -56,6 +56,20 @@ def test_pr_payload():
     assert "BMI" in p["title"]
 
 
+def test_parse_pr_number():
+    assert publisher.parse_pr_number("https://github.com/o/r/pull/42") == 42
+    assert publisher.parse_pr_number("https://github.com/o/r/pull/9?foo=1") == 9
+    assert publisher.parse_pr_number("") is None
+    assert publisher.parse_pr_number(None) is None
+    assert publisher.parse_pr_number("https://example.com/no-number") is None
+
+
+def test_merge_payload():
+    p = publisher.merge_payload("ti-studio/x")
+    assert p["merge_method"] == "merge"
+    assert "ti-studio/x" in p["commit_title"]
+
+
 # --- publish 流程（mock IO）-------------------------------------------
 
 
@@ -130,3 +144,65 @@ async def test_publish_pr_fail_still_ok(monkeypatch, _configured):
     assert res.ok and res.pushed
     assert res.pr_url is None
     assert "PR 建立失敗" in res.detail
+
+
+# --- merge 流程（mock IO）--------------------------------------------
+
+
+@pytest.fixture
+def _ok_push_pr(monkeypatch):
+    async def fake_push(cwd, branch, url):
+        return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
+
+    async def fake_pr(payload):
+        return True, "https://github.com/o/r/pull/7"
+
+    monkeypatch.setattr(publisher, "_push", fake_push)
+    monkeypatch.setattr(publisher, "_open_pr", fake_pr)
+
+
+@pytest.mark.asyncio
+async def test_publish_merge_off_does_not_merge(monkeypatch, _configured, _ok_push_pr):
+    called = {"n": 0}
+
+    async def fake_flow(number, payload, **kw):
+        called["n"] += 1
+        return publisher.MergeOutcome.MERGED, "deadbeef"
+
+    monkeypatch.setattr(publisher, "_merge_flow", fake_flow)
+    # 預設 merge=False → 不應呼叫 _merge_flow，行為與現在相同
+    res = await publisher.publish("/tmp", "s1", "需求")
+    assert res.ok and res.pushed and not res.merged
+    assert res.pr_url.endswith("/pull/7")
+    assert called["n"] == 0
+    assert res.outcome is None  # 未嘗試合併
+
+
+@pytest.mark.asyncio
+async def test_publish_merge_success(monkeypatch, _configured, _ok_push_pr):
+    async def fake_flow(number, payload, **kw):
+        assert number == 7
+        return publisher.MergeOutcome.MERGED, "deadbeef"
+
+    monkeypatch.setattr(publisher, "_merge_flow", fake_flow)
+    res = await publisher.publish("/tmp", "s1", "需求", merge=True)
+    assert res.ok and res.merged
+    assert res.pr_number == 7
+    assert "合併" in res.detail
+    assert res.outcome == publisher.MergeOutcome.MERGED
+    assert res.to_dict()["outcome"] == "merged"
+
+
+@pytest.mark.asyncio
+async def test_publish_merge_conflict_no_raise(monkeypatch, _configured, _ok_push_pr):
+    async def fake_flow(number, payload, **kw):
+        return publisher.MergeOutcome.CONFLICT, "分支落後或 base 已變動（409）：not mergeable"
+
+    monkeypatch.setattr(publisher, "_merge_flow", fake_flow)
+    res = await publisher.publish("/tmp", "s1", "需求", merge=True)
+    # 衝突不丟例外：仍 ok（已 push/開 PR），但 merged=False 且帶可讀結局
+    assert res.ok and res.pushed and not res.merged
+    assert res.pr_url.endswith("/pull/7")
+    assert res.outcome == publisher.MergeOutcome.CONFLICT
+    assert "未合併" in res.detail
+    assert "tok" not in res.detail  # token 已遮蔽
