@@ -27,6 +27,15 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+      # shell 用法掃描（warning-only）。warn 模式由腳本內 SCAN_MODE 控制、恆回 0；
+      # 此處 continue-on-error 僅為雙保險，防腳本「本身崩潰」時誤擋 CI，
+      # 而非用來吞掉掃描命中。升級 blocking：把 SCAN_MODE 改成 block 即可。
+      - name: Scan shell usage (warning-only)
+        continue-on-error: true
+        env:
+          SCAN_MODE: warn
+        run: bash scripts/scan_shell_usage.sh
+
   test:
     runs-on: ubuntu-latest
     strategy:

@@ -6,3 +6,16 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # shell 用法掃描（warning-only，不阻斷 commit）。
+  # 與 CI 共用同一支腳本 scripts/scan_shell_usage.sh（SSOT），規則/args 天然一致。
+  # warn 模式由腳本恆回 0 保證不擋 commit；升級 blocking 改 SCAN_MODE=block 即可。
+  - repo: local
+    hooks:
+      - id: scan-shell-usage
+        name: scan shell usage (warning-only)
+        entry: bash scripts/scan_shell_usage.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true
