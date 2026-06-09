@@ -127,6 +127,55 @@ async def test_parallel_wave_isolates_and_merges(tmp_path, monkeypatch):
     assert {e.payload["task_id"] for e in lane_msgs} == {1, 2, 3}
 
 
+class DepStub(LaneStub):
+    """記錄各 lane 開工時，其 worktree 是否已看得到前一波合併進來的成果。"""
+
+    saw_prior: dict[str, bool] = {}
+
+    async def speak(self, prompt: str, broadcast) -> str:
+        if self.role.key == "engineer":
+            DepStub.saw_prior[self.cwd.name] = (self.cwd / "task-1.txt").is_file()
+        return await super().speak(prompt, broadcast)
+
+
+@pytest.mark.asyncio
+async def test_dependent_tasks_run_in_later_wave_on_merged_base(tmp_path, monkeypatch):
+    """依賴任務排在後一波，其 worktree 從『前一波已合併的 HEAD』分支 → 看得到前一波成果。"""
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", True)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "CRITIC_ENABLED", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    LaneStub.created.clear()
+    DepStub.saw_prior = {}
+
+    sid = "dep"
+    cwd = workspace.create_workspace(sid)
+
+    async def broadcast(ev):
+        pass
+
+    main = {
+        "pm": MainStub(
+            BY_KEY["pm"], ["任務: #1 基礎\n任務: #2 依賴\n依賴: #2 -> #1", "決議: 完成", "檢討"]
+        ),
+        "engineer": MainStub(BY_KEY["engineer"], ["x"]),
+        "qa": MainStub(BY_KEY["qa"], ["驗證: PASS"]),
+        "senior": MainStub(BY_KEY["senior"], ["決議: 核可"]),
+    }
+    session = StudioSession(sid, broadcast, experts=main, cwd=cwd)
+    session._lane_expert_factory = DepStub
+
+    await session.run("先做基礎再做依賴")
+
+    # task-1（第一波）開工時看不到自己；task-2（第二波）開工時應已看得到 task-1.txt。
+    assert DepStub.saw_prior.get("task-1") is False
+    assert DepStub.saw_prior.get("task-2") is True, "第二波 worktree 未從前一波合併後的 HEAD 分支"
+    assert {"task-1.txt", "task-2.txt"} <= set(workspace.list_files(sid))
+
+
 @pytest.mark.asyncio
 async def test_parallel_disabled_is_sequential(tmp_path, monkeypatch):
     """關閉並行旗標時不開任何 worktree、不呼叫 lane 工廠（純循序、行為不變）。"""

@@ -236,6 +236,7 @@ class StudioSession:
         self._repo_url = repo_url  # 已 clone 進 workspace 的既有 GitHub repo（可選）
         self._tasks: list[dict] = []  # {id, title, status}
         self._edges: list[tuple[int, int]] = []  # 任務依賴邊 (after, before)，並行分波用
+        self._pending_human = ""  # 並行模式於波次邊界 drain 的插話，套用到該波各 lane
         # 全域 LLM 並發節流（lazy 建立，綁當前 event loop）；多 lane × 多 reviewer 時生效。
         self._llm_sem: asyncio.Semaphore | None = None
         # 並行 lane 的專家工廠（測試可注入 stub）；None 時用 providers.make_expert。
@@ -273,6 +274,17 @@ class StudioSession:
             return ""
         await self.broadcast(events.human_message(self.session_id, human))
         return f"【使用者插話，請納入考量】{human}\n\n"
+
+    async def _lane_human_prefix(self, ctx: LaneContext) -> str:
+        """lane 內取插話前綴。並行 lane 用波次邊界已 drain 的 _pending_human（避免多 lane 同時
+        drain 競態、不重複廣播）；主 lane / 循序維持每次發言即時 drain 的既有行為。"""
+        if ctx.branch is not None:
+            return (
+                f"【使用者插話，請納入考量】{self._pending_human}\n\n"
+                if self._pending_human
+                else ""
+            )
+        return await self._human_prefix()
 
     def _get_experts(self) -> dict[str, ExpertLike]:
         if self._experts is None:
@@ -642,6 +654,11 @@ class StudioSession:
         for wave in waves:
             if self._stop:
                 break
+            # 並行模式：波次邊界統一 drain 一次插話，套用到本波各 lane（避免多 lane 同時 drain）。
+            if parallel:
+                self._pending_human = self._drain_human()
+                if self._pending_human:
+                    await self.broadcast(events.human_message(self.session_id, self._pending_human))
             lanes = self._plan_lanes(wave)
             # 序列化開 worktree（git worktree add 不宜並發）；無法隔離者留待序列化重跑。
             opened: list[tuple[LaneContext, list[dict]]] = []
@@ -837,7 +854,7 @@ class StudioSession:
         for rnd in range(1, rounds + 1):
             if self._stop:
                 return False
-            human = await self._human_prefix()
+            human = await self._lane_human_prefix(ctx)
 
             # --- 實作 ---
             if not feedback:
