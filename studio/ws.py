@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import auth, config, events, history, runner, workspace
+from . import auth, config, events, history, netutil, runner, workspace
 from .events import StudioEvent
 from .orchestrator import StudioSession
 
@@ -23,6 +23,13 @@ _detached: set[asyncio.Task] = set()
 @router.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
+
+    # 來源前置於身分：非本機連線直接拒絕（依賴注入對 WS 不生效，於 handler 內檢查）。
+    # 與 HTTP require_loopback 同一信任模型（spoof-safe、fail-closed）。
+    if not netutil.is_loopback(websocket):
+        await websocket.send_json({"type": "error", "payload": {"message": "僅限本機存取"}})
+        await websocket.close(code=1008)
+        return
 
     # 門禁啟用時，未登入的連線直接拒絕。
     if not auth.is_authed(websocket):

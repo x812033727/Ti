@@ -15,7 +15,7 @@ import time
 from dotenv import set_key
 from fastapi import HTTPException, Request, WebSocket
 
-from . import config
+from . import config, netutil
 
 
 def _sign(payload: bytes) -> str:
@@ -73,3 +73,13 @@ def require_auth(request: Request) -> None:
     """FastAPI 依賴：保護 HTTP 路由，未通過回 401。"""
     if not is_authed(request):
         raise HTTPException(status_code=401, detail="需要登入")
+
+
+def require_loopback(request: Request) -> None:
+    """FastAPI 依賴：敏感寫入路由限定本機來源，非本機回 403。
+
+    判定委派給 spoof-safe、fail-closed 的 netutil.is_loopback（禁止字串比對 127.0.0.1）。
+    403 detail 維持泛化，不回傳 client_ip／XFF 等內部來源資訊。
+    """
+    if not netutil.is_loopback(request):
+        raise HTTPException(status_code=403, detail="僅限本機存取")

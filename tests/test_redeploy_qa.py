@@ -26,7 +26,8 @@ _ORIG_SCHEDULE_RESTART = redeploy.schedule_restart
 def client():
     from studio.server import app
 
-    return TestClient(app)
+    # 寫入端點已限定本機（require_loopback）：以 loopback peer 連入。
+    return TestClient(app, client=("127.0.0.1", 12345))
 
 
 @pytest.fixture(autouse=True)

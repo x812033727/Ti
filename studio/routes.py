@@ -14,6 +14,10 @@ from . import auth, backlog, config, history, publisher, redeploy, settings, wor
 
 router = APIRouter()
 
+# 敏感寫入路由統一掛此依賴組，避免未來新增路由漏掛。
+# 順序：require_loopback 在前 → 外網未登入請求先回 403（來源優先曝光）。
+WRITE_DEPS = [Depends(auth.require_loopback), Depends(auth.require_auth)]
+
 
 # --- 健康檢查 -----------------------------------------------------------
 @router.get("/api/health")
@@ -68,7 +72,7 @@ class PasswordBody(BaseModel):
     new_password: str = ""
 
 
-@router.post("/api/auth/password", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/auth/password", dependencies=WRITE_DEPS)
 async def change_password(body: PasswordBody) -> JSONResponse:
     """變更 / 設定存取密碼。
 
@@ -99,7 +103,7 @@ async def get_settings() -> JSONResponse:
     return JSONResponse(settings.read())
 
 
-@router.post("/api/settings", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/settings", dependencies=WRITE_DEPS)
 async def post_settings(request: Request) -> JSONResponse:
     body = await request.json()
     if not isinstance(body, dict):
@@ -189,7 +193,7 @@ async def publish_now(session_id: str) -> JSONResponse:
 
 
 # --- 重新佈署重啟（受保護）--------------------------------------------
-@router.post("/api/redeploy", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/redeploy", dependencies=WRITE_DEPS)
 async def redeploy_now() -> JSONResponse:
     """拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。"""
     result = await redeploy.redeploy()
@@ -219,19 +223,19 @@ async def autopilot_backlog() -> JSONResponse:
     return JSONResponse({"tasks": backlog.list_tasks()})
 
 
-@router.post("/api/autopilot/pause", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/autopilot/pause", dependencies=WRITE_DEPS)
 async def autopilot_pause() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.write_text("paused via UI\n", encoding="utf-8")
     return JSONResponse({"ok": True, "paused": True})
 
 
-@router.post("/api/autopilot/resume", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/autopilot/resume", dependencies=WRITE_DEPS)
 async def autopilot_resume() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.unlink(missing_ok=True)
     return JSONResponse({"ok": True, "paused": config.autopilot_paused()})
 
 
-@router.post("/api/autopilot/task", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/autopilot/task", dependencies=WRITE_DEPS)
 async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     task = backlog.add(body.title, body.detail, source="manual")
     if task is None:
