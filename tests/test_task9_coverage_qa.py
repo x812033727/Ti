@@ -36,7 +36,7 @@ def test_test_tools_covers_five_boundaries():
 
 
 def test_test_zip_workspace_qa_covers_five_boundaries():
-    src = _src("test_zip_workspace_qa.py")
+    src = _src("export/test_zip_workspace_qa.py")
     missing = [b for b, keys in BOUNDARIES.items() if not any(k in src for k in keys)]
     assert not missing, f"test_zip_workspace_qa.py 缺少邊界覆蓋: {missing}"
 
@@ -96,7 +96,7 @@ def test_two_target_files_pass_in_isolation():
             "pytest",
             "-q",
             str(TESTS / "test_tools.py"),
-            str(TESTS / "test_zip_workspace_qa.py"),
+            str(TESTS / "export" / "test_zip_workspace_qa.py"),
         ],
         capture_output=True,
         text=True,
