@@ -1,6 +1,6 @@
 """QA 任務#1：驗證 ci.yml 的 sandbox-test job 符合驗收標準（結構面）。
 
-只驗 CI 設定的結構與不變式，沙箱實跑由 tests/test_runner.py 等負責。
+只驗 CI 設定的結構與不變式，沙箱實跑由 tests/core/test_runner.py 等負責。
 """
 
 import pytest
