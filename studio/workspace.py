@@ -58,6 +58,14 @@ def workspace_path(session_id: str) -> Path:
     return config.WORKSPACE_ROOT / (safe or "default")
 
 
+def count_workspaces() -> int:
+    """workspaces 根目錄下的 session 目錄數（供運維可視化；不存在回 0）。"""
+    root = config.WORKSPACE_ROOT
+    if not root.exists():
+        return 0
+    return sum(1 for p in root.iterdir() if p.is_dir())
+
+
 def list_files(session_id: str) -> list[str]:
     """列出 workspace 內的相對檔案路徑（排除雜訊目錄）。"""
     root = workspace_path(session_id)
