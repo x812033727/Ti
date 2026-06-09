@@ -154,6 +154,13 @@ PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")  # 例：octocat/outputs
 PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")  # PR 目標分支
 # 專案完成後是否自動發佈（預設關閉，避免非預期的對外推送）。
 PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", "")
+# 發佈後驗證 CI/CD：失敗讓團隊修正重推、成功直接 squash-merge（預設開啟）。
+PUBLISH_MERGE = os.getenv("TI_PUBLISH_MERGE", "1") not in ("0", "false", "False", "")
+PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))  # CI 失敗最多重修幾輪
+PUBLISH_CI_TIMEOUT = int(os.getenv("TI_PUBLISH_CI_TIMEOUT", "1800"))  # 單輪等 CI 完成上限（秒）
+PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))  # push 後等 check 出現的寬限期（秒）
+# 預設不帶 --admin，讓分支保護／必過檢查生效；設為真才繞過保護強制合併。
+PUBLISH_MERGE_ADMIN = os.getenv("TI_PUBLISH_MERGE_ADMIN", "0") not in ("0", "false", "False", "")
 
 # --- 登入 / 門禁（單一共用密碼，預設關閉）------------------------------
 # 設定 TI_ACCESS_PASSWORD 後即啟用門禁：使用者需在登入頁輸入正確密碼才能進入工作室。
@@ -289,6 +296,8 @@ def reload() -> None:
     global PROVIDER, MODEL_LEAD, MODEL_FAST
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO
+    global PUBLISH_MERGE, PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_TIMEOUT, PUBLISH_CI_GRACE
+    global PUBLISH_MERGE_ADMIN
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if r.strip()}
@@ -311,3 +320,8 @@ def reload() -> None:
     PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")
     PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")
     PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", "")
+    PUBLISH_MERGE = os.getenv("TI_PUBLISH_MERGE", "1") not in ("0", "false", "False", "")
+    PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
+    PUBLISH_CI_TIMEOUT = int(os.getenv("TI_PUBLISH_CI_TIMEOUT", "1800"))
+    PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
+    PUBLISH_MERGE_ADMIN = os.getenv("TI_PUBLISH_MERGE_ADMIN", "0") not in ("0", "false", "False", "")

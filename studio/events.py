@@ -20,6 +20,7 @@ class EventType(str, Enum):
     DEMO_RESULT = "demo_result"  # 實際執行產出（含 stdout/stderr）
     GIT_COMMIT = "git_commit"  # workspace 內階段性 commit
     PUBLISH_RESULT = "publish_result"  # 成果發佈到 GitHub 的結果
+    CI_RESULT = "ci_result"  # 發佈後 CI/CD 驗證與自動合併的進度
     HUMAN_MESSAGE = "human_message"  # 人類中途插話
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
@@ -127,6 +128,15 @@ def human_message(session_id: str, text: str) -> StudioEvent:
 
 def publish_result(session_id: str, result: dict) -> StudioEvent:
     return StudioEvent(EventType.PUBLISH_RESULT, session_id, result)
+
+
+def ci_result(session_id: str, payload: dict) -> StudioEvent:
+    """發佈後 CI/CD 驗證與合併進度。
+
+    payload.state ∈ {pass, fail, none, error, merged, merge_failed, giveup}；
+    另含 attempt/rounds/detail（視階段而定）、merged（bool，合併是否成功）。
+    """
+    return StudioEvent(EventType.CI_RESULT, session_id, payload)
 
 
 def huddle(

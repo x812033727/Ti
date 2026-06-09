@@ -149,6 +149,17 @@ async def history_events(session_id: str) -> JSONResponse:
     return JSONResponse({"meta": meta, "events": history.load_events(session_id)})
 
 
+@router.delete("/api/history/{session_id}", dependencies=[Depends(auth.require_auth)])
+async def history_delete(session_id: str) -> JSONResponse:
+    ok = history.delete_session(session_id)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
+@router.post("/api/history/cleanup/completed", dependencies=[Depends(auth.require_auth)])
+async def history_cleanup_completed() -> JSONResponse:
+    return JSONResponse({"deleted": history.delete_completed_sessions()})
+
+
 # --- publish（受保護）--------------------------------------------------
 @router.get("/api/publish/config", dependencies=[Depends(auth.require_auth)])
 async def publish_config() -> JSONResponse:
@@ -171,7 +182,17 @@ async def publish_now(session_id: str) -> JSONResponse:
     meta = history.get_meta(session_id)
     requirement = meta["requirement"] if meta else "Ti Studio 成果"
     result = await publisher.publish(cwd, session_id, requirement)
-    return JSONResponse(result.to_dict())
+    payload = result.to_dict()
+    # 手動發佈：session 已結束、團隊已散，只做「過就合併」，不過僅回報、不自動修。
+    if result.pushed and config.PUBLISH_MERGE:
+        state, detail = await publisher.check_ci(result.repo, result.branch)
+        payload["ci_state"] = state
+        payload["ci_detail"] = detail
+        if state in ("pass", "none"):
+            ok, md = await publisher.merge_pr(result.repo, result.branch)
+            payload["merged"] = ok
+            payload["merge_detail"] = md
+    return JSONResponse(payload)
 
 
 # --- autopilot（受保護）------------------------------------------------

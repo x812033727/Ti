@@ -478,8 +478,8 @@ class StudioSession:
         # 5) PM 驗收 + 檢討
         done = await self._wrap_up(pm, all_ok)
 
-        # 6) 視設定自動發佈成果到 GitHub
-        await self._maybe_publish(done)
+        # 6) 視設定自動發佈成果到 GitHub（此時專家團隊仍在線，可在 CI 失敗時修正）
+        await self._maybe_publish(done, engineer)
 
         return {"completed": done, "followups": self._followups, "commit": self._last_commit}
 
@@ -781,8 +781,8 @@ class StudioSession:
         )
         return done
 
-    async def _maybe_publish(self, done: bool) -> None:
-        """專案完成且設定允許時，自動把成果發佈到 GitHub。"""
+    async def _maybe_publish(self, done: bool, engineer: ExpertLike) -> None:
+        """專案完成且設定允許時，自動發佈到 GitHub；接著驗 CI、失敗讓團隊修、成功直接合併。"""
         if not self.cwd or self._stop or not done:
             return
         if not (config.PUBLISH_AUTO and publisher.is_configured()):
@@ -790,3 +790,63 @@ class StudioSession:
         await self.broadcast(events.phase_change(self.session_id, "發佈", "推送成果到 GitHub"))
         result = await publisher.publish(self.cwd, self.session_id, self._requirement)
         await self.broadcast(events.publish_result(self.session_id, result.to_dict()))
+        if not (result.pushed and config.PUBLISH_MERGE):
+            return
+
+        repo, ref = result.repo, result.branch
+        rounds = config.PUBLISH_CI_MAX_ROUNDS
+        for attempt in range(1, rounds + 1):
+            if self._stop:
+                return
+            await self.broadcast(
+                events.phase_change(self.session_id, "CI 驗證", f"第 {attempt}/{rounds} 輪")
+            )
+            state, detail = await publisher.check_ci(repo, ref)
+            await self.broadcast(
+                events.ci_result(
+                    self.session_id,
+                    {"state": state, "attempt": attempt, "rounds": rounds, "detail": detail},
+                )
+            )
+            if state in ("pass", "none"):
+                await self.broadcast(events.phase_change(self.session_id, "合併", f"squash-merge {ref}"))
+                ok, md = await publisher.merge_pr(repo, ref)
+                await self.broadcast(
+                    events.ci_result(
+                        self.session_id,
+                        {"state": "merged" if ok else "merge_failed", "merged": ok, "detail": md},
+                    )
+                )
+                return
+            if state == "error":
+                # 逾時／gh 出錯：保留 PR、停手，交人工。
+                return
+            if attempt >= rounds:
+                await self.broadcast(
+                    events.ci_result(
+                        self.session_id,
+                        {"state": "giveup", "detail": f"CI 連續 {rounds} 輪未通過，保留 PR 待人工"},
+                    )
+                )
+                return
+            # CI 失敗且還有額度：取失敗日誌→請工程師修正→commit→重推（同分支會重觸 CI）。
+            logs = await publisher.ci_failure_logs(repo, result.branch, ref)
+            await self.broadcast(
+                events.phase_change(self.session_id, "CI 修正", f"第 {attempt}/{rounds} 輪")
+            )
+            await engineer.speak(
+                await self._human_prefix()
+                + "發佈後的 CI/CD 檢查未通過，請依下列失敗日誌修正程式碼，"
+                "讓所有測試／檢查都能通過：\n\n" + logs,
+                self.broadcast,
+            )
+            await self._commit(f"修正 CI 失敗（第 {attempt} 輪）")
+            rp = await publisher.repush(self.cwd, result.branch)
+            if not rp.ok:
+                await self.broadcast(
+                    events.ci_result(
+                        self.session_id,
+                        {"state": "error", "detail": "re-push 失敗：" + publisher.redact(rp.output)},
+                    )
+                )
+                return

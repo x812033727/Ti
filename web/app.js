@@ -142,6 +142,35 @@ function addDemo(p) {
   scrollStream();
 }
 
+const CI_LABELS = {
+  pass: ["✅ CI 通過", "pass"],
+  none: ["✅ 無 CI 檢查，直接合併", "pass"],
+  fail: ["❌ CI 未通過", "fail"],
+  error: ["⚠️ CI 等待逾時/出錯，保留 PR 待人工", "fail"],
+  merged: ["🎉 已自動合併（squash + 刪分支）", "pass"],
+  merge_failed: ["❌ 合併失敗", "fail"],
+  giveup: ["🛑 CI 連續失敗達上限，保留 PR 待人工", "fail"],
+};
+
+function addCI(p) {
+  const [label, cls] = CI_LABELS[p.state] || [p.state || "CI", "fail"];
+  const round = p.attempt && p.rounds ? `（第 ${p.attempt}/${p.rounds} 輪）` : "";
+  const el = document.createElement("div");
+  el.className = "ci result " + cls;
+  el.textContent = "🔁 " + label + round;
+  if (p.detail) {
+    const det = document.createElement("details");
+    det.className = "log";
+    det.innerHTML = "<summary>查看詳情</summary>";
+    const pre = document.createElement("pre");
+    pre.textContent = p.detail;
+    det.appendChild(pre);
+    el.appendChild(det);
+  }
+  stream.appendChild(el);
+  scrollStream();
+}
+
 function renderBoard(columns) {
   for (const [col, items] of Object.entries(columns)) {
     const wrap = document.querySelector(`.col[data-col="${col}"] .cards`);
@@ -257,6 +286,9 @@ function handleEvent(ev) {
     case "publish_result":
       renderPublish(p);
       break;
+    case "ci_result":
+      addCI(p);
+      break;
     case "done":
       setPhase(p.stopped ? "⏹ 已停止" : (p.completed ? "✅ 已完成" : "⚠️ 結束（未完全達標）"));
       addSystem(p.stopped ? "已依指示停止。" : (p.completed ? "🎉 專案完成！" : "專案結束，仍有未達標項目。"));
@@ -330,13 +362,40 @@ function renderHistory(sessions) {
     const li = document.createElement("li");
     const when = s.started_at ? new Date(s.started_at * 1000).toLocaleString() : "";
     li.innerHTML = `
-      <div class="h-req"></div>
-      <div class="h-meta"><span>${STATUS_LABEL[s.status] || s.status}</span>
-        <span>${s.n_events || 0} 事件</span><span>${when}</span></div>`;
+      <div class="h-main">
+        <div class="h-req"></div>
+        <div class="h-meta"><span class="h-status status-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>
+          <span>${s.n_events || 0} 事件</span><span>${when}</span></div>
+      </div>
+      <button class="h-del" title="刪除此 session（含產出檔案）">🗑</button>`;
     li.querySelector(".h-req").textContent = s.requirement || "(無需求)";
-    li.onclick = () => replaySession(s.session_id);
+    li.querySelector(".h-main").onclick = () => replaySession(s.session_id);
+    li.querySelector(".h-del").onclick = (e) => {
+      e.stopPropagation();
+      deleteSession(s.session_id, s.status);
+    };
     historyList.appendChild(li);
   }
+}
+
+async function deleteSession(sid, status) {
+  if (status === "running") { toast("執行中的 session 無法刪除", "err"); return; }
+  if (!confirm("刪除此 session？產出檔案（workspace）也會一併刪除，無法復原。")) return;
+  try {
+    const r = await fetch(`/api/history/${sid}`, { method: "DELETE" });
+    if (r.ok) { toast("已刪除", "ok"); openHistory(); }
+    else toast("刪除失敗", "err");
+  } catch (e) { toast("刪除失敗", "err"); }
+}
+
+async function cleanupCompleted() {
+  if (!confirm("清除所有「✅ 已完成」的 session？產出檔案也會一併刪除，無法復原。")) return;
+  try {
+    const r = await fetch("/api/history/cleanup/completed", { method: "POST" });
+    const d = await r.json().catch(() => ({}));
+    toast(`已清除 ${d.deleted ?? 0} 筆已完成 session`, "ok");
+    openHistory();
+  } catch (e) { toast("清除失敗", "err"); }
 }
 
 async function replaySession(sid) {
@@ -440,6 +499,12 @@ function addPublishButton(sid) {
     try {
       const res = await (await fetch(`/api/publish/${sid}`, { method: "POST" })).json();
       renderPublish(res);
+      if (res.ci_state) {
+        addCI({ state: res.ci_state, detail: res.ci_detail });
+        if (res.merged !== undefined) {
+          addCI({ state: res.merged ? "merged" : "merge_failed", detail: res.merge_detail });
+        }
+      }
     } catch (e) { renderPublish({ ok: false, detail: "發佈請求失敗" }); }
     btn.remove();
   };
@@ -606,6 +671,7 @@ $("#pwSave").onclick = savePassword;
 $("#downloadBtn").onclick = downloadWorkspace;
 $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
+$("#historyCleanup").onclick = cleanupCompleted;
 $("#autopilotBtn").onclick = openAutopilot;
 $("#autopilotClose").onclick = closeAutopilot;
 $("#apToggle").onclick = toggleAutopilot;

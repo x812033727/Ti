@@ -7,9 +7,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import dataclass
 
 from . import config, runner
+
+# gh 從環境（HOME=/root 的 ~/.config/gh）讀 token；輸出不含 token，但對外回傳仍經 redact() 防呆。
+_GH = ["gh"]
 
 
 @dataclass
@@ -135,3 +140,113 @@ async def publish(cwd, session_id: str, requirement: str, *, make_pr: bool = Tru
             True, "已 push 並建立 PR", branch=branch, repo=repo, pushed=True, pr_url=info
         )
     return PublishResult(True, "已 push，但 " + info, branch=branch, repo=repo, pushed=True)
+
+
+# --- CI/CD 驗證 + 自動合併（對外、走 gh）-------------------------------
+# 全部 sandbox=False（要連外）、簡短 label（避免污染日誌），ref 一律用分支名當 PR selector。
+
+
+def _no_checks(output: str) -> bool:
+    """gh 在「該分支沒有任何 check」時的輸出特徵；用文字判定比依賴 exit code 穩。"""
+    return "no checks reported" in (output or "").lower()
+
+
+async def check_ci(repo: str, ref: str, *, grace: int | None = None, timeout: int | None = None):
+    """驗證 ref（分支）對應 PR 的 CI/CD 狀態。
+
+    回傳 (state, detail)，state ∈ {"pass","fail","none","error"}：
+      pass  — 所有 check 通過
+      fail  — 有 check 失敗
+      none  — 寬限期過後仍無任何 check（視同無 CI）
+      error — 等待逾時或 gh 本身出錯
+    """
+    grace = config.PUBLISH_CI_GRACE if grace is None else grace
+    timeout = config.PUBLISH_CI_TIMEOUT if timeout is None else timeout
+
+    # 1) 寬限輪詢：等 push 後 check 註冊出現（CI 常有數十秒延遲）。
+    waited = 0
+    interval = 15
+    has_checks = False
+    while waited < grace:
+        r = await runner.run_command_exec(
+            cwd=".", argv=[*_GH, "pr", "checks", ref, "-R", repo], timeout=60,
+            sandbox=False, label="gh pr checks",
+        )
+        if r.ok:
+            return "pass", redact(r.output[-500:])
+        if not _no_checks(r.output):
+            # check 已存在（pending/部分失敗）→ 進入等完成階段。
+            has_checks = True
+            break
+        await asyncio.sleep(interval)
+        waited += interval
+    if not has_checks:
+        return "none", "寬限期內未偵測到任何 CI check，視同無 CI"
+
+    # 2) 等所有 check 完成（--watch；--fail-fast 一失敗即返回）。
+    r = await runner.run_command_exec(
+        cwd=".",
+        argv=[*_GH, "pr", "checks", ref, "-R", repo, "--watch", "--fail-fast", "--interval", "15"],
+        timeout=timeout, sandbox=False, label="gh pr checks --watch",
+    )
+    if r.timed_out:
+        return "error", f"等待 CI 完成逾時（>{timeout}s）"
+    if r.ok:
+        return "pass", redact(r.output[-500:])
+    if _no_checks(r.output):
+        return "none", "無任何 CI check，視同無 CI"
+    return "fail", redact(r.output[-1500:])
+
+
+async def ci_failure_logs(repo: str, branch: str, ref: str) -> str:
+    """盡力取最近一次失敗 run 的日誌餵給工程師；取不到就退回 checks 摘要。"""
+    listing = await runner.run_command_exec(
+        cwd=".",
+        argv=[
+            *_GH, "run", "list", "-R", repo, "--branch", branch, "-L", "5",
+            "--json", "databaseId,conclusion,status,workflowName",
+        ],
+        timeout=60, sandbox=False, label="gh run list",
+    )
+    run_id = None
+    if listing.ok:
+        try:
+            for run in json.loads(listing.output or "[]"):
+                if run.get("conclusion") == "failure":
+                    run_id = run.get("databaseId")
+                    break
+        except (ValueError, TypeError):
+            run_id = None
+    if run_id is not None:
+        logs = await runner.run_command_exec(
+            cwd=".", argv=[*_GH, "run", "view", str(run_id), "-R", repo, "--log-failed"],
+            timeout=120, sandbox=False, label="gh run view --log-failed",
+        )
+        if logs.output.strip():
+            return redact(logs.output[-4000:])
+    # 退回：用 pr checks 的摘要當線索。
+    summary = await runner.run_command_exec(
+        cwd=".", argv=[*_GH, "pr", "checks", ref, "-R", repo], timeout=60,
+        sandbox=False, label="gh pr checks",
+    )
+    return redact(summary.output[-2000:]) or "（無法取得失敗日誌）"
+
+
+async def merge_pr(repo: str, ref: str) -> tuple[bool, str]:
+    """squash-merge 並刪除分支；預設不帶 --admin（讓分支保護生效）。"""
+    admin = ["--admin"] if config.PUBLISH_MERGE_ADMIN else []
+    r = await runner.run_command_exec(
+        cwd=".",
+        argv=[*_GH, "pr", "merge", ref, "-R", repo, "--squash", *admin, "--delete-branch"],
+        timeout=180, sandbox=False, label="gh pr merge",
+    )
+    if r.ok:
+        return True, f"已 squash-merge {ref} 並刪除分支"
+    return False, "merge 失敗：" + redact(r.output[-500:])
+
+
+async def repush(cwd, branch: str) -> runner.RunOutput:
+    """把工程師修正後的 commit 重推同一分支（remote ti_publish 由初次 _push 已建好）。"""
+    return await runner.run_command_exec(
+        cwd, ["git", "push", "ti_publish", branch], timeout=120, sandbox=False, label="git push",
+    )
