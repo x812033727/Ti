@@ -10,10 +10,11 @@
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from pathlib import Path
 
-from . import config
+from . import config, workspace
 
 
 def _safe_id(session_id: str) -> str:
@@ -118,6 +119,34 @@ def load_events(session_id: str) -> list[dict]:
         except json.JSONDecodeError:
             continue
     return events
+
+
+def delete_session(session_id: str) -> bool:
+    """刪除單一 session 的 meta、events 與 workspace 產出。
+
+    拒刪 running 中的 session（避免刪掉正在跑的)；找不到 meta 回 False。
+    """
+    meta = get_meta(session_id)
+    if meta is None:
+        return False
+    if meta.get("status") == "running":
+        return False
+    for p in (_meta_path(session_id), _events_path(session_id)):
+        if p.exists():
+            p.unlink()
+    ws = workspace.workspace_path(session_id)
+    if ws.exists():
+        shutil.rmtree(ws, ignore_errors=True)
+    return True
+
+
+def delete_completed_sessions() -> int:
+    """刪除所有 status == 'completed' 的 session,回傳刪除筆數。"""
+    deleted = 0
+    for meta in list_sessions():
+        if meta.get("status") == "completed" and delete_session(meta["session_id"]):
+            deleted += 1
+    return deleted
 
 
 def _write_meta(session_id: str, meta: dict) -> None:

@@ -149,6 +149,17 @@ async def history_events(session_id: str) -> JSONResponse:
     return JSONResponse({"meta": meta, "events": history.load_events(session_id)})
 
 
+@router.delete("/api/history/{session_id}", dependencies=[Depends(auth.require_auth)])
+async def history_delete(session_id: str) -> JSONResponse:
+    ok = history.delete_session(session_id)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
+@router.post("/api/history/cleanup/completed", dependencies=[Depends(auth.require_auth)])
+async def history_cleanup_completed() -> JSONResponse:
+    return JSONResponse({"deleted": history.delete_completed_sessions()})
+
+
 # --- publish（受保護）--------------------------------------------------
 @router.get("/api/publish/config", dependencies=[Depends(auth.require_auth)])
 async def publish_config() -> JSONResponse:
@@ -171,6 +182,8 @@ async def publish_now(session_id: str) -> JSONResponse:
         )
     meta = history.get_meta(session_id)
     requirement = meta["requirement"] if meta else "Ti Studio 成果"
+    # 手動發佈：session 已結束、團隊已散，無法自我修復；走 publish(merge=) 一次性「等 CI→合併」，
+    # 結局（outcome）寫進 to_dict 供前端徽章顯示，不另起修正迴圈。
     result = await publisher.publish(cwd, session_id, requirement, merge=config.PUBLISH_MERGE)
     return JSONResponse(result.to_dict())
 

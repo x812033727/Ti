@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -19,6 +20,10 @@ from enum import Enum
 from . import config, runner
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
+
+# gh CLI 從環境（HOME 的 ~/.config/gh）讀 token；輸出不含 token，但對外回傳仍經 redact() 防呆。
+# 僅供 CI 自我修復迴圈取失敗日誌用（合併本身走 REST 的 _merge_flow）。
+_GH = ["gh"]
 
 
 class MergeOutcome(str, Enum):
@@ -528,7 +533,6 @@ async def publish(
         return PublishResult(
             True, "已 push，但 " + redact(info), branch=branch, repo=repo, pushed=True
         )
-
     res = PublishResult(
         True,
         "已 push 並建立 PR",
@@ -562,3 +566,114 @@ async def publish(
         label = _OUTCOME_LABEL.get(outcome, "未合併")
         res.detail = f"已 push 並建立 PR，但未合併（{label}）：" + redact(minfo)
     return res
+
+
+# --- 發佈後 CI 自我修復迴圈用的輔助 ------------------------------------
+# publish(merge=True) 已含「首輪等 CI→合併」。orchestrator 在 CI 失敗時用以下函式取失敗日誌
+# 餵工程師、修正後 repush，再以 verify_and_merge 重新等 CI 並合併（沿用 REST 的 _merge_flow）。
+
+
+async def _await_checks_registered(
+    pr_number: int, grace: int, *, sleep=asyncio.sleep, interval: int = 15
+) -> None:
+    """盡力等 PR head 的 CI check 在 grace 秒內註冊出現；取不到狀態就直接返回（best-effort）。
+
+    repush 後新 commit 的 check 常有數十秒延遲；若不等，_wait_for_ci 會把「尚未註冊」誤判為
+    「無 CI → pass」而提前合併未驗證的修正。此函式只負責「等 check 冒出來」，不判定通過與否。
+    """
+    if grace <= 0:
+        return
+    status = await _get_pr_status(pr_number, sleep=sleep)
+    head_sha = ((status or {}).get("head") or {}).get("sha", "")
+    if not head_sha:
+        return
+    waited = 0
+    while waited < grace:
+        fetched = await _fetch_ci(head_sha)
+        if fetched is not None:
+            runs, st = fetched
+            if runs or int((st or {}).get("total_count", 0) or 0) > 0:
+                return
+        await sleep(interval)
+        waited += interval
+
+
+async def verify_and_merge(
+    pr_number: int, branch: str, *, grace: int | None = None
+) -> tuple[MergeOutcome, str]:
+    """工程師修正並 repush 後，重新等 CI 並嘗試合併；回傳 (MergeOutcome, detail)。
+
+    先寬限等新 commit 的 check 註冊出現（避免提前合併未驗證的修正），再交給 REST 的
+    _merge_flow（含 stale→update-branch 與暫時性錯誤的有限重試）。
+    """
+    grace = config.PUBLISH_CI_GRACE if grace is None else grace
+    await _await_checks_registered(pr_number, grace)
+    return await _merge_flow(
+        pr_number,
+        merge_payload(branch),
+        ci_timeout=config.PUBLISH_CI_TIMEOUT,
+        ci_interval=config.PUBLISH_CI_INTERVAL,
+        retries=config.PUBLISH_MERGE_RETRIES,
+    )
+
+
+async def ci_failure_logs(repo: str, branch: str, ref: str) -> str:
+    """盡力取最近一次失敗 run 的日誌餵給工程師；取不到就退回 checks 摘要。"""
+    listing = await runner.run_command_exec(
+        cwd=".",
+        argv=[
+            *_GH,
+            "run",
+            "list",
+            "-R",
+            repo,
+            "--branch",
+            branch,
+            "-L",
+            "5",
+            "--json",
+            "databaseId,conclusion,status,workflowName",
+        ],
+        timeout=60,
+        sandbox=False,
+        label="gh run list",
+    )
+    run_id = None
+    if listing.ok:
+        try:
+            for run in json.loads(listing.output or "[]"):
+                if run.get("conclusion") == "failure":
+                    run_id = run.get("databaseId")
+                    break
+        except (ValueError, TypeError):
+            run_id = None
+    if run_id is not None:
+        logs = await runner.run_command_exec(
+            cwd=".",
+            argv=[*_GH, "run", "view", str(run_id), "-R", repo, "--log-failed"],
+            timeout=120,
+            sandbox=False,
+            label="gh run view --log-failed",
+        )
+        if logs.output.strip():
+            return redact(logs.output[-4000:])
+    # 退回：用 pr checks 的摘要當線索。
+    summary = await runner.run_command_exec(
+        cwd=".",
+        argv=[*_GH, "pr", "checks", ref, "-R", repo],
+        timeout=60,
+        sandbox=False,
+        label="gh pr checks",
+    )
+    return redact(summary.output[-2000:]) or "（無法取得失敗日誌）"
+
+
+async def repush(cwd, branch: str) -> runner.RunOutput:
+    """把工程師修正後的 commit 重推同一分支（remote ti_publish 由初次 _push 已建好）。"""
+    return await runner.run_command_exec(
+        cwd,
+        ["git", "push", "ti_publish", branch],
+        timeout=120,
+        sandbox=False,
+        label="git push",
+    )
