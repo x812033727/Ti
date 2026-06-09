@@ -8,6 +8,10 @@ dist/
 .pytest_cache/
 .venv/
 venv/
+# QA / 驗證流程產生的暫存 venv 與 pre-commit 快取（本機 artifact，不進版控）
+.qa-venv/
+.qa_venv/
+.pc-cache-qa/
 
 # Secrets
 .env
