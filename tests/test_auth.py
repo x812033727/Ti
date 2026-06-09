@@ -68,13 +68,55 @@ def test_auth_enabled_blocks_then_allows(app, monkeypatch):
 
 def test_auth_enabled_websocket_requires_login(app, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
-    client = TestClient(app)
+    # 須先通過 loopback 檢查（在身分檢查之前），故用 loopback client 才測得到登入分支
+    client = TestClient(app, client=("127.0.0.1", 12345))
 
     # 未登入：WS 連線會收到 error 並被關閉
     with client.websocket_connect("/ws") as ws:
         ev = ws.receive_json()
         assert ev["type"] == "error"
         assert "登入" in ev["payload"]["message"]
+
+
+# --- 任務 #4：/ws 於 handler 內限定本機（來源前置於身分） ----------------
+def test_ws_blocks_public_peer(app, monkeypatch):
+    """公網來源連 /ws：握手後收到『僅限本機存取』error 並被關閉，獨立於門禁狀態。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用也不得放行
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    with client.websocket_connect("/ws") as ws:
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert ev["payload"]["message"] == "僅限本機存取"
+
+
+def test_ws_blocks_unknown_peer(app, monkeypatch):
+    """來源不可知（TestClient 預設 host 非 IP）→ fail-closed，/ws 被擋。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app)  # 預設 client host = "testclient"
+    with client.websocket_connect("/ws") as ws:
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert ev["payload"]["message"] == "僅限本機存取"
+
+
+def test_ws_loopback_check_precedes_auth(app, monkeypatch):
+    """來源前置於身分：門禁啟用且公網來源時，先因 loopback 被擋（非『需要登入』）。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    with client.websocket_connect("/ws") as ws:
+        ev = ws.receive_json()
+        assert ev["payload"]["message"] == "僅限本機存取"  # loopback 先於登入短路
+
+
+def test_ws_allows_loopback_peer(app, monkeypatch):
+    """loopback 來源放行 loopback 檢查：送空需求應進入 handler 主體並回『需求不可為空』。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app, client=("127.0.0.1", 12345))
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"requirement": ""})  # 已過 loopback+auth，進入需求解析
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert ev["payload"]["message"] == "需求不可為空"
 
 
 def test_change_password_when_disabled_enables_gate(app, pw_env, monkeypatch):
