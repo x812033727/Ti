@@ -400,3 +400,187 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
         root, ["git", "rev-parse", "--short", "HEAD"], timeout=20, label="git rev-parse"
     )
     return h.output.strip() if h.ok else None
+
+
+# --- git worktree（並行支線隔離）--------------------------------------
+# 每條並行 lane 在 workspace 外的兄弟目錄開獨立 worktree + 分支，各自 commit、互不干擾主
+# repo 的 index；完工後依序 merge 回主分支。worktree 路徑在 workspace 沙箱外，故這些 git
+# 基礎操作一律 sandbox=False（與 git_init 同款，非 agent 指令、為確定性基礎建設）。
+
+
+@dataclass
+class MergeResult:
+    """git merge 結果。conflict=True 表示遇到合併衝突（呼叫端應 abort 後序列化重跑）。"""
+
+    ok: bool
+    conflict: bool
+    output: str
+
+
+async def git_worktree_add(
+    repo: Path | str, worktree_path: Path | str, branch: str, base: str = "HEAD"
+) -> bool:
+    """在 repo 上開新分支 <branch> 並 checkout 到獨立 worktree 目錄。回傳是否成功。
+
+    branch 以 _BRANCH_RE 驗證，擋下以選項開頭（如 --upload-pack）的注入。repo 尚無 .git
+    時先 git_init（但此時通常已有 PM 規劃的首個 commit，base=HEAD 有效）。
+    """
+    if not config.ENABLE_GIT or not _git_available():
+        return False
+    if not _BRANCH_RE.match(branch):
+        log.warning("git worktree add 被拒：不合法的 branch 名 %r", branch)
+        return False
+    root = Path(repo)
+    if not (root / ".git").exists() and not await git_init(root):
+        return False
+    r = await run_command_exec(
+        root,
+        ["git", "worktree", "add", "-b", branch, str(worktree_path), base],
+        timeout=60,
+        sandbox=False,
+        label="git worktree add",
+    )
+    if not r.ok:
+        log.warning("git worktree add 失敗（exit=%s）：%s", r.exit_code, r.output)
+    return r.ok
+
+
+async def git_ensure_initial_commit(repo: Path | str) -> str | None:
+    """確保 repo 至少有一個 commit（並行 worktree 需要可分支的 base）。回傳 HEAD 短 hash。
+
+    已有 commit 直接回傳其短 hash；HEAD 未誕生（剛 init、PM 規劃無實質檔案）時建一個空的
+    初始 commit。帶 git identity + gpgsign=false（與 git_commit 一致）。git 不可用回 None。
+    """
+    if not config.ENABLE_GIT or not _git_available():
+        return None
+    root = Path(repo)
+    if not (root / ".git").exists() and not await git_init(root):
+        return None
+    h = await git_head_short(root)
+    if h:
+        return h
+    r = await run_command_exec(
+        root,
+        [
+            "git",
+            "-c",
+            f"user.name={_GIT_USER_NAME}",
+            "-c",
+            f"user.email={_GIT_USER_EMAIL}",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "init",
+        ],
+        timeout=30,
+        sandbox=False,
+        label="git commit",
+    )
+    if not r.ok:
+        return None
+    return await git_head_short(root)
+
+
+async def git_head_short(repo: Path | str) -> str | None:
+    """回傳 repo 當前 HEAD 的短 hash（失敗回 None）。合併後更新 last_commit 用。"""
+    if not _git_available():
+        return None
+    r = await run_command_exec(
+        Path(repo),
+        ["git", "rev-parse", "--short", "HEAD"],
+        timeout=20,
+        sandbox=False,
+        label="git rev-parse",
+    )
+    return r.output.strip() if r.ok else None
+
+
+async def git_current_branch(repo: Path | str) -> str | None:
+    """回傳 repo 目前所在分支名（detached / 失敗回 None）。merge 目標即主分支。"""
+    if not _git_available():
+        return None
+    r = await run_command_exec(
+        Path(repo),
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        timeout=20,
+        sandbox=False,
+        label="git rev-parse",
+    )
+    name = r.output.strip() if r.ok else ""
+    return name or None
+
+
+async def git_merge_worktree(repo: Path | str, branch: str) -> MergeResult:
+    """在主 repo 把 lane 分支 <branch> 以 --no-ff 合併回當前分支。
+
+    回傳 MergeResult。衝突（exit!=0 且輸出含 CONFLICT / Automatic merge failed）時
+    ok=False、conflict=True，呼叫端應 git_merge_abort 後走序列化重跑 fallback。
+    合併會建 merge commit，故帶 git identity 與 gpgsign=false（與 git_commit 一致）。
+    """
+    if not config.ENABLE_GIT or not _git_available():
+        return MergeResult(ok=False, conflict=False, output="（git 不可用）")
+    if not _BRANCH_RE.match(branch):
+        return MergeResult(ok=False, conflict=False, output=f"不合法的 branch 名：{branch!r}")
+    r = await run_command_exec(
+        Path(repo),
+        [
+            "git",
+            "-c",
+            f"user.name={_GIT_USER_NAME}",
+            "-c",
+            f"user.email={_GIT_USER_EMAIL}",
+            "-c",
+            "commit.gpgsign=false",
+            "merge",
+            "--no-ff",
+            "--no-edit",
+            branch,
+        ],
+        timeout=60,
+        sandbox=False,
+        label="git merge",
+    )
+    if r.ok:
+        return MergeResult(ok=True, conflict=False, output=r.output)
+    conflict = bool(re.search(r"CONFLICT|Automatic merge failed", r.output))
+    return MergeResult(ok=False, conflict=conflict, output=r.output)
+
+
+async def git_merge_abort(repo: Path | str) -> None:
+    """中止進行中的 merge，把主 repo working tree 還原乾淨（衝突 fallback 用）。"""
+    if not _git_available():
+        return
+    await run_command_exec(
+        Path(repo),
+        ["git", "merge", "--abort"],
+        timeout=20,
+        sandbox=False,
+        label="git merge --abort",
+    )
+
+
+async def git_worktree_remove(
+    repo: Path | str, worktree_path: Path | str, branch: str | None = None
+) -> None:
+    """移除 lane 的 worktree（--force 容忍未清理變更），並盡力刪除其分支（best-effort）。"""
+    if not _git_available():
+        return
+    root = Path(repo)
+    await run_command_exec(
+        root,
+        ["git", "worktree", "remove", "--force", str(worktree_path)],
+        timeout=30,
+        sandbox=False,
+        label="git worktree remove",
+    )
+    if branch and _BRANCH_RE.match(branch):
+        await run_command_exec(
+            root,
+            ["git", "branch", "-D", branch],
+            timeout=20,
+            sandbox=False,
+            label="git branch -D",
+        )

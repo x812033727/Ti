@@ -65,12 +65,17 @@ function setExpertStatus(key, status) {
   if (status !== "idle") el.classList.add("active");
 }
 
+// 並行支線標籤：事件帶 task_id（並行模式）時回傳一枚色彩標記，讓多支線發言可辨識來源。
+function laneTag(p) {
+  return p.task_id != null ? `<span class="lanetag lane-${p.task_id % 6}">支線 #${p.task_id}</span>` : "";
+}
+
 function addMessage(p) {
   const el = document.createElement("div");
-  el.className = "msg";
+  el.className = "msg" + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
   el.innerHTML = `
     <div class="av">${p.avatar}</div>
-    <div class="body"><div class="who">${p.name}</div><div class="txt"></div></div>`;
+    <div class="body">${laneTag(p)}<div class="who">${p.name}</div><div class="txt"></div></div>`;
   el.querySelector(".txt").textContent = p.text;
   stream.appendChild(el);
   scrollStream();
@@ -78,8 +83,8 @@ function addMessage(p) {
 
 function addTool(p) {
   const el = document.createElement("div");
-  el.className = "tool";
-  el.innerHTML = `<span class="badge">${p.tool}</span><span></span>`;
+  el.className = "tool" + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
+  el.innerHTML = `${laneTag(p)}<span class="badge">${p.tool}</span><span></span>`;
   el.querySelector("span:last-child").textContent = p.summary;
   stream.appendChild(el);
   scrollStream();

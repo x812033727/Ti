@@ -28,7 +28,7 @@ EXPECTED = {
     "runner.py git init/config": ("a", {296, 299, 303, 307}),
     "runner.py git_clone": ("a", {347}),
     "autopilot.py pytest gate": ("a", {93}),
-    "orchestrator.py demo/self-test": ("c", {721, 740}),
+    "orchestrator.py demo/self-test": ("c", {1063, 1082}),
     "tools.py run_bash": ("c", {133}),
 }
 
@@ -205,8 +205,9 @@ def test_classification_matches_code_reality():
     ), "autopilot pytest gate 應為固定 pytest 指令 (a 類，shell 或 exec 皆可)"
 
     # --- c 類：傳入的是變數（cmd / args.get(...)），必須仍走 shell run_command ---
-    for ln in (721, 740):
-        assert "run_command(self.cwd, cmd)" in orch[ln - 1], (
+    # _self_test 走 lane context（ctx.cwd）、_final_demo 走整體 workspace（self.cwd），皆傳動態 cmd。
+    for ln in (1063, 1082):
+        assert re.search(r"run_command\((?:ctx|self)\.cwd, cmd\)", orch[ln - 1]), (
             f"orchestrator.py:{ln} 預期傳動態 cmd 變數、保留 shell (c 類)"
         )
     assert 'args.get("command"' in tools[132], "tools.py:133 預期傳使用者輸入、保留 shell (c 類)"
