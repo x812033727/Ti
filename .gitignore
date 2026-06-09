@@ -8,12 +8,20 @@ dist/
 .pytest_cache/
 .venv/
 venv/
+# QA / 驗證流程產生的暫存 venv 與 pre-commit 快取（本機 artifact，不進版控）
+.qa-venv/
+.qa_venv/
+.pc-cache-qa/
 
 # Secrets
 .env
 
 # Generated agent workspaces
 workspaces/
+
+# Autopilot 執行期狀態目錄（AUTOPILOT_STATE_DIR，預設 PROJECT_ROOT/autopilot）
+# 含 deploy.lock / backlog.json / backlog.lock 等運維狀態，不得進版控。
+autopilot/
 
 # Session history archive
 history/

@@ -41,6 +41,50 @@ CI（GitHub Actions）會在每次 push / PR 跑兩個 job：
 
 請在送出前確認本地 `ruff` 與 `pytest` 皆通過。
 
+## shell 用法安全掃描
+
+為偵測潛在的 shell 注入面，repo 內有一支共用掃描腳本
+`scripts/scan_shell_usage.sh`，會掃出兩類用法：
+
+- `subprocess.run(..., shell=True)` 等 → 由 Ruff `S602/S604/S605` 命中
+- `asyncio.create_subprocess_shell(...)` → 由 ripgrep/grep 補掃命中
+  （Ruff S 規則不抓它，因它「天生就是 shell」、無 `shell=` 參數）
+
+這支腳本是**唯一事實來源（SSOT）**：CI 的 lint job、pre-commit hook、本機 demo
+三處都只呼叫它，規則與參數天然一致。
+
+### 本機重現（與 CI 一致）
+
+```bash
+# (a) 與 CI lint job 的「Scan shell usage」step 完全相同的指令；預設掃 studio/
+bash scripts/scan_shell_usage.sh
+
+# (b) 同時展示兩類命中（S602 + create_subprocess_shell）——掃測試樣本
+bash scripts/scan_shell_usage.sh tests/fixtures
+```
+
+> 上面 (a) 的輸出與 CI lint job 的 **Scan shell usage** step 一致（同掃 `studio/`、
+> 同 `SCAN_MODE=warn`），可直接對照。`tests/fixtures/shell_usage_sample.py`
+> 是刻意留存的命中樣本，故 (b) 必然各出現一筆兩類命中。
+
+### 目前為 warning-only
+
+掃描現階段**只警告、不阻斷**：
+
+- CI step 設 `continue-on-error: true`，且腳本在 `warn` 模式恆回傳 0。
+- pre-commit hook 同樣不阻斷 `git commit`，僅印出警告。
+
+### 升級為 blocking（單步操作）
+
+確認既有命中都清乾淨後，把模式改成 `block`，腳本在有命中時即回非零：
+
+```bash
+SCAN_MODE=block bash scripts/scan_shell_usage.sh
+```
+
+正式升級時，只需在 CI step 的 `env` 與（如需）pre-commit hook 將
+`SCAN_MODE` 設為 `block` 即可——單一槓桿，三處邏輯不變。
+
 ## 程式風格
 
 - 規則與行長集中在 `pyproject.toml` 的 `[tool.ruff]`，請勿在個別檔案覆寫。
