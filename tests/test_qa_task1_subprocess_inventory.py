@@ -27,7 +27,7 @@ INVENTORY = STUDIO / "docs" / "subprocess_migration_inventory.md"
 EXPECTED = {
     "runner.py git init/config": ("a", {296, 299, 303, 307}),
     "runner.py git_clone": ("a", {347}),
-    "autopilot.py pytest gate": ("a", {90}),
+    "autopilot.py pytest gate": ("a", {93}),
     "orchestrator.py demo/self-test": ("c", {721, 740}),
     "tools.py run_bash": ("c", {133}),
 }

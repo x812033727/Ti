@@ -34,13 +34,16 @@ _SELF_FILES = ("autopilot.py", "deploy.py", "backlog.py", "config.py")
 
 async def _run(cmd: list[str], cwd: str | None = None, timeout: int = 600) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
-        *cmd, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        *cmd,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        start_new_session=True,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
+        runner.kill_process_group(proc)
         return -1, f"(逾時 {timeout}s)"
     return proc.returncode if proc.returncode is not None else -1, out.decode("utf-8", "replace")
 

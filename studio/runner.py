@@ -109,7 +109,7 @@ def _sandbox_blocked(label: str) -> RunOutput:
     )
 
 
-def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+def kill_process_group(proc: asyncio.subprocess.Process) -> None:
     """逾時時 SIGKILL 整個 process group。
 
     只 `proc.kill()` 殺得到直屬子程序（非沙箱下是 `/bin/sh`），它再 spawn 的工作程序
@@ -146,7 +146,7 @@ async def _finalize_proc(proc: asyncio.subprocess.Process, label: str, timeout: 
             timed_out=False,
         )
     except asyncio.TimeoutError:
-        _kill_process_group(proc)
+        kill_process_group(proc)
         try:
             await proc.wait()
         except ProcessLookupError:
