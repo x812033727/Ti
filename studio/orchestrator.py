@@ -13,6 +13,7 @@ import asyncio
 import difflib
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -27,6 +28,24 @@ class ExpertLike(Protocol):
 
     async def speak(self, prompt: str, broadcast: Broadcast) -> str: ...
     async def stop(self) -> None: ...
+
+
+@dataclass
+class LaneContext:
+    """單一執行支線（lane）的隔離狀態。
+
+    循序模式只有一條 "main" lane：cwd/experts 即 session 本身、branch=None。並行模式下每條
+    lane 各有獨立的 worktree 目錄、專家團隊與 last_commit，彼此不干擾。NOTES 在 lane 內先寫進
+    notes_buffer，由排程器在波次結束時序列化 flush 進共享 NOTES.md，避免並行寫檔競態。
+    """
+
+    lane_id: str
+    cwd: Path | None
+    experts: dict[str, ExpertLike]
+    critics: dict[str, ExpertLike] | None = None
+    branch: str | None = None
+    last_commit: str | None = None
+    notes_buffer: list[str] = field(default_factory=list)
 
 
 # --- 決議解析 -----------------------------------------------------------
@@ -147,7 +166,11 @@ class StudioSession:
         self._requirement = ""
         self._stop = False
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
-        self._last_commit: str | None = None  # 最近一次 workspace commit 短 hash
+        self._last_commit: str | None = None  # 最近一次主分支 workspace commit 短 hash
+        # 主（循序）lane 的隔離狀態；於 _run 建立後，所有對主 workspace 的操作都走它。
+        self._main_ctx: LaneContext | None = None
+        # 所有建立過的 lane（含 main），供 run() 結束時統一回收專家、避免子程序洩漏。
+        self._lane_ctxs: list[LaneContext] = []
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -180,25 +203,27 @@ class StudioSession:
         return self._experts
 
     # --- 異議檢查（critic）-------------------------------------------------
-    def _get_critic(self, role_key: str) -> ExpertLike | None:
-        """取得指定視角的獨立 critic expert。
+    def _get_critic(self, ctx: LaneContext, role_key: str) -> ExpertLike | None:
+        """取得指定視角的獨立 critic expert（綁定到傳入 lane 的 cwd/critics）。
 
-        優先用注入的 critics（測試/離線）；否則在有 cwd 時以獨立 session 建一個新實例，
-        確保不污染主 experts 的對話與 calls 序號。都無法取得時回 None（呼叫端視為放行）。
+        優先用該 lane 已注入/建立的 critics（測試/離線）；否則在有 cwd 時以獨立 session 建一個
+        新實例，確保不污染該 lane 主 experts 的對話與 calls 序號。都無法取得時回 None（放行）。
         """
-        if self._critics is not None:
-            return self._critics.get(role_key)
+        if ctx.critics is not None:
+            return ctx.critics.get(role_key)
         # 離線示範未注入 critics 時不走真 provider（無金鑰），直接放行不報錯。
-        if self.cwd is None or config.OFFLINE_MODE:
+        if ctx.cwd is None or config.OFFLINE_MODE:
             return None
         from .providers import make_expert
         from .roles import BY_KEY
 
-        critic = make_expert(BY_KEY[role_key], f"{self.session_id}:critic:{role_key}", self.cwd)
-        self._critics = {role_key: critic}
+        critic = make_expert(BY_KEY[role_key], f"{self.session_id}:critic:{role_key}", ctx.cwd)
+        ctx.critics = {role_key: critic}
         return critic
 
-    async def _critic_gate(self, role_key: str, subject: str, acceptance: str) -> tuple[bool, str]:
+    async def _critic_gate(
+        self, ctx: LaneContext, role_key: str, subject: str, acceptance: str
+    ) -> tuple[bool, str]:
         """放行前的異議關卡。回傳 (是否放行, critic 文字)。
 
         刻意只餵標的與驗收標準、不餵當事人剛才的核可理由以降低錨定；停用或無 critic 時放行。
@@ -206,7 +231,7 @@ class StudioSession:
         # 離線示範（OFFLINE_MODE）視為 demo 情境自動啟用，以展示「內部討論」事件。
         if not (config.CRITIC_ENABLED or config.OFFLINE_MODE) or self._stop:
             return True, ""
-        critic = self._get_critic(role_key)
+        critic = self._get_critic(ctx, role_key)
         if critic is None:
             return True, ""
         text = await critic.speak(
@@ -221,14 +246,29 @@ class StudioSession:
         return (not blocks), text
 
     # --- 共用知識庫（NOTES.md）----------------------------------------
-    def _note(self, text: str) -> None:
-        """把一段跨任務知識寫進 workspace 的 NOTES.md（停用或無 cwd 時略過）。"""
-        if config.NOTES_ENABLED and self.cwd:
-            workspace.append_note(self.session_id, text)
+    def _note(self, ctx: LaneContext, text: str) -> None:
+        """把一段跨任務知識暫存到 lane 的 notes_buffer（停用或無 cwd 時略過）。
 
-    def _notes_context(self) -> str:
+        刻意不立即寫檔：循序模式每任務結束 flush、並行模式每波次結束序列化 flush，
+        以根除多 lane 同時 append NOTES.md 的競態。
+        """
+        if config.NOTES_ENABLED and ctx.cwd:
+            text = (text or "").strip()
+            if text:
+                ctx.notes_buffer.append(text)
+
+    def _flush_lane_notes(self, ctx: LaneContext) -> None:
+        """把 lane 暫存的 notes_buffer 依序寫進共享 NOTES.md（單一寫入點，無競態），並清空。"""
+        if not (config.NOTES_ENABLED and ctx.cwd):
+            ctx.notes_buffer.clear()
+            return
+        for note in ctx.notes_buffer:
+            workspace.append_note(self.session_id, note)
+        ctx.notes_buffer.clear()
+
+    def _notes_context(self, ctx: LaneContext) -> str:
         """讀回 NOTES.md，組成要注入實作 prompt 的前綴（停用/空白時回空字串）。"""
-        if not (config.NOTES_ENABLED and self.cwd):
+        if not (config.NOTES_ENABLED and ctx.cwd):
             return ""
         notes = workspace.read_notes(self.session_id)
         if not notes.strip():
@@ -236,13 +276,13 @@ class StudioSession:
         return f"【團隊共用知識庫 NOTES.md（過往踩過的坑／決策／後續）】\n{notes}\n\n"
 
     # --- 停滯守門 ------------------------------------------------------
-    def _stalled(self, history: list[str], committed_change: bool) -> bool:
+    def _stalled(self, ctx: LaneContext, history: list[str], committed_change: bool) -> bool:
         """是否陷入停滯（連續多輪只重述且無實質檔案變動）。
 
         無 cwd 或關閉 git 時一律回 False（保護 cwd=None 的單元測試不被提早收斂）；
         本輪有實質 commit 變動則視為有進展、不算停滯。文字相似度為主訊號。
         """
-        if not self.cwd or not config.ENABLE_GIT:
+        if not ctx.cwd or not config.ENABLE_GIT:
             return False
         if config.STALL_ROUNDS <= 1 or committed_change:
             return False
@@ -262,12 +302,16 @@ class StudioSession:
         await self._board()
 
     # --- git --------------------------------------------------------------
-    async def _commit(self, message: str) -> None:
-        if not self.cwd:
+    async def _commit(self, ctx: LaneContext, message: str) -> None:
+        if not ctx.cwd:
             return
-        h = await runner.git_commit(self.cwd, message)
+        h = await runner.git_commit(ctx.cwd, message)
         if h:
-            self._last_commit = h
+            ctx.last_commit = h
+            # 主分支（branch=None）的 commit 同步到 session 級欄位（發佈/回傳值仍用它）。
+            # 並行 lane 的 commit 不動 self._last_commit，改由波次合併後以主分支 HEAD 更新。
+            if ctx.branch is None:
+                self._last_commit = h
             await self.broadcast(events.git_commit(self.session_id, message, h))
 
     # --- 辯論 ----------------------------------------------------------
@@ -334,7 +378,15 @@ class StudioSession:
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
             await self.broadcast(events.error(self.session_id, f"{type(exc).__name__}: {exc}"))
         finally:
-            for ex in list((self._experts or {}).values()) + list((self._critics or {}).values()):
+            # 回收所有 lane（含 main）的專家與 critic；安全網涵蓋 main_ctx 尚未建立但
+            # experts 已 build 的情況。以實例身分去重（同一實例可能同時在數處被引用）。
+            to_stop: list[ExpertLike] = []
+            for ctx in self._lane_ctxs:
+                to_stop += list(ctx.experts.values())
+                to_stop += list((ctx.critics or {}).values())
+            to_stop += list((self._experts or {}).values())
+            to_stop += list((self._critics or {}).values())
+            for ex in dict.fromkeys(to_stop):
                 try:
                     await ex.stop()
                 except Exception:  # noqa: BLE001
@@ -344,16 +396,17 @@ class StudioSession:
     async def _run(self, requirement: str) -> None:
         self._requirement = requirement
         experts = self._get_experts()
-        pm, engineer, qa, senior = (
-            experts["pm"],
-            experts["engineer"],
-            experts["qa"],
-            experts["senior"],
+        # 主（循序）lane：cwd/experts 即 session 本身。逐任務迭代與其 helper 全走它，
+        # 行為與重構前逐字等價；並行模式（後續階段）才會另建隔離 lane。
+        self._main_ctx = LaneContext(
+            "main", self.cwd, experts, self._critics, last_commit=self._last_commit
         )
+        self._lane_ctxs.append(self._main_ctx)
+        # 架構/辯論/驗收/發佈等「整體階段」直接用到的角色（任務內角色由 lane.experts 提供）。
+        pm, engineer, senior = experts["pm"], experts["engineer"], experts["senior"]
         # 可選角色：不存在（offline 或被 TI_OPTIONAL_ROLES 關閉）就跳過對應階段。
         researcher = experts.get("researcher")
         architect = experts.get("architect")
-        security = experts.get("security")
         devops = experts.get("devops")
 
         await self.broadcast(
@@ -413,7 +466,7 @@ class StudioSession:
             for i, t in enumerate(parse_tasks(pm_plan), start=1)
         ]
         await self._board()
-        await self._commit("PM 規劃：建立任務清單與驗收標準")
+        await self._commit(self._main_ctx, "PM 規劃：建立任務清單與驗收標準")
 
         # 2) 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論
         design_note = ""
@@ -441,25 +494,27 @@ class StudioSession:
                 events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
             )
             await self._set_task_status(task, "doing")
-            task_ok = await self._work_task(task, pm_plan + context, engineer, qa, senior, security)
+            task_ok = await self._work_task(self._main_ctx, task, pm_plan + context)
             # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
             if not task_ok and config.HUDDLE_ENABLED and not self._stop:
-                task_ok = await self._huddle_and_retry(
-                    task, pm_plan + context, pm, architect, engineer, qa, senior, security
-                )
+                task_ok = await self._huddle_and_retry(self._main_ctx, task, pm_plan + context)
             all_ok = all_ok and task_ok
             await self._set_task_status(task, "done" if task_ok else "review")
             # 每任務結束摘要寫回知識庫，供後續任務讀回。
             if task_ok:
-                self._note(f"## 任務 #{task['id']} 完成：{task['title']}")
+                self._note(self._main_ctx, f"## 任務 #{task['id']} 完成：{task['title']}")
             elif task.get("limitation"):
                 self._note(
-                    f"## 任務 #{task['id']} 已知限制：{task['title']}（huddle 與重試後仍未通過）"
+                    self._main_ctx,
+                    f"## 任務 #{task['id']} 已知限制：{task['title']}（huddle 與重試後仍未通過）",
                 )
             else:
                 self._note(
-                    f"## 任務 #{task['id']} 未通過：{task['title']}（標記 review，待後續處理）"
+                    self._main_ctx,
+                    f"## 任務 #{task['id']} 未通過：{task['title']}（標記 review，待後續處理）",
                 )
+            # 循序模式每任務結束即 flush，保住「下一任務讀得回本任務知識」的既有語意。
+            self._flush_lane_notes(self._main_ctx)
 
         # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
         if devops:
@@ -485,25 +540,26 @@ class StudioSession:
 
     async def _work_task(
         self,
+        ctx: LaneContext,
         task: dict,
         pm_plan: str,
-        engineer: ExpertLike,
-        qa: ExpertLike,
-        senior: ExpertLike,
-        security: ExpertLike | None = None,
         *,
         max_rounds: int | None = None,
         seed_feedback: str = "",
     ) -> bool:
         """單一任務的 實作→自測→驗證→審查→改進 迴圈，回傳是否通過。
 
+        所有工作（cwd / 專家 / commit / NOTES）都綁定在傳入的 lane context 上，循序模式
+        傳 main_ctx＝今日行為，並行模式傳各 lane 的隔離 context。
         max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
         seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
         """
+        engineer, qa, senior = ctx.experts["engineer"], ctx.experts["qa"], ctx.experts["senior"]
+        security = ctx.experts.get("security")
         feedback = seed_feedback
         rounds = max_rounds if max_rounds is not None else config.TASK_MAX_ROUNDS
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
-        prev_commit = self._last_commit
+        prev_commit = ctx.last_commit
         for rnd in range(1, rounds + 1):
             if self._stop:
                 return False
@@ -512,7 +568,7 @@ class StudioSession:
             # --- 實作 ---
             if not feedback:
                 impl_prompt = (
-                    f"{human}{self._notes_context()}"
+                    f"{human}{self._notes_context(ctx)}"
                     f"目前要完成的任務 #{task['id']}：{task['title']}\n\n"
                     f"整體計畫供參考：\n{pm_plan}\n\n"
                     "請在工作目錄裡實作，並在交付前自己跑過一次確認能執行。"
@@ -526,14 +582,14 @@ class StudioSession:
             impl_text = await engineer.speak(impl_prompt, self.broadcast)
 
             # --- 交付前自測（確定性 smoke-run）---
-            await self._self_test(impl_text)
-            await self._commit(f"任務#{task['id']} 第{rnd}輪：{task['title']}")
+            await self._self_test(ctx, impl_text)
+            await self._commit(ctx, f"任務#{task['id']} 第{rnd}輪：{task['title']}")
 
             # --- 停滯守門：連續多輪只重述且無檔案變動 → 提早收斂，不再燒後續 token ---
             impl_history.append(impl_text)
-            committed_change = self._last_commit != prev_commit
-            prev_commit = self._last_commit
-            if self._stalled(impl_history, committed_change):
+            committed_change = ctx.last_commit != prev_commit
+            prev_commit = ctx.last_commit
+            if self._stalled(ctx, impl_history, committed_change):
                 await self.broadcast(
                     events.phase_change(
                         self.session_id,
@@ -542,8 +598,9 @@ class StudioSession:
                     )
                 )
                 self._note(
+                    ctx,
                     f"## 停滯收斂 任務 #{task['id']}：{task['title']}"
-                    f"（連續 {config.STALL_ROUNDS} 輪只重述，提早收斂）"
+                    f"（連續 {config.STALL_ROUNDS} 輪只重述，提早收斂）",
                 )
                 return False
 
@@ -589,12 +646,12 @@ class StudioSession:
             if qa_ok and senior_ok and security_ok:
                 # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
                 subject = f"任務 #{task['id']}：{task['title']}"
-                critic_ok, critic_text = await self._critic_gate("pm", subject, pm_plan)
+                critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan)
                 if critic_ok:
                     return True
                 # 異議成立 → 退回再修，把反對理由帶進下一輪並記入知識庫。
                 feedback = f"【異議檢查（critic）退回理由】\n{critic_text}"
-                self._note(f"## 異議退回 任務 #{task['id']}：{task['title']}\n{critic_text}")
+                self._note(ctx, f"## 異議退回 任務 #{task['id']}：{task['title']}\n{critic_text}")
                 await self.broadcast(
                     events.phase_change(
                         self.session_id,
@@ -617,29 +674,16 @@ class StudioSession:
             )
         return False
 
-    async def _huddle_and_retry(
-        self,
-        task: dict,
-        context: str,
-        pm: ExpertLike,
-        architect: ExpertLike | None,
-        engineer: ExpertLike,
-        qa: ExpertLike,
-        senior: ExpertLike,
-        security: ExpertLike | None,
-    ) -> bool:
+    async def _huddle_and_retry(self, ctx: LaneContext, task: dict, context: str) -> bool:
         """卡關升級：召集團隊 huddle 找替代方案 → 給 1 輪重試。
 
         重試仍失敗則把 task 標為「已知限制」（註記 + 事件），status 由呼叫端維持 review。
         """
-        conclusion = await self._huddle(task, context, pm, architect, engineer, senior)
+        conclusion = await self._huddle(ctx, task, context)
         task_ok = await self._work_task(
+            ctx,
             task,
             context,
-            engineer,
-            qa,
-            senior,
-            security,
             max_rounds=1,
             seed_feedback=f"【卡關 huddle 替代方案，請據此突破】\n{conclusion}",
         )
@@ -657,20 +701,18 @@ class StudioSession:
             )
         return task_ok
 
-    async def _huddle(
-        self,
-        task: dict,
-        context: str,
-        pm: ExpertLike,
-        architect: ExpertLike | None,
-        engineer: ExpertLike,
-        senior: ExpertLike,
-    ) -> str:
+    async def _huddle(self, ctx: LaneContext, task: dict, context: str) -> str:
         """召集卡關討論：依序讓在場角色針對 blocker 提替代方案。回傳彙整結論。
 
-        召集 PM＋架構師＋工程師＋高級工程師，缺席角色（如 offline 無架構師）自動略過。
+        召集 PM＋架構師＋工程師＋高級工程師（取自該 lane 的專家團隊），缺席角色
+        （如 offline 無架構師）自動略過。
         """
-        roster = [("pm", pm), ("architect", architect), ("engineer", engineer), ("senior", senior)]
+        roster = [
+            ("pm", ctx.experts.get("pm")),
+            ("architect", ctx.experts.get("architect")),
+            ("engineer", ctx.experts.get("engineer")),
+            ("senior", ctx.experts.get("senior")),
+        ]
         present = [(key, ex) for key, ex in roster if ex is not None]
         await self.broadcast(
             events.phase_change(
@@ -703,22 +745,22 @@ class StudioSession:
                 conclusion,
             )
         )
-        self._note(f"## 卡關討論 任務 #{task['id']}：{task['title']}\n{conclusion}")
+        self._note(ctx, f"## 卡關討論 任務 #{task['id']}：{task['title']}\n{conclusion}")
         return conclusion
 
-    async def _self_test(self, impl_text: str) -> None:
-        """工程師交付前的確定性 smoke-run，把完整 log 回報。"""
-        if not self.cwd:
+    async def _self_test(self, ctx: LaneContext, impl_text: str) -> None:
+        """工程師交付前的確定性 smoke-run（在 lane 的 cwd 內執行），把完整 log 回報。"""
+        if not ctx.cwd:
             return
         cmd = runner.parse_run_command(impl_text) or runner.resolve_demo_command(
-            self.cwd, self._run_command
+            ctx.cwd, self._run_command
         )
         if not cmd:
             return
         # 刻意保留 shell（run_command，非 run_command_exec）：cmd 來自 PM/工程師宣告的
         # 自測指令（parse_run_command / resolve_demo_command 動態解析），可能含 pipe /
         # && / glob / 重導向等 shell 語法，須經 /bin/sh 解析；非固定指令、無法 argv 化。
-        result = await runner.run_command(self.cwd, cmd)  # nosec B602
+        result = await runner.run_command(ctx.cwd, cmd)  # nosec B602
         await self.broadcast(
             events.run_result(
                 self.session_id,
@@ -754,7 +796,7 @@ class StudioSession:
         # 最終驗收放行前的異議關卡：用 senior 視角（避開剛驗收表態的 pm）。
         if done:
             critic_ok, _ = await self._critic_gate(
-                "senior", "整體最終交付成果", "PM 宣告的驗收標準與整體需求"
+                self._main_ctx, "senior", "整體最終交付成果", "PM 宣告的驗收標準與整體需求"
             )
             done = critic_ok
 
@@ -769,7 +811,7 @@ class StudioSession:
         await self.broadcast(
             events.StudioEvent(events.EventType.RETROSPECTIVE, self.session_id, {"text": retro})
         )
-        await self._commit("完成：交付成果與檢討")
+        await self._commit(self._main_ctx, "完成：交付成果與檢討")
 
         files = workspace.list_files(self.session_id) if self.cwd else []
         await self.broadcast(
@@ -852,7 +894,7 @@ class StudioSession:
                 "讓所有測試／檢查都能通過：\n\n" + logs,
                 self.broadcast,
             )
-            await self._commit(f"修正 CI 失敗（第 {attempt} 輪）")
+            await self._commit(self._main_ctx, f"修正 CI 失敗（第 {attempt} 輪）")
             rp = await publisher.repush(self.cwd, result.branch)
             if not rp.ok:
                 await self.broadcast(

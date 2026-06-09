@@ -20,7 +20,7 @@ import re
 import pytest
 
 from studio import runner, tools
-from studio.orchestrator import StudioSession
+from studio.orchestrator import LaneContext, StudioSession
 from studio.runner import RunOutput
 
 
@@ -87,7 +87,8 @@ async def test_self_test_routes_to_shell_run_command(monkeypatch, tmp_path):
 
     _, broadcast = _collect()
     session = StudioSession("t", broadcast, cwd=tmp_path)
-    await session._self_test("執行指令: echo A && echo B")
+    ctx = LaneContext("main", tmp_path, {})
+    await session._self_test(ctx, "執行指令: echo A && echo B")
 
     assert len(spy.calls) == 1
     # 動態指令原樣（含 shell 語法）交給 shell run_command，未被拆解或改寫。
@@ -138,7 +139,8 @@ async def test_self_test_shell_executes_chained_command(tmp_path):
     """_self_test 真跑動態鏈式指令：&& 串接被 shell 執行，輸出含兩段。"""
     bucket, broadcast = _collect()
     session = StudioSession("t", broadcast, cwd=tmp_path)
-    await session._self_test("執行指令: echo ALPHA && echo BETA")
+    ctx = LaneContext("main", tmp_path, {})
+    await session._self_test(ctx, "執行指令: echo ALPHA && echo BETA")
     # 從廣播事件 payload 取出回報的 log，確認 shell 串接生效。
     logs = " ".join(ev.payload.get("log", "") or "" for ev in bucket)
     assert "ALPHA" in logs and "BETA" in logs, f"shell && 未被執行：{logs!r}"
