@@ -79,11 +79,11 @@ jobs:
   # 的沙箱測試「真的跑起來」而非被 skip。不動上面 lint/test job（test 仍 TI_SANDBOX=0）。
   #
   # 涵蓋的沙箱實跑測試（兩檔共 8 條，含參數化）：
-  #   tests/test_runner.py::test_run_command_exec_sandbox_writes_cwd
-  #   tests/test_runner.py::test_git_commit_three_steps_go_through_sandbox
-  #   tests/test_runner.py::test_git_commit_no_injection_in_real_sandbox[4 參數]
-  #   tests/test_qa_task3_autopilot_pytest_exec.py::test_sandbox_exec_resolves_python
-  #   tests/test_qa_task3_autopilot_pytest_exec.py::test_gate_tests_real_sandbox_run
+  #   tests/core/test_runner.py::test_run_command_exec_sandbox_writes_cwd
+  #   tests/core/test_runner.py::test_git_commit_three_steps_go_through_sandbox
+  #   tests/core/test_runner.py::test_git_commit_no_injection_in_real_sandbox[4 參數]
+  #   tests/autopilot/test_qa_task3_autopilot_pytest_exec.py::test_sandbox_exec_resolves_python
+  #   tests/autopilot/test_qa_task3_autopilot_pytest_exec.py::test_gate_tests_real_sandbox_run
   sandbox-test:
     runs-on: ubuntu-latest
     steps:
@@ -172,7 +172,7 @@ jobs:
         run: |
           set -o pipefail
           SEL="test_run_command_exec_sandbox_writes_cwd or test_git_commit_three_steps_go_through_sandbox or test_git_commit_no_injection_in_real_sandbox or test_sandbox_exec_resolves_python or test_gate_tests_real_sandbox_run"
-          FILES="tests/test_runner.py tests/test_qa_task3_autopilot_pytest_exec.py"
+          FILES="tests/core/test_runner.py tests/autopilot/test_qa_task3_autopilot_pytest_exec.py"
 
           # 步驟 A：先用 --collect-only 動態取得「選中數」作為預期 PASSED 數。
           # 不硬編 8——參數化條數一旦變動會在 collect 階段同步反映，避免假綠。

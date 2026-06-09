@@ -30,7 +30,7 @@ def _src(name: str) -> str:
 
 
 def test_test_tools_covers_five_boundaries():
-    src = _src("test_tools.py")
+    src = _src("core/test_tools.py")
     missing = [b for b, keys in BOUNDARIES.items() if not any(k in src for k in keys)]
     assert not missing, f"test_tools.py 缺少邊界覆蓋: {missing}"
 
@@ -76,15 +76,17 @@ except Exception as e:
 
 def test_tools_traversal_test_is_effective():
     """破壞 containment 後，test_path_traversal_blocked 必須失敗（證明它有守邊界）。"""
-    assert _mutation("tests.test_tools", "test_path_traversal_blocked") == "DETECTED"
+    assert _mutation("tests.core.test_tools", "test_path_traversal_blocked") == "DETECTED"
 
 
 def test_tools_absolute_test_is_effective():
-    assert _mutation("tests.test_tools", "test_absolute_path_blocked") == "DETECTED"
+    assert _mutation("tests.core.test_tools", "test_absolute_path_blocked") == "DETECTED"
 
 
 def test_tools_external_symlink_test_is_effective():
-    assert _mutation("tests.test_tools", "test_safe_path_external_symlink_blocked") == "DETECTED"
+    assert (
+        _mutation("tests.core.test_tools", "test_safe_path_external_symlink_blocked") == "DETECTED"
+    )
 
 
 def test_two_target_files_pass_in_isolation():
@@ -95,7 +97,7 @@ def test_two_target_files_pass_in_isolation():
             "-m",
             "pytest",
             "-q",
-            str(TESTS / "test_tools.py"),
+            str(TESTS / "core" / "test_tools.py"),
             str(TESTS / "export" / "test_zip_workspace_qa.py"),
         ],
         capture_output=True,

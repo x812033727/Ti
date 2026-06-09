@@ -12,10 +12,10 @@ import hmac
 import os
 import time
 
-from dotenv import set_key
 from fastapi import HTTPException, Request, WebSocket
 
 from . import config, netutil
+from .secretfile import write_secret_file
 
 
 def _sign(payload: bytes) -> str:
@@ -57,7 +57,7 @@ def set_password(new_password: str) -> None:
     簽章、與密碼無關，因此變更密碼不會把目前使用者登出（新登入才需要用新密碼）。
     """
     new_password = (new_password or "").strip()
-    set_key(str(config.PROJECT_ROOT / ".env"), "TI_ACCESS_PASSWORD", new_password)
+    write_secret_file(config.env_path(), "TI_ACCESS_PASSWORD", new_password)
     os.environ["TI_ACCESS_PASSWORD"] = new_password
     config.ACCESS_PASSWORD = new_password
 
