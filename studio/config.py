@@ -229,6 +229,13 @@ def reset_trusted_proxies() -> None:
 
 # --- 路徑 ---------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def env_path() -> str:
+    """持久化設定 / 秘密的 .env 路徑（settings 與 auth 共用此單一來源）。"""
+    return str(PROJECT_ROOT / ".env")
+
+
 WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspaces")))
 HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
 WEB_DIR = PROJECT_ROOT / "web"

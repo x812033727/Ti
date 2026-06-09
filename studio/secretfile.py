@@ -13,11 +13,14 @@
      注意：這不是內容權限的最終依據（set_key 底層走 NamedTemporaryFile+os.replace，
      會換掉 inode），內容權限由 ④ 的 os.chmod 保證。
   ③ `set_key(path, key, value, follow_symlinks=False)` 寫入內容，保留 dotenv 的引號／escape 相容。
-  ④ `os.chmod(path, 0o600)` 收尾收緊（普通 chmod：本平台 os.chmod 不支援 follow_symlinks，
-     且 replace 後必為 regular file，無 symlink 風險）。
+  ④ `os.chmod(path, 0o600)` 收尾收緊（普通 chmod：本平台 os.chmod 不支援 follow_symlinks）。
+     在父目錄可信的前提下，replace 後為 regular file，無 symlink 風險；若攻擊者已能寫入
+     父目錄，則屬超出本函式威脅模型的更嚴重妥協。
 
 併發：模組級 threading.Lock 序列化同行程多執行緒寫入，消除權限窗口與 .env 內容互蓋
 （lost update）；跨程序原子性由 set_key 底層的 NamedTemporaryFile+os.replace 保證。
+
+注意：`path` 由呼叫端控制，本函式不負責路徑驗證；呼叫端勿傳入未經驗證的外部路徑。
 """
 
 from __future__ import annotations
@@ -40,13 +43,16 @@ def write_secret_file(path: str, key: str, value: str) -> None:
         if parent:
             os.makedirs(parent, exist_ok=True)
 
-        # ② first-touch 原子建檔（僅在檔不存在時）：精確 0600、與 umask 脫鉤、防 TOCTOU/symlink 競爭。
-        if not os.path.exists(path):
+        # ② first-touch 原子建檔：精確 0600、與 umask 脫鉤、防 symlink/TOCTOU 競爭。
+        # O_EXCL 讓既存檔（含 symlink）直接 EEXIST，交由 ③④ 處理——跨程序首次競建也安全。
+        try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             try:
                 os.fchmod(fd, 0o600)
             finally:
                 os.close(fd)
+        except FileExistsError:
+            pass  # 已存在，內容權限由 ③④ 保證
 
         # ③ 寫入內容（保留 dotenv 格式相容；不跟隨 symlink）。
         set_key(path, key, value, follow_symlinks=False)
