@@ -56,7 +56,7 @@ def test_step_has_collect_and_four_gates(step):
 def test_step_targets_right_tests(step):
     run = step["run"]
     assert "tests/test_runner.py" in run
-    assert "tests/test_qa_task3_autopilot_pytest_exec.py" in run
+    assert "tests/autopilot/test_qa_task3_autopilot_pytest_exec.py" in run
     for nodeid in (
         "test_run_command_exec_sandbox_writes_cwd",
         "test_git_commit_three_steps_go_through_sandbox",
