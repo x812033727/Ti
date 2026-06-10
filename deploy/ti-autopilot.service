@@ -9,6 +9,11 @@ User=root
 # 走 Claude 訂閱（沿用 /root/.claude 憑證），刻意不設 ANTHROPIC_API_KEY。
 Environment=HOME=/root
 Environment=PATH=/usr/bin:/bin:/usr/local/bin
+# 自我加強迴圈（self-reinforcing）：開啟跨場次教訓庫，讓每場改善的檢討教訓落盤、
+# 下場開場注入 PM 拆解（避免重蹈、善用既有結論）。eval-memory 預設已啟用（20），
+# 此處顯式標明，讓自我評估記取自身 done/failed 成績單。
+Environment=TI_LESSONS=1
+Environment=TI_AUTOPILOT_EVAL_MEMORY=20
 WorkingDirectory=/opt/ti
 ExecStart=/opt/ti/.venv/bin/python -m studio.autopilot
 Restart=on-failure
