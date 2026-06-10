@@ -37,6 +37,16 @@
     </div>
     <form id="settingsForm" class="settings-form"></form>
 
+    <!-- 重新部署重啟 -->
+    <div class="settings-redeploy">
+      <h3>重新部署</h3>
+      <p class="muted">拉取主 repo 最新 main 並重啟服務，讓合併後的新程式碼生效。重啟會中斷進行中的工作與連線。</p>
+      <div class="redeploy-actions">
+        <button id="redeployBtn" type="button">♻️ 重新部署並重啟</button>
+        <span id="redeployStatus" class="redeploy-status muted"></span>
+      </div>
+    </div>
+
     <!-- 變更登入門禁密碼 -->
     <div class="settings-pw">
       <h3>存取密碼（登入門禁）</h3>
@@ -146,6 +156,14 @@
       </div>
     </aside>
   </main>
+
+  <!-- 手機底部分頁導覽（桌機隱藏） -->
+  <nav class="mobiletabs">
+    <button data-mv="discussion">💬<span>討論</span></button>
+    <button data-mv="experts">👥<span>成員</span></button>
+    <button data-mv="board">📋<span>看板</span></button>
+    <button data-mv="files">📁<span>檔案</span></button>
+  </nav>
 
   <div id="toast"></div>
 

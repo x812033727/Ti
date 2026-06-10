@@ -21,8 +21,8 @@ body {
   flex-direction: column;
 }
 
-h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
-h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
 
 /* 頂部 */
 .topbar {
@@ -33,26 +33,26 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .brand small { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
 .launch { display: flex; flex: 1; gap: 8px; }
 .launch input {
-  flex: 1; padding: 9px 12px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px;
+  flex: 1; padding: 11px 14px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 15px;
 }
 .launch input:focus { outline: none; border-color: var(--accent); }
 .launch button {
-  padding: 9px 18px; border: none; border-radius: 8px; cursor: pointer;
-  background: var(--accent); color: white; font-weight: 600; font-size: 14px;
+  padding: 11px 20px; border: none; border-radius: 8px; cursor: pointer;
+  background: var(--accent); color: white; font-weight: 600; font-size: 15px;
   white-space: nowrap;
 }
 .launch button:disabled { opacity: .5; cursor: not-allowed; }
 /* 次要工具列：與主操作以分隔線區隔 */
-.toolbar { display: flex; align-items: center; gap: 6px; padding-left: 14px; border-left: 1px solid var(--border); }
-.toolbar button { padding: 7px 11px; font-size: 13px; white-space: nowrap; }
-.phase { font-size: 13px; color: var(--accent); white-space: nowrap; min-width: 120px; text-align: right; }
+.toolbar { display: flex; align-items: center; gap: 8px; padding-left: 14px; border-left: 1px solid var(--border); }
+.toolbar button { padding: 9px 13px; font-size: 14px; white-space: nowrap; }
+.phase { font-size: 14px; color: var(--accent); white-space: nowrap; min-width: 120px; text-align: right; }
 
 /* 版面 */
 .layout {
   flex: 1; display: grid;
-  grid-template-columns: 240px 1fr 360px;
-  gap: 12px; padding: 12px; overflow: hidden;
+  grid-template-columns: 260px 1fr 380px;
+  gap: 16px; padding: 16px; overflow: hidden;
 }
 .experts, .discussion, .side { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; overflow: hidden; display: flex; flex-direction: column; }
 .side { gap: 14px; }
@@ -66,8 +66,8 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .expert.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .expert .av { font-size: 26px; }
 .expert .meta { flex: 1; min-width: 0; }
-.expert .nm { font-weight: 600; font-size: 14px; }
-.expert .tt { font-size: 11px; color: var(--muted); }
+.expert .nm { font-weight: 600; font-size: 15px; }
+.expert .tt { font-size: 12.5px; color: var(--muted); }
 .expert .dot { width: 9px; height: 9px; border-radius: 50%; background: #3a4150; }
 .expert[data-status="thinking"] .dot { background: var(--warn); animation: pulse 1s infinite; }
 .expert[data-status="working"] .dot { background: var(--accent); animation: pulse .6s infinite; }
@@ -80,9 +80,9 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .msg { display: flex; gap: 10px; }
 .msg .av { font-size: 24px; flex-shrink: 0; }
 .msg .body { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; max-width: 88%; }
-.msg .who { font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 3px; }
-.msg .txt { font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.tool { font-size: 12.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; padding-left: 34px; }
+.msg .who { font-size: 13px; color: var(--accent); font-weight: 600; margin-bottom: 3px; }
+.msg .txt { font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.tool { font-size: 13.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; padding-left: 34px; }
 .tool .badge { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; }
 .sys { text-align: center; font-size: 12px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
 .result.pass { color: var(--good); } .result.fail { color: var(--bad); }
@@ -112,7 +112,7 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .lane-5 { border-left-color: #4fd6d6; border-top-color: #4fd6d6; } .lane-col.lane-5 .lane-col-head { color: #7fe0e0; }
 
 /* git commit chip */
-.commit { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); padding-left: 34px; }
+.commit { display: flex; gap: 8px; align-items: center; font-size: 13.5px; color: var(--muted); padding-left: 34px; }
 .commit .hash { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; color: var(--accent); font-family: monospace; }
 
 /* Demo 區塊 */
@@ -123,11 +123,11 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .demo pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 11.5px; overflow: auto; max-height: 240px; margin: 0; color: #c9d1d9; }
 
 /* 插話列 */
-.interject { display: flex; gap: 8px; margin-top: 10px; }
-.interject input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
+.interject { display: flex; gap: 8px; margin-top: 12px; }
+.interject input { flex: 1; padding: 11px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; }
 .interject input:focus { outline: none; border-color: var(--accent); }
 .interject input:disabled { opacity: .5; }
-.interject button { padding: 8px 16px; border: none; border-radius: 8px; background: var(--good); color: white; font-weight: 600; cursor: pointer; }
+.interject button { padding: 11px 18px; border: none; border-radius: 8px; background: var(--good); color: white; font-weight: 600; font-size: 14px; cursor: pointer; }
 .interject button:disabled { opacity: .4; cursor: not-allowed; }
 
 /* topbar 次要按鈕 */
@@ -165,9 +165,20 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .pw-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
 .pw-actions button { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; background: var(--good); color: white; font-weight: 600; font-size: 13px; }
 
+/* 重新部署區塊 */
+.settings-redeploy { padding: 4px 14px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); }
+.settings-redeploy h3 { margin: 12px 0 2px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.settings-redeploy p { margin: 0; }
+.redeploy-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.redeploy-actions button { padding: 9px 16px; border: none; border-radius: 8px; cursor: pointer; background: var(--warn); color: #1a1205; font-weight: 600; font-size: 14px; }
+.redeploy-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.redeploy-status { font-size: 13px; }
+.redeploy-status.ok { color: var(--good); }
+.redeploy-status.fail { color: var(--bad); }
+
 .settings-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--border); }
 .settings-foot button { padding: 8px 18px; border: none; border-radius: 8px; cursor: pointer; background: var(--accent); color: white; font-weight: 600; font-size: 14px; }
-.muted { color: var(--muted); font-size: 12px; }
+.muted { color: var(--muted); font-size: 13px; }
 
 /* 歷史面板 */
 .history-panel {
@@ -219,15 +230,15 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .columns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .col { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px; min-height: 90px; }
 .col .cards { display: flex; flex-direction: column; gap: 5px; }
-.card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 7px; font-size: 11.5px; line-height: 1.35; }
+.card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px; font-size: 13px; line-height: 1.4; }
 
 /* 檔案 */
 .files { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .filewrap { flex: 1; display: grid; grid-template-rows: auto 1fr; gap: 8px; overflow: hidden; }
 .filelist { list-style: none; margin: 0; padding: 0; max-height: 110px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
-.filelist li { font-size: 12.5px; padding: 4px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.filelist li { font-size: 13.5px; padding: 7px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .filelist li:hover { border-color: var(--accent); }
-.fileview { flex: 1; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; color: #c9d1d9; margin: 0; }
+.fileview { flex: 1; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13.5px; color: #c9d1d9; margin: 0; }
 
 /* 離線模式徽章 */
 .badge-offline { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #3a2d12; color: var(--warn); border: 1px solid #5a4a1f; white-space: nowrap; }
@@ -265,14 +276,60 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .login-form button:disabled { opacity: .5; cursor: not-allowed; }
 .login-error { color: var(--bad); font-size: 13px; }
 
+/* 手機底部分頁導覽列（桌機隱藏） */
+.mobiletabs { display: none; }
+
 /* 窄螢幕 / 手機版面 */
 @media (max-width: 900px) {
-  .topbar { flex-wrap: wrap; }
-  .launch { order: 3; width: 100%; }
-  .layout { grid-template-columns: 1fr; overflow: auto; }
-  .experts, .discussion, .side { overflow: visible; }
-  .stream { max-height: 50vh; }
-  .history-panel { left: 12px; right: 12px; width: auto; }
+  /* topbar 堆疊：品牌+階段一列、launch 一列、工具列可橫向捲動一列 */
+  .topbar { flex-wrap: wrap; gap: 10px; padding: 10px 14px; }
+  .brand { font-size: 17px; }
+  .launch { order: 3; width: 100%; flex-wrap: wrap; }
+  .launch .repo-input { flex: 1 1 100%; }
+  .launch input { font-size: 16px; }            /* iOS 不放大避免 focus 跳動 */
+  .toolbar { order: 4; width: 100%; padding-left: 0; border-left: none;
+             overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .toolbar button { flex: 0 0 auto; min-height: 44px; }
+  .phase { order: 2; min-width: 0; flex: 1; }
+
+  /* 單欄版面：一次只顯示一個分頁，底部保留分頁列空間 */
+  .layout { grid-template-columns: 1fr; padding: 10px; gap: 10px;
+            padding-bottom: 68px; overflow: hidden; }
+  .experts, .discussion, .side { overflow-y: auto; min-height: 0; }
+  .stream { max-height: none; }
+
+  /* 依 body[data-mv] 切換顯示的面板 */
+  body[data-mv="discussion"] .experts,
+  body[data-mv="discussion"] .side,
+  body[data-mv="experts"] .discussion,
+  body[data-mv="experts"] .side,
+  body[data-mv="board"] .experts,
+  body[data-mv="board"] .discussion,
+  body[data-mv="board"] .side .files,
+  body[data-mv="files"] .experts,
+  body[data-mv="files"] .discussion,
+  body[data-mv="files"] .side .board { display: none; }
+  /* 看板/檔案同住 .side：board 視圖讓看板撐開、files 視圖讓檔案撐開 */
+  body[data-mv="board"] .board { flex: 1; }
+  body[data-mv="files"] .files { flex: 1; }
+
+  /* 底部分頁列 */
+  .mobiletabs {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    background: var(--panel); border-top: 1px solid var(--border);
+    padding: 4px; gap: 4px;
+  }
+  .mobiletabs button {
+    flex: 1; min-height: 52px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px;
+    background: transparent; border: none; cursor: pointer;
+    color: var(--muted); font-size: 19px; border-radius: 8px;
+  }
+  .mobiletabs button span { font-size: 12px; }
+  .mobiletabs button.active { color: var(--accent); background: var(--panel-2); }
+
+  /* 浮層面板貼齊邊界 */
+  .history-panel, .settings-panel { left: 12px; right: 12px; width: auto; top: 12px; max-height: 82vh; }
 }
 
 /* 產出檔案：下載成果按鈕 */

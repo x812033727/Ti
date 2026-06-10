@@ -1,7 +1,9 @@
-"""QA 加固測試：任務 #4 —— 前端「合併並重啟」入口與結果顯示。
+"""QA 加固測試：任務 #4 —— 前端「重新部署並重啟」入口與結果顯示。
 
-前端為純 JS（無瀏覽器測試框架），故以兩個層面驗證：
-A. 前端結構：對 web/app.js 做靜態斷言，確認 UI 接線存在且沿用既有 publish CTA 樣式。
+重新部署為設定面板常駐入口（非合併後才出現的串內按鈕）。前端為純 JS
+（無瀏覽器測試框架），故以兩個層面驗證：
+A. 前端結構：對 web/app.js、web/index.html、web/styles.css 做靜態斷言，
+   確認設定面板的重新部署 UI 接線、確認框與樣式存在。
 B. 後端合約：前端依賴的 API（/api/publish/config 的 merge、/api/redeploy）回傳符合預期。
 JS 語法另以 `node --check` 於命令列驗證（已通過）。
 """
@@ -15,6 +17,7 @@ from studio import config, redeploy, runner
 
 APP_JS = config.PROJECT_ROOT / "web" / "app.js"
 STYLES = config.PROJECT_ROOT / "web" / "styles.css"
+INDEX = config.PROJECT_ROOT / "web" / "index.html"
 
 
 @pytest.fixture
@@ -37,29 +40,33 @@ def test_merge_cta_text(app_js):
 
 
 def test_redeploy_button_wiring(app_js):
-    # 合併成功後出現「重新佈署並重啟」入口，打 POST /api/redeploy
-    assert "addRedeployButton" in app_js
-    assert "重新佈署並重啟" in app_js
+    # 設定面板常駐「重新部署並重啟」入口，按下打 POST /api/redeploy
+    index = INDEX.read_text(encoding="utf-8")
+    assert "redeployBtn" in index
+    assert "重新部署並重啟" in index
+    assert "redeployNow" in app_js
     assert '"/api/redeploy"' in app_js
-    assert "renderRedeploy" in app_js
+    assert '$("#redeployBtn").onclick = redeployNow' in app_js
 
 
-def test_redeploy_shown_only_after_merge(app_js):
-    # merged 成功才顯示「已合併」並掛上 redeploy 入口
-    assert "p.merged" in app_js
-    assert "已合併" in app_js
-    assert "addRedeployButton()" in app_js
+def test_redeploy_entry_in_settings_panel(app_js):
+    # 重新部署入口位於設定面板（settings-redeploy 區塊），按下前先確認
+    index = INDEX.read_text(encoding="utf-8")
+    assert "settings-redeploy" in index
+    assert "redeployStatus" in index
+    assert "確定重新部署" in app_js  # redeployNow 內先 confirm 再執行
 
 
-def test_reuses_publish_cta_styles(app_js):
-    # 沿用現有 publish CTA 樣式（publish-cta / publish）
-    assert app_js.count('"publish-cta"') >= 2  # publish 與 redeploy 兩顆按鈕都用
-    assert STYLES.read_text(encoding="utf-8").find(".publish-cta") != -1
+def test_redeploy_block_has_styles(app_js):
+    # 重新部署區塊有對應樣式（settings-redeploy / redeploy-status）
+    styles = STYLES.read_text(encoding="utf-8")
+    assert ".settings-redeploy" in styles
+    assert ".redeploy-status" in styles
 
 
 def test_redeploy_request_failure_handled(app_js):
     # redeploy 請求失敗（服務可能正在重啟）有 catch 並顯示可讀訊息
-    assert "重新佈署請求失敗" in app_js
+    assert "服務可能正在重啟" in app_js
 
 
 # --- B. 後端合約（前端所依賴）---------------------------------------
@@ -101,4 +108,4 @@ def test_static_app_js_served(client, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     r = client.get("/static/app.js")
     assert r.status_code == 200
-    assert "addRedeployButton" in r.text
+    assert "redeployNow" in r.text

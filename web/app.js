@@ -60,8 +60,6 @@ function clearBoard() {
   document.querySelectorAll(".col .cards").forEach((c) => (c.innerHTML = ""));
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 function toast(msg, kind = "") {
   const el = document.createElement("div");
   el.className = "toast " + kind;
@@ -356,7 +354,6 @@ function sendInterject() {
 }
 
 function stop() {
-  if (replaying) { replaying = false; return; }   // 中止重播
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" }));
   stopBtn.disabled = true;
   toast("已送出停止指令", "");
@@ -431,27 +428,24 @@ async function replaySession(sid) {
   historyPanel.classList.add("hidden");
   if (ws && ws.readyState === WebSocket.OPEN) ws.close();
   let events = [];
+  let requirement = "";
   try {
     const data = await (await fetch(`/api/history/${sid}/events`)).json();
     events = data.events || [];
+    requirement = (data.meta && data.meta.requirement) || "";
   } catch (e) { addSystem("⚠️ 無法載入此 session"); return; }
 
+  // 直接一次把整段歷史渲染完，畫面停在最底（最新）；要看過程往上滑即可。
+  // replaying 旗標維持為 true，讓 handleEvent 的 done case 不會替歷史 session 補出發佈鈕。
   replaying = true;
   setRunning(false);
-  stopBtn.disabled = false;          // 重播時「停止」可中止重播
   clearStream();
   clearBoard();
-  addSystem("⏪ 重播 session：" + sid);
-  const total = events.length;
-  for (let i = 0; i < total; i++) {
-    if (!replaying) { setPhase("⏪ 已中止重播"); break; }
-    handleEvent(events[i]);
-    setPhase(`⏪ 重播 ${i + 1}/${total}`);
-    await sleep(120);
-  }
-  if (replaying) setPhase("⏪ 重播結束");
+  addSystem("📜 歷史紀錄：" + (requirement || sid));
+  for (let i = 0; i < events.length; i++) handleEvent(events[i]);
   replaying = false;
-  stopBtn.disabled = true;
+  setPhase("📜 歷史紀錄");
+  scrollStream();
 }
 
 function closeHistory() { historyPanel.classList.add("hidden"); }
@@ -612,35 +606,31 @@ function renderPublish(p) {
     el.appendChild(document.createTextNode("　")); el.appendChild(a);
   }
   stream.appendChild(el);
-  // 合併成功後提供「重新佈署重啟」入口，讓新程式碼生效。
-  if (p.merged) addRedeployButton();
   scrollStream();
 }
 
-function addRedeployButton() {
-  const wrap = document.createElement("div");
-  wrap.className = "publish-cta";
-  const btn = document.createElement("button");
-  btn.textContent = "♻️ 重新佈署並重啟";
-  btn.onclick = async () => {
-    btn.disabled = true; btn.textContent = "重新佈署中…";
-    try {
-      const res = await (await fetch("/api/redeploy", { method: "POST" })).json();
-      renderRedeploy(res);
-    } catch (e) { renderRedeploy({ ok: false, detail: "重新佈署請求失敗（服務可能正在重啟）" }); }
-    btn.remove();
-  };
-  wrap.appendChild(btn);
-  stream.appendChild(wrap);
-  scrollStream();
-}
-
-function renderRedeploy(r) {
-  const el = document.createElement("div");
-  el.className = "publish " + (r.ok ? "ok" : "fail");
-  el.innerHTML = (r.ok ? "♻️ " : "⚠️ ") + (r.detail || "");
-  stream.appendChild(el);
-  scrollStream();
+// --- 重新部署重啟（設定面板常駐入口）---------------------------------
+// 拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。後端：POST /api/redeploy。
+async function redeployNow() {
+  const btn = $("#redeployBtn");
+  const status = $("#redeployStatus");
+  if (!confirm("確定重新部署？服務會重啟，進行中的工作與連線會中斷。")) return;
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = "重新部署中…";
+  status.className = "redeploy-status muted";
+  status.textContent = "正在拉取最新 main 並重啟…";
+  try {
+    const r = await (await fetch("/api/redeploy", { method: "POST" })).json();
+    status.className = "redeploy-status " + (r.ok ? "ok" : "fail");
+    status.textContent = (r.ok ? "♻️ " : "⚠️ ") + (r.detail || "");
+  } catch (e) {
+    // 重啟成功時連線會中斷，請求可能無法正常回傳——這通常代表已在重啟。
+    status.className = "redeploy-status muted";
+    status.textContent = "♻️ 已送出重新部署，服務可能正在重啟，稍後重新整理頁面。";
+  }
+  btn.disabled = false;
+  btn.textContent = prev;
 }
 
 // --- 設定（API key / provider / 模型 / GitHub token）-------------------
@@ -783,6 +773,7 @@ $("#settingsBtn").onclick = openSettings;
 $("#settingsClose").onclick = closeSettings;
 $("#settingsSave").onclick = saveSettings;
 $("#pwSave").onclick = savePassword;
+$("#redeployBtn").onclick = redeployNow;
 $("#downloadBtn").onclick = downloadWorkspace;
 $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
@@ -796,6 +787,18 @@ $("#metricsClose").onclick = closeMetrics;
 $("#metricsRefresh").onclick = refreshMetrics;
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
+
+// --- 手機分頁導覽：在討論／成員／看板／檔案間切換（桌機自動隱藏分頁列）----
+function setMobileView(view) {
+  document.body.dataset.mv = view;
+  document.querySelectorAll(".mobiletabs button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mv === view);
+  });
+}
+document.querySelectorAll(".mobiletabs button").forEach((b) => {
+  b.onclick = () => setMobileView(b.dataset.mv);
+});
+setMobileView("discussion");
 
 async function loadHealth() {
   try {
