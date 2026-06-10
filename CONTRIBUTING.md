@@ -103,9 +103,10 @@ SCAN_MODE=block bash scripts/scan_shell_usage.sh
 - 從 `main` 開功能分支：`feat/...`、`fix/...`、`docs/...`。
 - commit 訊息用祈使句、聚焦單一變更；可用中文。
 - PR 前的檢查清單：
-  - [ ] `ruff check .` 與 `ruff format --check .` 通過
+  - [ ] `.venv/bin/python -m ruff check .` 與 `.venv/bin/python -m ruff format --check .` 通過
   - [ ] `.venv/bin/python -m pytest -q` 全綠
   - [ ] 必要時更新 `README.md` / `ARCHITECTURE.md` / `.env.example`
+  - [ ] dev 指令（安裝／測試／lint／pre-commit）只在本文件維護；README 等其他文件僅以敘述或連結引用，未新增重複的可複製指令區塊（防漂移，由 `tests/docs/` 把關）
 
 ## 進一步閱讀
 
