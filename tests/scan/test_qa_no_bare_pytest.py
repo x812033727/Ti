@@ -7,6 +7,7 @@
   #5 CI 與本地共用同一規則來源（不另寫 grep）
 雙路徑（有 rg / 無 rg 強制 fallback）皆覆蓋——對齊架構決策。
 """
+
 from __future__ import annotations
 
 import os
@@ -39,17 +40,20 @@ def run_scan(targets, *, force_fallback=False, mode="block"):
         env["PATH"] = str(binstub)
     return subprocess.run(
         ["bash", str(SCRIPT), *targets],
-        capture_output=True, text=True, env=env, cwd=REPO,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=REPO,
     )
 
 
 # ---- 黑樣本：必須被攔（行首 / 句中 / inline code）-------------------------
 BLACK_SAMPLES = [
-    "pytest tests/",                                  # 行首指令
-    "- **完整套件** `pytest tests/` → 8 failed",      # inline code（0002 第19行型）
-    "請執行 pytest tests/test_foo.py -q 驗證",          # 句中非行首
-    "    pytest -q tests/",                            # 縮排指令
-    "pytest foo.py",                                   # 直接帶 .py
+    "pytest tests/",  # 行首指令
+    "- **完整套件** `pytest tests/` → 8 failed",  # inline code（0002 第19行型）
+    "請執行 pytest tests/test_foo.py -q 驗證",  # 句中非行首
+    "    pytest -q tests/",  # 縮排指令
+    "pytest foo.py",  # 直接帶 .py
 ]
 
 # ---- 白名單：零誤殺 ------------------------------------------------------
@@ -61,7 +65,7 @@ WHITE_SAMPLES = [
     "@pytest.fixture",
     "@pytest.mark.asyncio",
     "見 pytest.ini 設定",
-    "本專案使用 pytest 套件進行測試",                   # 行內提及套件名
+    "本專案使用 pytest 套件進行測試",  # 行內提及套件名
     "安裝 pytest-asyncio 與 pytest-cov",
 ]
 
@@ -72,6 +76,7 @@ def docfile(tmp_path):
         f = tmp_path / "sample.md"
         f.write_text(text + "\n", encoding="utf-8")
         return str(f)
+
     return _make
 
 
@@ -117,8 +122,11 @@ def test_ci_uses_same_source():
     # 共用同一支腳本：CI run 與 hook entry 指向相同 SSOT 檔。
     cfg = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
     hook_entry = next(
-        h["entry"] for r in cfg["repos"] if r.get("repo") == "local"
-        for h in r.get("hooks", []) if h.get("id") == "no-bare-pytest"
+        h["entry"]
+        for r in cfg["repos"]
+        if r.get("repo") == "local"
+        for h in r.get("hooks", [])
+        if h.get("id") == "no-bare-pytest"
     )
     assert "scan_bare_pytest.sh" in hook_entry, "hook 未用 SSOT 腳本"
     assert "scan_bare_pytest.sh" in step["run"], "CI 未用同一 SSOT 腳本"
@@ -127,9 +135,11 @@ def test_ci_uses_same_source():
 def test_ci_no_duplicate_grep():
     """驗收#5：CI 不得另寫獨立 grep/rg 掃 pytest（規則單一來源）。"""
     import re
+
     text = CI.read_text(encoding="utf-8")
     bad = [
-        ln for ln in text.splitlines()
+        ln
+        for ln in text.splitlines()
         if re.search(r"(grep|rg)\b.*pytest", ln) and "scan_bare_pytest" not in ln
     ]
     assert not bad, f"CI 出現自寫 grep/rg pytest 邏輯（違反單一來源）: {bad}"
