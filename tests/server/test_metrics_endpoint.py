@@ -71,6 +71,9 @@ def test_metrics_aggregates_parallel(client, tmp_path, monkeypatch):
                 "waves": 2,
                 "lanes_max": 3,
                 "merge_conflicts": 1,
+                "lane_exceptions": 1,
+                "deferred": 2,
+                "conflict_retries": 1,
                 "wall_clock_s": 4.0,
                 "serial_estimate_s": 9.0,
                 "speedup": 2.25,
@@ -83,6 +86,9 @@ def test_metrics_aggregates_parallel(client, tmp_path, monkeypatch):
                 "waves": 1,
                 "lanes_max": 2,
                 "merge_conflicts": 0,
+                "lane_exceptions": 0,
+                "deferred": 1,
+                "conflict_retries": 0,
                 "wall_clock_s": 2.0,
                 "serial_estimate_s": 3.0,
                 "speedup": 1.5,
@@ -99,6 +105,9 @@ def test_metrics_aggregates_parallel(client, tmp_path, monkeypatch):
     assert pa["peak_lanes"] == 3
     assert pa["total_waves"] == 3
     assert pa["merge_conflicts"] == 1
+    assert pa["lane_exceptions"] == 1  # 跨 session 聚合：1 + 0
+    assert pa["deferred"] == 3  # 2 + 1
+    assert pa["conflict_retries"] == 1  # 1 + 0
     assert pa["avg_speedup"] == 1.88  # (2.25 + 1.5) / 2，四捨五入
     assert pa["wall_clock_saved_s"] == 6.0  # (9-4) + (3-2)
     assert pa["config"] == {"enabled": True, "lanes": 3}

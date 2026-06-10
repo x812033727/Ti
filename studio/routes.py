@@ -82,6 +82,10 @@ def _aggregate_parallel(sessions: list[dict]) -> dict:
         "peak_lanes": max(r.get("lanes_max", 0) for r in runs),
         "total_waves": sum(r.get("waves", 0) for r in runs),
         "merge_conflicts": sum(r.get("merge_conflicts", 0) for r in runs),
+        # 降級可觀測性：並行實際退回主幹序列化的頻率（lane 崩潰 / 無法隔離 / 合併衝突重跑）。
+        "lane_exceptions": sum(r.get("lane_exceptions", 0) for r in runs),
+        "deferred": sum(r.get("deferred", 0) for r in runs),
+        "conflict_retries": sum(r.get("conflict_retries", 0) for r in runs),
         "avg_speedup": round(sum(speedups) / len(speedups), 2),
         "wall_clock_saved_s": round(saved, 1),
         "config": {
