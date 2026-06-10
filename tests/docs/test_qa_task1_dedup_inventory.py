@@ -76,30 +76,31 @@ def test_inventory_lists_all_duplicate_commands():
     assert not missing, f"盤點漏列重複指令家族: {missing}"
 
 
-# D. 盤點所宣稱的「重複」必須是真的：README 測試段與 CONTRIBUTING 皆含這些指令
-def test_duplication_is_real_in_both_files():
-    readme = _txt(README)
+# D. 盤點所宣稱的「重複」記載必須正確：盤點文件須把 README 記為引用點、
+#    CONTRIBUTING 記為 canonical；且 canonical 端（穩定事實）確實含這些指令家族。
+#    注意：不對 README 活現況斷言「仍重複」——README 會被 #3 收斂，那是 epic 目標，
+#    對暫態固化會在 #3 後誤判 fail（時序炸彈）。盤點正確性改讀盤點文件的記載。
+def test_duplication_recorded_in_inventory():
+    inv = _txt(INVENTORY)
     contrib = _txt(CONTRIB)
-    # README `## 測試` 段目前確實保留可複製執行區塊（#3 尚未收斂，屬正常）
-    assert re.search(r"^## 測試", readme, re.M), "README 找不到 `## 測試` 段"
-    for token in ('pip install -e ".[dev]"', "-m pytest", "ruff", "pre_commit"):
-        assert token in readme, f"README 測試段應仍含重複指令 {token!r}（盤點宣稱的引用點）"
+    # 盤點須記載 README 為引用點、CONTRIBUTING 為 canonical（敘述記載，與 README 是否已收斂無關）
+    assert "README" in inv and "CONTRIBUTING" in inv, "盤點未同時記載 README 與 CONTRIBUTING"
+    assert re.search(r"README[^\n]*(引用|測試)", inv), "盤點未把 README 記載為引用點"
+    # canonical 端為穩定事實，task#2 後仍須含這些指令家族
     for token in ('pip install -e ".[dev]"', "pytest", "ruff", "pre-commit"):
         assert token in contrib, f"CONTRIBUTING（canonical）應含 {token!r}"
 
 
-# E. 盤點宣稱的 README 引用點（## 測試 段 code block）真實存在
-def test_readme_reference_point_block_exists():
-    ls = _txt(README).splitlines()
-    # 找 `## 測試` 後第一個 ```bash fenced block，且含 pytest 指令
-    sec = next((i for i, ln in enumerate(ls) if re.match(r"^## 測試", ln)), None)
-    assert sec is not None, "README 無 `## 測試` 段"
-    fence = next((i for i in range(sec, len(ls)) if ls[i].strip().startswith("```bash")), None)
-    assert fence is not None, "README `## 測試` 段缺 ```bash 可複製執行區塊（盤點引用點）"
-    end = next((i for i in range(fence + 1, len(ls)) if ls[i].strip() == "```"), None)
-    assert end is not None, "README 測試段 code block 未正確閉合"
-    block = "\n".join(ls[fence : end + 1])
-    assert "-m pytest" in block, "README 測試段 code block 應含 pytest 指令"
+# E. 盤點明確記載 README 的引用點位置（## 測試 段）。
+#    只驗「盤點是否記載此引用點」與「README 該段標題存在」（#3 收斂後仍保留標題，
+#    僅把區塊改寫為摘要＋連結）——不要求 README 測試段保留 ```bash code block，
+#    否則 #3 收斂後必 fail。
+def test_inventory_records_readme_reference_point():
+    inv = _txt(INVENTORY)
+    # 盤點須點名 README `## 測試` 段為引用點
+    assert "## 測試" in inv, "盤點未記載 README `## 測試` 引用點"
+    # README 該段標題本身是穩定錨點（#3 只改寫內容，不刪標題）
+    assert re.search(r"^## 測試", _txt(README), re.M), "README 找不到 `## 測試` 段標題"
 
 
 # F. 盤點點名的「受影響 docs 測試檔」皆真實存在
