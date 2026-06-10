@@ -276,17 +276,24 @@ class StudioSession:
         return "\n".join(t for t in texts if t.strip())
 
     async def _human_prefix(self) -> str:
-        """取出插話、回顯到討論串，並組成要前綴給專家的字串。"""
+        """取出插話、組成要前綴給專家的字串。回顯（human_message）已於收到插話時即時 broadcast
+        （見 ws._pump_interventions），此處不重複 broadcast，只負責把文字餵給專家。"""
         human = self._drain_human()
         if not human:
             return ""
-        await self.broadcast(events.human_message(self.session_id, human))
         return f"【使用者插話，請納入考量】{human}\n\n"
 
     async def _lane_human_prefix(self, ctx: LaneContext) -> str:
-        """lane 內取插話前綴。並行 lane 用波次邊界已 drain 的 _pending_human（避免多 lane 同時
-        drain 競態、不重複廣播）；主 lane / 循序維持每次發言即時 drain 的既有行為。"""
+        """lane 內取插話前綴。並行 lane：先把佇列中新到的插話 drain 進來、累加到 _pending_human，
+        讓波次中途送的插話也即時生效（不必等下一波）。_drain_human 走 get_nowait 同步取出、過程
+        無 await＝在 event loop 內為原子操作，多 lane 並行呼叫不會取到同一則；回顯已於收到時即時
+        broadcast，故此處不再廣播。主 lane / 循序維持每次發言即時 drain 的既有行為。"""
         if ctx.branch is not None:
+            fresh = self._drain_human()
+            if fresh:
+                self._pending_human = (
+                    f"{self._pending_human}\n{fresh}".strip() if self._pending_human else fresh
+                )
             return (
                 f"【使用者插話，請納入考量】{self._pending_human}\n\n"
                 if self._pending_human
@@ -720,11 +727,11 @@ class StudioSession:
         for wave in waves:
             if self._stop:
                 break
-            # 並行模式：波次邊界統一 drain 一次插話，套用到本波各 lane（避免多 lane 同時 drain）。
+            # 並行模式：波次邊界先 drain 一次當本波基準（回顯已於收到時即時 broadcast，此處不重複）。
+            # 波次內各 lane 另於每個任務再 drain 新插話累加（見 _lane_human_prefix），故波次跑到一半
+            # 送的插話也進得來，不必枯等下一波。
             if parallel:
                 self._pending_human = self._drain_human()
-                if self._pending_human:
-                    await self.broadcast(events.human_message(self.session_id, self._pending_human))
             lanes = self._plan_lanes(wave)
             # 序列化開 worktree（git worktree add 不宜並發）；無法隔離者留待序列化重跑。
             opened: list[tuple[LaneContext, list[dict]]] = []

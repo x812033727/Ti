@@ -239,6 +239,9 @@ async def _pump_interventions(websocket, session, queue, run_task) -> None:
             text = (msg.get("text") or "").strip()
             if text:
                 queue.put_nowait(text)
+                # 收到即回顯（寫 history + 推前端），使用者立刻看到插話已送達；專家於下一次
+                # drain 納入。否則並行模式要等到波次邊界才 broadcast，期間畫面毫無反應＝「沒用」。
+                await session.broadcast(events.human_message(session.session_id, text))
         elif kind == "stop":
             session.request_stop()
             break
