@@ -70,6 +70,7 @@ def sec6(text):
 
 # ---------- 格式 ----------
 
+
 def test_各區塊有實際案例且七欄(sec4, sec5, sec6):
     for name, sec in [("④", sec4), ("⑤", sec5), ("⑥", sec6)]:
         rows = _rows(sec)
@@ -86,30 +87,35 @@ def test_編號全域唯一(sec4, sec5, sec6):
 
 # ---------- ④ 持久性四重點 ----------
 
+
 def test_儲存後重整值還在(sec4):
     assert "重整" in sec4 or "重新整理" in sec4 or "F5" in sec4, "④ 缺『重整』案例"
     assert "還在" in sec4 or "仍顯示" in sec4 or "仍在" in sec4, "④ 未描述值保留"
 
 
 def test_秘密欄留空不清空(sec4):
-    assert "留空" in sec4 and ("不變更" in sec4 or "未被清空" in sec4 or "不清空" in sec4), \
+    assert "留空" in sec4 and ("不變更" in sec4 or "未被清空" in sec4 or "不清空" in sec4), (
         "④ 缺『秘密欄留空不清空』案例"
+    )
 
 
 def test_未存變更離開提醒(sec4):
-    assert ("離開" in sec4 or "未儲存" in sec4 or "未存" in sec4), "④ 缺『未存變更離開提醒』案例"
+    assert "離開" in sec4 or "未儲存" in sec4 or "未存" in sec4, "④ 缺『未存變更離開提醒』案例"
 
 
 # ---------- 三高風險點（全域必含）----------
 
+
 def test_三高風險點全部出現(text):
     assert "連點" in text, "缺高風險點：連點儲存不重複送出"
-    assert ("離開" in text and ("未儲存" in text or "未存" in text)), "缺高風險點：未存變更離開提醒"
-    assert ("重整" in text or "重新整理" in text) and ("還在" in text or "仍" in text), \
+    assert "離開" in text and ("未儲存" in text or "未存" in text), "缺高風險點：未存變更離開提醒"
+    assert ("重整" in text or "重新整理" in text) and ("還在" in text or "仍" in text), (
         "缺高風險點：儲存後重整值還在"
+    )
 
 
 # ---------- ⑤ 錯誤／權限覆蓋 ----------
+
 
 def test_錯誤權限案例覆蓋(sec5):
     assert "401" in sec5, "⑤ 缺未授權 401 案例"
@@ -119,6 +125,7 @@ def test_錯誤權限案例覆蓋(sec5):
 
 
 # ---------- ⑥ 跨瀏覽器／無障礙覆蓋 ----------
+
 
 def test_跨瀏覽器至少兩種引擎(sec6):
     browsers = [b for b in ["Chrome", "Firefox", "Safari", "Edge"] if b in sec6]
@@ -132,6 +139,7 @@ def test_鍵盤與報讀無障礙覆蓋(sec6):
 
 
 # ---------- 文件宣稱 vs 程式碼事實 ----------
+
 
 def test_未實作離開提醒_與程式碼一致(sec4):
     """4.6 宣稱前端無 beforeunload；須與實際程式碼一致（誠實揭露待開發項）。"""
@@ -154,18 +162,22 @@ def test_label包覆input_與renderSettings一致(sec6):
 def test_routes後端權限與錯誤防護屬實(sec5):
     src = ROUTES.read_text(encoding="utf-8")
     # GET /api/settings 受 require_auth
-    assert 'get("/api/settings", dependencies=[Depends(auth.require_auth)])' in src, \
+    assert 'get("/api/settings", dependencies=[Depends(auth.require_auth)])' in src, (
         "GET /api/settings 未掛 require_auth，5.2 失準"
+    )
     # POST /api/settings 受 loopback + auth（WRITE_DEPS）
-    assert 'post("/api/settings", dependencies=WRITE_DEPS)' in src, \
+    assert 'post("/api/settings", dependencies=WRITE_DEPS)' in src, (
         "POST /api/settings 未掛 WRITE_DEPS，5.3 失準"
+    )
     assert "require_loopback" in src and "require_auth" in src, "WRITE_DEPS 未含雙重保護"
     # 非 dict body → 400 格式錯誤
-    assert "isinstance(body, dict)" in src and '"格式錯誤"' in src and "status_code=400" in src, \
+    assert "isinstance(body, dict)" in src and '"格式錯誤"' in src and "status_code=400" in src, (
         "POST 未對非物件 body 回 400 格式錯誤，5.4 失準"
+    )
 
 
 # ---------- 真實行為佐證：持久化 round-trip + 0600 ----------
+
 
 def test_持久化roundtrip_改其他欄原值保留(tmp_path):
     """模擬『儲存後重整值還在』『改其他欄不影響既有值』。"""
@@ -180,7 +192,9 @@ def test_持久化roundtrip_改其他欄原值保留(tmp_path):
     write_secret_file(env, "TI_PARALLEL_LANES", "6")
 
     assert get_key(env, "TI_MODEL_LEAD") == "claude-opus-4-8", "重整後文字欄值應保留"
-    assert get_key(env, "GITHUB_TOKEN") == "ghp_secret_xyz", "改其他欄後既有金鑰應保留（留空不清空的底層保證）"
+    assert get_key(env, "GITHUB_TOKEN") == "ghp_secret_xyz", (
+        "改其他欄後既有金鑰應保留（留空不清空的底層保證）"
+    )
     assert get_key(env, "TI_PARALLEL_LANES") == "6", "新值應寫入"
 
 

@@ -63,6 +63,7 @@ def sec(text):
 
 # ---------- 格式 ----------
 
+
 def test_有實際案例(rows):
     assert len(rows) >= 12, f"② 案例過少：{len(rows)}"
 
@@ -81,6 +82,7 @@ def test_編號唯一(rows):
 
 # ---------- 四象限關鍵字覆蓋 ----------
 
+
 def test_四象限關鍵字皆出現(sec):
     quad = {"正常": "正常", "空值": "空", "邊界": "邊界", "非法": "非法"}
     missing = [k for k, kw in quad.items() if kw not in sec]
@@ -89,11 +91,13 @@ def test_四象限關鍵字皆出現(sec):
 
 def test_超長輸入不破版有案例(sec):
     assert "超長" in sec, "缺『超長輸入』案例"
-    assert ("破版" in sec or "變形" in sec or "溢出" in sec or "捲軸" in sec), \
+    assert "破版" in sec or "變形" in sec or "溢出" in sec or "捲軸" in sec, (
         "超長案例未描述『不撐破版面』的可觀察預期"
+    )
 
 
 # ---------- select 欄非法選項覆蓋（對齊實際欄位）----------
+
 
 def test_每個select欄都有非法選項案例(sec):
     """4 個 select 欄都應出現在『非法值』語境。"""
@@ -126,6 +130,7 @@ def test_select邊界值有案例(sec):
 
 # ---------- 真實行為佐證：後端 update() ----------
 
+
 @pytest.fixture
 def capture_update(monkeypatch):
     """攔截 update() 的寫入，避免污染真實 .env，並記錄哪些 key 真的被寫。"""
@@ -144,23 +149,27 @@ def capture_update(monkeypatch):
 
 def test_後端忽略非法select值(capture_update):
     settings, written = capture_update
-    settings.update({
-        "TI_PROVIDER": "bogus",          # 非法 → 應忽略
-        "TI_PARALLEL_LANES": "0",        # 非法（範圍外）→ 應忽略
-        "TI_PARALLEL_TASKS": "2",        # 非法 → 應忽略
-        "TI_PUBLISH_MERGE": "9",         # 非法 → 應忽略
-    })
+    settings.update(
+        {
+            "TI_PROVIDER": "bogus",  # 非法 → 應忽略
+            "TI_PARALLEL_LANES": "0",  # 非法（範圍外）→ 應忽略
+            "TI_PARALLEL_TASKS": "2",  # 非法 → 應忽略
+            "TI_PUBLISH_MERGE": "9",  # 非法 → 應忽略
+        }
+    )
     assert written == {}, f"非法 select 值不應被寫入，卻寫了：{written}"
 
 
 def test_後端接受合法select值(capture_update):
     settings, written = capture_update
-    settings.update({
-        "TI_PROVIDER": "openai",
-        "TI_PARALLEL_LANES": "6",
-        "TI_PARALLEL_TASKS": "1",
-        "TI_PUBLISH_MERGE": "0",
-    })
+    settings.update(
+        {
+            "TI_PROVIDER": "openai",
+            "TI_PARALLEL_LANES": "6",
+            "TI_PARALLEL_TASKS": "1",
+            "TI_PUBLISH_MERGE": "0",
+        }
+    )
     assert written == {
         "TI_PROVIDER": "openai",
         "TI_PARALLEL_LANES": "6",

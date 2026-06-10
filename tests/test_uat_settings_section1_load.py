@@ -11,8 +11,6 @@
 
 from __future__ import annotations
 
-import os
-import re
 from pathlib import Path
 
 import pytest
@@ -65,6 +63,7 @@ def rows(text: str) -> list[list[str]]:
 
 # ---- 格式類 ----
 
+
 def test_區塊有實際案例非佔位(rows):
     real = [r for r in rows if r and r[0] and not r[0].startswith("<!--")]
     assert len(real) >= 5, f"① 區塊案例過少或仍為佔位，實得 {len(real)} 列"
@@ -86,6 +85,7 @@ def test_案例編號唯一(rows):
 
 # ---- 三大主題覆蓋 ----
 
+
 def test_涵蓋開啟設定面板(text):
     sec = text.split("## ①", 1)[1].split("## ②", 1)[0]
     assert "設定" in sec and ("面板" in sec or "彈窗" in sec), "① 未涵蓋『開啟設定面板』"
@@ -103,6 +103,7 @@ def test_涵蓋秘密欄只顯示是否已設定(text):
 
 
 # ---- 文件宣稱 vs 原始碼事實 一致性 ----
+
 
 def test_載入中字樣存在於前端(text):
     sec = text.split("## ①", 1)[1].split("## ②", 1)[0]
@@ -144,6 +145,7 @@ def test_分組順序與settings一致(text):
 
 
 # ---- 後端真實行為：秘密欄不回明文 ----
+
 
 def test_後端秘密欄不回明文(monkeypatch):
     from studio import settings

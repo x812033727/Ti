@@ -79,9 +79,7 @@ def test_存在固定七欄表頭(lines: list[str]):
             cols = _split_row(ln)
             if cols == EXPECTED_HEADER_COLS:
                 found.append(ln)
-    assert found, (
-        "找不到符合規定的固定欄位表頭：" + "｜".join(EXPECTED_HEADER_COLS)
-    )
+    assert found, "找不到符合規定的固定欄位表頭：" + "｜".join(EXPECTED_HEADER_COLS)
 
 
 def test_每個案例區塊都用規定七欄表頭(lines: list[str]):

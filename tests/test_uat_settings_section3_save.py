@@ -69,6 +69,7 @@ def app() -> str:
 
 # ---------- 格式 ----------
 
+
 def test_有實際案例(rows):
     assert len(rows) >= 10, f"③ 案例過少：{len(rows)}"
 
@@ -86,6 +87,7 @@ def test_編號唯一(rows):
 
 # ---------- 四主題覆蓋 ----------
 
+
 def test_四主題皆覆蓋(sec):
     for kw in ["儲存", "取消", "重新部署", "改密碼" if "改密碼" in sec else "密碼"]:
         assert kw in sec, f"③ 缺主題：{kw}"
@@ -94,11 +96,11 @@ def test_四主題皆覆蓋(sec):
 
 # ---------- 高風險：連點儲存不重複送出 ----------
 
+
 def test_有連點儲存案例(sec):
     assert "連點" in sec, "③ 缺『連點儲存不重複送出』高風險案例"
     # 該案例應引導觀察是否送出多筆請求
-    assert ("Network" in sec or "多筆" in sec or "重複" in sec), \
-        "連點案例未引導觀察重複送出"
+    assert "Network" in sec or "多筆" in sec or "重複" in sec, "連點案例未引導觀察重複送出"
 
 
 def test_儲存鈕未防連點_文件與程式碼一致(sec, app):
@@ -107,10 +109,11 @@ def test_儲存鈕未防連點_文件與程式碼一致(sec, app):
     m = re.search(r"async function saveSettings\(\)\s*\{(.*?)\n\}", app, re.S)
     assert m, "找不到 saveSettings 函式"
     body = m.group(1)
-    assert "disabled" not in body, \
+    assert "disabled" not in body, (
         "app.js saveSettings 已加入 disabled，但文件仍宣稱未禁用——文件需同步更新"
+    )
     # 文件確實有揭露此風險
-    assert ("未禁用" in sec or "未禁" in sec), "文件未揭露儲存鈕未防連點的風險"
+    assert "未禁用" in sec or "未禁" in sec, "文件未揭露儲存鈕未防連點的風險"
 
 
 def test_重新部署鈕有防連點_文件與程式碼一致(sec, app):
@@ -122,6 +125,7 @@ def test_重新部署鈕有防連點_文件與程式碼一致(sec, app):
 
 
 # ---------- 改密碼三欄一致性（前端規則一致）----------
+
 
 def test_改密碼規則存在於程式碼(app):
     m = re.search(r"async function savePassword\(\)\s*\{(.*?)\n\}", app, re.S)
@@ -136,27 +140,32 @@ def test_改密碼規則存在於程式碼(app):
 def test_改密碼三欄一致性案例齊全(sec):
     assert "至少 4 個字元" in sec, "③ 缺『新密碼長度』案例（3.10）"
     assert "不一致" in sec, "③ 缺『兩次新密碼一致性』案例（3.11）"
-    assert ("目前密碼" in sec), "③ 缺『目前密碼』相關案例（3.12/3.13）"
+    assert "目前密碼" in sec, "③ 缺『目前密碼』相關案例（3.12/3.13）"
 
 
 # ---------- 文件宣稱字串 vs app.js 一致 ----------
 
-@pytest.mark.parametrize("claim", [
-    "儲存中…",
-    "已儲存，下次討論即生效。",
-    "儲存請求失敗",
-    "重新部署中…",
-    "正在拉取最新 main 並重啟…",
-    "已變更，新密碼即時生效。",
-])
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "儲存中…",
+        "已儲存，下次討論即生效。",
+        "儲存請求失敗",
+        "重新部署中…",
+        "正在拉取最新 main 並重啟…",
+        "已變更，新密碼即時生效。",
+    ],
+)
 def test_文件提到的字串都真實存在於前端(claim, sec, app):
     if claim in sec:
         assert claim in app, f"文件提到字串『{claim}』但 app.js 無此字串（描述失準）"
 
 
 def test_重新部署確認文字一致(sec, app):
-    assert "服務會重啟" in app and "進行中的工作與連線會中斷" in app, \
+    assert "服務會重啟" in app and "進行中的工作與連線會中斷" in app, (
         "app.js 重新部署 confirm 文字與預期不符"
+    )
     if "重新部署" in sec:
         assert "服務會重啟" in sec, "文件 3.5 未對齊實際 confirm 文字"
 
