@@ -13,12 +13,26 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 from _repo import REPO_ROOT
 
 ROOT = REPO_ROOT
 CONTRIB = ROOT / "CONTRIBUTING.md"
 PYPROJECT = ROOT / "pyproject.toml"
 SUBPROC_INV = ROOT / "studio" / "docs" / "subprocess_migration_inventory.md"
+EPIC_BASE = "4f32d3a"  # task 起點前最後一個共同 commit
+
+
+def _base_in_clone(base: str = EPIC_BASE) -> bool:
+    """base commit 是否存在於當前 clone（CI 預設 shallow fetch-depth:1 時可能不在）。"""
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{base}^{{commit}}"],
+            cwd=ROOT,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
 
 
 def _contrib() -> str:
@@ -82,8 +96,18 @@ def test_no_new_tooling_introduced():
 
 # 標準6：pyproject 自 epic 起點未被改動
 def test_pyproject_unchanged():
+    # shallow clone（CI fetch-depth:1）無祖先 commit → 退而確認工作區乾淨。
+    if not _base_in_clone():
+        st = subprocess.run(
+            ["git", "status", "--short", "--", str(PYPROJECT)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert st.stdout.strip() == "", f"pyproject.toml 不應有未提交變更:\n{st.stdout}"
+        pytest.skip(f"base {EPIC_BASE} 不在 shallow clone，略過歷史 diff（已驗工作區乾淨）")
     r = subprocess.run(
-        ["git", "diff", "4f32d3a..HEAD", "--", str(PYPROJECT)],
+        ["git", "diff", f"{EPIC_BASE}..HEAD", "--", str(PYPROJECT)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -105,8 +129,10 @@ def test_subprocess_inventory_untouched():
 
 # 標準5 收尾-d：本 epic 未偷改/放寬任何「既有」docs 測試（只可新增 QA 測試）
 def test_no_preexisting_docs_test_weakened():
+    if not _base_in_clone():
+        pytest.skip(f"base {EPIC_BASE} 不在 shallow clone，無法做歷史 name-only diff")
     r = subprocess.run(
-        ["git", "diff", "4f32d3a..HEAD", "--name-only", "--", "tests/docs/"],
+        ["git", "diff", f"{EPIC_BASE}..HEAD", "--name-only", "--", "tests/docs/"],
         cwd=ROOT,
         capture_output=True,
         text=True,
