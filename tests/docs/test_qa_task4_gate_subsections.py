@@ -18,9 +18,7 @@ CI_YML = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
 def _gate_section() -> str:
     """擷取 ### 登入 / 門禁 段（到下一個同級 ### 之前）。"""
-    m = re.search(
-        r"^###\s+登入\s*/\s*門禁.*?$(.*?)(?=^###\s)", README, re.MULTILINE | re.DOTALL
-    )
+    m = re.search(r"^###\s+登入\s*/\s*門禁.*?$(.*?)(?=^###\s)", README, re.MULTILINE | re.DOTALL)
     assert m, "找不到『### 登入 / 門禁』段"
     return m.group(1)
 
@@ -34,9 +32,7 @@ def _strip_comments(s: str) -> str:
 
 def _subsection(label: str) -> str:
     """擷取 #### (A)/(B) 小節到下一個 #### 之前。"""
-    m = re.search(
-        rf"^####\s+\({label}\).*?$(.*?)(?=^####\s|\Z)", GATE, re.MULTILINE | re.DOTALL
-    )
+    m = re.search(rf"^####\s+\({label}\).*?$(.*?)(?=^####\s|\Z)", GATE, re.MULTILINE | re.DOTALL)
     assert m, f"找不到 #### ({label}) 小節"
     return m.group(1)
 
@@ -85,7 +81,9 @@ def test_required_checks_match_ci_jobs():
 # ---- (B) 不寫 TI_AUTOPILOT_* 完整變數名（紅線：首現須留在設定表） ----
 def test_subsection_b_no_autopilot_varnames():
     b = _strip_comments(_subsection("B"))
-    assert "TI_AUTOPILOT_" not in b, "(B) 小節不應出現 TI_AUTOPILOT_* 完整變數名（首現須留在設定表）"
+    assert "TI_AUTOPILOT_" not in b, (
+        "(B) 小節不應出現 TI_AUTOPILOT_* 完整變數名（首現須留在設定表）"
+    )
 
 
 # ---- (B) 以連結指向「設定」表，只連結不展開 ----

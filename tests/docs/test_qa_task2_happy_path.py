@@ -52,7 +52,7 @@ def test_block_has_all_steps():
 
 # ---- localhost:8000 在 happy-path 區塊（標題之後的前置段內） ----
 def test_localhost_8000_present():
-    seg = SEC[SEC.find("happy-path"):]
+    seg = SEC[SEC.find("happy-path") :]
     assert "http://localhost:8000" in seg, "happy-path 區塊缺 http://localhost:8000"
 
 
@@ -91,7 +91,7 @@ def test_no_bare_pip_in_block():
 
 # ---- 複雜旗標不在 happy-path 流程展開（標準 6）：以連結指向設定表 ----
 def test_links_to_settings_not_expand_flags():
-    seg = SEC[SEC.find("happy-path"):]
+    seg = SEC[SEC.find("happy-path") :]
     assert "[設定](#設定)" in seg, "happy-path 區塊未以連結指向『[設定](#設定)』表"
     assert "TI_AUTOPILOT_" not in re.sub(r"<!--.*?-->", "", seg, flags=re.DOTALL), (
         "happy-path 不應展開 TI_AUTOPILOT_* 旗標細節"

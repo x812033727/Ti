@@ -39,9 +39,7 @@ def _slugify(title: str) -> str:
 
 
 BODY = _strip_code_fences(README)
-HEADINGS = [
-    re.sub(r"^#{1,6}\s+", "", ln) for ln in BODY.splitlines() if re.match(r"^#{1,6}\s", ln)
-]
+HEADINGS = [re.sub(r"^#{1,6}\s+", "", ln) for ln in BODY.splitlines() if re.match(r"^#{1,6}\s", ln)]
 SLUGS = {_slugify(h) for h in HEADINGS}
 LINKS = LINK_RE.findall(README)
 
