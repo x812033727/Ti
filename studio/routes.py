@@ -36,7 +36,7 @@ async def health() -> JSONResponse:
 # --- 運維可視化（受保護）----------------------------------------------
 @router.get("/api/metrics", dependencies=[Depends(auth.require_auth)])
 async def metrics() -> JSONResponse:
-    """運維指標：活躍場次 / 並發上限、history 各狀態數與保留策略、workspace 目錄數。"""
+    """運維指標：活躍場次 / 並發上限、history 各狀態數與保留策略、workspace 目錄數、並行統計。"""
     sessions = history.list_sessions()
     by_status: dict[str, int] = {}
     for m in sessions:
@@ -57,8 +57,38 @@ async def metrics() -> JSONResponse:
                 },
             },
             "workspaces": {"count": workspace.count_workspaces()},
+            "parallel": _aggregate_parallel(sessions),
         }
     )
+
+
+def _aggregate_parallel(sessions: list[dict]) -> dict:
+    """跨 session 聚合並行可觀測性：曾並行的場次數、峰值支線、合併衝突、平均加速比與省下的時間。"""
+    runs = [
+        p for m in sessions if (p := m.get("parallel")) and isinstance(p, dict) and p.get("enabled")
+    ]
+    if not runs:
+        return {
+            "enabled_runs": 0,
+            "config": {
+                "enabled": config.PARALLEL_TASKS_ENABLED,
+                "lanes": config.PARALLEL_LANES,
+            },
+        }
+    speedups = [r.get("speedup", 1.0) for r in runs]
+    saved = sum(r.get("serial_estimate_s", 0) - r.get("wall_clock_s", 0) for r in runs)
+    return {
+        "enabled_runs": len(runs),
+        "peak_lanes": max(r.get("lanes_max", 0) for r in runs),
+        "total_waves": sum(r.get("waves", 0) for r in runs),
+        "merge_conflicts": sum(r.get("merge_conflicts", 0) for r in runs),
+        "avg_speedup": round(sum(speedups) / len(speedups), 2),
+        "wall_clock_saved_s": round(saved, 1),
+        "config": {
+            "enabled": config.PARALLEL_TASKS_ENABLED,
+            "lanes": config.PARALLEL_LANES,
+        },
+    }
 
 
 # --- 登入 / 門禁 --------------------------------------------------------

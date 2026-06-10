@@ -529,13 +529,23 @@ async function refreshMetrics() {
       ? Object.entries(byStatus).map(([k, v]) => `${k} ${v}`).join("・")
       : "（無）";
     const cap = s.max_concurrent ? `／上限 ${s.max_concurrent}` : "（不限）";
+    const pa = m.parallel || {};
+    const pcfg = pa.config || {};
     const rows = [
       ["活躍場次", `${s.active ?? "?"}${cap}`],
       ["歷史場次", `${h.total ?? "?"}`],
       ["各狀態", statusLine],
       ["保留策略", `數量 ${r.max_count ? r.max_count : "不限"}・年齡 ${r.max_age_s ? r.max_age_s + "s" : "停用"}`],
       ["workspace 目錄", `${(m.workspaces || {}).count ?? "?"}`],
+      ["任務並行", `${pcfg.enabled ? "開啟" : "關閉"}・支線上限 ${pcfg.lanes ?? "?"}`],
     ];
+    if (pa.enabled_runs > 0) {
+      rows.push(
+        ["　曾並行場次", `${pa.enabled_runs}・峰值支線 ${pa.peak_lanes}`],
+        ["　平均加速", `${pa.avg_speedup}×・省下約 ${pa.wall_clock_saved_s}s`],
+        ["　波次／合併衝突", `${pa.total_waves} 波・${pa.merge_conflicts} 次衝突`],
+      );
+    }
     body.innerHTML = "";
     rows.forEach(([k, v]) => {
       const row = document.createElement("div");

@@ -66,6 +66,9 @@ def finish_session(session_id: str) -> dict | None:
     meta["n_events"] = len(events)
     meta["finished_at"] = time.time()
     meta["status"] = _derive_status(events)
+    parallel = _derive_parallel(events)
+    if parallel:
+        meta["parallel"] = parallel  # 供 /api/metrics 聚合並行可觀測性
     _write_meta(session_id, meta)
     # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
     # 自己回收掉）；回收失敗絕不影響本次收尾。
@@ -87,6 +90,15 @@ def _derive_status(events: list[dict]) -> str:
                 return "stopped"
             return "completed" if p.get("completed") else "incomplete"
     return "incomplete"
+
+
+def _derive_parallel(events: list[dict]) -> dict:
+    """從 done 事件取出並行可觀測性摘要（無則回空 dict）。"""
+    for ev in reversed(events):
+        if ev.get("type") == "done":
+            p = ev.get("payload", {}).get("parallel")
+            return p if isinstance(p, dict) else {}
+    return {}
 
 
 def list_sessions() -> list[dict]:
