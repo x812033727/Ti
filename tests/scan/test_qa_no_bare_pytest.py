@@ -102,11 +102,45 @@ def test_config_has_hook():
     assert "docs" in hook.get("files", ""), f"files 未限定 docs/: {hook.get('files')!r}"
 
 
+def _ci_pytest_step():
+    data = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    for step in data["jobs"]["lint"]["steps"]:
+        if "scan_bare_pytest" in str(step.get("run", "")):
+            return step
+    return None
+
+
 def test_ci_uses_same_source():
-    """驗收#5：CI 須執行同一條檢查（共用 SSOT），不另寫重複 grep。"""
+    """驗收#5：CI 須執行同一條檢查（共用 SSOT 腳本），不另寫重複 grep。"""
+    step = _ci_pytest_step()
+    assert step is not None, "CI lint job 未接入 scan_bare_pytest.sh（criterion #5 未達成）"
+    # 共用同一支腳本：CI run 與 hook entry 指向相同 SSOT 檔。
+    cfg = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    hook_entry = next(
+        h["entry"] for r in cfg["repos"] if r.get("repo") == "local"
+        for h in r.get("hooks", []) if h.get("id") == "no-bare-pytest"
+    )
+    assert "scan_bare_pytest.sh" in hook_entry, "hook 未用 SSOT 腳本"
+    assert "scan_bare_pytest.sh" in step["run"], "CI 未用同一 SSOT 腳本"
+
+
+def test_ci_no_duplicate_grep():
+    """驗收#5：CI 不得另寫獨立 grep/rg 掃 pytest（規則單一來源）。"""
+    import re
     text = CI.read_text(encoding="utf-8")
-    assert ("no-bare-pytest" in text) or ("scan_bare_pytest.sh" in text), (
-        "CI 未接入 no-bare-pytest 檢查（criterion #5 未達成）"
+    bad = [
+        ln for ln in text.splitlines()
+        if re.search(r"(grep|rg)\b.*pytest", ln) and "scan_bare_pytest" not in ln
+    ]
+    assert not bad, f"CI 出現自寫 grep/rg pytest 邏輯（違反單一來源）: {bad}"
+
+
+def test_ci_pytest_step_is_blocking():
+    """驗收#5 配套：CI pytest 掃描須為 blocking（不得 continue-on-error 吞掉命中）。"""
+    step = _ci_pytest_step()
+    assert step is not None
+    assert step.get("continue-on-error", False) is False, (
+        "CI pytest 掃描被設為 continue-on-error，命中不會擋 CI"
     )
 
 
