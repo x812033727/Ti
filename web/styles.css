@@ -96,15 +96,20 @@ h3 { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
 .msg.human .body { background: #1d2a1d; border-color: #2f5132; }
 .msg.human .who { color: var(--good); }
 
-/* 並行支線：左側色條 + 標籤，讓同一波多條 lane 的發言可辨識來源。 */
-.lanetag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; margin-right: 6px; border: 1px solid var(--border); }
+/* 並行支線多欄看板：同一波的多條 lane 各自一欄並排，欄頭標「支線 #N」、以色條區分來源。 */
+.lanes-board { display: flex; gap: 10px; overflow-x: auto; padding: 4px 0; align-items: flex-start; }
+.lane-col { flex: 1 1 0; min-width: 220px; background: var(--panel); border: 1px solid var(--border); border-top-width: 3px; border-radius: 10px; }
+.lane-col-head { font-size: 12px; font-weight: 700; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.lane-col-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.lane-col-body .msg .body { max-width: 100%; }
+.lane-col-body .tool { padding-left: 4px; }
 .msg.lane .body { border-left-width: 3px; }
-.lane-0 { border-left-color: #4f8cff; } .lanetag.lane-0 { background: #16273f; color: #7fb0ff; }
-.lane-1 { border-left-color: #2fbf71; } .lanetag.lane-1 { background: #15301f; color: #6fd49a; }
-.lane-2 { border-left-color: #c77dff; } .lanetag.lane-2 { background: #2a1c3a; color: #cf9bff; }
-.lane-3 { border-left-color: #ffaf4f; } .lanetag.lane-3 { background: #3a2a12; color: #ffc87f; }
-.lane-4 { border-left-color: #ff6f91; } .lanetag.lane-4 { background: #3a1620; color: #ff9bb0; }
-.lane-5 { border-left-color: #4fd6d6; } .lanetag.lane-5 { background: #133333; color: #7fe0e0; }
+.lane-0 { border-left-color: #4f8cff; border-top-color: #4f8cff; } .lane-col.lane-0 .lane-col-head { color: #7fb0ff; }
+.lane-1 { border-left-color: #2fbf71; border-top-color: #2fbf71; } .lane-col.lane-1 .lane-col-head { color: #6fd49a; }
+.lane-2 { border-left-color: #c77dff; border-top-color: #c77dff; } .lane-col.lane-2 .lane-col-head { color: #cf9bff; }
+.lane-3 { border-left-color: #ffaf4f; border-top-color: #ffaf4f; } .lane-col.lane-3 .lane-col-head { color: #ffc87f; }
+.lane-4 { border-left-color: #ff6f91; border-top-color: #ff6f91; } .lane-col.lane-4 .lane-col-head { color: #ff9bb0; }
+.lane-5 { border-left-color: #4fd6d6; border-top-color: #4fd6d6; } .lane-col.lane-5 .lane-col-head { color: #7fe0e0; }
 
 /* git commit chip */
 .commit { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); padding-left: 34px; }

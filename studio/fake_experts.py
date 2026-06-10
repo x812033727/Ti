@@ -10,6 +10,7 @@ calculator.py / main.py / README.md，驗證工程師補上 pytest，最終 Demo
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 from . import config, events
@@ -94,6 +95,40 @@ def test_div_zero():
 """
 
 
+# --- 並行示範專案（多支線）：兩個獨立模組 + 一個依賴它們的整合說明 -------
+# 設計成「波次 + 依賴」：#1 加法、#2 減法彼此獨立（第一波並行兩條 lane）；#3 整合說明
+# 依賴 #1/#2（第二波，其 worktree 從前一波已合併的 HEAD 分支，看得到 add.py/sub.py）。
+_ADD_PY = '"""加法模組。"""\n\n\ndef add(a, b):\n    return a + b\n'
+_SUB_PY = '"""減法模組。"""\n\n\ndef sub(a, b):\n    return a - b\n'
+_TEST_ADD_PY = "from add import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+_TEST_SUB_PY = "from sub import sub\n\n\ndef test_sub():\n    assert sub(5, 2) == 3\n"
+_README_PARALLEL_MD = """\
+# 四則運算模組
+
+由 Ti Studio 離線「並行」示範產生：兩個獨立模組分波並行，整合說明依賴它們。
+
+- `add.py` — 加法（任務 #1）
+- `sub.py` — 減法（任務 #2）
+
+```bash
+python -m pytest -q   # 兩模組測試全過
+```
+"""
+
+# 任務 id → 該支線要寫出的檔案（工程師在自己的 worktree 寫，互不重疊以利合併）。
+_PARALLEL_FILES: dict[int, dict[str, str]] = {
+    1: {"add.py": _ADD_PY, "test_add.py": _TEST_ADD_PY},
+    2: {"sub.py": _SUB_PY, "test_sub.py": _TEST_SUB_PY},
+    3: {"README.md": _README_PARALLEL_MD},
+}
+
+
+def _task_id_from_cwd(cwd: Path) -> int:
+    """從 lane 的 worktree 目錄名（"task-<id>[-<id>...]"）解析出任務 id；解析不到回 0。"""
+    m = re.search(r"task-(\d+)", Path(cwd).name)
+    return int(m.group(1)) if m else 0
+
+
 class FakeExpert:
     """依角色腳本回應；在「動作」型發言時把下一組檔案寫進 workspace。
 
@@ -162,6 +197,56 @@ def build_fake_critics(session_id: str, cwd: Path) -> dict[str, FakeExpert]:
     }
 
 
+def build_fake_lane_expert(role: Role, session_id: str, cwd: Path) -> FakeExpert:
+    """並行示範用的 lane 專家工廠：每條支線各一套，工程師依其 worktree 對應的任務寫檔。
+
+    供 orchestrator 的 `_lane_expert_factory` 注入（離線 + 並行時）。工程師寫該任務的檔、
+    驗證工程師回 PASS、其餘角色給通用台詞；critic 在離線一律放行（見 _get_critic）。
+    """
+    tid = _task_id_from_cwd(cwd)
+    if role.key == "engineer":
+        return FakeExpert(
+            role,
+            session_id,
+            cwd,
+            scripts=["已完成本支線任務，並在自己的 worktree 跑過確認可執行。"],
+            action_marker="任務 #",
+            file_queue=[_PARALLEL_FILES.get(tid, {})],
+        )
+    if role.key == "qa":
+        return FakeExpert(
+            role, session_id, cwd, scripts=["在本支線重跑測試，全數通過。\n驗證: PASS"]
+        )
+    if role.key == "senior":
+        return FakeExpert(
+            role, session_id, cwd, scripts=["本支線程式碼分層清楚、無明顯問題。\n決議: 核可"]
+        )
+    return FakeExpert(role, session_id, cwd, scripts=["以驗收標準逐項檢查，沒有實質反對。"])
+
+
+def _pm_decompose_script(requirement: str) -> str:
+    """PM 拆解台詞：並行模式宣告含依賴的波次任務，循序模式維持原本四則運算 CLI。"""
+    if config.PARALLEL_TASKS_ENABLED:
+        return (
+            f"收到需求：{requirement}。我拆成可並行的模組任務（獨立者分波同時做）。\n"
+            "任務: #1 實作加法模組 add.py\n"
+            "任務: #2 實作減法模組 sub.py\n"
+            "任務: #3 補整合說明 README（彙整 add/sub）\n"
+            "依賴: #3 -> #1\n"
+            "依賴: #3 -> #2\n"
+            "驗收標準: add/sub 模組正確且各有測試；整合說明列出兩模組\n"
+            "執行指令: python -m pytest -q"
+        )
+    return (
+        f"收到需求：{requirement}。我拆成三個任務循序完成。\n"
+        "任務: 實作四則運算核心 calculator.py\n"
+        "任務: 建立命令列介面 main.py\n"
+        "任務: 補上 README 使用說明\n"
+        "驗收標準: calculator 四則運算正確、除以 0 報錯；main.py 可由命令列執行\n"
+        "執行指令: python main.py add 3 4"
+    )
+
+
 def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str, FakeExpert]:
     return {
         "pm": FakeExpert(
@@ -169,13 +254,8 @@ def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str
             session_id,
             cwd,
             scripts=[
-                f"收到需求：{requirement}。我拆成三個任務循序完成。\n"
-                "任務: 實作四則運算核心 calculator.py\n"
-                "任務: 建立命令列介面 main.py\n"
-                "任務: 補上 README 使用說明\n"
-                "驗收標準: calculator 四則運算正確、除以 0 報錯；main.py 可由命令列執行\n"
-                "執行指令: python main.py add 3 4",
-                "三個任務都完成，測試通過、Demo 可執行。\n決議: 完成",
+                _pm_decompose_script(requirement),
+                "所有任務都完成，測試通過、Demo 可執行。\n決議: 完成",
                 "做得不錯：模組分層清楚、有測試。下次可加更多輸入驗證與互動模式。",
             ],
         ),

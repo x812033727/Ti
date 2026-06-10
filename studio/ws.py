@@ -181,6 +181,11 @@ async def ws(websocket: WebSocket) -> None:
             repo_url=repo_url or None,
             critics=critics,
         )
+        if config.OFFLINE_MODE:
+            # 離線並行 demo：每條 lane 用假專家工廠（各自寫該任務的檔），無金鑰也能跑多支線。
+            from .fake_experts import build_fake_lane_expert
+
+            session._lane_expert_factory = build_fake_lane_expert
 
         # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令。
         # 任務生命週期與這條連線解耦：用 done callback 負責收尾（finish_session），

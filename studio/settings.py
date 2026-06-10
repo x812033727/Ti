@@ -85,6 +85,20 @@ FIELDS: tuple[Field, ...] = (
         options=("0", "1"),
         group="GitHub",
     ),
+    Field(
+        "TI_PARALLEL_TASKS",
+        "任務並行（獨立任務分波多支線同時做，1 開／0 關）",
+        kind="select",
+        options=("0", "1"),
+        group="並行",
+    ),
+    Field(
+        "TI_PARALLEL_LANES",
+        "並行支線數上限（每波次同時進行的任務數）",
+        kind="select",
+        options=("1", "2", "3", "4", "5", "6"),
+        group="並行",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}
