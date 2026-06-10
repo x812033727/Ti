@@ -172,6 +172,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_MODEL_LEAD` / `TI_MODEL_FAST` | PM/高級工程師 與 工程師/QA 使用的模型 | opus / sonnet |
 | `TI_MAX_ROUNDS` | 每個任務的最大改進輪數 | 3 |
 | `TI_DEBATE_ROUNDS` | 架構辯論來回回合數（0 = 關閉） | 2 |
+| `TI_LESSONS` / `TI_LESSONS_MAX` | 跨場次教訓庫（長期記憶）：每場檢討蒸餾可重用教訓存入 `lessons.json`，下次開場注入 PM 拆解，讓工作室越做越會／`MAX` 為注入時取最新筆數 | 關閉 / 12 |
 | `TI_DEMO_TIMEOUT` / `TI_DEMO_MAX_OUTPUT` | 自測/Demo 的逾時秒數與輸出字數上限 | 60 / 8000 |
 | `TI_ENABLE_GIT` | 是否在 workspace 內做階段性 commit | 1 |
 | `TI_HOST` / `TI_PORT` | 伺服器位址 | 0.0.0.0 / 8000 |
