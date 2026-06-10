@@ -19,3 +19,17 @@ repos:
         pass_filenames: false
         always_run: true
         verbose: true
+
+  # 裸 pytest 掃描（blocking）。與 CI 共用同一支腳本 scripts/scan_bare_pytest.sh（SSOT）。
+  # 只掃 docs/（files 限定 + pass_filenames），命中裸 `pytest tests/` 即讓檔案失敗。
+  # SCAN_MODE 預設 block 由腳本內收斂；升級/降級單處改 SCAN_MODE 即可。
+  - repo: local
+    hooks:
+      - id: no-bare-pytest
+        name: 禁止文件出現裸 pytest 指令
+        entry: bash scripts/scan_bare_pytest.sh
+        language: system
+        files: ^docs/
+        types: [markdown]
+        pass_filenames: true
+        verbose: true
