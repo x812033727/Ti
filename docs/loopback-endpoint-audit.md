@@ -54,7 +54,7 @@
 
 | 端點 | 檢查方式 | 納管 | 理由 |
 |------|----------|:----:|------|
-| `/ws` | handler 內 `netutil.is_loopback` → `close(1008)` | ✅ | 啟動專家討論並驅動會執行 bash 的 runner，等同遠端執行入口；依賴注入對 WS 不生效，故 handler 內檢查 |
+| `/ws` | handler 內 `auth.is_authed`（共用密碼門禁） | ❌ | 核心產品入口（啟動多專家討論）。**刻意不限本機**：對外網站須讓已登入者開討論，否則對外服務癱瘓。安全靠「登入門禁 + 專家 bash 一律 bwrap 沙箱（host 唯讀、PID/網路隔離）」，非以來源限定 |
 
 ## 框架/靜態端點（不納管）
 
@@ -64,5 +64,5 @@
 
 - 寫入納管守門：`tests/test_auth.py::LOOPBACK_WRITE_ENDPOINTS`（公網→403、裸 XFF 偽造→403、來源不可知→403、loopback→放行）。
 - 讀取不誤納管守門：`tests/test_auth.py::READ_ENDPOINTS`（結構反查：不含 loopback、仍含 auth）。
-- WS：`test_ws_blocks_public_peer` / `test_ws_blocks_unknown_peer` / `test_ws_loopback_check_precedes_auth` / `test_ws_allows_loopback_peer`。
+- WS：`tests/test_qa_task4_ws_loopback.py`（公網未登入→需登入、公網已登入→進主流程、loopback→進主流程、原始碼不再含 `is_loopback`）。
 - 信任模型底層：`tests/test_trust_proxy.py`（XFF 由右往左、受信代理偽造、fail-closed）。

@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import auth, config, events, history, netutil, runner, workspace
+from . import auth, config, events, history, runner, workspace
 from .events import StudioEvent
 from .orchestrator import StudioSession
 
@@ -51,13 +51,10 @@ def active_session_count() -> int:
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
 
-    # 來源前置於身分：非本機連線直接拒絕（依賴注入對 WS 不生效，於 handler 內檢查）。
-    # 與 HTTP require_loopback 同一信任模型（spoof-safe、fail-closed）。
-    if not netutil.is_loopback(websocket):
-        await websocket.send_json({"type": "error", "payload": {"message": "僅限本機存取"}})
-        await websocket.close(code=1008)
-        return
-
+    # /ws 是核心產品入口（啟動多專家討論）。刻意「不」限定本機來源：對外網站須能讓
+    # 已登入使用者開討論，否則整個對外服務形同癱瘓。安全模型改為「登入門禁（共用密碼）
+    # + 專家 bash 一律 bwrap 沙箱（host 唯讀、PID/網路隔離）」。HTTP 管理類寫入
+    # （settings / redeploy / autopilot）仍維持 require_loopback 僅限本機，不受此影響。
     # 門禁啟用時，未登入的連線直接拒絕。
     if not auth.is_authed(websocket):
         await websocket.send_json(

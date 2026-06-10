@@ -1,11 +1,17 @@
-"""QA 獨立驗證：任務 #4 /ws handler 內本機限定（依賴注入對 WS 不生效，於 handler 檢查）。
+"""QA 驗證：/ws 改為「僅登入門禁、不限本機來源」後的行為。
 
-驗收要點（AC4 + AC5 之 WS 面）：
-- /ws 對非本機來源會主動 close（不靠路由依賴），並送出「僅限本機存取」error。
-- loopback peer → 放行，進入後續主流程（不因 loopback 被 close）。
-- 受信代理偽造 XFF（真實 client 為公網）→ close。
-- 來源不可知（預設 testclient，非 IP）→ fail-closed close。
-- loopback 檢查『前置於』身分檢查：門禁啟用 + 公網來源 → 收到「僅限本機存取」而非「登入」。
+政策變更（原任務 #4 把 /ws 鎖本機 → 現反轉）：
+- /ws 是核心產品入口（啟動多專家討論）。對外網站須能讓已登入使用者開討論，
+  故 **不再** 以 netutil.is_loopback 限定來源；安全模型改為「共用密碼門禁
+  + 專家 bash 一律 bwrap 沙箱」。HTTP 管理類寫入仍維持 require_loopback（見
+  test_qa_task2_loopback_writes / test_qa_task5_audit_table）。
+
+驗收要點：
+- 公網來源 + 門禁停用 → 進入主流程（不再被「僅限本機存取」擋）。
+- 公網來源 + 門禁啟用、未登入 → 回「需要登入」（非「僅限本機存取」）。
+- 公網來源 + 門禁啟用、已登入 → 進入主流程（外網登入即可開討論）。
+- loopback 來源 → 一如既往進入主流程。
+- 程式碼層級：ws handler 不再呼叫 netutil.is_loopback、亦不再送「僅限本機存取」。
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config
+from studio import auth, config
 
 
 @pytest.fixture
@@ -23,75 +29,63 @@ def app():
     return fastapi_app
 
 
-def _first_event(client, headers=None):
-    """連上 /ws 並取第一則伺服器訊息（loopback/登入 gate 會立即送 error 後 close）。"""
-    with client.websocket_connect("/ws", headers=headers or {}) as ws:
-        return ws.receive_json()
+def _authed_headers() -> dict:
+    """組一個合法登入 cookie 的 header（門禁啟用時用）。"""
+    return {"Cookie": f"{config.AUTH_COOKIE}={auth.make_token()}"}
 
 
-# --- AC4：公網來源 → 主動 close + 「僅限本機存取」-------------------------
-def test_ws_public_peer_closed(app, monkeypatch):
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用也不得放行 WS
-    client = TestClient(app, client=("203.0.113.5", 40000))
-    ev = _first_event(client)
-    assert ev["type"] == "error"
-    assert ev["payload"]["message"] == "僅限本機存取"
-
-
-# --- AC4：來源不可知（預設 testclient 非 IP）→ fail-closed close ----------
-def test_ws_unknown_peer_fail_closed(app, monkeypatch):
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
-    client = TestClient(app)  # client host = "testclient"，無法解析為 IP
-    ev = _first_event(client)
-    assert ev["type"] == "error"
-    assert ev["payload"]["message"] == "僅限本機存取"
-
-
-# --- AC5(WS)：受信代理偽造 XFF（真實 client 為公網）→ close ---------------
-def test_ws_spoofed_xff_closed(app, monkeypatch):
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
-    monkeypatch.setattr(config, "TRUST_PROXY", True)
-    monkeypatch.setenv("TI_TRUSTED_PROXIES", "127.0.0.0/8,::1")
-    config.reset_trusted_proxies()
-    try:
-        client = TestClient(app, client=("127.0.0.1", 12345))  # peer 受信 → 採信 XFF
-        # 最左塞 127.0.0.1，但最右非受信真實 client = 203.0.113.9（公網）
-        ev = _first_event(client, headers={"X-Forwarded-For": "127.0.0.1, 203.0.113.9"})
-        assert ev["type"] == "error"
-        assert ev["payload"]["message"] == "僅限本機存取"
-    finally:
-        config.reset_trusted_proxies()
-
-
-# --- AC5(WS)：loopback peer → 放行，進入主流程（非「僅限本機存取」分支）----
-def test_ws_loopback_peer_allowed_enters_flow(app, monkeypatch):
-    """loopback 通過後進入主流程：送空需求 → 回「需求不可為空」（證明已過 loopback+auth gate）。"""
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用，loopback 直接進主流程
-    client = TestClient(app, client=("127.0.0.1", 12345))
+# --- 公網來源 + 門禁停用 → 不被本機限制擋，直接進主流程 -------------------
+def test_ws_public_peer_not_blocked_by_loopback(app, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用
+    client = TestClient(app, client=("203.0.113.5", 40000))  # 公網來源
     with client.websocket_connect("/ws") as ws:
-        ws.send_json({"requirement": ""})  # 空需求觸發主流程內的驗證
+        ws.send_json({"requirement": ""})  # 空需求觸發主流程內驗證
         ev = ws.receive_json()
         assert ev["type"] == "error"
-        assert ev["payload"]["message"] != "僅限本機存取"  # 未被 loopback gate 擋
-        assert "需求" in ev["payload"]["message"]  # 確實進入主流程
+        assert ev["payload"]["message"] != "僅限本機存取"  # 不再被本機 gate 擋
+        assert "需求" in ev["payload"]["message"]  # 確實已進入主流程
 
 
-# --- AC4：loopback 檢查『前置於』身分檢查（順序與 HTTP 一致）-------------
-def test_ws_loopback_precedes_auth(app, monkeypatch):
-    """門禁啟用 + 公網來源：應先回 loopback 的「僅限本機存取」，而非「需要登入」。"""
+# --- 公網來源 + 門禁啟用、未登入 → 「需要登入」（非「僅限本機存取」）------
+def test_ws_public_peer_requires_auth_not_loopback(app, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")  # 門禁啟用
     client = TestClient(app, client=("203.0.113.5", 40000))  # 公網、未登入
-    ev = _first_event(client)
-    assert ev["type"] == "error"
-    assert ev["payload"]["message"] == "僅限本機存取"
-    assert "登入" not in ev["payload"]["message"]
+    with client.websocket_connect("/ws") as ws:
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert "登入" in ev["payload"]["message"]
+        assert ev["payload"]["message"] != "僅限本機存取"
 
 
-# --- AC4：loopback 來源 + 門禁啟用未登入 → 落到登入分支（順序正確的反證）--
-def test_ws_loopback_then_auth_gate(app, monkeypatch):
-    """loopback 通過後，門禁啟用且未登入 → 回「需要登入」（證明兩道 gate 串接正確）。"""
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
-    client = TestClient(app, client=("127.0.0.1", 12345))  # loopback、未登入
-    ev = _first_event(client)
-    assert ev["type"] == "error"
-    assert "登入" in ev["payload"]["message"]
+# --- 公網來源 + 門禁啟用、已登入 → 進入主流程（外網登入即可開討論）-------
+def test_ws_public_peer_authed_enters_flow(app, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")  # 門禁啟用
+    client = TestClient(app, client=("203.0.113.5", 40000))  # 公網來源
+    with client.websocket_connect("/ws", headers=_authed_headers()) as ws:
+        ws.send_json({"requirement": ""})  # 已登入 → 進主流程 → 空需求驗證
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert ev["payload"]["message"] != "僅限本機存取"
+        assert "需求" in ev["payload"]["message"]
+
+
+# --- loopback 來源 + 門禁停用 → 一如既往進入主流程 -----------------------
+def test_ws_loopback_peer_still_enters_flow(app, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app, client=("127.0.0.1", 12345))
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"requirement": ""})
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert "需求" in ev["payload"]["message"]
+
+
+# --- 程式碼層級：/ws handler 不再做本機限定 ------------------------------
+def test_ws_source_has_no_loopback_gate():
+    import inspect
+
+    from studio import ws as ws_mod
+
+    src = inspect.getsource(ws_mod.ws)
+    assert "is_loopback" not in src, "/ws 不應再呼叫 netutil.is_loopback"
+    assert "僅限本機存取" not in src, "/ws 不應再送『僅限本機存取』"
