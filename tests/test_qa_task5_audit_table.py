@@ -108,13 +108,15 @@ def test_audit_managed_set_matches_decision():
     assert managed == expected, f"納管清單與架構決策不符：{managed ^ expected}"
 
 
-# --- WS：/ws 已列載並標納管，且 handler 內確實檢查 -----------------------
-def test_audit_ws_listed_and_managed(app):
+# --- WS：/ws 已列載但「不」納管本機限定，改以登入門禁守護 -----------------
+def test_audit_ws_listed_and_auth_only(app):
     _, ws_docs = parse_audit()
-    assert ws_docs.get("/ws") is True, "盤點表未把 /ws 標為納管"
+    assert "/ws" in ws_docs, "盤點表未列載 /ws"
+    assert ws_docs.get("/ws") is False, "盤點表不應把 /ws 標為（本機）納管：核心入口刻意不限本機"
     # app 確有 /ws WebSocket 入口
     ws_paths = {r.path for r in app.routes if isinstance(r, WebSocketRoute)}
     assert "/ws" in ws_paths
-    # ws.py 確實於 handler 內呼叫 netutil.is_loopback（非靠路由依賴）
+    # ws.py 改以 auth.is_authed 守護，且不再做本機限定
     src = WS_SRC.read_text(encoding="utf-8")
-    assert "netutil.is_loopback(websocket)" in src
+    assert "auth.is_authed(websocket)" in src
+    assert "netutil.is_loopback(websocket)" not in src
