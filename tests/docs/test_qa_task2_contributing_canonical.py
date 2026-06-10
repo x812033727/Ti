@@ -114,6 +114,9 @@ def test_documented_install_and_lint_modules_resolve():
         pytest.skip(".venv 未建立，略過文件指令可執行性實測")
     # 文件宣告以 .venv/bin/python -m {pip,ruff,pytest,pre_commit} 為入口；逐一確認模組可解析
     for mod in ("pip", "ruff", "pytest", "pre_commit"):
-        r = subprocess.run([str(VENV_PY), "-c", f"import importlib; importlib.import_module('{mod}')"],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            [str(VENV_PY), "-c", f"import importlib; importlib.import_module('{mod}')"],
+            capture_output=True,
+            text=True,
+        )
         assert r.returncode == 0, f"文件 canonical 指令依賴的模組 {mod} 無法 import: {r.stderr}"
