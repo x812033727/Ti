@@ -180,6 +180,98 @@ async def test_parallel_wave_isolates_and_merges(tmp_path, monkeypatch):
     assert {e.payload["task_id"] for e in lane_msgs} == {1, 2, 3}
 
 
+@pytest.mark.asyncio
+async def test_lane_exception_retries_on_main(tmp_path, monkeypatch):
+    """lane 崩潰時，其任務改在主幹序列化重跑（與合併衝突 fallback 對稱）→ 最終 done、指標有記。"""
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", True)
+    monkeypatch.setattr(config, "PARALLEL_LANES", 3)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "CRITIC_ENABLED", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+
+    sid = "retry"
+    cwd = workspace.create_workspace(sid)
+
+    async def broadcast(ev):
+        pass
+
+    # lane 一律崩潰；任務轉主幹重跑時改用這套主專家（engineer 正常回應 → 重跑通過）。
+    main = {
+        "pm": MainStub(BY_KEY["pm"], ["任務: #1 甲", "決議: 完成", "檢討"]),
+        "engineer": MainStub(BY_KEY["engineer"], ["主幹重跑實作"]),
+        "qa": MainStub(BY_KEY["qa"], ["驗證: PASS"]),
+        "senior": MainStub(BY_KEY["senior"], ["決議: 核可"]),
+    }
+    session = StudioSession(sid, broadcast, experts=main, cwd=cwd)
+    session._lane_expert_factory = RaisingLaneStub
+
+    result = await session.run("一件會在 lane 崩潰的事")
+
+    # 任務在主幹序列化重跑 → 最終 done，不靜默卡在 doing/review。
+    assert all(t["status"] == "done" for t in session._tasks)
+    assert result["completed"] is True
+    # 降級指標記到 1 次 lane 例外。
+    assert session._parallel_metrics["lane_exceptions"] == 1
+    # 崩潰 lane 的 worktree 清乾淨、無洩漏。
+    assert not (tmp_path / f"{cwd.name}.lanes").exists()
+
+
+@pytest.mark.asyncio
+async def test_parallel_lane_events_carry_task_id(tmp_path, monkeypatch):
+    """並行 lane 的看板/驗證/commit 事件都帶 task_id，前端才能把交錯事件歸到正確任務。"""
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", True)
+    monkeypatch.setattr(config, "PARALLEL_LANES", 3)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "CRITIC_ENABLED", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    LaneStub.created.clear()
+
+    sid = "tagged"
+    cwd = workspace.create_workspace(sid)
+
+    bucket = []
+
+    async def broadcast(ev):
+        bucket.append(ev)
+
+    main = {
+        "pm": MainStub(
+            BY_KEY["pm"], ["任務: #1 甲\n任務: #2 乙\n任務: #3 丙", "決議: 完成", "檢討"]
+        ),
+        "engineer": MainStub(BY_KEY["engineer"], ["x"]),
+        "qa": MainStub(BY_KEY["qa"], ["驗證: PASS"]),
+        "senior": MainStub(BY_KEY["senior"], ["決議: 核可"]),
+    }
+    session = StudioSession(sid, broadcast, experts=main, cwd=cwd)
+    session._lane_expert_factory = LaneStub
+
+    await session.run("做三件獨立的事")
+
+    # task_status 只由 lane 任務路徑發出 → 並行時每筆都應帶 task_id，且涵蓋三個任務。
+    status_evs = [e for e in bucket if e.type == events.EventType.TASK_STATUS]
+    assert status_evs, "應有 task_status 事件"
+    assert all("task_id" in e.payload for e in status_evs), "並行 task_status 未帶 task_id"
+    assert {e.payload["task_id"] for e in status_evs} == {1, 2, 3}
+
+    # 任務 commit（_work_task 內）也帶 task_id（PM 規劃/合併等主幹 commit 不在此列）。
+    commit_tagged = {
+        e.payload["task_id"]
+        for e in bucket
+        if e.type == events.EventType.GIT_COMMIT and "task_id" in e.payload
+    }
+    assert commit_tagged == {1, 2, 3}, f"任務 commit 未正確帶 task_id：{commit_tagged}"
+
+    # 驗證結果事件（run_result）在並行 lane 也帶 task_id。
+    run_evs = [e for e in bucket if e.type == events.EventType.RUN_RESULT]
+    assert run_evs and all("task_id" in e.payload for e in run_evs), "並行 run_result 未帶 task_id"
+
+
 class DepStub(LaneStub):
     """記錄各 lane 開工時，其 worktree 是否已看得到前一波合併進來的成果。"""
 
