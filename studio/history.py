@@ -183,6 +183,11 @@ def delete_session(session_id: str) -> bool:
     ws = workspace.workspace_path(session_id)
     if ws.exists():
         shutil.rmtree(ws, ignore_errors=True)
+    # 並行支線的 worktree 是 workspace 的兄弟目錄（<id>.lanes）。正常路徑於 session 收尾即清掉，
+    # 此處兜底「程序中途崩潰未收尾」殘留的 .lanes，避免回收後仍永久占用磁碟。
+    lanes = ws.parent / f"{ws.name}.lanes"
+    if lanes.exists():
+        shutil.rmtree(lanes, ignore_errors=True)
     return True
 
 
