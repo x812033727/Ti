@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import config, events, publisher, runner, workspace
+from . import config, events, lessons, publisher, runner, workspace
 from .roles import ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
@@ -144,6 +144,11 @@ def parse_tasks(pm_text: str) -> list[str]:
 def parse_followups(text: str) -> list[str]:
     """從檢討文字抽出 `後續任務: ...` 行（供 autopilot 回寫 backlog）。"""
     return [m.strip() for m in re.findall(r"^\s*後續任務\s*[:：]\s*(.+)$", text, re.M)][:10]
+
+
+def parse_lessons(text: str) -> list[str]:
+    """從檢討文字抽出 `教訓: ...` 行（供跨場次教訓庫累積）。"""
+    return [m.strip() for m in re.findall(r"^\s*教訓\s*[:：]\s*(.+)$", text, re.M)][:5]
 
 
 def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:
@@ -577,6 +582,7 @@ class StudioSession:
         research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
         pm_plan = await pm.speak(
             (await self._human_prefix())
+            + lessons.context()  # 跨場次教訓庫（停用/空白時為空字串）
             + repo_note
             + research_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
@@ -1225,13 +1231,24 @@ class StudioSession:
             done = critic_ok
 
         await self.broadcast(events.phase_change(self.session_id, "檢討", "團隊進行回顧"))
-        retro = await pm.speak(
+        retro_prompt = (
             "請帶領團隊做一段簡短檢討：這次做得好的地方、可以改進的地方、以及後續建議。\n"
             "若過程中發現尚未解決的問題或值得改善之處，請在最後逐行列出後續任務，"
-            "每行格式固定為 `後續任務: <動詞開頭的具體任務>`（沒有就不必列）。",
-            self.broadcast,
+            "每行格式固定為 `後續任務: <動詞開頭的具體任務>`（沒有就不必列）。"
         )
+        if config.LESSONS_ENABLED:
+            retro_prompt += (
+                "\n另外，若有可跨專案重用的具體經驗（踩過的坑、有效做法、技術選型結論），"
+                "請逐行列出，格式固定為 `教訓: <一句精簡、可重用的經驗>`（最多 5 條，沒有就不必列）。"
+            )
+        retro = await pm.speak(retro_prompt, self.broadcast)
         self._followups = parse_followups(retro)
+        if config.LESSONS_ENABLED:
+            lessons.add_many(
+                parse_lessons(retro),
+                session_id=self.session_id,
+                requirement=self._requirement,
+            )
         await self.broadcast(
             events.StudioEvent(events.EventType.RETROSPECTIVE, self.session_id, {"text": retro})
         )

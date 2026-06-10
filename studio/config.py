@@ -51,6 +51,12 @@ CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 # 不進交付物與檔案清單（見 workspace._IGNORE）。預設關閉以保既有行為。
 NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
 
+# 跨場次教訓庫（lessons.json）：工作室的長期記憶。每場檢討蒸餾出可重用的「教訓」持久化，
+# 下次新討論開場注入 PM 拆解，讓工作室跨場次自我加強（避免重蹈、善用既有結論）。
+# 預設關閉以保既有行為（與 NOTES/HUDDLE/CRITIC 同為 opt-in）；LESSONS_MAX 為注入時取最新筆數。
+LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
+LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
+
 # 停滯守門：改進迴圈連續 STALL_ROUNDS 輪只重述（文字高度相似且無檔案變動）就提早收斂，
 # 避免燒 token。<=1 視為停用。預設值刻意大於離線示範每任務實際圈數，使既有流程不誤觸；
 # 且 _stalled 在無 cwd 或關閉 git 時一律不偵測（保護 cwd=None 的單元測試）。
@@ -248,6 +254,8 @@ def env_path() -> str:
 
 WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspaces")))
 HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
+# 跨場次教訓庫持久化檔（見 LESSONS_ENABLED）。預設置於專案根，已列入 .gitignore，不進版控。
+LESSONS_FILE = Path(os.getenv("TI_LESSONS_FILE", str(PROJECT_ROOT / "lessons.json")))
 WEB_DIR = PROJECT_ROOT / "web"
 
 # --- 歷史 / 工作區保留（GC，避免自托管長跑下 history/ 與 workspaces/ 只增不減）----
