@@ -756,11 +756,26 @@ class StudioSession:
         m["serial_estimate_s"] = round(sum(durations), 2)
         m["speedup"] = round(m["serial_estimate_s"] / wall_clock_s, 2) if wall_clock_s > 0 else 1.0
 
+    def _lane_budget(self) -> int:
+        """單一波次可同時並行的支線上限（依 LLM 並發預算自適應）。
+
+        每條 lane 的 review 階段會同時佔用 `_min_lane_concurrency()` 個號誌額度（qa/senior/
+        security 並行）。能真正同時推進的 lane 數 ≈ 全域 LLM 並發 ÷ 每 lane 佔用，向下取整。
+        超過此數的 lane 只會卡在號誌前枯等，徒增 worktree 開／合併開銷 → 以此夾住上限。至少 1。
+        """
+        return max(1, config.LLM_MAX_CONCURRENCY // self._min_lane_concurrency())
+
     def _plan_lanes(self, wave: list[dict]) -> list[list[dict]]:
-        """把一波任務切成至多 PARALLEL_LANES 條支線（round-robin）。關閉並行/無 cwd 時整波一條。"""
+        """把一波任務切成多條支線（round-robin）。關閉並行/無 cwd 時整波一條。
+
+        支線數隨波次大小自適應，但同時受使用者上限 `PARALLEL_LANES` 與 LLM 並發預算
+        （`_lane_budget`）雙重約束——不開出多到只能在 LLM 號誌前排隊的 lane。
+        預設設定（PARALLEL_LANES=3、LLM_MAX_CONCURRENCY=9、3 位 reviewer → 預算=3）下，
+        上限維持 3，行為與調整前一致。
+        """
         if not (config.PARALLEL_TASKS_ENABLED and self.cwd):
             return [wave]
-        n = max(1, min(config.PARALLEL_LANES, len(wave)))
+        n = max(1, min(config.PARALLEL_LANES, self._lane_budget(), len(wave)))
         lanes: list[list[dict]] = [[] for _ in range(n)]
         for i, task in enumerate(wave):
             lanes[i % n].append(task)

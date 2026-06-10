@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 from studio import config
-from studio.orchestrator import build_waves, parse_tasks_with_deps
+from studio.orchestrator import StudioSession, build_waves, parse_tasks_with_deps
+from studio.roles import BY_KEY
 
 
 def _ids(waves):
@@ -118,3 +119,58 @@ def test_waves_ignores_unknown_edge_ids():
 
 def test_waves_empty_tasks():
     assert build_waves([], []) == []
+
+
+# --- _plan_lanes：支線數自適應（受 PARALLEL_LANES 與 LLM 並發預算雙重約束）-------
+
+
+class _Stub:
+    def __init__(self, role):
+        self.role = role
+
+    async def speak(self, prompt, broadcast):  # pragma: no cover - 不會被呼叫
+        return "ok"
+
+    async def stop(self):  # pragma: no cover
+        pass
+
+
+def _session(tmp_path, monkeypatch, *, lanes, llm_max):
+    """建一個並行啟用、含 3 位 reviewer（qa/senior/security）的 session 供 _plan_lanes 測試。"""
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", True)
+    monkeypatch.setattr(config, "PARALLEL_LANES", lanes)
+    monkeypatch.setattr(config, "LLM_MAX_CONCURRENCY", llm_max)
+    experts = {k: _Stub(BY_KEY[k]) for k in ("pm", "engineer", "qa", "senior", "security")}
+
+    async def bc(ev):  # pragma: no cover
+        pass
+
+    return StudioSession("s", bc, experts=experts, cwd=tmp_path)
+
+
+def test_plan_lanes_default_budget_matches_parallel_lanes(tmp_path, monkeypatch):
+    # 預設：PARALLEL_LANES=3、LLM=9、3 reviewer → 預算=3。5 任務 → 3 條 lane（行為不變）。
+    s = _session(tmp_path, monkeypatch, lanes=3, llm_max=9)
+    lanes = s._plan_lanes(_tasks(1, 2, 3, 4, 5))
+    assert len(lanes) == 3
+    assert sorted(t["id"] for ln in lanes for t in ln) == [1, 2, 3, 4, 5]
+
+
+def test_plan_lanes_llm_budget_caps_high_parallel_lanes(tmp_path, monkeypatch):
+    # PARALLEL_LANES 調高到 10 但 LLM=9、3 reviewer → 預算=3 夾住 → 8 任務仍只開 3 條 lane。
+    s = _session(tmp_path, monkeypatch, lanes=10, llm_max=9)
+    lanes = s._plan_lanes(_tasks(1, 2, 3, 4, 5, 6, 7, 8))
+    assert len(lanes) == 3
+
+
+def test_plan_lanes_scales_up_when_budget_allows(tmp_path, monkeypatch):
+    # 同時調高 PARALLEL_LANES=10 與 LLM=30 → 預算=10 → 8 任務自適應開到 8 條 lane。
+    s = _session(tmp_path, monkeypatch, lanes=10, llm_max=30)
+    lanes = s._plan_lanes(_tasks(1, 2, 3, 4, 5, 6, 7, 8))
+    assert len(lanes) == 8
+
+
+def test_plan_lanes_never_exceeds_wave_size(tmp_path, monkeypatch):
+    # 預算充足但任務只有 2 個 → 至多 2 條 lane。
+    s = _session(tmp_path, monkeypatch, lanes=10, llm_max=30)
+    assert len(s._plan_lanes(_tasks(1, 2))) == 2
