@@ -121,6 +121,8 @@ def test_read_notes_path_traversal_safe(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_session_writes_notes_and_reads_back(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NOTES_ENABLED", True)
+    # 驗證循序模式下後續任務讀回前一任務 NOTES；並行同波任務並發、波末才 flush，故釘循序。
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
     monkeypatch.setattr(config, "ENABLE_GIT", False)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     sid = "flow"

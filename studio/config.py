@@ -82,8 +82,10 @@ MAX_TASKS = int(os.getenv("TI_MAX_TASKS", "5"))
 
 # --- 任務並行（多支線 lane）---------------------------------------------
 # 開啟後：PM 標注依賴 → 獨立任務分「波次」，每波最多 PARALLEL_LANES 條支線並行，每條各有
-# 獨立 git worktree 分支與專家團隊，完工依序合併回主分支。預設關閉以保既有循序行為與測試。
-PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "0") not in ("0", "false", "False", "")
+# 獨立 git worktree 分支與專家團隊，完工依序合併回主分支。功能已成熟（波次/lane/合併衝突
+# 化解/lane 例外降級/worktree 洩漏兜底/可觀測指標皆備且有測試），故預設開啟；要還原純循序
+# 行為：TI_PARALLEL_TASKS=0（循序專屬語義的測試已各自明確釘在 PARALLEL_TASKS_ENABLED=False）。
+PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
 # 單一波次內同時並行的支線數上限（含 1 = 退化為循序）。
 PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
 # 全域同時進行中的 LLM 發言數上限（節流：N 條 lane × 各自驗證/審查/資安 gather 可能爆量）。
@@ -360,7 +362,7 @@ def reload() -> None:
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
-    PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "0") not in ("0", "false", "False", "")
+    PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
     LLM_MAX_CONCURRENCY = int(os.getenv("TI_LLM_MAX_CONCURRENCY", "9"))
     LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if r.strip()}
