@@ -57,6 +57,16 @@ async def test_offline_parallel_demo(tmp_path, monkeypatch):
     notes = workspace.read_notes(sid)
     assert "任務 #1 完成" in notes and "任務 #2 完成" in notes and "任務 #3 完成" in notes
 
+    # 並行可觀測性：done 事件帶並行指標。波次 2、峰值支線 2（第一波 #1/#2 並行）。
+    # 註：speedup 在「即時假任務」下可能 <1（worktree/合併的固定開銷大於近乎零的任務工時）——
+    # 這是誠實的量測；真實 LLM 任務（每個數秒）才會 >1。故只驗結構與數值合理、不斷言方向。
+    done = next(e for e in bucket if e.type == events.EventType.DONE)
+    par = done.payload["parallel"]
+    assert par["enabled"] is True
+    assert par["waves"] == 2 and par["tasks"] == 3
+    assert par["lanes_max"] == 2
+    assert par["speedup"] > 0 and par["wall_clock_s"] >= 0 and "serial_estimate_s" in par
+
 
 @pytest.mark.asyncio
 async def test_offline_sequential_demo_unchanged(tmp_path, monkeypatch):

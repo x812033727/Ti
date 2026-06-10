@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -237,6 +238,7 @@ class StudioSession:
         self._tasks: list[dict] = []  # {id, title, status}
         self._edges: list[tuple[int, int]] = []  # 任務依賴邊 (after, before)，並行分波用
         self._pending_human = ""  # 並行模式於波次邊界 drain 的插話，套用到該波各 lane
+        self._parallel_metrics: dict = {}  # 並行可觀測性：波次/峰值支線/合併衝突/加速比
         # 全域 LLM 並發節流（lazy 建立，綁當前 event loop）；多 lane × 多 reviewer 時生效。
         self._llm_sem: asyncio.Semaphore | None = None
         # 並行 lane 的專家工廠（測試可注入 stub）；None 時用 providers.make_expert。
@@ -650,6 +652,16 @@ class StudioSession:
             if config.PARALLEL_TASKS_ENABLED
             else [[t] for t in self._tasks]
         )
+        # 並行可觀測性：記錄波次/峰值支線數/合併衝突/各任務耗時，供 done 事件與 /api/metrics 量化。
+        self._parallel_metrics = {
+            "enabled": parallel,
+            "waves": len(waves),
+            "tasks": len(self._tasks),
+            "lanes_max": 0,
+            "merge_conflicts": 0,
+            "_task_durations": [],
+        }
+        t0 = time.monotonic()
         all_ok = True
         for wave in waves:
             if self._stop:
@@ -669,12 +681,25 @@ class StudioSession:
                     deferred.extend(lane_tasks)
                 else:
                     opened.append((ctx, lane_tasks))
+            # 峰值並行度＝任一波次內實際同時跑的 lane 數。
+            self._parallel_metrics["lanes_max"] = max(
+                self._parallel_metrics["lanes_max"], len(opened)
+            )
             results = await asyncio.gather(
                 *(self._run_lane(ctx, tasks, plan_ctx) for ctx, tasks in opened),
                 return_exceptions=True,
             )
             all_ok = await self._integrate_wave(results, deferred, plan_ctx) and all_ok
+        self._finalize_parallel_metrics(time.monotonic() - t0)
         return all_ok
+
+    def _finalize_parallel_metrics(self, wall_clock_s: float) -> None:
+        """收尾並行指標：以各任務耗時總和估算「若循序」的時間，算出加速比。"""
+        m = self._parallel_metrics
+        durations = m.pop("_task_durations", [])
+        m["wall_clock_s"] = round(wall_clock_s, 2)
+        m["serial_estimate_s"] = round(sum(durations), 2)
+        m["speedup"] = round(m["serial_estimate_s"] / wall_clock_s, 2) if wall_clock_s > 0 else 1.0
 
     def _plan_lanes(self, wave: list[dict]) -> list[list[dict]]:
         """把一波任務切成至多 PARALLEL_LANES 條支線（round-robin）。關閉並行/無 cwd 時整波一條。"""
@@ -749,10 +774,13 @@ class StudioSession:
             events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
         )
         await self._set_task_status(task, "doing")
+        t0 = time.monotonic()
         task_ok = await self._work_task(ctx, task, plan_ctx)
         # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
         if not task_ok and config.HUDDLE_ENABLED and not self._stop:
             task_ok = await self._huddle_and_retry(ctx, task, plan_ctx)
+        # 累計本任務耗時（供「若循序」估算 → 加速比）。
+        self._parallel_metrics.setdefault("_task_durations", []).append(time.monotonic() - t0)
         await self._set_task_status(task, "done" if task_ok else "review")
         # 每任務結束摘要寫進 lane 知識緩衝（波末序列化 flush，供後續波次讀回）。
         if task_ok:
@@ -808,6 +836,9 @@ class StudioSession:
                 )
             return lr.ok
         if res.conflict:
+            self._parallel_metrics["merge_conflicts"] = (
+                self._parallel_metrics.get("merge_conflicts", 0) + 1
+            )
             await runner.git_merge_abort(self.cwd)
             lr.ctx.notes_buffer.clear()  # 丟棄 lane 嘗試的筆記，改以序列化重跑為準。
             await self.broadcast(
@@ -1118,7 +1149,12 @@ class StudioSession:
             events.StudioEvent(
                 events.EventType.DONE,
                 self.session_id,
-                {"completed": done, "stopped": self._stop, "files": files},
+                {
+                    "completed": done,
+                    "stopped": self._stop,
+                    "files": files,
+                    "parallel": self._parallel_metrics,
+                },
             )
         )
         return done

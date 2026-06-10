@@ -54,3 +54,61 @@ def test_metrics_empty_state(client, tmp_path, monkeypatch):
 def test_metrics_requires_auth(client, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")  # 門禁啟用、未登入
     assert client.get("/api/metrics").status_code == 401
+
+
+def test_metrics_aggregates_parallel(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", True)
+    monkeypatch.setattr(config, "PARALLEL_LANES", 3)
+    # 兩個曾並行的 session + 一個未並行（enabled=False，不計入聚合）。
+    for sid, par in [
+        (
+            "p1",
+            {
+                "enabled": True,
+                "waves": 2,
+                "lanes_max": 3,
+                "merge_conflicts": 1,
+                "wall_clock_s": 4.0,
+                "serial_estimate_s": 9.0,
+                "speedup": 2.25,
+            },
+        ),
+        (
+            "p2",
+            {
+                "enabled": True,
+                "waves": 1,
+                "lanes_max": 2,
+                "merge_conflicts": 0,
+                "wall_clock_s": 2.0,
+                "serial_estimate_s": 3.0,
+                "speedup": 1.5,
+            },
+        ),
+        ("s1", {"enabled": False}),
+    ]:
+        m = history.start_session(sid, "需求")
+        m["parallel"] = par
+        history._write_meta(sid, m)
+
+    pa = client.get("/api/metrics").json()["parallel"]
+    assert pa["enabled_runs"] == 2  # s1 的 enabled=False 不計
+    assert pa["peak_lanes"] == 3
+    assert pa["total_waves"] == 3
+    assert pa["merge_conflicts"] == 1
+    assert pa["avg_speedup"] == 1.88  # (2.25 + 1.5) / 2，四捨五入
+    assert pa["wall_clock_saved_s"] == 6.0  # (9-4) + (3-2)
+    assert pa["config"] == {"enabled": True, "lanes": 3}
+
+
+def test_metrics_parallel_empty(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
+    pa = client.get("/api/metrics").json()["parallel"]
+    assert pa["enabled_runs"] == 0
+    assert pa["config"]["enabled"] is False
