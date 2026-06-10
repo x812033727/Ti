@@ -704,7 +704,11 @@ async function savePassword() {
   }
 }
 
-function closeSettings() { settingsPanel.classList.add("hidden"); }
+function closeSettings() {
+  settingsPanel.classList.add("hidden");
+  // 若是從手機底部「設定」分頁進來的，關閉後回到討論分頁，避免留下空白畫面
+  if (document.body.dataset.mv === "settings") setMobileView("discussion");
+}
 
 function renderSettings(fields) {
   settingsForm.innerHTML = "";
@@ -781,6 +785,10 @@ stopBtn.onclick = stop;
 interjectBtn.onclick = sendInterject;
 $("#settingsBtn").onclick = openSettings;
 $("#settingsClose").onclick = closeSettings;
+// 點卡片外的暗色遮罩即關閉設定
+settingsPanel.addEventListener("click", (e) => {
+  if (e.target === settingsPanel) closeSettings();
+});
 $("#settingsSave").onclick = saveSettings;
 $("#pwSave").onclick = savePassword;
 $("#redeployBtn").onclick = redeployNow;
@@ -804,6 +812,8 @@ function setMobileView(view) {
   document.querySelectorAll(".mobiletabs button").forEach((b) => {
     b.classList.toggle("active", b.dataset.mv === view);
   });
+  if (view === "settings") openSettings();
+  else closeSettings();
 }
 document.querySelectorAll(".mobiletabs button").forEach((b) => {
   b.onclick = () => setMobileView(b.dataset.mv);
