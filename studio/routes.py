@@ -86,6 +86,7 @@ def _aggregate_parallel(sessions: list[dict]) -> dict:
         "lane_exceptions": sum(r.get("lane_exceptions", 0) for r in runs),
         "deferred": sum(r.get("deferred", 0) for r in runs),
         "conflict_retries": sum(r.get("conflict_retries", 0) for r in runs),
+        "lane_resolved": sum(r.get("lane_resolved", 0) for r in runs),
         "avg_speedup": round(sum(speedups) / len(speedups), 2),
         "wall_clock_saved_s": round(saved, 1),
         "config": {

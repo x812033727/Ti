@@ -272,6 +272,80 @@ async def test_parallel_lane_events_carry_task_id(tmp_path, monkeypatch):
     assert run_evs and all("task_id" in e.payload for e in run_evs), "並行 run_result 未帶 task_id"
 
 
+class ConflictLaneStub(LaneStub):
+    """兩條 lane 的工程師都寫同一個 shared.txt（不同內容）→ 合回主幹時 add/add 衝突。
+
+    收到「化解衝突」提示（prompt 含『衝突』）時，就地把 shared.txt 改寫成去除標記的結果，
+    模擬工程師在 lane worktree 內解衝突。
+    """
+
+    resolved_calls = 0
+
+    async def speak(self, prompt: str, broadcast) -> str:
+        await broadcast(
+            events.expert_message(
+                self.session_id, self.role.key, self.role.name, self.role.avatar, "做事中"
+            )
+        )
+        if self.role.key == "engineer":
+            shared = self.cwd / "shared.txt"
+            if "衝突" in prompt:  # 解衝突回合：清掉標記
+                ConflictLaneStub.resolved_calls += 1
+                shared.write_text("resolved\n", encoding="utf-8")
+                return "已化解衝突"
+            shared.write_text(f"{self.cwd.name}\n", encoding="utf-8")  # 各 lane 寫不同內容
+            return "已完成實作"
+        if self.role.key == "qa":
+            return "驗證: PASS"
+        if self.role.key == "senior":
+            return "決議: 核可"
+        return "ok"
+
+
+@pytest.mark.asyncio
+async def test_merge_conflict_resolved_in_lane(tmp_path, monkeypatch):
+    """合併衝突時在 lane 內就地化解 → 保留 lane commit、不走序列化重跑，主幹得到化解後的結果。"""
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", True)
+    monkeypatch.setattr(config, "PARALLEL_LANES", 3)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+    monkeypatch.setattr(config, "NOTES_ENABLED", False)
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "CRITIC_ENABLED", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    ConflictLaneStub.resolved_calls = 0
+
+    sid = "conflict"
+    cwd = workspace.create_workspace(sid)
+
+    async def broadcast(ev):
+        pass
+
+    # 兩個獨立任務 → 同一波兩條 lane，皆寫 shared.txt → 第二條合回時衝突。
+    main = {
+        "pm": MainStub(BY_KEY["pm"], ["任務: #1 甲\n任務: #2 乙", "決議: 完成", "檢討"]),
+        "engineer": MainStub(BY_KEY["engineer"], ["x"]),
+        "qa": MainStub(BY_KEY["qa"], ["驗證: PASS"]),
+        "senior": MainStub(BY_KEY["senior"], ["決議: 核可"]),
+    }
+    session = StudioSession(sid, broadcast, experts=main, cwd=cwd)
+    session._lane_expert_factory = ConflictLaneStub
+
+    result = await session.run("兩件都會改到 shared.txt 的事")
+
+    # 衝突在 lane 內化解 → 兩任務皆 done、最終完成。
+    assert all(t["status"] == "done" for t in session._tasks)
+    assert result["completed"] is True
+    # 指標：化解 1 次、未退回序列化重跑。
+    assert session._parallel_metrics["lane_resolved"] == 1
+    assert session._parallel_metrics["conflict_retries"] == 0
+    assert ConflictLaneStub.resolved_calls == 1
+    # 主幹拿到化解後的結果，且 worktree 已清乾淨。
+    assert (cwd / "shared.txt").read_text(encoding="utf-8") == "resolved\n"
+    assert not (tmp_path / f"{cwd.name}.lanes").exists()
+
+
 class DepStub(LaneStub):
     """記錄各 lane 開工時，其 worktree 是否已看得到前一波合併進來的成果。"""
 
