@@ -63,12 +63,46 @@ def _truncate(text: str, limit: int | None = None) -> str:
     return text[:limit] + f"\n…（輸出過長，已截斷，共 {len(text)} 字）"
 
 
+def _worktree_common_git_dir(cwd: Path | str) -> Path | None:
+    """cwd 是 git linked worktree 時，回傳其共用 git 目錄（主 repo 的 .git）；否則 None。
+
+    並行 lane 在 workspace 外的兄弟目錄開 worktree，其 `.git` 是檔案而非目錄，內容形如
+    `gitdir: <主 repo>/.git/worktrees/<name>`。在沙箱裡 `git add/commit/merge` 要寫的
+    index.lock、refs、objects 都落在那個共用 .git 底下——它不在 lane cwd 之內，預設只 bind
+    cwd 可寫時會踩到 `--ro-bind / /` 的唯讀面而失敗（「Read-only file system」），導致 lane
+    分支拿不到 commit、波次合併變成 no-op。故偵測出共用 .git 路徑，交由 _bwrap_prefix 一併綁可寫。
+    一般 repo（`.git` 為目錄、就在 cwd 內）回 None，行為不變。
+    """
+    gitfile = Path(cwd) / ".git"
+    try:
+        if not gitfile.is_file():
+            return None  # 一般 repo：.git 是目錄，已隨 cwd 綁為可寫
+        text = gitfile.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    admin = Path(text[len("gitdir:") :].strip())
+    if not admin.is_absolute():
+        admin = (Path(cwd) / admin).resolve()
+    # admin＝<共用 .git>/worktrees/<name>；commondir 檔給出回到共用 .git 的相對路徑（通常 ../..）。
+    commondir = admin / "commondir"
+    try:
+        if commondir.is_file():
+            rel = commondir.read_text(encoding="utf-8", errors="replace").strip()
+            return (admin / rel).resolve()
+    except OSError:
+        pass
+    return admin.parent.parent  # 後備：worktrees/<name> 往上兩層即共用 .git
+
+
 def _bwrap_prefix(cwd: Path | str) -> list[str]:
     """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
 
     新 PID namespace 讓沙箱內的指令看不到也殺不到主機進程（含正式服務）；
     `--ro-bind / /` 讓 python/node/git 等執行檔可用但主機檔系唯讀。預設 `--unshare-net`
-    斷網（Demo 不需網路），設 TI_SANDBOX_NET=1 可放行。
+    斷網（Demo 不需網路），設 TI_SANDBOX_NET=1 可放行。cwd 為並行 lane 的 linked worktree 時，
+    額外把共用 git 目錄（主 repo 的 .git）綁為可寫，否則 worktree 內的 git 寫入會踩到唯讀面。
     """
     cwd = str(cwd)
     cache = os.path.join(os.path.expanduser("~"), ".cache")
@@ -88,6 +122,11 @@ def _bwrap_prefix(cwd: Path | str) -> list[str]:
         "--bind",
         cwd,
         cwd,
+    ]
+    common_git = _worktree_common_git_dir(cwd)
+    if common_git is not None and common_git.exists():
+        args += ["--bind", str(common_git), str(common_git)]
+    args += [
         "--chdir",
         cwd,
         "--unshare-pid",
