@@ -320,11 +320,17 @@ class StudioSession:
         return critic
 
     async def _critic_gate(
-        self, ctx: LaneContext, role_key: str, subject: str, acceptance: str
+        self,
+        ctx: LaneContext,
+        role_key: str,
+        subject: str,
+        acceptance: str,
+        broadcast: Broadcast | None = None,
     ) -> tuple[bool, str]:
         """放行前的異議關卡。回傳 (是否放行, critic 文字)。
 
         刻意只餵標的與驗收標準、不餵當事人剛才的核可理由以降低錨定；停用或無 critic 時放行。
+        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
         """
         # 離線示範（OFFLINE_MODE）視為 demo 情境自動啟用，以展示「內部討論」事件。
         if not (config.CRITIC_ENABLED or config.OFFLINE_MODE) or self._stop:
@@ -332,16 +338,17 @@ class StudioSession:
         critic = self._get_critic(ctx, role_key)
         if critic is None:
             return True, ""
+        bc = broadcast or self.broadcast
         async with self._llm_semaphore():
             text = await critic.speak(
                 "你是獨立的異議檢查者，專挑『為何這還不算完成』，以防團隊形成錯誤共識。\n"
                 f"檢查標的：{subject}\n\n驗收標準：\n{acceptance}\n\n"
                 "請只根據標的與驗收標準判斷，提出具體、實質的反對；找不到實質問題就放行。\n"
                 "最後一行明確輸出：`異議: 成立`（需退回）或 `異議: 不成立`（放行）。",
-                self.broadcast,
+                bc,
             )
         blocks = critic_blocks(text)
-        await self.broadcast(events.critic_review(self.session_id, role_key, not blocks, text))
+        await bc(events.critic_review(self.session_id, role_key, not blocks, text))
         return (not blocks), text
 
     # --- 共用知識庫（NOTES.md）----------------------------------------
@@ -395,13 +402,20 @@ class StudioSession:
             columns.setdefault(t["status"], columns["todo"]).append({"title": t["title"]})
         await self.broadcast(events.board_update(self.session_id, columns))
 
-    async def _set_task_status(self, task: dict, status: str) -> None:
+    async def _set_task_status(
+        self, task: dict, status: str, broadcast: Broadcast | None = None
+    ) -> None:
         task["status"] = status
-        await self.broadcast(events.task_status(self.session_id, task["id"], task["title"], status))
+        # 並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        # 看板是 session 全域快照（跨所有任務）→ 維持未標籤的 self.broadcast。
+        bc = broadcast or self.broadcast
+        await bc(events.task_status(self.session_id, task["id"], task["title"], status))
         await self._board()
 
     # --- git --------------------------------------------------------------
-    async def _commit(self, ctx: LaneContext, message: str) -> None:
+    async def _commit(
+        self, ctx: LaneContext, message: str, broadcast: Broadcast | None = None
+    ) -> None:
         if not ctx.cwd:
             return
         h = await runner.git_commit(ctx.cwd, message)
@@ -411,7 +425,9 @@ class StudioSession:
             # 並行 lane 的 commit 不動 self._last_commit，改由波次合併後以主分支 HEAD 更新。
             if ctx.branch is None:
                 self._last_commit = h
-            await self.broadcast(events.git_commit(self.session_id, message, h))
+            # 並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+            bc = broadcast or self.broadcast
+            await bc(events.git_commit(self.session_id, message, h))
 
     # --- 辯論 ----------------------------------------------------------
     async def _debate(self, a: ExpertLike, b: ExpertLike, topic: str, rounds: int) -> None:
@@ -629,10 +645,23 @@ class StudioSession:
         return {"completed": done, "followups": self._followups, "commit": self._last_commit}
 
     # --- 波次排程（並行支線）------------------------------------------
+    def _min_lane_concurrency(self) -> int:
+        """單一 lane 內最大同時 gather 數＝review 階段 qa/senior/security 並行的現役角色數。
+
+        號誌下限須 ≥ 此值，否則單一 lane 的 review gather 會搶不到足夠額度而自我死鎖。
+        改為依實際在場的 reviewer 角色動態計算（取代硬編碼 4），日後增減 reviewer 不必再手調。
+        至少回 1（無 reviewer 時也不會把號誌夾成 0）。
+        """
+        experts = self._get_experts()
+        reviewers = sum(1 for key in ("qa", "senior", "security") if key in experts)
+        return max(reviewers, 1)
+
     def _llm_semaphore(self) -> asyncio.Semaphore:
-        """全域 LLM 並發節流號誌。下限夾到 4，避免單一 lane 內 review 三人 gather 自我死鎖。"""
+        """全域 LLM 並發節流號誌。下限夾到單一 lane 內最大 gather 數，避免該 lane review 自我死鎖。"""
         if self._llm_sem is None:
-            self._llm_sem = asyncio.Semaphore(max(config.LLM_MAX_CONCURRENCY, 4))
+            self._llm_sem = asyncio.Semaphore(
+                max(config.LLM_MAX_CONCURRENCY, self._min_lane_concurrency())
+            )
         return self._llm_sem
 
     def _tagged_broadcast(self, task_id: int | None) -> Broadcast:
@@ -679,6 +708,10 @@ class StudioSession:
             "tasks": len(self._tasks),
             "lanes_max": 0,
             "merge_conflicts": 0,
+            # 降級可觀測性：量化並行實際退回序列化的頻率，供 done / /api/metrics 診斷。
+            "lane_exceptions": 0,  # lane 跑任務時拋例外（崩潰）→ 轉主幹序列化重跑的 lane 數
+            "deferred": 0,  # worktree 開失敗、無法隔離 → 直接在主幹序列化跑的任務數
+            "conflict_retries": 0,  # 合併衝突 → 在主幹序列化重跑的任務數
             "_task_durations": [],
         }
         t0 = time.monotonic()
@@ -705,11 +738,13 @@ class StudioSession:
             self._parallel_metrics["lanes_max"] = max(
                 self._parallel_metrics["lanes_max"], len(opened)
             )
+            # worktree 開失敗無法隔離 → 計入 deferred 指標（稍後在主幹序列化重跑）。
+            self._parallel_metrics["deferred"] += len(deferred)
             results = await asyncio.gather(
                 *(self._run_lane(ctx, tasks, plan_ctx) for ctx, tasks in opened),
                 return_exceptions=True,
             )
-            all_ok = await self._integrate_wave(results, deferred, plan_ctx) and all_ok
+            all_ok = await self._integrate_wave(opened, results, deferred, plan_ctx) and all_ok
         self._finalize_parallel_metrics(time.monotonic() - t0)
         return all_ok
 
@@ -790,18 +825,20 @@ class StudioSession:
 
     async def _run_task_in_lane(self, ctx: LaneContext, task: dict, plan_ctx: str) -> bool:
         """在指定 lane 跑單一任務（實作→驗證→審查→huddle），更新看板與 lane 知識緩衝。"""
-        await self.broadcast(
+        # 並行 lane 的事件統一帶 task_id（供前端分流）；主 lane（tag=None）回原樣 self.broadcast。
+        bc = self._tagged_broadcast(self._lane_tag(ctx, task))
+        await bc(
             events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
         )
-        await self._set_task_status(task, "doing")
+        await self._set_task_status(task, "doing", bc)
         t0 = time.monotonic()
         task_ok = await self._work_task(ctx, task, plan_ctx)
         # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
         if not task_ok and config.HUDDLE_ENABLED and not self._stop:
-            task_ok = await self._huddle_and_retry(ctx, task, plan_ctx)
+            task_ok = await self._huddle_and_retry(ctx, task, plan_ctx, bc)
         # 累計本任務耗時（供「若循序」估算 → 加速比）。
         self._parallel_metrics.setdefault("_task_durations", []).append(time.monotonic() - t0)
-        await self._set_task_status(task, "done" if task_ok else "review")
+        await self._set_task_status(task, "done" if task_ok else "review", bc)
         # 每任務結束摘要寫進 lane 知識緩衝（波末序列化 flush，供後續波次讀回）。
         if task_ok:
             self._note(ctx, f"## 任務 #{task['id']} 完成：{task['title']}")
@@ -815,16 +852,39 @@ class StudioSession:
             )
         return task_ok
 
-    async def _integrate_wave(self, results: list, deferred: list[dict], plan_ctx: str) -> bool:
-        """波次收尾（全序列化、無競態）：合併各 lane 回主分支 → flush 知識 → 清 worktree。"""
+    async def _integrate_wave(
+        self,
+        opened: list[tuple[LaneContext, list[dict]]],
+        results: list,
+        deferred: list[dict],
+        plan_ctx: str,
+    ) -> bool:
+        """波次收尾（全序列化、無競態）：合併各 lane 回主分支 → flush 知識 → 清 worktree。
+
+        results 與 opened 位置對應（asyncio.gather 保序）。某 lane 跑任務時拋例外（崩潰）→ 丟棄
+        該 lane 的 worktree 與筆記，把其任務併入 deferred 於主幹序列化重跑（與合併衝突 fallback
+        對稱，不讓崩潰 lane 的任務靜默卡在 doing/review）。
+        """
         all_ok = True
         lane_results: list[LaneResult] = []
-        for r in results:
+        crashed: list[dict] = []
+        for (ctx, tasks), r in zip(opened, results, strict=True):
             if isinstance(r, BaseException):
-                all_ok = False
-                await self.broadcast(
-                    events.error(self.session_id, f"lane 例外：{type(r).__name__}: {r}")
+                self._parallel_metrics["lane_exceptions"] = (
+                    self._parallel_metrics.get("lane_exceptions", 0) + 1
                 )
+                await self.broadcast(
+                    events.error(
+                        self.session_id,
+                        f"lane 例外：{type(r).__name__}: {r}，改於主幹序列化重跑",
+                    )
+                )
+                # 崩潰 lane：丟棄其 worktree／筆記（成果未合併、不可信），任務改主幹重跑。
+                # 不在此直接判失敗——最終是否通過交由主幹重跑決定（與合併衝突 fallback 對稱）。
+                if ctx is not self._main_ctx:
+                    ctx.notes_buffer.clear()
+                    await self._teardown_lane(ctx)
+                crashed.extend(tasks)
             else:
                 lane_results.append(r)
         # 依 lane_id 穩定排序，逐一合併（主 repo 單一 working tree → 合併必須序列化）。
@@ -835,8 +895,8 @@ class StudioSession:
                 all_ok = await self._merge_lane(lr, plan_ctx) and all_ok
                 self._flush_lane_notes(lr.ctx)
                 await self._teardown_lane(lr.ctx)
-        # 無法隔離（worktree 開失敗）的任務：序列化重跑在主 lane。
-        for task in deferred:
+        # 無法隔離（worktree 開失敗）+ 崩潰 lane 的任務：序列化重跑在主 lane。
+        for task in deferred + crashed:
             if self._stop:
                 break
             all_ok = await self._run_task_in_lane(self._main_ctx, task, plan_ctx) and all_ok
@@ -873,6 +933,9 @@ class StudioSession:
                 if self._stop:
                     ok = False
                     break
+                self._parallel_metrics["conflict_retries"] = (
+                    self._parallel_metrics.get("conflict_retries", 0) + 1
+                )
                 ok = await self._run_task_in_lane(self._main_ctx, task, plan_ctx) and ok
             return ok
         await self.broadcast(
@@ -898,6 +961,9 @@ class StudioSession:
         """
         has_security = "security" in ctx.experts
         tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。
+        bc = self._tagged_broadcast(
+            tag
+        )  # 本任務所有事件統一帶 task_id；主 lane 回原樣 self.broadcast。
         feedback = seed_feedback
         rounds = max_rounds if max_rounds is not None else config.TASK_MAX_ROUNDS
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
@@ -924,15 +990,15 @@ class StudioSession:
             impl_text = await self._speak(ctx, "engineer", impl_prompt, tag)
 
             # --- 交付前自測（確定性 smoke-run）---
-            await self._self_test(ctx, impl_text)
-            await self._commit(ctx, f"任務#{task['id']} 第{rnd}輪：{task['title']}")
+            await self._self_test(ctx, impl_text, bc)
+            await self._commit(ctx, f"任務#{task['id']} 第{rnd}輪：{task['title']}", bc)
 
             # --- 停滯守門：連續多輪只重述且無檔案變動 → 提早收斂，不再燒後續 token ---
             impl_history.append(impl_text)
             committed_change = ctx.last_commit != prev_commit
             prev_commit = ctx.last_commit
             if self._stalled(ctx, impl_history, committed_change):
-                await self.broadcast(
+                await bc(
                     events.phase_change(
                         self.session_id,
                         "停滯收斂",
@@ -947,14 +1013,14 @@ class StudioSession:
                 return False
 
             # --- 驗證 + 審查 + 資安：三者都評同一份已 commit 的實作、互相獨立 → 並行省時 ---
-            await self.broadcast(
+            await bc(
                 events.phase_change(
                     self.session_id,
                     "驗證與審查",
                     f"任務 #{task['id']} 並行驗證/審查/資安（第 {rnd} 輪）",
                 )
             )
-            await self._set_task_status(task, "review")
+            await self._set_task_status(task, "review", bc)
             review_calls = [
                 self._speak(
                     ctx,
@@ -987,20 +1053,20 @@ class StudioSession:
             qa_ok = qa_passed(qa_text)
             senior_ok = senior_approved(senior_text)
             security_ok = security_approved(sec_text) if has_security else True
-            await self.broadcast(
+            await bc(
                 events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
             )
 
             if qa_ok and senior_ok and security_ok:
                 # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
                 subject = f"任務 #{task['id']}：{task['title']}"
-                critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan)
+                critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan, bc)
                 if critic_ok:
                     return True
                 # 異議成立 → 退回再修，把反對理由帶進下一輪並記入知識庫。
                 feedback = f"【異議檢查（critic）退回理由】\n{critic_text}"
                 self._note(ctx, f"## 異議退回 任務 #{task['id']}：{task['title']}\n{critic_text}")
-                await self.broadcast(
+                await bc(
                     events.phase_change(
                         self.session_id,
                         "異議退回",
@@ -1013,7 +1079,7 @@ class StudioSession:
             feedback = f"【驗證工程師回報】\n{qa_text}\n\n【高級工程師審查意見】\n{senior_text}"
             if sec_text:
                 feedback += f"\n\n【資安審查意見】\n{sec_text}"
-            await self.broadcast(
+            await bc(
                 events.phase_change(
                     self.session_id,
                     "改進討論",
@@ -1022,12 +1088,16 @@ class StudioSession:
             )
         return False
 
-    async def _huddle_and_retry(self, ctx: LaneContext, task: dict, context: str) -> bool:
+    async def _huddle_and_retry(
+        self, ctx: LaneContext, task: dict, context: str, broadcast: Broadcast | None = None
+    ) -> bool:
         """卡關升級：召集團隊 huddle 找替代方案 → 給 1 輪重試。
 
         重試仍失敗則把 task 標為「已知限制」（註記 + 事件），status 由呼叫端維持 review。
+        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
         """
-        conclusion = await self._huddle(ctx, task, context)
+        bc = broadcast or self.broadcast
+        conclusion = await self._huddle(ctx, task, context, bc)
         task_ok = await self._work_task(
             ctx,
             task,
@@ -1037,7 +1107,7 @@ class StudioSession:
         )
         if not task_ok:
             task["limitation"] = True
-            await self.broadcast(
+            await bc(
                 events.huddle(
                     self.session_id,
                     task["id"],
@@ -1049,11 +1119,13 @@ class StudioSession:
             )
         return task_ok
 
-    async def _huddle(self, ctx: LaneContext, task: dict, context: str) -> str:
+    async def _huddle(
+        self, ctx: LaneContext, task: dict, context: str, broadcast: Broadcast | None = None
+    ) -> str:
         """召集卡關討論：依序讓在場角色針對 blocker 提替代方案。回傳彙整結論。
 
         召集 PM＋架構師＋工程師＋高級工程師（取自該 lane 的專家團隊），缺席角色
-        （如 offline 無架構師）自動略過。
+        （如 offline 無架構師）自動略過。並行 lane 傳入 tagged broadcast 供前端分流。
         """
         roster = [
             ("pm", ctx.experts.get("pm")),
@@ -1062,7 +1134,8 @@ class StudioSession:
             ("senior", ctx.experts.get("senior")),
         ]
         present = [(key, ex) for key, ex in roster if ex is not None]
-        await self.broadcast(
+        bc = broadcast or self.broadcast
+        await bc(
             events.phase_change(
                 self.session_id,
                 "卡關討論",
@@ -1099,8 +1172,13 @@ class StudioSession:
         self._note(ctx, f"## 卡關討論 任務 #{task['id']}：{task['title']}\n{conclusion}")
         return conclusion
 
-    async def _self_test(self, ctx: LaneContext, impl_text: str) -> None:
-        """工程師交付前的確定性 smoke-run（在 lane 的 cwd 內執行），把完整 log 回報。"""
+    async def _self_test(
+        self, ctx: LaneContext, impl_text: str, broadcast: Broadcast | None = None
+    ) -> None:
+        """工程師交付前的確定性 smoke-run（在 lane 的 cwd 內執行），把完整 log 回報。
+
+        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        """
         if not ctx.cwd:
             return
         cmd = runner.parse_run_command(impl_text) or runner.resolve_demo_command(
@@ -1112,7 +1190,8 @@ class StudioSession:
         # 自測指令（parse_run_command / resolve_demo_command 動態解析），可能含 pipe /
         # && / glob / 重導向等 shell 語法，須經 /bin/sh 解析；非固定指令、無法 argv 化。
         result = await runner.run_command(ctx.cwd, cmd)  # nosec B602
-        await self.broadcast(
+        bc = broadcast or self.broadcast
+        await bc(
             events.run_result(
                 self.session_id,
                 result.ok,

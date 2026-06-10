@@ -49,6 +49,14 @@
 完整路徑寫法 `.venv/bin/python3` 可**免 activate**直接使用（避免誤用系統 Python）；
 **Windows 對應為 `.venv\Scripts\python`**（啟動則為 `.venv\Scripts\activate`）。
 
+**前置條件 checklist**（開工前先備齊，依「依賴／secrets／token」三類）：
+
+<!-- 維護注意：勿在此 checklist 寫出 TI_AUTOPILOT_* 完整變數名，首現須留在下方「[設定](#設定)」表。 -->
+
+- **依賴**：Python ≥ 3.10（對齊 `pyproject.toml` 的 `requires-python`）、`git`。
+- **secrets**：`ANTHROPIC_API_KEY`（**必備**，預設由 Claude 後端驅動專家；切換 OpenAI 見下方「[設定](#設定)」）。
+- **token／選填**：`GITHUB_TOKEN`（發佈成果到 GitHub 時才需）、登入密碼（啟用登入門禁才需，見「[登入 / 門禁（選填）](#登入--門禁選填)」）。
+
 ### 1. 建立虛擬環境
 
 ```bash
@@ -85,6 +93,22 @@ source .venv/bin/activate        # macOS / Linux
 
 > 預期結果：輸出 `ok`，代表 `.venv` 與套件安裝皆正確，可進入下方「安裝 / 啟動」。
 
+### 首次設定 happy-path（從零到啟動，可整段複製）
+
+第一次上手照這條最短路徑跑完即可啟動；複雜旗標不在此展開，詳見下方「[設定](#設定)」表。
+
+```bash
+git clone https://github.com/x812033727/Ti.git && cd Ti     # 已 clone 可略
+python3 -m venv .venv                                        # 1. 建虛擬環境
+.venv/bin/python3 -m pip install -e ".[dev]"                 # 2. 裝套件（含開發工具）
+cp .env.example .env                                         # 3. 建 .env，填入 ANTHROPIC_API_KEY
+.venv/bin/python3 -m pre_commit install                     # 4.（選填）裝 git hook，提交前自動 lint
+.venv/bin/python3 -m studio.server                           # 5. 啟動（Windows：.venv\Scripts\python -m studio.server）
+```
+
+> 預期結果：終端機顯示伺服器啟動於 `0.0.0.0:8000`；瀏覽器開 http://localhost:8000 即見工作室首頁。
+> 想無金鑰先試流程，把第 5 步換成 `TI_OFFLINE=1 .venv/bin/python3 -m studio.server`（見「離線示範模式」）。
+
 ## 安裝
 
 需要 Python 3.10+ 與 [Claude Code](https://code.claude.com) 執行環境。
@@ -111,6 +135,10 @@ export ANTHROPIC_API_KEY=sk-...                      # 或寫在 .env
 
 ### 登入 / 門禁（選填）
 
+本專案有兩層用途不同、各自獨立的「門禁」，分開設定：
+
+#### (A) 登入門禁（最小啟用）
+
 預設不需登入。若要讓工作室只開放給知道密碼的人，設定一組共用密碼即可：
 
 ```bash
@@ -120,6 +148,17 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 啟用後，未登入者會被導向登入頁，所有 API 與 WebSocket 都需登入才能使用；右上角會出現
 「登出」按鈕。登入狀態以簽章 cookie 維持（預設 7 天，見 `TI_AUTH_TTL`）。
 未設定 `TI_ACCESS_PASSWORD` 時門禁完全停用，本地開發與離線示範不受影響。
+
+#### (B) Autopilot 門禁前置（自動合併前必做）
+
+<!-- 維護注意：勿在此小節寫出 TI_AUTOPILOT_* 完整變數名，首現須留在下方「[設定](#設定)」表。 -->
+
+啟用 autopilot 自動合併（force-push／merge-admin 等安全旗標）前，務必先在 GitHub 目標分支備妥保護，否則等於把合併閘門大開：
+
+1. 為目標分支設定 **branch protection 或 ruleset**（要求先開 PR、必過 status check 才能合併）。
+2. 把 CI 的 `lint`／`test`／`sandbox-test` 三個 job 設為 **required checks**，確保自動合併前一定先綠燈。
+
+各旗標的預設值、風險與解析規則一律只連結不展開，詳見下方「[設定](#設定)」表與其「[Autopilot 安全旗標補充](#autopilot-安全旗標補充)」小節。
 
 ### ⚙️ 設定頁（API key / provider / 模型 / GitHub token）
 
