@@ -110,6 +110,12 @@ def test_ci_uses_same_source():
     )
 
 
+def test_real_docs_clean():
+    """驗收#4：實際 docs/ 全量掃描須零違規（既有違規已修，hook 全綠）。"""
+    r = run_scan(["docs"])
+    assert r.returncode == 0, f"docs/ 仍有裸 pytest 違規:\n{r.stderr}"
+
+
 def test_warn_mode_never_blocks(docfile):
     """家族逃生口：SCAN_MODE=warn 即使命中也回 0。"""
     r = run_scan([docfile("pytest tests/")], mode="warn")
