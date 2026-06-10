@@ -1,6 +1,7 @@
 # 開發指南（Contributing）
 
-歡迎參與 Ti Studio。本文件說明本地開發環境、品質工具與提交慣例。
+歡迎參與 Ti Studio。本文件說明本地開發環境、品質工具與提交慣例，並作為
+**dev 指令（安裝／測試／lint／pre-commit）的唯一權威來源**——其他文件僅以敘述或連結引用，不再重複可複製的指令區塊。
 
 ## 環境建置
 
@@ -9,10 +10,10 @@
 建 venv 階段尚無 `.venv`，只能用系統 Python，故用 `python3`；建好後一律走 venv 內直譯器 `.venv/bin/python`。
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate   # 選填
-pip install -e ".[dev]"     # 安裝套件 + 開發工具（pytest / ruff / pre-commit）
-cp .env.example .env        # 視需要填入金鑰或門禁密碼
-pre-commit install          # 裝 git hook，提交前自動 lint / 格式化
+python3 -m venv .venv                                   # 建 venv（此階段尚無 .venv，故用系統 python3）
+.venv/bin/python -m pip install -e ".[dev]"             # 安裝套件 + 開發工具（pytest / ruff / pre-commit）
+cp .env.example .env                                     # 視需要填入金鑰或門禁密碼
+.venv/bin/python -m pre_commit install                  # 裝 git hook，提交前自動 lint / 格式化
 ```
 
 > 跑測試與離線示範**不需** API 金鑰；只有真正要驅動 LLM 專家時才需要
@@ -22,16 +23,16 @@ pre-commit install          # 裝 git hook，提交前自動 lint / 格式化
 
 ```bash
 # 啟動（離線示範，免金鑰，最快看到完整流程）
-TI_OFFLINE=1 python -m studio.server
+TI_OFFLINE=1 .venv/bin/python -m studio.server
 
-# 跑測試
+# 跑全部測試
 .venv/bin/python -m pytest -q
 
 # Lint 與格式化
-ruff check .            # 檢查
-ruff check . --fix      # 自動修正可修的問題
-ruff format .           # 套用格式
-ruff format --check .   # 只檢查（CI 用）
+.venv/bin/python -m ruff check .            # 檢查
+.venv/bin/python -m ruff check . --fix      # 自動修正可修的問題
+.venv/bin/python -m ruff format .           # 套用格式
+.venv/bin/python -m ruff format --check .   # 只檢查（CI 用）
 ```
 
 CI（GitHub Actions）會在每次 push / PR 跑兩個 job：
@@ -102,9 +103,10 @@ SCAN_MODE=block bash scripts/scan_shell_usage.sh
 - 從 `main` 開功能分支：`feat/...`、`fix/...`、`docs/...`。
 - commit 訊息用祈使句、聚焦單一變更；可用中文。
 - PR 前的檢查清單：
-  - [ ] `ruff check .` 與 `ruff format --check .` 通過
+  - [ ] `.venv/bin/python -m ruff check .` 與 `.venv/bin/python -m ruff format --check .` 通過
   - [ ] `.venv/bin/python -m pytest -q` 全綠
   - [ ] 必要時更新 `README.md` / `ARCHITECTURE.md` / `.env.example`
+  - [ ] dev 指令（安裝／測試／lint／pre-commit）只在本文件維護；README 等其他文件僅以敘述或連結引用，未新增重複的可複製指令區塊（防漂移，由 `tests/docs/` 把關）
 
 ## 進一步閱讀
 
