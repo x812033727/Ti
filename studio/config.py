@@ -307,6 +307,10 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
     "False",
     "",
 )
+# AUTOPILOT_EVAL_MEMORY：自我評估時回饋「近期成敗」給資深專家的筆數（每類 done/failed 各取
+#   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
+#   0 = 停用（還原成無狀態評估）。
+AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 
 
 def autopilot_paused() -> bool:
