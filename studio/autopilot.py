@@ -340,8 +340,53 @@ async def _wait_until_idle(timeout: int = 600) -> bool:
 # --- 自我評估 ------------------------------------------------------------
 
 
+def _recent_done_titles() -> set[str]:
+    """近期已完成任務的標題集合（依 AUTOPILOT_EVAL_MEMORY 取最新 N 筆），供去重過濾。"""
+    limit = config.AUTOPILOT_EVAL_MEMORY
+    if limit <= 0:
+        return set()
+    done = sorted(backlog.list_tasks("done"), key=lambda t: t.get("updated_at", 0), reverse=True)
+    return {t["title"].strip() for t in done[:limit]}
+
+
+def _recent_outcomes_context() -> str:
+    """把迴圈自身的近期成敗（done/失敗＋失敗原因）整理成可注入評估提示的文字。
+
+    純讀 backlog、無 LLM/網路，方便單測。AUTOPILOT_EVAL_MEMORY=0 或無成敗紀錄時回 ""，
+    呼叫端據此維持原本的無狀態提示（零行為變更）。
+    """
+    limit = config.AUTOPILOT_EVAL_MEMORY
+    if limit <= 0:
+        return ""
+
+    def _recent(status: str) -> list[dict]:
+        rows = sorted(
+            backlog.list_tasks(status), key=lambda t: t.get("updated_at", 0), reverse=True
+        )
+        return rows[:limit]
+
+    done = _recent("done")
+    failed = _recent("failed")
+    if not done and not failed:
+        return ""
+
+    lines = ["【本工作室過往成績單（請據此提出全新、不重複的改善點）】"]
+    if done:
+        lines.append("✅ 近期已完成（請勿重複提出）：")
+        lines += [f"- {t['title'].strip()}" for t in done]
+    if failed:
+        lines.append("❌ 近期失敗（除非有明確不同的新做法，否則勿重蹈覆轍）：")
+        for t in failed:
+            note = (t.get("note") or "").strip()
+            lines.append(f"- {t['title'].strip()}" + (f" — {note}" if note else ""))
+    return "\n".join(lines) + "\n\n"
+
+
 async def _evaluate_self(clone: str) -> int:
-    """backlog 空時，用一位資深專家審視 Ti 自身並產出改善任務。回傳新增數。"""
+    """backlog 空時，用一位資深專家審視 Ti 自身並產出改善任務。回傳新增數。
+
+    會先把迴圈自身的近期成敗回饋給專家（self-reinforcing）：避免重提已完成、避開已知失敗做法。
+    """
     from .experts import Expert
     from .roles import SENIOR
 
@@ -351,7 +396,7 @@ async def _evaluate_self(clone: str) -> int:
     async def _noop(_ev):
         return None
 
-    prompt = (
+    prompt = _recent_outcomes_context() + (
         "你正在審視「Ti Studio」這個 AI 多專家自主開發工作室專案本身（原始碼就在你的工作目錄）。\n"
         "請用 Read/Grep 快速瀏覽程式碼與測試，找出最值得改善的 3~5 點（bug、缺測試、可讀性、"
         "功能缺口、安全），每點獨立一行,格式固定為 `任務: <動詞開頭的具體任務>`。只輸出任務行。"
@@ -361,7 +406,9 @@ async def _evaluate_self(clone: str) -> int:
     finally:
         with contextlib.suppress(Exception):
             await ex.stop()
-    tasks = parse_tasks(text)
+    # 過濾掉與近期已完成標題完全相符者（補 backlog 去重對 done 的缺口，避免剛完成又重排）。
+    done_titles = _recent_done_titles()
+    tasks = [t for t in parse_tasks(text) if t.strip() not in done_titles]
     n = backlog.add_many(tasks, source="eval")
     log.info("自我評估產出 %d 個新任務", n)
     return n
