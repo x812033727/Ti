@@ -140,15 +140,20 @@ h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
 
 /* 設定面板 */
 .settings-panel {
-  position: fixed; top: 64px; right: 18px; width: 460px; max-height: 78vh;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0,0,0,.5); z-index: 60; display: flex; flex-direction: column;
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: flex-start; justify-content: center;
+  background: rgba(0,0,0,.5); padding: 48px 16px;
 }
 .settings-panel.hidden { display: none; }
+.settings-card {
+  width: min(720px, 100%); max-height: calc(100vh - 96px);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.5); display: flex; flex-direction: column; overflow: hidden;
+}
 .settings-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .settings-head h2 { margin: 0; }
 .settings-head button { padding: 4px 10px; border-radius: 6px; cursor: pointer; }
-.settings-form { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.settings-form { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; }
 .settings-form h3 { margin: 10px 0 2px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
 .set-row { display: flex; flex-direction: column; gap: 4px; }
 .set-label { font-size: 12.5px; color: var(--text); }
@@ -329,7 +334,10 @@ h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
   .mobiletabs button.active { color: var(--accent); background: var(--panel-2); }
 
   /* 浮層面板貼齊邊界 */
-  .history-panel, .settings-panel { left: 12px; right: 12px; width: auto; top: 12px; max-height: 82vh; }
+  .history-panel { left: 12px; right: 12px; width: auto; top: 12px; max-height: 82vh; }
+  /* 設定改為整頁：填滿畫面、底部留出分頁列空間 */
+  .settings-panel { top: 0; left: 0; right: 0; bottom: 60px; padding: 0; align-items: stretch; }
+  .settings-card { width: 100%; height: 100%; max-height: none; border-radius: 0; border: none; }
 }
 
 /* 產出檔案：下載成果按鈕 */
