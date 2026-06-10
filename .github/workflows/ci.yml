@@ -36,6 +36,13 @@ jobs:
           SCAN_MODE: warn
         run: bash scripts/scan_shell_usage.sh
 
+      # 裸 pytest 掃描（blocking）。與 pre-commit hook no-bare-pytest 共用同一支
+      # 腳本 scripts/scan_bare_pytest.sh（SSOT），不另寫 grep。腳本內限定 *.md，
+      # 與 hook 的 types:[markdown] 同範圍，避免「CI 紅、pre-commit 綠」分歧。
+      # 本案為 blocking：SCAN_MODE 預設 block、刻意不加 continue-on-error。
+      - name: Scan bare pytest (blocking)
+        run: bash scripts/scan_bare_pytest.sh docs/
+
   test:
     runs-on: ubuntu-latest
     strategy:

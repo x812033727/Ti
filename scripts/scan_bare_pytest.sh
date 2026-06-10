@@ -18,9 +18,13 @@
 # 否則 grep fallback 在無 GNU grep -P 的環境會炸掉。
 # 執行順序固定為「兩段式」，順序不可顛倒：
 #   第一段：抓黑樣式候選行（裸 pytest 指令）
-#   第二段：從候選中「濾除」白名單行（-m pytest / run pytest / @pytest / pytest.）
+#   第二段：把白名單「片段」就地剝除後，對殘餘字串再抓一次黑樣式。
+#     —— 不是整行 grep -Ev 濾除！否則同一行同時含黑+白（如教學對照句
+#        「請用 python -m pytest，不要 pytest tests/」）會被整行放掉而漏報。
+#        剝掉 `-m pytest` 片段後殘餘仍含裸 `pytest tests/` → 正確攔截。
 # 黑樣式左邊界用 (^|[^.a-zA-Z-])，故反引號 inline code 內的 pytest 也會命中；
 # 右邊界要求後接指令型參數（tests/ 、-[a-z]、*.py 路徑）以避免誤殺行內套件名。
+# 掃描範圍限定 *.md，與 pre-commit hook 的 types:[markdown] 同源，避免兩端分歧。
 # ============================================================================
 set -euo pipefail
 
@@ -35,38 +39,40 @@ fi
 
 # 黑樣式：裸 pytest 當執行指令（左邊界非 . 字母 -，右邊界須接指令型參數）。
 PATTERN_BLACK='(^|[^.a-zA-Z-])pytest[[:space:]]+(tests?/|-[a-z]|[^[:space:]]+\.py)'
-# 白名單：整行含任一即放行（合法寫法）。
-PATTERN_WHITE='(-m[[:space:]]+pytest|run[[:space:]]+pytest|@pytest|pytest\.)'
+# 白名單片段（合法 pytest 修飾）。
+PATTERN_WHITE='-m[[:space:]]+pytest|run[[:space:]]+pytest|@pytest|pytest\.'
+# 白優先交替式：白名單片段「排在黑樣式前面」。grep -oE 取最左最長，會先吃掉
+# 合法修飾（-m pytest / @pytest / pytest. / run pytest），剩下的裸 pytest 才會
+# 被黑樣式抽出 → 對抽出片段再 grep 黑樣式即判定真命中。全程只用 grep，無 sed/awk，
+# 維持 rg/grep 家族可攜性（fallback 環境可能無 sed）。
+PATTERN_ALT="(${PATTERN_WHITE}|${PATTERN_BLACK})"
 
 echo "== 裸 pytest 掃描 (SCAN_MODE=${SCAN_MODE}) 目標: ${TARGETS[*]} =="
 
-# ---- 第一段：抓黑樣式候選（rg 優先、grep 退路）---------------------------
+# ---- 第一段：抓黑樣式候選（rg 優先、grep 退路），限定 *.md ----------------
 # -H/--with-filename 強制輸出檔名，確保單檔/多檔皆為穩定的 file:line:content 格式。
 if command -v rg >/dev/null 2>&1; then
-  raw="$(rg -nH --no-heading -e "$PATTERN_BLACK" "${TARGETS[@]}" 2>/dev/null || true)"
+  raw="$(rg -nH --no-heading -g '*.md' -e "$PATTERN_BLACK" "${TARGETS[@]}" 2>/dev/null || true)"
 else
-  raw="$(grep -rnHE -e "$PATTERN_BLACK" "${TARGETS[@]}" 2>/dev/null || true)"
+  raw="$(grep -rnHE --include='*.md' -e "$PATTERN_BLACK" "${TARGETS[@]}" 2>/dev/null || true)"
 fi
 
-# ---- 第二段：濾除白名單行 -------------------------------------------------
-if [ -n "$raw" ]; then
-  matches="$(printf '%s\n' "$raw" | grep -Ev "$PATTERN_WHITE" || true)"
-else
-  matches=""
-fi
-
-# ---- 輸出友善訊息 + exit code 收斂 ---------------------------------------
+# ---- 第二段：逐行剝白片段後再抓黑（修同行黑+白漏報），純 grep -------------
+# 對每個候選行的內容（去掉 file:line: 前綴）做「白優先抽片段 → 殘餘抓黑」，
+# 命中即印友善訊息。用 here-string 餵迴圈避免 pipe subshell 吃掉 hits 變數。
 hits=0
-if [ -n "$matches" ]; then
-  hits=1
-  # rg/grep 輸出格式皆為 file:line:content，只取前兩欄轉成友善訊息。
-  printf '%s\n' "$matches" | while IFS= read -r line; do
+if [ -n "$raw" ]; then
+  while IFS= read -r line; do
     [ -z "$line" ] && continue
     file="${line%%:*}"
     rest="${line#*:}"
     lineno="${rest%%:*}"
-    echo "${file}:${lineno}: 偵測到裸 pytest 指令，請改用 python -m pytest（例：python -m pytest tests/）" >&2
-  done
+    content="${rest#*:}"
+    if printf '%s' "$content" | grep -oE "$PATTERN_ALT" | grep -qE "$PATTERN_BLACK"; then
+      hits=1
+      echo "${file}:${lineno}: 偵測到裸 pytest 指令，請改用 python -m pytest（例：python -m pytest tests/）" >&2
+    fi
+  done <<< "$raw"
 fi
 
 echo "== 掃描完成 =="
