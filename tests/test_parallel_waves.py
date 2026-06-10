@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import config, events, workspace
+from studio import config, events, runner, workspace
 from studio.orchestrator import StudioSession
 from studio.roles import BY_KEY, Role
 
@@ -66,6 +66,59 @@ class LaneStub:
 
     async def stop(self) -> None:
         pass
+
+
+class RaisingLaneStub:
+    """並行 lane 專家：工程師發言時直接拋例外，模擬 lane 中途崩潰（驗證 worktree 不洩漏）。"""
+
+    def __init__(self, role: Role, session_id: str, cwd):
+        self.role = role
+        self.session_id = session_id
+        self.cwd = cwd
+
+    async def speak(self, prompt: str, broadcast) -> str:
+        if self.role.key == "engineer":
+            raise RuntimeError("模擬 lane 崩潰")
+        return "ok"
+
+    async def stop(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_lane_exception_cleans_up_worktrees(tmp_path, monkeypatch):
+    """lane 中途拋例外（未走到 teardown）時，run() 收尾仍清掉 .lanes worktree，不洩漏。"""
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", True)
+    monkeypatch.setattr(config, "PARALLEL_LANES", 3)
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "CRITIC_ENABLED", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+
+    sid = "boom"
+    cwd = workspace.create_workspace(sid)
+
+    async def broadcast(ev):
+        pass
+
+    main = {
+        "pm": MainStub(BY_KEY["pm"], ["任務: #1 甲\n任務: #2 乙", "決議: 未完成", "檢討"]),
+        "engineer": MainStub(BY_KEY["engineer"], ["x"]),
+        "qa": MainStub(BY_KEY["qa"], ["驗證: PASS"]),
+        "senior": MainStub(BY_KEY["senior"], ["決議: 核可"]),
+    }
+    session = StudioSession(sid, broadcast, experts=main, cwd=cwd)
+    session._lane_expert_factory = RaisingLaneStub
+
+    # run() 吞掉 lane 例外（broadcast error）並跑到收尾，不應往外拋。
+    await session.run("會崩潰的兩件事")
+
+    # 收尾後 .lanes worktree 目錄與 git worktree 註冊都清乾淨，無殘留。
+    assert not (tmp_path / f"{cwd.name}.lanes").exists(), "lane 例外後 worktree 目錄洩漏"
+    wt = await runner.run_command_exec(cwd, ["git", "worktree", "list"], sandbox=False)
+    assert "task-1" not in wt.output and "task-2" not in wt.output, wt.output
 
 
 @pytest.mark.asyncio

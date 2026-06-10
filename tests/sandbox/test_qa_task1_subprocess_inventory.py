@@ -28,7 +28,7 @@ EXPECTED = {
     "runner.py git init/config": ("a", {296, 299, 303, 307}),
     "runner.py git_clone": ("a", {347}),
     "autopilot.py pytest gate": ("a", {93}),
-    "orchestrator.py demo/self-test": ("c", {1094, 1113}),
+    "orchestrator.py demo/self-test": ("c", {1108, 1127}),
     "tools.py run_bash": ("c", {133}),
 }
 
@@ -206,7 +206,7 @@ def test_classification_matches_code_reality():
 
     # --- c 類：傳入的是變數（cmd / args.get(...)），必須仍走 shell run_command ---
     # _self_test 走 lane context（ctx.cwd）、_final_demo 走整體 workspace（self.cwd），皆傳動態 cmd。
-    for ln in (1094, 1113):
+    for ln in (1108, 1127):
         assert re.search(r"run_command\((?:ctx|self)\.cwd, cmd\)", orch[ln - 1]), (
             f"orchestrator.py:{ln} 預期傳動態 cmd 變數、保留 shell (c 類)"
         )
