@@ -93,6 +93,22 @@ source .venv/bin/activate        # macOS / Linux
 
 > 預期結果：輸出 `ok`，代表 `.venv` 與套件安裝皆正確，可進入下方「安裝 / 啟動」。
 
+### 首次設定 happy-path（從零到啟動，可整段複製）
+
+第一次上手照這條最短路徑跑完即可啟動；複雜旗標不在此展開，詳見下方「[設定](#設定)」表。
+
+```bash
+git clone https://github.com/x812033727/Ti.git && cd Ti     # 已 clone 可略
+python3 -m venv .venv                                        # 1. 建虛擬環境
+.venv/bin/python3 -m pip install -e ".[dev]"                 # 2. 裝套件（含開發工具）
+cp .env.example .env                                         # 3. 建 .env，填入 ANTHROPIC_API_KEY
+.venv/bin/python3 -m pre_commit install                     # 4.（選填）裝 git hook，提交前自動 lint
+.venv/bin/python3 -m studio.server                           # 5. 啟動（Windows：.venv\Scripts\python -m studio.server）
+```
+
+> 預期結果：終端機顯示伺服器啟動於 `0.0.0.0:8000`；瀏覽器開 http://localhost:8000 即見工作室首頁。
+> 想無金鑰先試流程，把第 5 步換成 `TI_OFFLINE=1 .venv/bin/python3 -m studio.server`（見「離線示範模式」）。
+
 ## 安裝
 
 需要 Python 3.10+ 與 [Claude Code](https://code.claude.com) 執行環境。
