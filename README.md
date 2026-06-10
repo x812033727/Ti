@@ -135,6 +135,10 @@ export ANTHROPIC_API_KEY=sk-...                      # 或寫在 .env
 
 ### 登入 / 門禁（選填）
 
+本專案有兩層用途不同、各自獨立的「門禁」，分開設定：
+
+#### (A) 登入門禁（最小啟用）
+
 預設不需登入。若要讓工作室只開放給知道密碼的人，設定一組共用密碼即可：
 
 ```bash
@@ -144,6 +148,17 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 啟用後，未登入者會被導向登入頁，所有 API 與 WebSocket 都需登入才能使用；右上角會出現
 「登出」按鈕。登入狀態以簽章 cookie 維持（預設 7 天，見 `TI_AUTH_TTL`）。
 未設定 `TI_ACCESS_PASSWORD` 時門禁完全停用，本地開發與離線示範不受影響。
+
+#### (B) Autopilot 門禁前置（自動合併前必做）
+
+<!-- 維護注意：勿在此小節寫出 TI_AUTOPILOT_* 完整變數名，首現須留在下方「[設定](#設定)」表。 -->
+
+啟用 autopilot 自動合併（force-push／merge-admin 等安全旗標）前，務必先在 GitHub 目標分支備妥保護，否則等於把合併閘門大開：
+
+1. 為目標分支設定 **branch protection 或 ruleset**（要求先開 PR、必過 status check 才能合併）。
+2. 把 CI 的 `lint`／`test`／`sandbox-test` 三個 job 設為 **required checks**，確保自動合併前一定先綠燈。
+
+各旗標的預設值、風險與解析規則一律只連結不展開，詳見下方「[設定](#設定)」表與其「[Autopilot 安全旗標補充](#autopilot-安全旗標補充)」小節。
 
 ### ⚙️ 設定頁（API key / provider / 模型 / GitHub token）
 
