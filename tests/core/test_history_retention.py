@@ -82,6 +82,19 @@ def test_removes_workspace_dir():
     assert keep_ws.exists()
 
 
+def test_removes_orphan_lanes_dir():
+    """回收時連並行支線的 .lanes 兄弟目錄一併清掉（兜底程序中途崩潰未收尾的殘留）。"""
+    _make("drop", started_at=1.0, with_workspace=True)
+    ws = workspace.workspace_path("drop")
+    lanes = ws.parent / f"{ws.name}.lanes" / "task-1"
+    lanes.mkdir(parents=True, exist_ok=True)
+    (lanes / "leftover.txt").write_text("x", encoding="utf-8")
+
+    assert history.delete_session("drop") is True
+    assert not ws.exists()
+    assert not (ws.parent / f"{ws.name}.lanes").exists(), ".lanes 殘留未被回收"
+
+
 def test_finish_session_triggers_retention(monkeypatch):
     monkeypatch.setattr(config, "HISTORY_MAX_COUNT", 1)
     monkeypatch.setattr(config, "HISTORY_MAX_AGE", 0)
