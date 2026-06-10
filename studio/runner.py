@@ -562,6 +562,59 @@ async def git_merge_abort(repo: Path | str) -> None:
     )
 
 
+async def git_merge_ref_into(repo: Path | str, ref: str) -> MergeResult:
+    """在 `repo`（通常是 lane 的 worktree）把 <ref> 合併進當前分支，保留衝突標記不自動 abort。
+
+    用於「lane 內解衝突」：把最新主幹（ref＝主幹 HEAD 短 hash）merge 進 lane 分支，衝突時
+    讓 working tree 留著 `<<<<<<<` 標記，交由該 lane 的工程師就地解決後再 commit、合回主幹。
+    ref 以 `_BRANCH_RE` 驗證（短 hash 亦符合），擋下以選項開頭的注入。
+    """
+    if not config.ENABLE_GIT or not _git_available():
+        return MergeResult(ok=False, conflict=False, output="（git 不可用）")
+    if not _BRANCH_RE.match(ref):
+        return MergeResult(ok=False, conflict=False, output=f"不合法的 ref：{ref!r}")
+    r = await run_command_exec(
+        Path(repo),
+        [
+            "git",
+            "-c",
+            f"user.name={_GIT_USER_NAME}",
+            "-c",
+            f"user.email={_GIT_USER_EMAIL}",
+            "-c",
+            "commit.gpgsign=false",
+            "merge",
+            "--no-edit",
+            ref,
+        ],
+        timeout=60,
+        sandbox=False,
+        label="git merge",
+    )
+    if r.ok:
+        return MergeResult(ok=True, conflict=False, output=r.output)
+    conflict = bool(re.search(r"CONFLICT|Automatic merge failed", r.output))
+    return MergeResult(ok=False, conflict=conflict, output=r.output)
+
+
+async def git_conflict_markers_present(repo: Path | str) -> bool:
+    """working tree 是否仍殘留未解的衝突標記（`<<<<<<<` 等）。
+
+    以 `git diff --check` 偵測：有殘留衝突標記時輸出含 "conflict marker" 且 exit≠0。
+    無法判定（git 不可用）時保守回 True（視為未解 → 呼叫端走安全 fallback）。
+    """
+    if not _git_available():
+        return True
+    r = await run_command_exec(
+        Path(repo),
+        ["git", "diff", "--check"],
+        timeout=20,
+        sandbox=False,
+        label="git diff --check",
+    )
+    return "conflict marker" in r.output.lower()
+
+
 async def git_worktree_remove(
     repo: Path | str, worktree_path: Path | str, branch: str | None = None
 ) -> None:

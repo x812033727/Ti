@@ -711,7 +711,8 @@ class StudioSession:
             # 降級可觀測性：量化並行實際退回序列化的頻率，供 done / /api/metrics 診斷。
             "lane_exceptions": 0,  # lane 跑任務時拋例外（崩潰）→ 轉主幹序列化重跑的 lane 數
             "deferred": 0,  # worktree 開失敗、無法隔離 → 直接在主幹序列化跑的任務數
-            "conflict_retries": 0,  # 合併衝突 → 在主幹序列化重跑的任務數
+            "conflict_retries": 0,  # 合併衝突且 lane 內無法化解 → 在主幹序列化重跑的任務數
+            "lane_resolved": 0,  # 合併衝突由 lane 內就地化解、保留 lane commit 的次數
             "_task_durations": [],
         }
         t0 = time.monotonic()
@@ -756,11 +757,26 @@ class StudioSession:
         m["serial_estimate_s"] = round(sum(durations), 2)
         m["speedup"] = round(m["serial_estimate_s"] / wall_clock_s, 2) if wall_clock_s > 0 else 1.0
 
+    def _lane_budget(self) -> int:
+        """單一波次可同時並行的支線上限（依 LLM 並發預算自適應）。
+
+        每條 lane 的 review 階段會同時佔用 `_min_lane_concurrency()` 個號誌額度（qa/senior/
+        security 並行）。能真正同時推進的 lane 數 ≈ 全域 LLM 並發 ÷ 每 lane 佔用，向下取整。
+        超過此數的 lane 只會卡在號誌前枯等，徒增 worktree 開／合併開銷 → 以此夾住上限。至少 1。
+        """
+        return max(1, config.LLM_MAX_CONCURRENCY // self._min_lane_concurrency())
+
     def _plan_lanes(self, wave: list[dict]) -> list[list[dict]]:
-        """把一波任務切成至多 PARALLEL_LANES 條支線（round-robin）。關閉並行/無 cwd 時整波一條。"""
+        """把一波任務切成多條支線（round-robin）。關閉並行/無 cwd 時整波一條。
+
+        支線數隨波次大小自適應，但同時受使用者上限 `PARALLEL_LANES` 與 LLM 並發預算
+        （`_lane_budget`）雙重約束——不開出多到只能在 LLM 號誌前排隊的 lane。
+        預設設定（PARALLEL_LANES=3、LLM_MAX_CONCURRENCY=9、3 位 reviewer → 預算=3）下，
+        上限維持 3，行為與調整前一致。
+        """
         if not (config.PARALLEL_TASKS_ENABLED and self.cwd):
             return [wave]
-        n = max(1, min(config.PARALLEL_LANES, len(wave)))
+        n = max(1, min(config.PARALLEL_LANES, self._lane_budget(), len(wave)))
         lanes: list[list[dict]] = [[] for _ in range(n)]
         for i, task in enumerate(wave):
             lanes[i % n].append(task)
@@ -905,7 +921,12 @@ class StudioSession:
         return all_ok
 
     async def _merge_lane(self, lr: LaneResult, plan_ctx: str) -> bool:
-        """把一條並行 lane 的分支合併回主分支；衝突則 abort 後在最新主 HEAD 序列化重跑。"""
+        """把一條並行 lane 的分支合併回主分支。
+
+        衝突時先嘗試「lane 內解衝突」：把最新主幹 merge 進 lane worktree，讓該 lane 的工程師
+        就地解掉衝突標記後 commit，再 fast-forward 合回主幹——成功則保留 lane 已完成的所有
+        commit（省去整段重跑）。解不掉才退回既有的「於最新主幹序列化重跑」fallback。
+        """
         res = await runner.git_merge_worktree(self.cwd, lr.ctx.branch)
         if res.ok:
             h = await runner.git_head_short(self.cwd)
@@ -920,12 +941,18 @@ class StudioSession:
                 self._parallel_metrics.get("merge_conflicts", 0) + 1
             )
             await runner.git_merge_abort(self.cwd)
-            lr.ctx.notes_buffer.clear()  # 丟棄 lane 嘗試的筆記，改以序列化重跑為準。
+            # 先試 lane 內解衝突（保留 lane 工作）；成功即合回主幹、不必序列化重跑。
+            if await self._resolve_conflict_in_lane(lr, plan_ctx):
+                self._parallel_metrics["lane_resolved"] = (
+                    self._parallel_metrics.get("lane_resolved", 0) + 1
+                )
+                return lr.ok
+            lr.ctx.notes_buffer.clear()  # 解不掉 → 丟棄 lane 筆記，改以序列化重跑為準。
             await self.broadcast(
                 events.phase_change(
                     self.session_id,
                     "合併衝突",
-                    f"支線 {lr.ctx.branch} 與既有變更衝突，於最新主幹序列化重跑",
+                    f"支線 {lr.ctx.branch} 衝突且 lane 內無法化解，於最新主幹序列化重跑",
                 )
             )
             ok = True
@@ -942,6 +969,70 @@ class StudioSession:
             events.error(self.session_id, f"支線 {lr.ctx.branch} 合併失敗：{res.output[:200]}")
         )
         return False
+
+    async def _resolve_conflict_in_lane(self, lr: LaneResult, plan_ctx: str) -> bool:
+        """在 lane 的 worktree 內就地化解與主幹的合併衝突，成功則 fast-forward 合回主幹。
+
+        流程：把最新主幹 HEAD merge 進 lane 分支（留下衝突標記）→ 工程師就地解標記 → 確認無
+        殘留標記 → 完成 merge commit → 合回主幹。任一步失敗一律回 False（呼叫端走序列化重跑
+        fallback），且把主 repo 還原乾淨，不留半完成狀態。
+        """
+        if not (self.cwd and lr.ctx.cwd and lr.ctx.branch and self._last_commit):
+            return False
+        if self._stop or "engineer" not in lr.ctx.experts:
+            return False
+        tag = lr.tasks[0]["id"] if lr.tasks else None
+        # 1) 把最新主幹 merge 進 lane 分支（保留衝突標記，不自動 abort）。
+        m = await runner.git_merge_ref_into(lr.ctx.cwd, self._last_commit)
+        if m.ok:
+            # 罕見：與主幹其實可自動合 → 直接完成 merge commit 後合回。
+            if not await runner.git_commit(lr.ctx.cwd, f"併入主幹 {self._last_commit}"):
+                return False
+            return await self._merge_resolved_lane_back(lr)
+        if not m.conflict:
+            return False  # 非衝突的其他失敗 → 走 fallback
+        await self.broadcast(
+            events.phase_change(
+                self.session_id,
+                "合併衝突",
+                f"支線 {lr.ctx.branch} 與主幹衝突，由該支線工程師就地化解",
+            )
+        )
+        # 2) 工程師就地解衝突標記（其 cwd 即此 worktree，可直接編輯/執行）。
+        await self._speak(
+            lr.ctx,
+            "engineer",
+            "你的分支與主幹合併時發生衝突。請開啟下列衝突檔案、逐處化解 `<<<<<<<` / "
+            "`=======` / `>>>>>>>` 標記（保留雙方意圖、勿刪他人變更），確保不留任何衝突標記、"
+            f"且程式仍可執行。整體計畫供參考：\n{plan_ctx}\n\ngit 合併輸出：\n{m.output[:1500]}",
+            tag,
+        )
+        if self._stop:
+            await runner.git_merge_abort(lr.ctx.cwd)
+            return False
+        # 3) 確認衝突標記已清空（殘留即視為未解，走 fallback）。
+        if await runner.git_conflict_markers_present(lr.ctx.cwd):
+            await runner.git_merge_abort(lr.ctx.cwd)
+            return False
+        # 4) 完成 merge commit（add -A 收下解好的檔案）。
+        if not await runner.git_commit(lr.ctx.cwd, f"化解與主幹 {self._last_commit} 的合併衝突"):
+            await runner.git_merge_abort(lr.ctx.cwd)
+            return False
+        return await self._merge_resolved_lane_back(lr)
+
+    async def _merge_resolved_lane_back(self, lr: LaneResult) -> bool:
+        """lane 已併入主幹並解完衝突後，把它合回主分支（此時應可乾淨快轉）。"""
+        res = await runner.git_merge_worktree(self.cwd, lr.ctx.branch)
+        if not res.ok:
+            await runner.git_merge_abort(self.cwd)  # 仍不乾淨 → 還原主 repo，走 fallback。
+            return False
+        h = await runner.git_head_short(self.cwd)
+        if h:
+            self._last_commit = h
+            await self.broadcast(
+                events.git_commit(self.session_id, f"合併支線 {lr.ctx.branch}（已化解衝突）", h)
+            )
+        return True
 
     async def _work_task(
         self,
