@@ -49,6 +49,14 @@
 完整路徑寫法 `.venv/bin/python3` 可**免 activate**直接使用（避免誤用系統 Python）；
 **Windows 對應為 `.venv\Scripts\python`**（啟動則為 `.venv\Scripts\activate`）。
 
+**前置條件 checklist**（開工前先備齊，依「依賴／secrets／token」三類）：
+
+<!-- 維護注意：勿在此 checklist 寫出 TI_AUTOPILOT_* 完整變數名，首現須留在下方「[設定](#設定)」表。 -->
+
+- **依賴**：Python ≥ 3.10（對齊 `pyproject.toml` 的 `requires-python`）、`git`。
+- **secrets**：`ANTHROPIC_API_KEY`（**必備**，預設由 Claude 後端驅動專家；切換 OpenAI 見下方「[設定](#設定)」）。
+- **token／選填**：`GITHUB_TOKEN`（發佈成果到 GitHub 時才需）、登入密碼（啟用登入門禁才需，見「[登入 / 門禁（選填）](#登入--門禁選填)」）。
+
 ### 1. 建立虛擬環境
 
 ```bash
