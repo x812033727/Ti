@@ -15,8 +15,8 @@
 
 ## 症狀
 
-- **單獨跑** `pytest tests/test_qa_task1_server_boot.py` → **7 passed（全綠）**。
-- **完整套件** `pytest tests/` → **8 failed**，且失敗**全部集中在 `test_qa_task1_server_boot.py`**：
+- **單獨跑** `python -m pytest tests/test_qa_task1_server_boot.py` → **7 passed（全綠）**。
+- **完整套件** `python -m pytest tests/` → **8 failed**，且失敗**全部集中在 `test_qa_task1_server_boot.py`**：
   - `test_root_page_served`
   - `test_health_or_root_ok`
   - `test_csp_header_present`
@@ -121,7 +121,7 @@ task1/task4/task6 各自重複實作 server 啟動。建議抽到 `tests/conftes
 
 1. task1/task4/task6 的 server fixture 皆有 teardown，測試結束後無殘留 `studio.server` 進程。
 2. 每個 server 使用獨立隨機 port（`STUDIO_PORT` 由 fixture 注入），不再共用固定 8765。
-3. `pytest tests/` 完整套件可乾淨綠燈（除既有的沙箱硬限制測試，如 bwrap/PID 隔離，需另記為已知跳過）。
+3. `python -m pytest tests/` 完整套件可乾淨綠燈（除既有的沙箱硬限制測試，如 bwrap/PID 隔離，需另記為已知跳過）。
 4. 連續多次重跑完整套件結果穩定（無 flaky）。
 
 ---

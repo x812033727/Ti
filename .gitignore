@@ -12,6 +12,9 @@ venv/
 .qa-venv/
 .qa_venv/
 .pc-cache-qa/
+# test_qa_no_bare_pytest.py 的 grep-fallback 測試會即時建立此 binstub 目錄（symlink），
+# 屬執行期 artifact，不得進版控。
+.qa-tmp-nopath/
 
 # Secrets
 .env
