@@ -17,6 +17,9 @@ def client(tmp_path, monkeypatch):
     # 停用門禁，讓 e2e 不受環境變數 TI_ACCESS_PASSWORD 影響（否則 WS 握手會被擋）。
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     monkeypatch.setattr(config, "OFFLINE_MODE", True)
+    # 本 e2e 驗證「循序離線 demo」的確定性產出（固定檔案集 + 逐任務 git commit）；並行離線 demo
+    # 另由 test_offline_parallel.py 覆蓋，故此處釘循序（並行下分波多 lane 的檔案集與 commit 數不同）。
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
     monkeypatch.setattr(config, "OFFLINE_DELAY", 0.0)
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")

@@ -55,9 +55,9 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 事件型別是前後端的契約，定義集中在 `events.py`，前端在 `web/app.js` 的
 `handleEvent()` 對應處理。
 
-## 任務並行（多支線 lane，預設關閉）
+## 任務並行（多支線 lane，預設開啟）
 
-`TI_PARALLEL_TASKS=1` 時，「逐任務迭代」改走**波次排程**：PM 拆解時可宣告
+並行開啟時（`TI_PARALLEL_TASKS`，預設 `1`；設 `0` 還原純循序），「逐任務迭代」改走**波次排程**：PM 拆解時可宣告
 `依賴: #後 -> #前`，`build_waves()` 以拓撲分層把彼此獨立的任務排進同一波次，
 波次之間循序（尊重依賴）、波次之內最多 `TI_PARALLEL_LANES` 條支線並行。
 

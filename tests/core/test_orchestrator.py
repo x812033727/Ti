@@ -466,6 +466,9 @@ async def test_notes_written_and_read_back(tmp_path, monkeypatch):
     from studio import workspace
 
     monkeypatch.setattr(config, "NOTES_ENABLED", True)
+    # 本測試驗證循序模式下「同需求內後續任務讀回前一任務寫入的 NOTES」；並行模式同波獨立任務
+    # 並發、NOTES 於波末才序列化 flush（並行 NOTES 行為另由 test_parallel_waves 覆蓋），故釘循序。
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
     monkeypatch.setattr(config, "ENABLE_GIT", False)  # 避免依賴 git
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     sid = "notesflow"
