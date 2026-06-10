@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import re
+import shutil
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -484,6 +485,19 @@ class StudioSession:
                     await ex.stop()
                 except Exception:  # noqa: BLE001
                     pass
+            # 兜底清理並行 lane 的 worktree：正常路徑已在 _integrate_wave 逐一 teardown；此處
+            # 涵蓋 lane 例外 / 中途停止等未走到 teardown 的情況，避免 .lanes worktree 目錄與
+            # git worktree 註冊洩漏（該目錄是 workspace 的兄弟目錄，不會被 history 回收掃到）。
+            if self.cwd:
+                for ctx in self._lane_ctxs:
+                    if ctx.branch and ctx.cwd and ctx.cwd.exists():
+                        try:
+                            await runner.git_worktree_remove(self.cwd, ctx.cwd, ctx.branch)
+                        except Exception:  # noqa: BLE001
+                            pass
+                lanes_root = self.cwd.parent / f"{self.cwd.name}.lanes"
+                if lanes_root.exists():
+                    shutil.rmtree(lanes_root, ignore_errors=True)
         return result
 
     async def _run(self, requirement: str) -> None:
