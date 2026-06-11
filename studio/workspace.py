@@ -5,12 +5,17 @@ from __future__ import annotations
 import io
 import shutil
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from . import config
 
 # 團隊共用知識庫檔名（跨任務知識，不算交付物，不進檔案面板/打包）。
 NOTES_FILE = "NOTES.md"
+
+# 知識沉澱檔白名單：只允許寫進 docs/ 下這幾個固定檔名。
+# 與 NOTES 不同，這些是交付物（會出現在檔案面板與打包），專案模式下跨場次累積。
+KNOWLEDGE_DOCS = {"PRD.md", "RESEARCH.md", "DECISIONS.md"}
 
 # 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔
 _IGNORE = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv", NOTES_FILE}
@@ -124,6 +129,49 @@ def read_notes(session_id: str) -> str:
         return target.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def append_doc(workspace_id: str, name: str, text: str) -> None:
+    """把一段知識（PRD／調研結論／設計決策）追加到 workspace 的 docs/<name>。
+
+    僅接受 KNOWLEDGE_DOCS 白名單檔名；每段加 `## <時間>` 標頭以利跨場次追溯；
+    append 模式不覆寫（與使用者產品自己的 docs/ 同名檔相撞時只會追加）。
+    空字串忽略；沿用 workspace_path + safe_resolve 的路徑防護。
+    """
+    body = (text or "").strip()
+    if not body or name not in KNOWLEDGE_DOCS:
+        return
+    root = workspace_path(workspace_id)
+    (root / "docs").mkdir(parents=True, exist_ok=True)
+    target = safe_resolve(root.resolve(), f"docs/{name}", must_exist=False)
+    if target is None:
+        return
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with target.open("a", encoding="utf-8") as f:
+        f.write(f"## {stamp}\n\n{body}\n\n")
+
+
+def read_doc_tail(workspace_id: str, name: str, max_chars: int) -> str:
+    """讀回 docs/<name> 的尾段（最多 max_chars 字）；不存在／超界／非白名單回空字串。
+
+    超長時從段落邊界（空行）起切，避免注入 prompt 的內容被腰斬在句子中間。
+    """
+    if name not in KNOWLEDGE_DOCS or max_chars <= 0:
+        return ""
+    target = safe_resolve(workspace_path(workspace_id).resolve(), f"docs/{name}")
+    if target is None or not target.is_file():
+        return ""
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    tail = text[-max_chars:]
+    cut = tail.find("\n\n")
+    if 0 <= cut < len(tail) - 2:
+        tail = tail[cut + 2 :]
+    return tail.strip()
 
 
 def zip_workspace(session_id: str) -> bytes | None:

@@ -393,6 +393,21 @@ class StudioSession:
             return ""
         return f"【團隊共用知識庫 NOTES.md（過往踩過的坑／決策／後續）】\n{notes}\n\n"
 
+    # --- 知識沉澱（docs/PRD.md / RESEARCH.md / DECISIONS.md）-------------
+    def _knowledge_tail(self, name: str) -> str:
+        """讀回 workspace docs/<name> 的尾段供注入 prompt（停用／無 cwd／不存在回空字串）。"""
+        if not (config.KNOWLEDGE_ENABLED and self.cwd):
+            return ""
+        return workspace.read_doc_tail(self.workspace_id, name, config.KNOWLEDGE_MAX_CHARS)
+
+    def _persist_knowledge(self, name: str, text: str) -> None:
+        """把一段知識追加到 workspace docs/<name>（停用／無 cwd／空字串時略過）。
+
+        以 workspace_id 定位：專案模式下多場 session 共用同一 workspace，知識跨場次累積。
+        """
+        if config.KNOWLEDGE_ENABLED and self.cwd and (text or "").strip():
+            workspace.append_doc(self.workspace_id, name, text)
+
     # --- 停滯守門 ------------------------------------------------------
     def _stalled(self, ctx: LaneContext, history: list[str], committed_change: bool) -> bool:
         """是否陷入停滯（連續多輪只重述且無實質檔案變動）。
@@ -574,15 +589,27 @@ class StudioSession:
         if self.cwd:
             await runner.git_init(self.cwd)
 
-        # 0) 調研（研究員上網查資料，供拆解與設計參考）
+        # 0) 調研（研究員上網查資料，供拆解與設計參考）。過往場次的調研先注入：
+        #    沿用既有結論、只查缺口——既省 token 也讓知識跨場次累積（專案模式）。
         research_notes = ""
         if researcher:
             await self.broadcast(events.phase_change(self.session_id, "調研", "研究員正在查資料"))
+            prior_research = self._knowledge_tail("RESEARCH.md")
+            prior_note = (
+                f"【既有調研（docs/RESEARCH.md，過往場次累積）】\n{prior_research}\n\n"
+                "以上是過往調研結論：請先沿用、只查缺口，不要重查已有答案的問題。\n\n"
+                if prior_research
+                else ""
+            )
             research_notes = await researcher.speak(
-                f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
+                prior_note
+                + f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
                 "查可用套件/函式庫、官方 API 與文件、最佳實踐與常見坑，精簡彙整並附來源。",
                 self.broadcast,
             )
+            # 調研結論沉澱成交付物，下場開場讀回（檔案不存在時 read 回空字串、零行為差）。
+            self._persist_knowledge("RESEARCH.md", research_notes)
+            await self._commit(self._main_ctx, "知識沉澱：調研結論寫入 docs/RESEARCH.md")
 
         # 1) 拆解
         await self.broadcast(events.phase_change(self.session_id, "需求拆解", "PM 正在拆解需求"))
@@ -593,11 +620,26 @@ class StudioSession:
             else ""
         )
         research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
+        if not research_note:
+            # 研究員缺席（離線或被關閉）時，過往場次的調研沉澱仍可供 PM 參考。
+            prior_research = self._knowledge_tail("RESEARCH.md")
+            if prior_research:
+                research_note = (
+                    f"過往場次的調研結論（docs/RESEARCH.md）供參考：\n{prior_research}\n\n"
+                )
+        prior_decisions = self._knowledge_tail("DECISIONS.md")
+        decisions_note = (
+            "過往場次的設計決策（docs/DECISIONS.md）——沿用為先、要推翻需說明理由：\n"
+            f"{prior_decisions}\n\n"
+            if prior_decisions
+            else ""
+        )
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + lessons.context()  # 跨場次教訓庫（停用/空白時為空字串）
             + repo_note
             + research_note
+            + decisions_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請拆解成結構化任務清單與驗收標準，並宣告執行指令。",
             self.broadcast,
@@ -615,13 +657,19 @@ class StudioSession:
         await self._board()
         await self._commit(self._main_ctx, "PM 規劃：建立任務清單與驗收標準")
 
-        # 2) 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論
+        # 2) 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論。
+        #    過往設計決策前綴進題目：沿用為先，要推翻需明說（避免跨場次反覆翻案）。
         design_note = ""
-        topic = f"我們要實作這個需求：{requirement}\n任務清單：\n{pm_plan}"
+        topic = decisions_note + f"我們要實作這個需求：{requirement}\n任務清單：\n{pm_plan}"
         if architect:
             design_note = await self._architecture_decision(
                 architect, engineer, senior, topic, research_notes
             )
+            # 只沉澱可解析的 `設計決策:` 行（架構師被要求的定案格式），避免把討論全文塞進檔案。
+            decision_lines = re.findall(r"^\s*(設計決策\s*[:：].+)$", design_note, re.M)
+            if decision_lines:
+                self._persist_knowledge("DECISIONS.md", "\n".join(decision_lines))
+                await self._commit(self._main_ctx, "知識沉澱：設計決策寫入 docs/DECISIONS.md")
         else:
             await self._debate(engineer, senior, topic=topic, rounds=config.DEBATE_ROUNDS)
 

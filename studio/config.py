@@ -57,6 +57,12 @@ NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 
+# 知識沉澱（workspace 的 docs/PRD.md / RESEARCH.md / DECISIONS.md）：調研結論與設計決策
+# 持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然跨場次累積。
+# 檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
+KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
+KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))  # 注入尾段上限（字元）
+
 # --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
 # A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
 #   重試時 prepend 回工程師 context（既有「上一輪原文回饋」照舊，本機制只補更早輪次的累積）。
@@ -413,6 +419,7 @@ def reload() -> None:
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
+    global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -452,3 +459,5 @@ def reload() -> None:
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
     SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
+    KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
+    KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))

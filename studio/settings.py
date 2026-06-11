@@ -173,6 +173,14 @@ FIELDS: tuple[Field, ...] = (
         default="1",
         group="進階",
     ),
+    Field(
+        "TI_KNOWLEDGE",
+        "知識沉澱（調研／設計決策寫入 docs/，跨場次累積，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}
