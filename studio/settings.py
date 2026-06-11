@@ -25,11 +25,17 @@ class Field:
     options: tuple[str, ...] = ()
     placeholder: str = ""
     group: str = ""
+    default: str = ""  # env 未設定時 UI 應顯示的「有效預設」（避免 select 誤顯第一個選項）
 
 
 FIELDS: tuple[Field, ...] = (
     Field(
-        "TI_PROVIDER", "後端 Provider", kind="select", options=("claude", "openai"), group="一般"
+        "TI_PROVIDER",
+        "後端 Provider",
+        kind="select",
+        options=("claude", "openai"),
+        default="claude",
+        group="一般",
     ),
     Field(
         "ANTHROPIC_API_KEY",
@@ -83,6 +89,7 @@ FIELDS: tuple[Field, ...] = (
         "發佈後自動合併 PR（1 開／0 關）",
         kind="select",
         options=("0", "1"),
+        default="0",
         group="GitHub",
     ),
     Field(
@@ -90,6 +97,7 @@ FIELDS: tuple[Field, ...] = (
         "任務並行（獨立任務分波多支線同時做，1 開／0 關）",
         kind="select",
         options=("0", "1"),
+        default="1",
         group="並行",
     ),
     Field(
@@ -97,7 +105,73 @@ FIELDS: tuple[Field, ...] = (
         "並行支線數上限（每波次同時進行的任務數）",
         kind="select",
         options=("1", "2", "3", "4", "5", "6"),
+        default="3",
         group="並行",
+    ),
+    # --- 進階流程開關（對應 .env 的 power-user 旋鈕；消費端讀即時全域值，存檔後下次討論生效）---
+    Field(
+        "TI_HUDDLE",
+        "卡關討論 huddle（跑滿輪數仍未過時召集團隊找替代方案）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_CRITIC",
+        "異議檢查 critic（放行前由獨立 critic 挑剔「為何還不算完成」）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_NOTES",
+        "共用筆記 NOTES.md（跨任務累積踩過的坑／決策）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_LESSONS",
+        "跨場次教訓庫（長期記憶，開場注入 PM 拆解）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_REFLEXION",
+        "任務級反思記憶（失敗輪蒸餾反思，後續輪／huddle 重試帶回）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_OBJECTIVE_GATE",
+        "客觀驗收閘門（0 關／1 自測實敗才否決／strict 連未宣告指令也退回）",
+        kind="select",
+        options=("0", "1", "strict"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_SELF_REFINE_ITERS",
+        "單輪內自我精修次數（自測未過就地再修，0 關）",
+        kind="select",
+        options=("0", "1", "2", "3"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_RLIMITS",
+        "子進程資源上限（記憶體／CPU／檔案大小防線，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
     ),
 )
 
@@ -113,7 +187,10 @@ def read() -> dict:
     """回傳目前設定狀態給 UI；秘密欄位不含明文，只回報是否已設定。"""
     fields = []
     for f in FIELDS:
-        cur = os.getenv(f.env, "")
+        raw = os.getenv(f.env, "")
+        # 顯示值：env 未設定時退回該欄位的「有效預設」，避免 select 誤顯第一個選項
+        # （如 TI_RLIMITS 預設開＝"1"）。set 仍依「env 是否實際設定」判斷（秘密欄位佔位提示用）。
+        cur = raw if raw != "" else f.default
         fields.append(
             {
                 "env": f.env,
@@ -124,7 +201,7 @@ def read() -> dict:
                 "placeholder": f.placeholder,
                 "group": f.group,
                 "value": "" if f.secret else cur,
-                "set": bool(cur),
+                "set": bool(raw),
             }
         )
     return {"fields": fields}

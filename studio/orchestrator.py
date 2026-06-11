@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import config, events, lessons, publisher, runner, workspace
+from . import config, events, lessons, memory, publisher, reflexion, runner, workspace
 from .roles import ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
@@ -641,10 +641,19 @@ class StudioSession:
             )
 
         # 4) 最終 Demo（實際執行整體產出）
-        await self._final_demo()
+        demo = await self._final_demo()
 
-        # 5) PM 驗收 + 檢討
-        done = await self._wrap_up(pm, all_ok)
+        # 5) PM 驗收 + 檢討。客觀閘門開啟時，Demo「實際執行」未通過則整體不予驗收——PM 仍照常
+        #    發言檢討，但 `決議: 完成` 翻轉不了真實失敗的 Demo（只在 Demo 真的有跑且失敗時否決，
+        #    無 demo 指令不在此誤殺）。
+        demo_veto = config.objective_gate_enabled() and demo is not None and not demo.ok
+        if demo_veto:
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id, "客觀閘門", "最終 Demo 實際執行未通過，整體不予驗收"
+                )
+            )
+        done = await self._wrap_up(pm, all_ok and not demo_veto)
 
         # 6) 視設定自動發佈成果到 GitHub（此時專家團隊仍在線，可在 CI 失敗時修正）
         await self._maybe_publish(done, engineer)
@@ -1080,15 +1089,52 @@ class StudioSession:
                     "請在工作目錄裡實作，並在交付前自己跑過一次確認能執行。"
                 )
             else:
+                # (A) 反思記憶：注入本任務更早輪次蒸餾的反思（最新一輪原文已在 feedback 內，故
+                # exclude_latest；huddle seed＝rnd==1 且 seed_feedback，為結論非上一輪報告 → 全帶）。
+                is_seed = rnd == 1 and bool(seed_feedback)
+                reflections_ctx = (
+                    memory.build_context(self.session_id, task["id"], exclude_latest=not is_seed)
+                    if config.REFLEXION_ENABLED
+                    else ""
+                )
                 impl_prompt = (
-                    f"{human}任務 #{task['id']}：{task['title']} 尚未通過，"
+                    f"{human}{reflections_ctx}"
+                    f"任務 #{task['id']}：{task['title']} 尚未通過，"
                     f"請根據以下意見逐項修正（第 {rnd} 輪）：\n\n{feedback}\n\n"
                     "修正後請自己再跑一次確認。"
                 )
             impl_text = await self._speak(ctx, "engineer", impl_prompt, tag)
 
             # --- 交付前自測（確定性 smoke-run）---
-            await self._self_test(ctx, impl_text, bc)
+            smoke = await self._self_test(ctx, impl_text, bc)
+            # --- (D) 單輪內自我精修：自測「實際執行」未通過時，讓同一工程師就地依執行紀錄再修 ---
+            # 訊號是 runner 的確定性 exit code（非 LLM 自評），裁決權仍在 QA/高工/客觀閘門；同一
+            # engineer 是有狀態對話，續一則帶 log 的訊息即可。rnd 不變、impl_history 每外輪仍只
+            # append 最終一筆、commit 仍每輪一次 → 不影響停滯偵測與輪數。
+            if (
+                config.SELF_REFINE_ITERS > 0
+                and smoke is not None
+                and not smoke.ok
+                and not self._stop
+            ):
+                for i in range(1, config.SELF_REFINE_ITERS + 1):
+                    await bc(
+                        events.phase_change(
+                            self.session_id,
+                            "自我精修",
+                            f"任務 #{task['id']} 交付前自測未通過，工程師就地修正"
+                            f"（{i}/{config.SELF_REFINE_ITERS}）",
+                        )
+                    )
+                    refine_prompt = (
+                        f"{human}【交付前自測未通過——請先就地修正再交付】\n"
+                        f"自測指令 `{smoke.command}` 實際執行未通過，紀錄如下：\n{smoke.output}\n\n"
+                        "請直接修正程式碼讓它能跑過，修好後簡述改了什麼即可。"
+                    )
+                    impl_text = await self._speak(ctx, "engineer", refine_prompt, tag)
+                    smoke = await self._self_test(ctx, impl_text, bc)
+                    if smoke is None or smoke.ok:
+                        break
             await self._commit(ctx, f"任務#{task['id']} 第{rnd}輪：{task['title']}", bc)
 
             # --- 停滯守門：連續多輪只重述且無檔案變動 → 提早收斂，不再燒後續 token ---
@@ -1155,6 +1201,44 @@ class StudioSession:
                 events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
             )
 
+            # --- (B) 客觀閘門（硬性否決）：交付前自測「實際執行」未通過 → 本輪強制退回，
+            # QA/高工的文字裁決推翻不了真實 exit code（守住反 reward-hacking）。只在自測真的有跑
+            # 且失敗時否決；strict 模式連「未宣告自測指令」也視為未通過。評審照常並行跑（評同一
+            # commit、文字仍是修正素材），附在閘門結論之後。---
+            gate_veto = (
+                config.objective_gate_enabled()
+                and ctx.cwd is not None
+                and (
+                    (smoke is not None and not smoke.ok)
+                    or (smoke is None and config.objective_gate_strict())
+                )
+            )
+            if gate_veto:
+                if smoke is not None:
+                    gate_note = (
+                        f"【客觀閘門】交付前自測「{smoke.command}」實際執行未通過"
+                        f"（exit={smoke.exit_code}{'，逾時' if smoke.timed_out else ''}），本輪強制退回。\n"
+                        f"執行紀錄：\n{smoke.output}"
+                    )
+                else:
+                    gate_note = "【客觀閘門】嚴格模式：未宣告任何可執行的自測指令，無從客觀驗證，本輪強制退回。"
+                review_note = ""
+                if qa_text or senior_text:
+                    review_note = f"\n\n【驗證工程師回報】\n{qa_text}\n\n【高級工程師審查意見】\n{senior_text}"
+                    if sec_text:
+                        review_note += f"\n\n【資安審查意見】\n{sec_text}"
+                feedback = gate_note + review_note
+                await bc(
+                    events.phase_change(
+                        self.session_id,
+                        "客觀閘門",
+                        f"任務 #{task['id']} 交付前自測實際執行未通過，第 {rnd} 輪強制退回",
+                    )
+                )
+                self._note(ctx, f"## 客觀閘門退回 任務 #{task['id']}：{task['title']}")
+                await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
+                continue
+
             if qa_ok and senior_ok and security_ok:
                 # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
                 subject = f"任務 #{task['id']}：{task['title']}"
@@ -1171,6 +1255,7 @@ class StudioSession:
                         f"任務 #{task['id']} 表面通過但 critic 提出實質反對，退回修正",
                     )
                 )
+                await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
                 continue
 
             # --- 帶意見回饋，準備下一輪 ---
@@ -1184,6 +1269,7 @@ class StudioSession:
                     f"任務 #{task['id']} 第 {rnd} 輪未通過，工程師將依意見修正",
                 )
             )
+            await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
         return False
 
     async def _huddle_and_retry(
@@ -1270,20 +1356,59 @@ class StudioSession:
         self._note(ctx, f"## 卡關討論 任務 #{task['id']}：{task['title']}\n{conclusion}")
         return conclusion
 
+    async def _store_reflection(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        rnd: int,
+        impl_text: str,
+        feedback: str,
+        bc: Broadcast,
+    ) -> None:
+        """(A) 某輪未通過後，把評審意見蒸餾成反思寫入 per-task 記憶，供後續輪/huddle 重試帶回。
+
+        opt-in（REFLEXION_ENABLED）且需有 cwd（離線單元測試 cwd=None 時跳過）。反思的 LLM 呼叫
+        經號誌節流、且有不崩 fallback（reflect_and_store 永不 raise），任何失敗都不影響主迴圈。
+        儲存編號用「本任務已存反思數 + 1」，使主迴圈與 huddle 重試的編號單調不撞。
+        """
+        if not config.REFLEXION_ENABLED or not ctx.cwd:
+            return
+        from . import providers  # 延後 import：關閉反思時零成本，且避開 SDK 載入路徑
+
+        await bc(
+            events.phase_change(
+                self.session_id,
+                "反思",
+                f"任務 #{task['id']} 第 {rnd} 輪未過，蒸餾反思供下一輪參考",
+            )
+        )
+        attempt = len(memory.retrieve(self.session_id, task["id"])) + 1
+
+        async def _llm(system: str, user: str) -> str:
+            return await providers.complete_once(
+                system, user, session_id=self.session_id, cwd=ctx.cwd
+            )
+
+        async with self._llm_semaphore():
+            await reflexion.reflect_and_store(
+                self.session_id, task, attempt, impl_text, feedback, llm=_llm
+            )
+
     async def _self_test(
         self, ctx: LaneContext, impl_text: str, broadcast: Broadcast | None = None
-    ) -> None:
+    ) -> runner.RunOutput | None:
         """工程師交付前的確定性 smoke-run（在 lane 的 cwd 內執行），把完整 log 回報。
 
+        回傳實際執行結果（供客觀閘門/自我精修判定）；無 cwd 或無可執行指令時回 None。
         並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
         """
         if not ctx.cwd:
-            return
+            return None
         cmd = runner.parse_run_command(impl_text) or runner.resolve_demo_command(
             ctx.cwd, self._run_command
         )
         if not cmd:
-            return
+            return None
         # 刻意保留 shell（run_command，非 run_command_exec）：cmd 來自 PM/工程師宣告的
         # 自測指令（parse_run_command / resolve_demo_command 動態解析），可能含 pipe /
         # && / glob / 重導向等 shell 語法，須經 /bin/sh 解析；非固定指令、無法 argv 化。
@@ -1297,13 +1422,15 @@ class StudioSession:
                 log=result.output,
             )
         )
+        return result
 
-    async def _final_demo(self) -> None:
+    async def _final_demo(self) -> runner.RunOutput | None:
+        """最終整體 Demo；回傳實際執行結果（供客觀閘門判定），無 cwd/指令或已停止時回 None。"""
         if not self.cwd or self._stop:
-            return
+            return None
         cmd = runner.resolve_demo_command(self.cwd, self._run_command)
         if not cmd:
-            return
+            return None
         await self.broadcast(events.phase_change(self.session_id, "Demo", "實際執行成果"))
         # 刻意保留 shell：同 _self_test，cmd 為 demo 指令（resolve_demo_command 動態解析），
         # 可能含 shell 語法，必須經 /bin/sh，無法 argv 化。
@@ -1311,6 +1438,7 @@ class StudioSession:
         await self.broadcast(
             events.demo_result(self.session_id, cmd, result.exit_code, result.output, label="Demo")
         )
+        return result
 
     async def _wrap_up(self, pm: ExpertLike, all_ok: bool) -> bool:
         await self.broadcast(events.phase_change(self.session_id, "驗收", "PM 確認驗收標準"))

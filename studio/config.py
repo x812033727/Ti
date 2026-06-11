@@ -57,6 +57,40 @@ NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 
+# --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
+# A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
+#   重試時 prepend 回工程師 context（既有「上一輪原文回饋」照舊，本機制只補更早輪次的累積）。
+# B 客觀閘門：交付前自測（smoke-run）實際執行失敗 → 該輪「強制退回」，不讓 QA／高工的文字裁決
+#   推翻真實 exit code（守住反 reward-hacking）。
+# C 子進程資源上限：runner 執行指令時套 RLIMIT，補 bwrap 沒有的記憶體／CPU／檔案大小防線。
+# D Self-Refine：單輪內自測未過時，讓同一工程師就地依執行紀錄再修一次。
+# 穩健式預設：C 預設開（純加固、無行為風險）；A／B／D 預設關（opt-in），保既有行為向後相容。
+# 與 TI_LESSONS／NOTES／HUDDLE／CRITIC 同列「進階流程」開關：env 仍是來源，且已納入設定面板
+# （settings.FIELDS「進階」組）與 reload()。消費端皆讀即時全域值，故面板存檔後下次討論即生效。
+REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
+REFLEXION_MAX = int(os.getenv("TI_REFLEXION_MAX", "5"))  # 注入時取最近 N 筆反思
+# 客觀閘門：0=關／1=開（有自測指令且實敗才否決）／strict=連「未宣告執行指令」也視為未通過。
+OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
+SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))  # 單輪內就地精修次數（0=關）
+# 子進程資源上限（穩健式預設開）。每項 0=略過該限。RLIMIT_AS 算虛擬位址空間，V8／BLAS 會預留
+# 數 GB，故 4096MB 為真實工作負載的寬鬆下限（交付物 512MB 是玩具題尺度）；CPU 300s 遠高於
+# DEMO_TIMEOUT(60s wall)，只攔失控孤兒；FSIZE 512MB 擋單檔塞爆磁碟而不卡 pip wheel。
+RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
+RLIMIT_MEM_MB = int(os.getenv("TI_RLIMIT_MEM_MB", "4096"))
+RLIMIT_CPU_S = int(os.getenv("TI_RLIMIT_CPU_S", "300"))
+RLIMIT_FSIZE_MB = int(os.getenv("TI_RLIMIT_FSIZE_MB", "512"))
+
+
+def objective_gate_enabled() -> bool:
+    """客觀閘門是否啟用（"1" 或 "strict"）。讀目前全域值，故 reload() 後即時生效。"""
+    return OBJECTIVE_GATE in ("1", "strict")
+
+
+def objective_gate_strict() -> bool:
+    """嚴格模式：連「未宣告可執行指令」也視為未通過（無從客觀驗證＝不放行）。"""
+    return OBJECTIVE_GATE == "strict"
+
+
 # 停滯守門：改進迴圈連續 STALL_ROUNDS 輪只重述（文字高度相似且無檔案變動）就提早收斂，
 # 避免燒 token。<=1 視為停用。預設值刻意大於離線示範每任務實際圈數，使既有流程不誤觸；
 # 且 _stalled 在無 cwd 或關閉 git 時一律不偵測（保護 cwd=None 的單元測試）。
@@ -351,8 +385,9 @@ def provider_ready() -> bool:
 def reload() -> None:
     """重新從環境變數載入「可由 UI 調整」的設定，讓變更即時生效（無需重啟）。
 
-    僅涵蓋 provider / 模型 / OpenAI / GitHub 發佈這幾組可在設定頁修改的項目；
-    其餘（門禁、流程輪數、路徑、伺服器位址）維持啟動時的值。
+    涵蓋 provider／模型／OpenAI／GitHub 發佈／並行／角色／輪數，以及「進階流程」開關
+    （huddle／critic／notes／lessons／reflexion／客觀閘門／self-refine／rlimits）——這些
+    設定面板可改的項目；其餘（門禁、路徑、伺服器位址）維持啟動時的值。
     """
     global PROVIDER, MODEL_LEAD, MODEL_FAST
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
@@ -361,6 +396,8 @@ def reload() -> None:
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
+    global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
+    global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -391,3 +428,12 @@ def reload() -> None:
     PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
     PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
     PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
+    # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
+    HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+    CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
+    NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
+    LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
+    REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
+    OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
+    SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))
+    RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
