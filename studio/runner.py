@@ -17,6 +17,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    import resource  # POSIX 專有；非 POSIX（如 Windows）下資源上限整段 no-op。
+except ImportError:  # pragma: no cover - 僅非 POSIX 平台
+    resource = None  # type: ignore[assignment]
+
 from . import config
 
 log = logging.getLogger("ti.runner")
@@ -170,6 +175,52 @@ def kill_process_group(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
+def _rlimit_preexec():
+    """產生「fork 後、exec 前套用資源上限」的 preexec_fn；停用／無 resource／全 0 時回 None。
+
+    補 bwrap 沒有的記憶體／CPU／檔案大小防線——bwrap 缺席（如本機無 /usr/bin/bwrap）時，
+    這是唯一能擋住失控指令吃爆主機的防線；bwrap 啟用時 RLIMIT 也會經 exec 繼承進沙箱子進程。
+    closure body 只做 setrlimit syscalls（fork 安全：不配置記憶體、不拿鎖、不 import），各上限
+    0＝略過。移植自 ti-studio evaluator._preexec，刻意「不」呼叫 os.setsid()——兩個 subprocess
+    分支已 start_new_session=True 自成 group leader，kill_process_group 靠它整組收屍，重複
+    setsid 反而干擾。
+    """
+    if resource is None or not config.RLIMITS_ENABLED:
+        return None
+    mem_mb = config.RLIMIT_MEM_MB
+    cpu_s = config.RLIMIT_CPU_S
+    fsize_mb = config.RLIMIT_FSIZE_MB
+    if not (mem_mb or cpu_s or fsize_mb):
+        return None
+
+    def _inner() -> None:
+        def _try(res, soft_hard):
+            try:
+                resource.setrlimit(res, soft_hard)
+            except (ValueError, OSError):
+                pass
+
+        if mem_mb:
+            b = mem_mb * 1024 * 1024
+            _try(resource.RLIMIT_AS, (b, b))  # 位址空間（記憶體）
+        if cpu_s:
+            _try(resource.RLIMIT_CPU, (cpu_s, cpu_s))  # CPU 時間（秒）
+        if fsize_mb:
+            b = fsize_mb * 1024 * 1024
+            _try(resource.RLIMIT_FSIZE, (b, b))  # 可寫單檔大小上限
+        _try(resource.RLIMIT_CORE, (0, 0))  # 關 core dump
+        # 限制進程數盡力擋 fork bomb；不放寬現有上限（避免共享 UID 環境誤殺）。註：root 下
+        # RLIMIT_NPROC 以 real UID 全域計、實為盡力而為——根本防護仍靠 OS 層／PID namespace。
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+            cap = 256 if soft == resource.RLIM_INFINITY else min(soft, 256)
+            resource.setrlimit(resource.RLIMIT_NPROC, (cap, hard))
+        except (ValueError, OSError):
+            pass
+
+    return _inner
+
+
 async def _finalize_proc(proc: asyncio.subprocess.Process, label: str, timeout: int) -> RunOutput:
     """共用收尾：communicate + 逾時 kill + 輸出截斷。
 
@@ -210,6 +261,8 @@ async def run_command(
     timeout = timeout or config.DEMO_TIMEOUT
     use_sandbox = config.SANDBOX_ENABLED if sandbox is None else sandbox
     inner = _executable_command(command)
+    # 資源上限經 fork-exec 繼承：沙箱時設在 bwrap 進程上（傳入沙箱子進程），非沙箱時直接設在 sh。
+    preexec = _rlimit_preexec()
     if use_sandbox:
         if not config._sandbox_available():
             return _sandbox_blocked(command)
@@ -221,6 +274,7 @@ async def run_command(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
+            preexec_fn=preexec,
         )
     else:
         proc = await asyncio.create_subprocess_shell(
@@ -229,6 +283,7 @@ async def run_command(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
+            preexec_fn=preexec,
         )
     return await _finalize_proc(proc, command, timeout)
 

@@ -37,6 +37,8 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `runner.py` | 確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git |
 | `workspace.py` | 每個 session 的沙箱工作目錄（安全路徑、列檔、讀檔、打包 zip 匯出） |
 | `history.py` | session 事件存檔/讀取（JSONL + meta），供歷史列表與重播 |
+| `memory.py` | 任務級反思記憶（per-session JSONL＋fcntl 鎖）：失敗輪蒸餾反思存檔、後續輪 prepend 回 context（opt-in，env `TI_REFLEXION`） |
+| `reflexion.py` | 把失敗輪的評審意見蒸餾成文字反思（LLM＋模板 fallback，不裁決成敗、永不崩） |
 | `publisher.py` | 把 workspace 成果推成 GitHub 分支並開 PR（預設關閉） |
 | `fake_experts.py` | 離線示範用的假專家（真的寫檔/commit，供無金鑰試用與 E2E） |
 

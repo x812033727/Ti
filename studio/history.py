@@ -15,7 +15,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import config, workspace
+from . import config, memory, workspace
 
 log = logging.getLogger("ti.history")
 
@@ -180,6 +180,7 @@ def delete_session(session_id: str) -> bool:
     for p in (_meta_path(session_id), _events_path(session_id)):
         if p.exists():
             p.unlink()
+    memory.delete(session_id)  # per-session 反思記憶（與 events/meta 同生命週期）
     ws = workspace.workspace_path(session_id)
     if ws.exists():
         shutil.rmtree(ws, ignore_errors=True)
