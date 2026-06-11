@@ -57,6 +57,13 @@ NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 
+# 需求澄清階段：拆解前 PM 先就模糊需求向使用者反問關鍵問題（附預設假設），等回覆逾時則按
+# 假設續行——流程絕不因等人而卡死。僅互動 session 生效（須有插話佇列）；autopilot／持續改良
+# 迴圈等自主流程一律跳過。預設關閉（與其他進階流程開關同為 opt-in）。
+CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "0") not in ("0", "false", "False", "")
+CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等使用者回覆的秒數
+CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
+
 # --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
 # A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
 #   重試時 prepend 回工程師 context（既有「上一輪原文回饋」照舊，本機制只補更早輪次的累積）。
@@ -413,6 +420,7 @@ def reload() -> None:
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
+    global CLARIFY_ENABLED, CLARIFY_TIMEOUT
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -452,3 +460,5 @@ def reload() -> None:
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
     SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
+    CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "0") not in ("0", "false", "False", "")
+    CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))

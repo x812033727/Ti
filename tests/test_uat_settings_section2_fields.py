@@ -111,6 +111,7 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_PARALLEL_LANES": ["TI_PARALLEL_LANES", "支線數"],
         "TI_PARALLEL_TASKS": ["TI_PARALLEL_TASKS", "任務並行"],
         "TI_PUBLISH_MERGE": ["TI_PUBLISH_MERGE", "自動合併"],
+        "TI_CLARIFY": ["TI_CLARIFY"],
         "TI_HUDDLE": ["TI_HUDDLE"],
         "TI_CRITIC": ["TI_CRITIC"],
         "TI_NOTES": ["TI_NOTES"],

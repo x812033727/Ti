@@ -296,6 +296,16 @@ function handleEvent(ev) {
     case "human_message":
       addHuman(p.text);
       break;
+    case "clarify_request": {
+      // PM 的需求澄清提問：逐題渲染並引導用插話框回答（逾時自動按假設續行）。
+      addSystem("❓ PM 想先跟你確認需求（在下方插話框回答，一則訊息回答全部即可）：");
+      (p.questions || []).forEach((q, i) => {
+        addSystem(`${i + 1}. ${q.q}` + (q.assumption ? `（未回覆時假設：${q.assumption}）` : ""));
+      });
+      if (p.timeout_s) addSystem(`⏳ ${Math.round(p.timeout_s)} 秒內未回覆，將按 PM 的預設假設繼續。`);
+      if (!replaying) interjectInput.focus();
+      break;
+    }
     case "critic_review":
       if (p.passed) {
         addSystem("🔍 異議檢查放行（" + (p.gate || "") + " 視角）");

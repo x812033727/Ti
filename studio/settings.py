@@ -110,6 +110,14 @@ FIELDS: tuple[Field, ...] = (
     ),
     # --- 進階流程開關（對應 .env 的 power-user 旋鈕；消費端讀即時全域值，存檔後下次討論生效）---
     Field(
+        "TI_CLARIFY",
+        "需求澄清（拆解前 PM 先反問關鍵問題，逾時按假設續行）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
         "TI_HUDDLE",
         "卡關討論 huddle（跑滿輪數仍未過時召集團隊找替代方案）",
         kind="select",
