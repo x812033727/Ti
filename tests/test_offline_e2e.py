@@ -26,7 +26,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
     from studio.server import app
 
-    # /ws 已限定本機（handler 內 is_loopback 檢查）：以 loopback peer 連入握手。
+    # /ws 不限本機來源（#81，僅登入門禁）；沿用 loopback peer 連入握手。
     return TestClient(app, client=("127.0.0.1", 12345))
 
 

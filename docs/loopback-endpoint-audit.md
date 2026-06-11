@@ -1,27 +1,31 @@
-# 端點盤點：本機限定（loopback）納管清單
+# 端點盤點：管理寫入門禁（require_admin）納管清單
 
-> 任務 #5 產出。盤點 `studio/routes.py`（HTTP）與 `studio/ws.py`（WebSocket）所有入口，
-> 標記「該限定本機」的端點與理由。事實依據以 `app.routes` 反查（含實際生效的 dependant），
+> 盤點 `studio/routes.py`（HTTP）與 `studio/ws.py`（WebSocket）所有入口，
+> 標記「掛管理門禁」的端點與理由。事實依據以 `app.routes` 反查（含實際生效的 dependant），
 > 非靠人工讀碼，避免漏列。
 
 ## 判定原則
 
-- **納管（掛 `require_loopback`）**：會改機器狀態／控制面／可外洩秘密的**寫入**端點。
+- **納管（掛 `require_admin`）**：會改機器狀態／控制面／可外洩秘密的**寫入**端點。
+  `require_admin` 是 fail-safe 複合門禁：**門禁啟用**（設了 `TI_ACCESS_PASSWORD`）時等同
+  `require_auth`——外網已登入者可操作（重新部署/改設定/控 autopilot），未登入回 401；
+  **門禁停用**時退回 `require_loopback` 僅限本機（403），不把控制面裸露給全網
+  （`HOST` 預設 `0.0.0.0`，且 `is_authed` 在門禁停用時恆放行）。
 - **不納管**：讀取查詢、認證握手、靜態與框架端點。
-- 信任判定統一走 `netutil.is_loopback`（spoof-safe、fail-closed），HTTP 用 `WRITE_DEPS` 依賴、
-  WS 在 handler 內檢查（依賴注入對 WebSocket 不生效）。
-- 回應碼：HTTP 403「僅限本機存取」；WS error payload 同字串後 `close(1008)`。
+- fail-safe 分支的信任判定統一走 `netutil.is_loopback`（spoof-safe、fail-closed），
+  HTTP 用 `WRITE_DEPS` 依賴掛 `require_admin`。
+- 回應碼：門禁啟用未登入 → HTTP 401「需要登入」；門禁停用非本機 → HTTP 403「僅限本機存取」。
 
 ## HTTP 端點
 
 | 方法 | 路徑 | 現況 deps | 納管 | 理由 |
 |------|------|-----------|:----:|------|
-| POST | `/api/redeploy` | loopback+auth | ✅ | 拉 main 並自我重啟，最高危機器狀態變更 |
-| POST | `/api/auth/password` | loopback+auth | ✅ | 寫 .env 改存取密碼，秘密寫入面 |
-| POST | `/api/settings` | loopback+auth | ✅ | 改 .env 設定（含 `OPENAI_BASE_URL` 等），可致金鑰外洩/RCE 風險 |
-| POST | `/api/autopilot/pause` | loopback+auth | ✅ | 控制自動迴圈，遠端可癱瘓（DoS） |
-| POST | `/api/autopilot/resume` | loopback+auth | ✅ | 控制自動迴圈狀態 |
-| POST | `/api/autopilot/task` | loopback+auth | ✅ | 向會自主執行 bash 的 autopilot 注入任務 |
+| POST | `/api/redeploy` | admin（auth｜fail-safe loopback） | ✅ | 拉 main 並自我重啟，高危機器狀態變更 |
+| POST | `/api/auth/password` | admin（auth｜fail-safe loopback） | ✅ | 寫 .env 改存取密碼，秘密寫入面；門禁停用時限本機，公網裸部署不致被搶先設密碼接管 |
+| POST | `/api/settings` | admin（auth｜fail-safe loopback） | ✅ | 改 .env 設定（含 `OPENAI_BASE_URL` 等），可致金鑰外洩/RCE 風險 |
+| POST | `/api/autopilot/pause` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈，遠端可癱瘓（DoS） |
+| POST | `/api/autopilot/resume` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈狀態 |
+| POST | `/api/autopilot/task` | admin（auth｜fail-safe loopback） | ✅ | 向會自主執行 bash 的 autopilot 注入任務 |
 | GET  | `/api/settings` | auth | ➖ | 讀取設定（秘密欄位不回明文），敏感度低 |
 | GET  | `/api/autopilot` | auth | ➖ | 讀取狀態 |
 | GET  | `/api/autopilot/backlog` | auth | ➖ | 讀取待辦清單 |
@@ -58,7 +62,7 @@
 
 | 端點 | 檢查方式 | 納管 | 理由 |
 |------|----------|:----:|------|
-| `/ws` | handler 內 `auth.is_authed`（共用密碼門禁） | ❌ | 核心產品入口（啟動多專家討論）。**刻意不限本機**：對外網站須讓已登入者開討論，否則對外服務癱瘓。安全靠「登入門禁 + 專家 bash 一律 bwrap 沙箱（host 唯讀、PID/網路隔離）」，非以來源限定 |
+| `/ws` | handler 內 `auth.is_authed`（共用密碼門禁） | ❌ | 核心產品入口（啟動多專家討論）。**刻意不限本機**：對外網站須讓已登入者開討論，否則對外服務癱瘓。安全靠「登入門禁 + 專家 bash 一律 bwrap 沙箱（host 唯讀、PID/網路隔離）」，非以來源限定。HTTP 管理寫入現同此模型，另加門禁停用時的 fail-safe 本機限定（見上） |
 
 ## 框架/靜態端點（不納管）
 
@@ -66,7 +70,9 @@
 
 ## 對應測試
 
-- 寫入納管守門：`tests/test_auth.py::LOOPBACK_WRITE_ENDPOINTS`（公網→403、裸 XFF 偽造→403、來源不可知→403、loopback→放行）。
-- 讀取不誤納管守門：`tests/test_auth.py::READ_ENDPOINTS`（結構反查：不含 loopback、仍含 auth）。
+- 寫入納管守門：`tests/server/test_auth.py::ADMIN_WRITE_ENDPOINTS`（門禁啟用：公網未登入→401；
+  門禁停用 fail-safe：公網→403、裸 XFF 偽造→403、來源不可知→403、loopback→放行）。
+- 已登入放行與 fail-safe 兩面：`tests/test_qa_admin_gate.py`（公網已登入→放行全部 6 端點）。
+- 讀取不誤納管守門：`tests/server/test_auth.py::READ_ENDPOINTS`（結構反查：不含 loopback/admin、仍含 auth）。
 - WS：`tests/test_qa_task4_ws_loopback.py`（公網未登入→需登入、公網已登入→進主流程、loopback→進主流程、原始碼不再含 `is_loopback`）。
 - 信任模型底層：`tests/test_trust_proxy.py`（XFF 由右往左、受信代理偽造、fail-closed）。

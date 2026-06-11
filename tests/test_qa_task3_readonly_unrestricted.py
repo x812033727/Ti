@@ -61,6 +61,7 @@ def _route_dep_funcs(app, path, method):
 def test_readonly_not_loopback_restricted(app, path, method):
     funcs = _route_dep_funcs(app, path, method)
     assert "require_loopback" not in funcs, f"{method} {path} 不應掛 require_loopback"
+    assert "require_admin" not in funcs, f"{method} {path} 不應誤掛管理門禁"
     assert "require_auth" in funcs, f"{method} {path} 應維持 require_auth"
 
 

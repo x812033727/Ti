@@ -68,7 +68,7 @@ def test_auth_enabled_blocks_then_allows(app, monkeypatch):
 
 def test_auth_enabled_websocket_requires_login(app, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
-    # 須先通過 loopback 檢查（在身分檢查之前），故用 loopback client 才測得到登入分支
+    # /ws 已不限本機來源（#81），登入分支對任何來源都會生效；此處沿用 loopback client。
     client = TestClient(app, client=("127.0.0.1", 12345))
 
     # 未登入：WS 連線會收到 error 並被關閉
@@ -79,8 +79,8 @@ def test_auth_enabled_websocket_requires_login(app, monkeypatch):
 
 
 # --- /ws 來源政策：#81 起僅登入門禁、不再限定本機來源 --------------------
-# （原任務 #4 的「/ws 限定本機」三測已隨政策翻轉改寫；新政策的完整矩陣另見
-#   tests/test_qa_task4_ws_loopback.py。此處保留與門禁互動的最小斷言。）
+# （原任務 #4 的「/ws 限定本機」三測已隨政策翻轉改寫為登入門禁語意；
+#   新政策的完整矩陣另見 tests/test_qa_task4_ws_loopback.py。）
 def test_ws_public_peer_allowed_when_auth_disabled(app, monkeypatch):
     """公網來源連 /ws：門禁停用時不再被來源擋下，直接進入業務驗證（需求不可為空）。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
@@ -114,7 +114,7 @@ def test_ws_auth_gate_still_blocks_public_peer(app, monkeypatch):
 
 
 def test_ws_allows_loopback_peer(app, monkeypatch):
-    """loopback 來源放行 loopback 檢查：送空需求應進入 handler 主體並回『需求不可為空』。"""
+    """loopback 來源照舊放行：送空需求應進入 handler 主體並回『需求不可為空』。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     client = TestClient(app, client=("127.0.0.1", 12345))
     with client.websocket_connect("/ws") as ws:
@@ -126,7 +126,8 @@ def test_ws_allows_loopback_peer(app, monkeypatch):
 
 def test_change_password_when_disabled_enables_gate(app, pw_env, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
-    # password 端點限定本機，TestClient 預設 host 非 IP（fail-closed），需指定 loopback client
+    # 門禁停用時 password 端點 fail-safe 限本機，TestClient 預設 host 非 IP（fail-closed），
+    # 需指定 loopback client
     client = TestClient(app, client=("127.0.0.1", 12345))
     # 門禁停用時可直接設定新密碼以首次啟用門禁（無需目前密碼）
     r = client.post("/api/auth/password", json={"new_password": "newpass"})
@@ -139,7 +140,7 @@ def test_change_password_when_disabled_enables_gate(app, pw_env, monkeypatch):
 
 def test_change_password_when_enabled(app, pw_env, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
-    # password 端點限定本機，需指定 loopback client 才能測到 401/403/400 等下游邏輯
+    # 沿用 loopback client 測 401/403/400 等下游邏輯（門禁啟用時來源已不影響判定）
     client = TestClient(app, client=("127.0.0.1", 12345))
     body = {"current_password": "oldpass", "new_password": "brandnew"}
 
@@ -169,9 +170,9 @@ def test_change_password_when_enabled(app, pw_env, monkeypatch):
     assert auth.check_password("oldpass") is False
 
 
-# --- 任務 #1/#2：敏感寫入端點限定本機（require_loopback） ----------------
+# --- 管理寫入端點門禁（require_admin：門禁啟用→登入即可；停用→fail-safe 限本機） ----
 # 守門清單：列舉所有 WRITE_DEPS 端點，任一漏掛或未來新增未掛皆會被本測試攔下。
-LOOPBACK_WRITE_ENDPOINTS = [
+ADMIN_WRITE_ENDPOINTS = [
     "/api/redeploy",
     "/api/auth/password",
     "/api/settings",
@@ -181,39 +182,49 @@ LOOPBACK_WRITE_ENDPOINTS = [
 ]
 
 
-@pytest.mark.parametrize("path", LOOPBACK_WRITE_ENDPOINTS)
-def test_high_risk_endpoint_blocks_public_peer(app, monkeypatch, path):
-    """公網來源對敏感寫入端點一律 403，且獨立於門禁狀態（loopback 在 auth 之前短路）。"""
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用也不得放行
+@pytest.mark.parametrize("path", ADMIN_WRITE_ENDPOINTS)
+def test_admin_endpoint_blocks_public_peer_when_auth_disabled(app, monkeypatch, path):
+    """門禁停用時 fail-safe 退回僅限本機：公網來源對管理寫入端點一律 403。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → fail-safe 限本機
     client = TestClient(app, client=("203.0.113.5", 40000))
     r = client.post(path, json={})
     assert r.status_code == 403
     assert r.json()["detail"] == "僅限本機存取"
 
 
-@pytest.mark.parametrize("path", LOOPBACK_WRITE_ENDPOINTS)
-def test_high_risk_endpoint_blocks_unknown_peer(app, monkeypatch, path):
-    """來源不可知（TestClient 預設 host 非 IP）→ fail-closed 回 403。"""
+@pytest.mark.parametrize("path", ADMIN_WRITE_ENDPOINTS)
+def test_admin_endpoint_blocks_unknown_peer_when_auth_disabled(app, monkeypatch, path):
+    """門禁停用 + 來源不可知（TestClient 預設 host 非 IP）→ fail-closed 回 403。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     client = TestClient(app)  # 預設 client host = "testclient"，無法解析為 IP
     assert client.post(path, json={}).status_code == 403
 
 
-def test_high_risk_endpoint_allows_loopback_peer(app, pw_env, monkeypatch):
-    """loopback 來源放行 require_loopback：以 password 端點驗證（不觸發實際重啟）。"""
+def test_admin_endpoint_allows_loopback_peer(app, pw_env, monkeypatch):
+    """門禁停用時 loopback 來源放行 fail-safe：以 password 端點驗證（不觸發實際重啟）。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     client = TestClient(app, client=("127.0.0.1", 12345))
     r = client.post("/api/auth/password", json={"new_password": "loopok"})
-    assert r.status_code == 200  # 通過 loopback + auth，進入 handler
+    assert r.status_code == 200  # 通過 fail-safe loopback，進入 handler
 
 
-@pytest.mark.parametrize("path", LOOPBACK_WRITE_ENDPOINTS)
-def test_high_risk_endpoint_rejects_spoofed_xff(app, monkeypatch, path):
+@pytest.mark.parametrize("path", ADMIN_WRITE_ENDPOINTS)
+def test_admin_endpoint_rejects_spoofed_xff_when_auth_disabled(app, monkeypatch, path):
     """裸 XFF 偽造：trust_proxy 預設關閉時，公網 peer 偽造 X-Forwarded-For: 127.0.0.1 仍 403。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
     client = TestClient(app, client=("203.0.113.5", 40000))
     r = client.post(path, json={}, headers={"X-Forwarded-For": "127.0.0.1"})
     assert r.status_code == 403  # XFF 被忽略，採信 socket peer（公網）
+
+
+@pytest.mark.parametrize("path", ADMIN_WRITE_ENDPOINTS)
+def test_admin_endpoint_requires_login_when_auth_enabled(app, monkeypatch, path):
+    """門禁啟用：公網未登入 → 401『需要登入』（不再是 403 本機限定）。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    r = client.post(path, json={})
+    assert r.status_code == 401
+    assert r.json()["detail"] == "需要登入"
 
 
 def test_read_endpoints_not_loopback_restricted(app, monkeypatch):
@@ -253,6 +264,7 @@ def test_read_endpoint_keeps_auth_without_loopback(app, method, path):
     """讀取類端點：不含 require_loopback（不納管），但仍含 require_auth（門禁照舊）。"""
     deps = _route_dep_names(app, method, path)
     assert "require_loopback" not in deps, f"{method} {path} 不應被 loopback 限定"
+    assert "require_admin" not in deps, f"{method} {path} 不應誤掛管理門禁"
     assert "require_auth" in deps, f"{method} {path} 應維持門禁保護"
 
 

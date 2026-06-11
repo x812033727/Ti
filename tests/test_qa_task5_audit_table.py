@@ -1,10 +1,11 @@
-"""QA 獨立驗證：任務 #5 端點盤點表（docs/loopback-endpoint-audit.md）正確且完整。
+"""QA 獨立驗證：端點盤點表（docs/loopback-endpoint-audit.md）正確且完整。
 
 把「文件」變成可執行的守門測試：自動從 app.routes 反查所有入口，與盤點表雙向比對。
 - 完整性：每個實際 HTTP 入口都在盤點表中列載（無遺漏）。
-- 正確性：盤點表標「✅ 納管」者，實際 deps 含 require_loopback；未標者不含。
+- 正確性：盤點表標「✅ 納管」者，實際 deps 含 require_admin（管理門禁：門禁啟用→登入、
+  停用→fail-safe 限本機）；未標者不含。
 - 無虛構：盤點表列出的每個 (method, path) 都真實存在於 app。
-- WS：/ws 已列載且標納管，且 ws.py 確實於 handler 內以 netutil.is_loopback 檢查。
+- WS：/ws 已列載且不納管本機限定，ws.py 以 auth.is_authed 守護。
 """
 
 from __future__ import annotations
@@ -57,13 +58,13 @@ def parse_audit():
 
 
 def app_http_routes(app):
-    """{(method, path): has_require_loopback} for every APIRoute（自動排除框架/靜態）。"""
+    """{(method, path): has_require_admin} for every APIRoute（自動排除框架/靜態）。"""
     out = {}
     for r in app.routes:
         if isinstance(r, APIRoute):
             deps = {getattr(d.dependency, "__name__", None) for d in r.dependencies}
             for m in (r.methods or set()) - {"HEAD", "OPTIONS"}:
-                out[(m, r.path)] = "require_loopback" in deps
+                out[(m, r.path)] = "require_admin" in deps
     return out
 
 
@@ -75,7 +76,7 @@ def test_audit_covers_every_http_route(app):
     assert not missing, f"盤點表遺漏入口：{missing}"
 
 
-# --- 正確性：納管標記與實際 require_loopback 完全一致 ---------------------
+# --- 正確性：納管標記與實際 require_admin 完全一致 -------------------------
 def test_audit_marks_match_actual_deps(app):
     http_docs, _ = parse_audit()
     actual = app_http_routes(app)
