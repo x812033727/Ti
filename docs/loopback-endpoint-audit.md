@@ -35,6 +35,8 @@
 | GET  | `/api/workspace/{session_id}/file` | auth | ➖ | 讀取單一檔案內容 |
 | GET  | `/api/workspace/{session_id}/download` | auth | ➖ | 下載工作區壓縮檔 |
 | GET  | `/api/publish/config` | auth | ➖ | 讀取發佈設定 |
+| GET  | `/api/projects` | auth | ➖ | 讀取專案列表與 backlog 統計 |
+| GET  | `/api/projects/{project_id}` | auth | ➖ | 讀取單一專案 meta 與 backlog |
 | GET  | `/api/metrics` | auth | ➖ | 讀取運維指標（活躍場次/並發上限/history 計數/保留策略/workspace 數），無秘密 |
 | POST | `/api/login` | — | ➖ | 認證握手，必須對外可達才能登入 |
 | POST | `/api/logout` | — | ➖ | 認證握手 |
@@ -50,8 +52,10 @@
 | DELETE | `/api/history/{session_id}` | auth | 刪除歷史紀錄，作用於資料而非機器控制面；門禁已足夠 |
 | POST | `/api/history/cleanup/completed` | auth | 清理已完成歷史，同上 |
 | POST | `/api/history/cleanup/retention` | auth | 依保留策略回收超量/過舊歷史，作用於資料面而非機器控制面；同上 |
+| POST | `/api/projects` | auth | 建立專案（寫 meta 與空 workspace 目錄），純資料面；與 /ws 同屬核心產品操作，須對已登入外網使用者可用 |
+| POST | `/api/projects/{project_id}/backlog` | auth | 往「專案」backlog 排改良任務。與 autopilot 的任務注入端點（納管）不同：專案任務僅在已登入使用者經 /ws 主動啟動持續改良時才執行，且專家 bash 走 bwrap 沙箱（與 /ws 同安全模型），非無人值守自動執行 |
 
-> 註：此四者屬「資料面寫入」，架構決策的納管邊界限定在「會改機器狀態的控制面/秘密寫入」。
+> 註：上列皆屬「資料面寫入」，架構決策的納管邊界限定在「會改機器狀態的控制面/秘密寫入」。
 > 若後續威脅模型升級，可比照 `WRITE_DEPS` 一行掛上，已有守門測試結構可直接擴充。
 
 ## WebSocket 端點

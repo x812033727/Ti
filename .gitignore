@@ -31,6 +31,9 @@ autopilot/
 # Session history archive
 history/
 
+# 專案（長期產品）執行期狀態：meta + 專屬改良 backlog（TI_PROJECTS_ROOT，預設 PROJECT_ROOT/projects）
+projects/
+
 # 跨場次教訓庫（LESSONS_FILE，預設 PROJECT_ROOT/lessons.json）+ 其鎖檔，屬執行期狀態，不進版控。
 lessons.json
 lessons.lock

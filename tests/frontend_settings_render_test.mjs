@@ -24,6 +24,9 @@ class RecEl {
     // app.js 頂層即會呼叫 setMobileView → closeSettings → classList.add（#84 手機分頁）
     this.classList = { add() {}, remove() {}, toggle() {}, contains() { return false; } };
   }
+  // 手機分頁導覽（#84）於 app.js 載入時即呼叫 setMobileView → open/closeSettings 操作
+  // classList；stub 一律 no-op（與 save harness 對齊），避免載入期 TypeError。
+  classList = { add() {}, remove() {}, toggle() {}, contains() { return false; } };
   appendChild(c) {
     if (this.innerHTML === '') {} // 不清空既有 children
     this.children.push(c);

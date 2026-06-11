@@ -9,6 +9,9 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # 防線：任一 job 卡死不得吃滿預設 360 分鐘——#81 曾因測試永久阻塞掛滿 6 小時、
+    # 一次燒掉千餘分鐘 Actions 額度，導致後續所有 run 因額度耗盡秒敗。
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +50,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # 防卡死燒額度（同 lint 註記）
     strategy:
       fail-fast: false
       matrix:
@@ -95,6 +99,7 @@ jobs:
   #   tests/autopilot/test_qa_task3_autopilot_pytest_exec.py::test_gate_tests_real_sandbox_run
   sandbox-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # 防卡死燒額度（同 lint 註記）
     steps:
       - uses: actions/checkout@v4
 

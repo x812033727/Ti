@@ -40,6 +40,8 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `memory.py` | 任務級反思記憶（per-session JSONL＋fcntl 鎖）：失敗輪蒸餾反思存檔、後續輪 prepend 回 context（opt-in，env `TI_REFLEXION`） |
 | `reflexion.py` | 把失敗輪的評審意見蒸餾成文字反思（LLM＋模板 fallback，不裁決成敗、永不崩） |
 | `publisher.py` | 把 workspace 成果推成 GitHub 分支並開 PR（預設關閉） |
+| `projects.py` | 專案（長期產品）：固定 workspace、專屬 backlog、session 足跡，跨場次累積 |
+| `improver.py` | 專案持續改良迴圈：消化 backlog → 跑討論 → followups 回填 → 空了就「找問題」 |
 | `fake_experts.py` | 離線示範用的假專家（真的寫檔/commit，供無金鑰試用與 E2E） |
 
 ## 執行期資料流
@@ -72,6 +74,32 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 
 關閉（預設）時退化成「每任務一波、單一主 lane」，與循序逐任務迭代逐字等價。
 全域 `TI_LLM_MAX_CONCURRENCY` 節流同時進行的 LLM 發言數。
+
+## 專案與持續改良迴圈
+
+session 是一次性的；**專案**（`projects.py`）則是「同一個產品做下去」的一級實體：
+
+- `projects/<pid>/meta.json`：名稱、產品願景、歷次 session 足跡。
+- `projects/<pid>/backlog.json`：專屬改良任務佇列（`backlog.py` 以 `state_dir` 參數泛化，
+  與 autopilot 的全域 backlog 同一套機制、互不干擾）。
+- `workspaces/project-<pid>/`：固定 workspace——程式碼與 git 歷史**跨場次累積**，絕不清空。
+  刻意放在 `WORKSPACE_ROOT` 下，讓既有檔案/下載 API 與前端檔案面板零改動可用
+  （`session_started` 事件帶 `workspace_id`，前端據此對接）。
+
+WebSocket 第一則訊息可帶 `project_id`（在該專案的固定 workspace 上跑單場討論；檢討發現的
+`後續任務:` 自動回填專案 backlog），或再加 `mode: "improve"` 啟動**持續改良迴圈**
+（`improver.py`，把 autopilot 的自我改善迴圈泛化到任意產品）：
+
+```
+取 backlog pending 任務 → 跑一場完整討論（固定 workspace）→ followups 回填 backlog
+   ↑                                                            │
+   └── backlog 空了：「找問題」（資深專家審視產品、產出新改良任務，已完成標題去重）←┘
+```
+
+結束條件：使用者停止／達 `TI_IMPROVE_MAX_CYCLES`／連續失敗達 `TI_IMPROVE_MAX_FAILS`／
+「找問題」找不出新改善點（自然收斂）。每一輪（含找問題）各自記錄 history session 可重播；
+迴圈結束送出帶 `improve` 摘要的總結 `done` 事件。同一專案同時僅允許一場討論（互斥），
+避免固定 workspace 被兩場討論互踩。
 
 ## 認證 / 門禁流程
 
@@ -128,6 +156,8 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
 ## 資料夾
 
 - `workspaces/<session_id>/`：每個 session 的產出與獨立 git repo。
+- `workspaces/project-<pid>/`：專案的固定 workspace（跨場次累積，不被 history 回收）。
 - `history/<session_id>.jsonl` + `.meta.json`：事件存檔與摘要。
+- `projects/<pid>/`：專案 meta 與專屬 backlog。
 
-兩者皆可由環境變數覆寫路徑（`TI_WORKSPACE_ROOT` / `TI_HISTORY_ROOT`）。
+皆可由環境變數覆寫路徑（`TI_WORKSPACE_ROOT` / `TI_HISTORY_ROOT` / `TI_PROJECTS_ROOT`）。

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import auth, backlog, config, history, publisher, redeploy, settings, workspace, ws
+from . import auth, backlog, config, history, projects, publisher, redeploy, settings, workspace, ws
 
 router = APIRouter()
 
@@ -232,6 +232,69 @@ async def history_cleanup_completed() -> JSONResponse:
 async def history_cleanup_retention() -> JSONResponse:
     """依保留策略（TI_HISTORY_MAX_COUNT / TI_HISTORY_MAX_AGE）手動觸發一次回收。"""
     return JSONResponse({"deleted": history.enforce_retention()})
+
+
+# --- 專案（長期產品；受保護）--------------------------------------------
+class ProjectBody(BaseModel):
+    name: str
+    vision: str = ""
+
+
+class ProjectTaskBody(BaseModel):
+    title: str
+    detail: str = ""
+
+
+@router.get("/api/projects", dependencies=[Depends(auth.require_auth)])
+async def projects_list() -> JSONResponse:
+    """所有專案＋各自 backlog 統計（前端專案選單/面板用）。"""
+    out = []
+    for meta in projects.list_projects():
+        out.append(
+            {
+                **meta,
+                "backlog": backlog.counts(state_dir=projects.state_dir(meta["id"])),
+                "workspace_id": projects.workspace_id(meta["id"]),
+            }
+        )
+    return JSONResponse({"projects": out})
+
+
+@router.post("/api/projects", dependencies=[Depends(auth.require_auth)])
+async def projects_create(body: ProjectBody) -> JSONResponse:
+    meta = projects.create(body.name, body.vision)
+    if meta is None:
+        return JSONResponse({"error": "名稱不可為空"}, status_code=400)
+    return JSONResponse({"project": meta})
+
+
+@router.get("/api/projects/{project_id}", dependencies=[Depends(auth.require_auth)])
+async def projects_detail(project_id: str) -> JSONResponse:
+    meta = projects.get(project_id)
+    if meta is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    sdir = projects.state_dir(project_id)
+    return JSONResponse(
+        {
+            "project": meta,
+            "workspace_id": projects.workspace_id(project_id),
+            "backlog": backlog.list_tasks(state_dir=sdir),
+            "counts": backlog.counts(state_dir=sdir),
+        }
+    )
+
+
+@router.post("/api/projects/{project_id}/backlog", dependencies=[Depends(auth.require_auth)])
+async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONResponse:
+    """手動往專案 backlog 排一個改良任務（持續改良迴圈會撿走）。"""
+    if projects.get(project_id) is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    task = backlog.add(
+        body.title, body.detail, source="user", state_dir=projects.state_dir(project_id)
+    )
+    if task is None:
+        return JSONResponse({"error": "標題不可為空或與待辦重複"}, status_code=400)
+    return JSONResponse({"task": task})
 
 
 # --- publish（受保護）--------------------------------------------------

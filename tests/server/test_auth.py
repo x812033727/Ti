@@ -78,7 +78,41 @@ def test_auth_enabled_websocket_requires_login(app, monkeypatch):
         assert "登入" in ev["payload"]["message"]
 
 
-# /ws 不再限定本機來源（#81）：公網已登入可連，政策守門見 tests/test_qa_task4_ws_loopback.py。
+# --- /ws 來源政策：#81 起僅登入門禁、不再限定本機來源 --------------------
+# （原任務 #4 的「/ws 限定本機」三測已隨政策翻轉改寫為登入門禁語意；
+#   新政策的完整矩陣另見 tests/test_qa_task4_ws_loopback.py。）
+def test_ws_public_peer_allowed_when_auth_disabled(app, monkeypatch):
+    """公網來源連 /ws：門禁停用時不再被來源擋下，直接進入業務驗證（需求不可為空）。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"requirement": ""})
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert ev["payload"]["message"] == "需求不可為空"  # 已越過來源/身分關卡
+
+
+def test_ws_unknown_peer_allowed_when_auth_disabled(app, monkeypatch):
+    """來源不可知（TestClient 預設 host 非 IP）也不再被擋：/ws 不做來源判定。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    client = TestClient(app)  # 預設 client host = "testclient"
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"requirement": ""})
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert ev["payload"]["message"] == "需求不可為空"
+
+
+def test_ws_auth_gate_still_blocks_public_peer(app, monkeypatch):
+    """門禁啟用＋公網未登入：被登入門禁擋（而非來源限定），訊息為需要登入。"""
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "secret")
+    client = TestClient(app, client=("203.0.113.5", 40000))
+    with client.websocket_connect("/ws") as ws:
+        ev = ws.receive_json()
+        assert ev["type"] == "error"
+        assert "登入" in ev["payload"]["message"]
+
+
 def test_ws_allows_loopback_peer(app, monkeypatch):
     """loopback 來源照舊放行：送空需求應進入 handler 主體並回『需求不可為空』。"""
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
