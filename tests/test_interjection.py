@@ -16,7 +16,6 @@ import asyncio
 
 import pytest
 
-from studio import events
 from studio.orchestrator import LaneContext, StudioSession
 
 
