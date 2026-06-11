@@ -760,6 +760,17 @@ async function redeployNow() {
 const settingsPanel = $("#settingsPanel");
 const settingsForm = $("#settingsForm");
 
+// 未存變更追蹤：欄位有改動且尚未儲存時，重整／關閉分頁前由瀏覽器原生對話框提醒。
+// 點「✕」關面板視為主動放棄變更（不提醒），重新開啟面板會從伺服器重新載入現值。
+let settingsDirty = false;
+settingsForm.addEventListener("input", () => { settingsDirty = true; });
+settingsForm.addEventListener("change", () => { settingsDirty = true; });
+window.addEventListener("beforeunload", (e) => {
+  if (!settingsDirty) return;
+  e.preventDefault();
+  e.returnValue = ""; // 舊版瀏覽器需要 returnValue 才會跳提醒
+});
+
 async function openSettings() {
   settingsPanel.classList.remove("hidden");
   settingsForm.innerHTML = "<div class='muted'>載入中…</div>";
@@ -818,12 +829,14 @@ async function savePassword() {
 }
 
 function closeSettings() {
+  settingsDirty = false; // 關閉＝放棄未存變更，之後重整不再提醒
   settingsPanel.classList.add("hidden");
   // 若是從手機底部「設定」分頁進來的，關閉後回到討論分頁，避免留下空白畫面
   if (document.body.dataset.mv === "settings") setMobileView("discussion");
 }
 
 function renderSettings(fields) {
+  settingsDirty = false; // 重新渲染後欄位即為伺服器現值，無未存變更
   settingsForm.innerHTML = "";
   let lastGroup = null;
   for (const f of fields) {
@@ -896,7 +909,9 @@ async function saveSettings() {
     payload[el.dataset.env] = val;
   });
   const hint = $("#settingsHint");
+  const btn = $("#settingsSave");
   hint.textContent = "儲存中…";
+  btn.disabled = true; // 防連點：請求期間禁用，避免送出多筆 POST
   try {
     const res = await (await fetch("/api/settings", {
       method: "POST",
@@ -913,6 +928,8 @@ async function saveSettings() {
     }
   } catch (e) {
     hint.textContent = "儲存請求失敗";
+  } finally {
+    btn.disabled = false;
   }
 }
 

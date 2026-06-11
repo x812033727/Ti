@@ -6,7 +6,7 @@
 - 改密碼三欄一致性（長度檢查、兩次一致）案例存在。
 - 案例描述須與前端 app.js **實際行為／字串一致**（避免誤導測試員）：
     * 文件宣稱的提示字、確認對話框文字確實存在於 app.js。
-    * 文件對「儲存鈕未防連點 / 重新部署鈕有防連點」的對比描述，與程式碼一致。
+    * 文件對「儲存鈕／重新部署鈕防連點」的描述，與程式碼一致（雙向：有實作就不得宣稱未禁用，未實作就須誠實揭露）。
     * 改密碼前端驗證規則（new<4、new!==confirm）確實存在於程式碼。
 """
 
@@ -103,17 +103,22 @@ def test_有連點儲存案例(sec):
     assert "Network" in sec or "多筆" in sec or "重複" in sec, "連點案例未引導觀察重複送出"
 
 
-def test_儲存鈕未防連點_文件與程式碼一致(sec, app):
-    """文件 3.2 備註宣稱『儲存鈕請求期間未禁用』，須與 app.js 實際一致。"""
+def test_儲存鈕防連點_文件與程式碼一致(sec, app):
+    """文件 3.2 對儲存鈕防連點的描述，須與 app.js saveSettings 實際行為一致（雙向）。"""
     # 擷取 saveSettings 函式體
     m = re.search(r"async function saveSettings\(\)\s*\{(.*?)\n\}", app, re.S)
     assert m, "找不到 saveSettings 函式"
     body = m.group(1)
-    assert "disabled" not in body, (
-        "app.js saveSettings 已加入 disabled，但文件仍宣稱未禁用——文件需同步更新"
-    )
-    # 文件確實有揭露此風險
-    assert "未禁用" in sec or "未禁" in sec, "文件未揭露儲存鈕未防連點的風險"
+    has_guard = "disabled = true" in body
+    if has_guard:
+        assert "未禁用" not in sec, "app.js 已實作儲存鈕防連點，文件仍宣稱未禁用——需同步更新"
+        assert "禁用" in sec, "文件未描述儲存鈕請求期間禁用的防連點行為"
+        # 防連點須有收尾：失敗也要恢復可點，否則一次錯誤後永久卡死
+        assert "finally" in body and "disabled = false" in body, (
+            "saveSettings 禁用按鈕後未以 finally 恢復，失敗會永久卡死儲存鈕"
+        )
+    else:
+        assert "未禁用" in sec or "未禁" in sec, "文件未誠實揭露儲存鈕未防連點的風險"
 
 
 def test_重新部署鈕有防連點_文件與程式碼一致(sec, app):

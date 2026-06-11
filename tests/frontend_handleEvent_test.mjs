@@ -47,7 +47,7 @@ const fetchStub = () => Promise.resolve({
 const sandbox = {
   document, location, WebSocket,
   fetch: fetchStub,
-  window: {}, console,
+  window: { addEventListener: () => {} }, console,
   setTimeout: () => 0, clearTimeout: () => {},
   Date, JSON, Object, Array, Math, Promise, Symbol, encodeURIComponent,
 };
