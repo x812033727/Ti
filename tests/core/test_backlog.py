@@ -36,6 +36,55 @@ def test_next_pending_is_oldest(state):
     assert backlog.next_pending()["id"] == a["id"]
 
 
+def test_priority_fields_defaults(state):
+    t = backlog.add("預設欄位")
+    assert t["priority"] == 1 and t["type"] == "improvement" and t["effort"] == ""
+
+
+def test_priority_clamp_and_type_norm(state):
+    t = backlog.add("夾值", priority=9, item_type="WEIRD")
+    assert t["priority"] == 2 and t["type"] == "improvement"
+    t2 = backlog.add("負值", priority=-3, item_type="Bug")
+    assert t2["priority"] == 0 and t2["type"] == "bug"
+
+
+def test_next_pending_priority_order(state):
+    backlog.add("普通", priority=1)
+    p0 = backlog.add("緊急", priority=0)
+    backlog.add("加分", priority=2)
+    assert backlog.next_pending()["id"] == p0["id"]  # P0 先於更早建立的 P1
+
+
+def test_next_pending_legacy_items_without_priority(state):
+    # 舊格式 JSON（無 priority 欄位）讀回時視為 P1，順序與 FIFO 相同。
+    a = backlog.add("舊任務A")
+    backlog.add("舊任務B")
+    p = backlog._path(None)
+    data = backlog._load(None)
+    for t in data["tasks"]:
+        t.pop("priority", None)
+        t.pop("type", None)
+        t.pop("effort", None)
+    p.write_text(__import__("json").dumps(data), encoding="utf-8")
+    assert backlog.next_pending()["id"] == a["id"]
+
+
+def test_add_items_structured(state):
+    n = backlog.add_items(
+        [
+            {"title": "功能X", "priority": 0, "type": "feature", "detail": "說明"},
+            {"title": "功能X", "priority": 0, "type": "feature"},  # 重複標題 → 去重
+            {"title": "  "},  # 空標題 → 拒收
+            {"title": "修Y", "type": "bug"},
+        ],
+        source="blueprint",
+    )
+    assert n == 2
+    first = backlog.next_pending()
+    assert first["title"] == "功能X" and first["source"] == "blueprint"
+    assert first["priority"] == 0 and first["type"] == "feature" and first["detail"] == "說明"
+
+
 def test_status_transitions(state):
     t = backlog.add("做這個")
     backlog.set_status(t["id"], "in_progress", session_id="s1")
