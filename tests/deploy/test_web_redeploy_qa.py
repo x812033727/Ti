@@ -74,7 +74,7 @@ def test_redeploy_request_failure_handled(app_js):
 def client():
     from studio.server import app
 
-    # 寫入端點已限定本機（require_loopback）：以 loopback peer 連入測後端合約。
+    # 寫入端點門禁停用時 fail-safe 限本機（require_admin）：以 loopback peer 連入測後端合約。
     return TestClient(app, client=("127.0.0.1", 12345))
 
 

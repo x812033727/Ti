@@ -1,11 +1,17 @@
-"""QA 獨立驗證：任務 #1 高危寫入端點限定本機（require_loopback）。
+"""QA 驗證：高危寫入端點門禁（原任務 #1 限本機 → 現改 require_admin 複合門禁）。
+
+政策變更：管理寫入端點不再無條件限定本機。門禁啟用（設了 TI_ACCESS_PASSWORD）時
+僅靠登入門禁（外網登入後可重新部署/改設定）；門禁停用時 fail-safe 退回僅限本機，
+不把控制面裸露給全網。require_loopback / netutil.is_loopback 保留為 fail-safe
+分支的實作，本檔 AC1 單元測試原樣沿用。
 
 聚焦驗收標準：
 - AC1：require_loopback 存在；未通過 raise HTTPException(403)；確實『呼叫』netutil.is_loopback
         （非字串比對 127.0.0.1）。
-- AC2：POST /api/redeploy 與 POST /api/auth/password 的 dependencies 同時含
-        require_auth 與 require_loopback（兩道防線並掛）。
-- AC5：loopback peer → 放行(非403)、公網 peer → 403、受信代理偽造 XFF → 403。
+- AC2：POST /api/redeploy 與 POST /api/auth/password 的 dependencies 掛 require_admin
+        （複合門禁，取代直接並掛 require_loopback + require_auth）。
+- AC5（門禁停用時的 fail-safe 面）：loopback peer → 放行(非403)、公網 peer → 403、
+        受信代理偽造 XFF → 403。
 - AC7：不引入第三方套件（僅用標準庫 + 既有相依）。
 """
 
@@ -91,7 +97,7 @@ def test_require_loopback_detail_does_not_leak_source(monkeypatch):
     assert "8.8.8.8" not in str(ei.value.detail)
 
 
-# --- AC2：兩端點 dependencies 同時含 require_auth 與 require_loopback ------
+# --- AC2：兩端點 dependencies 掛 require_admin 複合門禁 --------------------
 def _route_dep_funcs(app, path):
     for route in app.routes:
         if getattr(route, "path", None) == path:
@@ -100,16 +106,18 @@ def _route_dep_funcs(app, path):
 
 
 @pytest.mark.parametrize("path", HIGH_RISK)
-def test_high_risk_route_has_both_deps(app, path):
+def test_high_risk_route_has_admin_dep(app, path):
     funcs = _route_dep_funcs(app, path)
-    assert "require_loopback" in funcs, f"{path} 缺 require_loopback"
-    assert "require_auth" in funcs, f"{path} 缺 require_auth"
+    assert "require_admin" in funcs, f"{path} 缺 require_admin"
+    # 複合門禁取代直接並掛：兩個舊依賴不再直接出現在路由上
+    assert "require_loopback" not in funcs, f"{path} 不應再直接掛 require_loopback"
+    assert "require_auth" not in funcs, f"{path} 不應再直接掛 require_auth"
 
 
-# --- AC5：loopback 放行 / 公網 403 / 偽造 XFF 403 -------------------------
+# --- AC5（門禁停用 fail-safe）：loopback 放行 / 公網 403 / 偽造 XFF 403 ----
 @pytest.mark.parametrize("path", HIGH_RISK)
 def test_public_peer_blocked_403(app, monkeypatch, path):
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用也不得放行
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → fail-safe 限本機
     client = TestClient(app, client=("203.0.113.5", 40000))
     r = client.post(path, json={})
     assert r.status_code == 403

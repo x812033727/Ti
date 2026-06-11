@@ -15,8 +15,9 @@ from . import auth, backlog, config, history, publisher, redeploy, settings, wor
 router = APIRouter()
 
 # 敏感寫入路由統一掛此依賴組，避免未來新增路由漏掛。
-# 順序：require_loopback 在前 → 外網未登入請求先回 403（來源優先曝光）。
-WRITE_DEPS = [Depends(auth.require_loopback), Depends(auth.require_auth)]
+# require_admin：門禁啟用 → 僅登入門禁（外網登入後可用，未登入 401）；
+# 門禁停用 → fail-safe 退回僅限本機（403），不把控制面裸露給全網。
+WRITE_DEPS = [Depends(auth.require_admin)]
 
 
 # --- 健康檢查 -----------------------------------------------------------
@@ -139,8 +140,8 @@ class PasswordBody(BaseModel):
 async def change_password(body: PasswordBody) -> JSONResponse:
     """變更 / 設定存取密碼。
 
-    - 門禁已啟用：require_auth 確保已登入，再驗證『目前密碼』正確才放行。
-    - 門禁未啟用：可直接設定一組新密碼以首次啟用門禁（此時無需目前密碼）。
+    - 門禁已啟用：require_admin 走登入門禁確保已登入，再驗證『目前密碼』正確才放行。
+    - 門禁未啟用：受 fail-safe 限本機，首次設定密碼須由本機執行（此時無需目前密碼）。
     成功後回應會附上新的登入 cookie，避免操作者在啟用門禁的當下被登出。
     """
     if config.auth_enabled() and not auth.check_password(body.current_password):

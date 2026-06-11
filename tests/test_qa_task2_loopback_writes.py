@@ -1,9 +1,11 @@
-"""QA 獨立驗證：任務 #2 一併納管的敏感寫入端點限定本機。
+"""QA 驗證：一併納管的敏感寫入端點門禁（原任務 #2 限本機 → 現改 require_admin）。
 
 範圍：POST /api/settings、POST /api/autopilot/{pause,resume,task}。
+政策：門禁啟用時僅靠登入門禁（外網登入後可用）；門禁停用時 fail-safe 退回僅限本機。
 聚焦驗收標準：
-- AC3：這些寫入路由皆掛 require_loopback（+ require_auth）；讀取類路由維持不變（不掛 loopback）。
-- AC5：loopback peer → 放行(非403)、公網 peer → 403、受信代理偽造 XFF → 403、來源不可知 → 403。
+- AC3：這些寫入路由皆掛 require_admin；讀取類路由維持不變（不掛 loopback/admin）。
+- AC5（門禁停用 fail-safe 面）：loopback peer → 放行(非403)、公網 peer → 403、
+        受信代理偽造 XFF → 403、來源不可知 → 403。
 """
 
 from __future__ import annotations
@@ -51,19 +53,19 @@ def _route_dep_funcs(app, path, method):
     raise AssertionError(f"找不到路由 {method} {path}")
 
 
-# --- AC3：四個寫入端點 dependencies 同時含 require_loopback 與 require_auth -
+# --- AC3：四個寫入端點 dependencies 掛 require_admin 複合門禁 --------------
 @pytest.mark.parametrize("path", TASK2_WRITES)
-def test_task2_write_has_both_deps(app, path):
+def test_task2_write_has_admin_dep(app, path):
     funcs = _route_dep_funcs(app, path, "POST")
-    assert "require_loopback" in funcs, f"POST {path} 缺 require_loopback"
-    assert "require_auth" in funcs, f"POST {path} 缺 require_auth"
+    assert "require_admin" in funcs, f"POST {path} 缺 require_admin"
 
 
-# --- AC3：讀取類路由維持不變（不得掛 require_loopback）--------------------
+# --- AC3：讀取類路由維持不變（不得掛 require_loopback / require_admin）-----
 @pytest.mark.parametrize("path", READ_ONLY)
 def test_readonly_routes_have_no_loopback(app, path):
     funcs = _route_dep_funcs(app, path, "GET")
     assert "require_loopback" not in funcs, f"GET {path} 不應掛 require_loopback"
+    assert "require_admin" not in funcs, f"GET {path} 不應誤掛管理門禁"
     assert "require_auth" in funcs  # 讀取類仍需登入
 
 

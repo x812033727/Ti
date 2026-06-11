@@ -54,7 +54,8 @@ async def ws(websocket: WebSocket) -> None:
     # /ws 是核心產品入口（啟動多專家討論）。刻意「不」限定本機來源：對外網站須能讓
     # 已登入使用者開討論，否則整個對外服務形同癱瘓。安全模型改為「登入門禁（共用密碼）
     # + 專家 bash 一律 bwrap 沙箱（host 唯讀、PID/網路隔離）」。HTTP 管理類寫入
-    # （settings / redeploy / autopilot）仍維持 require_loopback 僅限本機，不受此影響。
+    # （settings / redeploy / autopilot）同此模型：門禁啟用時登入即可（require_admin），
+    # 門禁停用時 fail-safe 退回僅限本機。
     # 門禁啟用時，未登入的連線直接拒絕。
     if not auth.is_authed(websocket):
         await websocket.send_json(

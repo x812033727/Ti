@@ -165,11 +165,11 @@ def test_routes後端權限與錯誤防護屬實(sec5):
     assert 'get("/api/settings", dependencies=[Depends(auth.require_auth)])' in src, (
         "GET /api/settings 未掛 require_auth，5.2 失準"
     )
-    # POST /api/settings 受 loopback + auth（WRITE_DEPS）
+    # POST /api/settings 受 require_admin 複合門禁（WRITE_DEPS）
     assert 'post("/api/settings", dependencies=WRITE_DEPS)' in src, (
         "POST /api/settings 未掛 WRITE_DEPS，5.3 失準"
     )
-    assert "require_loopback" in src and "require_auth" in src, "WRITE_DEPS 未含雙重保護"
+    assert "require_admin" in src, "WRITE_DEPS 未掛 require_admin 管理門禁"
     # 非 dict body → 400 格式錯誤
     assert "isinstance(body, dict)" in src and '"格式錯誤"' in src and "status_code=400" in src, (
         "POST 未對非物件 body 回 400 格式錯誤，5.4 失準"

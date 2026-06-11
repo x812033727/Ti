@@ -21,6 +21,8 @@ class RecEl {
     this.className = '';
     this.textContent = '';
     this.innerHTML = '';
+    // app.js 頂層即會呼叫 setMobileView → closeSettings → classList.add（#84 手機分頁）
+    this.classList = { add() {}, remove() {}, toggle() {}, contains() { return false; } };
   }
   appendChild(c) {
     if (this.innerHTML === '') {} // 不清空既有 children

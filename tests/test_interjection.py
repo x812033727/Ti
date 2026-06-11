@@ -16,7 +16,6 @@ import asyncio
 
 import pytest
 
-from studio import events
 from studio.orchestrator import LaneContext, StudioSession
 
 
@@ -78,7 +77,9 @@ async def test_concurrent_lane_drains_consume_queue_once_each():
     session, q, bucket = _session_with_queue()
     for i in range(20):
         q.put_nowait(f"指示{i}")
-    lanes = [LaneContext(lane_id=f"task-{i}", cwd=None, experts={}, branch=f"task-{i}") for i in range(5)]
+    lanes = [
+        LaneContext(lane_id=f"task-{i}", cwd=None, experts={}, branch=f"task-{i}") for i in range(5)
+    ]
 
     await asyncio.gather(*(session._lane_human_prefix(ln) for ln in lanes))
 
