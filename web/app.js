@@ -296,6 +296,16 @@ function handleEvent(ev) {
     case "human_message":
       addHuman(p.text);
       break;
+    case "clarify_request": {
+      // PM 的需求澄清提問：逐題渲染並引導用插話框回答（逾時自動按假設續行）。
+      addSystem("❓ PM 想先跟你確認需求（在下方插話框回答，一則訊息回答全部即可）：");
+      (p.questions || []).forEach((q, i) => {
+        addSystem(`${i + 1}. ${q.q}` + (q.assumption ? `（未回覆時假設：${q.assumption}）` : ""));
+      });
+      if (p.timeout_s) addSystem(`⏳ ${Math.round(p.timeout_s)} 秒內未回覆，將按 PM 的預設假設繼續。`);
+      if (!replaying) interjectInput.focus();
+      break;
+    }
     case "critic_review":
       if (p.passed) {
         addSystem("🔍 異議檢查放行（" + (p.gate || "") + " 視角）");
@@ -613,6 +623,35 @@ async function refreshMetrics() {
         ["　平均加速", `${pa.avg_speedup}×・省下約 ${pa.wall_clock_saved_s}s`],
         ["　波次／合併衝突", `${pa.total_waves} 波・${pa.merge_conflicts} 次衝突`],
       );
+    }
+    // 成果記分卡：成功率／輪數／一次過率／退回原因，與「近 10 場 vs 前 10 場」趨勢。
+    const sc = m.scorecard || {};
+    if (sc.n > 0) {
+      const pct = (v) => (v == null ? "—" : Math.round(v * 100) + "%");
+      const t = sc.tasks || {};
+      const rj = sc.rejects || {};
+      const rejParts = [
+        ["QA 退回", rj.qa_fail], ["自測失敗", rj.smoke_fail], ["客觀閘門", rj.gate_veto],
+        ["異議退回", rj.critic], ["停滯收斂", rj.stall],
+      ].filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`);
+      rows.push(
+        ["📈 記分卡（場次）", `${sc.n} 場・成功率 ${pct(sc.completed_rate)}`],
+        ["　任務", `${t.done ?? 0}/${t.total ?? 0} 完成・一次過率 ${pct(t.first_try_rate)}`],
+        ["　平均輪數/任務", `${sc.avg_rounds ?? "—"}`],
+        ["　退回原因", rejParts.length ? rejParts.join("・") : "（無）"],
+      );
+      const tr = sc.trend || {};
+      if ((tr.previous || {}).n > 0) {
+        const a = tr.recent, b = tr.previous;
+        const arrow = (recentV, prevV, lowerBetter) => {
+          if (recentV == null || prevV == null || recentV === prevV) return "→";
+          return (lowerBetter ? recentV < prevV : recentV > prevV) ? "↑ 進步" : "↓ 退步";
+        };
+        rows.push(
+          ["　趨勢：成功率", `近${a.n}場 ${pct(a.completed_rate)} vs 前${b.n}場 ${pct(b.completed_rate)}（${arrow(a.completed_rate, b.completed_rate, false)}）`],
+          ["　趨勢：平均輪數", `近${a.n}場 ${a.avg_rounds ?? "—"} vs 前${b.n}場 ${b.avg_rounds ?? "—"}（${arrow(a.avg_rounds, b.avg_rounds, true)}）`],
+        );
+      }
     }
     body.innerHTML = "";
     rows.forEach(([k, v]) => {

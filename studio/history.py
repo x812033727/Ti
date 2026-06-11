@@ -69,6 +69,7 @@ def finish_session(session_id: str) -> dict | None:
     parallel = _derive_parallel(events)
     if parallel:
         meta["parallel"] = parallel  # 供 /api/metrics 聚合並行可觀測性
+    meta["scorecard"] = _derive_scorecard(events, meta)  # 供 /api/metrics 聚合成果記分卡
     _write_meta(session_id, meta)
     # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
     # 自己回收掉）；回收失敗絕不影響本次收尾。
@@ -90,6 +91,74 @@ def _derive_status(events: list[dict]) -> str:
                 return "stopped"
             return "completed" if p.get("completed") else "incomplete"
     return "incomplete"
+
+
+def _derive_scorecard(events: list[dict], meta: dict) -> dict:
+    """從事件流推導本場「成果記分卡」：任務完成數、每任務輪數、退回原因分類、Demo 結果。
+
+    這是「工作室有沒有越做越進步」的量測基礎——/api/metrics 跨場聚合成功率、平均輪數
+    與近期趨勢。輪數以 task_status 的 review 次數計（每輪驗證前必進一次 review）；
+    退回原因取自既有結構化事件，不解析自然語言：
+      qa_fail＝run_result 失敗且非自測、smoke_fail＝自測失敗、gate_veto＝客觀閘門退回、
+      critic＝異議檢查退回、stall＝停滯收斂提早結束。
+    """
+    tasks: dict[int, dict] = {}  # id -> {"reviews": n, "done": bool}
+    rejects = {"qa_fail": 0, "smoke_fail": 0, "gate_veto": 0, "critic": 0, "stall": 0}
+    huddles = huddle_limits = 0
+    demo_passed: bool | None = None
+    completed = stopped = False
+    for ev in events:
+        t = ev.get("type")
+        p = ev.get("payload") or {}
+        if t == "task_status":
+            tid = p.get("id")
+            if tid is None:
+                continue
+            rec = tasks.setdefault(tid, {"reviews": 0, "done": False})
+            if p.get("status") == "review":
+                rec["reviews"] += 1
+            elif p.get("status") == "done":
+                rec["done"] = True
+        elif t == "run_result" and not p.get("passed"):
+            # detail 以「自測」開頭＝交付前 smoke-run；其餘為 QA 驗證裁決。
+            key = "smoke_fail" if str(p.get("detail", "")).startswith("自測") else "qa_fail"
+            rejects[key] += 1
+        elif t == "critic_review" and not p.get("passed"):
+            rejects["critic"] += 1
+        elif t == "huddle":
+            if p.get("limitation"):
+                huddle_limits += 1
+            else:
+                huddles += 1
+        elif t == "phase_change":
+            phase = p.get("phase", "")
+            if phase == "客觀閘門":
+                rejects["gate_veto"] += 1
+            elif phase == "停滯收斂":
+                rejects["stall"] += 1
+        elif t == "demo_result":
+            demo_passed = bool(p.get("passed"))
+        elif t == "done":
+            completed = bool(p.get("completed"))
+            stopped = bool(p.get("stopped"))
+    reviewed = [r for r in tasks.values() if r["reviews"] > 0]
+    rounds_total = sum(r["reviews"] for r in reviewed)
+    sc: dict = {
+        "tasks_total": len(tasks),
+        "tasks_done": sum(1 for r in tasks.values() if r["done"]),
+        "rounds_total": rounds_total,
+        "avg_rounds": round(rounds_total / len(reviewed), 2) if reviewed else 0.0,
+        "first_try_done": sum(1 for r in tasks.values() if r["done"] and r["reviews"] == 1),
+        "rejects": rejects,
+        "huddles": huddles,
+        "huddle_limits": huddle_limits,
+        "demo_passed": demo_passed,
+        "completed": completed,
+        "stopped": stopped,
+    }
+    if meta.get("finished_at") and meta.get("started_at"):
+        sc["duration_s"] = round(meta["finished_at"] - meta["started_at"], 1)
+    return sc
 
 
 def _derive_parallel(events: list[dict]) -> dict:
