@@ -76,10 +76,25 @@ def require_auth(request: Request) -> None:
 
 
 def require_loopback(request: Request) -> None:
-    """FastAPI 依賴：敏感寫入路由限定本機來源，非本機回 403。
+    """限定本機來源，非本機回 403（現作為 require_admin 門禁停用時的 fail-safe 分支）。
 
     判定委派給 spoof-safe、fail-closed 的 netutil.is_loopback（禁止字串比對 127.0.0.1）。
     403 detail 維持泛化，不回傳 client_ip／XFF 等內部來源資訊。
     """
     if not netutil.is_loopback(request):
         raise HTTPException(status_code=403, detail="僅限本機存取")
+
+
+def require_admin(request: Request) -> None:
+    """FastAPI 依賴：管理寫入端點門禁（fail-safe 複合依賴）。
+
+    - 門禁啟用（已設 TI_ACCESS_PASSWORD）：等同 require_auth → 已登入的外網使用者
+      可操作管理面（重新部署/設定/autopilot），未登入回 401。
+    - 門禁停用：退回 require_loopback 僅限本機（403）。is_authed 在門禁停用時恆 True，
+      若直接沿用會把控制面（settings 可改 OPENAI_BASE_URL、redeploy、autopilot 注入）
+      裸露給所有能連到服務的人（HOST 預設 0.0.0.0），故 fail-safe 收緊為本機。
+    """
+    if config.auth_enabled():
+        require_auth(request)
+    else:
+        require_loopback(request)

@@ -64,7 +64,7 @@ def test_settings_endpoints(sandbox, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用
     from studio.server import app
 
-    # POST /api/settings 已限定本機（require_loopback）：以 loopback peer 連入。
+    # POST /api/settings 門禁停用時 fail-safe 限本機（require_admin）：以 loopback peer 連入。
     client = TestClient(app, client=("127.0.0.1", 12345))
     r = client.get("/api/settings")
     assert r.status_code == 200 and "fields" in r.json()
