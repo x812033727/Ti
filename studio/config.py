@@ -65,8 +65,8 @@ LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 # C 子進程資源上限：runner 執行指令時套 RLIMIT，補 bwrap 沒有的記憶體／CPU／檔案大小防線。
 # D Self-Refine：單輪內自測未過時，讓同一工程師就地依執行紀錄再修一次。
 # 穩健式預設：C 預設開（純加固、無行為風險）；A／B／D 預設關（opt-in），保既有行為向後相容。
-# 與 TI_LESSONS／NOTES／HUDDLE／CRITIC 一致：屬「啟動時固定」的進階流程開關，env 設定、不納入
-# 設定面板（settings.FIELDS）與 reload()——這些是 power-user 旋鈕，預設行為已涵蓋多數情境。
+# 與 TI_LESSONS／NOTES／HUDDLE／CRITIC 同列「進階流程」開關：env 仍是來源，且已納入設定面板
+# （settings.FIELDS「進階」組）與 reload()。消費端皆讀即時全域值，故面板存檔後下次討論即生效。
 REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
 REFLEXION_MAX = int(os.getenv("TI_REFLEXION_MAX", "5"))  # 注入時取最近 N 筆反思
 # 客觀閘門：0=關／1=開（有自測指令且實敗才否決）／strict=連「未宣告執行指令」也視為未通過。
@@ -385,8 +385,9 @@ def provider_ready() -> bool:
 def reload() -> None:
     """重新從環境變數載入「可由 UI 調整」的設定，讓變更即時生效（無需重啟）。
 
-    僅涵蓋 provider / 模型 / OpenAI / GitHub 發佈這幾組可在設定頁修改的項目；
-    其餘（門禁、流程輪數、路徑、伺服器位址）維持啟動時的值。
+    涵蓋 provider／模型／OpenAI／GitHub 發佈／並行／角色／輪數，以及「進階流程」開關
+    （huddle／critic／notes／lessons／reflexion／客觀閘門／self-refine／rlimits）——這些
+    設定面板可改的項目；其餘（門禁、路徑、伺服器位址）維持啟動時的值。
     """
     global PROVIDER, MODEL_LEAD, MODEL_FAST
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
@@ -395,6 +396,8 @@ def reload() -> None:
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
+    global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
+    global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -425,3 +428,12 @@ def reload() -> None:
     PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
     PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
     PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
+    # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
+    HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+    CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
+    NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
+    LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
+    REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
+    OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
+    SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))
+    RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")

@@ -1,7 +1,7 @@
-"""自我改進機制的設定預設（穩健式）與閘門 helper —— env-only，不入設定面板。
+"""自我改進機制的設定預設（穩健式）與閘門 helper。
 
-與 TI_LESSONS／NOTES／HUDDLE／CRITIC 一致屬「啟動時固定」的進階開關，故以乾淨子程序環境
-驗證預設值（避免本測試行程的 env 污染），不走 settings.FIELDS／reload。
+這些進階開關 env 為來源、亦已納入設定面板（settings.FIELDS「進階」組）與 config.reload()。
+本檔以乾淨子程序環境驗證「穩健式預設值」（避免本測試行程的 env 污染影響預設判定）。
 """
 
 from __future__ import annotations
@@ -22,12 +22,14 @@ def test_objective_gate_helpers(monkeypatch):
     assert config.objective_gate_enabled() is True and config.objective_gate_strict() is True
 
 
-def test_not_exposed_in_settings_panel():
-    """進階開關刻意不進設定面板（與 TI_LESSONS／HUDDLE 等一致）。"""
+def test_exposed_in_settings_panel():
+    """進階開關已納入設定面板（settings.FIELDS「進階」組），可由 UI 調整、env 仍為來源。"""
     from studio import settings
 
     envs = {f.env for f in settings.FIELDS}
-    assert not ({"TI_REFLEXION", "TI_OBJECTIVE_GATE", "TI_SELF_REFINE_ITERS", "TI_RLIMITS"} & envs)
+    assert {"TI_REFLEXION", "TI_OBJECTIVE_GATE", "TI_SELF_REFINE_ITERS", "TI_RLIMITS"} <= envs
+    # 同列的既有進階開關亦一併納入
+    assert {"TI_HUDDLE", "TI_CRITIC", "TI_NOTES", "TI_LESSONS"} <= envs
 
 
 def test_stable_defaults_in_isolated_env(tmp_path):

@@ -71,3 +71,32 @@ def test_settings_endpoints(sandbox, monkeypatch):
     r2 = client.post("/api/settings", json={"TI_MODEL_FAST": "claude-bar"})
     assert r2.status_code == 200 and r2.json()["ok"] is True
     assert config.MODEL_FAST == "claude-bar"
+
+
+def test_update_advanced_toggle_reloads(sandbox):
+    """進階開關經設定面板存檔後即時生效（消費端讀即時全域值）。"""
+    settings.update(
+        {"TI_REFLEXION": "1", "TI_OBJECTIVE_GATE": "strict", "TI_SELF_REFINE_ITERS": "2"}
+    )
+    assert config.REFLEXION_ENABLED is True
+    assert config.OBJECTIVE_GATE == "strict" and config.objective_gate_strict() is True
+    assert config.SELF_REFINE_ITERS == 2
+    # 關回去亦即時生效
+    settings.update({"TI_REFLEXION": "0", "TI_OBJECTIVE_GATE": "0", "TI_SELF_REFINE_ITERS": "0"})
+    assert config.REFLEXION_ENABLED is False
+    assert config.objective_gate_enabled() is False
+    assert config.SELF_REFINE_ITERS == 0
+
+
+def test_update_rejects_bad_objective_gate(sandbox):
+    """select 白名單：非法閘門值不被接受（維持原值）。"""
+    settings.update({"TI_OBJECTIVE_GATE": "bogus"})
+    assert config.OBJECTIVE_GATE != "bogus"
+
+
+def test_read_shows_effective_default_for_unset_toggle(sandbox, monkeypatch):
+    """env 未設定時，select 顯示「有效預設」（RLIMITS 預設開＝"1"）而非 raw 空字串。"""
+    monkeypatch.delenv("TI_RLIMITS", raising=False)
+    fields = {f["env"]: f for f in settings.read()["fields"]}
+    assert fields["TI_RLIMITS"]["value"] == "1"  # 顯示預設「開」
+    assert fields["TI_RLIMITS"]["set"] is False  # 但標記為未明確設定

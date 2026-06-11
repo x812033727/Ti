@@ -4,7 +4,7 @@
 - 每欄至少涵蓋 正常值／空值／邊界值／非法值（高風險欄全展開）。
 - select 欄須有「非法選項」案例。
 - 須含「超長輸入不撐破版面」案例。
-- 案例對齊實際欄位（4 個 select、6 文字、3 秘密）。
+- 案例對齊實際欄位（12 個 select：4 基本＋8 進階組、6 文字、3 秘密）。
 - 文件宣稱的「後端擋下非法 select」「秘密留空不變更」須為**真實行為**——
   以實際呼叫 settings.update() 佐證。
 """
@@ -104,13 +104,21 @@ def test_每個select欄都有非法選項案例(sec):
     from studio import settings
 
     selects = [f for f in settings.FIELDS if f.kind == "select"]
-    # 至少要點名到 provider / 並行支線數 / 0-1 類欄位的非法處理
-    # 用 env 名或 label 關鍵字判斷其非法案例是否存在
+    # 用 env 名或 label 關鍵字判斷其非法案例是否存在。基本 select 各自展開；
+    # 進階組（0/1 或固定選項）由一條彙整的「非法值一律忽略」案例涵蓋（列名所有 env）。
     checks = {
         "TI_PROVIDER": ["TI_PROVIDER", "Provider"],
         "TI_PARALLEL_LANES": ["TI_PARALLEL_LANES", "支線數"],
         "TI_PARALLEL_TASKS": ["TI_PARALLEL_TASKS", "任務並行"],
         "TI_PUBLISH_MERGE": ["TI_PUBLISH_MERGE", "自動合併"],
+        "TI_HUDDLE": ["TI_HUDDLE"],
+        "TI_CRITIC": ["TI_CRITIC"],
+        "TI_NOTES": ["TI_NOTES"],
+        "TI_LESSONS": ["TI_LESSONS"],
+        "TI_REFLEXION": ["TI_REFLEXION"],
+        "TI_OBJECTIVE_GATE": ["TI_OBJECTIVE_GATE", "閘門"],
+        "TI_SELF_REFINE_ITERS": ["TI_SELF_REFINE_ITERS", "自我精修"],
+        "TI_RLIMITS": ["TI_RLIMITS", "資源上限"],
     }
     assert {f.env for f in selects} == set(checks), "select 欄與預期不符，請更新測試"
     # 非法案例段落：含『非法』字樣的列
