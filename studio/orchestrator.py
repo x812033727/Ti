@@ -734,7 +734,7 @@ class StudioSession:
         research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
         pm_plan = await pm.speak(
             (await self._human_prefix())
-            + lessons.context()  # 跨場次教訓庫（停用/空白時為空字串）
+            + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
             + repo_note
             + clarify_note
             + research_note
