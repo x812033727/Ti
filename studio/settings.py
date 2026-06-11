@@ -181,6 +181,20 @@ FIELDS: tuple[Field, ...] = (
         default="1",
         group="進階",
     ),
+    Field(
+        "TI_CLARIFY",
+        "立項澄清（開場 PM 評估需求、必要時提問等回覆，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_CLARIFY_TIMEOUT",
+        "立項等待回覆秒數（逾時以明示假設續行）",
+        placeholder="180",
+        group="進階",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}

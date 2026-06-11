@@ -144,6 +144,7 @@ class FakeExpert:
         scripts: list[str],
         file_queue: list[dict[str, str]] | None = None,
         action_marker: str = "",
+        keyed_scripts: dict[str, str] | None = None,
     ):
         self.role = role
         self.session_id = session_id
@@ -151,6 +152,9 @@ class FakeExpert:
         self._scripts = scripts
         self._queue = list(file_queue or [])
         self._marker = action_marker
+        # 關鍵字台詞：prompt 含某 key 就回對應台詞、不消耗位置腳本。用於「是否出現取決於
+        # 設定」的階段（如立項評估），讓位置式腳本不因階段開關而錯位。
+        self._keyed = dict(keyed_scripts or {})
         self.calls = 0
 
     async def speak(self, prompt: str, broadcast) -> str:
@@ -158,6 +162,14 @@ class FakeExpert:
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
         if config.OFFLINE_DELAY:
             await asyncio.sleep(config.OFFLINE_DELAY)
+
+        for key, text in self._keyed.items():
+            if key in prompt:
+                await broadcast(
+                    events.expert_message(self.session_id, r.key, r.name, r.avatar, text)
+                )
+                await broadcast(events.expert_status(self.session_id, r.key, "idle"))
+                return text
 
         if self._queue and self._marker and self._marker in prompt:
             await broadcast(events.expert_status(self.session_id, r.key, "working"))
@@ -258,6 +270,19 @@ def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str
                 "所有任務都完成，測試通過、Demo 可執行。\n決議: 完成",
                 "做得不錯：模組分層清楚、有測試。下次可加更多輸入驗證與互動模式。",
             ],
+            # 立項台詞（_inception 的 PM 發言）：需求清楚、直接給簡短 PRD，`澄清: 不需要`
+            # 確保離線示範不進等待分支。用關鍵字對應（非位置式），無 queue 時不會錯位。
+            keyed_scripts={
+                "立項評估": (
+                    "需求清楚，先立項。\n"
+                    "目標用戶: 想在命令列快速算數的使用者\n"
+                    "MVP 範圍: 四則運算 CLI（含測試與說明）\n"
+                    "不做什麼: 不做 GUI、不做科學計算\n"
+                    "假設: 使用者已有 Python 環境\n"
+                    "願景: 人人可用的口袋計算器\n"
+                    "澄清: 不需要"
+                ),
+            },
         ),
         "engineer": FakeExpert(
             BY_KEY["engineer"],

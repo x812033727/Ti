@@ -153,6 +153,7 @@ class ProjectImprover:
             intervention_queue=self.queue,
             critics=critics,
             workspace_id=projects.workspace_id(pid),
+            clarify=False,  # backlog 任務已具體，不需再立項澄清
         )
         if config.OFFLINE_MODE:
             from .fake_experts import build_fake_lane_expert

@@ -519,9 +519,11 @@ async def test_notes_disabled_by_default(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_human_intervention():
+async def test_human_intervention(monkeypatch):
     """插話餵給專家；回顯（HUMAN_MESSAGE）自 #83 起改由 ws._pump_interventions 於收到時
     即時 broadcast，orchestrator 不再重複廣播。"""
+    # 本測試驗證拆解階段的插話前綴：pin 掉立項澄清，避免 PM 第一句被立項消費。
+    monkeypatch.setattr(config, "CLARIFY_ENABLED", False)
     bucket, broadcast = collect()
     queue: asyncio.Queue[str] = asyncio.Queue()
     queue.put_nowait("請改用公制單位")

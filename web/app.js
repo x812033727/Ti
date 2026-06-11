@@ -296,6 +296,16 @@ function handleEvent(ev) {
     case "human_message":
       addHuman(p.text);
       break;
+    case "clarify_request": {
+      // 立項澄清：PM 列出關鍵問題等待回覆；回覆就用既有插話輸入框（協定零變更）。
+      const qs = (p.questions || []).map((q, i) => `${i + 1}. ${q}`).join("\n");
+      const mins = Math.round((p.timeout_s || 0) / 60);
+      addSystem(
+        "❓ PM 需要你澄清需求（請用下方插話框回覆；約 " + mins + " 分鐘未回覆將以明示假設續行）：\n" + qs
+      );
+      if (!replaying) interjectInput.focus();
+      break;
+    }
     case "critic_review":
       if (p.passed) {
         addSystem("🔍 異議檢查放行（" + (p.gate || "") + " 視角）");

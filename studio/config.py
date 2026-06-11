@@ -57,6 +57,13 @@ NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 
+# 立項/需求澄清：開場由 PM 評估需求是否模糊——模糊則列關鍵問題（≤3 條）等使用者回覆，
+# 逾時以明示假設續行（不卡死），最終產出簡短 PRD 沉澱 docs/PRD.md 並注入調研/拆解。
+# 預設開啟：這是「說一句產品就能開工」的核心；無人類通道（autopilot/improver 子場次、
+# 未傳 intervention queue 的測試）時自動跳過，天然向後相容。
+CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
+CLARIFY_TIMEOUT = int(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等待使用者回覆秒數
+
 # 知識沉澱（workspace 的 docs/PRD.md / RESEARCH.md / DECISIONS.md）：調研結論與設計決策
 # 持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然跨場次累積。
 # 檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
@@ -419,7 +426,7 @@ def reload() -> None:
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
-    global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS
+    global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -461,3 +468,5 @@ def reload() -> None:
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
+    CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
+    CLARIFY_TIMEOUT = int(os.getenv("TI_CLARIFY_TIMEOUT", "180"))

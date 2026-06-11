@@ -304,11 +304,22 @@ async def _run_project_session(session: StudioSession, requirement: str, project
     這條回填線讓「手動單場討論」也參與持續改良——下次開持續改良迴圈時，
     這些後續任務就是現成的供給。
     """
-    result = await session.run(requirement)
+    # 既有願景前綴進需求：讓每場討論都對齊長期產品方向（不只 improver 看得到）。
+    vision = (project.get("vision") or "").strip()
+    req = (
+        f"【長期專案：{project['name']}】產品願景：{vision}\n\n{requirement}"
+        if vision
+        else requirement
+    )
+    result = await session.run(req)
     sdir = projects.state_dir(project["id"])
     followups = result.get("followups") or []
     if followups:
         backlog.add_many(followups, source="discovered", state_dir=sdir)
+    # 立項抽出的願景回填專案 meta（僅當原本為空；下一場開場即可前綴）。
+    new_vision = (result.get("vision") or "").strip()
+    if new_vision and not vision:
+        projects.update_vision(project["id"], new_vision)
     projects.record_session(
         project["id"], session.session_id, requirement[:80], bool(result.get("completed"))
     )

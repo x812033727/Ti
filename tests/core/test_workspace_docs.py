@@ -49,9 +49,10 @@ def test_whitelist_rejects_other_names():
 def test_empty_text_and_missing_file():
     workspace.create_workspace("w4")
     workspace.append_doc("w4", "PRD.md", "   ")  # 空白忽略
-    assert not (workspace.workspace_path("w4") / "docs").exists() or workspace.read_doc_tail(
-        "w4", "PRD.md", 100
-    ) == ""
+    assert (
+        not (workspace.workspace_path("w4") / "docs").exists()
+        or workspace.read_doc_tail("w4", "PRD.md", 100) == ""
+    )
     assert workspace.read_doc_tail("w4", "RESEARCH.md", 100) == ""
     assert workspace.read_doc_tail("w4", "RESEARCH.md", 0) == ""  # max_chars<=0 視為停用
 
