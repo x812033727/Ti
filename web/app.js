@@ -810,6 +810,29 @@ function renderSettings(fields) {
         if (opt === f.value) o.selected = true;
         input.appendChild(o);
       }
+      // 現值不在清單內（如 .env 手動填過清單外的模型）：追加為選項並選取，
+      // 避免開面板再存檔時被靜默改成清單第一項。
+      if (f.value && !f.options.includes(f.value)) {
+        const o = document.createElement("option");
+        o.value = f.value; o.textContent = f.value;
+        o.selected = true;
+        input.appendChild(o);
+      }
+    } else if (f.kind === "combo") {
+      // 可選可打：下拉建議來自 datalist，仍接受任意輸入（如本地模型名稱）。
+      input = document.createElement("input");
+      input.type = "text";
+      input.value = f.value || "";
+      input.placeholder = f.placeholder || "";
+      const dl = document.createElement("datalist");
+      dl.id = "dl-" + f.env;
+      for (const opt of f.options) {
+        const o = document.createElement("option");
+        o.value = opt;
+        dl.appendChild(o);
+      }
+      input.setAttribute("list", dl.id);
+      row.appendChild(dl);
     } else {
       input = document.createElement("input");
       input.type = f.kind === "password" ? "password" : "text";

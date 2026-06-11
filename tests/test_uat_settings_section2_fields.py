@@ -4,7 +4,7 @@
 - 每欄至少涵蓋 正常值／空值／邊界值／非法值（高風險欄全展開）。
 - select 欄須有「非法選項」案例。
 - 須含「超長輸入不撐破版面」案例。
-- 案例對齊實際欄位（12 個 select：4 基本＋8 進階組、6 文字、3 秘密）。
+- 案例對齊實際欄位（14 個 select：4 基本＋2 Claude 模型＋8 進階組、2 combo、2 文字、3 秘密）。
 - 文件宣稱的「後端擋下非法 select」「秘密留空不變更」須為**真實行為**——
   以實際呼叫 settings.update() 佐證。
 """
@@ -100,7 +100,7 @@ def test_超長輸入不破版有案例(sec):
 
 
 def test_每個select欄都有非法選項案例(sec):
-    """4 個 select 欄都應出現在『非法值』語境。"""
+    """所有 select 欄都應出現在『非法值』語境。"""
     from studio import settings
 
     selects = [f for f in settings.FIELDS if f.kind == "select"]
@@ -108,6 +108,8 @@ def test_每個select欄都有非法選項案例(sec):
     # 進階組（0/1 或固定選項）由一條彙整的「非法值一律忽略」案例涵蓋（列名所有 env）。
     checks = {
         "TI_PROVIDER": ["TI_PROVIDER", "Provider"],
+        "TI_MODEL_LEAD": ["TI_MODEL_LEAD", "主力模型"],
+        "TI_MODEL_FAST": ["TI_MODEL_FAST", "快速模型"],
         "TI_PARALLEL_LANES": ["TI_PARALLEL_LANES", "支線數"],
         "TI_PARALLEL_TASKS": ["TI_PARALLEL_TASKS", "任務並行"],
         "TI_PUBLISH_MERGE": ["TI_PUBLISH_MERGE", "自動合併"],
@@ -192,12 +194,29 @@ def test_後端秘密留空不變更(capture_update):
     assert written == {}, f"秘密欄留空（含純空白）不應寫入：{written}"
 
 
-def test_後端文字欄接受任意值含超長(capture_update):
+def test_後端文字與combo欄接受任意值含超長(capture_update):
     settings, written = capture_update
     longv = "x" * 2000
-    settings.update({"TI_MODEL_LEAD": longv, "TI_PUBLISH_REPO": "owner/repo"})
-    assert written["TI_MODEL_LEAD"] == longv, "文字欄應接受超長值（後端不限長）"
+    settings.update({"TI_OPENAI_MODEL_LEAD": longv, "TI_PUBLISH_REPO": "owner/repo"})
+    assert written["TI_OPENAI_MODEL_LEAD"] == longv, (
+        "combo 欄應接受任意值含超長（後端不限長、不套白名單）"
+    )
     assert written["TI_PUBLISH_REPO"] == "owner/repo"
+
+
+def test_後端擋下Claude模型欄非法值(capture_update):
+    settings, written = capture_update
+    settings.update({"TI_MODEL_LEAD": "bogus-model", "TI_MODEL_FAST": "gpt-4o"})
+    assert written == {}, f"清單外的 Claude 模型值不應被寫入，卻寫了：{written}"
+
+
+def test_後端接受Claude模型欄合法值(capture_update):
+    settings, written = capture_update
+    settings.update({"TI_MODEL_LEAD": "claude-opus-4-8", "TI_MODEL_FAST": "claude-haiku-4-5"})
+    assert written == {
+        "TI_MODEL_LEAD": "claude-opus-4-8",
+        "TI_MODEL_FAST": "claude-haiku-4-5",
+    }, f"合法 Claude 模型值應全部寫入，實際：{written}"
 
 
 def test_後端忽略白名單外的鍵(capture_update):
