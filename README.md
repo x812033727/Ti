@@ -30,6 +30,8 @@
 - **階段性 git**：每輪在 workspace 內的獨立 repo 自動 commit，留下可追蹤歷史。
 - **詳細 log**：自測與 Demo 的完整輸出都會回報到討論串（可展開查看）。
 - **歷史存檔/重播**：每次 session 的事件自動存檔，可從「📜 歷史」面板挑選並重播當時的討論過程。
+- **專案與持續改良**：把產品建成「專案」後，程式碼與改良任務跨場次累積；勾選「♻️ 持續改良」
+  即讓團隊自動消化改良任務、自己「找問題」產生新任務，一直改良直到你喊停（見「[專案與持續改良](#專案與持續改良一直找問題一直改良)」）。
 - **成果發佈到 GitHub**：設定 token 與目標 repo 後，可手動（或自動）把 workspace 成果推成分支並開 PR。
 - **成果匯出下載**：產出檔案面板的「⬇️ 下載成果」按鈕會把該 session 的 workspace 打包成 zip 下載（自動排除 `.git/` 等雜訊）。
 
@@ -187,6 +189,21 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 **clone 進這次的 workspace**，PM 會先閱讀現有結構再拆解任務。私有倉庫請先在設定頁填入
 GitHub token。（僅支援 github.com 的 https 網址；離線示範模式會忽略此欄位。）
 
+### 專案與持續改良（一直找問題、一直改良）
+
+一次性的討論結束就散場；想讓團隊**對同一個產品做下去**，就建一個「專案」：
+
+1. 頂部下拉選單選「➕ 新增專案…」，填名稱與一句話產品願景。
+2. 之後選定該專案再「開始討論」，團隊就在專案的**固定 workspace** 上工作——程式碼與
+   git 歷史跨場次累積，檢討時發現的後續任務自動排進專案的改良 backlog。
+3. 勾選「**♻️ 持續改良**」再開始（需求欄可留空），團隊會進入自動迴圈：
+   逐一消化 backlog 裡的改良任務（每個任務跑一場完整討論），backlog 空了就由資深專家
+   審視產品現況「**找問題**」、產出新的改良任務，繼續做——一直到你按「停止」、達到輪數
+   上限，或再也找不出新改善點為止。執行中照樣可以隨時插話下指示。
+
+每一輪討論都各自存進「📜 歷史」可重播；專案的 backlog 也可透過 `/api/projects` 系列 API
+查看與手動排任務。離線示範模式（見下節）同樣支援整套專案／持續改良流程，可先無金鑰試玩。
+
 ### 離線示範模式（不需 API 金鑰）
 
 想先試用整套流程、或在沒有金鑰的環境驗證，可開啟離線模式：用腳本化的假專家驅動
@@ -237,6 +254,9 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_AUTOPILOT_MERGE_ADMIN` | Autopilot 合併策略：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效；目標 branch 有保護規則且需維持自動合併時設 `1` | 0（安全側） |
 | `TI_AUTOPILOT_PROTECTION_CHECK` | 第二道防線：squash-merge 前主動查「合併目標分支（`TI_AUTOPILOT_BRANCH`，預設 `main`）」的保護狀態。優先打 Rulesets 端點（classic token 即可讀、**多半不需 `Administration:read`**），舊 branch protection 端點為輔。三態 fail-safe——受保護/無保護皆放行，唯「無法確認」（403 無權／網路／逾時）一律**中止**並回含「無法確認保護狀態」字樣的訊息，絕不誤判為無保護而放行。讀舊 protection 端點才需 `Administration:read`；無此權限而持續卡「無法確認」的環境，設 `0` 整段跳過（明確逃生口） | 1（啟用） |
 | `TI_AUTOPILOT_EVAL_MEMORY` | 自我評估（backlog 空時找改善點）回饋給專家的「近期成敗」筆數（done/failed 各取最新 N 筆，附失敗原因）。讓迴圈記取自身成績單——避免重提已完成、避開已知失敗做法；越跑越聚焦。0=停用（無狀態評估） | 20 |
+| `TI_PROJECTS_ROOT` | 專案（長期產品）meta 與專屬 backlog 的存放根目錄 | `projects/` |
+| `TI_IMPROVE_MAX_CYCLES` | 持續改良迴圈單次連線最多跑幾輪（每輪＝一場完整討論）；0=不限（直到找不到新改善點） | 5 |
+| `TI_IMPROVE_MAX_FAILS` / `TI_IMPROVE_COOLDOWN` | 連續失敗幾輪即停 ／ 每輪之間喘息秒數 | 2 / 0 |
 | `TI_HISTORY_MAX_COUNT` / `TI_HISTORY_MAX_AGE` | 自動回收：最多保留幾個非 running session ／ 最後活動超過幾秒即回收（含 history 的 meta+events 與其 workspace 產出）；0=該規則停用 | 200 / 0 |
 | `TI_MAX_CONCURRENT_SESSIONS` | 同時進行的討論場次上限（每場會起多個專家子程序/LLM 連線）；超過時新的 `/ws` 連線被拒（送 error 後 close 1013）。0=不限 | 8 |
 
@@ -288,6 +308,8 @@ studio/
   orchestrator.py  StudioSession：逐任務工作流程狀態機（核心）
   runner.py        確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git
   history.py       session 事件存檔/讀取（供歷史列表與重播）
+  projects.py      專案（長期產品）：固定 workspace、專屬 backlog、session 足跡
+  improver.py      專案持續改良迴圈：消化 backlog → 跑討論 → 回填 → 找問題
   publisher.py     把 workspace 成果推成 GitHub 分支並開 PR（預設關閉）
   fake_experts.py  離線示範用的假專家（真的寫檔，供無金鑰試用/端到端驗證）
   routes.py        REST API 路由（health / 登入 / workspace / history / publish）

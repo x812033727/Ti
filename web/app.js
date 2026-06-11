@@ -12,6 +12,11 @@ const interjectBtn = $("#interjectBtn");
 
 let ws = null;
 let sessionId = null;
+// 檔案面板/下載對接的 workspace id：一次性討論＝sessionId；專案模式＝project-<pid>
+// （多場 session 共用固定 workspace），由 session_started 的 workspace_id 提供。
+let workspaceId = null;
+// 持續改良模式：迴圈內每輪討論各發自己的 done，僅「帶 improve 摘要的總結 done」才收尾。
+let improveMode = false;
 
 function setPhase(text) { phaseEl.textContent = text; }
 
@@ -212,9 +217,10 @@ function renderBoard(columns) {
 }
 
 async function refreshFiles() {
-  if (!sessionId) return;
+  const wid = workspaceId || sessionId;
+  if (!wid) return;
   try {
-    const res = await fetch(`/api/workspace/${sessionId}/files`);
+    const res = await fetch(`/api/workspace/${wid}/files`);
     const data = await res.json();
     const list = $("#fileList");
     list.innerHTML = "";
@@ -230,18 +236,20 @@ async function refreshFiles() {
 }
 
 function downloadWorkspace() {
-  if (!sessionId) return;
+  const wid = workspaceId || sessionId;
+  if (!wid) return;
   // 透過隱藏連結觸發瀏覽器下載；同源 cookie 會自動帶上（門禁啟用時）。
   const a = document.createElement("a");
-  a.href = `/api/workspace/${sessionId}/download`;
-  a.download = `workspace-${sessionId}.zip`;
+  a.href = `/api/workspace/${wid}/download`;
+  a.download = `workspace-${wid}.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();
 }
 
 async function viewFile(path) {
-  const res = await fetch(`/api/workspace/${sessionId}/file?path=${encodeURIComponent(path)}`);
+  const wid = workspaceId || sessionId;
+  const res = await fetch(`/api/workspace/${wid}/file?path=${encodeURIComponent(path)}`);
   if (!res.ok) return;
   const data = await res.json();
   $("#fileView").textContent = data.content;
@@ -252,6 +260,7 @@ function handleEvent(ev) {
   const p = ev.payload || {};
   switch (ev.type) {
     case "session_started":
+      workspaceId = p.workspace_id || ev.session_id;
       clearStream();
       renderRoster(p.roster || []);
       addSystem("🛠️ 工作室開工：" + (p.requirement || ""));
@@ -316,34 +325,99 @@ function handleEvent(ev) {
       addCI(p);
       break;
     case "done":
-      setPhase(p.stopped ? "⏹ 已停止" : (p.completed ? "✅ 已完成" : "⚠️ 結束（未完全達標）"));
-      addSystem(p.stopped ? "已依指示停止。" : (p.completed ? "🎉 專案完成！" : "專案結束，仍有未達標項目。"));
+      // 持續改良模式：迴圈內每輪討論的 done 只是「一輪結束」，迴圈總結（帶 improve）才收尾。
+      if (improveMode && !p.improve) {
+        addSystem(p.completed ? "✅ 本輪改良完成，繼續下一輪…" : "⚠️ 本輪未達標，迴圈將評估是否續跑…");
+        refreshFiles();
+        break;
+      }
+      if (p.improve) {
+        const s = p.improve;
+        setPhase(p.stopped ? "⏹ 已停止" : "♻️ 持續改良結束");
+        addSystem(`♻️ 持續改良結束：共 ${s.cycles} 輪（完成 ${s.done}、未達標 ${s.failed}）。`);
+      } else {
+        setPhase(p.stopped ? "⏹ 已停止" : (p.completed ? "✅ 已完成" : "⚠️ 結束（未完全達標）"));
+        addSystem(p.stopped ? "已依指示停止。" : (p.completed ? "🎉 專案完成！" : "專案結束，仍有未達標項目。"));
+      }
       refreshFiles();
-      if (!replaying && p.completed && publishConfigured) addPublishButton(sessionId);
+      if (!replaying && p.completed && publishConfigured && !p.improve) addPublishButton(sessionId);
       setRunning(false);
+      loadProjects(); // backlog 統計可能已變，刷新專案選單
       break;
     case "error":
       addSystem("⚠️ 錯誤：" + (p.message || "未知錯誤"));
       toast(p.message || "發生錯誤", "err");
-      setRunning(false);
+      // 持續改良模式下，單輪錯誤不終止迴圈（improver 會記 failed 並評估續跑）。
+      if (!improveMode) setRunning(false);
       break;
   }
 }
 
 function start() {
   const requirement = reqInput.value.trim();
-  if (!requirement) { reqInput.focus(); return; }
-  const repoUrl = $("#repoUrl").value.trim();
+  const projectId = $("#projectSelect").value;
+  const improve = $("#improveChk").checked && !!projectId;
+  // 需求必填；唯「專案 + 持續改良」可留空（任務由專案 backlog／找問題供給）。
+  if (!requirement && !improve) { reqInput.focus(); return; }
+  const repoUrl = projectId ? "" : $("#repoUrl").value.trim();
   replaying = false;
+  improveMode = improve;
+  workspaceId = null;
   closeHistory();
   setRunning(true);
   setPhase("連線中…");
 
+  const payload = { requirement, repo_url: repoUrl };
+  if (projectId) payload.project_id = projectId;
+  if (improve) payload.mode = "improve";
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onopen = () => ws.send(JSON.stringify({ requirement, repo_url: repoUrl }));
+  ws.onopen = () => ws.send(JSON.stringify(payload));
   ws.onmessage = (e) => handleEvent(JSON.parse(e.data));
   ws.onerror = () => { addSystem("⚠️ 連線發生錯誤"); toast("WebSocket 連線錯誤", "err"); setRunning(false); };
+  // 連線關閉＝後端收尾（總結 done 已送）或斷線；無論何者，恢復可重新開始的狀態。
+  ws.onclose = () => setRunning(false);
+}
+
+// --- 專案（長期產品）---------------------------------------------------
+async function loadProjects() {
+  const sel = $("#projectSelect");
+  if (!sel) return;
+  try {
+    const data = await (await fetch("/api/projects")).json();
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">（一次性討論）</option>';
+    for (const p of data.projects || []) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      const b = p.backlog || {};
+      opt.textContent = `📦 ${p.name}` + (b.pending ? `（待辦 ${b.pending}）` : "");
+      sel.appendChild(opt);
+    }
+    const add = document.createElement("option");
+    add.value = "__new__";
+    add.textContent = "➕ 新增專案…";
+    sel.appendChild(add);
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  } catch (e) { /* 忽略 */ }
+}
+
+async function createProjectFlow() {
+  const name = (prompt("專案名稱（例如：無人機地面站）") || "").trim();
+  if (!name) { $("#projectSelect").value = ""; return; }
+  const vision = (prompt("一句話產品願景（選填，會持續提醒團隊方向）") || "").trim();
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, vision }),
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error || "建立失敗", "err"); return; }
+    await loadProjects();
+    $("#projectSelect").value = data.project.id;
+    toast(`專案「${name}」已建立`, "ok");
+  } catch (e) { toast("建立專案失敗", "err"); }
 }
 
 function sendInterject() {
@@ -803,6 +877,9 @@ $("#apAddBtn").onclick = addAutopilotTask;
 $("#metricsBtn").onclick = openMetrics;
 $("#metricsClose").onclick = closeMetrics;
 $("#metricsRefresh").onclick = refreshMetrics;
+$("#projectSelect").addEventListener("change", (e) => {
+  if (e.target.value === "__new__") createProjectFlow();
+});
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
 
@@ -856,6 +933,7 @@ async function init() {
   if (!(await checkAuth())) return;
   loadPublishConfig();
   loadHealth();
+  loadProjects();
 }
 
 init();

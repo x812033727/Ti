@@ -342,11 +342,7 @@ async def _wait_until_idle(timeout: int = 600) -> bool:
 
 def _recent_done_titles() -> set[str]:
     """近期已完成任務的標題集合（依 AUTOPILOT_EVAL_MEMORY 取最新 N 筆），供去重過濾。"""
-    limit = config.AUTOPILOT_EVAL_MEMORY
-    if limit <= 0:
-        return set()
-    done = sorted(backlog.list_tasks("done"), key=lambda t: t.get("updated_at", 0), reverse=True)
-    return {t["title"].strip() for t in done[:limit]}
+    return backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
 
 
 def _recent_outcomes_context() -> str:

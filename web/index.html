@@ -12,10 +12,17 @@
       <span id="offlineBadge" class="badge-offline hidden">離線示範</span>
     </div>
     <div class="launch">
+      <select id="projectSelect" class="project-select"
+              title="長期專案：程式碼與改良任務跨場次累積；選「一次性討論」則每次從零開始">
+        <option value="">（一次性討論）</option>
+      </select>
       <input id="repoUrl" type="text" class="repo-input"
              placeholder="（選填）GitHub repo 網址，會 clone 進來一起討論" />
       <input id="requirement" type="text"
              placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
+      <label class="improve-toggle" title="選定專案後勾選：團隊自動消化改良任務、找問題、一直改良，直到你按停止">
+        <input id="improveChk" type="checkbox" /> ♻️ 持續改良
+      </label>
       <button id="startBtn">開始討論</button>
       <button id="stopBtn" class="ghost" disabled>停止</button>
     </div>

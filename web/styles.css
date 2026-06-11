@@ -37,6 +37,16 @@ h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
   border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 15px;
 }
 .launch input:focus { outline: none; border-color: var(--accent); }
+/* 專案選單與持續改良開關（與輸入框同一風格） */
+.launch .project-select {
+  max-width: 180px; padding: 11px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px;
+}
+.launch .improve-toggle {
+  display: flex; align-items: center; gap: 5px; white-space: nowrap;
+  color: var(--muted); font-size: 14px; cursor: pointer;
+}
+.launch .improve-toggle input { flex: none; accent-color: var(--accent); }
 .launch button {
   padding: 11px 20px; border: none; border-radius: 8px; cursor: pointer;
   background: var(--accent); color: white; font-weight: 600; font-size: 15px;
@@ -291,6 +301,7 @@ h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
   .brand { font-size: 17px; }
   .launch { order: 3; width: 100%; flex-wrap: wrap; }
   .launch .repo-input { flex: 1 1 100%; }
+  .launch .project-select { max-width: none; flex: 1 1 48%; }
   .launch input { font-size: 16px; }            /* iOS 不放大避免 focus 跳動 */
   .toolbar { order: 4; width: 100%; padding-left: 0; border-left: none;
              overflow-x: auto; -webkit-overflow-scrolling: touch; }

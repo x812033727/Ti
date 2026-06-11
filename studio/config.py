@@ -357,6 +357,21 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 
 
+# --- 專案（長期產品）與持續改良迴圈 ---------------------------------------
+# 專案是跨 session 的一級實體：固定 workspace（程式碼與 git 歷史跨場次累積）、
+# 專屬 backlog（改良任務佇列）。持續改良迴圈（improver）重複「取 backlog 任務 →
+# 跑一場討論 → followups 回填 → backlog 空了就『找問題』產生新任務」，
+# 讓團隊對同一個產品一直找問題、一直改良。
+PROJECTS_ROOT = Path(os.getenv("TI_PROJECTS_ROOT", str(PROJECT_ROOT / "projects")))
+# 單次「持續改良」連線最多跑幾輪（每輪＝一場完整討論）；0 = 不限（直到找不到新改善點）。
+# 預設給保守上限，避免一次連線燒掉過多 API 額度。
+IMPROVE_MAX_CYCLES = int(os.getenv("TI_IMPROVE_MAX_CYCLES", "5"))
+# 連續失敗幾輪即停（避免同一個壞任務無限重試空轉）。
+IMPROVE_MAX_FAILS = int(os.getenv("TI_IMPROVE_MAX_FAILS", "2"))
+# 每輪之間的喘息秒數（0 = 不等待）。
+IMPROVE_COOLDOWN = float(os.getenv("TI_IMPROVE_COOLDOWN", "0"))
+
+
 def autopilot_paused() -> bool:
     """暫停開關：pause 檔存在、或 env TI_AUTOPILOT_PAUSED 為真，即暫停迴圈。"""
     if os.getenv("TI_AUTOPILOT_PAUSED", "0") not in ("0", "false", "False", ""):

@@ -520,6 +520,12 @@ async def test_notes_disabled_by_default(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_human_intervention():
+    """插話注入：佇列中的插話應前綴進 PM 的拆解 prompt。
+
+    回顯（human_message）自插話即時生效改版（#83）起，改由 ws 層於「收到插話當下」
+    broadcast（見 ws._pump_interventions），orchestrator 不再重複發——此處驗證
+    orchestrator 端的職責只剩「把文字餵進專家 prompt」。
+    """
     bucket, broadcast = collect()
     queue: asyncio.Queue[str] = asyncio.Queue()
     queue.put_nowait("請改用公制單位")
@@ -532,11 +538,12 @@ async def test_human_intervention():
     session = StudioSession("t", broadcast, experts=experts, cwd=None, intervention_queue=queue)
     await session.run("需求")
 
+    # orchestrator 不重複回顯（回顯由 ws 層負責；此處 bucket 不應有 HUMAN_MESSAGE）
     humans = [e for e in bucket if e.type == events.EventType.HUMAN_MESSAGE]
-    assert len(humans) == 1
-    assert "公制" in humans[0].payload["text"]
+    assert humans == []
     # 插話應前綴進 PM 的拆解 prompt
     assert "使用者插話" in experts["pm"].prompts[0]
+    assert "公制" in experts["pm"].prompts[0]
 
 
 @pytest.mark.asyncio

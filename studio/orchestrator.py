@@ -232,10 +232,14 @@ class StudioSession:
         intervention_queue: asyncio.Queue[str] | None = None,
         repo_url: str | None = None,
         critics: dict[str, ExpertLike] | None = None,
+        workspace_id: str | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
         self.cwd = cwd
+        # 檔案面板/下載 API 用的 workspace id；預設＝session_id（一次性 workspace）。
+        # 專案模式傳 `project-<pid>`（多場 session 共用同一個固定 workspace）。
+        self.workspace_id = workspace_id or session_id
         self._experts = experts
         # 異議檢查用的獨立 expert 實例（不與主 experts 共用對話/calls 序號）。
         self._critics = critics
@@ -376,14 +380,15 @@ class StudioSession:
             ctx.notes_buffer.clear()
             return
         for note in ctx.notes_buffer:
-            workspace.append_note(self.session_id, note)
+            # 以 workspace_id 定位（專案模式下多場 session 共用同一份 NOTES.md，知識跨場次累積）。
+            workspace.append_note(self.workspace_id, note)
         ctx.notes_buffer.clear()
 
     def _notes_context(self, ctx: LaneContext) -> str:
         """讀回 NOTES.md，組成要注入實作 prompt 的前綴（停用/空白時回空字串）。"""
         if not (config.NOTES_ENABLED and ctx.cwd):
             return ""
-        notes = workspace.read_notes(self.session_id)
+        notes = workspace.read_notes(self.workspace_id)
         if not notes.strip():
             return ""
         return f"【團隊共用知識庫 NOTES.md（過往踩過的坑／決策／後續）】\n{notes}\n\n"
@@ -551,6 +556,7 @@ class StudioSession:
                 {
                     "requirement": requirement,
                     "repo_url": self._repo_url,
+                    "workspace_id": self.workspace_id,
                     # 以實際建立的專家為準（offline 顯示 4 位、正式顯示全部）。
                     "roster": [
                         {
@@ -1480,7 +1486,7 @@ class StudioSession:
         )
         await self._commit(self._main_ctx, "完成：交付成果與檢討")
 
-        files = workspace.list_files(self.session_id) if self.cwd else []
+        files = workspace.list_files(self.workspace_id) if self.cwd else []
         await self.broadcast(
             events.StudioEvent(
                 events.EventType.DONE,

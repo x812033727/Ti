@@ -10,14 +10,18 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import auth, config, events, history, runner, workspace
+from . import auth, backlog, config, events, history, projects, runner, workspace
 from .events import StudioEvent
+from .improver import ProjectImprover
 from .orchestrator import StudioSession
 
 router = APIRouter()
 
 # 客戶端斷線後仍在背景跑完的討論任務（持有參考避免被 GC 回收）。
 _detached: set[asyncio.Task] = set()
+
+# 進行中的專案 id：同一專案共用固定 workspace，同時兩場討論會互相踩檔案，故擋第二場。
+_active_projects: set[str] = set()
 
 # 同時進行中的討論場次數（並發上限用）。每場占一個 slot，隨 run_task 完成釋放
 # （含客戶端斷線後背景續跑）。單執行緒 event loop 內，slot 的 check 與增減之間無
@@ -67,6 +71,7 @@ async def ws(websocket: WebSocket) -> None:
     recording = False
     connected = True
     slot_held = False
+    project_held = False
     run_task: asyncio.Task | None = None
 
     async def broadcast(event: StudioEvent) -> None:
@@ -85,12 +90,40 @@ async def ws(websocket: WebSocket) -> None:
             connected = False
 
     try:
-        # 第一則訊息為產品需求（可選擇附帶要 clone 的 GitHub repo）
+        # 第一則訊息為產品需求（可選擇附帶要 clone 的 GitHub repo，或指定長期專案）。
+        # project_id：在該專案的固定 workspace 上工作（程式碼跨場次累積）。
+        # mode="improve"：啟動持續改良迴圈（需搭配 project_id；requirement 選填＝先排進 backlog）。
         data = await websocket.receive_json()
         requirement = (data.get("requirement") or "").strip()
         repo_url = (data.get("repo_url") or "").strip()
         repo_branch = (data.get("repo_branch") or "").strip() or None
-        if not requirement:
+        project_id = (data.get("project_id") or "").strip()
+        improve_mode = (data.get("mode") or "").strip() == "improve"
+
+        project = projects.get(project_id) if project_id else None
+        if project_id and project is None:
+            await websocket.send_json({"type": "error", "payload": {"message": "找不到該專案"}})
+            await websocket.close()
+            return
+        if improve_mode and project is None:
+            await websocket.send_json(
+                {"type": "error", "payload": {"message": "持續改良需先選擇一個專案"}}
+            )
+            await websocket.close()
+            return
+        if project is not None and repo_url:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "payload": {
+                        "message": "專案模式不支援同時指定 repo 網址（專案已有固定 workspace）"
+                    },
+                }
+            )
+            await websocket.close()
+            return
+        # 需求必填；唯「專案 + 持續改良」可留空（由 backlog／找問題供給任務）。
+        if not requirement and not (improve_mode and project is not None):
             await websocket.send_json({"type": "error", "payload": {"message": "需求不可為空"}})
             await websocket.close()
             return
@@ -143,7 +176,40 @@ async def ws(websocket: WebSocket) -> None:
             return
         slot_held = True
 
-        cwd = workspace.create_workspace(session_id)
+        # 專案互斥：固定 workspace 不能同時兩場討論互踩，同一專案僅允許一場。
+        if project is not None:
+            if project["id"] in _active_projects:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"message": "該專案已有進行中的討論，請稍後再試"}}
+                )
+                await websocket.close(code=1013)
+                return
+            _active_projects.add(project["id"])
+            project_held = True
+
+        queue: asyncio.Queue[str] = asyncio.Queue()
+
+        if improve_mode:
+            # 持續改良迴圈：requirement 有值就先排進專案 backlog（使用者指定的改良方向）。
+            # 各輪討論由 improver 自行記錄成獨立 history session，外層不開錄。
+            sdir = projects.state_dir(project["id"])
+            if requirement:
+                backlog.add(requirement, source="user", state_dir=sdir)
+            improver = ProjectImprover(project, broadcast, intervention_queue=queue)
+            run_task = asyncio.create_task(improver.run())
+            run_task.add_done_callback(lambda _t: _release_session_slot())
+            run_task.add_done_callback(lambda _t: _active_projects.discard(project["id"]))
+            await _pump_interventions(websocket, improver, queue, run_task)
+            if not run_task.done():
+                _detached.add(run_task)
+                run_task.add_done_callback(_detached.discard)
+            return
+
+        if project is not None:
+            # 專案固定 workspace：絕不清空，程式碼與 git 歷史跨場次累積。
+            cwd = projects.workspace_dir(project["id"])
+        else:
+            cwd = workspace.create_workspace(session_id)
 
         # 若指定了 GitHub repo，先 clone 進 workspace，讓專家在現有程式碼上討論/修改。
         if repo_url:
@@ -158,9 +224,9 @@ async def ws(websocket: WebSocket) -> None:
                 await websocket.close()
                 return
 
-        history.start_session(session_id, requirement)
+        label = f"[專案 {project['name']}] {requirement}" if project is not None else requirement
+        history.start_session(session_id, label)
         recording = True
-        queue: asyncio.Queue[str] = asyncio.Queue()
         experts = None
         critics = None
         if config.OFFLINE_MODE:
@@ -177,6 +243,7 @@ async def ws(websocket: WebSocket) -> None:
             intervention_queue=queue,
             repo_url=repo_url or None,
             critics=critics,
+            workspace_id=projects.workspace_id(project["id"]) if project is not None else None,
         )
         if config.OFFLINE_MODE:
             # 離線並行 demo：每條 lane 用假專家工廠（各自寫該任務的檔），無金鑰也能跑多支線。
@@ -187,9 +254,17 @@ async def ws(websocket: WebSocket) -> None:
         # 編排在背景跑，主迴圈同時接收人類插話 / 停止指令。
         # 任務生命週期與這條連線解耦：用 done callback 負責收尾（finish_session），
         # 即使客戶端中途斷線，討論仍能在背景跑到完成，事件照寫 history。
-        run_task = asyncio.create_task(session.run(requirement))
+        run_coro = (
+            _run_project_session(session, requirement, project)
+            if project is not None
+            else session.run(requirement)
+        )
+        run_task = asyncio.create_task(run_coro)
         # slot 隨 run_task 完成釋放（無論是否 detach、是否斷線），一次性、不重複。
         run_task.add_done_callback(lambda _t: _release_session_slot())
+        if project is not None:
+            pid = project["id"]
+            run_task.add_done_callback(lambda _t: _active_projects.discard(pid))
         await _pump_interventions(websocket, session, queue, run_task)
         if not run_task.done():
             # 客戶端已斷線（或按 stop 後尚未結束）：把討論留在背景跑完，handler 立即
@@ -209,6 +284,9 @@ async def ws(websocket: WebSocket) -> None:
         # （驗證失敗 / 例外），在此補釋放，避免 slot 永久洩漏。
         if slot_held and run_task is None:
             _release_session_slot()
+        # 專案互斥同理：已建 run_task 者由其 done-callback 釋放；建 task 前出錯在此補釋放。
+        if project_held and run_task is None:
+            _active_projects.discard(project["id"])
         # 已 detach（背景跑、尚未結束）的任務由 callback 收尾；其餘（正常跑完、或在
         # 建立任務前就出錯）在此同步收尾，確保歷史狀態即時更新、不被重複呼叫。
         if recording and (run_task is None or run_task.done()):
@@ -217,6 +295,23 @@ async def ws(websocket: WebSocket) -> None:
             await websocket.close()
         except RuntimeError:
             pass
+
+
+async def _run_project_session(session: StudioSession, requirement: str, project: dict) -> dict:
+    """專案內的單場討論：跑完後把檢討發現的後續任務回填專案 backlog、足跡記到專案 meta。
+
+    這條回填線讓「手動單場討論」也參與持續改良——下次開持續改良迴圈時，
+    這些後續任務就是現成的供給。
+    """
+    result = await session.run(requirement)
+    sdir = projects.state_dir(project["id"])
+    followups = result.get("followups") or []
+    if followups:
+        backlog.add_many(followups, source="discovered", state_dir=sdir)
+    projects.record_session(
+        project["id"], session.session_id, requirement[:80], bool(result.get("completed"))
+    )
+    return result
 
 
 async def _pump_interventions(websocket, session, queue, run_task) -> None:
