@@ -206,3 +206,25 @@ async def test_publish_merge_conflict_no_raise(monkeypatch, _configured, _ok_pus
     assert res.outcome == publisher.MergeOutcome.CONFLICT
     assert "未合併" in res.detail
     assert "tok" not in res.detail  # token 已遮蔽
+
+
+# --- pr_failure_detail：422 無共同歷史是預期情境，不是要丟給使用者的原始 JSON ---
+
+
+def test_pr_failure_detail_unrelated_history_is_friendly():
+    body = (
+        '{"message":"Validation Failed","errors":[{"resource":"PullRequest",'
+        '"code":"custom","message":"The ti-studio/x branch has no history in common with main"}]}'
+    )
+    out = publisher.pr_failure_detail(422, body)
+    assert "未開 PR" in out and "無共同歷史" in out and "分支已推送保存" in out
+    assert "Validation Failed" not in out  # 不把原始 JSON 丟給使用者
+
+
+def test_pr_failure_detail_other_errors_keep_status_and_body():
+    out = publisher.pr_failure_detail(403, "rate limited")
+    assert out.startswith("PR 建立失敗（403）")
+    assert "rate limited" in out
+    # 其他 422（非無共同歷史）仍走一般格式
+    out2 = publisher.pr_failure_detail(422, '{"message":"A pull request already exists"}')
+    assert out2.startswith("PR 建立失敗（422）")
