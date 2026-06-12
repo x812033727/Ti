@@ -279,6 +279,9 @@ class StudioSession:
         # 並行 lane 的專家工廠（測試可注入 stub）；None 時用 providers.make_expert。
         self._lane_expert_factory = None
         self._run_command: str | None = None  # PM/工程師宣告的執行指令
+        # PM/工程師宣告的 `Demo 網址:`（僅限 localhost）。有宣告＝web 服務型產品，
+        # 自測與最終 Demo 改走「啟動服務→HTTP 探測→收掉」，不再傻等常駐指令逾時。
+        self._demo_url: str | None = None
         self._requirement = ""
         self._stop = False
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
@@ -731,7 +734,7 @@ class StudioSession:
         research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
         pm_plan = await pm.speak(
             (await self._human_prefix())
-            + lessons.context()  # 跨場次教訓庫（停用/空白時為空字串）
+            + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
             + repo_note
             + clarify_note
             + research_note
@@ -740,6 +743,7 @@ class StudioSession:
             self.broadcast,
         )
         self._run_command = runner.parse_run_command(pm_plan)
+        self._demo_url = runner.parse_demo_url(pm_plan)
         if config.PARALLEL_TASKS_ENABLED:
             # 並行：解析任務 + 依賴邊，供拓撲分波。
             self._tasks, self._edges = parse_tasks_with_deps(pm_plan)
@@ -1549,6 +1553,10 @@ class StudioSession:
         """
         if not ctx.cwd:
             return None
+        # 工程師若宣告了 `Demo 網址:`（web 服務型產品），更新到 session 供自測/Demo 走 HTTP 路徑。
+        impl_url = runner.parse_demo_url(impl_text)
+        if impl_url:
+            self._demo_url = impl_url
         cmd = runner.parse_run_command(impl_text) or runner.resolve_demo_command(
             ctx.cwd, self._run_command
         )
@@ -1557,13 +1565,17 @@ class StudioSession:
         # 刻意保留 shell（run_command，非 run_command_exec）：cmd 來自 PM/工程師宣告的
         # 自測指令（parse_run_command / resolve_demo_command 動態解析），可能含 pipe /
         # && / glob / 重導向等 shell 語法，須經 /bin/sh 解析；非固定指令、無法 argv 化。
-        result = await runner.run_command(ctx.cwd, cmd)  # nosec B602
+        if self._demo_url:
+            # 常駐 server 指令純 run_command 只會傻等逾時；HTTP 路徑啟動→探測→收掉。
+            result, _status = await runner.run_http_demo(ctx.cwd, cmd, self._demo_url)
+        else:
+            result = await runner.run_command(ctx.cwd, cmd)  # nosec B602
         bc = broadcast or self.broadcast
         await bc(
             events.run_result(
                 self.session_id,
                 result.ok,
-                f"自測 `{cmd}`：{'通過' if result.ok else '未通過'}",
+                f"自測 `{result.command}`：{'通過' if result.ok else '未通過'}",
                 log=result.output,
             )
         )
@@ -1576,6 +1588,22 @@ class StudioSession:
         cmd = runner.resolve_demo_command(self.cwd, self._run_command)
         if not cmd:
             return None
+        if self._demo_url:
+            # web 服務型產品：啟動服務 → HTTP 探測 → 收掉，讓「驗證: PASS」對網站也可信。
+            await self.broadcast(
+                events.phase_change(self.session_id, "Demo", f"啟動服務並探測 {self._demo_url}")
+            )
+            result, _status = await runner.run_http_demo(self.cwd, cmd, self._demo_url)
+            await self.broadcast(
+                events.demo_result(
+                    self.session_id,
+                    result.command,
+                    result.exit_code,
+                    result.output,
+                    label="HTTP Demo",
+                )
+            )
+            return result
         await self.broadcast(events.phase_change(self.session_id, "Demo", "實際執行成果"))
         # 刻意保留 shell：同 _self_test，cmd 為 demo 指令（resolve_demo_command 動態解析），
         # 可能含 shell 語法，必須經 /bin/sh，無法 argv 化。
