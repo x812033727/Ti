@@ -11,17 +11,21 @@
 context 餵法為「議題＋上一輪全員發言＋自己的歷史發言」（各段有截斷上限），刻意不重播
 全史，避免 O(N²) token 膨脹。
 
-本模組只依賴 stdlib 與 :mod:`studio.flow`，**嚴禁 import orchestrator**（防循環依賴）；
+本模組只依賴 stdlib 與 :mod:`studio.flow`、:mod:`studio.config`（皆無反向依賴），
+**嚴禁 import orchestrator**（防循環依賴）；
 semaphore / broadcast / should_stop 一律由呼叫端建構時注入。
 
 實際介面簽名（驗收者以 inspect.signature 抽查，務必與程式碼一致）：
 
 - ``DiscussionEngine.__init__(self, participants: list[tuple[str, ExpertLike]],
-  mode: str = "round_robin", max_rounds: int = 2,
+  mode: str = "round_robin", max_rounds: int | None = None,
   semaphore: AbstractAsyncContextManager | None = None,
   broadcast: Broadcast | None = None,
   should_stop: Callable[[], bool] | None = None,
   stall_threshold: float = 0.9)``
+
+  ``max_rounds=None`` 時於建構當下取 :data:`studio.config.DISCUSS_MAX_ROUNDS`
+  （env ``TI_DISCUSS_MAX_ROUNDS``，未設則退回 ``DEBATE_ROUNDS``）。
 - ``async DiscussionEngine.run(self, topic: str) -> DiscussionResult``
 - ``parse_mentions(speaker: str, text: str, participants: Sequence[str])
   -> list[Mention]`` — 解析發言中的 ``回應 @角色名: 同意|反對`` 結構化引用。
@@ -53,7 +57,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from . import flow
+from . import config, flow
 
 Broadcast = Callable[[Any], Awaitable[None]]
 
@@ -142,6 +146,8 @@ async def _noop_broadcast(_event: Any) -> None:
 class DiscussionEngine:
     """N 角色討論循環。participants 為 (名稱, expert) 列表，順序即發言/寫回順序。
 
+    - max_rounds：最大輪數硬上限；None＝建構時取 config.DISCUSS_MAX_ROUNDS
+      （env TI_DISCUSS_MAX_ROUNDS，未設退回 DEBATE_ROUNDS）。
     - semaphore：注入的並發節流（如 orchestrator._llm_semaphore()）；None＝不節流。
     - broadcast：speak 轉手用的事件回呼；None＝no-op。
     - should_stop：每輪開頭檢查，True 即停（stop_reason="cancelled"）。
@@ -152,7 +158,7 @@ class DiscussionEngine:
         self,
         participants: list[tuple[str, ExpertLike]],
         mode: str = "round_robin",
-        max_rounds: int = 2,
+        max_rounds: int | None = None,
         semaphore: AbstractAsyncContextManager | None = None,
         broadcast: Broadcast | None = None,
         should_stop: Callable[[], bool] | None = None,
@@ -160,6 +166,9 @@ class DiscussionEngine:
     ):
         if mode not in _MODES:
             raise ValueError(f"mode 必須是 {_MODES} 之一，收到 {mode!r}")
+        if max_rounds is None:
+            # 建構當下讀即時全域值（config.reload() 後新建的 engine 即生效）。
+            max_rounds = config.DISCUSS_MAX_ROUNDS
         if max_rounds < 1:
             raise ValueError(f"max_rounds 必須 ≥ 1，收到 {max_rounds}")
         names = [name for name, _ in participants]
