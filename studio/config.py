@@ -61,6 +61,12 @@ NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
 # 近零成本（搭檢討 prompt 順帶解析，無額外 LLM 呼叫）——預設開啟；LESSONS_MAX 為注入上限。
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
+# 教訓庫蒸餾：庫超過門檻時於檢討後用一次 LLM 把相近教訓合併、淘汰過時項（取代純 FIFO 截斷的
+# 粗暴遺忘）。低頻（門檻＋最小間隔雙閘）；LLM 失敗/離線/壞輸出一律靜默跳過、保留原庫，行為退
+# 回現行 FIFO——絕不讓壞輸出清空長期記憶。env-only（與 LESSONS_MAX 同級的 power-user 旋鈕）。
+LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "False", "")
+LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
+LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))  # 最小間隔（秒）
 
 # 需求澄清階段：拆解前 PM 先就模糊需求向使用者反問關鍵問題（附預設假設），等回覆逾時則按
 # 假設續行——流程絕不因等人而卡死。僅互動 session 生效（須有插話佇列）；autopilot／持續改良
@@ -507,6 +513,7 @@ def reload() -> None:
     global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
     global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
     global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
+    global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -544,6 +551,9 @@ def reload() -> None:
     NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
     NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
     LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
+    LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "False", "")
+    LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
+    LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))
     REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
     SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))

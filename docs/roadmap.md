@@ -21,8 +21,9 @@
 
 ## 階段三：越做越進步迴圈
 
-1. **教訓庫語意去重與蒸餾**：`lessons.distill()`——定期用一次 LLM 把相近教訓合併、淘汰
-   過時項（取代全文相符去重＋FIFO 截斷）；教訓加 `scope`（global/project）與使用計數。
+1. ✅ **教訓庫語意去重與蒸餾（已落地）**：`lessons.distill()`——庫超門檻時於檢討後用一次
+   LLM 把相近教訓合併、淘汰過時項（雙閘低頻；LLM 失敗/離線/壞輸出一律保留原庫，退回 FIFO）；
+   教訓加 `scope`（global/project，`relevant`/`context` 按 scope 過濾）與 `use_count`（注入選中時 +1）。
 2. **記分卡回饋進流程**：`history._derive_scorecard` 按專案聚合（demo 通過率/退回率），
    注入 improver 的「找問題」與 `_compose_requirement` 前綴（擴充 `_recent_outcomes_context`），
    讓找問題對準弱項。

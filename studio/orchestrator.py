@@ -1604,6 +1604,8 @@ class StudioSession:
                 session_id=self.session_id,
                 requirement=self._requirement,
             )
+            # 庫超門檻時順手語意蒸餾一次（雙閘低頻、離線自動短路、壞輸出保留原庫）。
+            await lessons.distill(session_id=self.session_id, cwd=self.cwd)
         await self.broadcast(
             events.StudioEvent(events.EventType.RETROSPECTIVE, self.session_id, {"text": retro})
         )
