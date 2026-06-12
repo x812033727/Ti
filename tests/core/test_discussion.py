@@ -2,6 +2,8 @@
 
 任務 #1 範圍：兩種模式的發言順序與輪間同步、context 餵法、semaphore 節流、
 max_rounds／stalled／cancelled 停止條件、建構校驗、transcript/summary 結構。
+任務 #3 範圍：TI_DISCUSS_MAX_ROUNDS 設定接入（env 解析／reload／engine 預設取用）、
+stalled 提前停止標記、共識/分歧由 mentions 統計推導的小結。
 （任務 #5 將再擴充 @引用解析與 TI_DISCUSS_MODE 分流案例。）
 """
 
@@ -11,7 +13,8 @@ import asyncio
 
 import pytest
 
-from studio.discussion import DiscussionEngine, DiscussionResult, Utterance
+from studio import config
+from studio.discussion import DiscussionEngine, DiscussionResult, Mention, Utterance
 
 
 class StubExpert:
@@ -126,6 +129,77 @@ async def test_should_stop_cancelled():
     res = await eng.run("T")
     assert res.stop_reason == "cancelled"
     assert res.transcript == []
+
+
+# --- 任務 #3：收斂控制（TI_DISCUSS_MAX_ROUNDS）與討論小結 -------------------
+
+
+async def test_default_max_rounds_from_config(monkeypatch):
+    """未顯式給 max_rounds 時，engine 建構當下取 config.DISCUSS_MAX_ROUNDS，恰好 N 輪停。"""
+    monkeypatch.setattr(config, "DISCUSS_MAX_ROUNDS", 2)
+    stubs = [StubExpert(n) for n in ("甲", "乙", "丙")]
+    eng = DiscussionEngine([(s.name, s) for s in stubs], mode="round_robin")
+    res = await eng.run("T")
+    assert all(s.calls == 2 for s in stubs)
+    assert max(u.round for u in res.transcript) == 2
+    assert res.stop_reason == "max_rounds"
+
+
+def test_explicit_max_rounds_overrides_config(monkeypatch):
+    monkeypatch.setattr(config, "DISCUSS_MAX_ROUNDS", 7)
+    s = StubExpert("甲")
+    eng = DiscussionEngine([("甲", s)], max_rounds=3)
+    assert eng._max_rounds == 3
+
+
+def test_discuss_max_rounds_env_parsing(monkeypatch):
+    """TI_DISCUSS_MAX_ROUNDS 的 env 解析：合法值生效；未設/留空/非法/<1 退回 DEBATE_ROUNDS。"""
+    try:
+        monkeypatch.setenv("TI_DEBATE_ROUNDS", "3")
+        monkeypatch.setenv("TI_DISCUSS_MAX_ROUNDS", "5")
+        config.reload()
+        assert config.DISCUSS_MAX_ROUNDS == 5
+
+        for bad in ("", "  ", "abc", "0", "-2"):
+            monkeypatch.setenv("TI_DISCUSS_MAX_ROUNDS", bad)
+            config.reload()
+            assert config.DISCUSS_MAX_ROUNDS == config.DEBATE_ROUNDS == 3, bad
+
+        monkeypatch.delenv("TI_DISCUSS_MAX_ROUNDS")
+        config.reload()
+        assert config.DISCUSS_MAX_ROUNDS == 3
+    finally:
+        monkeypatch.undo()
+        config.reload()  # 還原全域，避免污染其他測試
+
+
+async def test_stalled_marks_reason_and_summary_structure():
+    """stalled 提前停止：stop_reason 標記正確，且小結三鍵齊備、final_positions 取末輪發言。"""
+    stubs = [StubExpert(n, texts=["重複立場，無新進展"]) for n in ("甲", "乙", "丙")]
+    eng = DiscussionEngine([(s.name, s) for s in stubs], mode="parallel", max_rounds=6)
+    res = await eng.run("T")
+    assert res.stop_reason == "stalled"
+    assert set(res.summary) == {"consensus", "disagreements", "final_positions"}
+    assert res.summary["final_positions"] == {n: "重複立場，無新進展" for n in ("甲", "乙", "丙")}
+
+
+def test_summary_consensus_and_disagreements_from_mentions():
+    """共識/分歧由 mentions 統計推導：同意進 consensus、反對進 disagreements、
+    同一對先同意後反對以分歧為準（agree - disagree）。"""
+    s = StubExpert("甲")
+    eng = DiscussionEngine([("甲", s)], max_rounds=1)
+    transcript = [
+        Utterance(1, "甲", "支持乙", [Mention("甲", "乙", "同意")]),
+        Utterance(1, "乙", "反對丙", [Mention("乙", "丙", "反對")]),
+        Utterance(1, "丙", "先同意", [Mention("丙", "甲", "同意")]),
+        Utterance(2, "丙", "改反對", [Mention("丙", "甲", "反對")]),
+    ]
+    summary = eng._build_summary(transcript)
+    assert summary["consensus"] == ["甲 同意 乙"]
+    assert set(summary["disagreements"]) == {"乙 反對 丙", "丙 反對 甲"}
+    assert summary["disagreements"] == sorted(summary["disagreements"])  # 穩定排序可重現
+    assert "丙 同意 甲" not in summary["consensus"]  # 立場翻轉以分歧為準
+    assert summary["final_positions"]["丙"] == "改反對"
 
 
 def test_constructor_validation():
