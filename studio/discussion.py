@@ -23,11 +23,20 @@ semaphore / broadcast / should_stop 一律由呼叫端建構時注入。
   should_stop: Callable[[], bool] | None = None,
   stall_threshold: float = 0.9)``
 - ``async DiscussionEngine.run(self, topic: str) -> DiscussionResult``
+- ``parse_mentions(speaker: str, text: str, participants: Sequence[str])
+  -> list[Mention]`` — 解析發言中的 ``回應 @角色名: 同意|反對`` 結構化引用。
+  防禦式：regex 以 participants 名單組白名單交替（名稱經 ``re.escape``），
+  target 不在名單、格式不符或自我引用的片段一律丟棄；整段無合法匹配回傳
+  空清單，絕不產生錯位結果。
+
+反諂媚機制：engine 的發言 prompt 模板內建硬指令——回應其他角色必須用
+``回應 @角色名: 同意|反對 ＋理由`` 結構化引用，且每輪至少指出一個可挑戰點，
+無異議時必須說明為何（不可單純附和）。
 
 資料結構：
 
-- ``Mention(speaker: str, target: str, stance: str)`` — 結構化 @引用（由任務 #2 的
-  parse_mentions 填入；本階段為空清單）。
+- ``Mention(speaker: str, target: str, stance: str)`` — 結構化 @引用（由
+  parse_mentions 解析發言全文後填入 Utterance.mentions）。
 - ``Utterance(round: int, speaker: str, text: str, mentions: list[Mention])``
 - ``DiscussionResult(transcript: list[Utterance], stop_reason: str, summary: dict)``
   其中 ``stop_reason ∈ {"max_rounds", "stalled", "cancelled"}``；summary 含
@@ -39,7 +48,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -96,6 +105,36 @@ class DiscussionResult:
     summary: dict
 
 
+def parse_mentions(speaker: str, text: str, participants: Sequence[str]) -> list[Mention]:
+    """解析發言全文中的 ``回應 @角色名: 同意|反對`` 結構化引用。
+
+    防禦式設計（格式不符整段視為無引用，絕不 silent 錯位）：
+
+    - regex 以 participants 名單組「白名單交替」（每個名稱經 ``re.escape``），
+      而非通用 ``@(\\S+)`` 後再過濾——target 不在名單的片段根本不會匹配。
+    - 名稱交替依長度遞減排序，避免短名稱是長名稱前綴時搶先匹配造成錯位
+      （如「甲」vs「甲乙」）。
+    - 立場僅接受「同意」「反對」二值；缺冒號、立場詞不符等格式錯誤的片段不匹配、
+      直接丟棄。
+    - 自我引用（target == speaker）視為格式誤用丟棄。
+    - 整段無任何合法匹配 → 回傳空清單。
+    """
+    if not text or not participants:
+        return []
+    names = sorted((n for n in participants if n), key=len, reverse=True)
+    if not names:
+        return []
+    alternation = "|".join(re.escape(n) for n in names)
+    pattern = re.compile(rf"回應\s*@({alternation})\s*[:：]\s*(同意|反對)")
+    mentions: list[Mention] = []
+    for m in pattern.finditer(text):
+        target, stance = m.group(1), m.group(2)
+        if target == speaker:
+            continue
+        mentions.append(Mention(speaker=speaker, target=target, stance=stance))
+    return mentions
+
+
 async def _noop_broadcast(_event: Any) -> None:
     return None
 
@@ -135,6 +174,7 @@ class DiscussionEngine:
             raise ValueError(f"角色名稱必須唯一：{names}")
 
         self._participants = list(participants)
+        self._names = names  # parse_mentions 的白名單（順序同 participants）
         self._mode = mode
         self._max_rounds = max_rounds
         self._semaphore = semaphore
@@ -176,10 +216,20 @@ class DiscussionEngine:
             ]
             parts.append("【你先前的發言】\n" + "\n\n".join(lines))
         parts.append(
-            "請針對議題發表本輪意見，精簡聚焦；若回應其他角色，請引用其 @名稱。"
-            if round_no == 1
-            else "請針對上一輪其他角色的發言與議題發表本輪意見，精簡聚焦；"
-            "回應某位角色時請引用其 @名稱。"
+            "請針對議題發表本輪意見，精簡聚焦。"
+            if round_no == 1 and not prev_round
+            else "請針對其他角色的發言與議題發表本輪意見，精簡聚焦。"
+        )
+        # 反諂媚硬指令＋結構化引用格式（任務 #2）：固定附在每輪 prompt 末尾。
+        parts.append(
+            "【發言格式硬性要求】\n"
+            "1. 回應其他角色時，必須使用結構化引用，每條獨立一行、格式嚴格如下：\n"
+            "   回應 @角色名: 同意 ＋理由\n"
+            "   回應 @角色名: 反對 ＋理由\n"
+            f"   角色名僅限：{others}；立場僅限「同意」或「反對」二選一，後面必須附具體理由。\n"
+            "2. 反諂媚：你必須至少指出一個可挑戰點（其他角色論點的弱點、風險、盲區，"
+            "或議題本身的疑慮）；若你對所有發言皆無異議，必須明確說明為何無異議，"
+            "不可單純附和或重複他人觀點。"
         )
         return "\n\n".join(parts)
 
@@ -219,7 +269,7 @@ class DiscussionEngine:
                 # 寫回固定依 participants 順序（gather 保序）：transcript 順序與
                 # round_history 串接順序皆確定，避免順序抖動讓 is_stalled 誤判相似度。
                 this_round = [
-                    Utterance(round_no, name, text)
+                    Utterance(round_no, name, text, parse_mentions(name, text, self._names))
                     for (name, _), text in zip(self._participants, texts, strict=True)
                 ]
             else:  # round_robin：同輪內依序發言，後者可見同輪前者（prev_round＋同輪累積）。
@@ -231,7 +281,9 @@ class DiscussionEngine:
                         name, topic, round_no, prev_round + this_round, own[name]
                     )
                     text = await self._speak(expert, prompt)
-                    this_round.append(Utterance(round_no, name, text))
+                    this_round.append(
+                        Utterance(round_no, name, text, parse_mentions(name, text, self._names))
+                    )
                 if len(this_round) < len(self._participants):
                     # 輪中被要求停止：已完成的發言保留進 transcript，標 cancelled。
                     transcript.extend(this_round)
@@ -259,8 +311,8 @@ class DiscussionEngine:
 
     # --- 小結（規則式、零 LLM 呼叫）---------------------------------------
     def _build_summary(self, transcript: list[Utterance]) -> dict:
-        """從 transcript 推導小結。共識/分歧由 mentions 統計推導（任務 #2 接上 parse_mentions
-        後生效；目前 mentions 為空 → 兩清單為空）；final_positions 取各角色末輪發言。"""
+        """從 transcript 推導小結（規則式、零 LLM 呼叫）。共識/分歧由各 Utterance 的
+        mentions（parse_mentions 解析結果）統計推導；final_positions 取各角色末輪發言。"""
         final_positions: dict[str, str] = {}
         for u in transcript:
             final_positions[u.speaker] = u.text
