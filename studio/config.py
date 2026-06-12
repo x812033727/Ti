@@ -112,6 +112,29 @@ def _discuss_mode() -> str:
 
 DISCUSS_MODE = _discuss_mode()
 
+
+def _agenda_rounds() -> int:
+    """逐子題討論的每子題輪數：TI_AGENDA_ROUNDS，未設/留空/非法（含 <1）一律 1。
+
+    成本上界＝MAX_AGENDA_ITEMS(5) × AGENDA_ROUNDS(1)；prompt 的「2–5 個子題」只是
+    建議不是防線，解析端另有硬截斷（flow.MAX_AGENDA_ITEMS）。"""
+    raw = (os.getenv("TI_AGENDA_ROUNDS") or "").strip()
+    if not raw:
+        return 1
+    try:
+        val = int(raw)
+    except ValueError:
+        logger.warning("環境變數 TI_AGENDA_ROUNDS=%r 非整數，改用 1", raw)
+        return 1
+    if val < 1:
+        logger.warning("環境變數 TI_AGENDA_ROUNDS=%s 須 ≥1，改用 1", val)
+        return 1
+    return val
+
+
+# 多子題議程討論時，每個子題的討論輪數（單子題沿用 DISCUSS_MAX_ROUNDS）。
+AGENDA_ROUNDS = _agenda_rounds()
+
 # --- 內部討論機制（卡關 huddle）--------------------------------------------
 # 開啟後：任務跑滿 TASK_MAX_ROUNDS 仍未通過時，召集團隊 huddle 找替代方案並給 1 輪重試，
 # 仍失敗則明確標記為「已知限制」而非靜默帶過。只在「跑滿輪數仍失敗」的低頻路徑加成本，
@@ -589,7 +612,7 @@ def reload() -> None:
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
-    global DISCUSS_MAX_ROUNDS, DISCUSS_MODE
+    global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
@@ -617,6 +640,7 @@ def reload() -> None:
     DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
     DISCUSS_MAX_ROUNDS = _discuss_max_rounds()  # 依賴 DEBATE_ROUNDS，須在其後重算
     DISCUSS_MODE = _discuss_mode()
+    AGENDA_ROUNDS = _agenda_rounds()
     MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
     ROLE_MODELS = _role_models()
