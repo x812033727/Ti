@@ -853,6 +853,21 @@ class StudioSession:
             list(experts.keys()),
             fallback="engineer",
         )
+        # 拆解結果快照（議程、任務、分派表＋修正紀錄）經 broadcast→record_event 入
+        # history，供事後重看；前端對 agenda_plan 有對應 case（重播可見）。
+        await self.broadcast(
+            events.agenda_plan(
+                self.session_id,
+                self._agenda,
+                self._tasks,
+                [
+                    {"index": i, "title": a["title"], "assignee": a["assignee"]}
+                    for i, a in enumerate(self._agenda, start=1)
+                ],
+                corrections=self._agenda_corrections,
+                edges=self._edges,
+            )
+        )
         await self._board()
         await self._commit(self._main_ctx, "PM 規劃：建立任務清單與驗收標準")
 

@@ -23,6 +23,7 @@ class EventType(str, Enum):
     CI_RESULT = "ci_result"  # 發佈後 CI/CD 驗證與自動合併的進度
     HUMAN_MESSAGE = "human_message"  # 人類中途插話
     CLARIFY_REQUEST = "clarify_request"  # 需求澄清：PM 向使用者反問關鍵問題（附預設假設）
+    AGENDA_PLAN = "agenda_plan"  # 拆解結果快照（議程子題、任務、分派表），入 history 供重看
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
@@ -133,6 +134,35 @@ def clarify_request(session_id: str, questions: list[dict], timeout_s: float) ->
         EventType.CLARIFY_REQUEST,
         session_id,
         {"questions": questions, "timeout_s": timeout_s},
+    )
+
+
+def agenda_plan(
+    session_id: str,
+    agenda: list[dict],
+    tasks: list[dict],
+    assignments: list[dict],
+    *,
+    corrections: list[dict] | None = None,
+    edges: list | None = None,
+) -> StudioEvent:
+    """拆解結果快照：議程（含每子題 title/description/criteria/assignee）、任務清單、
+    分派表（assignments: [{index, title, assignee}]，index 1-based）。
+
+    經既有 broadcast→record_event 管道入 history jsonl，供事後重看。
+    corrections 為 validate_assignees 的修正紀錄（[{index, given, assigned}]，index
+    0-based 對齊 agenda 序）；edges 為任務依賴邊 [(after, before)]，序列化為 list。
+    """
+    return StudioEvent(
+        EventType.AGENDA_PLAN,
+        session_id,
+        {
+            "agenda": agenda,
+            "tasks": tasks,
+            "assignments": assignments,
+            "corrections": corrections or [],
+            "edges": [list(e) for e in (edges or [])],
+        },
     )
 
 

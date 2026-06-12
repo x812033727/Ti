@@ -63,6 +63,11 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 事件型別是前後端的契約，定義集中在 `events.py`，前端在 `web/app.js` 的
 `handleEvent()` 對應處理。
 
+拆解階段另送一筆 `agenda_plan` 快照（payload：`agenda` 子題列表
+〔title/description/criteria/assignee，assignee 已過硬驗證〕、`tasks` 任務清單、
+`edges` 依賴邊、`assignments` 分派表〔index 1-based〕、`corrections` 分派修正紀錄
+〔index 0-based〕），隨事件流入 `history/<id>.jsonl`，供事後重看與重播。
+
 ## 需求澄清（選配，`TI_CLARIFY`）
 
 開啟後，拆解前 PM 先檢視需求：模糊就向使用者反問最多 `TI_CLARIFY_MAX_QUESTIONS` 個
