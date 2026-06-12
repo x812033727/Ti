@@ -302,6 +302,12 @@ FIELDS: tuple[Field, ...] = (
         group="進階",
     ),
     Field(
+        "TI_ROLES_DIR",
+        "自訂角色檔目錄（roles/*.md，內建為預設、同 key 覆蓋；空＝專案根 roles/）",
+        placeholder="roles",
+        group="進階",
+    ),
+    Field(
         "TI_RESEARCH_TOOLS",
         "實作中即時研究（工程師／高工附加 WebSearch/WebFetch，預設關）",
         kind="select",
