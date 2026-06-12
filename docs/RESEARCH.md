@@ -47,3 +47,29 @@ Sources: [AG2 GroupChat](https://docs.ag2.ai/latest/docs/user-guide/advanced-con
 
 Sources: [CrewAI Agents](https://docs.crewai.com/en/concepts/agents) · [CrewAI YAML 教學](https://codesignal.com/learn/courses/getting-started-with-crewai-agents-and-tasks/lessons/configuring-crewai-agents-and-tasks-with-yaml-files) · [Claude Code sub-agents](https://code.claude.com/docs/en/sub-agents) · [Persona Prompting](https://www.emergentmind.com/topics/persona-prompting-pp) · [Role prompting 優化](https://arxiv.org/html/2509.00482v1) · [PRISM](https://arxiv.org/html/2603.18507) · [DyLAN](https://arxiv.org/abs/2310.02170) · [團隊協同](https://arxiv.org/pdf/2510.26352) · [AG2 GroupChat](https://docs.ag2.ai/latest/docs/user-guide/advanced-concepts/groupchat/groupchat/)
 
+## 2026-06-13 05:53
+
+我先看程式碼現況並載入搜尋工具，鎖定本輪缺口：「需求→議程/任務拆解＋分派」的做法與既有方案。
+調研完成。本輪缺口（議程拆解模式、選角分派、粒度與失敗坑）已補齊，整理如下：
+
+**現況脈絡**（Explore 代理回報）：orchestrator.py 已有「PM 一層拆解→`任務:` 行解析（flow.py `parse_tasks_with_deps` 含 `#id`/`依賴:` 拓撲分波）」；但 DiscussionEngine 只吃單一 topic 字串、**無議程/子題概念**；分派是「波次→lane 鏡射全部角色」、**無選角邏輯**；Group 已有 `{name, role_keys, mode}` 但沒有任何流程觸發它；Role 已有 `description` 欄位（內建 8 角色目前空白）。
+
+**重點**
+
+- 重點: 業界共識是「Planner 先產結構化計畫、executor 各自執行」優於「orchestrator 逐步即興指揮」——planner 模式併發處理更好、agent 閒置更少；且好的 planner 不只列步驟，還要寫明假設、限制與**成功準則**（[Orchestration of Multi-Agent Systems](https://arxiv.org/html/2601.13671v1)、[Self-Resource Allocation](https://arxiv.org/pdf/2504.02051)、[Task Decomposition Strategies](https://apxml.com/courses/agentic-llm-memory-architectures/chapter-4-complex-planning-tool-integration/task-decomposition-strategies)）
+- 重點: 重大警示——CrewAI 的 hierarchical（manager 動態分派）模式**實測常失靈**：manager 無法有效協調、退化成順序執行、分派給錯的 agent、延遲爆高，官方 issue 與第三方評測都證實（[CrewAI Issue #4783](https://github.com/crewAIInc/crewAI/issues/4783)、[TDS 分析](https://towardsdatascience.com/why-crewais-manager-worker-architecture-fails-and-how-to-fix-it/)、[CrewAI Processes](https://docs.crewai.com/en/concepts/processes)）。教訓：分派不要全交給 LLM 即興決定，要「LLM 提議＋程式碼硬驗證」
+- 重點: 粒度是最大的坑：計畫太粗 executor 沒方向、太細則綁死執行者＋浪費 token；經驗法則「每個子任務 1–3 個動作可完成」；**過度拆解探索型議題**會讓每步後都得重規劃，比 reactive 還貴——重規劃比執行還頻繁就是訊號（[LangChain Plan-and-Execute](https://www.langchain.com/blog/planning-agents)、[GenAI Patterns](https://www.genaipatterns.dev/patterns/agents/plan-and-execute)）
+- 重點: 議程生成已有可循模式：LLM 從需求抽「階層式主題→子題」，每個子題含**標題＋一句議程描述＋要點 bullet**；FOMC 模擬（MiniFed）與會議合成研究都採「先產 agenda scenes、再逐 scene 跑多角色討論」的兩段式（[FAME](https://arxiv.org/pdf/2502.13001)、[MiniFed](https://arxiv.org/pdf/2410.18012)、[合成討論系統](https://arxiv.org/html/2503.16505)）
+- 重點: 選角依據是角色的 `description`（一句話給調度器看的）而非 system prompt——既有調研（AG2）已確認；本專案 Role 已有此欄位但**內建 8 角色全空**，是本輪的前置缺口
+
+**建議**
+
+- 建議: 架構走「兩段式」對齊研究與既有程式：① 拆解階段——一次 LLM 呼叫把需求拆成「議程（2–5 個子題，各含標題＋描述＋成功準則）＋任務（沿用既有 `任務:`/`#id`/`依賴:` 行格式與 `parse_tasks_with_deps`）」；② 討論階段——逐子題餵 DiscussionEngine（topic=子題），不必改引擎內部，只改呼叫端
+- 建議: 分派採「LLM 提議＋硬驗證」：拆解輸出每行加 `負責: <role_key>`，程式碼驗證 key 必須存在於選定 Group 的 role_keys，非法/缺漏就 fallback 到預設角色（如 engineer）——絕不讓 CrewAI 式「manager 全權即興分派」的失靈模式進來
+- 建議: 解析沿用既有「行前綴 regex」慣例（flow.py 已有 parse_tasks 系列），不要為這輪引入 JSON schema 結構化輸出——與 codebase 一致、且既有 fallback（條列退回）已驗證可用；只需新增 `子題:`/`負責:` 兩個前綴的 parser 純函式＋單元測試
+- 建議: 粒度守則寫進拆解 prompt 的 micro-rules：子題 2–5 個、任務每項一句可驗收、探索型議題允許輸出「單一子題」不硬拆；拆解結果先存（如 session/history），支援後續重看——不做自動 replanning（P1 主持人機制再考慮）
+- 建議: 順手補內建 8 角色的 `description`（一句話職能描述），這是選角分派的資料前提，改 roles.py 一處即可
+- 建議: 測試照慣例：StubExpert 餵預設拆解文本，測「議程解析」「負責 key 非法被 fallback」「探索型單子題不硬拆」三類純函式＋流程測試
+
+Sources: [Orchestration of MAS](https://arxiv.org/html/2601.13671v1) · [Self-Resource Allocation](https://arxiv.org/pdf/2504.02051) · [Task Decomposition Strategies](https://apxml.com/courses/agentic-llm-memory-architectures/chapter-4-complex-planning-tool-integration/task-decomposition-strategies) · [CrewAI Issue #4783](https://github.com/crewAIInc/crewAI/issues/4783) · [TDS: CrewAI manager 失靈分析](https://towardsdatascience.com/why-crewais-manager-worker-architecture-fails-and-how-to-fix-it/) · [CrewAI Processes](https://docs.crewai.com/en/concepts/processes) · [LangChain Plan-and-Execute](https://www.langchain.com/blog/planning-agents) · [GenAI Patterns: Plan and Execute](https://www.genaipatterns.dev/patterns/agents/plan-and-execute) · [FAME](https://arxiv.org/pdf/2502.13001) · [MiniFed](https://arxiv.org/pdf/2410.18012) · [合成討論系統設計](https://arxiv.org/html/2503.16505)
+
