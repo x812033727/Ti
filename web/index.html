@@ -7,28 +7,25 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">🛠️ <span>Ti Studio</span> <small>AI 專家討論工作室</small>
+  <header class="app-header glass">
+    <div class="brand">
+      <svg class="logo" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg-brand" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#6e79ff"/>
+            <stop offset=".55" stop-color="#a78bfa"/>
+            <stop offset="1" stop-color="#c084fc"/>
+          </linearGradient>
+        </defs>
+        <rect x="1" y="1" width="24" height="24" rx="7" fill="url(#lg-brand)"/>
+        <path d="M7.5 9.2h11M13 9.2v8.4" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      <span>Ti Studio</span> <small>AI 專家討論工作室</small>
       <span id="offlineBadge" class="badge-offline hidden">離線示範</span>
-    </div>
-    <div class="launch">
-      <select id="projectSelect" class="project-select"
-              title="長期專案：程式碼與改良任務跨場次累積；選「一次性討論」則每次從零開始">
-        <option value="">（一次性討論）</option>
-      </select>
-      <input id="repoUrl" type="text" class="repo-input"
-             placeholder="（選填）GitHub repo 網址，會 clone 進來一起討論" />
-      <input id="requirement" type="text"
-             placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
-      <label class="improve-toggle" title="選定專案後勾選：團隊自動消化改良任務、找問題、一直改良，直到你按停止">
-        <input id="improveChk" type="checkbox" /> ♻️ 持續改良
-      </label>
-      <button id="startBtn">開始討論</button>
-      <button id="stopBtn" class="ghost" disabled>停止</button>
     </div>
     <nav class="toolbar">
       <button id="settingsBtn" class="ghost" title="設定">⚙️ 設定</button>
-      <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在左側選擇專案）">📦 專案</button>
+      <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在啟動列選擇專案）">📦 專案</button>
       <button id="historyBtn" class="ghost" title="歷史 session">📜 歷史</button>
       <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
       <button id="metricsBtn" class="ghost" title="運維指標">📊 指標</button>
@@ -39,7 +36,7 @@
 
   <!-- 設定（API key / provider / 模型 / GitHub token） -->
   <div id="settingsPanel" class="settings-panel hidden">
-    <div class="settings-card">
+    <div class="settings-card glass">
       <div class="settings-head">
         <h2>設定</h2>
         <button id="settingsClose" class="ghost">✕</button>
@@ -86,10 +83,10 @@
   </div>
 
   <!-- 歷史存檔 / 重播 -->
-  <div id="historyPanel" class="history-panel hidden">
-    <div class="history-head">
-      <h2>歷史 session</h2>
-      <div class="history-actions">
+  <div id="historyPanel" class="drawer glass hidden">
+    <div class="drawer-head">
+      <h2>📜 歷史 session</h2>
+      <div class="drawer-actions">
         <button id="historyCleanup" class="ghost danger" title="刪除所有已完成的 session（含產出檔案）">🗑️ 清除已完成</button>
         <button id="historyClose" class="ghost">✕</button>
       </div>
@@ -98,8 +95,8 @@
   </div>
 
   <!-- Autopilot 自主自我改善迴圈 -->
-  <div id="autopilotPanel" class="history-panel hidden">
-    <div class="history-head">
+  <div id="autopilotPanel" class="drawer glass hidden">
+    <div class="drawer-head">
       <h2>🤖 Autopilot</h2>
       <button id="autopilotClose" class="ghost">✕</button>
     </div>
@@ -115,10 +112,10 @@
   </div>
 
   <!-- 專案藍圖與改良待辦 -->
-  <div id="projectPanel" class="history-panel hidden">
-    <div class="history-head">
+  <div id="projectPanel" class="drawer glass hidden">
+    <div class="drawer-head">
       <h2>📦 專案</h2>
-      <div class="history-actions">
+      <div class="drawer-actions">
         <button id="projectRefresh" class="ghost" title="重新整理">🔄</button>
         <button id="projectClose" class="ghost">✕</button>
       </div>
@@ -127,10 +124,10 @@
   </div>
 
   <!-- 運維指標 -->
-  <div id="metricsPanel" class="history-panel hidden">
-    <div class="history-head">
+  <div id="metricsPanel" class="drawer glass hidden">
+    <div class="drawer-head">
       <h2>📊 運維指標</h2>
-      <div class="history-actions">
+      <div class="drawer-actions">
         <button id="metricsRefresh" class="ghost" title="重新整理">🔄</button>
         <button id="metricsClose" class="ghost">✕</button>
       </div>
@@ -139,14 +136,34 @@
   </div>
 
   <main class="layout">
-    <!-- 左：專家名單 -->
+    <!-- 左：專家名單（可收合） -->
     <aside class="experts" id="experts">
-      <h2>工作室成員</h2>
+      <div class="panel-head">
+        <h2>工作室成員</h2>
+        <button id="expertsToggle" class="rail-toggle" title="收合／展開成員欄" aria-label="收合／展開成員欄">⟨</button>
+      </div>
       <div id="expertList"></div>
     </aside>
 
-    <!-- 中：討論串 -->
+    <!-- 中：啟動列 + 討論串 -->
     <section class="discussion">
+      <div class="command-deck glass">
+        <input id="requirement" type="text" class="req-input"
+               placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
+        <div class="deck-row">
+          <select id="projectSelect" class="project-select"
+                  title="長期專案：程式碼與改良任務跨場次累積；選「一次性討論」則每次從零開始">
+            <option value="">（一次性討論）</option>
+          </select>
+          <input id="repoUrl" type="text" class="repo-input"
+                 placeholder="（選填）GitHub repo 網址，會 clone 進來一起討論" />
+          <label class="improve-toggle" title="選定專案後勾選：團隊自動消化改良任務、找問題、一直改良，直到你按停止">
+            <input id="improveChk" type="checkbox" /> ♻️ 持續改良
+          </label>
+          <button id="startBtn">開始討論</button>
+          <button id="stopBtn" class="ghost" disabled>停止</button>
+        </div>
+      </div>
       <h2>即時討論</h2>
       <div id="stream" class="stream">
         <div class="placeholder">輸入需求並按「開始討論」，專家們就會開工。</div>
@@ -158,10 +175,16 @@
       </div>
     </section>
 
-    <!-- 右：看板 + 檔案 -->
+    <!-- 右：看板 / 檔案（桌面用分頁切換） -->
     <aside class="side">
+      <div class="side-head">
+        <div class="rail-tabs">
+          <button class="active" data-rt="board">📋 看板</button>
+          <button data-rt="files">📁 檔案</button>
+        </div>
+        <button id="downloadBtn" class="download-btn hidden" title="把目前 session 的產出打包下載">⬇️ 下載成果</button>
+      </div>
       <div class="board">
-        <h2>看板</h2>
         <div class="columns">
           <div class="col" data-col="todo"><h3>待辦</h3><div class="cards"></div></div>
           <div class="col" data-col="doing"><h3>進行中</h3><div class="cards"></div></div>
@@ -170,7 +193,6 @@
         </div>
       </div>
       <div class="files">
-        <h2>產出檔案 <button id="downloadBtn" class="download-btn hidden" title="把目前 session 的產出打包下載">⬇️ 下載成果</button></h2>
         <div class="filewrap">
           <ul id="fileList" class="filelist"></ul>
           <pre id="fileView" class="fileview">（點選左側檔案檢視內容）</pre>
@@ -180,7 +202,7 @@
   </main>
 
   <!-- 手機底部分頁導覽（桌機隱藏） -->
-  <nav class="mobiletabs">
+  <nav class="mobiletabs glass">
     <button data-mv="discussion">💬<span>討論</span></button>
     <button data-mv="experts">👥<span>成員</span></button>
     <button data-mv="board">📋<span>看板</span></button>
