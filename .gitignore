@@ -6,6 +6,9 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+# pytest-cov 覆蓋率資料檔（CI 以 --cov 產生），屬執行期 artifact，不進版控。
+.coverage
+.coverage.*
 .venv/
 venv/
 # QA / 驗證流程產生的暫存 venv 與 pre-commit 快取（本機 artifact，不進版控）
@@ -38,6 +41,10 @@ projects/
 lessons.json
 lessons.lock
 lessons.json.tmp
+
+# ADR 的 flock 鎖檔（adr._locked 需要時自動重建），屬執行期狀態，不進版控；
+# DECISIONS.md 與 adr.json 為刻意落盤的決策記錄，照常進版控。
+adr.lock
 
 # 沙箱 ro-bind 測試的 host 探針檔（test_qa_ro_bind_reject_qa.py，正常即時清理；防誤 commit）
 .ti_ro_bind_probe_*.txt
