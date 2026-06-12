@@ -119,7 +119,9 @@ def test_builtin_roundtrip_get_then_override(client):
     for key in ("engineer", "architect"):  # 出力標記最少的兩個內建
         res = client.post(
             "/api/roles",
-            json=_payload(key, name=listed[key]["name"], system_prompt=listed[key]["system_prompt"]),
+            json=_payload(
+                key, name=listed[key]["name"], system_prompt=listed[key]["system_prompt"]
+            ),
         )
         assert res.status_code == 200, res.json()
         assert res.json()["role"]["source"] == "override"
@@ -175,8 +177,9 @@ def test_delete_override_restores_builtin(client):
     res = client.delete("/api/roles/engineer")
     assert res.status_code == 200
     assert res.json()["restored_builtin"] is True
-    assert roles.BY_KEY["engineer"] is roles.BUILTIN_CORE[1]
-    assert roles.ENGINEER is roles.BUILTIN_CORE[1]
+    builtin_engineer = next(r for r in roles.BUILTIN_CORE if r.key == "engineer")
+    assert roles.BY_KEY["engineer"] is builtin_engineer
+    assert roles.ENGINEER is builtin_engineer
 
 
 def test_delete_pure_builtin_409(client):
