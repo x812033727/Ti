@@ -15,8 +15,10 @@ import logging
 import pytest
 
 from studio import config, role_store, roles
-from studio.roles import BY_KEY as BOUND_BY_KEY  # 模擬 orchestrator 的模組級綁定
-from studio.roles import ROSTER as BOUND_ROSTER
+from studio.roles import (
+    BY_KEY as BOUND_BY_KEY,  # 模擬 orchestrator 的模組級綁定
+    ROSTER as BOUND_ROSTER,
+)
 
 BODY = "職責：QA 驗證。\n最後一行輸出：`驗證: PASS` 或 `驗證: FAIL`。"
 
