@@ -69,7 +69,12 @@ async def test_round_robin_order_context_and_transcript():
     # 嚴格依序發言
     assert order == ["甲", "乙", "丙", "甲", "乙", "丙"]
     assert [(u.round, u.speaker) for u in res.transcript] == [
-        (1, "甲"), (1, "乙"), (1, "丙"), (2, "甲"), (2, "乙"), (2, "丙"),
+        (1, "甲"),
+        (1, "乙"),
+        (1, "丙"),
+        (2, "甲"),
+        (2, "乙"),
+        (2, "丙"),
     ]
     assert all(isinstance(u, Utterance) and u.text for u in res.transcript)
     assert res.stop_reason == "max_rounds"
@@ -109,8 +114,14 @@ async def test_parallel_snapshot_barrier_and_throttle():
         assert "第 2 輪意見" not in p2
     # 寫回固定依 participants 順序
     assert [(u.round, u.speaker) for u in res.transcript] == [
-        (1, "甲"), (1, "乙"), (1, "丙"), (1, "丁"),
-        (2, "甲"), (2, "乙"), (2, "丙"), (2, "丁"),
+        (1, "甲"),
+        (1, "乙"),
+        (1, "丙"),
+        (1, "丁"),
+        (2, "甲"),
+        (2, "乙"),
+        (2, "丙"),
+        (2, "丁"),
     ]
     assert res.stop_reason == "max_rounds"
 

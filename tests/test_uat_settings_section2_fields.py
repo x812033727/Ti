@@ -4,7 +4,7 @@
 - 每欄至少涵蓋 正常值／空值／邊界值／非法值（高風險欄全展開）。
 - select 欄須有「非法選項」案例。
 - 須含「超長輸入不撐破版面」案例。
-- 案例對齊實際欄位（25 個 select：4 基本＋2 Claude 模型＋8 角色模型＋11 進階組、2 combo、5 文字、3 秘密）。
+- 案例對齊實際欄位（26 個 select：4 基本＋2 Claude 模型＋8 角色模型＋12 進階組、2 combo、5 文字、3 秘密）。
 - 文件宣稱的「後端擋下非法 select」「秘密留空不變更」須為**真實行為**——
   以實際呼叫 settings.update() 佐證。
 """
@@ -135,6 +135,7 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_BLUEPRINT": ["TI_BLUEPRINT", "產品藍圖"],
         "TI_ADR": ["TI_ADR", "架構決策記錄"],
         "TI_RESEARCH_TOOLS": ["TI_RESEARCH_TOOLS", "即時研究"],
+        "TI_DISCUSS_MODE": ["TI_DISCUSS_MODE", "討論模式"],
     }
     assert {f.env for f in selects} == set(checks), "select 欄與預期不符，請更新測試"
     # 非法案例段落：含『非法』字樣的列

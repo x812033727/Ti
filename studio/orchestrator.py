@@ -527,14 +527,11 @@ class StudioSession:
             broadcast=self.broadcast,
             should_stop=lambda: self._stop,
         )
-        result = await engine.run(
-            adr.context(self.cwd) + f"{topic}\n請對齊整體做法與檔案結構。"
-        )
+        result = await engine.run(adr.context(self.cwd) + f"{topic}\n請對齊整體做法與檔案結構。")
         if not (config.ADR_ENABLED and self.cwd and not self._stop and result.transcript):
             return
         positions = "\n\n".join(
-            f"【{name} 最終立場】{text}"
-            for name, text in result.summary["final_positions"].items()
+            f"【{name} 最終立場】{text}" for name, text in result.summary["final_positions"].items()
         )
         last_round = result.transcript[-1].round
         last_texts = "\n\n".join(

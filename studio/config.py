@@ -81,10 +81,14 @@ def _discuss_max_rounds() -> int:
     try:
         val = int(raw)
     except ValueError:
-        logger.warning("環境變數 TI_DISCUSS_MAX_ROUNDS=%r 非整數，改用 DEBATE_ROUNDS=%s", raw, DEBATE_ROUNDS)
+        logger.warning(
+            "環境變數 TI_DISCUSS_MAX_ROUNDS=%r 非整數，改用 DEBATE_ROUNDS=%s", raw, DEBATE_ROUNDS
+        )
         return DEBATE_ROUNDS
     if val < 1:
-        logger.warning("環境變數 TI_DISCUSS_MAX_ROUNDS=%s 須 ≥1，改用 DEBATE_ROUNDS=%s", val, DEBATE_ROUNDS)
+        logger.warning(
+            "環境變數 TI_DISCUSS_MAX_ROUNDS=%s 須 ≥1，改用 DEBATE_ROUNDS=%s", val, DEBATE_ROUNDS
+        )
         return DEBATE_ROUNDS
     return val
 
