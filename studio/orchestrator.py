@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import config, events, lessons, memory, publisher, reflexion, runner, workspace
+from . import adr, config, events, lessons, memory, publisher, reflexion, runner, workspace
 from .roles import ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
@@ -575,15 +575,21 @@ class StudioSession:
 
     # --- 辯論 ----------------------------------------------------------
     async def _debate(self, a: ExpertLike, b: ExpertLike, topic: str, rounds: int) -> None:
-        """a 提案、b 點評、a 回應，來回 rounds 輪。rounds<=0 則跳過。"""
+        """a 提案、b 點評、a 回應，來回 rounds 輪。rounds<=0 則跳過。
+
+        ADR 開啟時，辯論結束後由 b（高級工程師）把共識蒸餾成決策行並落盤——
+        讓純辯論路徑（無架構師）的結論也能跨場次留痕。
+        """
         if rounds <= 0 or self._stop:
             return
         await self.broadcast(
             events.phase_change(self.session_id, "架構討論", "工程師與高級工程師對齊做法")
         )
         proposal = await a.speak(
-            f"{topic}\n請先簡短提出你打算採取的整體做法與檔案結構。", self.broadcast
+            adr.context(self.cwd) + f"{topic}\n請先簡短提出你打算採取的整體做法與檔案結構。",
+            self.broadcast,
         )
+        critique = ""
         for i in range(rounds):
             if self._stop:
                 return
@@ -596,6 +602,16 @@ class StudioSession:
             proposal = await a.speak(
                 f"針對以下意見回應並調整你的做法，簡短：\n\n{critique}", self.broadcast
             )
+        if config.ADR_ENABLED and self.cwd and not self._stop:
+            distilled = await b.speak(
+                "把剛才架構討論的共識蒸餾成決策記錄：每條獨立、逐行輸出 `決策: <結論>`，"
+                "重要取捨可緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行。"
+                "只輸出格式行。\n\n"
+                f"【提案】{proposal}\n\n【點評】{critique}",
+                self.broadcast,
+            )
+            if adr.record(self.cwd, adr.parse_adr(distilled), session_id=self.session_id):
+                await self._commit(self._main_ctx, "架構決策：記錄 ADR")
 
     async def _architecture_decision(
         self,
@@ -609,7 +625,10 @@ class StudioSession:
         await self.broadcast(events.phase_change(self.session_id, "架構決策", "架構師主導設計決策"))
         rnote = f"研究員調研供參考：\n{research_notes}\n\n" if research_notes else ""
         proposal = await architect.speak(
-            rnote + topic + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
+            adr.context(self.cwd)
+            + rnote
+            + topic
+            + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
             self.broadcast,
         )
         # 工程師與高級工程師對同一份提案各自給意見，互相獨立 → 並行以省時。
@@ -621,11 +640,19 @@ class StudioSession:
                 f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}", self.broadcast
             ),
         )
+        adr_note = (
+            "重要取捨可在決策行後緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行（會記入決策檔）。"
+            if config.ADR_ENABLED
+            else ""
+        )
         decision = await architect.speak(
-            "綜合以下意見定案，逐行輸出 `設計決策: <決策>`：\n\n"
+            f"綜合以下意見定案，逐行輸出 `設計決策: <決策>`。{adr_note}\n\n"
             f"【工程師】{eng_view}\n\n【高級工程師】{senior_view}",
             self.broadcast,
         )
+        if config.ADR_ENABLED and self.cwd:
+            if adr.record(self.cwd, adr.parse_adr(decision), session_id=self.session_id):
+                await self._commit(self._main_ctx, "架構決策：記錄 ADR")
         return decision
 
     # --- 主流程 --------------------------------------------------------
@@ -732,6 +759,7 @@ class StudioSession:
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + lessons.context()  # 跨場次教訓庫（停用/空白時為空字串）
+            + adr.context(self.cwd)  # 既有架構決策（停用/無 cwd/空白時為空字串）
             + repo_note
             + clarify_note
             + research_note
