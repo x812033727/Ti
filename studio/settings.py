@@ -251,6 +251,20 @@ FIELDS: tuple[Field, ...] = (
         default="0",
         group="進階",
     ),
+    Field(
+        "TI_RESEARCH_TOOLS",
+        "實作中即時研究（工程師／高工附加 WebSearch/WebFetch，預設關）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_RESEARCH_ALLOWED_DOMAINS",
+        "研究網域白名單（csv，空＝不限網域但永擋私網）",
+        placeholder="docs.python.org,developer.mozilla.org",
+        group="進階",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}

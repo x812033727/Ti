@@ -89,6 +89,19 @@ BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
 ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
 ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))  # 注入時取最新 N 筆決策
 
+# 實作中即時研究（roadmap 階段二，opt-in 預設關）：開啟後工程師／高級工程師的工具清單
+# 附加 WebSearch/WebFetch，動工中可上網查官方 API、套件用法與最佳實踐。Claude 路徑由
+# SDK 原生支援；OpenAI function-calling 路徑由 tools.py 的 web_fetch 工具承接。
+RESEARCH_TOOLS_ENABLED = os.getenv("TI_RESEARCH_TOOLS", "0") not in ("0", "false", "False", "")
+# 研究網域白名單（csv，比對 hostname 尾綴）。空＝不限網域，但私網/loopback/link-local 等
+# 位址永遠擋（SSRF 防護不受白名單影響）。涵蓋 OpenAI 工具層（web_fetch）與 Claude 路徑
+# （WebFetch 經 can_use_tool 攔截）；Claude 的 WebSearch 流量不經本機、無法施加白名單（見 README）。
+RESEARCH_ALLOWED_DOMAINS = [
+    d.strip().lower() for d in os.getenv("TI_RESEARCH_ALLOWED_DOMAINS", "").split(",") if d.strip()
+]
+RESEARCH_FETCH_TIMEOUT = float(os.getenv("TI_RESEARCH_FETCH_TIMEOUT", "20"))  # 單次抓取逾時（秒）
+RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))  # 回應截斷上限
+
 # --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
 # A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
 #   重試時 prepend 回工程師 context（既有「上一輪原文回饋」照舊，本機制只補更早輪次的累積）。
@@ -492,6 +505,8 @@ def reload() -> None:
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
     global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
+    global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
+    global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -547,3 +562,11 @@ def reload() -> None:
     BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
     ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
     ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))
+    RESEARCH_TOOLS_ENABLED = os.getenv("TI_RESEARCH_TOOLS", "0") not in ("0", "false", "False", "")
+    RESEARCH_ALLOWED_DOMAINS = [
+        d.strip().lower()
+        for d in os.getenv("TI_RESEARCH_ALLOWED_DOMAINS", "").split(",")
+        if d.strip()
+    ]
+    RESEARCH_FETCH_TIMEOUT = float(os.getenv("TI_RESEARCH_FETCH_TIMEOUT", "20"))
+    RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))

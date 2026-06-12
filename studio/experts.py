@@ -11,14 +11,18 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import config, events
-from .roles import Role
+from . import config, events, tools
+from .roles import Role, effective_tools
 
 if TYPE_CHECKING:
     # 僅供型別檢查與註記用；執行期改在各函式內 local import，讓不需要 SDK 的
     # 輕量用途（如 _model_for、import studio.experts）在未安裝 claude-agent-sdk
     # 的環境（CI test job）也能載入。
-    from claude_agent_sdk import PermissionResultAllow, ToolPermissionContext
+    from claude_agent_sdk import (
+        PermissionResultAllow,
+        PermissionResultDeny,
+        ToolPermissionContext,
+    )
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
@@ -27,16 +31,24 @@ Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
 async def _auto_allow_tool(
     tool_name: str, tool_input: dict, context: ToolPermissionContext
-) -> PermissionResultAllow:
+) -> PermissionResultAllow | PermissionResultDeny:
     """自動核可專家請求的工具。
 
     工作室是無人值守後端，沒有真人能回答 SDK 的權限詢問；改用此回呼放行，取代
     bypassPermissions（後者會傳 --dangerously-skip-permissions，在 root 服務下被
     Claude CLI 拒絕）。每位專家可用的工具已由 role.allowed_tools 白名單限制，且各自
     跑在獨立 workspace（cwd）內。
-    """
-    from claude_agent_sdk import PermissionResultAllow
 
+    例外：WebFetch（實作中即時研究）的目標 URL 須過 tools.research_url_check 的
+    SSRF／網域白名單管控——CLI 沙箱的 allowedDomains 只管 bash 網路、攔不到 WebFetch，
+    故在此攔。WebSearch 無 URL 可驗、流量在 Anthropic 端，無法施加白名單（見 README）。
+    """
+    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
+    if tool_name == "WebFetch":
+        reason = tools.research_url_check(str((tool_input or {}).get("url", "")))
+        if reason:
+            return PermissionResultDeny(message=f"研究網域管控：{reason}")
     return PermissionResultAllow()
 
 
@@ -71,7 +83,7 @@ def _build_client(role: Role, session_id: str, cwd: Path):
     return ClaudeSDKClient(
         options=ClaudeAgentOptions(
             system_prompt=role.system_prompt,
-            allowed_tools=role.allowed_tools,
+            allowed_tools=effective_tools(role),
             permission_mode=role.permission_mode,
             can_use_tool=_auto_allow_tool,
             sandbox=config.expert_sandbox_settings(),
