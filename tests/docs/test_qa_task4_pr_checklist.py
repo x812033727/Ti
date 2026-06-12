@@ -20,18 +20,23 @@ ROOT = REPO_ROOT
 CONTRIB = ROOT / "CONTRIBUTING.md"
 PYPROJECT = ROOT / "pyproject.toml"
 SUBPROC_INV = ROOT / "studio" / "docs" / "subprocess_migration_inventory.md"
-EPIC_BASE = "4f32d3a"  # task 起點前最後一個共同 commit
+EPIC_BASE = "4f32d3a"  # 收斂 epic 起點前最後一個共同 commit
+EPIC_END = "11e4a51"  # 收斂 epic 的完成快照（最後一個動到本 epic 測試/交付的 commit）
+# 本守門驗證「CONTRIBUTING/README 收斂 epic 未引入新依賴、未弱化既有 docs 測試」。原以
+# EPIC_BASE..HEAD 比對會隨 HEAD 前移而誤擋日後不相關的合法變更（如 issue #0001 的 uvicorn
+# 升版）；改為固定 EPIC_BASE..EPIC_END，永久只驗證該 epic 自身的 diff，不再受後續工作干擾。
 
 
-def _base_in_clone(base: str = EPIC_BASE) -> bool:
-    """base commit 是否存在於當前 clone（CI 預設 shallow fetch-depth:1 時可能不在）。"""
-    return (
+def _epic_range_in_clone() -> bool:
+    """epic 起訖 commit 是否都在當前 clone（CI shallow fetch-depth:1 時不在 → 略過歷史比對）。"""
+    return all(
         subprocess.run(
-            ["git", "cat-file", "-e", f"{base}^{{commit}}"],
+            ["git", "cat-file", "-e", f"{c}^{{commit}}"],
             cwd=ROOT,
             capture_output=True,
         ).returncode
         == 0
+        for c in (EPIC_BASE, EPIC_END)
     )
 
 
@@ -94,25 +99,20 @@ def test_no_new_tooling_introduced():
         assert tok not in haystack, f"不應引入嵌入工具 {tok!r}"
 
 
-# 標準6：pyproject 自 epic 起點未被改動
+# 標準6：pyproject 未被「收斂 epic」改動（固定 EPIC_BASE..EPIC_END，不隨後續工作變動）
 def test_pyproject_unchanged():
-    # shallow clone（CI fetch-depth:1）無祖先 commit → 退而確認工作區乾淨。
-    if not _base_in_clone():
-        st = subprocess.run(
-            ["git", "status", "--short", "--", str(PYPROJECT)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
-        assert st.stdout.strip() == "", f"pyproject.toml 不應有未提交變更:\n{st.stdout}"
-        pytest.skip(f"base {EPIC_BASE} 不在 shallow clone，略過歷史 diff（已驗工作區乾淨）")
+    # shallow clone（CI fetch-depth:1）無歷史 commit → 略過（此為純歷史比對、與當前 HEAD 無關）。
+    if not _epic_range_in_clone():
+        pytest.skip(f"epic 範圍 {EPIC_BASE}..{EPIC_END} 不在 shallow clone，略過歷史 diff")
     r = subprocess.run(
-        ["git", "diff", f"{EPIC_BASE}..HEAD", "--", str(PYPROJECT)],
+        ["git", "diff", f"{EPIC_BASE}..{EPIC_END}", "--", str(PYPROJECT)],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
-    assert r.returncode == 0 and r.stdout.strip() == "", f"pyproject 不應被改動:\n{r.stdout}"
+    assert r.returncode == 0 and r.stdout.strip() == "", (
+        f"收斂 epic 不應改動 pyproject:\n{r.stdout}"
+    )
 
 
 # 標準7：subprocess inventory 未被更動
@@ -129,10 +129,12 @@ def test_subprocess_inventory_untouched():
 
 # 標準5 收尾-d：本 epic 未偷改/放寬任何「既有」docs 測試（只可新增 QA 測試）
 def test_no_preexisting_docs_test_weakened():
-    if not _base_in_clone():
-        pytest.skip(f"base {EPIC_BASE} 不在 shallow clone，無法做歷史 name-only diff")
+    if not _epic_range_in_clone():
+        pytest.skip(
+            f"epic 範圍 {EPIC_BASE}..{EPIC_END} 不在 shallow clone，無法做歷史 name-only diff"
+        )
     r = subprocess.run(
-        ["git", "diff", f"{EPIC_BASE}..HEAD", "--name-only", "--", "tests/docs/"],
+        ["git", "diff", f"{EPIC_BASE}..{EPIC_END}", "--name-only", "--", "tests/docs/"],
         cwd=ROOT,
         capture_output=True,
         text=True,

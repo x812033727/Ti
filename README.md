@@ -196,6 +196,25 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 `.env`(`TI_ACCESS_PASSWORD`)並即時生效;既有登入不會因此被登出(cookie 以 `TI_AUTH_SECRET`
 簽章,與密碼無關)。
 
+#### (C) 反向代理部署（X-Forwarded 信任鏈）
+
+把工作室放在負載平衡器／反向代理（Nginx、Traefik、ELB…）後面時，client 真實 IP 來自
+`X-Forwarded-*` 標頭。若不限制誰能設這些標頭，攻擊者可直連 app port 偽造 `X-Forwarded-For`
+冒充來源 IP，污染日誌、稽核、限流與 IP 白名單。本專案有**兩層獨立**的防線，各自設定：
+
+| 層級 | 設定 | 由誰處理 | 作用 |
+|---|---|---|---|
+| 傳輸層 | `TI_FORWARDED_ALLOW_IPS` | uvicorn `ProxyHeadersMiddleware` | 僅受信來源送來的 `X-Forwarded-*` 才被採信、改寫 ASGI scope 的 client IP/scheme |
+| 應用層 | `TI_TRUST_PROXY` / `TI_TRUSTED_PROXIES` | `studio/netutil.py` | 由右往左跳過受信代理、取最右非受信位址為真實 client，**不採信最左偽造值** |
+
+部署建議：
+
+- 把 `TI_FORWARDED_ALLOW_IPS` 設為 proxy 的私網範圍（例如 `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`，
+  K8s／Swarm 等 proxy IP 會變動的環境需用 CIDR——故依賴下限鎖在 `uvicorn>=0.31`）。
+- **嚴禁 `"*"`**（官方明確警告）；本專案偵測到 `"*"` 會 fail-closed 拒啟動。
+- proxy 端先 **strip 外部傳入的 `X-Forwarded-*`** 再自行附加（雙重防線）。
+- 確保 app port 只有受信代理連得到（防火牆／僅綁私網），避免攻擊者繞過 proxy 直連。
+
 ### 在現有的 GitHub 專案上工作
 
 想讓專家討論 / 修改一個現有專案，而不是從零開始：在頂部「GitHub repo 網址」欄位填入
@@ -260,6 +279,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_HOST` / `TI_PORT` | 伺服器位址 | 0.0.0.0 / 8000 |
 | `TI_ACCESS_PASSWORD` | 設定後啟用登入門禁（共用密碼） | 未設定（停用） |
 | `TI_AUTH_SECRET` / `TI_AUTH_TTL` | cookie 簽章密鑰 / 登入有效秒數 | 隨機 / 604800 |
+| `TI_FORWARDED_ALLOW_IPS` | uvicorn ProxyHeaders 信任來源（傳輸層）：僅清單內來源送來的 `X-Forwarded-*` 會被採信改寫 client IP/scheme。預設僅本機；嚴禁 `"*"`（偵測到即拒啟動）。反向代理部署見下方小節。別名 `FORWARDED_ALLOW_IPS` | 127.0.0.1 |
 | `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
 | `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
 | `TI_PUBLISH_MERGE` | push／開 PR 後是否自動合併（先等 CI 通過才合併） | 0 |

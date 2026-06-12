@@ -1,6 +1,6 @@
 # Follow-up Issue #0001：落地 `forwarded_allow_ips` / `proxy_headers`，完成 ProxyHeaders 防偽造
 
-- **狀態**：Open
+- **狀態**：Closed（2026-06-12 落地，見文末「落地摘要」）
 - **優先級**：High（安全強化，目前實質防護為零）
 - **類型**：Security / Hardening
 - **建立日期**：2026-06-09
@@ -99,3 +99,19 @@ uvicorn.run(
 ---
 
 *本 issue 由前次「uvicorn 版本鎖定」任務的架構決策衍生，用於追蹤實際防護落地，確保此安全風險不懸空消失。*
+
+---
+
+## 落地摘要（2026-06-12）
+
+| 驗收標準 | 落地 |
+|---|---|
+| 1. `uvicorn.run` 傳 `proxy_headers=True` + `forwarded_allow_ips` | `studio/server.py` `main()` 已傳入 |
+| 2. 值由 env 提供、預設安全值、嚴禁硬編 `"*"` | `studio/config.py` `FORWARDED_ALLOW_IPS`（env `TI_FORWARDED_ALLOW_IPS`，別名 `FORWARDED_ALLOW_IPS`，預設 `127.0.0.1`）＋ `forwarded_allow_ips()` 偵測 `"*"` 即 `SystemExit` fail-closed |
+| 3. 部署文件 | `README.md` 新增「反向代理部署（X-Forwarded 信任鏈）」小節（傳輸層 vs 應用層兩層對照、proxy 端 strip、私網範圍）；`.env.example` 補段 |
+| 4. 升級評估 `>=0.31` | 已採納：`pyproject.toml` 下限升至 `uvicorn[standard]>=0.31,<0.50`，ci.yml 兩處同步 |
+| 5. 新增測試 | `tests/server/test_forwarded_allow_ips.py`（預設本機、env 覆寫與別名、`"*"` 拒啟動、main() kwargs 截獲斷言、pyproject 下限 `>=0.31`） |
+
+註：`TI_FORWARDED_ALLOW_IPS`（傳輸層，uvicorn ProxyHeadersMiddleware）與既有
+`TI_TRUST_PROXY`/`TI_TRUSTED_PROXIES`（應用層，`studio/netutil.py` 解析 XFF）語意獨立、各自設定。
+CI 監控建議（pip-audit/Snyk）仍列為後續強化，不在本 issue 範圍。

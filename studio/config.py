@@ -314,6 +314,38 @@ def reset_trusted_proxies() -> None:
     _trusted_proxies_cache = None
 
 
+# --- uvicorn ProxyHeaders 信任來源（傳輸層，啟動時固定）---------------------
+# 這是 uvicorn ProxyHeadersMiddleware 的設定：僅清單內來源送來的 X-Forwarded-* 會被
+# 採信並改寫 ASGI scope（client IP / scheme）。與上面應用層的 TI_TRUST_PROXY /
+# TI_TRUSTED_PROXIES（netutil 自行解析 XFF）互補、語意獨立、各自設定——一個在傳輸層
+# 由 uvicorn 改寫 scope，一個在應用層由 netutil 解析真實來源。
+# 預設僅信任本機；嚴禁 "*"（偵測到即拒啟動，見 forwarded_allow_ips()），否則攻擊者可自帶
+# X-Forwarded-For 偽造 client IP，污染日誌、稽核、限流與 IP 白名單等所有依賴 client IP 的邏輯。
+# 別名：未設 TI_ 前綴版時，沿用 uvicorn 生態慣用名 FORWARDED_ALLOW_IPS。
+FORWARDED_ALLOW_IPS = os.getenv(
+    "TI_FORWARDED_ALLOW_IPS", os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+)
+
+
+def forwarded_allow_ips() -> str:
+    """回傳啟動用的 forwarded_allow_ips；含 "*" 一律拒啟動（fail-closed）。
+
+    安全設定取 fail-closed：寧可在啟動時明確報錯給出正確寫法，也不讓服務帶著
+    「信任全部來源」的危險設定默默上線。空字串退回安全預設 "127.0.0.1"。
+    屬「啟動時固定」設定（同 HOST/PORT），刻意不納入 reload()。
+    """
+    raw = (FORWARDED_ALLOW_IPS or "").strip()
+    if not raw:
+        return "127.0.0.1"
+    if "*" in {item.strip() for item in raw.split(",")}:
+        raise SystemExit(
+            "TI_FORWARDED_ALLOW_IPS 嚴禁 '*'（會讓任何來源都能偽造 X-Forwarded-For）：\n"
+            "請改列負載平衡器／反向代理的私網 IP 或 CIDR，例如\n"
+            "  TI_FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+        )
+    return raw
+
+
 # --- 路徑 ---------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
