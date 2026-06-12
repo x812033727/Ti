@@ -384,6 +384,15 @@ AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 # 跑一場討論 → followups 回填 → backlog 空了就『找問題』產生新任務」，
 # 讓團隊對同一個產品一直找問題、一直改良。
 PROJECTS_ROOT = Path(os.getenv("TI_PROJECTS_ROOT", str(PROJECT_ROOT / "projects")))
+
+# 持續改良「找問題」階段的視角（csv）：多視角並行審視產品再彙整去重——senior 看工程品質、
+# pm 看用戶價值/功能缺口、researcher 上網看同類產品與最佳實踐。只在 backlog 清空時發生
+# （低頻），多幾次呼叫可接受；設 "senior" 一鍵還原舊的單視角行為。
+DISCOVER_ROLES = [
+    r.strip()
+    for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")
+    if r.strip()
+]
 # 單次「持續改良」連線最多跑幾輪（每輪＝一場完整討論）；0 = 不限（直到找不到新改善點）。
 # 預設給保守上限，避免一次連線燒掉過多 API 額度。
 IMPROVE_MAX_CYCLES = int(os.getenv("TI_IMPROVE_MAX_CYCLES", "5"))
@@ -435,6 +444,7 @@ def reload() -> None:
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
+    global DISCOVER_ROLES
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -480,3 +490,8 @@ def reload() -> None:
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
     CLARIFY_TIMEOUT = int(os.getenv("TI_CLARIFY_TIMEOUT", "180"))
+    DISCOVER_ROLES = [
+        r.strip()
+        for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")
+        if r.strip()
+    ]

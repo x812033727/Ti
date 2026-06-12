@@ -195,6 +195,12 @@ FIELDS: tuple[Field, ...] = (
         placeholder="180",
         group="進階",
     ),
+    Field(
+        "TI_DISCOVER_ROLES",
+        "找問題視角（csv：senior 工程／pm 產品／researcher 調研）",
+        placeholder="senior,pm,researcher",
+        group="進階",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}
