@@ -120,6 +120,8 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_OBJECTIVE_GATE": ["TI_OBJECTIVE_GATE", "閘門"],
         "TI_SELF_REFINE_ITERS": ["TI_SELF_REFINE_ITERS", "自我精修"],
         "TI_RLIMITS": ["TI_RLIMITS", "資源上限"],
+        "TI_BLUEPRINT": ["TI_BLUEPRINT", "產品藍圖"],
+        "TI_ADR": ["TI_ADR", "架構決策記錄"],
     }
     assert {f.env for f in selects} == set(checks), "select 欄與預期不符，請更新測試"
     # 非法案例段落：含『非法』字樣的列

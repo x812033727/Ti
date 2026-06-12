@@ -164,9 +164,9 @@ def context(project_id: str) -> str:
         lines.append(f"願景：{data['vision']}")
     if data.get("users"):
         lines.append(f"目標用戶：{data['users']}")
-    feats = sorted(
-        data["features"], key=lambda x: x.get("priority", backlog.DEFAULT_PRIORITY)
-    )[:_CONTEXT_MAX_FEATURES]
+    feats = sorted(data["features"], key=lambda x: x.get("priority", backlog.DEFAULT_PRIORITY))[
+        :_CONTEXT_MAX_FEATURES
+    ]
     lines.append("核心功能（P0 必須 → P2 加分）：")
     for f in feats:
         label = _PRIORITY_LABEL.get(f.get("priority", backlog.DEFAULT_PRIORITY), "P1")

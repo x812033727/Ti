@@ -21,7 +21,9 @@ def client(tmp_path, monkeypatch):
 def test_detail_includes_blueprint_and_sorted_backlog(client, monkeypatch):
     monkeypatch.setattr(config, "BLUEPRINT_ENABLED", True)
     pid = projects.create("產品X", vision="願景")["id"]
-    blueprint.save(pid, {"version": 1, "vision": "願景", "features": [{"title": "F", "priority": 0}]})
+    blueprint.save(
+        pid, {"version": 1, "vision": "願景", "features": [{"title": "F", "priority": 0}]}
+    )
     # 先排 P1，再排 P0 → 回傳順序應 P0 先（依消化順序，前端不必自己排）。
     client.post(f"/api/projects/{pid}/backlog", json={"title": "普通改良"})
     client.post(

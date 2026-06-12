@@ -309,7 +309,9 @@ class ProjectImprover:
         )
         try:
             if config.OFFLINE_MODE:
-                items = [{"title": t, "priority": 1, "type": "improvement"} for t in OFFLINE_DISCOVERY]
+                items = [
+                    {"title": t, "priority": 1, "type": "improvement"} for t in OFFLINE_DISCOVERY
+                ]
             else:
                 items = await self._discover_with_expert(pid, sid)
             # 只寫進 history（不 broadcast）：讓這個審視 session 在歷史面板顯示為「完成」，
