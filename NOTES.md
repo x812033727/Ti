@@ -4,3 +4,7 @@
 
 ## 任務 #3 完成：實作收斂控制與討論小結：最大輪數上限（`TI_DISCUSS_MAX_ROUNDS`）＋沿用 `flow.is_stalled()` 相似度自適應提前停止；討論結束輸出小結結構（共識清單/分歧清單/各角色最終立場），供後續結論彙整使用
 
+## 任務 #4 完成：接線與設定：orchestrator 的 `_debate()` 在 `TI_DISCUSS_MODE=round_robin|parallel` 時改走 DiscussionEngine（未設或 `legacy` 時行為與現狀完全一致）；`config.py`/`settings.py` 白名單加新欄位、`.env.example` 補說明；更新 ARCHITECTURE.md 並在 discussion.py 模組 docstring 寫明**實際函式簽名**
+
+## 任務 #5 完成：撰寫離線測試 `tests/core/test_discussion.py`：用 StubExpert 驗證依序/並行模式的發言順序與輪間同步、@引用解析（含格式不符退化案例）、最大輪數與 is_stalled 提前停止、`TI_DISCUSS_MODE` 未設時 `_debate` 走舊路徑
+
