@@ -32,9 +32,7 @@ def test_parse_full_three_segments_with_assignees():
 
 def test_parse_missing_segments_default_empty():
     items = parse_agenda("子題: 只有標題\n")
-    assert items == [
-        {"title": "只有標題", "description": "", "criteria": "", "assignee": ""}
-    ]
+    assert items == [{"title": "只有標題", "description": "", "criteria": "", "assignee": ""}]
     items = parse_agenda("子題: 標題 | 只有描述\n")
     assert items[0]["description"] == "只有描述"
     assert items[0]["criteria"] == ""
@@ -87,6 +85,43 @@ def test_fullwidth_colon_accepted():
     items = parse_agenda("子題： 甲 | 乙 | 丙\n負責： engineer\n")
     assert items[0]["title"] == "甲"
     assert items[0]["assignee"] == "engineer"
+
+
+def test_fullwidth_pipe_normalized():
+    # LLM 常混用全形管線，須正規化切段而非整行誤入 title。
+    items = parse_agenda("子題: 甲｜乙｜丙\n")
+    assert items[0] == {"title": "甲", "description": "乙", "criteria": "丙", "assignee": ""}
+
+
+def test_assignee_with_trailing_text_not_adopted_but_logged(caplog):
+    # `負責: engineer (主寫)` 不符單一 token 規格——不採信，但記 warning 不靜默吞行
+    # （與 QA 測試 test_qa_task2_agenda_parser 的規格一致；採信交 validate 兜底）。
+    with caplog.at_level("WARNING", logger="ti.flow"):
+        items = parse_agenda("子題: 甲\n負責: engineer (主寫)\n")
+    assert items[0]["assignee"] == ""
+    assert "不符單一 token" in caplog.text
+
+
+def test_empty_title_backfilled_from_description():
+    items = parse_agenda("子題: | 描述在這 | 準則在這\n")
+    assert items[0]["title"] == "描述在這"
+    assert items[0]["description"] == ""
+    assert items[0]["criteria"] == "準則在這"
+
+
+def test_empty_title_backfilled_from_criteria_when_no_description():
+    items = parse_agenda("子題: | | 只有準則\n")
+    assert items[0]["title"] == "只有準則"
+    assert items[0]["criteria"] == ""
+
+
+def test_all_empty_subtopic_line_skipped():
+    # 全段皆空的子題行整行跳過，其後的 `負責:` 不可錯位附到前一個子題。
+    items = parse_agenda("子題: 甲\n子題: |\n負責: engineer\n")
+    assert [i["title"] for i in items] == ["甲"]
+    assert items[0]["assignee"] == ""
+    # 只有空殼行時退回單子題 fallback。
+    assert parse_agenda("子題: | |", requirement="原需求")[0]["title"] == "原需求"
 
 
 # --- validate_assignees ------------------------------------------------------

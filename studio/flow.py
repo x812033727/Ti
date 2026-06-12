@@ -190,11 +190,17 @@ def parse_agenda(text: str, requirement: str = "") -> list[dict]:
     """從拆解文字抽出議程子題列表，每筆 {title, description, criteria, assignee}。
 
     子題行：`子題: <標題> | <描述> | <成功準則>`——用 `split("|", 2)` 固定最多切三段，
-    多餘的 `|` 全部歸入成功準則（標題/描述不會被錯切）；缺段允許為空字串。
-    負責行：`負責: <role_key>` 附屬於其上方最近的子題行；找不到前置子題時忽略＋log。
+    多餘的 `|` 全部歸入成功準則（標題/描述不會被錯切）；全形 `｜` 先正規化為半形再切
+    （LLM 輸出常混用）；缺段允許為空字串。標題空、描述非空時以描述補位（log）；全段
+    皆空的子題行整行跳過（log），不產出空殼子題。
+    負責行：`負責: <role_key>` 附屬於其上方最近的子題行；找不到前置子題時忽略＋log；
+    key 後帶多餘文字（如 `負責: engineer (主寫)`）不符單一 token 規格——不採信、
+    記 warning（不靜默吞行），留待 validate_assignees fallback 兜底。
     無任何 `子題:` 行時 fallback 為單一子題（原需求全文 requirement，缺則用 text），
     不噴錯——探索型議題允許不硬拆。子題數超過 MAX_AGENDA_ITEMS 截斷並 log。
     assignee 為原始字串、未經驗證；合法性交由 validate_assignees 硬驗證。
+
+    新 API、不入 orchestrator re-export：消費端一律 `from studio.flow import`。
     """
     items: list[dict] = []
     cur: dict | None = None
@@ -206,8 +212,19 @@ def parse_agenda(text: str, requirement: str = "") -> list[dict]:
                 truncated += 1
                 cur = None  # 被截斷子題的後續 `負責:` 一併忽略。
                 continue
-            parts = [p.strip() for p in m.group(1).split("|", 2)]
+            body = m.group(1).replace("｜", "|")  # 全形管線正規化，避免整行誤入 title。
+            parts = [p.strip() for p in body.split("|", 2)]
             parts += [""] * (3 - len(parts))
+            if not parts[0]:
+                if not parts[1] and not parts[2]:
+                    log.warning("議程解析：子題行全段皆空，整行跳過: %r", line.strip())
+                    cur = None  # 後續 `負責:` 不得附到上一個子題。
+                    continue
+                log.warning("議程解析：子題標題為空，以描述補位: %r", line.strip())
+                if parts[1]:
+                    parts[0], parts[1] = parts[1], ""
+                else:
+                    parts[0], parts[2] = parts[2], ""
             cur = {
                 "title": parts[0],
                 "description": parts[1],
@@ -216,12 +233,19 @@ def parse_agenda(text: str, requirement: str = "") -> list[dict]:
             }
             items.append(cur)
             continue
-        m = re.match(r"^\s*負責\s*[:：]\s*(\S+)\s*$", line)
+        m = re.match(r"^\s*負責\s*[:：]\s*(.+?)\s*$", line)
         if m:
+            tokens = m.group(1).split()
             if cur is None:
                 log.warning("議程解析：`負責: %s` 找不到前置子題行，忽略", m.group(1))
-            else:
-                cur["assignee"] = m.group(1)
+                continue
+            if len(tokens) != 1:
+                log.warning(
+                    "議程解析：`負責: %s` 不符單一 token 規格，不採信（交 validate 兜底）",
+                    m.group(1),
+                )
+                continue
+            cur["assignee"] = tokens[0]
     if truncated:
         log.warning("議程解析：子題數超過上限 %d，截斷 %d 筆", MAX_AGENDA_ITEMS, truncated)
     if items:
@@ -260,7 +284,9 @@ def validate_assignees(
         else:
             log.warning(
                 "議程分派：子題 #%d 的 `負責: %s` 非法或缺漏，fallback 至 %s",
-                i, given or "(缺)", effective,
+                i,
+                given or "(缺)",
+                effective,
             )
     return out, corrections
 
