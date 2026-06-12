@@ -12,9 +12,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# 測試隔離：清掉開發機可能殘留的 TI_DISCUSS_* 環境變數——studio.config 於 import 時讀 env，
-# 殘留值會讓全部既有測試默默改道（legacy ↔ engine 路徑翻轉）。conftest 在任何測試模組
-# import studio.config 之前載入，於此清除最保險。測試要驗分流時一律
-# `monkeypatch.setattr(config, "DISCUSS_MODE", ...)` 改屬性，不用 setenv。
-os.environ.pop("TI_DISCUSS_MODE", None)
-os.environ.pop("TI_DISCUSS_MAX_ROUNDS", None)
+# --- 測試隔離（hermetic）：對齊乾淨 CI，隔絕執行環境殘留 ------------------------
+# studio.config 於 import 時讀 env 且會 load_dotenv()——python-dotenv 會從 config.py
+# 所在目錄一路向上搜 .env（部署機上 /opt/ti/.env 會被搜到），TI_CRITIC=1、TI_NOTES=1
+# 等部署值會翻轉 config 預設，讓「預設不啟用 X」類測試默默打掛。CI 乾淨無這些殘留，
+# 此處在任何測試模組 import studio.config 之前做兩件事對齊：
+#
+# 1) 把 dotenv.load_dotenv 換成 no-op——config.py 是 `from dotenv import load_dotenv`，
+#    在它 import 前改掉 dotenv 模組屬性即可攔下，祖先目錄的 .env 不再漏進測試。
+#    （tests/settings 的子程序測試另起 process 跑真 server，不受此 in-process stub
+#    影響；該測試自行備份/還原 .env。）
+import dotenv
+
+dotenv.load_dotenv = lambda *args, **kwargs: False
+
+# 2) 清光殘留的 TI_* 環境變數（含 TI_DISCUSS_*）：殘留值會讓既有測試默默改道
+#    （如 legacy ↔ engine 路徑翻轉、critic/notes 開關翻轉）。測試要改設定一律
+#    `monkeypatch.setattr(config, "<欄位>", ...)` 改屬性，或 setenv 後 config.reload()。
+for _k in [k for k in os.environ if k.startswith("TI_")]:
+    os.environ.pop(_k, None)
