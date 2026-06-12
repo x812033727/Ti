@@ -369,6 +369,31 @@ async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONRespo
     return JSONResponse({"task": task})
 
 
+@router.post("/api/projects/{project_id}/recover", dependencies=[Depends(auth.require_auth)])
+async def projects_recover(project_id: str) -> JSONResponse:
+    """中斷恢復：服務重啟／行程被殺後，把殘留狀態清乾淨，讓改良迴圈可以無痛重啟。
+
+    做兩件事（皆冪等）：
+    1. 卡在 in_progress 的 backlog 任務重置回 pending（中斷殘留不是真失敗，failed 不動）。
+    2. 這些任務對應的幽靈 session meta（永遠停在 running）標為 error，歷史列表不再誤顯。
+    改良迴圈正在跑時拒絕（409）——in_progress 是進行中的正常狀態，不能搶著重置。
+    前端收到 ok 後負責以既有 improve 流程重啟迴圈（事件照常即時串流）。
+    """
+    if projects.get(project_id) is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if project_id in ws._active_projects:
+        return JSONResponse({"error": "改良迴圈正在進行中，無需恢復"}, status_code=409)
+    sdir = projects.state_dir(project_id)
+    reset = 0
+    for t in backlog.list_tasks("in_progress", state_dir=sdir):
+        sid = (t.get("session_id") or "").strip()
+        if sid:
+            history.mark_interrupted(sid, "中斷恢復：服務重啟或行程中斷，任務已重置回待辦")
+        backlog.set_status(t["id"], "pending", state_dir=sdir, note="中斷恢復：重置重跑")
+        reset += 1
+    return JSONResponse({"ok": True, "reset": reset, "counts": backlog.counts(state_dir=sdir)})
+
+
 # --- publish（受保護）--------------------------------------------------
 @router.get("/api/publish/config", dependencies=[Depends(auth.require_auth)])
 async def publish_config() -> JSONResponse:

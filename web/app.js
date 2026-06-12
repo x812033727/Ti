@@ -656,8 +656,39 @@ async function refreshProjectPanel() {
       li.prepend(tag);
       body.appendChild(li);
     }
+
+    // 中斷恢復：有任務卡在 ⚙️ 進行中時顯示。正常運行中按下會被後端 409 擋掉（無害），
+    // 真正中斷（服務重啟／行程被殺）時則重置殘留並自動重啟持續改良。
+    if (tasks.some((t) => t.status === "in_progress")) {
+      const btn = document.createElement("button");
+      btn.id = "projectRecover";
+      btn.className = "ghost";
+      btn.textContent = "🛟 恢復中斷的改良";
+      btn.title = "服務重啟或行程中斷後：把卡在進行中的任務重置回待辦，並重新啟動持續改良迴圈";
+      btn.onclick = () => recoverProject(pid);
+      body.appendChild(btn);
+    }
   } catch (e) {
     body.innerHTML = "<span class='muted'>無法載入專案</span>";
+  }
+}
+
+async function recoverProject(pid) {
+  try {
+    const res = await fetch(`/api/projects/${pid}/recover`, { method: "POST" });
+    const d = await res.json();
+    if (!res.ok) { toast(d.error || "恢復失敗", "err"); return; }
+    toast(d.reset ? `已重置 ${d.reset} 個中斷任務` : "沒有中斷殘留");
+    await refreshProjectPanel();
+    // 還有待辦且目前沒有討論在跑 → 以既有 improve 流程自動重啟（事件即時串流到本頁）。
+    if (((d.counts || {}).pending || 0) > 0 && !startBtn.disabled) {
+      $("#projectSelect").value = pid;
+      $("#improveChk").checked = true;
+      closeProjectPanel();
+      start();
+    }
+  } catch (e) {
+    toast("恢復失敗：" + e.message, "err");
   }
 }
 
