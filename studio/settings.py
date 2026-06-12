@@ -223,7 +223,7 @@ FIELDS: tuple[Field, ...] = (
     ),
     Field(
         "TI_KNOWLEDGE",
-        "知識沉澱（調研／設計決策寫入 docs/，跨場次累積，預設開）",
+        "知識沉澱（調研結論寫入 docs/RESEARCH.md，跨場次累積，預設開）",
         kind="select",
         options=("0", "1"),
         default="1",
@@ -233,6 +233,22 @@ FIELDS: tuple[Field, ...] = (
         "TI_DISCOVER_ROLES",
         "找問題視角（csv：senior 工程／pm 產品／researcher 調研）",
         placeholder="senior,pm,researcher",
+        group="進階",
+    ),
+    Field(
+        "TI_BLUEPRINT",
+        "產品藍圖（持續改良開跑時 PM 展開願景成藍圖，功能餵 backlog）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_ADR",
+        "架構決策記錄 ADR（辯論結論落盤 DECISIONS.md，跨場注入防翻案）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
         group="進階",
     ),
 )

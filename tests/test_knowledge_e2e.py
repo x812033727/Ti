@@ -1,4 +1,5 @@
-"""端到端驗證：知識沉澱（docs/RESEARCH.md / DECISIONS.md）在真實 orchestrator 流程的接線。
+"""端到端驗證：知識沉澱（docs/RESEARCH.md）在真實 orchestrator 流程的接線。
+（設計決策的沉澱/注入已移交 ADR 模組，見 tests/core 的 ADR 專測。）
 
 沿用 tests/test_lessons_e2e.py 的 StubExpert 模式，加入研究員與架構師：
   第 1 場：調研結論與 `設計決策:` 行落盤 docs/ → 第 2 場（同一 workspace，模擬專案模式）
@@ -80,23 +81,13 @@ async def test_knowledge_persists_then_injected_next_session():
     # 落盤驗證：屬交付物、出現在檔案面板
     files = workspace.list_files("proj-k1")
     assert "docs/RESEARCH.md" in files
-    assert "docs/DECISIONS.md" in files
     assert "double-entry" in workspace.read_doc_tail("proj-k1", "RESEARCH.md", 4000)
-    decisions = workspace.read_doc_tail("proj-k1", "DECISIONS.md", 4000)
-    assert "設計決策: 後端用 FastAPI" in decisions
-    assert "提案：走輕量 web 架構" not in decisions  # 只沉澱可解析的決策行，不收討論全文
 
     # 第 2 場：不清空 workspace（模擬專案模式固定 workspace）
     experts2 = await _run_session("s2", "proj-k1", "重點: 第二場新發現")
     researcher_prompt = experts2["researcher"].prompts[0]
     assert "既有調研" in researcher_prompt
     assert "double-entry" in researcher_prompt
-    pm_prompt = experts2["pm"].prompts[0]
-    assert "過往場次的設計決策" in pm_prompt
-    assert "後端用 FastAPI" in pm_prompt
-    # 架構題目也帶既有決策（沿用為先）
-    architect_prompt = experts2["architect"].prompts[0]
-    assert "過往場次的設計決策" in architect_prompt
 
 
 @pytest.mark.asyncio
@@ -109,7 +100,6 @@ async def test_knowledge_disabled_writes_nothing(monkeypatch):
 
     experts2 = await _run_session("s4", "proj-k2", "重點: 第二場")
     assert "既有調研" not in experts2["researcher"].prompts[0]
-    assert "過往場次的設計決策" not in experts2["pm"].prompts[0]
 
 
 @pytest.mark.asyncio

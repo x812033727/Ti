@@ -380,3 +380,11 @@ h3 { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
 .metric-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 13px; }
 .metric-k { color: var(--muted); white-space: nowrap; }
 .metric-v { color: var(--text); text-align: right; }
+
+/* 專案面板：藍圖功能與 backlog 的優先級徽章（P0 紅／P1 黃／P2 灰） */
+.proj-name { font-weight: 600; }
+.proj-feature, .proj-task { font-size: 13px; display: flex; align-items: baseline; gap: 6px; }
+.prio { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.prio-0 { background: #3a1212; color: #ff8a8a; border-color: #5a1f1f; }
+.prio-1 { background: #3a2d12; color: var(--warn); border-color: #5a4a1f; }
+.prio-2 { background: var(--panel-2); color: var(--muted); }

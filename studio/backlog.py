@@ -23,6 +23,25 @@ from . import config
 
 VALID_STATUS = ("pending", "in_progress", "done", "failed")
 
+# 任務類型：功能缺口 / 缺陷 / 一般改良。來源外的值一律正規化成 improvement。
+VALID_TYPES = ("feature", "bug", "improvement")
+
+# 優先級 P0（必須）~ P2（加分）。舊資料無此欄位時以 P1 解讀，排序行為與先前 FIFO 一致。
+DEFAULT_PRIORITY = 1
+
+
+def _clamp_priority(priority) -> int:
+    """夾到 0..2；不可解析時回預設 P1（解析失敗不該擋任務入列）。"""
+    try:
+        return min(2, max(0, int(priority)))
+    except (TypeError, ValueError):
+        return DEFAULT_PRIORITY
+
+
+def _norm_type(item_type) -> str:
+    t = str(item_type or "").strip().lower()
+    return t if t in VALID_TYPES else "improvement"
+
 
 def _dir(state_dir: Path | None) -> Path:
     return state_dir if state_dir is not None else config.AUTOPILOT_STATE_DIR
@@ -67,9 +86,20 @@ def _save(data: dict, state_dir: Path | None) -> None:
 
 
 def add(
-    title: str, detail: str = "", source: str = "seed", *, state_dir: Path | None = None
+    title: str,
+    detail: str = "",
+    source: str = "seed",
+    *,
+    state_dir: Path | None = None,
+    priority: int = DEFAULT_PRIORITY,
+    item_type: str = "improvement",
+    effort: str = "",
 ) -> dict | None:
-    """新增一筆 pending 任務，回傳該任務；title 為空或重複則回 None。"""
+    """新增一筆 pending 任務，回傳該任務；title 為空或重複則回 None。
+
+    priority（0=P0 必須 ~ 2=P2 加分，越小越優先）與 item_type/effort 為可選的
+    結構化欄位；舊呼叫端不傳即取預設值，行為不變。
+    """
     title = (title or "").strip()
     if not title:
         return None
@@ -84,6 +114,9 @@ def add(
             "detail": (detail or "").strip(),
             "status": "pending",
             "source": source,
+            "priority": _clamp_priority(priority),
+            "type": _norm_type(item_type),
+            "effort": (effort or "").strip(),
             "attempts": 0,
             "created_at": time.time(),
             "updated_at": time.time(),
@@ -105,6 +138,28 @@ def add_many(
     return n
 
 
+def add_items(
+    items: list[dict], source: str = "discovered", *, state_dir: Path | None = None
+) -> int:
+    """批次新增結構化任務（{title, detail?, priority?, type?, effort?}），回傳實際新增數。
+
+    與 add_many 並列：消費端解析出優先級/類型時走這裡，純標題清單仍走 add_many。
+    """
+    n = 0
+    for it in items:
+        if add(
+            it.get("title", ""),
+            it.get("detail", ""),
+            source=source,
+            state_dir=state_dir,
+            priority=it.get("priority", DEFAULT_PRIORITY),
+            item_type=it.get("type", "improvement"),
+            effort=it.get("effort", ""),
+        ):
+            n += 1
+    return n
+
+
 def _is_duplicate(tasks: list[dict], title: str) -> bool:
     """同標題且仍 pending/in_progress 視為重複，避免回饋迴圈讓 backlog 暴增。"""
     return any(
@@ -121,9 +176,12 @@ def list_tasks(status: str | None = None, *, state_dir: Path | None = None) -> l
 
 
 def next_pending(*, state_dir: Path | None = None) -> dict | None:
-    """取最早建立、仍 pending 的任務（不改狀態）。"""
+    """取優先級最高（P0 先）、同級內最早建立、仍 pending 的任務（不改狀態）。
+
+    舊資料無 priority 欄位時以 P1 解讀，故純舊資料下順序與先前 FIFO 完全一致。
+    """
     pend = [t for t in _load(state_dir)["tasks"] if t["status"] == "pending"]
-    pend.sort(key=lambda t: t["created_at"])
+    pend.sort(key=lambda t: (t.get("priority", DEFAULT_PRIORITY), t["created_at"]))
     return pend[0] if pend else None
 
 

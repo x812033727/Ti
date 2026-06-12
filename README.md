@@ -16,8 +16,8 @@
 ⓪需求澄清   PM 評估需求：模糊就反問關鍵問題（附預設假設）等你回覆，逾時按假設續行；
             結論固化 PRD.md（「願景:」自動回填專案）
 ①需求拆解   PM 參考 PRD／調研／過往決策，拆成結構化任務 + 驗收標準 + 執行指令
-②架構辯論   工程師 ⇄ 高級工程師 來回討論整體做法（有架構師則由其定案，
-            設計決策沉澱 docs/DECISIONS.md）
+②架構辯論   工程師 ⇄ 高級工程師 來回討論整體做法（有架構師則由其定案；
+            開 TI_ADR 時決策沉澱 DECISIONS.md＋adr.json）
 ③逐任務迭代  for 每個任務（看板 todo→doing→review→done）：
               工程師實作（交付前自測）→ smoke-run + git commit
               → 驗證工程師測試 → 高級工程師審查（帶入測試 log）
@@ -30,8 +30,8 @@
 - **需求澄清（預設開啟）**：丟一句模糊需求（「做個記帳的」）時 PM 會先反問最多 4 個關鍵問題
   （各附預設假設），用插話框回覆即可；約 3 分鐘未回覆就按假設續行，不會卡死
   （`TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` / `TI_CLARIFY_MAX_QUESTIONS`）。
-- **知識沉澱（預設開啟）**：研究員調研結論與架構師設計決策持久化到 workspace 的
-  `docs/RESEARCH.md`／`docs/DECISIONS.md`（PRD 在根目錄 `PRD.md`），下場開場注入——專案模式
+- **知識沉澱（預設開啟）**：研究員調研結論持久化到 workspace 的 `docs/RESEARCH.md`
+  （PRD 在根目錄 `PRD.md`；設計決策見 `TI_ADR`），下場開場注入——專案模式
   workspace 固定，知識跨場次累積、調研不重查（`TI_KNOWLEDGE`）。
 - **人類可中途插話**：執行中於插話框輸入指示，專家會在下一步納入考量；亦可隨時「停止」。
 - **任務並行（預設開啟）**：PM 標注依賴、獨立任務分「波次」，每波多條支線各自 git worktree
@@ -246,9 +246,11 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_MAX_ROUNDS` | 每個任務的最大改進輪數 | 3 |
 | `TI_DEBATE_ROUNDS` | 架構辯論來回回合數（0 = 關閉） | 2 |
 | `TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` / `TI_CLARIFY_MAX_QUESTIONS` | 需求澄清：拆解前 PM 先反問關鍵問題（附預設假設），插話框回答即可；逾時按假設續行、結論固化進 `PRD.md`、抽出的「願景:」回填專案。僅互動討論生效（autopilot／持續改良迴圈自動跳過） | 開啟 / 180 / 4 |
-| `TI_KNOWLEDGE` / `TI_KNOWLEDGE_MAX_CHARS` | 知識沉澱：調研結論與設計決策持久化到 `docs/RESEARCH.md`／`docs/DECISIONS.md`，下場開場注入尾段（專案模式跨場次累積） | 開啟 / 4000 |
+| `TI_KNOWLEDGE` / `TI_KNOWLEDGE_MAX_CHARS` | 知識沉澱：調研結論持久化到 `docs/RESEARCH.md`，下場開場注入尾段（專案模式跨場次累積；設計決策見 `TI_ADR`） | 開啟 / 4000 |
 | `TI_DISCOVER_ROLES` | 持續改良「找問題」視角（csv）：senior 工程品質／pm 用戶價值／researcher 上網調研，多視角並行再彙整去重 | senior,pm,researcher |
 | `TI_LESSONS` / `TI_LESSONS_MAX` | 跨場次教訓庫（長期記憶）：每場檢討蒸餾可重用教訓存入 `lessons.json`，下次開場注入 PM 拆解，讓工作室越做越會。注入時**按本次需求相關性挑選**（IDF 加權，無人機的坑不會混進網站任務；無相關才退回最新）／`MAX` 為注入筆數 | 開啟 / 12 |
+| `TI_BLUEPRINT` / `TI_BLUEPRINT_SEED_MAX` | 產品藍圖：持續改良迴圈開跑時 PM 把願景展開成結構化藍圖（願景/用戶/功能 P0~P2/里程碑），落盤 `BLUEPRINT.md`＋`blueprint.json`、功能餵入專案 backlog（P0 優先出列，先於手排任務的預設 P1）；之後每輪改良與專案單場討論都注入藍圖前綴。每專案僅生成一次；解析失敗降級存原文、不擋迴圈。進階開關（env 或設定面板「進階」組）／`SEED_MAX` 為一次最多餵 backlog 的功能數 | 關閉 / 5 |
+| `TI_ADR` / `TI_ADR_MAX` | 架構決策記錄（ADR）：架構辯論／架構師定案後蒸餾成決策條目，落盤 workspace 的 `DECISIONS.md`（進交付物與 git）＋`adr.json`；後續場次的 PM 拆解與架構提案注入既有決策摘要，翻案須說明理由。進階開關（env 或設定面板「進階」組）／`MAX` 為注入時取最新筆數 | 關閉 / 8 |
 | `TI_REFLEXION` / `TI_REFLEXION_MAX` | 任務級反思記憶（補「只帶上一輪原文」缺口）：失敗輪把 QA/高工意見蒸餾成反思存 per-session JSONL，後續輪/huddle 重試 prepend 回工程師 context／`MAX` 為注入筆數。進階開關（env 或設定面板「進階」組） | 開啟 / 5 |
 | `TI_OBJECTIVE_GATE` | 客觀驗收閘門：交付前自測「實際執行」失敗 → 該輪強制退回，不讓 QA/高工的文字裁決推翻真實 exit code（守住反 reward-hacking）。`1`=工程師本輪宣告的自測指令實敗才否決（fallback 整體指令只回報不硬退）；`strict`=fallback 失敗與「未宣告執行指令」皆視為未通過 | 1（開啟） |
 | `TI_SELF_REFINE_ITERS` | 單輪內自我精修：自測未過時讓同一工程師就地依執行紀錄再修一次（交付驗證前），上限 N 次 | 1（開啟） |

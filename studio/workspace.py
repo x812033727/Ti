@@ -13,13 +13,24 @@ from . import config
 # 團隊共用知識庫檔名（跨任務知識，不算交付物，不進檔案面板/打包）。
 NOTES_FILE = "NOTES.md"
 
-# 知識沉澱檔白名單：只允許寫進 docs/ 下這幾個固定檔名。
-# 與 NOTES 不同，這些是交付物（會出現在檔案面板與打包），專案模式下跨場次累積。
-# （PRD.md 由需求澄清階段寫在 workspace 根目錄，見 orchestrator._write_prd。）
-KNOWLEDGE_DOCS = {"RESEARCH.md", "DECISIONS.md"}
+# 知識沉澱檔白名單：只允許寫進 docs/ 下這幾個固定檔名（交付物，進檔案面板與打包，
+# 專案模式跨場次累積）。PRD.md 由澄清階段寫 workspace 根（orchestrator._write_prd）；
+# 設計決策由 ADR 模組寫根目錄 DECISIONS.md＋adr.json（見 studio/adr.py）。
+KNOWLEDGE_DOCS = {"RESEARCH.md"}
 
-# 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔
-_IGNORE = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv", NOTES_FILE}
+# 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔＋ADR 機讀索引/鎖檔
+# （ADR 的人讀版 DECISIONS.md 才是交付物，不在此列）。
+_IGNORE = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    ".venv",
+    "venv",
+    NOTES_FILE,
+    "adr.json",
+    "adr.lock",
+}
 
 
 def safe_resolve(root: Path, rel: str, *, must_exist: bool = True) -> Path | None:

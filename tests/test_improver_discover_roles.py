@@ -42,9 +42,9 @@ def _improver():
 
 
 _SCRIPTS = {
-    "senior": "任務: 補上錯誤處理\n任務: 重構資料層",
+    "senior": "任務: [P0/bug] 補上錯誤處理\n任務: 重構資料層",
     "pm": "任務: 加上匯出功能\n任務: 補上錯誤處理",  # 與 senior 重複一條
-    "researcher": "重點: 同類產品都有快捷鍵\n任務: 支援鍵盤快捷鍵",
+    "researcher": "重點: 同類產品都有快捷鍵\n任務: [P2/feature] 支援鍵盤快捷鍵",
 }
 
 
@@ -64,15 +64,22 @@ async def test_three_views_merge_round_robin_and_dedupe(monkeypatch):
     _patch_experts(monkeypatch, created)
     imp, project = _improver()
 
-    titles = await imp._discover_with_experts(project["id"], "sid1")
+    items = await imp._discover_with_experts(project["id"], "sid1")
+    titles = [t["title"] for t in items]
 
     # 三視角各建一次、用後都 stop
     assert set(created) == {"senior", "pm", "researcher"}
     assert all(ex.stopped for ex in created.values())
-    # 輪替合併：每視角第一條先進；exact 去重（「補上錯誤處理」只留一條）
+    # 輪替合併：每視角第一條先進；依標題去重（「補上錯誤處理」只留一條）
     assert titles[:3] == ["補上錯誤處理", "加上匯出功能", "支援鍵盤快捷鍵"]
     assert titles.count("補上錯誤處理") == 1
     assert "重構資料層" in titles
+    # 結構化標籤（#95 格式）被保留：P0/bug 與 P2/feature；未標籤視為 P1
+    by_title = {t["title"]: t for t in items}
+    assert by_title["補上錯誤處理"]["priority"] == 0
+    assert by_title["補上錯誤處理"]["type"] == "bug"
+    assert by_title["支援鍵盤快捷鍵"]["priority"] == 2
+    assert by_title["加上匯出功能"]["priority"] == 1
     # 研究員產出沉澱 docs/RESEARCH.md（同知識沉澱管道）
     from studio import workspace
 
@@ -90,9 +97,9 @@ async def test_single_role_restores_old_behavior(monkeypatch):
     _patch_experts(monkeypatch, created)
     imp, project = _improver()
 
-    titles = await imp._discover_with_experts(project["id"], "sid2")
+    items = await imp._discover_with_experts(project["id"], "sid2")
     assert set(created) == {"senior"}
-    assert titles == ["補上錯誤處理", "重構資料層"]
+    assert [t["title"] for t in items] == ["補上錯誤處理", "重構資料層"]
 
 
 @pytest.mark.asyncio
@@ -115,9 +122,9 @@ async def test_all_filtered_falls_back_to_senior(monkeypatch):
     _patch_experts(monkeypatch, created)
     imp, project = _improver()
 
-    titles = await imp._discover_with_experts(project["id"], "sid4")
+    items = await imp._discover_with_experts(project["id"], "sid4")
     assert set(created) == {"senior"}
-    assert titles  # 保底單視角仍有產出
+    assert items  # 保底單視角仍有產出
 
 
 @pytest.mark.asyncio
@@ -141,6 +148,6 @@ async def test_one_view_failure_does_not_break_others(monkeypatch):
     monkeypatch.setattr(providers, "make_expert", fake_make_expert)
     imp, project = _improver()
 
-    titles = await imp._discover_with_experts(project["id"], "sid5")
-    assert "加上匯出功能" in titles  # pm 視角不受 senior 失敗影響
+    items = await imp._discover_with_experts(project["id"], "sid5")
+    assert "加上匯出功能" in [t["title"] for t in items]  # pm 視角不受 senior 失敗影響
     assert all(ex.stopped for ex in created.values())  # 失敗者也被 stop

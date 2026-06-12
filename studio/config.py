@@ -70,11 +70,24 @@ CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", ""
 CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等使用者回覆的秒數
 CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
 
-# 知識沉澱（workspace 的 docs/RESEARCH.md / DECISIONS.md；PRD.md 由澄清階段寫在 workspace 根）：
-# 調研結論與設計決策持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然
-# 跨場次累積。檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
+# 知識沉澱（workspace 的 docs/RESEARCH.md；PRD.md 由澄清階段寫根、設計決策由 ADR 寫根）：
+# 調研結論持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然跨場次累積。
+# 檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
 KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
 KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))  # 注入尾段上限（字元）
+
+# 產品藍圖：專案持續改良迴圈開跑時，PM 把一句願景展開成結構化藍圖（願景/用戶/功能 P0~P2/
+# 里程碑），落盤 BLUEPRINT.md＋blueprint.json、功能清單餵入專案 backlog（P0 先做），
+# 跨場次注入 requirement 前綴——讓「越做越進步」有方向感。每專案僅生成一次。
+# 預設關閉（opt-in，會多一次 PM 呼叫）；SEED_MAX 為一次最多餵 backlog 的功能數。
+BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
+BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
+
+# 架構決策記錄（ADR）：架構辯論/架構師定案後蒸餾成決策條目，落盤 workspace 的
+# DECISIONS.md（人讀、進交付物）＋adr.json（機讀索引）；後續 session 的 PM 拆解與
+# 架構提案注入既有決策摘要，翻案須說明理由——避免跨場次反覆推翻。預設關閉（opt-in）。
+ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
+ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))  # 注入時取最新 N 筆決策
 
 # --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
 # A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
@@ -446,6 +459,7 @@ def reload() -> None:
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
+    global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -497,3 +511,7 @@ def reload() -> None:
         for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")
         if r.strip()
     ]
+    BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
+    BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
+    ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
+    ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))

@@ -31,8 +31,15 @@ def test_append_and_read_roundtrip():
 
 def test_docs_are_deliverables_in_list_files():
     workspace.create_workspace("w2")
-    workspace.append_doc("w2", "DECISIONS.md", "設計決策: 用 SQLite")
-    assert "docs/DECISIONS.md" in workspace.list_files("w2")
+    workspace.append_doc("w2", "RESEARCH.md", "重點: 用 SQLite")
+    assert "docs/RESEARCH.md" in workspace.list_files("w2")
+
+
+def test_decisions_not_in_whitelist():
+    """設計決策已移交 ADR 模組（根目錄 DECISIONS.md＋adr.json），不再走 docs/ 白名單。"""
+    workspace.create_workspace("w2b")
+    workspace.append_doc("w2b", "DECISIONS.md", "設計決策: 不該被寫進 docs/")
+    assert not (workspace.workspace_path("w2b") / "docs" / "DECISIONS.md").exists()
 
 
 def test_whitelist_rejects_other_names():

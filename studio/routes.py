@@ -10,7 +10,19 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import auth, backlog, config, history, projects, publisher, redeploy, settings, workspace, ws
+from . import (
+    auth,
+    backlog,
+    blueprint,
+    config,
+    history,
+    projects,
+    publisher,
+    redeploy,
+    settings,
+    workspace,
+    ws,
+)
 
 router = APIRouter()
 
@@ -290,6 +302,8 @@ class ProjectBody(BaseModel):
 class ProjectTaskBody(BaseModel):
     title: str
     detail: str = ""
+    priority: int = 1  # P0 必須 ~ P2 加分（越小越優先；越界由 backlog 夾值）
+    type: str = "improvement"  # feature | bug | improvement
 
 
 @router.get("/api/projects", dependencies=[Depends(auth.require_auth)])
@@ -321,12 +335,18 @@ async def projects_detail(project_id: str) -> JSONResponse:
     if meta is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     sdir = projects.state_dir(project_id)
+    # backlog 按消化順序回傳（priority 小者先、同級內先進先出），前端不必自己排。
+    tasks = sorted(
+        backlog.list_tasks(state_dir=sdir),
+        key=lambda t: (t.get("priority", 1), t.get("created_at", 0)),
+    )
     return JSONResponse(
         {
             "project": meta,
             "workspace_id": projects.workspace_id(project_id),
-            "backlog": backlog.list_tasks(state_dir=sdir),
+            "backlog": tasks,
             "counts": backlog.counts(state_dir=sdir),
+            "blueprint": blueprint.load(project_id),
         }
     )
 
@@ -337,7 +357,12 @@ async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONRespo
     if projects.get(project_id) is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     task = backlog.add(
-        body.title, body.detail, source="user", state_dir=projects.state_dir(project_id)
+        body.title,
+        body.detail,
+        source="user",
+        state_dir=projects.state_dir(project_id),
+        priority=body.priority,
+        item_type=body.type,
     )
     if task is None:
         return JSONResponse({"error": "標題不可為空或與待辦重複"}, status_code=400)
