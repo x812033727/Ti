@@ -22,3 +22,28 @@
 
 Sources: [AG2 GroupChat](https://docs.ag2.ai/latest/docs/user-guide/advanced-concepts/groupchat/groupchat/) · [AutoGen group chat](https://microsoft.github.io/autogen/stable//user-guide/core-user-guide/design-patterns/group-chat.html) · [MAD/DoT 論文](https://arxiv.org/abs/2305.19118) · [MAD 綜述](https://hungleai.substack.com/p/agree-or-disagree-a-review-of-multi) · [受控辯論研究](https://arxiv.org/html/2511.07784v1) · [CONSENSAGENT (ACL 2025)](https://aclanthology.org/2025.findings-acl.1141/) · [Sycophancy 緩解](https://arxiv.org/html/2411.15287v1) · [RCR-Router](https://arxiv.org/pdf/2508.04903) · [Token 成本](https://www.augmentcode.com/guides/ai-agent-loop-token-cost-context-constraints) · [Anthropic 多代理系統](https://www.anthropic.com/engineering/multi-agent-research-system) · [SDK sessions](https://platform.claude.com/docs/en/agent-sdk/sessions) · [SDK 並行](https://codesignal.com/learn/courses/parallelizing-claude-agentic-systems-in-python/lessons/concurrent-agent-conversations)
 
+## 2026-06-13 03:21
+
+我先看既有程式碼現況，同時載入搜尋工具。
+調研完成，缺口已補齊（既有調研已涵蓋討論引擎，本輪聚焦角色 schema、儲存格式、persona 設計坑、動態組隊）。
+
+**現況脈絡**：角色在 `studio/roles.py` 是 8 個 hardcoded frozen dataclass（key/name/avatar/title/model/allowed_tools/permission_mode/system_prompt/tags），無設定檔、無角色管理 API；`DiscussionEngine` 已支援任意 N 角色但呼叫端仍硬編二人辯論；routes.py 已用 pydantic BaseModel、settings.py 已有 Field 白名單＋reload 機制——本輪是把角色「設定化＋可管理＋可組隊」。
+
+**重點**
+
+- 重點: 業界兩種主流角色定義檔格式可借鏡：(1) CrewAI 的 `agents.yaml`——每角色必填 `role/goal/backstory` 三欄＋tools，強調「越具體越好」（Senior Data Researcher > Researcher），支援 `{variable}` 執行期插值，YAML 讓非工程人員也能改角色（[CrewAI Agents](https://docs.crewai.com/en/concepts/agents)、[YAML 設定教學](https://codesignal.com/learn/courses/getting-started-with-crewai-agents-and-tasks/lessons/configuring-crewai-agents-and-tasks-with-yaml-files)）；(2) Claude Code subagents 的 **Markdown＋YAML frontmatter**——frontmatter 放 name/description/tools/model/permissionMode 等中繼資料，body 即 system prompt；同名以高優先層級覆蓋（project > user），name 重複會靜默丟棄其一（[官方 sub-agents 文件](https://code.claude.com/docs/en/sub-agents)）
+- 重點: persona 研究的關鍵警示：persona prompt **效果不穩定**——有研究顯示 162 個角色測試中無可靠增益、甚至降低 zero-shot 推理準確率；專家 persona 能提升對齊但可能傷準確性。已驗證有效的做法是「**persona 卡片＋明確微規則（micro-rules）＋場景契約**」而非單純堆形容詞——這正好對應現有 roles.py 的「職責＋出力格式硬指令」結構，應保留為 schema 必填欄位（[Persona Prompting 綜述](https://www.emergentmind.com/topics/persona-prompting-pp)、[role prompting 優化研究](https://arxiv.org/html/2509.00482v1)、[PRISM](https://arxiv.org/html/2603.18507)）
+- 重點: 動態組隊（依議題選角）已有研究支撐：DyLAN 用「代理重要性分數」做隊伍優化、MMLU 提升至多 25%；但結論強調**任務匹配＋認知多樣性**比「全選最強」重要——盲目堆高手會扼殺多樣性（[DyLAN](https://arxiv.org/abs/2310.02170)、[團隊協同研究](https://arxiv.org/pdf/2510.26352)）。本專案已有 `test_improver_discover_roles` 的多視角角色發現雛形可銜接
+- 重點: 角色名稱唯一性是調度的硬前提（既有調研 AG2 結論也如此）：auto/moderator 選人靠角色的 `description` 而非 system prompt，所以 schema 應把「給調度器看的一句話描述」與「給角色自己看的 system prompt」分成兩個欄位（[AG2 GroupChat](https://docs.ag2.ai/latest/docs/user-guide/advanced-concepts/groupchat/groupchat/)）
+
+**建議**
+
+- 建議: 儲存格式選 **Markdown＋YAML frontmatter，一檔一角色**（如 `roles/*.md`），比單一大 YAML 好：system_prompt 是多行長文放 body 最自然、git diff 友善、與 Claude Code subagents 慣例一致；frontmatter 欄位直接沿用現有 Role dataclass 欄位（key/name/avatar/title/model/allowed_tools/permission_mode/tags）＋新增 `description`（給未來 moderator 選人用）
+- 建議: 載入策略「**內建角色為預設、檔案覆蓋、同 key 後者勝**」：roles.py 現有 8 角色降為 built-in defaults，啟動時掃 `roles/` 目錄合併覆蓋——向後相容、不砍重練；用 pydantic BaseModel 做檔案驗證（fastapi 已帶 pydantic，錯誤訊息比 dataclass 好），驗證後再轉 frozen Role
+- 建議: 管理 API 走既有慣例：加 `GET/POST/PUT/DELETE /api/roles`（pydantic body，照 routes.py 現有 6 個 Body model 的寫法），寫入即落檔到 `roles/` 並 reload——和 `/api/settings` 寫 .env＋`config.reload()` 同模式
+- 建議: 「討論小組」做成獨立輕量概念：`Group = {name, role_keys[], mode}`，存同目錄設定檔；組隊驗證三條硬規則——key 必須存在、不得重複、≥2 人；先支援手動組隊，DyLAN 式自動選角列為 P1 跟進（可掛在主持人機制上）
+- 建議: schema 設計守住 persona 研究結論：必填「職責＋出力格式硬指令」（micro-rules），口吻/專長為選填裝飾欄位；建立角色時驗證 system_prompt 含出力格式段落，避免使用者建出「只有形容詞的空殼 persona」
+- 建議: 測試照既有慣例：用 `_StubExpert`/monkeypatch 模式，重點測「檔案覆蓋內建」「壞檔案被拒且不影響內建角色」「組隊驗證」三類
+
+Sources: [CrewAI Agents](https://docs.crewai.com/en/concepts/agents) · [CrewAI YAML 教學](https://codesignal.com/learn/courses/getting-started-with-crewai-agents-and-tasks/lessons/configuring-crewai-agents-and-tasks-with-yaml-files) · [Claude Code sub-agents](https://code.claude.com/docs/en/sub-agents) · [Persona Prompting](https://www.emergentmind.com/topics/persona-prompting-pp) · [Role prompting 優化](https://arxiv.org/html/2509.00482v1) · [PRISM](https://arxiv.org/html/2603.18507) · [DyLAN](https://arxiv.org/abs/2310.02170) · [團隊協同](https://arxiv.org/pdf/2510.26352) · [AG2 GroupChat](https://docs.ag2.ai/latest/docs/user-guide/advanced-concepts/groupchat/groupchat/)
+
