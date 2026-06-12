@@ -13,6 +13,8 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import math
+import re
 import time
 from pathlib import Path
 
@@ -102,16 +104,69 @@ def recent(limit: int) -> list[dict]:
     return list(reversed(_load()["lessons"]))[:limit]
 
 
-def context(limit: int | None = None) -> str:
-    """組成要注入 PM 拆解 prompt 的教訓區塊；停用、無教訓或 limit<=0 時回 ""。"""
+def _tokens(text: str) -> set[str]:
+    """中英混合輕量斷詞：ASCII 詞 + 中文字元 bigram。
+
+    不引入任何斷詞/embedding 依賴；bigram 對中文的主題比對已足夠
+    （「無人機」→ {無人, 人機} 不會撞上「網站後台」的任何 bigram）。
+    """
+    text = text.lower()
+    words = set(re.findall(r"[a-z0-9_]+", text))
+    han = re.findall(r"[一-鿿]", text)
+    bigrams = {a + b for a, b in zip(han, han[1:], strict=False)}
+    return words | bigrams
+
+
+def relevant(limit: int, requirement: str) -> list[dict]:
+    """取與需求最相關的 limit 筆教訓（IDF 加權重疊分數降冪、同分新者優先）。
+
+    做多種產品後教訓庫會混雜（無人機的坑不該注入網站任務）——按相關性挑選而非
+    「最新 N 筆」。token 以庫內文件頻率做 IDF 加權：「做一」「一個」這類滿庫都是的
+    泛用詞自動降權，主題詞（「無人」「人機」）自然勝出，無需維護停用詞表。
+    完全無相關（全部 0 分）時回空清單，由呼叫端退回最新 N 筆。
+    """
+    if limit <= 0:
+        return []
+    items = _load()["lessons"]
+    q = _tokens(requirement)
+    if not q or not items:
+        return []
+    toks = [_tokens(f"{it.get('text', '')} {it.get('requirement', '')}") for it in items]
+    df: dict[str, int] = {}
+    for lt in toks:
+        for t in lt:
+            df[t] = df.get(t, 0) + 1
+    n = len(items)
+
+    def _score(lt: set[str]) -> float:
+        return sum(math.log(1 + n / df[t]) for t in q & lt)
+
+    scored = [(s, it) for it, lt in zip(items, toks, strict=True) if (s := _score(lt)) > 0]
+    scored.sort(key=lambda p: (p[0], p[1].get("created_at", 0)), reverse=True)
+    return [it for _, it in scored[:limit]]
+
+
+def context(limit: int | None = None, requirement: str = "") -> str:
+    """組成要注入 PM 拆解 prompt 的教訓區塊；停用、無教訓或 limit<=0 時回 ""。
+
+    有給 requirement 時優先按相關性挑選（避免跨領域教訓互相污染），
+    完全無相關或未給需求則退回「最新 N 筆」（原行為）。
+    """
     if not config.LESSONS_ENABLED:
         return ""
     cap = config.LESSONS_MAX if limit is None else limit
-    rows = recent(cap)
+    rows = relevant(cap, requirement) if requirement.strip() else []
+    picked_by_relevance = bool(rows)
+    if not rows:
+        rows = recent(cap)
     if not rows:
         return ""
     body = "\n".join(f"- {r['text']}" for r in rows)
-    return f"【跨場次教訓庫（過往各場討論檢討蒸餾，請避免重蹈覆轍、善用既有結論）】\n{body}\n\n"
+    note = "依本次需求相關性挑選" if picked_by_relevance else "最新數筆"
+    return (
+        f"【跨場次教訓庫（過往各場討論檢討蒸餾，{note}；請避免重蹈覆轍、善用既有結論）】\n"
+        f"{body}\n\n"
+    )
 
 
 def all_lessons() -> list[dict]:

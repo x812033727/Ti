@@ -37,9 +37,9 @@ def test_read_masks_secrets(sandbox, monkeypatch):
 
 
 def test_update_writes_and_reloads(sandbox):
-    settings.update({"TI_PROVIDER": "openai", "TI_MODEL_LEAD": "claude-foo"})
+    settings.update({"TI_PROVIDER": "openai", "TI_MODEL_LEAD": "claude-haiku-4-5"})
     assert config.PROVIDER == "openai"
-    assert config.MODEL_LEAD == "claude-foo"
+    assert config.MODEL_LEAD == "claude-haiku-4-5"
     env_text = (sandbox / ".env").read_text()
     assert "TI_PROVIDER" in env_text and "openai" in env_text
 
@@ -68,9 +68,9 @@ def test_settings_endpoints(sandbox, monkeypatch):
     client = TestClient(app, client=("127.0.0.1", 12345))
     r = client.get("/api/settings")
     assert r.status_code == 200 and "fields" in r.json()
-    r2 = client.post("/api/settings", json={"TI_MODEL_FAST": "claude-bar"})
+    r2 = client.post("/api/settings", json={"TI_MODEL_FAST": "claude-opus-4-7"})
     assert r2.status_code == 200 and r2.json()["ok"] is True
-    assert config.MODEL_FAST == "claude-bar"
+    assert config.MODEL_FAST == "claude-opus-4-7"
 
 
 def test_update_advanced_toggle_reloads(sandbox):

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -101,12 +102,13 @@ def _worktree_common_git_dir(cwd: Path | str) -> Path | None:
     return admin.parent.parent  # 後備：worktrees/<name> 往上兩層即共用 .git
 
 
-def _bwrap_prefix(cwd: Path | str) -> list[str]:
+def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
 
     新 PID namespace 讓沙箱內的指令看不到也殺不到主機進程（含正式服務）；
     `--ro-bind / /` 讓 python/node/git 等執行檔可用但主機檔系唯讀。預設 `--unshare-net`
-    斷網（Demo 不需網路），設 TI_SANDBOX_NET=1 可放行。cwd 為並行 lane 的 linked worktree 時，
+    斷網（Demo 不需網路），設 TI_SANDBOX_NET=1 可放行；net 參數可逐次覆寫（HTTP Demo 須與
+    host 共享 loopback 才探測得到，傳 net=True）。cwd 為並行 lane 的 linked worktree 時，
     額外把共用 git 目錄（主 repo 的 .git）綁為可寫，否則 worktree 內的 git 寫入會踩到唯讀面。
     """
     cwd = str(cwd)
@@ -138,7 +140,8 @@ def _bwrap_prefix(cwd: Path | str) -> list[str]:
         "--die-with-parent",
         "--new-session",
     ]
-    if not config.SANDBOX_NET:
+    allow_net = config.SANDBOX_NET if net is None else net
+    if not allow_net:
         args.append("--unshare-net")
     return args
 
@@ -369,6 +372,136 @@ def resolve_demo_command(cwd: Path | str, declared: str | None) -> str | None:
         return declared
     entry = detect_entrypoint(cwd)
     return f"python {entry}" if entry else None
+
+
+def parse_demo_url(text: str) -> str | None:
+    """從專家文字解析 `Demo 網址: http://localhost:<port>/...`。
+
+    僅放行本機 URL（localhost / 127.0.0.1）——HTTP 驗收只探測自己剛啟動的服務，
+    絕不對外部主機發請求。
+    """
+    m = re.search(r"(?:Demo ?網址|demo ?url)\s*[:：]\s*(\S+)", text, re.I)
+    if not m:
+        return None
+    url = m.group(1).strip().strip("`")
+    if re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", url):
+        return url
+    return None
+
+
+def _http_get(url: str, timeout: float = 3.0) -> tuple[int | None, str]:
+    """同步 GET（給 to_thread 用）：回 (狀態碼, 內容片段)；連不上回 (None, "")。"""
+    import urllib.error
+    import urllib.request
+
+    try:
+        # nosec B310 — url 已由 parse_demo_url 限定 localhost/127.0.0.1
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+            return resp.status, resp.read(2048).decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, ""  # 4xx/5xx＝服務有回應，狀態碼交由呼叫端裁決
+    except OSError:
+        return None, ""
+
+
+async def run_http_demo(
+    cwd: Path | str,
+    command: str,
+    url: str,
+    timeout: int | None = None,
+    sandbox: bool | None = None,
+) -> tuple[RunOutput, int | None]:
+    """網站/服務的 HTTP 驗收：啟動服務 → 輪詢 url 至就緒 → GET 取狀態碼與內容 → 收掉服務。
+
+    解決「執行指令是常駐 server」時純 run_command 只能等逾時、無從驗證的缺口。
+    服務仍跑在沙箱（PID 隔離、host 唯讀）但「不」斷網（net=True，與 host 共享 loopback，
+    否則探測不到）；url 僅限本機（parse_demo_url 已過濾）。
+    回傳 (RunOutput, 狀態碼)；ok ＝ 時限內就緒且狀態碼 < 500。
+    """
+    timeout = timeout or config.DEMO_TIMEOUT
+    use_sandbox = config.SANDBOX_ENABLED if sandbox is None else sandbox
+    inner = _executable_command(command)
+    preexec = _rlimit_preexec()
+    display = f"{command} ⇒ GET {url}"
+    if use_sandbox:
+        if not config._sandbox_available():
+            return _sandbox_blocked(display), None
+        proc = await asyncio.create_subprocess_exec(
+            *_bwrap_prefix(cwd, net=True),
+            "/bin/sh",
+            "-c",
+            inner,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+            preexec_fn=preexec,
+        )
+    else:
+        proc = await asyncio.create_subprocess_shell(
+            inner,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+            preexec_fn=preexec,
+        )
+
+    # 並行讀走服務輸出，避免 server 寫滿 pipe buffer 被 block。
+    chunks: list[bytes] = []
+
+    async def _drain() -> None:
+        try:
+            while True:
+                blob = await proc.stdout.read(4096)
+                if not blob:
+                    return
+                chunks.append(blob)
+        except (OSError, ValueError):
+            return
+
+    drain_task = asyncio.create_task(_drain())
+    status: int | None = None
+    body = ""
+    early_exit_code: int | None = None  # 服務在探測成功前就自行退出（崩潰／port 被占）
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    try:
+        while loop.time() < deadline:
+            if proc.returncode is not None:
+                early_exit_code = proc.returncode
+                break  # 就緒無望
+            status, body = await asyncio.to_thread(_http_get, url)
+            if status is not None:
+                break
+            await asyncio.sleep(0.5)
+    finally:
+        if proc.returncode is None:
+            kill_process_group(proc)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(drain_task, timeout=5)
+
+    server_out = b"".join(chunks).decode("utf-8", "replace")
+    ok = status is not None and status < 500
+    if status is not None:
+        probe = f"GET {url} → HTTP {status}"
+    elif early_exit_code is not None:
+        probe = f"服務啟動後即退出（exit={early_exit_code}），未能回應 {url}"
+    else:
+        probe = f"服務在 {timeout}s 內未就緒，{url} 無回應"
+    parts = [probe]
+    if body.strip():
+        parts.append(f"--- 回應內容（截斷） ---\n{body.strip()}")
+    if server_out.strip():
+        parts.append(f"--- 服務輸出 ---\n{server_out.strip()}")
+    result = RunOutput(
+        command=display,
+        exit_code=0 if ok else 1,
+        output=_truncate("\n".join(parts)),
+        timed_out=status is None and early_exit_code is None,
+    )
+    return result, status
 
 
 # --- git（workspace 內的獨立 repo）-------------------------------------

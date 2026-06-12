@@ -66,8 +66,8 @@ def test_token_synced_to_os_environ(sandbox):
 
 def test_config_reload_takes_effect(sandbox):
     """config.reload() 後可調值即時更新（無需重啟）——驗收 #4 的『生效』。"""
-    settings.update({"TI_MODEL_FAST": "claude-fast-4", "TI_PROVIDER": "openai"})
-    assert config.MODEL_FAST == "claude-fast-4"
+    settings.update({"TI_MODEL_FAST": "claude-haiku-4-5", "TI_PROVIDER": "openai"})
+    assert config.MODEL_FAST == "claude-haiku-4-5"
     assert config.PROVIDER == "openai"
     # secret 類也同步進 config（reload 內 GITHUB_TOKEN/OPENAI_API_KEY 一起更新）
     settings.update({"GITHUB_TOKEN": "ghp_TEST_cfg_4"})
