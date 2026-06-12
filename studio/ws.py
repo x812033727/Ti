@@ -34,6 +34,43 @@ _detached: set[asyncio.Task] = set()
 # 進行中的專案 id：同一專案共用固定 workspace，同時兩場討論會互相踩檔案，故擋第二場。
 _active_projects: set[str] = set()
 
+# 進行中討論的控制器（session id／專案 id → StudioSession 或 ProjectImprover）。
+# WS 的 stop 只在原連線存活時可用；這張表讓 REST（POST /api/sessions/{id}/stop）
+# 在頁面重整／斷線（detach 背景續跑）後仍能對同一條 request_stop 管線喊停。
+_running: dict[str, object] = {}
+
+
+def _register_running(controller: object, *keys: str) -> None:
+    for k in keys:
+        if k:
+            _running[k] = controller
+
+
+def _unregister_running(*keys: str) -> None:
+    for k in keys:
+        _running.pop(k, None)
+
+
+def stop_running(target_id: str) -> bool:
+    """對進行中的討論／持續改良迴圈送停止指令；target 可為 session id 或專案 id。
+
+    持續改良迴圈內每輪討論各有自己的 session id（improver._record_sid），註冊表只記
+    umbrella id 與專案 id——直接命中不到時退而比對該欄位，讓「從歷史列表停掉正在跑
+    的那一輪」也可行。回 True＝已送出停止（在安全點收尾，非立即中斷）；False＝沒有
+    進行中的目標。
+    """
+    ctl = _running.get(target_id)
+    if ctl is None:
+        ctl = next(
+            (c for c in _running.values() if getattr(c, "_record_sid", None) == target_id),
+            None,
+        )
+    if ctl is None:
+        return False
+    ctl.request_stop()
+    return True
+
+
 # 同時進行中的討論場次數（並發上限用）。每場占一個 slot，隨 run_task 完成釋放
 # （含客戶端斷線後背景續跑）。單執行緒 event loop 內，slot 的 check 與增減之間無
 # await，故為原子操作、不需鎖。
@@ -212,6 +249,9 @@ async def ws(websocket: WebSocket) -> None:
             run_task = asyncio.create_task(improver.run())
             run_task.add_done_callback(lambda _t: _release_session_slot())
             run_task.add_done_callback(lambda _t: _active_projects.discard(project["id"]))
+            stop_keys = (improver.session_id, project["id"])
+            _register_running(improver, *stop_keys)
+            run_task.add_done_callback(lambda _t: _unregister_running(*stop_keys))
             await _pump_interventions(websocket, improver, queue, run_task)
             if not run_task.done():
                 _detached.add(run_task)
@@ -297,6 +337,9 @@ async def ws(websocket: WebSocket) -> None:
         if project is not None:
             pid = project["id"]
             run_task.add_done_callback(lambda _t: _active_projects.discard(pid))
+        stop_keys = (session_id, project["id"]) if project is not None else (session_id,)
+        _register_running(session, *stop_keys)
+        run_task.add_done_callback(lambda _t: _unregister_running(*stop_keys))
         await _pump_interventions(websocket, session, queue, run_task)
         if not run_task.done():
             # 客戶端已斷線（或按 stop 後尚未結束）：把討論留在背景跑完，handler 立即

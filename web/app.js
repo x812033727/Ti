@@ -476,15 +476,29 @@ function renderHistory(sessions) {
         <div class="h-meta"><span class="h-status status-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>
           <span>${s.n_events || 0} 事件</span><span>${when}</span></div>
       </div>
+      ${s.status === "running" ? '<button class="h-stop" title="停止這場進行中的討論（在安全點收尾）">⏹</button>' : ""}
       <button class="h-del" title="刪除此 session（含產出檔案）">🗑</button>`;
     li.querySelector(".h-req").textContent = s.requirement || "(無需求)";
     li.querySelector(".h-main").onclick = () => replaySession(s.session_id);
+    const stopB = li.querySelector(".h-stop");
+    if (stopB) stopB.onclick = (e) => { e.stopPropagation(); stopSession(s.session_id); };
     li.querySelector(".h-del").onclick = (e) => {
       e.stopPropagation();
       deleteSession(s.session_id, s.status);
     };
     historyList.appendChild(li);
   }
+}
+
+async function stopSession(sid) {
+  // 與 WS 的停止同一條管線（request_stop）：頁面重整／斷線後背景續跑的討論也停得掉。
+  // 停止在安全點收尾、非立即中斷，稍候再刷新列表讓狀態收斂。
+  try {
+    const r = await fetch(`/api/sessions/${sid}/stop`, { method: "POST" });
+    if (r.ok) toast("已送出停止指令，將在安全點收尾");
+    else toast("找不到進行中的目標（可能已結束，或服務曾重啟——可用專案面板的恢復）", "err");
+    setTimeout(openHistory, 1500);
+  } catch (e) { toast("停止失敗：" + e.message, "err"); }
 }
 
 async function deleteSession(sid, status) {
@@ -685,9 +699,56 @@ async function refreshProjectPanel() {
       btn.onclick = () => recoverProject(pid);
       body.appendChild(btn);
     }
+
+    // 專案層級操作：進行中可一鍵停止（同 WS stop 管線，斷線後也停得掉）；刪除整個專案。
+    const actions = document.createElement("div");
+    actions.className = "proj-actions";
+    if (d.active) {
+      const stopB = document.createElement("button");
+      stopB.id = "projectStop";
+      stopB.className = "ghost";
+      stopB.textContent = "⏹ 停止執行";
+      stopB.title = "對這個專案進行中的討論／持續改良迴圈送停止指令（在安全點收尾）";
+      stopB.onclick = () => stopProject(pid);
+      actions.appendChild(stopB);
+    }
+    const delB = document.createElement("button");
+    delB.id = "projectDelete";
+    delB.className = "ghost danger";
+    delB.textContent = "🗑 刪除專案";
+    delB.title = "刪除專案 meta、改良待辦、藍圖與 workspace 程式碼（歷史紀錄保留）；進行中需先停止";
+    delB.onclick = () => deleteProject(pid, p.name || pid);
+    actions.appendChild(delB);
+    body.appendChild(actions);
   } catch (e) {
     body.innerHTML = "<span class='muted'>無法載入專案</span>";
   }
+}
+
+async function stopProject(pid) {
+  try {
+    const r = await fetch(`/api/sessions/${pid}/stop`, { method: "POST" });
+    if (r.ok) toast("已送出停止指令，將在安全點收尾");
+    else toast("沒有進行中的討論", "err");
+    setTimeout(refreshProjectPanel, 1500);
+  } catch (e) { toast("停止失敗：" + e.message, "err"); }
+}
+
+async function deleteProject(pid, name) {
+  if (!confirm(
+    `刪除專案「${name}」？\n` +
+    "專案 meta、改良待辦、藍圖與 workspace 程式碼會一併刪除，無法復原。\n" +
+    "（歷史紀錄保留，可在歷史面板個別刪除）"
+  )) return;
+  try {
+    const res = await fetch(`/api/projects/${pid}`, { method: "DELETE" });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(d.error || "刪除失敗", "err"); return; }
+    toast("專案已刪除", "ok");
+    closeProjectPanel();
+    $("#projectSelect").value = "";
+    await loadProjects();
+  } catch (e) { toast("刪除失敗：" + e.message, "err"); }
 }
 
 async function setProjectPublishRepo(pid, current) {
