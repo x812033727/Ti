@@ -230,6 +230,76 @@
       "rejected": "",
       "session_id": "pj8fe0fdce47",
       "created_at": 1781292400.6990018
+    },
+    {
+      "decision": "技術選型——零新依賴，沿用行前綴 regex 解析（flow.py 慣例）、broadcast 事件持久化（history JSONL 既有管道），不引入 JSON schema 結構化輸出",
+      "rationale": "",
+      "rejected": "JSON schema 結構化輸出——與 codebase 行前綴慣例不一致，且既有條列 fallback 已驗證可用",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391583
+    },
+    {
+      "decision": "模組切分——`flow.parse_agenda` 與 `flow.validate_assignees` 為純函式（離線可測）；orchestrator 只改拆解 prompt 與討論階段呼叫端；discussion.py 與 `parse_tasks_with_deps` 完全不動",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391635
+    },
+    {
+      "decision": "介面——子題行 `子題: <標題> | <描述> | <成功準則>`，解析用 `split(\"|\", 2)` 固定最多三段（後段全歸 criteria），缺段允許空；`負責: <role_key>` 緊跟所屬子題行，找不到前置子題時忽略＋log；無 `子題:` 行 fallback 單一子題（原需求全文），零回歸",
+      "rationale": "高工指出標題含 `|` 會錯切，`split(\"|\", 2)` 一行解決，單測加此樣本",
+      "rejected": "",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391652
+    },
+    {
+      "decision": "分派硬驗證——合法集合＝本場實際出席角色 keys（experts dict）而非全域 BY_KEY；非法/缺漏 fallback 順序：`engineer` 若在出席集合，否則取第一個出席者（`fallback if fallback in available_keys else next(iter(available_keys))`），修正記錄入 log 與議程事件",
+      "rationale": "工程師與高工同點名 fallback 硬編 engineer 在自訂角色組合下自身就是非法 key；純函式不得依賴呼叫端保證",
+      "rejected": "fallback 永遠 engineer——engineer 缺席時 fallback 結果仍非法，硬驗證形同虛設",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391662
+    },
+    {
+      "decision": "assignee 消費端——逐子題討論階段由 orchestrator 讀取：該子題的提案方（先發言者）＝assignee 對應 expert，並在 topic 文字標明「主責: <角色名>」；同時隨 agenda_plan 事件持久化供重看",
+      "rationale": "高工正確指出無消費端就是死資料；先發言權是不改引擎介面下最小且有實效的消費方式",
+      "rejected": "",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391678
+    },
+    {
+      "decision": "持久化——events.py 新增 `EventType.AGENDA_PLAN` enum 成員＋`agenda_plan(session_id, agenda, tasks, assignments)` 建構子，經既有 broadcast→record_event 入 history；meta.json 與 history.py 不改；實作清單加一項：確認 web 前端對未知 event type 容錯忽略，會炸則補 default case",
+      "rationale": "工程師實跑確認 type 是 enum，只加函式不夠",
+      "rejected": "",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391693
+    },
+    {
+      "decision": "ADR 蒸餾收斂為一次——逐子題只跑討論、收集各子題結論串接成單一 design_note，討論全部結束後做一次蒸餾、一筆 adr.record、一次 commit",
+      "rationale": "工程師實測指出逐子題各帶蒸餾＋commit 會 ×N 成本，且後續子題 adr.context 吃到前面子題決策造成干擾；高工同問聚合方式——統一收斂為一次最便宜且語意正確",
+      "rejected": "每子題各自蒸餾＋commit——2–5 倍 token/時間成本、ADR 碎片化、子題間 context 互相污染",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.339171
+    },
+    {
+      "decision": "成本上界——解析端硬上限子題數 5（超出截斷並 log，prompt 的 2–5 只是建議不是防線）；多子題時每子題討論輪數走新 config `TI_AGENDA_ROUNDS`（預設 1），總成本上界＝5×1 輪可控",
+      "rationale": "高工指出 prompt 約束不可當防線；5 子題 × 既有 DEBATE_ROUNDS 會讓架構階段成本失控",
+      "rejected": "",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391728
+    },
+    {
+      "decision": "粒度守則入拆解 prompt——「子題 2–5 個、每任務一句可驗收、探索型允許單子題不硬拆」字面寫入，可 grep 驗證",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.3391738
+    },
+    {
+      "decision": "測試切分——flow 純函式單測（合法/非法 key、fallback 鏈含 engineer 缺席 case、標題含 `|`、單子題 fallback、超量截斷）＋8 角色 description 非空守門單測＋fake PM 腳本（含一合法一非法 key）流程測試＋#5 真實 server 冒煙特別驗證 PM 對疊加格式的遵循率，輸出回指輸入排除假綠",
+      "rationale": "工程師提醒拆解單次呼叫已產多種格式，再疊 `子題:`/`負責:` 格式負擔不小，fallback 路徑須在真實冒煙實測到",
+      "rejected": "",
+      "session_id": "pj2fdafbac98",
+      "created_at": 1781301525.339175
     }
   ]
 }
