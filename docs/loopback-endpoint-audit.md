@@ -35,6 +35,7 @@
 | GET  | `/api/workspace/{session_id}/file` | auth | ➖ | 讀取單一檔案內容 |
 | GET  | `/api/workspace/{session_id}/download` | auth | ➖ | 下載工作區壓縮檔 |
 | GET  | `/api/publish/config` | auth | ➖ | 讀取發佈設定 |
+| GET  | `/api/groups` | auth | ➖ | 讀取討論小組清單（roles/groups.yaml） |
 | GET  | `/api/projects` | auth | ➖ | 讀取專案列表與 backlog 統計 |
 | GET  | `/api/projects/{project_id}` | auth | ➖ | 讀取單一專案 meta 與 backlog |
 | GET  | `/api/metrics` | auth | ➖ | 讀取運維指標（活躍場次/並發上限/history 計數/保留策略/workspace 數），無秘密 |
@@ -56,6 +57,9 @@
 | POST | `/api/projects/{project_id}/backlog` | auth | 往「專案」backlog 排改良任務。與 autopilot 的任務注入端點（納管）不同：專案任務僅在已登入使用者經 /ws 主動啟動持續改良時才執行，且專家 bash 走 bwrap 沙箱（與 /ws 同安全模型），非無人值守自動執行 |
 | POST | `/api/projects/{project_id}/recover` | auth | 中斷恢復：把卡在 in_progress 的 backlog 任務重置回 pending、幽靈 running meta 標 error，皆冪等且僅作用於該專案的資料面；迴圈進行中回 409 防競爭，不啟動任何執行（重啟由前端走 /ws 既有流程） |
 | DELETE | `/api/projects/{project_id}` | auth | 刪除專案（meta/backlog/藍圖/固定 workspace），作用於資料面而非機器控制面，與 DELETE history 同級；進行中回 409 防止對著被抽掉的目錄繼續寫檔；history 紀錄保留 |
+| POST | `/api/groups` | auth | 建立討論小組：純資料面寫入（`roles/groups.yaml` 的組隊設定，role_key 須存在/不重複/≥2 人、mode 白名單，違規 422），不執行任何指令、不改機器狀態；與 POST /api/projects 同級 |
+| PUT | `/api/groups/{name}` | auth | 更新討論小組（同套驗證），同上 |
+| DELETE | `/api/groups/{name}` | auth | 刪除討論小組（單純移除 yaml 條目），同上 |
 | POST | `/api/sessions/{target_id}/stop` | auth | 對進行中討論／改良迴圈送停止指令（與 /ws 的 stop 同一條 request_stop 管線，僅作用於使用者自己啟動的場次）；讓斷線後背景續跑的討論也停得掉，與 /ws 同安全模型 |
 | POST | `/api/projects/{project_id}/publish-repo` | auth | 設定專案自己的發佈 repo（owner/repo，留空清除）：純 meta 寫入（格式白名單驗證），實際對外推送仍由 session 結束的既有發佈流程執行，token 不經此端點 |
 
