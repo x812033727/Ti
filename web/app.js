@@ -965,7 +965,8 @@ function renderSettings(fields) {
       input = document.createElement("select");
       for (const opt of f.options) {
         const o = document.createElement("option");
-        o.value = opt; o.textContent = opt;
+        o.value = opt;
+        o.textContent = opt + (f.recommended && opt === f.recommended ? "\uff08\u63a8\u85a6\uff09" : "");
         if (opt === f.value) o.selected = true;
         input.appendChild(o);
       }
@@ -1002,9 +1003,24 @@ function renderSettings(fields) {
     }
     input.dataset.env = f.env;
     input.dataset.secret = f.secret ? "1" : "";
+    input.dataset.recommended = f.recommended || "";
     row.appendChild(input);
     settingsForm.appendChild(row);
   }
+}
+
+function applyRecommendedSettings() {
+  // 把所有帶推薦值的欄位（各角色模型）一鍵填入推薦配置；不自動儲存，按「儲存」才生效。
+  let n = 0;
+  settingsForm.querySelectorAll("[data-env]").forEach((el) => {
+    const rec = el.dataset.recommended;
+    if (!rec) return;
+    if (el.value !== rec) { el.value = rec; n += 1; }
+  });
+  settingsDirty = settingsDirty || n > 0;
+  $("#settingsHint").textContent = n
+    ? `已填入推薦配置（${n} 個欄位），按「儲存」生效。`
+    : "所有欄位已是推薦配置。";
 }
 
 async function saveSettings() {
@@ -1050,6 +1066,7 @@ settingsPanel.addEventListener("click", (e) => {
   if (e.target === settingsPanel) closeSettings();
 });
 $("#settingsSave").onclick = saveSettings;
+$("#settingsRecommend").onclick = applyRecommendedSettings;
 $("#pwSave").onclick = savePassword;
 $("#redeployBtn").onclick = redeployNow;
 $("#downloadBtn").onclick = downloadWorkspace;

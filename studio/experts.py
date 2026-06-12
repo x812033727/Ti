@@ -68,7 +68,14 @@ async def _auto_allow_tool(
 
 
 def _model_for(role: Role) -> str:
-    """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。"""
+    """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。
+
+    優先序：該角色的個別覆寫（config.ROLE_MODELS，設定面板「<角色>模型」欄位）
+    → 沒覆寫（auto）就沿用 LEAD_ROLES → MODEL_LEAD/FAST 的二分法。
+    """
+    override = config.ROLE_MODELS.get(role.key, "")
+    if override:
+        return override
     return config.MODEL_LEAD if role.key in config.LEAD_ROLES else config.MODEL_FAST
 
 

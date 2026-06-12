@@ -26,6 +26,7 @@ class Field:
     placeholder: str = ""
     group: str = ""
     default: str = ""  # env 未設定時 UI 應顯示的「有效預設」（避免 select 誤顯第一個選項）
+    recommended: str = ""  # 推薦值（UI 在選項加「（推薦）」尾綴、「套用推薦」一鍵填入）
 
 
 # Claude 官方模型 ID（2026-06 現行清單）。select 嚴格白名單，由 update() 驗證。
@@ -76,6 +77,29 @@ FIELDS: tuple[Field, ...] = (
         options=CLAUDE_MODELS,
         default="claude-sonnet-4-6",  # 與 config.MODEL_FAST 預設一致
         group="Claude",
+    ),
+    # 每個角色可分開覆寫模型（auto＝沿用上面主力/快速的二分法；僅 Claude provider 適用）。
+    # 推薦值＝品質優先（全員 claude-fable-5），前端「✨ 套用推薦模型」一鍵填入。
+    *(
+        Field(
+            f"TI_MODEL_{key.upper()}",
+            f"{zh}模型（auto＝依主力/快速規則）",
+            kind="select",
+            options=("auto", *CLAUDE_MODELS),
+            default="auto",
+            recommended="claude-fable-5",
+            group="Claude",
+        )
+        for key, zh in (
+            ("pm", "專案經理"),
+            ("engineer", "工程師"),
+            ("qa", "驗證工程師"),
+            ("senior", "高級工程師"),
+            ("researcher", "研究員"),
+            ("architect", "架構師"),
+            ("security", "資安審查"),
+            ("devops", "整合維運"),
+        )
     ),
     Field(
         "OPENAI_API_KEY",
@@ -304,6 +328,7 @@ def read() -> dict:
                 "options": list(f.options),
                 "placeholder": f.placeholder,
                 "group": f.group,
+                "recommended": f.recommended,
                 "value": "" if f.secret else cur,
                 "set": bool(raw),
             }
