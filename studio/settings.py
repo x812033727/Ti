@@ -145,10 +145,16 @@ FIELDS: tuple[Field, ...] = (
     # --- 進階流程開關（對應 .env 的 power-user 旋鈕；消費端讀即時全域值，存檔後下次討論生效）---
     Field(
         "TI_CLARIFY",
-        "需求澄清（拆解前 PM 先反問關鍵問題，逾時按假設續行）",
+        "需求澄清（拆解前 PM 先反問關鍵問題，逾時按假設續行，預設開）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_CLARIFY_TIMEOUT",
+        "澄清等待回覆秒數（逾時按 PM 預設假設續行）",
+        placeholder="180",
         group="進階",
     ),
     Field(
@@ -156,7 +162,7 @@ FIELDS: tuple[Field, ...] = (
         "卡關討論 huddle（跑滿輪數仍未過時召集團隊找替代方案）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -172,7 +178,7 @@ FIELDS: tuple[Field, ...] = (
         "共用筆記 NOTES.md（跨任務累積踩過的坑／決策）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -180,7 +186,7 @@ FIELDS: tuple[Field, ...] = (
         "跨場次教訓庫（長期記憶，開場注入 PM 拆解）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -188,7 +194,7 @@ FIELDS: tuple[Field, ...] = (
         "任務級反思記憶（失敗輪蒸餾反思，後續輪／huddle 重試帶回）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -196,7 +202,7 @@ FIELDS: tuple[Field, ...] = (
         "客觀驗收閘門（0 關／1 自測實敗才否決／strict 連未宣告指令也退回）",
         kind="select",
         options=("0", "1", "strict"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -204,7 +210,7 @@ FIELDS: tuple[Field, ...] = (
         "單輪內自我精修次數（自測未過就地再修，0 關）",
         kind="select",
         options=("0", "1", "2", "3"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -213,6 +219,20 @@ FIELDS: tuple[Field, ...] = (
         kind="select",
         options=("0", "1"),
         default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_KNOWLEDGE",
+        "知識沉澱（調研結論寫入 docs/RESEARCH.md，跨場次累積，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_DISCOVER_ROLES",
+        "找問題視角（csv：senior 工程／pm 產品／researcher 調研）",
+        placeholder="senior,pm,researcher",
         group="進階",
     ),
     Field(

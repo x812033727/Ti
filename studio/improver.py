@@ -19,7 +19,7 @@ import contextlib
 import logging
 import uuid
 
-from . import backlog, blueprint, config, events, history, projects, runner
+from . import backlog, blueprint, config, events, history, projects, runner, workspace
 from .events import StudioEvent
 from .orchestrator import StudioSession, parse_structured_tasks
 
@@ -305,7 +305,9 @@ class ProjectImprover:
         history.start_session(sid, f"[專案 {name}] 找問題：審視產品提出改良點")
         self._record_sid = sid
         await self.broadcast(
-            events.phase_change(self.session_id, "找問題", "資深專家正在審視產品、找改良點")
+            events.phase_change(
+                self.session_id, "找問題", "團隊多視角審視產品、找改良點（工程/產品/調研）"
+            )
         )
         try:
             if config.OFFLINE_MODE:
@@ -313,7 +315,7 @@ class ProjectImprover:
                     {"title": t, "priority": 1, "type": "improvement"} for t in OFFLINE_DISCOVERY
                 ]
             else:
-                items = await self._discover_with_expert(pid, sid)
+                items = await self._discover_with_experts(pid, sid)
             # 只寫進 history（不 broadcast）：讓這個審視 session 在歷史面板顯示為「完成」，
             # 又不會在前端被誤當成一輪改良的結束。
             history.record_event(
@@ -338,30 +340,97 @@ class ProjectImprover:
         )
         return n
 
-    async def _discover_with_expert(self, pid: str, sid: str) -> list[dict]:
-        from .providers import make_expert
-        from .roles import SENIOR
+    def _discover_role_keys(self) -> list[str]:
+        """解析 TI_DISCOVER_ROLES：過濾未知鍵；可選角色須仍在 OPTIONAL_ROLES（被關即降級）。"""
+        from .roles import BY_KEY, CORE_ROLES
 
-        cwd = projects.workspace_dir(pid)
-        expert = make_expert(SENIOR, sid, cwd)
+        core = {r.key for r in CORE_ROLES}
+        keys: list[str] = []
+        for key in config.DISCOVER_ROLES:
+            if key not in BY_KEY or key in keys:
+                continue
+            if key in core or key in config.OPTIONAL_ROLES:
+                keys.append(key)
+        return keys or ["senior"]  # 全被過濾時保底單視角，找問題階段不致空轉
+
+    def _discover_prompts(self, pid: str) -> dict[str, str]:
+        """各視角的「找問題」prompt。共用成績單前綴、藍圖脈絡與結構化 `任務:` 輸出格式。"""
+        name = self.project.get("name", "")
         vision = self.project.get("vision", "")
-        prompt = self._recent_outcomes_context() + (
-            f"你正在審視長期產品專案「{self.project.get('name', '')}」"
-            "（程式碼就在你的工作目錄）。\n"
+        head = self._recent_outcomes_context() + (
+            f"你正在審視長期產品專案「{name}」（程式碼就在你的工作目錄）。\n"
             + (f"產品願景：{vision}\n" if vision else "")
             + blueprint.context(pid)
-            + "請用 Read/Grep 瀏覽現況，從使用者價值與工程品質兩面找出最值得改良的 3~5 點"
-            "（功能缺口、bug、體驗、測試、安全），每點獨立一行，格式固定為 "
+        )
+        tail = (
+            "找出最值得改良的 3~5 點，每點獨立一行，格式固定為 "
             "`任務: [P0/bug] <動詞開頭的具體任務>`——方括號標籤標注優先級"
             "（P0 必須~P2 加分）與類型（feature/bug/improvement），標籤可省（視為 P1）。"
             "只輸出任務行。"
         )
-        try:
-            text = await expert.speak(prompt, self.broadcast)
-        finally:
-            with contextlib.suppress(Exception):
-                await expert.stop()
-        return parse_structured_tasks(text)
+        wid = projects.workspace_id(pid)
+        prd_tail = workspace.read_prd_tail(wid, config.KNOWLEDGE_MAX_CHARS)
+        research_tail = workspace.read_doc_tail(wid, "RESEARCH.md", config.KNOWLEDGE_MAX_CHARS)
+        return {
+            "senior": head
+            + "請用 Read/Grep 瀏覽現況，從使用者價值與工程品質兩面（功能缺口、bug、體驗、"
+            "測試、安全）" + tail,
+            "pm": head
+            + (f"【PRD（需求澄清沉澱）】\n{prd_tail}\n\n" if prd_tail else "")
+            + "請用 Read/Grep 瀏覽現況，從目標用戶與產品價值的角度（功能缺口、使用體驗、"
+            "與願景的落差）" + tail,
+            "researcher": head
+            + (f"【既有調研（docs/RESEARCH.md）】\n{research_tail}\n\n" if research_tail else "")
+            + "請先沿用上面的既有調研，再上網看同類產品與業界最佳實踐，從「我們還缺什麼能力」"
+            "的角度" + tail,
+        }
+
+    async def _discover_with_experts(self, pid: str, sid: str) -> list[dict]:
+        """多視角並行「找問題」：各視角獨立提案 → 角色輪替合併＋依標題去重。
+
+        輪替合併（senior[0], pm[0], researcher[0], senior[1]…）保證 DISCOVERY_MAX 截斷後
+        每個視角至少有代表進 backlog。產出為結構化任務（含 priority/type，#95 格式）；
+        研究員產出順手沉澱 docs/RESEARCH.md（與正式流程同管道）。
+        """
+        from .providers import make_expert
+        from .roles import BY_KEY
+
+        cwd = projects.workspace_dir(pid)
+        keys = self._discover_role_keys()
+        prompts = self._discover_prompts(pid)
+        generic = (
+            self._recent_outcomes_context()
+            + f"你正在審視長期產品專案「{self.project.get('name', '')}」。"
+            "請從你的專業視角找出最值得改良的 3~5 點，每點獨立一行，"
+            "格式固定為 `任務: [P0/bug] <動詞開頭的具體任務>`（標籤可省，視為 P1）。"
+            "只輸出任務行。"
+        )
+
+        async def _ask(key: str) -> list[dict]:
+            expert = make_expert(BY_KEY[key], f"{sid}:{key}" if len(keys) > 1 else sid, cwd)
+            try:
+                text = await expert.speak(prompts.get(key, generic), self.broadcast)
+            except Exception:  # noqa: BLE001 — 單一視角失敗不拖垮整個找問題階段
+                return []
+            finally:
+                with contextlib.suppress(Exception):
+                    await expert.stop()
+            if key == "researcher" and config.KNOWLEDGE_ENABLED:
+                workspace.append_doc(projects.workspace_id(pid), "RESEARCH.md", text)
+            return parse_structured_tasks(text)
+
+        proposals = await asyncio.gather(*(_ask(k) for k in keys))
+        # 角色輪替合併 + 依標題去重（recent_done 過濾與 DISCOVERY_MAX 截斷由呼叫端負責）。
+        merged: list[dict] = []
+        seen: set[str] = set()
+        for i in range(max((len(p) for p in proposals), default=0)):
+            for p in proposals:
+                if i < len(p):
+                    title = p[i]["title"].strip()
+                    if title and title not in seen:
+                        seen.add(title)
+                        merged.append(p[i])
+        return merged
 
     def _recent_outcomes_context(self) -> str:
         """專案近期成敗（done/failed＋原因）整理成提示前綴；無紀錄回空字串。"""

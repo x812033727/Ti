@@ -110,6 +110,21 @@ def record_session(project_id: str, session_id: str, task: str, completed: bool)
     return meta
 
 
+def update_vision(project_id: str, vision: str) -> dict | None:
+    """回填產品願景（僅當 meta.vision 為空時，避免覆寫使用者手填的願景），回傳最新 meta。
+
+    供立項階段抽出的 `願景:` 自動回填——使用者建專案時沒填願景，第一場討論就補上。
+    """
+    vision = (vision or "").strip()
+    meta = get(project_id)
+    if meta is None or not vision or (meta.get("vision") or "").strip():
+        return meta
+    meta["vision"] = vision
+    meta["updated_at"] = time.time()
+    _write_meta(project_id, meta)
+    return meta
+
+
 def _write_meta(project_id: str, meta: dict) -> None:
     _meta_path(project_id).write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"

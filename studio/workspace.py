@@ -5,12 +5,18 @@ from __future__ import annotations
 import io
 import shutil
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from . import config
 
 # 團隊共用知識庫檔名（跨任務知識，不算交付物，不進檔案面板/打包）。
 NOTES_FILE = "NOTES.md"
+
+# 知識沉澱檔白名單：只允許寫進 docs/ 下這幾個固定檔名（交付物，進檔案面板與打包，
+# 專案模式跨場次累積）。PRD.md 由澄清階段寫 workspace 根（orchestrator._write_prd）；
+# 設計決策由 ADR 模組寫根目錄 DECISIONS.md＋adr.json（見 studio/adr.py）。
+KNOWLEDGE_DOCS = {"RESEARCH.md"}
 
 # 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔＋ADR 機讀索引/鎖檔
 # （ADR 的人讀版 DECISIONS.md 才是交付物，不在此列）。
@@ -133,6 +139,65 @@ def read_notes(session_id: str) -> str:
         return ""
     try:
         return target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def append_doc(workspace_id: str, name: str, text: str) -> None:
+    """把一段知識（PRD／調研結論／設計決策）追加到 workspace 的 docs/<name>。
+
+    僅接受 KNOWLEDGE_DOCS 白名單檔名；每段加 `## <時間>` 標頭以利跨場次追溯；
+    append 模式不覆寫（與使用者產品自己的 docs/ 同名檔相撞時只會追加）。
+    空字串忽略；沿用 workspace_path + safe_resolve 的路徑防護。
+    """
+    body = (text or "").strip()
+    if not body or name not in KNOWLEDGE_DOCS:
+        return
+    root = workspace_path(workspace_id)
+    (root / "docs").mkdir(parents=True, exist_ok=True)
+    target = safe_resolve(root.resolve(), f"docs/{name}", must_exist=False)
+    if target is None:
+        return
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with target.open("a", encoding="utf-8") as f:
+        f.write(f"## {stamp}\n\n{body}\n\n")
+
+
+def _tail_at_paragraph(text: str, max_chars: int) -> str:
+    """取文字尾段（最多 max_chars 字），超長時從段落邊界（空行）起切，不腰斬句子。"""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    tail = text[-max_chars:]
+    cut = tail.find("\n\n")
+    if 0 <= cut < len(tail) - 2:
+        tail = tail[cut + 2 :]
+    return tail.strip()
+
+
+def read_doc_tail(workspace_id: str, name: str, max_chars: int) -> str:
+    """讀回 docs/<name> 的尾段（最多 max_chars 字）；不存在／超界／非白名單回空字串。"""
+    if name not in KNOWLEDGE_DOCS or max_chars <= 0:
+        return ""
+    target = safe_resolve(workspace_path(workspace_id).resolve(), f"docs/{name}")
+    if target is None or not target.is_file():
+        return ""
+    try:
+        return _tail_at_paragraph(target.read_text(encoding="utf-8", errors="replace"), max_chars)
+    except OSError:
+        return ""
+
+
+def read_prd_tail(workspace_id: str, max_chars: int) -> str:
+    """讀回 workspace 根目錄 PRD.md（需求澄清階段沉澱）的尾段；不存在回空字串。"""
+    if max_chars <= 0:
+        return ""
+    safe_root = workspace_path(workspace_id).resolve()
+    target = safe_resolve(safe_root, "PRD.md")
+    if target is None or target.parent != safe_root or not target.is_file():
+        return ""
+    try:
+        return _tail_at_paragraph(target.read_text(encoding="utf-8", errors="replace"), max_chars)
     except OSError:
         return ""
 

@@ -61,7 +61,7 @@ def _base(monkeypatch):
     monkeypatch.setattr(config, "NOTES_ENABLED", False)
     monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 3)
     monkeypatch.setattr(config, "STALL_ROUNDS", 99)  # 不誤觸停滯收斂
-    # 穩健式預設
+    # 基線＝四機制全關（預設已開，各測試按需逐一打開要驗的機制）
     monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     monkeypatch.setattr(config, "OBJECTIVE_GATE", "0")
     monkeypatch.setattr(config, "SELF_REFINE_ITERS", 0)
@@ -110,8 +110,65 @@ async def test_gate_vetoes_despite_text_pass(tmp_path, monkeypatch):
     assert "客觀閘門" in _phases(bucket)
 
 
+async def test_gate_does_not_veto_fallback_overall_command(tmp_path, monkeypatch):
+    """閘門=1：自測 fallback 到 PM 整體執行指令時，實敗只回報、不硬退。
+
+    多任務場景下整體指令在前期任務本來就跑不起來，硬退回會誤殺——只有工程師
+    本輪自己宣告的自測指令實敗才適用硬性閘門。
+    """
+    monkeypatch.setattr(config, "OBJECTIVE_GATE", "1")
+    monkeypatch.setattr(runner, "run_command", _Smoke([False]))  # fallback 永遠實敗
+    s, ctx, experts, bucket = _session(
+        tmp_path,
+        monkeypatch,
+        eng=["做好了，但本任務沒有獨立的執行指令"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    s._run_command = "python overall.py"  # PM 的整體執行指令（fallback 來源）
+    ok = await s._work_task(ctx, {"id": 1, "title": "前期任務"}, "計畫")
+    assert ok is True  # 不被 fallback 失敗硬退
+    assert experts["engineer"].calls == 1
+    assert "客觀閘門" not in _phases(bucket)
+
+
+async def test_gate_strict_vetoes_fallback_failure(tmp_path, monkeypatch):
+    """strict：連 fallback 整體指令實敗也硬退（全面嚴格語義不變）。"""
+    monkeypatch.setattr(config, "OBJECTIVE_GATE", "strict")
+    monkeypatch.setattr(runner, "run_command", _Smoke([False]))
+    s, ctx, experts, bucket = _session(
+        tmp_path,
+        monkeypatch,
+        eng=["做好了，但沒有獨立執行指令"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    s._run_command = "python overall.py"
+    ok = await s._work_task(ctx, {"id": 1, "title": "前期任務"}, "計畫")
+    assert ok is False
+    assert "客觀閘門" in _phases(bucket)
+
+
+async def test_self_refine_skips_fallback_failure(tmp_path, monkeypatch):
+    """自我精修只針對工程師本輪宣告的指令：fallback 整體指令實敗不觸發就地精修。"""
+    monkeypatch.setattr(config, "SELF_REFINE_ITERS", 1)
+    monkeypatch.setattr(runner, "run_command", _Smoke([False]))
+    s, ctx, experts, bucket = _session(
+        tmp_path,
+        monkeypatch,
+        eng=["做好了，但沒有獨立執行指令"],
+        qa=["驗證: PASS"],
+        senior=["決議: 核可"],
+    )
+    s._run_command = "python overall.py"
+    ok = await s._work_task(ctx, {"id": 1, "title": "前期任務"}, "計畫")
+    assert ok is True
+    assert experts["engineer"].calls == 1  # 無就地精修呼叫
+    assert "自我精修" not in _phases(bucket)
+
+
 async def test_gate_off_baseline_passes(tmp_path, monkeypatch):
-    """閘門關閉（預設）：自測雖實敗，QA PASS＋核可即第 1 輪通過（既有行為不變）。"""
+    """閘門關閉（TI_OBJECTIVE_GATE=0）：自測雖實敗，QA PASS＋核可即第 1 輪通過（舊行為可還原）。"""
     monkeypatch.setattr(runner, "run_command", _Smoke([False]))
     s, ctx, experts, bucket = _session(
         tmp_path,

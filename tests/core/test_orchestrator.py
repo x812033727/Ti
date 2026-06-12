@@ -358,8 +358,10 @@ async def test_huddle_triggers_on_stall(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_huddle_disabled_by_default():
-    """預設不啟用 huddle：滿輪 FAIL 後直接收尾，無 HUDDLE 事件、無重試。"""
+async def test_huddle_off_when_disabled(monkeypatch):
+    """關閉 huddle（預設已開，此處明確 pin 關）：滿輪 FAIL 後直接收尾，無 HUDDLE 事件、無重試。"""
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     bucket, broadcast = collect()
     experts = _experts(
         pm=["任務: 實作", "決議: 未完成", "檢討"],
@@ -403,6 +405,9 @@ async def test_stall_breaks_early(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STALL_ROUNDS", 2)
     monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 5)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    # 只驗停滯守門：pin 掉會加輪次/呼叫的機制（其預設已開）。
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     sid = "stallflow"
     workspace.create_workspace(sid)
 
@@ -423,8 +428,10 @@ async def test_stall_breaks_early(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stall_disabled_with_no_cwd():
+async def test_stall_disabled_with_no_cwd(monkeypatch):
     """cwd=None（純單元測試情境）下不偵測停滯，照常跑滿輪數。"""
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     bucket, broadcast = collect()
     experts = _experts(
         pm=["任務: 實作", "決議: 未完成", "檢討"],
@@ -455,6 +462,8 @@ async def test_stall_disabled_when_rounds_le_one(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STALL_ROUNDS", 1)  # 關閉
     monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 3)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     sid = "nostall"
     workspace.create_workspace(sid)
 
@@ -474,11 +483,13 @@ async def test_stall_disabled_when_rounds_le_one(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_all_mechanisms_off_matches_baseline():
-    """四機制全關（含非 offline）時，happy path 不產生任何新機制事件，行為同既有。"""
-    # 直接驗證預設值已是關閉狀態（不靠 monkeypatch，確保預設相容）
+async def test_all_mechanisms_off_matches_baseline(monkeypatch):
+    """四機制全關（含非 offline）時，happy path 不產生任何新機制事件，行為同既有。
+
+    學習機制自 2026-06 起預設開啟，此處明確 pin 關以驗證「可一鍵還原舊行為」。
+    """
     for name in ("HUDDLE_ENABLED", "CRITIC_ENABLED", "NOTES_ENABLED", "OFFLINE_MODE"):
-        assert getattr(config, name) is False, f"{name} 預設應為 False"
+        monkeypatch.setattr(config, name, False)
 
     bucket, broadcast = collect()
     experts = _experts(
@@ -531,10 +542,11 @@ async def test_notes_written_and_read_back(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_notes_disabled_by_default(tmp_path, monkeypatch):
-    """預設不啟用：不寫 NOTES.md、實作 prompt 不含知識庫前綴。"""
+async def test_notes_off_when_disabled(tmp_path, monkeypatch):
+    """關閉 NOTES（預設已開，此處明確 pin 關）：不寫 NOTES.md、實作 prompt 不含知識庫前綴。"""
     from studio import workspace
 
+    monkeypatch.setattr(config, "NOTES_ENABLED", False)
     monkeypatch.setattr(config, "ENABLE_GIT", False)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     sid = "nonotes"
@@ -555,9 +567,11 @@ async def test_notes_disabled_by_default(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_human_intervention():
+async def test_human_intervention(monkeypatch):
     """插話餵給專家；回顯（HUMAN_MESSAGE）自 #83 起改由 ws._pump_interventions 於收到時
     即時 broadcast，orchestrator 不再重複廣播。"""
+    # 本測試驗證拆解階段的插話前綴：pin 掉立項澄清，避免 PM 第一句被立項消費。
+    monkeypatch.setattr(config, "CLARIFY_ENABLED", False)
     bucket, broadcast = collect()
     queue: asyncio.Queue[str] = asyncio.Queue()
     queue.put_nowait("請改用公制單位")

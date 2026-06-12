@@ -126,7 +126,9 @@ async def complete_once(
     任何例外／逾時／離線／無 cwd 一律回 ""，讓呼叫端走模板 fallback——絕不讓反思失敗拖垮主迴圈。
     SDK import 維持 lazy（在 Expert 建構時），CI 無 SDK 環境只要不實際呼叫即安全。
     """
-    if cwd is None or config.OFFLINE_MODE:
+    if cwd is None or config.OFFLINE_MODE or not config.provider_ready():
+        # provider 無憑證時直接走模板 fallback：避免每次失敗輪都白等 SDK 啟動失敗
+        # （無金鑰環境下可達數十秒），拖慢主迴圈與測試。
         return ""
     role = Role(
         key="oneshot",  # 不屬 LEAD_ROLES → 用 MODEL_FAST（廉價）

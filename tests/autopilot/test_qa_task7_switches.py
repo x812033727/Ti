@@ -70,13 +70,12 @@ def test_all_switches_exist():
     assert isinstance(config.STALL_ROUNDS, int)
 
 
-# === 環境變數解析：預設關閉、可開可關 =================================
+# === 環境變數解析：明確設值可開可關；未設走各自預設 =====================
 
 
 @pytest.mark.parametrize(
     "val,expected",
     [
-        (None, False),  # 未設定 → 預設關閉
         ("0", False),
         ("false", False),
         ("False", False),
@@ -87,12 +86,9 @@ def test_all_switches_exist():
     ],
 )
 def test_flag_env_parsing(monkeypatch, val, expected):
-    """三個布林開關的環境變數解析一致：預設與明確關閉值 → False。"""
+    """三個布林開關的環境變數解析一致（明確設值時）。"""
     for env in ("TI_HUDDLE", "TI_CRITIC", "TI_NOTES"):
-        if val is None:
-            monkeypatch.delenv(env, raising=False)
-        else:
-            monkeypatch.setenv(env, val)
+        monkeypatch.setenv(env, val)
     try:
         importlib.reload(config)
         assert config.HUDDLE_ENABLED is expected
@@ -117,16 +113,16 @@ def test_stall_rounds_env_parsing(monkeypatch):
     assert config.STALL_ROUNDS == 3
 
 
-def test_defaults_are_off():
-    """重載乾淨環境後，三個布林開關預設皆 False。"""
+def test_defaults():
+    """重載乾淨環境後的預設：huddle／notes 開（學習機制預設啟用）、critic 關（opt-in）。"""
     import os
 
     for env in ("TI_HUDDLE", "TI_CRITIC", "TI_NOTES"):
         os.environ.pop(env, None)
     importlib.reload(config)
-    assert config.HUDDLE_ENABLED is False
+    assert config.HUDDLE_ENABLED is True
     assert config.CRITIC_ENABLED is False
-    assert config.NOTES_ENABLED is False
+    assert config.NOTES_ENABLED is True
 
 
 # === 全部關閉 → 行為等同 legacy 線性管線 ==============================
@@ -207,6 +203,9 @@ async def test_stall_disabled_via_rounds_le_one(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "STALL_ROUNDS", 1)  # 停用
     monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 3)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    # 本測試只驗停滯守門：pin 掉會多加輪次/呼叫的機制（其預設已開）。
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     sid = "stalloff"
     workspace.create_workspace(sid)
 

@@ -203,3 +203,43 @@ async def test_prd_appends_across_sessions(tmp_path):
     prd = (tmp_path / "PRD.md").read_text(encoding="utf-8")
     assert "第一版需求" in prd and "第二版需求" in prd
     assert prd.count("產品需求紀錄") == 1  # 檔頭只寫一次
+
+
+# --- 願景回填（與澄清同一發言抽出，給專案 meta 用）------------------------
+
+
+@pytest.mark.asyncio
+async def test_vision_extracted_into_result(tmp_path, monkeypatch):
+    """PM 澄清發言含 `願景:` 行 → result["vision"] 抽出；無標記回空字串。"""
+    from studio import workspace
+
+    monkeypatch.setattr(config, "ENABLE_GIT", False)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
+    sid = "vis1"
+    workspace.create_workspace(sid)
+    _bucket, broadcast = collect()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    experts = _experts(["澄清: 不需要\n願景: 最輕量的記帳工具", "任務: 實作", "決議: 完成", "檢討"])
+    session = StudioSession(
+        sid,
+        broadcast,
+        experts=experts,
+        cwd=workspace.workspace_path(sid),
+        intervention_queue=queue,
+    )
+    result = await session.run("做一個記帳工具")
+    assert result["vision"] == "最輕量的記帳工具"
+
+    # 無願景行：回空字串（ws 端不會回填）
+    sid2 = "vis2"
+    workspace.create_workspace(sid2)
+    experts2 = _experts(["澄清: 不需要", "任務: 實作", "決議: 完成", "檢討"])
+    session2 = StudioSession(
+        sid2,
+        broadcast,
+        experts=experts2,
+        cwd=workspace.workspace_path(sid2),
+        intervention_queue=asyncio.Queue(),
+    )
+    result2 = await session2.run("需求")
+    assert result2["vision"] == ""

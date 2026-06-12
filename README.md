@@ -13,20 +13,27 @@
 ## 工作流程
 
 ```
-①需求拆解   PM 拆成結構化任務 + 驗收標準 + 執行指令
-②架構辯論   工程師 ⇄ 高級工程師 來回討論整體做法
+⓪需求澄清   PM 評估需求：模糊就反問關鍵問題（附預設假設）等你回覆，逾時按假設續行；
+            結論固化 PRD.md（「願景:」自動回填專案）
+①需求拆解   PM 參考 PRD／調研／過往決策，拆成結構化任務 + 驗收標準 + 執行指令
+②架構辯論   工程師 ⇄ 高級工程師 來回討論整體做法（有架構師則由其定案；
+            開 TI_ADR 時決策沉澱 DECISIONS.md＋adr.json）
 ③逐任務迭代  for 每個任務（看板 todo→doing→review→done）：
               工程師實作（交付前自測）→ smoke-run + git commit
               → 驗證工程師測試 → 高級工程師審查（帶入測試 log）
               → 通過？否則把【測試+審查意見】原文回饋，重跑（每任務最多 3 輪）
               （可選並行：獨立任務分波，每波多條支線各自 worktree 同時做，再合併回主幹）
 ④最終 Demo   實際執行整體產出，顯示 stdout/stderr
-⑤驗收+檢討   PM 判定完成 → 團隊回顧 → 完成
+⑤驗收+檢討   PM 判定完成 → 團隊回顧 → 教訓入庫、後續任務回填 backlog
 ```
 
+- **需求澄清（預設開啟）**：丟一句模糊需求（「做個記帳的」）時 PM 會先反問最多 4 個關鍵問題
+  （各附預設假設），用插話框回覆即可；約 3 分鐘未回覆就按假設續行，不會卡死
+  （`TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` / `TI_CLARIFY_MAX_QUESTIONS`）。
+- **知識沉澱（預設開啟）**：研究員調研結論持久化到 workspace 的 `docs/RESEARCH.md`
+  （PRD 在根目錄 `PRD.md`；設計決策見 `TI_ADR`），下場開場注入——專案模式
+  workspace 固定，知識跨場次累積、調研不重查（`TI_KNOWLEDGE`）。
 - **人類可中途插話**：執行中於插話框輸入指示，專家會在下一步納入考量；亦可隨時「停止」。
-- **需求澄清（選配）**：開啟後，模糊需求在拆解前 PM 會先向你反問關鍵問題（附預設假設），
-  在插話框回答即可；逾時按假設續行不卡流程，結論固化進 workspace 的 `PRD.md`。
 - **任務並行（預設開啟）**：PM 標注依賴、獨立任務分「波次」，每波多條支線各自 git worktree
   分支 + 獨立專家團隊同時做，完工依序合併回主幹（設定面板或 `TI_PARALLEL_TASKS` 切換；預設開啟，設 `0` 還原純循序）。
 - **階段性 git**：每輪在 workspace 內的獨立 repo 自動 commit，留下可追蹤歷史。
@@ -238,13 +245,15 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_MODEL_LEAD` / `TI_MODEL_FAST` | PM/高級工程師 與 工程師/QA 使用的模型 | opus / sonnet |
 | `TI_MAX_ROUNDS` | 每個任務的最大改進輪數 | 3 |
 | `TI_DEBATE_ROUNDS` | 架構辯論來回回合數（0 = 關閉） | 2 |
-| `TI_LESSONS` / `TI_LESSONS_MAX` | 跨場次教訓庫（長期記憶）：每場檢討蒸餾可重用教訓存入 `lessons.json`，下次開場注入 PM 拆解，讓工作室越做越會。注入時**按本次需求相關性挑選**（IDF 加權，無人機的坑不會混進網站任務；無相關才退回最新）／`MAX` 為注入筆數 | 關閉 / 12 |
-| `TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` / `TI_CLARIFY_MAX_QUESTIONS` | 需求澄清：拆解前 PM 先反問關鍵問題（附預設假設），插話框回答即可；逾時按假設續行、結論固化進 `PRD.md`。僅互動討論生效（autopilot／持續改良迴圈自動跳過）。進階開關（env 或設定面板「進階」組） | 關閉 / 180 / 4 |
+| `TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` / `TI_CLARIFY_MAX_QUESTIONS` | 需求澄清：拆解前 PM 先反問關鍵問題（附預設假設），插話框回答即可；逾時按假設續行、結論固化進 `PRD.md`、抽出的「願景:」回填專案。僅互動討論生效（autopilot／持續改良迴圈自動跳過） | 開啟 / 180 / 4 |
+| `TI_KNOWLEDGE` / `TI_KNOWLEDGE_MAX_CHARS` | 知識沉澱：調研結論持久化到 `docs/RESEARCH.md`，下場開場注入尾段（專案模式跨場次累積；設計決策見 `TI_ADR`） | 開啟 / 4000 |
+| `TI_DISCOVER_ROLES` | 持續改良「找問題」視角（csv）：senior 工程品質／pm 用戶價值／researcher 上網調研，多視角並行再彙整去重 | senior,pm,researcher |
+| `TI_LESSONS` / `TI_LESSONS_MAX` | 跨場次教訓庫（長期記憶）：每場檢討蒸餾可重用教訓存入 `lessons.json`，下次開場注入 PM 拆解，讓工作室越做越會。注入時**按本次需求相關性挑選**（IDF 加權，無人機的坑不會混進網站任務；無相關才退回最新）／`MAX` 為注入筆數 | 開啟 / 12 |
 | `TI_BLUEPRINT` / `TI_BLUEPRINT_SEED_MAX` | 產品藍圖：持續改良迴圈開跑時 PM 把願景展開成結構化藍圖（願景/用戶/功能 P0~P2/里程碑），落盤 `BLUEPRINT.md`＋`blueprint.json`、功能餵入專案 backlog（P0 優先出列，先於手排任務的預設 P1）；之後每輪改良與專案單場討論都注入藍圖前綴。每專案僅生成一次；解析失敗降級存原文、不擋迴圈。進階開關（env 或設定面板「進階」組）／`SEED_MAX` 為一次最多餵 backlog 的功能數 | 關閉 / 5 |
 | `TI_ADR` / `TI_ADR_MAX` | 架構決策記錄（ADR）：架構辯論／架構師定案後蒸餾成決策條目，落盤 workspace 的 `DECISIONS.md`（進交付物與 git）＋`adr.json`；後續場次的 PM 拆解與架構提案注入既有決策摘要，翻案須說明理由。進階開關（env 或設定面板「進階」組）／`MAX` 為注入時取最新筆數 | 關閉 / 8 |
-| `TI_REFLEXION` / `TI_REFLEXION_MAX` | 任務級反思記憶（補「只帶上一輪原文」缺口）：失敗輪把 QA/高工意見蒸餾成反思存 per-session JSONL，後續輪/huddle 重試 prepend 回工程師 context／`MAX` 為注入筆數。進階開關（env 或設定面板「進階」組） | 關閉 / 5 |
-| `TI_OBJECTIVE_GATE` | 客觀驗收閘門：交付前自測「實際執行」失敗 → 該輪強制退回，不讓 QA/高工的文字裁決推翻真實 exit code（守住反 reward-hacking）。`1`=自測實敗才否決；`strict`=連「未宣告執行指令」也視為未通過 | 0（關閉） |
-| `TI_SELF_REFINE_ITERS` | 單輪內自我精修：自測未過時讓同一工程師就地依執行紀錄再修一次（交付驗證前），上限 N 次 | 0（關閉） |
+| `TI_REFLEXION` / `TI_REFLEXION_MAX` | 任務級反思記憶（補「只帶上一輪原文」缺口）：失敗輪把 QA/高工意見蒸餾成反思存 per-session JSONL，後續輪/huddle 重試 prepend 回工程師 context／`MAX` 為注入筆數。進階開關（env 或設定面板「進階」組） | 開啟 / 5 |
+| `TI_OBJECTIVE_GATE` | 客觀驗收閘門：交付前自測「實際執行」失敗 → 該輪強制退回，不讓 QA/高工的文字裁決推翻真實 exit code（守住反 reward-hacking）。`1`=工程師本輪宣告的自測指令實敗才否決（fallback 整體指令只回報不硬退）；`strict`=fallback 失敗與「未宣告執行指令」皆視為未通過 | 1（開啟） |
+| `TI_SELF_REFINE_ITERS` | 單輪內自我精修：自測未過時讓同一工程師就地依執行紀錄再修一次（交付驗證前），上限 N 次 | 1（開啟） |
 | `TI_RLIMITS` / `TI_RLIMIT_MEM_MB` / `TI_RLIMIT_CPU_S` / `TI_RLIMIT_FSIZE_MB` | 子進程資源上限：runner 執行指令時套 RLIMIT，補 bwrap 沒有的記憶體/CPU/檔案大小防線（各上限 0=略過該項） | 1 / 4096 / 300 / 512 |
 | `TI_DEMO_TIMEOUT` / `TI_DEMO_MAX_OUTPUT` | 自測/Demo 的逾時秒數與輸出字數上限 | 60 / 8000 |
 | `TI_ENABLE_GIT` | 是否在 workspace 內做階段性 commit | 1 |

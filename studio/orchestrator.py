@@ -218,6 +218,11 @@ def parse_lessons(text: str) -> list[str]:
     return [m.strip() for m in re.findall(r"^\s*教訓\s*[:：]\s*(.+)$", text, re.M)][:5]
 
 
+def parse_vision(text: str) -> str:
+    """從澄清/評估文字抽出 `願景: ...`（一句產品願景，回填專案 meta 用）；無標記回空字串。"""
+    return _last_match(text, r"願景\s*[:：]\s*(.+)") or ""
+
+
 def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:
     """從 PM 拆解文字抽出任務（含可選 `#id`）與依賴邊，供並行分波使用。
 
@@ -332,6 +337,7 @@ class StudioSession:
         self._stop = False
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
         self._followup_items: list[dict] = []  # 同上、含 priority/type（消費端優先用這份）
+        self._vision = ""  # 澄清階段抽出的一句產品願景（回填專案 meta 用）
         self._last_commit: str | None = None  # 最近一次主分支 workspace commit 短 hash
         # 主（循序）lane 的隔離狀態；於 _run 建立後，所有對主 workspace 的操作都走它。
         self._main_ctx: LaneContext | None = None
@@ -418,13 +424,16 @@ class StudioSession:
         )
         text = await pm.speak(
             f"使用者的產品需求如下：\n\n{requirement}\n\n"
-            "請判斷此需求是否足夠明確、可直接拆解動工。若是，僅輸出一行 `澄清: 不需要`。\n"
+            "請判斷此需求是否足夠明確、可直接拆解動工。若是，輸出一行 `澄清: 不需要`。\n"
             f"若否，向使用者反問最多 {config.CLARIFY_MAX_QUESTIONS} 個最關鍵的問題"
             "（只問會改變做法的，不問瑣碎細節），每個問題固定兩行：\n"
             "`問題: <一句具體的問題>`\n"
-            "`假設: <若使用者未回覆，你將採用的合理預設>`",
+            "`假設: <若使用者未回覆，你將採用的合理預設>`\n"
+            "無論是否需要澄清，最後都補一行 `願景: <一句產品願景>`（給長期專案定方向用）。",
             self.broadcast,
         )
+        # 願景回填：抽出一句產品願景（專案 meta 為空時由 ws 回填，給後續場次定方向）。
+        self._vision = parse_vision(text)
         questions = parse_clarify(text)[: config.CLARIFY_MAX_QUESTIONS]
         if not questions:
             return ""
@@ -567,13 +576,39 @@ class StudioSession:
         ctx.notes_buffer.clear()
 
     def _notes_context(self, ctx: LaneContext) -> str:
-        """讀回 NOTES.md，組成要注入實作 prompt 的前綴（停用/空白時回空字串）。"""
+        """讀回 NOTES.md，組成要注入實作 prompt 的前綴（停用/空白時回空字串）。
+
+        只取尾段 NOTES_MAX_CHARS 字（從段落邊界起切）：專案模式 NOTES.md 跨場次累積、
+        只增不減，全文注入會讓 context 無限膨脹。
+        """
         if not (config.NOTES_ENABLED and ctx.cwd):
             return ""
-        notes = workspace.read_notes(self.workspace_id)
-        if not notes.strip():
+        notes = workspace.read_notes(self.workspace_id).strip()
+        if not notes:
             return ""
+        cap = config.NOTES_MAX_CHARS
+        if cap > 0 and len(notes) > cap:
+            tail = notes[-cap:]
+            cut = tail.find("\n\n")
+            if 0 <= cut < len(tail) - 2:
+                tail = tail[cut + 2 :]
+            notes = tail.strip()
         return f"【團隊共用知識庫 NOTES.md（過往踩過的坑／決策／後續）】\n{notes}\n\n"
+
+    # --- 知識沉澱（docs/RESEARCH.md；PRD 由澄清階段、設計決策由 ADR 寫根目錄）---
+    def _knowledge_tail(self, name: str) -> str:
+        """讀回 workspace docs/<name> 的尾段供注入 prompt（停用／無 cwd／不存在回空字串）。"""
+        if not (config.KNOWLEDGE_ENABLED and self.cwd):
+            return ""
+        return workspace.read_doc_tail(self.workspace_id, name, config.KNOWLEDGE_MAX_CHARS)
+
+    def _persist_knowledge(self, name: str, text: str) -> None:
+        """把一段知識追加到 workspace docs/<name>（停用／無 cwd／空字串時略過）。
+
+        以 workspace_id 定位：專案模式下多場 session 共用同一 workspace，知識跨場次累積。
+        """
+        if config.KNOWLEDGE_ENABLED and self.cwd and (text or "").strip():
+            workspace.append_doc(self.workspace_id, name, text)
 
     # --- 停滯守門 ------------------------------------------------------
     def _stalled(self, ctx: LaneContext, history: list[str], committed_change: bool) -> bool:
@@ -708,7 +743,13 @@ class StudioSession:
     # --- 主流程 --------------------------------------------------------
     async def run(self, requirement: str) -> dict:
         """執行整場討論。回傳結果摘要供 autopilot 使用（前端走 broadcast，不需回傳值）。"""
-        result = {"completed": False, "followups": [], "followup_items": [], "commit": None}
+        result = {
+            "completed": False,
+            "followups": [],
+            "followup_items": [],
+            "commit": None,
+            "vision": "",
+        }
         try:
             result = await self._run(requirement)
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
@@ -786,16 +827,28 @@ class StudioSession:
         # -1) 需求澄清（互動 session 限定）：模糊需求先反問，逾時按假設續行，絕不卡流程。
         clarify_note = await self._clarify_requirement(pm, requirement)
 
-        # 0) 調研（研究員上網查資料，供拆解與設計參考）
+        # 0) 調研（研究員上網查資料，供拆解與設計參考）。過往場次的調研先注入：
+        #    沿用既有結論、只查缺口——既省 token 也讓知識跨場次累積（專案模式）。
         research_notes = ""
         if researcher:
             await self.broadcast(events.phase_change(self.session_id, "調研", "研究員正在查資料"))
+            prior_research = self._knowledge_tail("RESEARCH.md")
+            prior_note = (
+                f"【既有調研（docs/RESEARCH.md，過往場次累積）】\n{prior_research}\n\n"
+                "以上是過往調研結論：請先沿用、只查缺口，不要重查已有答案的問題。\n\n"
+                if prior_research
+                else ""
+            )
             research_notes = await researcher.speak(
                 clarify_note
+                + prior_note
                 + f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
                 "查可用套件/函式庫、官方 API 與文件、最佳實踐與常見坑，精簡彙整並附來源。",
                 self.broadcast,
             )
+            # 調研結論沉澱成交付物，下場開場讀回（檔案不存在時 read 回空字串、零行為差）。
+            self._persist_knowledge("RESEARCH.md", research_notes)
+            await self._commit(self._main_ctx, "知識沉澱：調研結論寫入 docs/RESEARCH.md")
 
         # 1) 拆解
         await self.broadcast(events.phase_change(self.session_id, "需求拆解", "PM 正在拆解需求"))
@@ -806,6 +859,13 @@ class StudioSession:
             else ""
         )
         research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
+        if not research_note:
+            # 研究員缺席（離線或被關閉）時，過往場次的調研沉澱仍可供 PM 參考。
+            prior_research = self._knowledge_tail("RESEARCH.md")
+            if prior_research:
+                research_note = (
+                    f"過往場次的調研結論（docs/RESEARCH.md）供參考：\n{prior_research}\n\n"
+                )
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
@@ -831,7 +891,9 @@ class StudioSession:
         await self._board()
         await self._commit(self._main_ctx, "PM 規劃：建立任務清單與驗收標準")
 
-        # 2) 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論
+        # 2) 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論。
+        #    既有決策的注入與定案的沉澱由 ADR 模組負責（_architecture_decision／_debate 內
+        #    的 adr.context ＋ adr.record；TI_ADR 開關控制）。
         design_note = ""
         topic = f"我們要實作這個需求：{requirement}\n任務清單：\n{pm_plan}"
         if architect:
@@ -887,6 +949,7 @@ class StudioSession:
             "followups": self._followups,
             "followup_items": self._followup_items,
             "commit": self._last_commit,
+            "vision": self._vision,
         }
 
     # --- 波次排程（並行支線）------------------------------------------
@@ -1336,6 +1399,10 @@ class StudioSession:
 
             # --- 交付前自測（確定性 smoke-run）---
             smoke = await self._self_test(ctx, impl_text, bc)
+            # 自測指令是否為工程師「本輪自己宣告」：宣告者代表工程師聲稱此指令能展示本任務，
+            # 實敗才適用硬性閘門/就地精修；fallback 到 PM 的整體執行指令時只回報不硬退——
+            # 多任務場景下整體指令在前期任務本來就跑不起來，硬退回會誤殺（strict 模式除外）。
+            own_cmd = runner.parse_run_command(impl_text) is not None
             # --- (D) 單輪內自我精修：自測「實際執行」未通過時，讓同一工程師就地依執行紀錄再修 ---
             # 訊號是 runner 的確定性 exit code（非 LLM 自評），裁決權仍在 QA/高工/客觀閘門；同一
             # engineer 是有狀態對話，續一則帶 log 的訊息即可。rnd 不變、impl_history 每外輪仍只
@@ -1344,6 +1411,7 @@ class StudioSession:
                 config.SELF_REFINE_ITERS > 0
                 and smoke is not None
                 and not smoke.ok
+                and own_cmd
                 and not self._stop
             ):
                 for i in range(1, config.SELF_REFINE_ITERS + 1):
@@ -1431,14 +1499,20 @@ class StudioSession:
             )
 
             # --- (B) 客觀閘門（硬性否決）：交付前自測「實際執行」未通過 → 本輪強制退回，
-            # QA/高工的文字裁決推翻不了真實 exit code（守住反 reward-hacking）。只在自測真的有跑
-            # 且失敗時否決；strict 模式連「未宣告自測指令」也視為未通過。評審照常並行跑（評同一
-            # commit、文字仍是修正素材），附在閘門結論之後。---
+            # QA/高工的文字裁決推翻不了真實 exit code（守住反 reward-hacking）。只在「工程師
+            # 本輪自己宣告的自測指令」真的有跑且失敗時否決——fallback 到整體執行指令的失敗
+            # 只回報、不硬退（前期任務整體指令本來就跑不起來）；strict 模式維持全面嚴格：
+            # fallback 失敗與「未宣告自測指令」皆視為未通過。評審照常並行跑（評同一 commit、
+            # 文字仍是修正素材），附在閘門結論之後。---
             gate_veto = (
                 config.objective_gate_enabled()
                 and ctx.cwd is not None
                 and (
-                    (smoke is not None and not smoke.ok)
+                    (
+                        smoke is not None
+                        and not smoke.ok
+                        and (own_cmd or config.objective_gate_strict())
+                    )
                     or (smoke is None and config.objective_gate_strict())
                 )
             )
@@ -1723,8 +1797,14 @@ class StudioSession:
                 "請逐行列出，格式固定為 `教訓: <一句精簡、可重用的經驗>`（最多 5 條，沒有就不必列）。"
             )
         retro = await pm.speak(retro_prompt, self.broadcast)
-        self._followup_items = parse_followups_meta(retro)
-        self._followups = [t["title"] for t in self._followup_items]
+        # 結構化後續任務（main #95：含 priority/type）；累加而非覆寫——先前階段
+        # 可能已放入後續任務，不可被檢討清掉。
+        seen = set(self._followups)
+        for item in parse_followups_meta(retro):
+            if item["title"] not in seen:
+                seen.add(item["title"])
+                self._followup_items.append(item)
+                self._followups.append(item["title"])
         if config.LESSONS_ENABLED:
             lessons.add_many(
                 parse_lessons(retro),

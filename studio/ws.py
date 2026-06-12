@@ -304,10 +304,17 @@ async def _run_project_session(session: StudioSession, requirement: str, project
     這條回填線讓「手動單場討論」也參與持續改良——下次開持續改良迴圈時，
     這些後續任務就是現成的供給。
     """
-    # 已有產品藍圖時注入前綴（開關關閉/無藍圖時為空字串），讓單場討論也對齊長期方向。
-    # 注入只進 session.run；history 標籤與 meta 足跡仍記原始需求。
+    # 對齊長期方向的前綴（只進 session.run；history 標籤與 meta 足跡仍記原始需求）：
+    # 有產品藍圖（TI_BLUEPRINT）用藍圖；否則退而用一句產品願景（澄清階段回填）。
     bp_ctx = blueprint.context(project["id"])
-    result = await session.run(bp_ctx + requirement if bp_ctx else requirement)
+    vision = (project.get("vision") or "").strip()
+    if bp_ctx:
+        req = bp_ctx + requirement
+    elif vision:
+        req = f"【長期專案：{project['name']}】產品願景：{vision}\n\n{requirement}"
+    else:
+        req = requirement
+    result = await session.run(req)
     sdir = projects.state_dir(project["id"])
     # 優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
     items = result.get("followup_items") or []
@@ -316,6 +323,10 @@ async def _run_project_session(session: StudioSession, requirement: str, project
         backlog.add_items(items, source="discovered", state_dir=sdir)
     elif followups:
         backlog.add_many(followups, source="discovered", state_dir=sdir)
+    # 立項抽出的願景回填專案 meta（僅當原本為空；下一場開場即可前綴）。
+    new_vision = (result.get("vision") or "").strip()
+    if new_vision and not vision:
+        projects.update_vision(project["id"], new_vision)
     projects.record_session(
         project["id"], session.session_id, requirement[:80], bool(result.get("completed"))
     )

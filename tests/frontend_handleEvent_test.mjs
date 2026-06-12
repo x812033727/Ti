@@ -75,6 +75,8 @@ const known = [
   ev('demo_result', { label: 'Demo', command: 'py', exit_code: 0, passed: true, output: 'out' }),
   ev('git_commit', { message: 'm', hash: 'abc' }),
   ev('human_message', { text: 'hi' }),
+  ev('clarify_request', { questions: [{ q: '目標平台？', assumption: '網頁版' }, { q: '要支援多人嗎？', assumption: '' }], timeout_s: 180 }),
+  ev('clarify_request', { questions: [], timeout_s: 0 }),
   ev('huddle', { task_id: 1, title: 'T', participants: ['pm', 'engineer'], conclusion: '結論', limitation: false }),
   ev('huddle', { task_id: 1, title: 'T', participants: [], conclusion: '', limitation: true }),
   ev('critic_review', { gate: 'pm', passed: true, text: '放行' }),

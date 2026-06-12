@@ -38,36 +38,48 @@ MAX_ROUNDS = TASK_MAX_ROUNDS  # 舊名相容
 # 架構辯論的來回回合數（工程師 ⇄ 高級工程師）。
 DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
 
-# --- 內部討論機制（卡關 huddle，預設關閉以保既有測試/行為向後相容）---------
+# --- 內部討論機制（卡關 huddle）--------------------------------------------
 # 開啟後：任務跑滿 TASK_MAX_ROUNDS 仍未通過時，召集團隊 huddle 找替代方案並給 1 輪重試，
-# 仍失敗則明確標記為「已知限制」而非靜默帶過。離線 demo 由腳本自行開啟此開關展示。
-HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+# 仍失敗則明確標記為「已知限制」而非靜默帶過。只在「跑滿輪數仍失敗」的低頻路徑加成本，
+# 換得失敗被明示——預設開啟（要省可關）。
+HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
 
 # 異議檢查（critic）：放行前由獨立 critic 專挑「為何還不算完成」，提出實質反對才退回。
-# 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角），預設關閉。
+# 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角）。
+# 唯一在「成功路徑」上加成本的學習開關（每個通過任務都多一次獨立呼叫）且有誤退回風險，
+# 維持預設關閉（opt-in）。
 CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 
 # 共用知識庫（workspace 內 NOTES.md）：跨任務累積踩過的坑/決策/後續，實作時讀回、結束時寫入。
-# 不進交付物與檔案清單（見 workspace._IGNORE）。預設關閉以保既有行為。
-NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
+# 不進交付物與檔案清單（見 workspace._IGNORE）。純檔案 IO、無額外 LLM 呼叫——預設開啟；
+# 注入時只取尾段 NOTES_MAX_CHARS 字（從段落邊界起），防專案模式長跑 context 無限膨脹。
+NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
+NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
 
 # 跨場次教訓庫（lessons.json）：工作室的長期記憶。每場檢討蒸餾出可重用的「教訓」持久化，
 # 下次新討論開場注入 PM 拆解，讓工作室跨場次自我加強（避免重蹈、善用既有結論）。
-# 預設關閉以保既有行為（與 NOTES/HUDDLE/CRITIC 同為 opt-in）；LESSONS_MAX 為注入時取最新筆數。
-LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
+# 近零成本（搭檢討 prompt 順帶解析，無額外 LLM 呼叫）——預設開啟；LESSONS_MAX 為注入上限。
+LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 
 # 需求澄清階段：拆解前 PM 先就模糊需求向使用者反問關鍵問題（附預設假設），等回覆逾時則按
 # 假設續行——流程絕不因等人而卡死。僅互動 session 生效（須有插話佇列）；autopilot／持續改良
-# 迴圈等自主流程一律跳過。預設關閉（與其他進階流程開關同為 opt-in）。
-CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "0") not in ("0", "false", "False", "")
+# 迴圈等自主流程一律跳過。預設開啟：這是「說一句產品就能開工」的核心，無插話佇列時
+# 自動跳過、天然向後相容。結論固化 workspace 的 PRD.md，抽出的「願景:」回填專案 meta。
+CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
 CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等使用者回覆的秒數
 CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
+
+# 知識沉澱（workspace 的 docs/RESEARCH.md；PRD.md 由澄清階段寫根、設計決策由 ADR 寫根）：
+# 調研結論持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然跨場次累積。
+# 檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
+KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
+KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))  # 注入尾段上限（字元）
 
 # 產品藍圖：專案持續改良迴圈開跑時，PM 把一句願景展開成結構化藍圖（願景/用戶/功能 P0~P2/
 # 里程碑），落盤 BLUEPRINT.md＋blueprint.json、功能清單餵入專案 backlog（P0 先做），
 # 跨場次注入 requirement 前綴——讓「越做越進步」有方向感。每專案僅生成一次。
-# 預設關閉（與 LESSONS/NOTES/CLARIFY 同為 opt-in）；SEED_MAX 為一次最多餵 backlog 的功能數。
+# 預設關閉（opt-in，會多一次 PM 呼叫）；SEED_MAX 為一次最多餵 backlog 的功能數。
 BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
 BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
 
@@ -84,14 +96,17 @@ ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))  # 注入時取最新 N 筆決策
 #   推翻真實 exit code（守住反 reward-hacking）。
 # C 子進程資源上限：runner 執行指令時套 RLIMIT，補 bwrap 沒有的記憶體／CPU／檔案大小防線。
 # D Self-Refine：單輪內自測未過時，讓同一工程師就地依執行紀錄再修一次。
-# 穩健式預設：C 預設開（純加固、無行為風險）；A／B／D 預設關（opt-in），保既有行為向後相容。
+# 預設組合（讓「越做越進步」的迴圈真的在跑）：A／B／C／D 全開——A 只在失敗輪多一次廉價
+# 呼叫且永不 raise；B 零 LLM 成本、只在「自測真的有跑且失敗」才否決（strict 仍 opt-in，
+# 會誤殺純文件類任務）；D 失敗才觸發、一次就地修常省下整輪 QA＋審查三連呼叫。
 # 與 TI_LESSONS／NOTES／HUDDLE／CRITIC 同列「進階流程」開關：env 仍是來源，且已納入設定面板
 # （settings.FIELDS「進階」組）與 reload()。消費端皆讀即時全域值，故面板存檔後下次討論即生效。
-REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
+REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
 REFLEXION_MAX = int(os.getenv("TI_REFLEXION_MAX", "5"))  # 注入時取最近 N 筆反思
-# 客觀閘門：0=關／1=開（有自測指令且實敗才否決）／strict=連「未宣告執行指令」也視為未通過。
-OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
-SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))  # 單輪內就地精修次數（0=關）
+# 客觀閘門：0=關／1=開（工程師本輪宣告的自測指令實敗才否決；fallback 整體指令只回報不硬退）
+# ／strict=fallback 失敗與「未宣告執行指令」皆視為未通過。
+OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
+SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))  # 單輪內就地精修次數（0=關）
 # 子進程資源上限（穩健式預設開）。每項 0=略過該限。RLIMIT_AS 算虛擬位址空間，V8／BLAS 會預留
 # 數 GB，故 4096MB 為真實工作負載的寬鬆下限（交付物 512MB 是玩具題尺度）；CPU 300s 遠高於
 # DEMO_TIMEOUT(60s wall)，只攔失控孤兒；FSIZE 512MB 擋單檔塞爆磁碟而不卡 pip wheel。
@@ -383,6 +398,15 @@ AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 # 跑一場討論 → followups 回填 → backlog 空了就『找問題』產生新任務」，
 # 讓團隊對同一個產品一直找問題、一直改良。
 PROJECTS_ROOT = Path(os.getenv("TI_PROJECTS_ROOT", str(PROJECT_ROOT / "projects")))
+
+# 持續改良「找問題」階段的視角（csv）：多視角並行審視產品再彙整去重——senior 看工程品質、
+# pm 看用戶價值/功能缺口、researcher 上網看同類產品與最佳實踐。只在 backlog 清空時發生
+# （低頻），多幾次呼叫可接受；設 "senior" 一鍵還原舊的單視角行為。
+DISCOVER_ROLES = [
+    r.strip()
+    for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")
+    if r.strip()
+]
 # 單次「持續改良」連線最多跑幾輪（每輪＝一場完整討論）；0 = 不限（直到找不到新改善點）。
 # 預設給保守上限，避免一次連線燒掉過多 API 額度。
 IMPROVE_MAX_CYCLES = int(os.getenv("TI_IMPROVE_MAX_CYCLES", "5"))
@@ -431,9 +455,10 @@ def reload() -> None:
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
-    global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
+    global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
-    global CLARIFY_ENABLED, CLARIFY_TIMEOUT
+    global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
+    global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
     global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
@@ -466,16 +491,26 @@ def reload() -> None:
     PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
     PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
-    HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+    # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
+    HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
     CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
-    NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
-    LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
-    REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
-    OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
-    SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))
+    NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
+    NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
+    LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
+    REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
+    OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
+    SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
-    CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "0") not in ("0", "false", "False", "")
+    KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
+    KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
+    CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
     CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))
+    CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
+    DISCOVER_ROLES = [
+        r.strip()
+        for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")
+        if r.strip()
+    ]
     BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
     BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
     ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
