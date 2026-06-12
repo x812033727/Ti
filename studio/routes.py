@@ -610,6 +610,72 @@ async def redeploy_now() -> JSONResponse:
     return JSONResponse(result)
 
 
+# --- 討論小組（受保護）--------------------------------------------------
+class GroupBody(BaseModel):
+    """POST /api/groups 的請求體。mode 白名單 {round_robin, parallel}。"""
+
+    name: str
+    role_keys: list[str]
+    mode: str = "round_robin"
+
+
+class GroupUpdateBody(BaseModel):
+    """PUT /api/groups/{name} 的請求體（name 由路徑決定、不可改名）。
+
+    整筆替換語意，故 role_keys 與 mode 皆必填——防止漏帶 mode 被預設值默默重置。
+    """
+
+    role_keys: list[str]
+    mode: str
+
+
+@router.get("/api/groups", dependencies=[Depends(auth.require_auth)])
+async def groups_list() -> JSONResponse:
+    """全部討論小組（[{name, role_keys, mode}]）。groups.yaml 損壞回 500 並附原因。"""
+    try:
+        return JSONResponse({"groups": role_store.list_groups()})
+    except role_store.GroupFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/api/groups", dependencies=[Depends(auth.require_auth)])
+async def groups_create(body: GroupBody) -> JSONResponse:
+    """建立小組。驗證失敗（key 不存在/重複/<2 人/非法 mode）回 422；同名已存在回 409。"""
+    try:
+        group = role_store.create_group(body.name, body.role_keys, body.mode)
+    except role_store.GroupError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    except role_store.GroupFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if group is None:
+        return JSONResponse({"error": f"小組 {body.name.strip()!r} 已存在"}, status_code=409)
+    return JSONResponse({"group": group})
+
+
+@router.put("/api/groups/{name}", dependencies=[Depends(auth.require_auth)])
+async def groups_update(name: str, body: GroupUpdateBody) -> JSONResponse:
+    """整筆更新小組（role_keys＋mode）。驗證失敗回 422；小組不存在回 404。"""
+    try:
+        group = role_store.update_group(name, body.role_keys, body.mode)
+    except role_store.GroupError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    except role_store.GroupFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if group is None:
+        return JSONResponse({"error": f"小組 {name!r} 不存在"}, status_code=404)
+    return JSONResponse({"group": group})
+
+
+@router.delete("/api/groups/{name}", dependencies=[Depends(auth.require_auth)])
+async def groups_delete(name: str) -> JSONResponse:
+    """刪除小組；不存在回 404。"""
+    try:
+        ok = role_store.delete_group(name)
+    except role_store.GroupFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
 # --- autopilot（受保護）------------------------------------------------
 class TaskBody(BaseModel):
     title: str = ""
