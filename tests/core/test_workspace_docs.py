@@ -48,13 +48,28 @@ def test_whitelist_rejects_other_names():
 
 def test_empty_text_and_missing_file():
     workspace.create_workspace("w4")
-    workspace.append_doc("w4", "PRD.md", "   ")  # 空白忽略
+    workspace.append_doc("w4", "RESEARCH.md", "   ")  # 空白忽略
     assert (
         not (workspace.workspace_path("w4") / "docs").exists()
-        or workspace.read_doc_tail("w4", "PRD.md", 100) == ""
+        or workspace.read_doc_tail("w4", "RESEARCH.md", 100) == ""
     )
     assert workspace.read_doc_tail("w4", "RESEARCH.md", 100) == ""
     assert workspace.read_doc_tail("w4", "RESEARCH.md", 0) == ""  # max_chars<=0 視為停用
+
+
+def test_prd_lives_at_root_not_docs():
+    """PRD.md 由澄清階段寫在 workspace 根（orchestrator._write_prd），不在 docs/ 白名單。"""
+    workspace.create_workspace("w6")
+    workspace.append_doc("w6", "PRD.md", "不該被寫進 docs/")  # 已移出白名單 → 忽略
+    assert not (workspace.workspace_path("w6") / "docs" / "PRD.md").exists()
+    # 根目錄 PRD.md 用 read_prd_tail 讀
+    assert workspace.read_prd_tail("w6", 100) == ""
+    (workspace.workspace_path("w6") / "PRD.md").write_text(
+        "# 產品需求紀錄（PRD）\n\n## 需求\n\n做一個記帳工具\n", encoding="utf-8"
+    )
+    tail = workspace.read_prd_tail("w6", 4000)
+    assert "做一個記帳工具" in tail
+    assert workspace.read_prd_tail("w6", 0) == ""  # max_chars<=0 視為停用
 
 
 def test_tail_truncates_at_paragraph_boundary():

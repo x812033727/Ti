@@ -22,7 +22,7 @@ class EventType(str, Enum):
     PUBLISH_RESULT = "publish_result"  # 成果發佈到 GitHub 的結果
     CI_RESULT = "ci_result"  # 發佈後 CI/CD 驗證與自動合併的進度
     HUMAN_MESSAGE = "human_message"  # 人類中途插話
-    CLARIFY_REQUEST = "clarify_request"  # 立項階段 PM 提問、等待使用者澄清（逾時以假設續行）
+    CLARIFY_REQUEST = "clarify_request"  # 需求澄清：PM 向使用者反問關鍵問題（附預設假設）
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
@@ -127,8 +127,8 @@ def human_message(session_id: str, text: str) -> StudioEvent:
     return StudioEvent(EventType.HUMAN_MESSAGE, session_id, {"text": text})
 
 
-def clarify_request(session_id: str, questions: list[str], timeout_s: int) -> StudioEvent:
-    """立項澄清請求：PM 列出關鍵問題，等待使用者用既有插話輸入框回覆；逾時以明示假設續行。"""
+def clarify_request(session_id: str, questions: list[dict], timeout_s: float) -> StudioEvent:
+    """PM 的需求澄清提問。questions: [{"q": 問題, "assumption": 無回覆時的預設假設}]。"""
     return StudioEvent(
         EventType.CLARIFY_REQUEST,
         session_id,

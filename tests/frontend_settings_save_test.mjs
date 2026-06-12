@@ -14,9 +14,11 @@ class RecEl {
   constructor(tag) {
     this.tag = tag; this.children = []; this.dataset = {}; this.options = [];
     this.className = ''; this.textContent = ''; this._inner = '';
-    this.type = ''; this.value = ''; this.placeholder = '';
+    this.type = ''; this.value = ''; this.placeholder = ''; this._attrs = {};
   }
   appendChild(c) { this.children.push(c); return c; }
+  setAttribute(k, v) { this._attrs[k] = v; }
+  getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; }
   remove() {}
   set innerHTML(v) { this._inner = v; if (v === '') this.children = []; }
   get innerHTML() { return this._inner; }

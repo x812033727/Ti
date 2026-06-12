@@ -29,14 +29,14 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish |
 | `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
-| `orchestrator.py` | `StudioSession`：需求拆解 → 架構辯論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討 |
+| `orchestrator.py` | `StudioSession`：（選配）需求澄清 → 需求拆解 → 架構辯論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討 |
 | `roles.py` | 四位專家的角色定義與 system prompt |
 | `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，把串流回應轉成事件 |
 | `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容） |
 | `tools.py` | 非 Claude provider 的 function-calling 工具層（read/write/edit/bash…） |
-| `runner.py` | 確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git |
+| `runner.py` | 確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git；web 服務 HTTP 驗收（`run_http_demo`：啟動服務→輪詢探測→收掉，僅限 localhost；沙箱保留 PID/唯讀隔離、該次共享 loopback） |
 | `workspace.py` | 每個 session 的沙箱工作目錄（安全路徑、列檔、讀檔、打包 zip 匯出） |
-| `history.py` | session 事件存檔/讀取（JSONL + meta），供歷史列表與重播 |
+| `history.py` | session 事件存檔/讀取（JSONL + meta），供歷史列表與重播；收尾時從事件流推導「成果記分卡」（任務輪數/退回原因/Demo 結果）存進 meta，`/api/metrics` 跨場聚合成功率與近期趨勢 |
 | `memory.py` | 任務級反思記憶（per-session JSONL＋fcntl 鎖）：失敗輪蒸餾反思存檔、後續輪 prepend 回 context（opt-in，env `TI_REFLEXION`） |
 | `reflexion.py` | 把失敗輪的評審意見蒸餾成文字反思（LLM＋模板 fallback，不裁決成敗、永不崩） |
 | `publisher.py` | 把 workspace 成果推成 GitHub 分支並開 PR（預設關閉） |
@@ -58,6 +58,16 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 
 事件型別是前後端的契約，定義集中在 `events.py`，前端在 `web/app.js` 的
 `handleEvent()` 對應處理。
+
+## 需求澄清（選配，`TI_CLARIFY`）
+
+開啟後，拆解前 PM 先檢視需求：模糊就向使用者反問最多 `TI_CLARIFY_MAX_QUESTIONS` 個
+關鍵問題（每題附「未回覆時的預設假設」），透過 `clarify_request` 事件渲染到前端，
+使用者用既有的插話框回答。等待走 1 秒切片輪詢（stop 即時生效），逾時
+`TI_CLARIFY_TIMEOUT` 未回覆則按假設續行——**流程絕不因等人而卡死**。
+澄清結論前綴進調研／拆解／實作 context，並固化成 workspace 內 `PRD.md`
+（追加式；專案模式跨場次累積需求史）。僅互動 session 生效：無插話佇列（autopilot）、
+離線 demo、或持續改良迴圈（顯式 `clarify=False`）一律跳過。
 
 ## 任務並行（多支線 lane，預設開啟）
 

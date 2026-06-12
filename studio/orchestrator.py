@@ -141,6 +141,27 @@ def parse_tasks(pm_text: str) -> list[str]:
     return tasks[:cap] or ["實作需求"]
 
 
+def parse_clarify(text: str) -> list[dict]:
+    """從 PM 的澄清回應抽出 `問題:`／`假設:` 配對（假設行附屬於其上方最近的問題行）。
+
+    `澄清: 不需要` 或全無問題行回空 list（代表需求已足夠明確、不進等待）。
+    """
+    if re.search(r"^\s*澄清\s*[:：]\s*不需要", text, re.M):
+        return []
+    out: list[dict] = []
+    cur: dict | None = None
+    for line in text.splitlines():
+        m = re.match(r"^\s*問題\s*[:：]\s*(.+)$", line)
+        if m:
+            cur = {"q": m.group(1).strip(), "assumption": ""}
+            out.append(cur)
+            continue
+        m = re.match(r"^\s*假設\s*[:：]\s*(.+)$", line)
+        if m and cur is not None:
+            cur["assumption"] = m.group(1).strip()
+    return out
+
+
 def parse_followups(text: str) -> list[str]:
     """從檢討文字抽出 `後續任務: ...` 行（供 autopilot 回寫 backlog）。"""
     return [m.strip() for m in re.findall(r"^\s*後續任務\s*[:：]\s*(.+)$", text, re.M)][:10]
@@ -151,19 +172,8 @@ def parse_lessons(text: str) -> list[str]:
     return [m.strip() for m in re.findall(r"^\s*教訓\s*[:：]\s*(.+)$", text, re.M)][:5]
 
 
-def parse_clarify_needed(text: str) -> bool:
-    """立項評估判定：PM 是否要求澄清。無標記時保守視為不需要（不卡等待）。"""
-    verdict = _last_match(text, r"澄清\s*[:：]\s*(需要|不需要)")
-    return verdict == "需要"
-
-
-def parse_questions(text: str) -> list[str]:
-    """從立項評估抽出 `問題: ...` 行（PM 要問使用者的關鍵問題，至多 3 條）。"""
-    return [m.strip() for m in re.findall(r"^\s*問題\s*[:：]\s*(.+)$", text, re.M)][:3]
-
-
 def parse_vision(text: str) -> str:
-    """從 PRD 抽出 `願景: ...`（一句產品願景，回填專案 meta 用）；無標記回空字串。"""
+    """從澄清/評估文字抽出 `願景: ...`（一句產品願景，回填專案 meta 用）；無標記回空字串。"""
     return _last_match(text, r"願景\s*[:：]\s*(.+)") or ""
 
 
@@ -249,7 +259,7 @@ class StudioSession:
         repo_url: str | None = None,
         critics: dict[str, ExpertLike] | None = None,
         workspace_id: str | None = None,
-        clarify: bool = True,
+        clarify: bool | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
@@ -257,6 +267,9 @@ class StudioSession:
         # 檔案面板/下載 API 用的 workspace id；預設＝session_id（一次性 workspace）。
         # 專案模式傳 `project-<pid>`（多場 session 共用同一個固定 workspace）。
         self.workspace_id = workspace_id or session_id
+        # 需求澄清：None=依 config.CLARIFY_ENABLED（執行期讀取，reload 即生效）；
+        # 自主流程（autopilot／持續改良迴圈）顯式傳 False 跳過——沒有人在等著回答。
+        self._clarify = clarify
         self._experts = experts
         # 異議檢查用的獨立 expert 實例（不與主 experts 共用對話/calls 序號）。
         self._critics = critics
@@ -271,12 +284,13 @@ class StudioSession:
         # 並行 lane 的專家工廠（測試可注入 stub）；None 時用 providers.make_expert。
         self._lane_expert_factory = None
         self._run_command: str | None = None  # PM/工程師宣告的執行指令
+        # PM/工程師宣告的 `Demo 網址:`（僅限 localhost）。有宣告＝web 服務型產品，
+        # 自測與最終 Demo 改走「啟動服務→HTTP 探測→收掉」，不再傻等常駐指令逾時。
+        self._demo_url: str | None = None
         self._requirement = ""
         self._stop = False
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
-        # 立項/澄清：improver 子場次傳 False（backlog 任務已具體，不需再立項）。
-        self._clarify = clarify
-        self._vision = ""  # 立項 PRD 抽出的一句產品願景（回填專案 meta 用）
+        self._vision = ""  # 澄清階段抽出的一句產品願景（回填專案 meta 用）
         self._last_commit: str | None = None  # 最近一次主分支 workspace commit 短 hash
         # 主（循序）lane 的隔離狀態；於 _run 建立後，所有對主 workspace 的操作都走它。
         self._main_ctx: LaneContext | None = None
@@ -324,6 +338,116 @@ class StudioSession:
                 else ""
             )
         return await self._human_prefix()
+
+    async def _await_human(self, timeout_s: float) -> str:
+        """阻塞等待一則人類插話（給需求澄清用），逾時或被要求停止回空字串。
+
+        以 1 秒切片輪詢，確保等待期間 stop 指令仍即時生效——流程絕不因等人而卡死。
+        """
+        if self._intervention is None:
+            return ""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while not self._stop:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return ""
+            try:
+                first = await asyncio.wait_for(
+                    self._intervention.get(), timeout=min(1.0, remaining)
+                )
+            except asyncio.TimeoutError:
+                continue
+            rest = self._drain_human()
+            return (first + ("\n" + rest if rest else "")).strip()
+        return ""
+
+    # --- 需求澄清（拆解前的反問階段）-----------------------------------
+    async def _clarify_requirement(self, pm: ExpertLike, requirement: str) -> str:
+        """PM 檢視需求；模糊則向使用者反問關鍵問題（附預設假設），逾時按假設續行。
+
+        回傳要前綴給調研／拆解 prompt 的澄清結論（未啟用／不需澄清回空字串）。
+        僅互動 session 生效：無插話佇列（autopilot）、離線 demo、或顯式關閉時跳過。
+        """
+        enabled = config.CLARIFY_ENABLED if self._clarify is None else self._clarify
+        if not enabled or self._intervention is None or config.OFFLINE_MODE or self._stop:
+            return ""
+        await self.broadcast(
+            events.phase_change(self.session_id, "需求澄清", "PM 檢視需求是否足夠明確")
+        )
+        text = await pm.speak(
+            f"使用者的產品需求如下：\n\n{requirement}\n\n"
+            "請判斷此需求是否足夠明確、可直接拆解動工。若是，輸出一行 `澄清: 不需要`。\n"
+            f"若否，向使用者反問最多 {config.CLARIFY_MAX_QUESTIONS} 個最關鍵的問題"
+            "（只問會改變做法的，不問瑣碎細節），每個問題固定兩行：\n"
+            "`問題: <一句具體的問題>`\n"
+            "`假設: <若使用者未回覆，你將採用的合理預設>`\n"
+            "無論是否需要澄清，最後都補一行 `願景: <一句產品願景>`（給長期專案定方向用）。",
+            self.broadcast,
+        )
+        # 願景回填：抽出一句產品願景（專案 meta 為空時由 ws 回填，給後續場次定方向）。
+        self._vision = parse_vision(text)
+        questions = parse_clarify(text)[: config.CLARIFY_MAX_QUESTIONS]
+        if not questions:
+            return ""
+        timeout = config.CLARIFY_TIMEOUT
+        await self.broadcast(events.clarify_request(self.session_id, questions, timeout))
+        await self.broadcast(
+            events.phase_change(
+                self.session_id,
+                "需求澄清",
+                f"等待你的回覆（{int(timeout)} 秒內未回覆將按 PM 的預設假設進行）",
+            )
+        )
+        answer = await self._await_human(timeout)
+        qa_lines = [
+            f"- 問題：{q['q']}\n  假設：{q.get('assumption') or '（未提供）'}" for q in questions
+        ]
+        if answer:
+            await self.broadcast(
+                events.phase_change(self.session_id, "需求澄清", "已收到回覆，納入需求")
+            )
+            note = (
+                "【需求澄清】PM 的提問與預設假設：\n"
+                + "\n".join(qa_lines)
+                + f"\n\n使用者的回覆（以此為準，覆蓋上列假設）：\n{answer}\n\n"
+            )
+        else:
+            await self.broadcast(
+                events.phase_change(self.session_id, "需求澄清", "未收到回覆，按預設假設進行")
+            )
+            note = (
+                "【需求澄清】曾向使用者提問但未獲回覆，依下列預設假設進行：\n"
+                + "\n".join(qa_lines)
+                + "\n\n"
+            )
+        self._write_prd(requirement, questions, answer)
+        return note
+
+    def _write_prd(self, requirement: str, questions: list[dict], answer: str) -> None:
+        """把需求與澄清結論固化成 workspace 內的 PRD.md（追加；專案模式跨場次累積）。
+
+        寫檔失敗只略過，不影響流程；隨後的「PM 規劃」commit 會把它一併入庫。
+        """
+        if self.cwd is None:
+            return
+        path = self.cwd / "PRD.md"
+        lines = []
+        if not path.exists():
+            lines.append("# 產品需求紀錄（PRD）\n")
+        lines.append(f"## 需求（{time.strftime('%Y-%m-%d %H:%M')}）\n")
+        lines.append(requirement + "\n")
+        if questions:
+            lines.append("### 澄清問答\n")
+            for q in questions:
+                lines.append(f"- 問題：{q['q']}")
+                lines.append(f"  - 預設假設：{q.get('assumption') or '（未提供）'}")
+            lines.append(f"- 使用者回覆：{answer or '（未回覆，採上列假設）'}\n")
+        try:
+            with path.open("a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError:
+            pass
 
     def _get_experts(self) -> dict[str, ExpertLike]:
         if self._experts is None:
@@ -424,74 +548,7 @@ class StudioSession:
             notes = tail.strip()
         return f"【團隊共用知識庫 NOTES.md（過往踩過的坑／決策／後續）】\n{notes}\n\n"
 
-    # --- 立項/需求澄清（PRD）--------------------------------------------
-    async def _wait_for_reply(self, timeout: float) -> str:
-        """分段等待使用者插話（每秒輪詢 stop 旗標，避免停止時卡在 queue 等滿逾時）。
-
-        逾時或被停止回空字串；插話回顯已由 ws._pump_interventions 即時 broadcast，
-        這裡只負責消費文字。
-        """
-        if self._intervention is None:
-            return ""
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + max(timeout, 0)
-        while not self._stop and loop.time() < deadline:
-            try:
-                return await asyncio.wait_for(self._intervention.get(), timeout=1.0)
-            except asyncio.TimeoutError:  # noqa: UP041 — Python 3.10 下兩者尚非同一類別
-                continue
-        return ""
-
-    async def _inception(self, pm: ExpertLike) -> str:
-        """立項：PM 評估需求是否需要澄清，必要時提問等使用者回覆（逾時以明示假設續行），
-        產出簡短 PRD 沉澱 docs/PRD.md。回傳 PRD 文字；跳過時回空字串。
-
-        跳過條件：開關關閉／improver 子場次（clarify=False，backlog 任務已具體）／
-        無人類插話通道（autopilot、未傳 queue 的呼叫端）——天然向後相容。
-        """
-        if not (config.CLARIFY_ENABLED and self._clarify) or self._intervention is None:
-            return ""
-        await self.broadcast(
-            events.phase_change(self.session_id, "立項", "PM 評估需求是否需要澄清")
-        )
-        prd_format = (
-            "簡短 PRD 需包含：目標用戶、MVP 範圍、不做什麼、逐行 `假設: <明示假設>`、"
-            "一行 `願景: <一句產品願景>`；超出本場範圍的項目逐行 `後續任務: <項目>`。"
-        )
-        first = await pm.speak(
-            f"使用者的產品需求如下：\n\n{self._requirement}\n\n"
-            "請做立項評估：若需求模糊（目標用戶／MVP 範圍／平台等關鍵資訊缺失），"
-            "逐行列出至多 3 條 `問題: <關鍵問題>`，並以最後一行 `澄清: 需要` 結尾；"
-            f"若已足夠清楚，直接寫出簡短 PRD 並以最後一行 `澄清: 不需要` 結尾。{prd_format}",
-            self.broadcast,
-        )
-        prd = first
-        if parse_clarify_needed(first):
-            await self.broadcast(
-                events.clarify_request(
-                    self.session_id, parse_questions(first), config.CLARIFY_TIMEOUT
-                )
-            )
-            reply = await self._wait_for_reply(config.CLARIFY_TIMEOUT)
-            if self._stop:
-                return ""
-            if reply:
-                basis = f"使用者回覆如下，請依此定案：\n{reply}"
-                detail = "收到使用者回覆，PM 整理 PRD"
-            else:
-                basis = "使用者未在時限內回覆。請對你列的問題自行做出保守假設並逐行明示。"
-                detail = "未收到回覆，以明示假設續行"
-            await self.broadcast(events.phase_change(self.session_id, "立項", detail))
-            prd = await pm.speak(f"{basis}\n\n請寫出簡短 PRD。{prd_format}", self.broadcast)
-        # 超出本場範圍的項目併入後續任務（與檢討同管道，專案模式會回填 backlog）。
-        self._followups += [f for f in parse_followups(prd) if f not in self._followups]
-        self._vision = parse_vision(prd)
-        # PM 只有唯讀工具，PRD 由 orchestrator 確定性落盤（與調研/決策同一沉澱管道）。
-        self._persist_knowledge("PRD.md", prd)
-        await self._commit(self._main_ctx, "立項：建立 PRD（docs/PRD.md）")
-        return prd
-
-    # --- 知識沉澱（docs/PRD.md / RESEARCH.md / DECISIONS.md）-------------
+    # --- 知識沉澱（docs/RESEARCH.md / DECISIONS.md；PRD.md 由澄清階段寫根目錄）---
     def _knowledge_tail(self, name: str) -> str:
         """讀回 workspace docs/<name> 的尾段供注入 prompt（停用／無 cwd／不存在回空字串）。"""
         if not (config.KNOWLEDGE_ENABLED and self.cwd):
@@ -687,10 +744,8 @@ class StudioSession:
         if self.cwd:
             await runner.git_init(self.cwd)
 
-        # -1) 立項：PM 評估需求、必要時向使用者澄清，產出 PRD（澄清後的範圍才值得調研）。
-        #     等待中被停止時回空字串；停止語義交給後續各階段的既有 _stop 檢查（DONE 照常發）。
-        prd = await self._inception(pm)
-        prd_note = f"【PRD（立項結論）】\n{prd}\n\n" if prd else ""
+        # -1) 需求澄清（互動 session 限定）：模糊需求先反問，逾時按假設續行，絕不卡流程。
+        clarify_note = await self._clarify_requirement(pm, requirement)
 
         # 0) 調研（研究員上網查資料，供拆解與設計參考）。過往場次的調研先注入：
         #    沿用既有結論、只查缺口——既省 token 也讓知識跨場次累積（專案模式）。
@@ -705,7 +760,7 @@ class StudioSession:
                 else ""
             )
             research_notes = await researcher.speak(
-                prd_note
+                clarify_note
                 + prior_note
                 + f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
                 "查可用套件/函式庫、官方 API 與文件、最佳實踐與常見坑，精簡彙整並附來源。",
@@ -740,9 +795,9 @@ class StudioSession:
         )
         pm_plan = await pm.speak(
             (await self._human_prefix())
-            + lessons.context()  # 跨場次教訓庫（停用/空白時為空字串）
-            + prd_note  # 立項結論（任務範圍以 PRD 的 MVP 為準）
+            + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
             + repo_note
+            + clarify_note
             + research_note
             + decisions_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
@@ -750,6 +805,7 @@ class StudioSession:
             self.broadcast,
         )
         self._run_command = runner.parse_run_command(pm_plan)
+        self._demo_url = runner.parse_demo_url(pm_plan)
         if config.PARALLEL_TASKS_ENABLED:
             # 並行：解析任務 + 依賴邊，供拓撲分波。
             self._tasks, self._edges = parse_tasks_with_deps(pm_plan)
@@ -778,8 +834,10 @@ class StudioSession:
         else:
             await self._debate(engineer, senior, topic=topic, rounds=config.DEBATE_ROUNDS)
 
-        # 供每個任務實作時參考的脈絡（調研 + 設計決策）
+        # 供每個任務實作時參考的脈絡（澄清 + 調研 + 設計決策）
         context = ""
+        if clarify_note:
+            context += f"\n{clarify_note}"
         if research_notes:
             context += f"\n【研究員調研】\n{research_notes}\n"
         if design_note:
@@ -1579,6 +1637,10 @@ class StudioSession:
         """
         if not ctx.cwd:
             return None
+        # 工程師若宣告了 `Demo 網址:`（web 服務型產品），更新到 session 供自測/Demo 走 HTTP 路徑。
+        impl_url = runner.parse_demo_url(impl_text)
+        if impl_url:
+            self._demo_url = impl_url
         cmd = runner.parse_run_command(impl_text) or runner.resolve_demo_command(
             ctx.cwd, self._run_command
         )
@@ -1587,13 +1649,17 @@ class StudioSession:
         # 刻意保留 shell（run_command，非 run_command_exec）：cmd 來自 PM/工程師宣告的
         # 自測指令（parse_run_command / resolve_demo_command 動態解析），可能含 pipe /
         # && / glob / 重導向等 shell 語法，須經 /bin/sh 解析；非固定指令、無法 argv 化。
-        result = await runner.run_command(ctx.cwd, cmd)  # nosec B602
+        if self._demo_url:
+            # 常駐 server 指令純 run_command 只會傻等逾時；HTTP 路徑啟動→探測→收掉。
+            result, _status = await runner.run_http_demo(ctx.cwd, cmd, self._demo_url)
+        else:
+            result = await runner.run_command(ctx.cwd, cmd)  # nosec B602
         bc = broadcast or self.broadcast
         await bc(
             events.run_result(
                 self.session_id,
                 result.ok,
-                f"自測 `{cmd}`：{'通過' if result.ok else '未通過'}",
+                f"自測 `{result.command}`：{'通過' if result.ok else '未通過'}",
                 log=result.output,
             )
         )
@@ -1606,6 +1672,22 @@ class StudioSession:
         cmd = runner.resolve_demo_command(self.cwd, self._run_command)
         if not cmd:
             return None
+        if self._demo_url:
+            # web 服務型產品：啟動服務 → HTTP 探測 → 收掉，讓「驗證: PASS」對網站也可信。
+            await self.broadcast(
+                events.phase_change(self.session_id, "Demo", f"啟動服務並探測 {self._demo_url}")
+            )
+            result, _status = await runner.run_http_demo(self.cwd, cmd, self._demo_url)
+            await self.broadcast(
+                events.demo_result(
+                    self.session_id,
+                    result.command,
+                    result.exit_code,
+                    result.output,
+                    label="HTTP Demo",
+                )
+            )
+            return result
         await self.broadcast(events.phase_change(self.session_id, "Demo", "實際執行成果"))
         # 刻意保留 shell：同 _self_test，cmd 為 demo 指令（resolve_demo_command 動態解析），
         # 可能含 shell 語法，必須經 /bin/sh，無法 argv 化。

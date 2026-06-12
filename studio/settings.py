@@ -20,13 +20,29 @@ from .secretfile import write_secret_file
 class Field:
     env: str
     label: str
-    kind: str = "text"  # text | password | select
+    kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）
     secret: bool = False
     options: tuple[str, ...] = ()
     placeholder: str = ""
     group: str = ""
     default: str = ""  # env 未設定時 UI 應顯示的「有效預設」（避免 select 誤顯第一個選項）
 
+
+# Claude 官方模型 ID（2026-06 現行清單）。select 嚴格白名單，由 update() 驗證。
+CLAUDE_MODELS: tuple[str, ...] = (
+    "claude-fable-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-opus-4-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+)
+
+# OpenAI 模型僅為「建議值」：OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio），
+# 模型名稱可能是任意字串，故用 combo（可選可打）而非嚴格 select。
+OPENAI_MODELS: tuple[str, ...] = ("gpt-4o", "gpt-4o-mini")
 
 FIELDS: tuple[Field, ...] = (
     Field(
@@ -48,13 +64,17 @@ FIELDS: tuple[Field, ...] = (
     Field(
         "TI_MODEL_LEAD",
         "Claude 主力模型（PM／高級工程師）",
-        placeholder="claude-opus-4-8",
+        kind="select",
+        options=CLAUDE_MODELS,
+        default="claude-opus-4-8",  # 與 config.MODEL_LEAD 預設一致
         group="Claude",
     ),
     Field(
         "TI_MODEL_FAST",
         "Claude 快速模型（工程師／QA）",
-        placeholder="claude-sonnet-4-6",
+        kind="select",
+        options=CLAUDE_MODELS,
+        default="claude-sonnet-4-6",  # 與 config.MODEL_FAST 預設一致
         group="Claude",
     ),
     Field(
@@ -71,8 +91,22 @@ FIELDS: tuple[Field, ...] = (
         placeholder="http://localhost:11434/v1",
         group="OpenAI",
     ),
-    Field("TI_OPENAI_MODEL_LEAD", "OpenAI 主力模型", placeholder="gpt-4o", group="OpenAI"),
-    Field("TI_OPENAI_MODEL_FAST", "OpenAI 快速模型", placeholder="gpt-4o-mini", group="OpenAI"),
+    Field(
+        "TI_OPENAI_MODEL_LEAD",
+        "OpenAI 主力模型",
+        kind="combo",
+        options=OPENAI_MODELS,
+        placeholder="gpt-4o",
+        group="OpenAI",
+    ),
+    Field(
+        "TI_OPENAI_MODEL_FAST",
+        "OpenAI 快速模型",
+        kind="combo",
+        options=OPENAI_MODELS,
+        placeholder="gpt-4o-mini",
+        group="OpenAI",
+    ),
     Field(
         "GITHUB_TOKEN",
         "GitHub Token（clone 私有 repo／發佈成果）",
@@ -109,6 +143,20 @@ FIELDS: tuple[Field, ...] = (
         group="並行",
     ),
     # --- 進階流程開關（對應 .env 的 power-user 旋鈕；消費端讀即時全域值，存檔後下次討論生效）---
+    Field(
+        "TI_CLARIFY",
+        "需求澄清（拆解前 PM 先反問關鍵問題，逾時按假設續行，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_CLARIFY_TIMEOUT",
+        "澄清等待回覆秒數（逾時按 PM 預設假設續行）",
+        placeholder="180",
+        group="進階",
+    ),
     Field(
         "TI_HUDDLE",
         "卡關討論 huddle（跑滿輪數仍未過時召集團隊找替代方案）",
@@ -179,20 +227,6 @@ FIELDS: tuple[Field, ...] = (
         kind="select",
         options=("0", "1"),
         default="1",
-        group="進階",
-    ),
-    Field(
-        "TI_CLARIFY",
-        "立項澄清（開場 PM 評估需求、必要時提問等回覆，預設開）",
-        kind="select",
-        options=("0", "1"),
-        default="1",
-        group="進階",
-    ),
-    Field(
-        "TI_CLARIFY_TIMEOUT",
-        "立項等待回覆秒數（逾時以明示假設續行）",
-        placeholder="180",
         group="進階",
     ),
     Field(

@@ -34,7 +34,7 @@ SECRET_ENVS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"}
 
 GH = "ghp_TEST_reread_5"
 ANT = "sk-ant-TEST_reread_5"
-LEAD = "claude-lead-5"
+LEAD = "claude-haiku-4-5"  # 須為 CLAUDE_MODELS 白名單內的合法值（select 後端擋非法）
 REPO = "octo/outputs-5"
 
 

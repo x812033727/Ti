@@ -153,7 +153,7 @@ class ProjectImprover:
             intervention_queue=self.queue,
             critics=critics,
             workspace_id=projects.workspace_id(pid),
-            clarify=False,  # backlog 任務已具體，不需再立項澄清
+            clarify=False,  # 自主迴圈不反問：任務來自 backlog／找問題，沒有人在等著回答
         )
         if config.OFFLINE_MODE:
             from .fake_experts import build_fake_lane_expert
@@ -270,14 +270,14 @@ class ProjectImprover:
             "`任務: <動詞開頭的具體任務>`。只輸出任務行。"
         )
         wid = projects.workspace_id(pid)
-        prd_tail = workspace.read_doc_tail(wid, "PRD.md", config.KNOWLEDGE_MAX_CHARS)
+        prd_tail = workspace.read_prd_tail(wid, config.KNOWLEDGE_MAX_CHARS)
         research_tail = workspace.read_doc_tail(wid, "RESEARCH.md", config.KNOWLEDGE_MAX_CHARS)
         return {
             "senior": head
             + "請用 Read/Grep 瀏覽現況，從使用者價值與工程品質兩面（功能缺口、bug、體驗、"
             "測試、安全）" + tail,
             "pm": head
-            + (f"【PRD（立項結論）】\n{prd_tail}\n\n" if prd_tail else "")
+            + (f"【PRD（需求澄清沉澱）】\n{prd_tail}\n\n" if prd_tail else "")
             + "請用 Read/Grep 瀏覽現況，從目標用戶與產品價值的角度（功能缺口、使用體驗、"
             "與願景的落差）" + tail,
             "researcher": head

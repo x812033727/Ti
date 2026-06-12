@@ -47,7 +47,7 @@ const fetchStub = () => Promise.resolve({
 const sandbox = {
   document, location, WebSocket,
   fetch: fetchStub,
-  window: {}, console,
+  window: { addEventListener: () => {} }, console,
   setTimeout: () => 0, clearTimeout: () => {},
   Date, JSON, Object, Array, Math, Promise, Symbol, encodeURIComponent,
 };
@@ -75,7 +75,7 @@ const known = [
   ev('demo_result', { label: 'Demo', command: 'py', exit_code: 0, passed: true, output: 'out' }),
   ev('git_commit', { message: 'm', hash: 'abc' }),
   ev('human_message', { text: 'hi' }),
-  ev('clarify_request', { questions: ['目標平台？', '要支援多人嗎？'], timeout_s: 180 }),
+  ev('clarify_request', { questions: [{ q: '目標平台？', assumption: '網頁版' }, { q: '要支援多人嗎？', assumption: '' }], timeout_s: 180 }),
   ev('clarify_request', { questions: [], timeout_s: 0 }),
   ev('huddle', { task_id: 1, title: 'T', participants: ['pm', 'engineer'], conclusion: '結論', limitation: false }),
   ev('huddle', { task_id: 1, title: 'T', participants: [], conclusion: '', limitation: true }),

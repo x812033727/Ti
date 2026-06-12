@@ -13,8 +13,8 @@
 ## 工作流程
 
 ```
-⓪立項澄清   PM 評估需求：模糊就列出關鍵問題等你回覆（逾時以明示假設續行），
-            產出簡短 PRD 沉澱 docs/PRD.md（願景自動回填專案）
+⓪需求澄清   PM 評估需求：模糊就反問關鍵問題（附預設假設）等你回覆，逾時按假設續行；
+            結論固化 PRD.md（「願景:」自動回填專案）
 ①需求拆解   PM 參考 PRD／調研／過往決策，拆成結構化任務 + 驗收標準 + 執行指令
 ②架構辯論   工程師 ⇄ 高級工程師 來回討論整體做法（有架構師則由其定案，
             設計決策沉澱 docs/DECISIONS.md）
@@ -27,12 +27,12 @@
 ⑤驗收+檢討   PM 判定完成 → 團隊回顧 → 教訓入庫、後續任務回填 backlog
 ```
 
-- **立項澄清（預設開啟）**：丟一句模糊需求（「做個記帳的」）時 PM 會先問你最多 3 個關鍵問題，
-  用插話框回覆即可；約 3 分鐘未回覆就以明示假設續行，不會卡死（`TI_CLARIFY` / `TI_CLARIFY_TIMEOUT`）。
+- **需求澄清（預設開啟）**：丟一句模糊需求（「做個記帳的」）時 PM 會先反問最多 4 個關鍵問題
+  （各附預設假設），用插話框回覆即可；約 3 分鐘未回覆就按假設續行，不會卡死
+  （`TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` / `TI_CLARIFY_MAX_QUESTIONS`）。
 - **知識沉澱（預設開啟）**：研究員調研結論與架構師設計決策持久化到 workspace 的
-  `docs/RESEARCH.md`／`docs/DECISIONS.md`（PRD 在 `docs/PRD.md`），下場開場注入——專案模式
+  `docs/RESEARCH.md`／`docs/DECISIONS.md`（PRD 在根目錄 `PRD.md`），下場開場注入——專案模式
   workspace 固定，知識跨場次累積、調研不重查（`TI_KNOWLEDGE`）。
-
 - **人類可中途插話**：執行中於插話框輸入指示，專家會在下一步納入考量；亦可隨時「停止」。
 - **任務並行（預設開啟）**：PM 標注依賴、獨立任務分「波次」，每波多條支線各自 git worktree
   分支 + 獨立專家團隊同時做，完工依序合併回主幹（設定面板或 `TI_PARALLEL_TASKS` 切換；預設開啟，設 `0` 還原純循序）。
@@ -43,6 +43,11 @@
   即讓團隊自動消化改良任務、自己「找問題」產生新任務，一直改良直到你喊停（見「[專案與持續改良](#專案與持續改良一直找問題一直改良)」）。
 - **成果發佈到 GitHub**：設定 token 與目標 repo 後，可手動（或自動）把 workspace 成果推成分支並開 PR。
 - **成果匯出下載**：產出檔案面板的「⬇️ 下載成果」按鈕會把該 session 的 workspace 打包成 zip 下載（自動排除 `.git/` 等雜訊）。
+- **成果記分卡**：每場 session 收尾自動統計任務完成數、每任務輪數、退回原因（QA/自測/客觀閘門/異議/停滯）；
+  「📊 指標」面板跨場顯示成功率、一次過率與「近 10 場 vs 前 10 場」趨勢——讓「越做越進步」看得見。
+- **網站/服務的 HTTP 驗收**：PM 或工程師宣告 `Demo 網址: http://localhost:<port>/...` 後，
+  自測與最終 Demo 改走「啟動服務 → 輪詢探測 → GET 取狀態碼與內容 → 自動收掉」，
+  常駐 server 不再傻等逾時，「驗證: PASS」對 web 產品也可信（僅限 localhost）。
 
 ## 角色
 
@@ -180,7 +185,7 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 - OpenAI API key、Base URL（可指向本地模型）、OpenAI 模型
 - GitHub token、發佈目標 repo
 - 任務並行（開關 / 每波支線數上限）
-- **進階流程**開關：卡關討論 huddle、異議檢查 critic、共用筆記、跨場次教訓、反思記憶、客觀驗收閘門、單輪自我精修、子進程資源上限
+- **進階流程**開關：需求澄清、卡關討論 huddle、異議檢查 critic、共用筆記、跨場次教訓、反思記憶、客觀驗收閘門、單輪自我精修、子進程資源上限
 
 儲存後會寫入伺服器的 `.env` 檔（已被 git 忽略），並**於下次討論即時生效，無需重啟**。
 秘密欄位（key / token）在頁面上不會回顯明文，留空代表「不變更」。
@@ -240,10 +245,10 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_MODEL_LEAD` / `TI_MODEL_FAST` | PM/高級工程師 與 工程師/QA 使用的模型 | opus / sonnet |
 | `TI_MAX_ROUNDS` | 每個任務的最大改進輪數 | 3 |
 | `TI_DEBATE_ROUNDS` | 架構辯論來回回合數（0 = 關閉） | 2 |
-| `TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` | 立項澄清：開場 PM 評估需求、模糊則提問等你回覆（逾時以明示假設續行），產出 PRD 沉澱 `docs/PRD.md` | 開啟 / 180 秒 |
+| `TI_CLARIFY` / `TI_CLARIFY_TIMEOUT` / `TI_CLARIFY_MAX_QUESTIONS` | 需求澄清：拆解前 PM 先反問關鍵問題（附預設假設），插話框回答即可；逾時按假設續行、結論固化進 `PRD.md`、抽出的「願景:」回填專案。僅互動討論生效（autopilot／持續改良迴圈自動跳過） | 開啟 / 180 / 4 |
 | `TI_KNOWLEDGE` / `TI_KNOWLEDGE_MAX_CHARS` | 知識沉澱：調研結論與設計決策持久化到 `docs/RESEARCH.md`／`docs/DECISIONS.md`，下場開場注入尾段（專案模式跨場次累積） | 開啟 / 4000 |
 | `TI_DISCOVER_ROLES` | 持續改良「找問題」視角（csv）：senior 工程品質／pm 用戶價值／researcher 上網調研，多視角並行再彙整去重 | senior,pm,researcher |
-| `TI_LESSONS` / `TI_LESSONS_MAX` | 跨場次教訓庫（長期記憶）：每場檢討蒸餾可重用教訓存入 `lessons.json`，下次開場注入 PM 拆解，讓工作室越做越會／`MAX` 為注入時取最新筆數 | 開啟 / 12 |
+| `TI_LESSONS` / `TI_LESSONS_MAX` | 跨場次教訓庫（長期記憶）：每場檢討蒸餾可重用教訓存入 `lessons.json`，下次開場注入 PM 拆解，讓工作室越做越會。注入時**按本次需求相關性挑選**（IDF 加權，無人機的坑不會混進網站任務；無相關才退回最新）／`MAX` 為注入筆數 | 開啟 / 12 |
 | `TI_REFLEXION` / `TI_REFLEXION_MAX` | 任務級反思記憶（補「只帶上一輪原文」缺口）：失敗輪把 QA/高工意見蒸餾成反思存 per-session JSONL，後續輪/huddle 重試 prepend 回工程師 context／`MAX` 為注入筆數。進階開關（env 或設定面板「進階」組） | 開啟 / 5 |
 | `TI_OBJECTIVE_GATE` | 客觀驗收閘門：交付前自測「實際執行」失敗 → 該輪強制退回，不讓 QA/高工的文字裁決推翻真實 exit code（守住反 reward-hacking）。`1`=工程師本輪宣告的自測指令實敗才否決（fallback 整體指令只回報不硬退）；`strict`=fallback 失敗與「未宣告執行指令」皆視為未通過 | 1（開啟） |
 | `TI_SELF_REFINE_ITERS` | 單輪內自我精修：自測未過時讓同一工程師就地依執行紀錄再修一次（交付驗證前），上限 N 次 | 1（開啟） |

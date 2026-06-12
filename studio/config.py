@@ -62,16 +62,17 @@ NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 
-# 立項/需求澄清：開場由 PM 評估需求是否模糊——模糊則列關鍵問題（≤3 條）等使用者回覆，
-# 逾時以明示假設續行（不卡死），最終產出簡短 PRD 沉澱 docs/PRD.md 並注入調研/拆解。
-# 預設開啟：這是「說一句產品就能開工」的核心；無人類通道（autopilot/improver 子場次、
-# 未傳 intervention queue 的測試）時自動跳過，天然向後相容。
+# 需求澄清階段：拆解前 PM 先就模糊需求向使用者反問關鍵問題（附預設假設），等回覆逾時則按
+# 假設續行——流程絕不因等人而卡死。僅互動 session 生效（須有插話佇列）；autopilot／持續改良
+# 迴圈等自主流程一律跳過。預設開啟：這是「說一句產品就能開工」的核心，無插話佇列時
+# 自動跳過、天然向後相容。結論固化 workspace 的 PRD.md，抽出的「願景:」回填專案 meta。
 CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
-CLARIFY_TIMEOUT = int(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等待使用者回覆秒數
+CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等使用者回覆的秒數
+CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
 
-# 知識沉澱（workspace 的 docs/PRD.md / RESEARCH.md / DECISIONS.md）：調研結論與設計決策
-# 持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然跨場次累積。
-# 檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
+# 知識沉澱（workspace 的 docs/RESEARCH.md / DECISIONS.md；PRD.md 由澄清階段寫在 workspace 根）：
+# 調研結論與設計決策持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然
+# 跨場次累積。檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
 KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
 KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))  # 注入尾段上限（字元）
 
@@ -444,7 +445,7 @@ def reload() -> None:
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
-    global DISCOVER_ROLES
+    global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -489,7 +490,8 @@ def reload() -> None:
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
-    CLARIFY_TIMEOUT = int(os.getenv("TI_CLARIFY_TIMEOUT", "180"))
+    CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))
+    CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
     DISCOVER_ROLES = [
         r.strip()
         for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")

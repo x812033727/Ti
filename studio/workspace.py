@@ -15,7 +15,8 @@ NOTES_FILE = "NOTES.md"
 
 # 知識沉澱檔白名單：只允許寫進 docs/ 下這幾個固定檔名。
 # 與 NOTES 不同，這些是交付物（會出現在檔案面板與打包），專案模式下跨場次累積。
-KNOWLEDGE_DOCS = {"PRD.md", "RESEARCH.md", "DECISIONS.md"}
+# （PRD.md 由需求澄清階段寫在 workspace 根目錄，見 orchestrator._write_prd。）
+KNOWLEDGE_DOCS = {"RESEARCH.md", "DECISIONS.md"}
 
 # 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔
 _IGNORE = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv", NOTES_FILE}
@@ -151,20 +152,9 @@ def append_doc(workspace_id: str, name: str, text: str) -> None:
         f.write(f"## {stamp}\n\n{body}\n\n")
 
 
-def read_doc_tail(workspace_id: str, name: str, max_chars: int) -> str:
-    """讀回 docs/<name> 的尾段（最多 max_chars 字）；不存在／超界／非白名單回空字串。
-
-    超長時從段落邊界（空行）起切，避免注入 prompt 的內容被腰斬在句子中間。
-    """
-    if name not in KNOWLEDGE_DOCS or max_chars <= 0:
-        return ""
-    target = safe_resolve(workspace_path(workspace_id).resolve(), f"docs/{name}")
-    if target is None or not target.is_file():
-        return ""
-    try:
-        text = target.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return ""
+def _tail_at_paragraph(text: str, max_chars: int) -> str:
+    """取文字尾段（最多 max_chars 字），超長時從段落邊界（空行）起切，不腰斬句子。"""
+    text = text.strip()
     if len(text) <= max_chars:
         return text
     tail = text[-max_chars:]
@@ -172,6 +162,33 @@ def read_doc_tail(workspace_id: str, name: str, max_chars: int) -> str:
     if 0 <= cut < len(tail) - 2:
         tail = tail[cut + 2 :]
     return tail.strip()
+
+
+def read_doc_tail(workspace_id: str, name: str, max_chars: int) -> str:
+    """讀回 docs/<name> 的尾段（最多 max_chars 字）；不存在／超界／非白名單回空字串。"""
+    if name not in KNOWLEDGE_DOCS or max_chars <= 0:
+        return ""
+    target = safe_resolve(workspace_path(workspace_id).resolve(), f"docs/{name}")
+    if target is None or not target.is_file():
+        return ""
+    try:
+        return _tail_at_paragraph(target.read_text(encoding="utf-8", errors="replace"), max_chars)
+    except OSError:
+        return ""
+
+
+def read_prd_tail(workspace_id: str, max_chars: int) -> str:
+    """讀回 workspace 根目錄 PRD.md（需求澄清階段沉澱）的尾段；不存在回空字串。"""
+    if max_chars <= 0:
+        return ""
+    safe_root = workspace_path(workspace_id).resolve()
+    target = safe_resolve(safe_root, "PRD.md")
+    if target is None or target.parent != safe_root or not target.is_file():
+        return ""
+    try:
+        return _tail_at_paragraph(target.read_text(encoding="utf-8", errors="replace"), max_chars)
+    except OSError:
+        return ""
 
 
 def zip_workspace(session_id: str) -> bytes | None:

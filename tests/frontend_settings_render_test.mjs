@@ -32,6 +32,8 @@ class RecEl {
     this.children.push(c);
     return c;
   }
+  setAttribute(k, v) { this._attrs[k] = v; }
+  getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; }
   set innerHTML(v) { this._inner = v; if (v === '') this.children = []; }
   get innerHTML() { return this._inner || ''; }
   querySelectorAll() { return []; }
