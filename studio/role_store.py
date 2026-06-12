@@ -35,7 +35,7 @@
 主要介面
 --------
 - ``reload_roles() -> dict[str, str]``：掃 config.ROLES_DIR 合併進 roles 模組，
-  回傳 {key: 錯誤訊息} 的壞檔清單（空 dict＝全部成功）。
+  回傳 {檔名: 原因} 的壞檔清單（空 dict＝全部成功）。
 - ``parse_role_file(path) -> Role``：解析單一角色檔（壞檔 raise RoleFileError）。
 - ``validate_persona_body(body) -> None``：反空殼 persona 驗證（API 層共用）。
 - ``role_source(key) -> str``：'builtin' | 'override' | 'file' | 'unknown'。
@@ -220,8 +220,11 @@ def load_file_roles(roles_dir: Path) -> tuple[dict[str, Role], dict[str, str]]:
 
 
 def role_source(key: str) -> str:
-    """角色來源標記：builtin（純內建）/ override（檔案覆蓋內建）/ file（純檔案）/ unknown。"""
-    builtin = key in _BUILTIN_CONST
+    """角色來源標記：builtin（純內建）/ override（檔案覆蓋內建）/ file（純檔案）/ unknown。
+
+    builtin 判定由 ``roles.BUILTIN_ROLES``（單一真相）推導，不依賴 _BUILTIN_CONST。
+    """
+    builtin = any(r.key == key for r in roles.BUILTIN_ROLES)
     from_file = key in _file_keys
     if builtin and from_file:
         return "override"

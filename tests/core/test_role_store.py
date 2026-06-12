@@ -185,6 +185,16 @@ def test_body_without_format_section_rejected(roles_dir):
     assert "fluffy.md" in errors and "出力格式" in errors["fluffy.md"]
 
 
+def test_builtin_const_map_matches_builtin_roles():
+    """守門：_BUILTIN_CONST（setattr 用的具名常數對照表）必須與 BUILTIN_ROLES 一致。
+
+    role_source 已改由 BUILTIN_ROLES 推導；此表是僅剩的人工同步點，靠本測試釘住。
+    """
+    assert set(role_store._BUILTIN_CONST) == {r.key for r in roles.BUILTIN_ROLES}
+    for key, const in role_store._BUILTIN_CONST.items():
+        assert getattr(roles, const).key == key
+
+
 def test_all_builtin_bodies_pass_persona_rule():
     """守門：內建 8 角色的專屬 body 全數通過反空殼驗證。
 
