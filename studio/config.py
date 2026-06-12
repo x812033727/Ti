@@ -15,6 +15,23 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+
+def _env_float(name: str, default: float) -> float:
+    """讀數值環境變數，空字串／空白／無法解析時退回 default。
+
+    .env 常出現 `TI_TURN_IDLE_TIMEOUT=''` 這種「設了但留空」的寫法——os.getenv 會回
+    空字串而非預設，直接 float('') 會在 import 期炸掉整個服務啟動。此處統一容錯。
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("環境變數 %s=%r 非數值，改用預設 %s", name, raw, default)
+        return default
+
+
 # --- Provider / 模型 ----------------------------------------------------
 # 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）或 openai（含 OpenAI 相容/本地模型）。
 PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
@@ -172,8 +189,8 @@ MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 # 發言層 watchdog：max_turns 只限「回合數」，限不住單一工具呼叫卡死（如前景跑常駐
 # server），故另設時間軸保護。idle＝兩則串流訊息的間隔上限（有進展就重置，不誤殺正常
 # 長發言）；hard＝整次發言的總時長兜底。各自 0=停用。逾時走 Expert._abort_turn 回收。
-TURN_IDLE_TIMEOUT = float(os.getenv("TI_TURN_IDLE_TIMEOUT", "240"))
-TURN_HARD_TIMEOUT = float(os.getenv("TI_TURN_TIMEOUT", "1800"))
+TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
+TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
 
 # 啟用哪些「可選角色」（核心 4 角色永遠在）。逗號分隔；清空則只剩核心 4 角色。
 # 多一個角色 = 每場討論多幾次 LLM 呼叫（更耗額度、更久），要省可逐一移除。
@@ -582,8 +599,8 @@ def reload() -> None:
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
     SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
-    TURN_IDLE_TIMEOUT = float(os.getenv("TI_TURN_IDLE_TIMEOUT", "240"))
-    TURN_HARD_TIMEOUT = float(os.getenv("TI_TURN_TIMEOUT", "1800"))
+    TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
+    TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
