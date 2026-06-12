@@ -95,7 +95,7 @@ class ProjectImprover:
         # 否則 pristine workspace 會先長出獨立 root commit，與目標 repo 永遠分歧。
         base_sync = await repo_base.ensure_base(
             projects.workspace_dir(pid),
-            self.project.get("publish_repo") or "",
+            projects.effective_repo(self.project),
             broadcast=self.broadcast,
             session_id=self.session_id,
         )
@@ -172,7 +172,8 @@ class ProjectImprover:
 
         cwd = projects.workspace_dir(pid)
         # 每輪先同步工作基底：上一輪的 PR 合併後，這裡把本地 base 快轉回目標 repo 最新狀態。
-        base_repo = (self.project.get("publish_repo") or "").strip()
+        # 目標 repo 同樣 fallback 全域 TI_PUBLISH_REPO（與發佈端對齊，見 projects.effective_repo）。
+        base_repo = projects.effective_repo(self.project)
         base_sync = await repo_base.ensure_base(
             cwd, base_repo, broadcast=self.broadcast, session_id=self.session_id
         )

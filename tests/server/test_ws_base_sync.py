@@ -34,6 +34,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path / "projects")
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
+    # 全域目標 repo 固定值，讓 fallback 行為與真實 .env 解耦、測試可重現。
+    monkeypatch.setattr(config, "PUBLISH_REPO", "global/outputs")
     monkeypatch.setattr(ws, "_active_sessions", 0)
     monkeypatch.setattr(ws, "_active_projects", set())
     from studio.server import app
@@ -89,16 +91,33 @@ def test_project_session_diverged_does_not_claim_base(env, monkeypatch):
     assert _session_started(events)["base_repo"] is None
 
 
-def test_oneoff_session_never_syncs(env, monkeypatch):
-    """一次性 session（無專案）：完全不經過 ensure_base（repo_url 路線不變）。"""
-    spy = EnsureSpy(repo_base.SyncResult("cloned"))
+def test_project_without_repo_falls_back_to_global(env, monkeypatch):
+    """專案沒自設 publish_repo：工作基底退回全域 TI_PUBLISH_REPO（修正『自己做自己』）。"""
+    spy = EnsureSpy(repo_base.SyncResult("cloned", "已以全域 repo 為基底"))
+    monkeypatch.setattr(repo_base, "ensure_base", spy)
+    pid = projects.create("沒設 repo 的產品")["id"]  # 不呼叫 set_publish_repo
+
+    with env.websocket_connect("/ws") as conn:
+        conn.send_json({"requirement": "加個功能", "project_id": pid})
+        events = _drain(conn)
+
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["repo"] == "global/outputs"
+    assert _session_started(events)["base_repo"] == "global/outputs"
+
+
+def test_oneoff_session_bases_on_global_repo(env, monkeypatch):
+    """一次性 session（無專案、無 repo_url）：也以全域目標 repo 為工作基底。"""
+    spy = EnsureSpy(repo_base.SyncResult("cloned", "已以全域 repo 為基底"))
     monkeypatch.setattr(repo_base, "ensure_base", spy)
 
     with env.websocket_connect("/ws") as conn:
         conn.send_json({"requirement": "做一個 BMI CLI"})
-        _drain(conn)
+        events = _drain(conn)
 
-    assert spy.calls == []
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["repo"] == "global/outputs"
+    assert _session_started(events)["base_repo"] == "global/outputs"
 
 
 def test_fatal_sync_aborts_and_releases(env, monkeypatch):

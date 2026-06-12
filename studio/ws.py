@@ -218,27 +218,30 @@ async def ws(websocket: WebSocket) -> None:
                 run_task.add_done_callback(_detached.discard)
             return
 
-        base_repo = (project.get("publish_repo") or "").strip() if project is not None else ""
         if project is not None:
             # 專案固定 workspace：絕不清空，程式碼與 git 歷史跨場次累積。
             cwd = projects.workspace_dir(project["id"])
-            # 目標 repo＝工作基底：全新 workspace 先 clone 進來、已同源則快轉到遠端 base，
-            # 讓專家「在使用者指定的 repo 上做修改」而不是另起爐灶（詳見 repo_base）。
-            base_sync = await repo_base.ensure_base(
-                cwd, base_repo, broadcast=broadcast, session_id=session_id
-            )
-            if base_sync.fatal:
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "payload": {"message": "工作基底同步失敗：" + base_sync.detail},
-                    }
-                )
-                await websocket.close()
-                return
+            # 目標 repo＝工作基底：專案自設 publish_repo 優先，否則退回全域 TI_PUBLISH_REPO
+            # （與發佈端 fallback 對齊）。全新 workspace 先 clone 進來、已同源則快轉到遠端
+            # base，讓專家「在設定的 repo 上做修改」而不是另起爐灶（詳見 repo_base）。
+            base_repo = projects.effective_repo(project)
         else:
             cwd = workspace.create_workspace(session_id)
-            base_sync = repo_base.SyncResult("skipped")
+            # 未綁專案的一次性討論也以全域目標 repo 為基底（同樣與發佈端對齊）；使用者明確
+            # 指定 repo_url 時尊重該意圖，不另外注入全域基底（避免與下方 clone 互踩）。
+            base_repo = "" if repo_url else (config.PUBLISH_REPO or "").strip()
+        # base_repo 為空（未設目標 repo／一次性 repo_url 路線）時直接 skipped，不空跑同步。
+        base_sync = (
+            await repo_base.ensure_base(cwd, base_repo, broadcast=broadcast, session_id=session_id)
+            if base_repo
+            else repo_base.SyncResult("skipped")
+        )
+        if base_sync.fatal:
+            await websocket.send_json(
+                {"type": "error", "payload": {"message": "工作基底同步失敗：" + base_sync.detail}}
+            )
+            await websocket.close()
+            return
 
         # 若指定了 GitHub repo，先 clone 進 workspace，讓專家在現有程式碼上討論/修改。
         if repo_url:

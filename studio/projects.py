@@ -120,6 +120,17 @@ def set_publish_repo(project_id: str, repo: str) -> dict | None:
     return meta
 
 
+def effective_repo(project: dict | None) -> str:
+    """專案實際的目標 repo：專案自設的 publish_repo 優先，否則退回全域 TI_PUBLISH_REPO。
+
+    與 publisher.current_repo 對齊——發佈端缺 per-project repo 時會 fallback 到全域，
+    工作基底（repo_base.ensure_base）也必須一致 fallback，否則「從空白開工 → 成果推進
+    全域 repo」會永遠無共同歷史，正是使用者回報的『專家自己做自己、不改設定的 repo』。
+    """
+    repo = ((project or {}).get("publish_repo") or "").strip()
+    return repo or (config.PUBLISH_REPO or "").strip()
+
+
 def record_session(project_id: str, session_id: str, task: str, completed: bool) -> dict | None:
     """把一場討論的結果記到專案 meta（持續改良的足跡），回傳更新後 meta。"""
     meta = get(project_id)

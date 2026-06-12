@@ -149,6 +149,34 @@ async def test_improver_syncs_before_blueprint_and_each_cycle(improve_env, monke
     assert _StubSession.seen and _StubSession.seen[0]["base_repo"] == "me/product"
 
 
+def test_effective_repo_falls_back_to_global(monkeypatch):
+    """專案沒自設 publish_repo 時，工作基底退回全域 TI_PUBLISH_REPO（與發佈端對齊）。"""
+    monkeypatch.setattr(config, "PUBLISH_REPO", "global/outputs")
+    assert projects.effective_repo({"publish_repo": "me/product"}) == "me/product"
+    assert projects.effective_repo({"publish_repo": ""}) == "global/outputs"
+    assert projects.effective_repo({"publish_repo": None}) == "global/outputs"
+    assert projects.effective_repo({}) == "global/outputs"
+    assert projects.effective_repo(None) == "global/outputs"
+    monkeypatch.setattr(config, "PUBLISH_REPO", "")
+    assert projects.effective_repo({"publish_repo": None}) == ""
+
+
+async def test_improver_uses_global_repo_when_project_repo_unset(improve_env, monkeypatch):
+    """專案 publish_repo=None 時，仍以全域 TI_PUBLISH_REPO 為工作基底（修正『自己做自己』）。"""
+    monkeypatch.setattr(config, "PUBLISH_REPO", "global/outputs")
+    spy = EnsureSpy(repo_base.SyncResult("cloned", "已以全域 repo 為基底"))
+    monkeypatch.setattr(repo_base, "ensure_base", spy)
+    proj = projects.create("沒設 repo 的專案", vision="x")  # 不呼叫 set_publish_repo
+
+    imp = improver.ProjectImprover(proj, _noop_broadcast)
+    summary = await imp.run(max_cycles=1)
+
+    assert len(spy.calls) == 2
+    assert all(c["repo"] == "global/outputs" for c in spy.calls)
+    assert summary["cycles"] == 1 and summary["done"] == 1
+    assert _StubSession.seen and _StubSession.seen[0]["base_repo"] == "global/outputs"
+
+
 async def test_improver_fatal_sync_stops_loop(improve_env, monkeypatch):
     spy = EnsureSpy(repo_base.SyncResult("error", "拿不到基底"))
     monkeypatch.setattr(repo_base, "ensure_base", spy)
