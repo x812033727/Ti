@@ -39,6 +39,9 @@ packages = ["studio"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "realgit: 走本機真 git（file:// URL，零網路）的整合測試，豁免「禁真子程序」保險絲",
+]
 
 [tool.ruff]
 line-length = 100

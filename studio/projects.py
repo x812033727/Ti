@@ -98,10 +98,12 @@ def list_projects() -> list[dict]:
 
 
 def set_publish_repo(project_id: str, repo: str) -> dict | None:
-    """設定專案自己的發佈 repo（owner/repo；空字串＝清除，退回全域 TI_PUBLISH_REPO 行為）。
+    """設定專案的目標 repo（owner/repo；空字串＝清除，退回全域 TI_PUBLISH_REPO 行為）。
 
-    專案 workspace 是獨立 git init 的程式碼庫，對全域發佈 repo 的 main 沒有共同歷史、
-    開不了 PR；設了自己的 repo 後，session 成果改推到該 repo 並對其 base 開 PR。
+    目標 repo＝工作基底＋發佈目標：workspace 全新時，下一場 session 開始前會以該
+    repo 為基底 clone（專家在使用者指定的程式碼上修改，PR 歷史同源可正常合併）；
+    已有同源歷史則每場開始快轉到遠端 base；已有「不相干」歷史則維持現狀只嘗試發佈
+    （絕不清空既有內容）。同步邏輯見 repo_base，此處只存欄位。
     格式不合（非 owner/repo）回 None 由呼叫端轉 400；專案不存在也回 None。
     """
     import re

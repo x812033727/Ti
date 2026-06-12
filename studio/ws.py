@@ -10,7 +10,18 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import auth, backlog, blueprint, config, events, history, projects, runner, workspace
+from . import (
+    auth,
+    backlog,
+    blueprint,
+    config,
+    events,
+    history,
+    projects,
+    repo_base,
+    runner,
+    workspace,
+)
 from .events import StudioEvent
 from .improver import ProjectImprover
 from .orchestrator import StudioSession
@@ -117,7 +128,8 @@ async def ws(websocket: WebSocket) -> None:
                 {
                     "type": "error",
                     "payload": {
-                        "message": "專案模式不支援同時指定 repo 網址（專案已有固定 workspace）"
+                        "message": "專案模式不支援同時指定 repo 網址（專案已有固定 workspace）；"
+                        "要在現有 GitHub repo 上工作，請在專案面板設定「目標 repo」"
                     },
                 }
             )
@@ -206,11 +218,27 @@ async def ws(websocket: WebSocket) -> None:
                 run_task.add_done_callback(_detached.discard)
             return
 
+        base_repo = (project.get("publish_repo") or "").strip() if project is not None else ""
         if project is not None:
             # 專案固定 workspace：絕不清空，程式碼與 git 歷史跨場次累積。
             cwd = projects.workspace_dir(project["id"])
+            # 目標 repo＝工作基底：全新 workspace 先 clone 進來、已同源則快轉到遠端 base，
+            # 讓專家「在使用者指定的 repo 上做修改」而不是另起爐灶（詳見 repo_base）。
+            base_sync = await repo_base.ensure_base(
+                cwd, base_repo, broadcast=broadcast, session_id=session_id
+            )
+            if base_sync.fatal:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "payload": {"message": "工作基底同步失敗：" + base_sync.detail},
+                    }
+                )
+                await websocket.close()
+                return
         else:
             cwd = workspace.create_workspace(session_id)
+            base_sync = repo_base.SyncResult("skipped")
 
         # 若指定了 GitHub repo，先 clone 進 workspace，讓專家在現有程式碼上討論/修改。
         if repo_url:
@@ -246,6 +274,8 @@ async def ws(websocket: WebSocket) -> None:
             critics=critics,
             workspace_id=projects.workspace_id(project["id"]) if project is not None else None,
             publish_repo=(project.get("publish_repo") or None) if project is not None else None,
+            # 僅在 workspace 確實同步自目標 repo 時告知 session（prompt 不對專家說謊）。
+            base_repo=base_repo if base_sync.based else None,
         )
         if config.OFFLINE_MODE:
             # 離線並行 demo：每條 lane 用假專家工廠（各自寫該任務的檔），無金鑰也能跑多支線。

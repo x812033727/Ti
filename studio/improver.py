@@ -19,7 +19,7 @@ import contextlib
 import logging
 import uuid
 
-from . import backlog, blueprint, config, events, history, projects, runner, workspace
+from . import backlog, blueprint, config, events, history, projects, repo_base, runner, workspace
 from .events import StudioEvent
 from .orchestrator import StudioSession, parse_structured_tasks
 
@@ -91,6 +91,24 @@ class ProjectImprover:
         summary = {"cycles": 0, "done": 0, "failed": 0, "stopped": False}
         consecutive_fails = 0
 
+        # 開跑前先把工作基底同步到目標 repo（若有設定）——必須趕在藍圖 commit 之前，
+        # 否則 pristine workspace 會先長出獨立 root commit，與目標 repo 永遠分歧。
+        base_sync = await repo_base.ensure_base(
+            projects.workspace_dir(pid),
+            self.project.get("publish_repo") or "",
+            broadcast=self.broadcast,
+            session_id=self.session_id,
+        )
+        if base_sync.fatal:
+            # 全新 workspace 拿不到基底＝開工只會製造無共同歷史的孤兒成果，
+            # 不啟動迴圈；走標準 DONE 收尾（stopped=True），前端不會懸著。
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id, "持續改良", "工作基底同步失敗，迴圈未啟動：" + base_sync.detail
+                )
+            )
+            self._stop = True
+
         # 開跑前先備妥產品藍圖（每專案僅生成一次；失敗/解析不出時降級續行，絕不擋迴圈）。
         if config.BLUEPRINT_ENABLED and not self._stop and not blueprint.exists(pid):
             await self._ensure_blueprint()
@@ -153,6 +171,21 @@ class ProjectImprover:
         )
 
         cwd = projects.workspace_dir(pid)
+        # 每輪先同步工作基底：上一輪的 PR 合併後，這裡把本地 base 快轉回目標 repo 最新狀態。
+        base_repo = (self.project.get("publish_repo") or "").strip()
+        base_sync = await repo_base.ensure_base(
+            cwd, base_repo, broadcast=self.broadcast, session_id=self.session_id
+        )
+        if base_sync.fatal:
+            backlog.set_status(
+                task["id"],
+                "failed",
+                state_dir=sdir,
+                note="工作基底同步失敗：" + base_sync.detail,
+            )
+            history.finish_session(sid)
+            self._record_sid = None
+            return False
         requirement = self._compose_requirement(task)
         experts = critics = None
         if config.OFFLINE_MODE:
@@ -170,6 +203,7 @@ class ProjectImprover:
             workspace_id=projects.workspace_id(pid),
             clarify=False,  # 自主迴圈不反問：任務來自 backlog／找問題，沒有人在等著回答
             publish_repo=self.project.get("publish_repo") or None,
+            base_repo=base_repo if base_sync.based else None,
         )
         if config.OFFLINE_MODE:
             from .fake_experts import build_fake_lane_expert

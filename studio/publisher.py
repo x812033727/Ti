@@ -312,14 +312,15 @@ async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
 def pr_failure_detail(status_code: int, body: str) -> str:
     """把建 PR 失敗的 GitHub 回應轉成人話。
 
-    「no history in common」是預期情境而非異常：長期專案的 workspace 是獨立
-    git init 的程式碼庫（不是發佈 repo 的 clone），對 base 永遠開不了 PR——
-    分支推送仍有備份價值，但別把 GitHub 的原始 422 JSON 當錯誤丟給使用者。
+    「no history in common」是可解釋的已知情境而非異常：workspace 的歷史與目標
+    repo 不同源（在設定目標 repo 前就已長出獨立歷史、或基底同步未成功），對 base
+    開不了 PR——分支推送仍有備份價值，但別把 GitHub 的原始 422 JSON 丟給使用者。
+    workspace 全新時 repo_base 會以目標 repo 為基底 clone，正常不會再走到這裡。
     """
     if status_code == 422 and "no history in common" in body:
         return (
             "未開 PR：此工作區與發佈 repo 無共同歷史"
-            "（獨立程式碼庫的專案 workspace 無法對 base 開 PR）；分支已推送保存"
+            "（可能在設定目標 repo 前已有獨立歷史，或工作基底同步未成功）；分支已推送保存"
         )
     return f"PR 建立失敗（{status_code}）：{body[:200]}"
 

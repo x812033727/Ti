@@ -617,17 +617,19 @@ async function refreshProjectPanel() {
     const p = d.project || {};
     body.appendChild(projLine(`📦 ${p.name || pid}`, "proj-name"));
 
-    // 發佈 repo：設定後 session 成果改推到該 repo 並對其 base 開 PR
-    // （未設定＝沿用全域發佈 repo；專案 workspace 與其無共同歷史時只推備份分支）。
+    // 目標 repo＝工作基底＋發佈目標：workspace 全新時下一場討論先 clone 它當基底
+    // （專家在你指定的程式碼上修改），成果推分支開 PR；已同源則每場快轉到遠端 base。
     const repoRow = projLine(
-      `發佈 repo：${p.publish_repo || "未設定（只推備份分支，無法開 PR）"}`,
+      `目標 repo（工作基底＋發佈）：${p.publish_repo || "未設定（從零自建，無法開 PR）"}`,
       "muted",
     );
     const repoBtn = document.createElement("button");
     repoBtn.id = "projectPublishRepo";
     repoBtn.className = "ghost";
     repoBtn.textContent = "設定";
-    repoBtn.title = "owner/repo；不存在且 owner 是 token 使用者時會自動建立私有 repo，留空＝清除";
+    repoBtn.title =
+      "owner/repo；workspace 全新時下一場討論以該 repo 程式碼為工作基底；" +
+      "不存在且 owner 是 token 使用者時會自動建立私有 repo，留空＝清除";
     repoBtn.onclick = () => setProjectPublishRepo(pid, p.publish_repo || "");
     repoRow.appendChild(repoBtn);
     body.appendChild(repoRow);
@@ -690,7 +692,9 @@ async function refreshProjectPanel() {
 
 async function setProjectPublishRepo(pid, current) {
   const v = prompt(
-    "發佈 repo（owner/repo，留空＝清除）\n設定後此專案的成果會推到該 repo 並開 PR；" +
+    "目標 repo（owner/repo，留空＝清除）\n" +
+      "設定後：workspace 全新 → 下一場討論自動以該 repo 的程式碼為工作基底（專家改你的 repo，不另起爐灶）；" +
+      "每場開始會同步遠端 base；成果推分支並開 PR。\n" +
       "repo 不存在且 owner 是你的 token 使用者時會自動建立私有 repo。",
     current,
   );
@@ -703,7 +707,11 @@ async function setProjectPublishRepo(pid, current) {
     });
     const d = await res.json();
     if (!res.ok) { toast(d.error || "設定失敗", "err"); return; }
-    toast(v.trim() ? `發佈 repo 已設為 ${v.trim()}` : "已清除發佈 repo");
+    if (d.warning) {
+      toast(d.warning, "err");
+    } else {
+      toast(v.trim() ? `目標 repo 已設為 ${v.trim()}` : "已清除目標 repo");
+    }
     await refreshProjectPanel();
   } catch (e) {
     toast("設定失敗：" + e.message, "err");

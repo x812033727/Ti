@@ -43,6 +43,34 @@ def test_set_publish_repo_unknown_project_404(client):
     assert client.post("/api/projects/nope/publish-repo", json={"repo": "a/b"}).status_code == 404
 
 
+def test_set_repo_on_pristine_workspace_no_warning(client):
+    """全新 workspace：回 base_state=pristine、無警告（下場 session 會以該 repo 為基底）。"""
+    pid = projects.create("全新")["id"]
+    d = client.post(f"/api/projects/{pid}/publish-repo", json={"repo": "me/product"}).json()
+    assert d["base_state"] == "pristine"
+    assert d["warning"] is None
+
+
+def test_set_repo_on_used_workspace_warns_but_never_clears(client):
+    """workspace 已有獨立內容：設定照存、回明確警告，內容一個位元組都不能動。"""
+    pid = projects.create("已有內容")["id"]
+    ws_dir = projects.workspace_dir(pid)
+    (ws_dir / "own.py").write_text("print('mine')\n", encoding="utf-8")
+
+    d = client.post(f"/api/projects/{pid}/publish-repo", json={"repo": "me/product"}).json()
+    assert d["warning"] and "絕不清空" in d["warning"]
+    assert d["project"]["publish_repo"] == "me/product"  # 設定照存（發佈仍可用）
+    assert (ws_dir / "own.py").read_text(encoding="utf-8") == "print('mine')\n"
+
+
+def test_clear_repo_never_warns(client):
+    """清除設定（留空）不需警告，即使 workspace 有內容。"""
+    pid = projects.create("清除")["id"]
+    (projects.workspace_dir(pid) / "x.txt").write_text("x", encoding="utf-8")
+    d = client.post(f"/api/projects/{pid}/publish-repo", json={"repo": ""}).json()
+    assert d["warning"] is None
+
+
 async def test_session_uses_project_publish_repo(tmp_path, monkeypatch):
     """StudioSession 接到 publish_repo 後，_maybe_publish 全程以該 repo 覆寫發佈目標。"""
     from studio import publisher
