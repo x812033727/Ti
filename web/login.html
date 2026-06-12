@@ -8,7 +8,20 @@
 </head>
 <body class="login-body">
   <div class="login-card">
-    <div class="login-brand">🛠️ Ti Studio</div>
+    <div class="login-brand">
+      <svg class="logo" width="30" height="30" viewBox="0 0 26 26" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg-login" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#6e79ff"/>
+            <stop offset=".55" stop-color="#a78bfa"/>
+            <stop offset="1" stop-color="#c084fc"/>
+          </linearGradient>
+        </defs>
+        <rect x="1" y="1" width="24" height="24" rx="7" fill="url(#lg-login)"/>
+        <path d="M7.5 9.2h11M13 9.2v8.4" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      Ti Studio
+    </div>
     <div class="login-sub">AI 專家討論工作室</div>
     <form id="loginForm" class="login-form">
       <input id="password" type="password" placeholder="請輸入存取密碼" autocomplete="current-password" autofocus />

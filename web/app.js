@@ -1055,6 +1055,17 @@ document.querySelectorAll(".mobiletabs button").forEach((b) => {
 });
 setMobileView("discussion");
 
+// --- 桌面右欄分頁（看板／檔案）與左欄成員收合 ---------------------------
+document.querySelectorAll(".rail-tabs button").forEach((b) => {
+  b.onclick = () => {
+    const side = document.querySelector(".side");
+    if (side) side.dataset.rv = b.dataset.rt;
+    document.querySelectorAll(".rail-tabs button").forEach((x) =>
+      x.classList.toggle("active", x === b));
+  };
+});
+$("#expertsToggle").onclick = () => document.body.classList.toggle("experts-collapsed");
+
 async function loadHealth() {
   try {
     const h = await (await fetch("/api/health")).json();
