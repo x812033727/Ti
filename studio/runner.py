@@ -559,13 +559,22 @@ def build_clone_url(url: str, token: str | None) -> str:
 
 
 async def git_clone(
-    url: str, dest: Path | str, token: str | None = None, branch: str | None = None
+    url: str,
+    dest: Path | str,
+    token: str | None = None,
+    branch: str | None = None,
+    depth: int | None = 1,
 ) -> RunOutput:
-    """把 GitHub 倉庫 clone 到（空的）dest 目錄。回傳 RunOutput（output 已遮蔽 token）。"""
+    """把 GitHub 倉庫 clone 到（空的）dest 目錄。回傳 RunOutput（output 已遮蔽 token）。
+
+    depth 預設 1（一次性 session 只需最新快照）；長期專案要拿該 repo 當工作基底時傳
+    None 做完整 clone——跨場次的快轉判定（merge-base --is-ancestor）在 shallow
+    邊界上會失真，且專家需要能讀完整 git log。
+    """
     if not _git_available():
         return RunOutput("git clone", -1, "（環境沒有 git，無法 clone）", False)
     authed = build_clone_url(url, token)
-    parts = ["git", "clone", "--depth", "1"]
+    parts = ["git", "clone"] + (["--depth", str(depth)] if depth else [])
     if branch and _BRANCH_RE.match(branch):
         parts += ["--branch", branch]
     # 直接組 argv 走 exec，shell 不參與解析（authed url / branch 一律當純文字）。

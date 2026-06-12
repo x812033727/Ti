@@ -100,6 +100,7 @@ class StudioSession:
         workspace_id: str | None = None,
         clarify: bool | None = None,
         publish_repo: str | None = None,
+        base_repo: str | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
@@ -118,6 +119,10 @@ class StudioSession:
         # 長期專案自己的發佈 repo（owner/repo，可選）：成果改推到該 repo 並對其 base 開 PR，
         # 解決「專案 workspace 與全域發佈 repo 無共同歷史、開不了 PR」的限制。
         self._publish_repo = (publish_repo or "").strip()
+        # 目標 repo＝工作基底（owner/repo，可選）：呼叫端僅在 workspace 確實同步自
+        # 該 repo（repo_base.ensure_base 的 based）時帶值——prompt 據此告知專家
+        # 「既有程式碼就在工作目錄裡」，絕不對專家宣告不存在的基底。
+        self._base_repo = (base_repo or "").strip()
         self._tasks: list[dict] = []  # {id, title, status}
         self._edges: list[tuple[int, int]] = []  # 任務依賴邊 (after, before)，並行分波用
         self._pending_human = ""  # 並行模式於波次邊界 drain 的插話，套用到該波各 lane
@@ -603,6 +608,7 @@ class StudioSession:
                 {
                     "requirement": requirement,
                     "repo_url": self._repo_url,
+                    "base_repo": self._base_repo or None,
                     "workspace_id": self.workspace_id,
                     # 以實際建立的專家為準（offline 顯示 4 位、正式顯示全部）。
                     "roster": [
@@ -649,12 +655,19 @@ class StudioSession:
 
         # 1) 拆解
         await self.broadcast(events.phase_change(self.session_id, "需求拆解", "PM 正在拆解需求"))
-        repo_note = (
-            "我們要在一個現有的 GitHub 專案上工作，原始碼已 clone 到你的工作目錄"
-            f"（{self._repo_url}）。請先用工具瀏覽現有結構與檔案，再依需求拆解任務。\n\n"
-            if self._repo_url
-            else ""
-        )
+        if self._repo_url:
+            repo_note = (
+                "我們要在一個現有的 GitHub 專案上工作，原始碼已 clone 到你的工作目錄"
+                f"（{self._repo_url}）。請先用工具瀏覽現有結構與檔案，再依需求拆解任務。\n\n"
+            )
+        elif self._base_repo:
+            repo_note = (
+                f"這是長期專案，工作目錄裡是目標 GitHub repo（{self._base_repo}）的既有程式碼，"
+                f"已同步到其 {config.PUBLISH_BASE} 分支。請先用工具瀏覽既有結構與檔案再拆解任務；"
+                "改動要與既有架構一致，在現有程式碼上修改，不要砍掉重練。\n\n"
+            )
+        else:
+            repo_note = ""
         research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
         if not research_note:
             # 研究員缺席（離線或被關閉）時，過往場次的調研沉澱仍可供 PM 參考。

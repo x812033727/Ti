@@ -19,6 +19,7 @@ from . import (
     projects,
     publisher,
     redeploy,
+    repo_base,
     settings,
     workspace,
     ws,
@@ -375,17 +376,30 @@ class PublishRepoBody(BaseModel):
 
 @router.post("/api/projects/{project_id}/publish-repo", dependencies=[Depends(auth.require_auth)])
 async def projects_set_publish_repo(project_id: str, body: PublishRepoBody) -> JSONResponse:
-    """設定專案自己的發佈 repo（owner/repo；留空＝清除）。
+    """設定專案的目標 repo（owner/repo；留空＝清除）＝工作基底＋發佈目標。
 
-    設定後該專案的 session 成果改推到此 repo 並對其 base 開 PR（repo 不存在且 owner 為
-    token 使用者時會自動建立私有 repo；空 repo 首次發佈直接初始化 base 分支）。
+    workspace 全新時，下一場 session 開始前會 clone 該 repo 當工作基底（專家在使用者
+    指定的程式碼上修改）；已同源則每場快轉到遠端 base；成果推分支並對 base 開 PR
+    （repo 不存在且 owner 為 token 使用者時自動建私有 repo；空 repo 首次發佈初始化 base）。
+
+    這裡刻意「不」在設定當下 clone：此時 GITHUB_TOKEN 可能尚未設定、大 repo 會拖垮
+    HTTP 請求；clone 只是同步狀態機的一個分支，統一延後到 session 開始（repo_base）。
+    僅做唯讀檢查：workspace 已有獨立內容時回 warning（絕不清空既有內容）。
     """
     if projects.get(project_id) is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     meta = projects.set_publish_repo(project_id, body.repo)
     if meta is None:
         return JSONResponse({"error": "格式須為 owner/repo（或留空清除）"}, status_code=400)
-    return JSONResponse({"project": meta})
+    state = await repo_base.workspace_state(projects.workspace_dir(project_id))
+    warning = None
+    if (body.repo or "").strip() and state in ("has_history", "local_files"):
+        warning = (
+            "此專案 workspace 已有獨立內容／歷史，無法改以該 repo 為工作基底（既有內容絕不清空）。"
+            "若這份歷史本就源自該 repo，session 開始時會自動快轉同步；"
+            "否則成果仍會推分支保存，但 PR 會因無共同歷史而開不成"
+        )
+    return JSONResponse({"project": meta, "base_state": state, "warning": warning})
 
 
 @router.post("/api/projects/{project_id}/recover", dependencies=[Depends(auth.require_auth)])
