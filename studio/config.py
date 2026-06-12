@@ -64,6 +64,19 @@ CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "0") not in ("0", "false", "False", ""
 CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等使用者回覆的秒數
 CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
 
+# 產品藍圖：專案持續改良迴圈開跑時，PM 把一句願景展開成結構化藍圖（願景/用戶/功能 P0~P2/
+# 里程碑），落盤 BLUEPRINT.md＋blueprint.json、功能清單餵入專案 backlog（P0 先做），
+# 跨場次注入 requirement 前綴——讓「越做越進步」有方向感。每專案僅生成一次。
+# 預設關閉（與 LESSONS/NOTES/CLARIFY 同為 opt-in）；SEED_MAX 為一次最多餵 backlog 的功能數。
+BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
+BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
+
+# 架構決策記錄（ADR）：架構辯論/架構師定案後蒸餾成決策條目，落盤 workspace 的
+# DECISIONS.md（人讀、進交付物）＋adr.json（機讀索引）；後續 session 的 PM 拆解與
+# 架構提案注入既有決策摘要，翻案須說明理由——避免跨場次反覆推翻。預設關閉（opt-in）。
+ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
+ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))  # 注入時取最新 N 筆決策
+
 # --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
 # A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
 #   重試時 prepend 回工程師 context（既有「上一輪原文回饋」照舊，本機制只補更早輪次的累積）。
@@ -421,6 +434,7 @@ def reload() -> None:
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global CLARIFY_ENABLED, CLARIFY_TIMEOUT
+    global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -462,3 +476,7 @@ def reload() -> None:
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "0") not in ("0", "false", "False", "")
     CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))
+    BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
+    BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
+    ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
+    ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))

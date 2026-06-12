@@ -12,8 +12,19 @@ from . import config
 # 團隊共用知識庫檔名（跨任務知識，不算交付物，不進檔案面板/打包）。
 NOTES_FILE = "NOTES.md"
 
-# 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔
-_IGNORE = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv", NOTES_FILE}
+# 不顯示在檔案面板的雜訊（目錄）＋共用知識庫檔＋ADR 機讀索引/鎖檔
+# （ADR 的人讀版 DECISIONS.md 才是交付物，不在此列）。
+_IGNORE = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    ".venv",
+    "venv",
+    NOTES_FILE,
+    "adr.json",
+    "adr.lock",
+}
 
 
 def safe_resolve(root: Path, rel: str, *, must_exist: bool = True) -> Path | None:

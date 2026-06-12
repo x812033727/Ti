@@ -435,8 +435,11 @@ async def run_one_task(task: dict) -> None:
     result = await session.run(requirement)
     history.finish_session(sid)
 
-    # 回饋：討論發現的後續任務寫回 backlog
-    if result.get("followups"):
+    # 回饋：討論發現的後續任務寫回 backlog（優先含 priority/type 的結構化版本）
+    if result.get("followup_items"):
+        added = backlog.add_items(result["followup_items"], source="discovered")
+        log.info("從討論新增 %d 個後續任務", added)
+    elif result.get("followups"):
         added = backlog.add_many(result["followups"], source="discovered")
         log.info("從討論新增 %d 個後續任務", added)
 

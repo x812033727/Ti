@@ -215,6 +215,22 @@ FIELDS: tuple[Field, ...] = (
         default="1",
         group="進階",
     ),
+    Field(
+        "TI_BLUEPRINT",
+        "產品藍圖（持續改良開跑時 PM 展開願景成藍圖，功能餵 backlog）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    Field(
+        "TI_ADR",
+        "架構決策記錄 ADR（辯論結論落盤 DECISIONS.md，跨場注入防翻案）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}

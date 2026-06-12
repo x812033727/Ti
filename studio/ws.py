@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import auth, backlog, config, events, history, projects, runner, workspace
+from . import auth, backlog, blueprint, config, events, history, projects, runner, workspace
 from .events import StudioEvent
 from .improver import ProjectImprover
 from .orchestrator import StudioSession
@@ -304,10 +304,17 @@ async def _run_project_session(session: StudioSession, requirement: str, project
     這條回填線讓「手動單場討論」也參與持續改良——下次開持續改良迴圈時，
     這些後續任務就是現成的供給。
     """
-    result = await session.run(requirement)
+    # 已有產品藍圖時注入前綴（開關關閉/無藍圖時為空字串），讓單場討論也對齊長期方向。
+    # 注入只進 session.run；history 標籤與 meta 足跡仍記原始需求。
+    bp_ctx = blueprint.context(project["id"])
+    result = await session.run(bp_ctx + requirement if bp_ctx else requirement)
     sdir = projects.state_dir(project["id"])
+    # 優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
+    items = result.get("followup_items") or []
     followups = result.get("followups") or []
-    if followups:
+    if items:
+        backlog.add_items(items, source="discovered", state_dir=sdir)
+    elif followups:
         backlog.add_many(followups, source="discovered", state_dir=sdir)
     projects.record_session(
         project["id"], session.session_id, requirement[:80], bool(result.get("completed"))

@@ -585,6 +585,82 @@ async function addAutopilotTask() {
   await refreshAutopilot();
 }
 
+// --- 專案面板（藍圖 + 改良待辦）-----------------------------------------
+const projectPanel = $("#projectPanel");
+const PRIO_LABEL = ["P0", "P1", "P2"];
+const TYPE_LABEL = { feature: "功能", bug: "缺陷", improvement: "改良" };
+
+async function openProjectPanel() {
+  const pid = $("#projectSelect").value;
+  if (!pid || pid === "__new__") { toast("先在上方選擇一個專案", ""); return; }
+  projectPanel.classList.remove("hidden");
+  await refreshProjectPanel();
+}
+
+function closeProjectPanel() { projectPanel.classList.add("hidden"); }
+
+function projLine(text, cls) {
+  const div = document.createElement("div");
+  if (cls) div.className = cls;
+  div.textContent = text;
+  return div;
+}
+
+async function refreshProjectPanel() {
+  const body = $("#projectBody");
+  const pid = $("#projectSelect").value;
+  if (!pid || pid === "__new__") return;
+  body.innerHTML = "<span class='muted'>載入中…</span>";
+  try {
+    const d = await (await fetch(`/api/projects/${pid}`)).json();
+    body.innerHTML = "";
+    const p = d.project || {};
+    body.appendChild(projLine(`📦 ${p.name || pid}`, "proj-name"));
+
+    // 藍圖卡片（有藍圖才顯示；raw 藍圖只提示看 BLUEPRINT.md）
+    const bp = d.blueprint;
+    if (bp && (bp.features || []).length) {
+      if (bp.vision) body.appendChild(projLine(`願景：${bp.vision}`));
+      if (bp.users) body.appendChild(projLine(`目標用戶：${bp.users}`));
+      body.appendChild(projLine("核心功能：", "muted"));
+      const feats = (bp.features || []).slice().sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
+      for (const f of feats) {
+        const li = projLine(`${f.title}${f.detail ? " — " + f.detail : ""}`, "proj-feature");
+        const tag = document.createElement("span");
+        tag.className = `prio prio-${f.priority ?? 1}`;
+        tag.textContent = PRIO_LABEL[f.priority ?? 1] || "P1";
+        li.prepend(tag);
+        body.appendChild(li);
+      }
+      if ((bp.milestones || []).length) {
+        body.appendChild(projLine("里程碑：" + bp.milestones.map((m) => m.title).join("；"), "muted"));
+      }
+    } else if (bp && bp.raw) {
+      body.appendChild(projLine("藍圖以原文保存（見 workspace 的 BLUEPRINT.md）", "muted"));
+    } else if (p.vision) {
+      body.appendChild(projLine(`願景：${p.vision}`));
+      body.appendChild(projLine("（尚無結構化藍圖；開啟 TI_BLUEPRINT 後啟動持續改良即會生成）", "muted"));
+    }
+
+    // backlog（後端已按 priority→建立時間排序）
+    body.appendChild(projLine("改良待辦（依消化順序）：", "muted"));
+    const tasks = d.backlog || [];
+    if (!tasks.length) body.appendChild(projLine("（空）", "muted"));
+    for (const t of tasks) {
+      const icon = { pending: "🕓", in_progress: "⚙️", done: "✅", failed: "❌" }[t.status] || "•";
+      const typ = TYPE_LABEL[t.type] || TYPE_LABEL.improvement;
+      const li = projLine(`${icon} #${t.id} ${t.title}　[${typ}・${t.source}]`, "proj-task");
+      const tag = document.createElement("span");
+      tag.className = `prio prio-${t.priority ?? 1}`;
+      tag.textContent = PRIO_LABEL[t.priority ?? 1] || "P1";
+      li.prepend(tag);
+      body.appendChild(li);
+    }
+  } catch (e) {
+    body.innerHTML = "<span class='muted'>無法載入專案</span>";
+  }
+}
+
 // --- 運維指標 ----------------------------------------------------------
 const metricsPanel = $("#metricsPanel");
 
@@ -956,6 +1032,9 @@ $("#apAddBtn").onclick = addAutopilotTask;
 $("#metricsBtn").onclick = openMetrics;
 $("#metricsClose").onclick = closeMetrics;
 $("#metricsRefresh").onclick = refreshMetrics;
+$("#projectBtn").onclick = openProjectPanel;
+$("#projectClose").onclick = closeProjectPanel;
+$("#projectRefresh").onclick = refreshProjectPanel;
 $("#projectSelect").addEventListener("change", (e) => {
   if (e.target.value === "__new__") createProjectFlow();
 });

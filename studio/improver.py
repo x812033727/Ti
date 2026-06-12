@@ -19,9 +19,9 @@ import contextlib
 import logging
 import uuid
 
-from . import backlog, config, events, history, projects
+from . import backlog, blueprint, config, events, history, projects, runner
 from .events import StudioEvent
-from .orchestrator import StudioSession, parse_tasks
+from .orchestrator import StudioSession, parse_structured_tasks
 
 log = logging.getLogger("ti.improver")
 
@@ -31,6 +31,17 @@ OFFLINE_DISCOVERY = [
     "為產品補上使用說明文件",
     "強化錯誤處理與輸入驗證",
 ]
+
+# 離線示範模式的藍圖輸出（與 OFFLINE_DISCOVERY 同模式：讓 TI_OFFLINE=1 也能完整走
+# 生成→解析→落盤→seed→注入的全流程）。
+OFFLINE_BLUEPRINT = """願景: 做一個讓使用者輕鬆上手的示範產品
+用戶: 想快速體驗持續改良迴圈的開發者
+功能: [P0] 核心功能可運行 — 最小可用的主流程
+功能: [P1] 使用說明文件
+功能: [P2] 錯誤處理與輸入驗證
+里程碑: M1 核心功能可運行
+里程碑: M2 文件與穩健性補齊
+"""
 
 # 「找問題」單輪最多回填的任務數，避免一次把 backlog 塞爆。
 DISCOVERY_MAX = 5
@@ -79,6 +90,10 @@ class ProjectImprover:
         limit = config.IMPROVE_MAX_CYCLES if max_cycles is None else max_cycles
         summary = {"cycles": 0, "done": 0, "failed": 0, "stopped": False}
         consecutive_fails = 0
+
+        # 開跑前先備妥產品藍圖（每專案僅生成一次；失敗/解析不出時降級續行，絕不擋迴圈）。
+        if config.BLUEPRINT_ENABLED and not self._stop and not blueprint.exists(pid):
+            await self._ensure_blueprint()
 
         while not self._stop and (limit <= 0 or summary["cycles"] < limit):
             task = backlog.next_pending(state_dir=sdir)
@@ -169,11 +184,15 @@ class ProjectImprover:
 
         completed = bool(result.get("completed"))
         # 檢討發現的後續任務回填專案 backlog —— 迴圈的自我補給線。
+        # 優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
+        items = result.get("followup_items") or []
         followups = result.get("followups") or []
-        if followups:
+        if items:
+            added = backlog.add_items(items, source="discovered", state_dir=sdir)
+        else:
             added = backlog.add_many(followups, source="discovered", state_dir=sdir)
-            if added:
-                log.info("專案 %s 從討論回填 %d 個後續任務", pid, added)
+        if added:
+            log.info("專案 %s 從討論回填 %d 個後續任務", pid, added)
         backlog.set_status(
             task["id"],
             "done" if completed else "failed",
@@ -189,6 +208,9 @@ class ProjectImprover:
         parts = [f"【長期專案：{name}】這是持續改良中的既有產品，不是從零開始的新專案。"]
         if vision:
             parts.append(f"產品願景：{vision}")
+        bp_ctx = blueprint.context(self.project["id"])
+        if bp_ctx:
+            parts.append(bp_ctx.rstrip())
         parts.append(f"本輪改良任務：{task['title']}")
         if task.get("detail"):
             parts.append(f"細節：{task['detail']}")
@@ -197,6 +219,78 @@ class ProjectImprover:
             "請先瀏覽現況再拆解與動工；改良要與既有架構一致，不要砍掉重練。"
         )
         return "\n\n".join(parts)
+
+    # --- 產品藍圖：開跑前 PM 把一句願景展開成結構化藍圖 ----------------------
+    async def _ensure_blueprint(self) -> None:
+        """PM 生成產品藍圖：落盤 blueprint.json＋BLUEPRINT.md、功能餵 backlog。
+
+        解析不出結構時降級：原文仍寫 BLUEPRINT.md（人讀價值保留）、json 標記 raw、
+        不餵 backlog——行為退回現狀，絕不擋持續改良迴圈。
+        """
+        pid = self.project["id"]
+        name = self.project.get("name", pid)
+        sid = "pjbp" + uuid.uuid4().hex[:9]
+        history.start_session(sid, f"[專案 {name}] 產品藍圖：PM 展開願景")
+        self._record_sid = sid
+        await self.broadcast(
+            events.phase_change(self.session_id, "產品藍圖", "PM 正在把願景展開成產品藍圖")
+        )
+        try:
+            if config.OFFLINE_MODE:
+                text = OFFLINE_BLUEPRINT
+            else:
+                text = await self._blueprint_with_pm(pid, sid)
+            data = blueprint.parse_blueprint(text)
+            if data is None:
+                blueprint.write_md(pid, text)
+                blueprint.save(pid, {"version": 1, "features": [], "raw": True}, session_id=sid)
+                note = "藍圖輸出無法解析，已存原文（不餵 backlog）"
+            else:
+                seeded = blueprint.seed_backlog(pid, data, config.BLUEPRINT_SEED_MAX)
+                blueprint.save(pid, data, session_id=sid)  # seed 後存，保住 seeded 標記
+                blueprint.write_md(pid, blueprint.render_md(data, name=name))
+                cwd = projects.workspace_dir(pid)
+                await runner.git_init(cwd)  # 首輪 workspace 可能還沒 repo；冪等
+                await runner.git_commit(cwd, "產品藍圖：PM 展開願景")
+                note = f"藍圖完成：{len(data['features'])} 項功能，{seeded} 項已排入 backlog"
+            history.record_event(
+                sid,
+                StudioEvent(
+                    events.EventType.DONE, sid, {"completed": True, "blueprint": True}
+                ).to_dict(),
+            )
+        except Exception:
+            log.exception("專案 %s 產品藍圖生成失敗，降級為無藍圖續行", pid)
+            note = "藍圖生成失敗，按原流程續行"
+        finally:
+            history.finish_session(sid)
+            self._record_sid = None
+        await self.broadcast(events.phase_change(self.session_id, "產品藍圖", note))
+
+    async def _blueprint_with_pm(self, pid: str, sid: str) -> str:
+        from .providers import make_expert
+        from .roles import PM
+
+        cwd = projects.workspace_dir(pid)
+        expert = make_expert(PM, sid, cwd)
+        vision = self.project.get("vision", "")
+        prompt = (
+            f"你要為長期產品專案「{self.project.get('name', '')}」制定產品藍圖"
+            "（工作目錄是它的 workspace，首輪可能為空）。\n"
+            + (f"產品願景：{vision}\n" if vision else "")
+            + "請把願景展開成結構化藍圖，逐行輸出、格式固定為：\n"
+            "願景: <一句精煉的產品願景>\n"
+            "用戶: <目標用戶與使用場景，一句>\n"
+            "功能: [P0] <功能名> — <一句說明>（P0 必須有/P1 重要/P2 加分，共 5~10 項）\n"
+            "里程碑: M1 <第一個可用版本包含哪些功能>\n"
+            "里程碑: M2 <下一階段>\n"
+            "只輸出上述格式行，不要其他說明。"
+        )
+        try:
+            return await expert.speak(prompt, self.broadcast)
+        finally:
+            with contextlib.suppress(Exception):
+                await expert.stop()
 
     # --- 找問題：backlog 空了就審視產品、產出新改良任務 ---------------------
     async def _discover(self, sdir) -> int:
@@ -215,9 +309,11 @@ class ProjectImprover:
         )
         try:
             if config.OFFLINE_MODE:
-                titles = list(OFFLINE_DISCOVERY)
+                items = [
+                    {"title": t, "priority": 1, "type": "improvement"} for t in OFFLINE_DISCOVERY
+                ]
             else:
-                titles = await self._discover_with_expert(pid, sid)
+                items = await self._discover_with_expert(pid, sid)
             # 只寫進 history（不 broadcast）：讓這個審視 session 在歷史面板顯示為「完成」，
             # 又不會在前端被誤當成一輪改良的結束。
             history.record_event(
@@ -231,8 +327,8 @@ class ProjectImprover:
             self._record_sid = None
 
         done_titles = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY, state_dir=sdir)
-        titles = [t for t in titles if t.strip() and t.strip() not in done_titles]
-        n = backlog.add_many(titles[:DISCOVERY_MAX], source="eval", state_dir=sdir)
+        items = [t for t in items if t["title"].strip() and t["title"].strip() not in done_titles]
+        n = backlog.add_items(items[:DISCOVERY_MAX], source="eval", state_dir=sdir)
         await self.broadcast(
             events.phase_change(
                 self.session_id,
@@ -242,7 +338,7 @@ class ProjectImprover:
         )
         return n
 
-    async def _discover_with_expert(self, pid: str, sid: str) -> list[str]:
+    async def _discover_with_expert(self, pid: str, sid: str) -> list[dict]:
         from .providers import make_expert
         from .roles import SENIOR
 
@@ -253,16 +349,19 @@ class ProjectImprover:
             f"你正在審視長期產品專案「{self.project.get('name', '')}」"
             "（程式碼就在你的工作目錄）。\n"
             + (f"產品願景：{vision}\n" if vision else "")
+            + blueprint.context(pid)
             + "請用 Read/Grep 瀏覽現況，從使用者價值與工程品質兩面找出最值得改良的 3~5 點"
             "（功能缺口、bug、體驗、測試、安全），每點獨立一行，格式固定為 "
-            "`任務: <動詞開頭的具體任務>`。只輸出任務行。"
+            "`任務: [P0/bug] <動詞開頭的具體任務>`——方括號標籤標注優先級"
+            "（P0 必須~P2 加分）與類型（feature/bug/improvement），標籤可省（視為 P1）。"
+            "只輸出任務行。"
         )
         try:
             text = await expert.speak(prompt, self.broadcast)
         finally:
             with contextlib.suppress(Exception):
                 await expert.stop()
-        return parse_tasks(text)
+        return parse_structured_tasks(text)
 
     def _recent_outcomes_context(self) -> str:
         """專案近期成敗（done/failed＋原因）整理成提示前綴；無紀錄回空字串。"""

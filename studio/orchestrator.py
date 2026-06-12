@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import config, events, lessons, memory, publisher, reflexion, runner, workspace
+from . import adr, config, events, lessons, memory, publisher, reflexion, runner, workspace
 from .roles import ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
@@ -162,9 +162,55 @@ def parse_clarify(text: str) -> list[dict]:
     return out
 
 
+# 可選的「[P0/bug]」標籤：priority（P0~P2）與 type（feature|bug|improvement）皆可省、
+# 順序不拘；解析失敗一律退回預設（P1 / improvement），絕不因標籤寫壞丟任務。
+_RE_TAGGED_TASK = re.compile(r"^\s*任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
+_RE_TAGGED_FOLLOWUP = re.compile(r"^\s*後續任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
+
+
+def _parse_item_tag(tag: str) -> dict:
+    """把 `[P0/bug]` 標籤內容解析成 {priority, type}；無法辨識的片段忽略。"""
+    priority, item_type = 1, "improvement"
+    for part in re.split(r"[/,，\s]+", (tag or "").strip()):
+        part = part.strip()
+        if part.upper() in ("P0", "P1", "P2"):
+            priority = int(part[1])
+        elif part.lower() in ("feature", "bug", "improvement"):
+            item_type = part.lower()
+    return {"priority": priority, "type": item_type}
+
+
+def parse_structured_tasks(text: str) -> list[dict]:
+    """從專家輸出抽出結構化任務（`任務: [P0/bug] <title>`，標籤可省）。
+
+    供「找問題」等回填 backlog 的消費端使用（與 PM 拆解的 parse_tasks 並列、互不影響）。
+    完全無 `任務:` 行時退回 parse_tasks 的條列解析（預設 P1/improvement），行為與現狀一致。
+    """
+    items = [
+        {"title": title.strip(), **_parse_item_tag(tag)}
+        for tag, title in _RE_TAGGED_TASK.findall(text or "")
+        if title.strip()
+    ]
+    if items:
+        return items[: config.MAX_TASKS]
+    return [{"title": t, "priority": 1, "type": "improvement"} for t in parse_tasks(text)]
+
+
 def parse_followups(text: str) -> list[str]:
-    """從檢討文字抽出 `後續任務: ...` 行（供 autopilot 回寫 backlog）。"""
-    return [m.strip() for m in re.findall(r"^\s*後續任務\s*[:：]\s*(.+)$", text, re.M)][:10]
+    """從檢討文字抽出 `後續任務: ...` 行（供 autopilot 回寫 backlog）。
+
+    回傳純標題（剝掉可選的 `[P0/bug]` 標籤）；要保留標籤語意用 parse_followups_meta。
+    """
+    return [t["title"] for t in parse_followups_meta(text)]
+
+
+def parse_followups_meta(text: str) -> list[dict]:
+    """parse_followups 的結構化版本：每筆 {title, priority, type}（標籤缺省取預設）。"""
+    return [
+        {"title": title.strip(), **_parse_item_tag(tag)}
+        for tag, title in _RE_TAGGED_FOLLOWUP.findall(text or "")
+        if title.strip()
+    ][:10]
 
 
 def parse_lessons(text: str) -> list[str]:
@@ -285,6 +331,7 @@ class StudioSession:
         self._requirement = ""
         self._stop = False
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
+        self._followup_items: list[dict] = []  # 同上、含 priority/type（消費端優先用這份）
         self._last_commit: str | None = None  # 最近一次主分支 workspace commit 短 hash
         # 主（循序）lane 的隔離狀態；於 _run 建立後，所有對主 workspace 的操作都走它。
         self._main_ctx: LaneContext | None = None
@@ -578,15 +625,21 @@ class StudioSession:
 
     # --- 辯論 ----------------------------------------------------------
     async def _debate(self, a: ExpertLike, b: ExpertLike, topic: str, rounds: int) -> None:
-        """a 提案、b 點評、a 回應，來回 rounds 輪。rounds<=0 則跳過。"""
+        """a 提案、b 點評、a 回應，來回 rounds 輪。rounds<=0 則跳過。
+
+        ADR 開啟時，辯論結束後由 b（高級工程師）把共識蒸餾成決策行並落盤——
+        讓純辯論路徑（無架構師）的結論也能跨場次留痕。
+        """
         if rounds <= 0 or self._stop:
             return
         await self.broadcast(
             events.phase_change(self.session_id, "架構討論", "工程師與高級工程師對齊做法")
         )
         proposal = await a.speak(
-            f"{topic}\n請先簡短提出你打算採取的整體做法與檔案結構。", self.broadcast
+            adr.context(self.cwd) + f"{topic}\n請先簡短提出你打算採取的整體做法與檔案結構。",
+            self.broadcast,
         )
+        critique = ""
         for i in range(rounds):
             if self._stop:
                 return
@@ -599,6 +652,16 @@ class StudioSession:
             proposal = await a.speak(
                 f"針對以下意見回應並調整你的做法，簡短：\n\n{critique}", self.broadcast
             )
+        if config.ADR_ENABLED and self.cwd and not self._stop:
+            distilled = await b.speak(
+                "把剛才架構討論的共識蒸餾成決策記錄：每條獨立、逐行輸出 `決策: <結論>`，"
+                "重要取捨可緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行。"
+                "只輸出格式行。\n\n"
+                f"【提案】{proposal}\n\n【點評】{critique}",
+                self.broadcast,
+            )
+            if adr.record(self.cwd, adr.parse_adr(distilled), session_id=self.session_id):
+                await self._commit(self._main_ctx, "架構決策：記錄 ADR")
 
     async def _architecture_decision(
         self,
@@ -612,7 +675,10 @@ class StudioSession:
         await self.broadcast(events.phase_change(self.session_id, "架構決策", "架構師主導設計決策"))
         rnote = f"研究員調研供參考：\n{research_notes}\n\n" if research_notes else ""
         proposal = await architect.speak(
-            rnote + topic + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
+            adr.context(self.cwd)
+            + rnote
+            + topic
+            + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
             self.broadcast,
         )
         # 工程師與高級工程師對同一份提案各自給意見，互相獨立 → 並行以省時。
@@ -624,17 +690,25 @@ class StudioSession:
                 f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}", self.broadcast
             ),
         )
+        adr_note = (
+            "重要取捨可在決策行後緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行（會記入決策檔）。"
+            if config.ADR_ENABLED
+            else ""
+        )
         decision = await architect.speak(
-            "綜合以下意見定案，逐行輸出 `設計決策: <決策>`：\n\n"
+            f"綜合以下意見定案，逐行輸出 `設計決策: <決策>`。{adr_note}\n\n"
             f"【工程師】{eng_view}\n\n【高級工程師】{senior_view}",
             self.broadcast,
         )
+        if config.ADR_ENABLED and self.cwd:
+            if adr.record(self.cwd, adr.parse_adr(decision), session_id=self.session_id):
+                await self._commit(self._main_ctx, "架構決策：記錄 ADR")
         return decision
 
     # --- 主流程 --------------------------------------------------------
     async def run(self, requirement: str) -> dict:
         """執行整場討論。回傳結果摘要供 autopilot 使用（前端走 broadcast，不需回傳值）。"""
-        result = {"completed": False, "followups": [], "commit": None}
+        result = {"completed": False, "followups": [], "followup_items": [], "commit": None}
         try:
             result = await self._run(requirement)
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
@@ -735,6 +809,7 @@ class StudioSession:
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
+            + adr.context(self.cwd)  # 既有架構決策（停用/無 cwd/空白時為空字串）
             + repo_note
             + clarify_note
             + research_note
@@ -807,7 +882,12 @@ class StudioSession:
         # 6) 視設定自動發佈成果到 GitHub（此時專家團隊仍在線，可在 CI 失敗時修正）
         await self._maybe_publish(done, engineer)
 
-        return {"completed": done, "followups": self._followups, "commit": self._last_commit}
+        return {
+            "completed": done,
+            "followups": self._followups,
+            "followup_items": self._followup_items,
+            "commit": self._last_commit,
+        }
 
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
@@ -1633,7 +1713,9 @@ class StudioSession:
         retro_prompt = (
             "請帶領團隊做一段簡短檢討：這次做得好的地方、可以改進的地方、以及後續建議。\n"
             "若過程中發現尚未解決的問題或值得改善之處，請在最後逐行列出後續任務，"
-            "每行格式固定為 `後續任務: <動詞開頭的具體任務>`（沒有就不必列）。"
+            "每行格式固定為 `後續任務: <動詞開頭的具體任務>`（沒有就不必列）；"
+            "可在任務前加 `[P0/bug]` 樣式的標籤標注優先級（P0 必須~P2 加分）與類型"
+            "（feature/bug/improvement），標籤可省。"
         )
         if config.LESSONS_ENABLED:
             retro_prompt += (
@@ -1641,7 +1723,8 @@ class StudioSession:
                 "請逐行列出，格式固定為 `教訓: <一句精簡、可重用的經驗>`（最多 5 條，沒有就不必列）。"
             )
         retro = await pm.speak(retro_prompt, self.broadcast)
-        self._followups = parse_followups(retro)
+        self._followup_items = parse_followups_meta(retro)
+        self._followups = [t["title"] for t in self._followup_items]
         if config.LESSONS_ENABLED:
             lessons.add_many(
                 parse_lessons(retro),
