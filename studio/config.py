@@ -92,6 +92,22 @@ def _discuss_max_rounds() -> int:
 # 多角色討論（DiscussionEngine）的最大輪數上限；預設取 DEBATE_ROUNDS。
 DISCUSS_MAX_ROUNDS = _discuss_max_rounds()
 
+# 多角色討論模式白名單：legacy＝舊「工程師⇄高級工程師」兩人往返（預設，行為與現狀一致）；
+# round_robin＝DiscussionEngine 依序發言；parallel＝同輪並行、輪間同步。
+DISCUSS_MODES = ("legacy", "round_robin", "parallel")
+
+
+def _discuss_mode() -> str:
+    """TI_DISCUSS_MODE：白名單外（含拼錯）一律 fallback legacy（向後相容、絕不誤開新路徑）。"""
+    raw = (os.getenv("TI_DISCUSS_MODE") or "").strip() or "legacy"
+    if raw not in DISCUSS_MODES:
+        logger.warning("環境變數 TI_DISCUSS_MODE=%r 不在白名單 %s，改用 legacy", raw, DISCUSS_MODES)
+        return "legacy"
+    return raw
+
+
+DISCUSS_MODE = _discuss_mode()
+
 # --- 內部討論機制（卡關 huddle）--------------------------------------------
 # 開啟後：任務跑滿 TASK_MAX_ROUNDS 仍未通過時，召集團隊 huddle 找替代方案並給 1 輪重試，
 # 仍失敗則明確標記為「已知限制」而非靜默帶過。只在「跑滿輪數仍失敗」的低頻路徑加成本，
@@ -565,7 +581,7 @@ def reload() -> None:
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
-    global DISCUSS_MAX_ROUNDS
+    global DISCUSS_MAX_ROUNDS, DISCUSS_MODE
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
@@ -590,6 +606,7 @@ def reload() -> None:
     TASK_MAX_ROUNDS = int(os.getenv("TI_MAX_ROUNDS", "3"))
     DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
     DISCUSS_MAX_ROUNDS = _discuss_max_rounds()  # 依賴 DEBATE_ROUNDS，須在其後重算
+    DISCUSS_MODE = _discuss_mode()
     MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
     ROLE_MODELS = _role_models()
