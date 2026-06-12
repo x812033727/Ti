@@ -309,8 +309,12 @@ async def _run_project_session(session: StudioSession, requirement: str, project
     bp_ctx = blueprint.context(project["id"])
     result = await session.run(bp_ctx + requirement if bp_ctx else requirement)
     sdir = projects.state_dir(project["id"])
+    # 優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
+    items = result.get("followup_items") or []
     followups = result.get("followups") or []
-    if followups:
+    if items:
+        backlog.add_items(items, source="discovered", state_dir=sdir)
+    elif followups:
         backlog.add_many(followups, source="discovered", state_dir=sdir)
     projects.record_session(
         project["id"], session.session_id, requirement[:80], bool(result.get("completed"))

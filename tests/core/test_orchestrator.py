@@ -98,6 +98,42 @@ def test_parse_tasks_bullets():
     assert parse_tasks("沒有條列") == ["實作需求"]
 
 
+def test_parse_structured_tasks_tags():
+    from studio.orchestrator import parse_structured_tasks
+
+    text = (
+        "任務: [P0/bug] 修登入閃退\n"
+        "任務: [feature] 加匯出功能\n"
+        "任務: [P2] 美化首頁\n"
+        "任務: 補文件\n"
+        "任務: [亂寫的標籤] 仍要收下\n"
+    )
+    items = parse_structured_tasks(text)
+    assert [(t["priority"], t["type"]) for t in items] == [
+        (0, "bug"),
+        (1, "feature"),
+        (2, "improvement"),
+        (1, "improvement"),
+        (1, "improvement"),
+    ]
+    assert items[0]["title"] == "修登入閃退" and items[4]["title"] == "仍要收下"
+    # 完全無 `任務:` 行 → 退回條列 fallback（預設 P1/improvement）
+    fallback = parse_structured_tasks("- 做 A\n- 做 B")
+    assert [t["title"] for t in fallback] == ["做 A", "做 B"]
+    assert all(t["priority"] == 1 for t in fallback)
+
+
+def test_parse_followups_meta_and_strip():
+    from studio.orchestrator import parse_followups, parse_followups_meta
+
+    text = "後續任務: [P0/bug] 修資料遺失\n後續任務: 補測試"
+    meta = parse_followups_meta(text)
+    assert meta[0] == {"title": "修資料遺失", "priority": 0, "type": "bug"}
+    assert meta[1] == {"title": "補測試", "priority": 1, "type": "improvement"}
+    # 純標題版剝掉標籤（舊消費端不破）
+    assert parse_followups(text) == ["修資料遺失", "補測試"]
+
+
 def test_parse_tasks_structured():
     text = "任務: 建立 CLI\n任務: 加入分類\n驗收標準: 能跑\n執行指令: python main.py"
     tasks = parse_tasks(text)

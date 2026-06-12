@@ -21,7 +21,7 @@ import uuid
 
 from . import backlog, blueprint, config, events, history, projects, runner
 from .events import StudioEvent
-from .orchestrator import StudioSession, parse_tasks
+from .orchestrator import StudioSession, parse_structured_tasks
 
 log = logging.getLogger("ti.improver")
 
@@ -184,11 +184,15 @@ class ProjectImprover:
 
         completed = bool(result.get("completed"))
         # 檢討發現的後續任務回填專案 backlog —— 迴圈的自我補給線。
+        # 優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
+        items = result.get("followup_items") or []
         followups = result.get("followups") or []
-        if followups:
+        if items:
+            added = backlog.add_items(items, source="discovered", state_dir=sdir)
+        else:
             added = backlog.add_many(followups, source="discovered", state_dir=sdir)
-            if added:
-                log.info("專案 %s 從討論回填 %d 個後續任務", pid, added)
+        if added:
+            log.info("專案 %s 從討論回填 %d 個後續任務", pid, added)
         backlog.set_status(
             task["id"],
             "done" if completed else "failed",
@@ -305,9 +309,9 @@ class ProjectImprover:
         )
         try:
             if config.OFFLINE_MODE:
-                titles = list(OFFLINE_DISCOVERY)
+                items = [{"title": t, "priority": 1, "type": "improvement"} for t in OFFLINE_DISCOVERY]
             else:
-                titles = await self._discover_with_expert(pid, sid)
+                items = await self._discover_with_expert(pid, sid)
             # 只寫進 history（不 broadcast）：讓這個審視 session 在歷史面板顯示為「完成」，
             # 又不會在前端被誤當成一輪改良的結束。
             history.record_event(
@@ -321,8 +325,8 @@ class ProjectImprover:
             self._record_sid = None
 
         done_titles = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY, state_dir=sdir)
-        titles = [t for t in titles if t.strip() and t.strip() not in done_titles]
-        n = backlog.add_many(titles[:DISCOVERY_MAX], source="eval", state_dir=sdir)
+        items = [t for t in items if t["title"].strip() and t["title"].strip() not in done_titles]
+        n = backlog.add_items(items[:DISCOVERY_MAX], source="eval", state_dir=sdir)
         await self.broadcast(
             events.phase_change(
                 self.session_id,
@@ -332,7 +336,7 @@ class ProjectImprover:
         )
         return n
 
-    async def _discover_with_expert(self, pid: str, sid: str) -> list[str]:
+    async def _discover_with_expert(self, pid: str, sid: str) -> list[dict]:
         from .providers import make_expert
         from .roles import SENIOR
 
@@ -343,16 +347,19 @@ class ProjectImprover:
             f"你正在審視長期產品專案「{self.project.get('name', '')}」"
             "（程式碼就在你的工作目錄）。\n"
             + (f"產品願景：{vision}\n" if vision else "")
+            + blueprint.context(pid)
             + "請用 Read/Grep 瀏覽現況，從使用者價值與工程品質兩面找出最值得改良的 3~5 點"
             "（功能缺口、bug、體驗、測試、安全），每點獨立一行，格式固定為 "
-            "`任務: <動詞開頭的具體任務>`。只輸出任務行。"
+            "`任務: [P0/bug] <動詞開頭的具體任務>`——方括號標籤標注優先級"
+            "（P0 必須~P2 加分）與類型（feature/bug/improvement），標籤可省（視為 P1）。"
+            "只輸出任務行。"
         )
         try:
             text = await expert.speak(prompt, self.broadcast)
         finally:
             with contextlib.suppress(Exception):
                 await expert.stop()
-        return parse_tasks(text)
+        return parse_structured_tasks(text)
 
     def _recent_outcomes_context(self) -> str:
         """專案近期成敗（done/failed＋原因）整理成提示前綴；無紀錄回空字串。"""
