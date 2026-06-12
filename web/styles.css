@@ -823,6 +823,19 @@ input:focus-visible, select:focus-visible { outline: none; }
 }
 .history-list li:hover .h-del { opacity: .75; }
 .h-del:hover { opacity: 1 !important; color: var(--bad); background: var(--bad-bg); }
+/* 進行中場次的停止鈕：常駐可見（不像刪除鈕等 hover 才現身），執行中就該一眼看到能停 */
+.h-stop {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--bad);
+  cursor: pointer;
+  opacity: .75;
+  font-size: 15px;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+}
+.h-stop:hover { opacity: 1; background: var(--bad-bg); }
 
 /* Autopilot 面板 */
 .ap-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 0; }
@@ -859,6 +872,7 @@ input:focus-visible, select:focus-visible { outline: none; }
 .prio-0 { background: var(--bad-bg); color: #ff8a8a; border-color: rgba(255, 107, 107, .4); }
 .prio-1 { background: var(--warn-bg); color: var(--warn); border-color: rgba(245, 184, 95, .4); }
 .prio-2 { background: var(--surface-2); color: var(--muted); }
+.proj-actions { display: flex; gap: 8px; margin-top: 10px; }
 
 /* ---------- 設定面板（置中大 modal） ---------- */
 .settings-panel {

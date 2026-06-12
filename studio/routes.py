@@ -348,6 +348,8 @@ async def projects_detail(project_id: str) -> JSONResponse:
             "backlog": tasks,
             "counts": backlog.counts(state_dir=sdir),
             "blueprint": blueprint.load(project_id),
+            # 進行中與否（前端據此顯示「停止執行」、預期刪除會被 409 擋下）
+            "active": project_id in ws._active_projects,
         }
     )
 
@@ -402,6 +404,22 @@ async def projects_set_publish_repo(project_id: str, body: PublishRepoBody) -> J
     return JSONResponse({"project": meta, "base_state": state, "warning": warning})
 
 
+@router.delete("/api/projects/{project_id}", dependencies=[Depends(auth.require_auth)])
+async def projects_delete(project_id: str) -> JSONResponse:
+    """刪除專案：meta／改良待辦／藍圖與固定 workspace（含 .lanes 兜底）。
+
+    進行中（改良迴圈或單場討論佔用 workspace）回 409——先停止再刪，避免專家
+    對著被抽掉的目錄繼續寫檔。history 的 session 紀錄保留（仍可重播），可從
+    歷史面板各自刪除。
+    """
+    if projects.get(project_id) is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if project_id in ws._active_projects:
+        return JSONResponse({"error": "專案有進行中的討論，請先停止執行再刪除"}, status_code=409)
+    ok = projects.delete(project_id)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
 @router.post("/api/projects/{project_id}/recover", dependencies=[Depends(auth.require_auth)])
 async def projects_recover(project_id: str) -> JSONResponse:
     """中斷恢復：服務重啟／行程被殺後，把殘留狀態清乾淨，讓改良迴圈可以無痛重啟。
@@ -425,6 +443,19 @@ async def projects_recover(project_id: str) -> JSONResponse:
         backlog.set_status(t["id"], "pending", state_dir=sdir, note="中斷恢復：重置重跑")
         reset += 1
     return JSONResponse({"ok": True, "reset": reset, "counts": backlog.counts(state_dir=sdir)})
+
+
+# --- 進行中討論的停止（受保護）------------------------------------------
+@router.post("/api/sessions/{target_id}/stop", dependencies=[Depends(auth.require_auth)])
+async def session_stop(target_id: str) -> JSONResponse:
+    """對進行中的討論／持續改良迴圈送停止指令；target 可為 session id 或專案 id。
+
+    與 WS 的 stop 同一條 request_stop 管線——原 WS 連線斷開（頁面重整／detach
+    背景續跑）後仍能喊停。停止是「請求」非立即中斷：編排在安全點收尾、照常發
+    DONE 與寫 history。找不到進行中的目標回 404。
+    """
+    ok = ws.stop_running(target_id)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 
 
 # --- publish（受保護）--------------------------------------------------
