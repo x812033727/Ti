@@ -97,6 +97,27 @@ def list_projects() -> list[dict]:
     return metas
 
 
+def set_publish_repo(project_id: str, repo: str) -> dict | None:
+    """設定專案自己的發佈 repo（owner/repo；空字串＝清除，退回全域 TI_PUBLISH_REPO 行為）。
+
+    專案 workspace 是獨立 git init 的程式碼庫，對全域發佈 repo 的 main 沒有共同歷史、
+    開不了 PR；設了自己的 repo 後，session 成果改推到該 repo 並對其 base 開 PR。
+    格式不合（非 owner/repo）回 None 由呼叫端轉 400；專案不存在也回 None。
+    """
+    import re
+
+    meta = get(project_id)
+    if meta is None:
+        return None
+    repo = (repo or "").strip()
+    if repo and not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo):
+        return None
+    meta["publish_repo"] = repo
+    meta["updated_at"] = time.time()
+    _write_meta(project_id, meta)
+    return meta
+
+
 def record_session(project_id: str, session_id: str, task: str, completed: bool) -> dict | None:
     """把一場討論的結果記到專案 meta（持續改良的足跡），回傳更新後 meta。"""
     meta = get(project_id)

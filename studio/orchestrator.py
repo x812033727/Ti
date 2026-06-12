@@ -99,6 +99,7 @@ class StudioSession:
         critics: dict[str, ExpertLike] | None = None,
         workspace_id: str | None = None,
         clarify: bool | None = None,
+        publish_repo: str | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
@@ -114,6 +115,9 @@ class StudioSession:
         self._critics = critics
         self._intervention = intervention_queue
         self._repo_url = repo_url  # 已 clone 進 workspace 的既有 GitHub repo（可選）
+        # 長期專案自己的發佈 repo（owner/repo，可選）：成果改推到該 repo 並對其 base 開 PR，
+        # 解決「專案 workspace 與全域發佈 repo 無共同歷史、開不了 PR」的限制。
+        self._publish_repo = (publish_repo or "").strip()
         self._tasks: list[dict] = []  # {id, title, status}
         self._edges: list[tuple[int, int]] = []  # 任務依賴邊 (after, before)，並行分波用
         self._pending_human = ""  # 並行模式於波次邊界 drain 的插話，套用到該波各 lane
@@ -1632,7 +1636,17 @@ class StudioSession:
         首輪「等 CI→合併」沿用 publisher.publish(merge=)（REST，結局寫進 result.outcome）；CI 失敗
         則取日誌請 engineer 修正、重推，再以 verify_and_merge 重驗合併，最多 PUBLISH_CI_MAX_ROUNDS 輪。
         engineer 省略（如單測）時不進自我修復迴圈，CI 失敗即保留 PR 待人工。
+
+        專案有自己的 publish_repo 時，整段（publish＋CI 迴圈的 verify_and_merge／
+        ci_failure_logs／repush）都以 contextvar 覆寫目標 repo——同一 task 內全程生效。
         """
+        token = publisher.set_repo_override(self._publish_repo)
+        try:
+            await self._maybe_publish_inner(done, engineer)
+        finally:
+            publisher.reset_repo_override(token)
+
+    async def _maybe_publish_inner(self, done: bool, engineer: ExpertLike | None = None) -> None:
         if not self.cwd or self._stop or not done:
             return
         if not (config.PUBLISH_AUTO and publisher.is_configured()):

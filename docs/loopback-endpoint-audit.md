@@ -55,6 +55,7 @@
 | POST | `/api/projects` | auth | 建立專案（寫 meta 與空 workspace 目錄），純資料面；與 /ws 同屬核心產品操作，須對已登入外網使用者可用 |
 | POST | `/api/projects/{project_id}/backlog` | auth | 往「專案」backlog 排改良任務。與 autopilot 的任務注入端點（納管）不同：專案任務僅在已登入使用者經 /ws 主動啟動持續改良時才執行，且專家 bash 走 bwrap 沙箱（與 /ws 同安全模型），非無人值守自動執行 |
 | POST | `/api/projects/{project_id}/recover` | auth | 中斷恢復：把卡在 in_progress 的 backlog 任務重置回 pending、幽靈 running meta 標 error，皆冪等且僅作用於該專案的資料面；迴圈進行中回 409 防競爭，不啟動任何執行（重啟由前端走 /ws 既有流程） |
+| POST | `/api/projects/{project_id}/publish-repo` | auth | 設定專案自己的發佈 repo（owner/repo，留空清除）：純 meta 寫入（格式白名單驗證），實際對外推送仍由 session 結束的既有發佈流程執行，token 不經此端點 |
 
 > 註：上列皆屬「資料面寫入」，架構決策的納管邊界限定在「會改機器狀態的控制面/秘密寫入」。
 > 若後續威脅模型升級，可比照 `WRITE_DEPS` 一行掛上，已有守門測試結構可直接擴充。

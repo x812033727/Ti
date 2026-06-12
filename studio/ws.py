@@ -245,6 +245,7 @@ async def ws(websocket: WebSocket) -> None:
             repo_url=repo_url or None,
             critics=critics,
             workspace_id=projects.workspace_id(project["id"]) if project is not None else None,
+            publish_repo=(project.get("publish_repo") or None) if project is not None else None,
         )
         if config.OFFLINE_MODE:
             # 離線並行 demo：每條 lane 用假專家工廠（各自寫該任務的檔），無金鑰也能跑多支線。

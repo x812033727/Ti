@@ -617,6 +617,21 @@ async function refreshProjectPanel() {
     const p = d.project || {};
     body.appendChild(projLine(`📦 ${p.name || pid}`, "proj-name"));
 
+    // 發佈 repo：設定後 session 成果改推到該 repo 並對其 base 開 PR
+    // （未設定＝沿用全域發佈 repo；專案 workspace 與其無共同歷史時只推備份分支）。
+    const repoRow = projLine(
+      `發佈 repo：${p.publish_repo || "未設定（只推備份分支，無法開 PR）"}`,
+      "muted",
+    );
+    const repoBtn = document.createElement("button");
+    repoBtn.id = "projectPublishRepo";
+    repoBtn.className = "ghost";
+    repoBtn.textContent = "設定";
+    repoBtn.title = "owner/repo；不存在且 owner 是 token 使用者時會自動建立私有 repo，留空＝清除";
+    repoBtn.onclick = () => setProjectPublishRepo(pid, p.publish_repo || "");
+    repoRow.appendChild(repoBtn);
+    body.appendChild(repoRow);
+
     // 藍圖卡片（有藍圖才顯示；raw 藍圖只提示看 BLUEPRINT.md）
     const bp = d.blueprint;
     if (bp && (bp.features || []).length) {
@@ -670,6 +685,28 @@ async function refreshProjectPanel() {
     }
   } catch (e) {
     body.innerHTML = "<span class='muted'>無法載入專案</span>";
+  }
+}
+
+async function setProjectPublishRepo(pid, current) {
+  const v = prompt(
+    "發佈 repo（owner/repo，留空＝清除）\n設定後此專案的成果會推到該 repo 並開 PR；" +
+      "repo 不存在且 owner 是你的 token 使用者時會自動建立私有 repo。",
+    current,
+  );
+  if (v === null) return; // 取消
+  try {
+    const res = await fetch(`/api/projects/${pid}/publish-repo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: v.trim() }),
+    });
+    const d = await res.json();
+    if (!res.ok) { toast(d.error || "設定失敗", "err"); return; }
+    toast(v.trim() ? `發佈 repo 已設為 ${v.trim()}` : "已清除發佈 repo");
+    await refreshProjectPanel();
+  } catch (e) {
+    toast("設定失敗：" + e.message, "err");
   }
 }
 

@@ -369,6 +369,25 @@ async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONRespo
     return JSONResponse({"task": task})
 
 
+class PublishRepoBody(BaseModel):
+    repo: str = ""
+
+
+@router.post("/api/projects/{project_id}/publish-repo", dependencies=[Depends(auth.require_auth)])
+async def projects_set_publish_repo(project_id: str, body: PublishRepoBody) -> JSONResponse:
+    """設定專案自己的發佈 repo（owner/repo；留空＝清除）。
+
+    設定後該專案的 session 成果改推到此 repo 並對其 base 開 PR（repo 不存在且 owner 為
+    token 使用者時會自動建立私有 repo；空 repo 首次發佈直接初始化 base 分支）。
+    """
+    if projects.get(project_id) is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    meta = projects.set_publish_repo(project_id, body.repo)
+    if meta is None:
+        return JSONResponse({"error": "格式須為 owner/repo（或留空清除）"}, status_code=400)
+    return JSONResponse({"project": meta})
+
+
 @router.post("/api/projects/{project_id}/recover", dependencies=[Depends(auth.require_auth)])
 async def projects_recover(project_id: str) -> JSONResponse:
     """中斷恢復：服務重啟／行程被殺後，把殘留狀態清乾淨，讓改良迴圈可以無痛重啟。
