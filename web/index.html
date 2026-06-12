@@ -98,9 +98,12 @@
 
   <!-- Autopilot 自主自我改善迴圈 -->
   <div id="autopilotPanel" class="drawer glass hidden">
-    <div class="drawer-head">
-      <h2>🤖 Autopilot</h2>
-      <button id="autopilotClose" class="ghost">✕</button>
+    <div class="drawer-head" id="autopilotHead">
+      <h2>🤖 Autopilot <span id="apMini" class="ap-mini muted hidden"></span></h2>
+      <div class="drawer-actions">
+        <button id="autopilotMin" class="ghost" title="縮成迷你狀態列">▁</button>
+        <button id="autopilotClose" class="ghost">✕</button>
+      </div>
     </div>
     <div class="ap-status">
       <span id="apState" class="muted">載入中…</span>
@@ -150,6 +153,12 @@
     <!-- 中：啟動列 + 討論串 -->
     <section class="discussion">
       <div class="command-deck glass">
+        <!-- 收合後的精簡列：點擊展開；執行中保留停止鈕 -->
+        <button id="deckBar" class="deck-bar" type="button">
+          <span class="deck-caret">▾</span>
+          <span id="deckSummary" class="deck-summary muted"></span>
+          <span id="deckStop" class="deck-stop hidden" role="button">⏹ 停止</span>
+        </button>
         <input id="requirement" type="text" class="req-input"
                placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
         <div class="deck-row">
