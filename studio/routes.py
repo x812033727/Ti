@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import (
     auth,
@@ -20,6 +20,8 @@ from . import (
     publisher,
     redeploy,
     repo_base,
+    role_store,
+    roles,
     settings,
     workspace,
     ws,
@@ -233,6 +235,120 @@ async def post_settings(request: Request) -> JSONResponse:
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "detail": "格式錯誤"}, status_code=400)
     return JSONResponse({"ok": True, **settings.update(body)})
+
+
+# --- 角色管理（受保護）--------------------------------------------------
+class RoleBody(BaseModel):
+    """POST/PUT /api/roles 的請求本體。
+
+    ``system_prompt`` 為「角色專屬段」（不含共通守則 _COMMON，載入時自動前置）；
+    須非空且至少一行含「輸出/決議/驗證/格式/指令/決策」緊接冒號（反空殼 persona）。
+    PUT 為整筆替換語意：未給的選填欄位回到預設值。
+    """
+
+    key: str = ""  # POST 必填；PUT 可省略（給了須與路徑一致）
+    name: str
+    system_prompt: str
+    avatar: str = "🤖"
+    title: str = ""
+    model: str = ""  # 空字串 → config.MODEL_FAST
+    allowed_tools: list[str] = Field(default_factory=lambda: ["Read", "Grep"])
+    permission_mode: str = "default"  # 白名單 {default, acceptEdits}
+    tags: list[str] = Field(default_factory=list)
+    description: str = ""
+
+
+def _role_json(role: roles.Role) -> dict:
+    """單一角色的 API 回傳形狀：Role 欄位＋來源標記＋「角色專屬 body 原文」。
+
+    system_prompt 回去除 _COMMON 前綴的原文——讓「GET 讀出→改→PUT 寫回」直接往返。
+    """
+    return {
+        "key": role.key,
+        "name": role.name,
+        "avatar": role.avatar,
+        "title": role.title,
+        "model": role.model,
+        "allowed_tools": list(role.allowed_tools),
+        "permission_mode": role.permission_mode,
+        "tags": list(role.tags),
+        "description": role.description,
+        "source": role_store.role_source(role.key),
+        "in_roster": any(r.key == role.key for r in roles.ROSTER),
+        "system_prompt": role_store.builtin_body(role).strip(),
+    }
+
+
+def _bad_key_response(key: str) -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "detail": f"key {key!r} 不合法（須符合 {role_store.KEY_RE.pattern}）"},
+        status_code=422,
+    )
+
+
+@router.get("/api/roles", dependencies=[Depends(auth.require_auth)])
+async def roles_list() -> JSONResponse:
+    """全部角色（內建＋檔案；含被 OPTIONAL_ROLES 過濾出 ROSTER 者，以 in_roster 區分）。"""
+    return JSONResponse({"roles": [_role_json(r) for r in roles.BY_KEY.values()]})
+
+
+@router.post("/api/roles", dependencies=WRITE_DEPS)
+async def roles_create(body: RoleBody) -> JSONResponse:
+    """建立角色：落檔 roles/<key>.md 並 reload。內建 key ＝建立覆蓋檔（允許）；
+    已有角色檔的 key 回 409（請用 PUT 編輯）。"""
+    key = body.key.strip()
+    if not role_store.KEY_RE.match(key):
+        return _bad_key_response(key)
+    if role_store.role_source(key) in ("override", "file"):
+        return JSONResponse(
+            {"ok": False, "detail": f"角色 {key!r} 已存在，請用 PUT /api/roles/{key} 編輯"},
+            status_code=409,
+        )
+    try:
+        role = role_store.save_role(
+            key, body.model_dump(exclude={"key", "system_prompt"}), body.system_prompt
+        )
+    except role_store.RoleFileError as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=422)
+    return JSONResponse({"ok": True, "role": _role_json(role)})
+
+
+@router.put("/api/roles/{key}", dependencies=WRITE_DEPS)
+async def roles_update(key: str, body: RoleBody) -> JSONResponse:
+    """編輯角色（整筆替換）：對內建角色＝寫覆蓋檔；對檔案角色＝改寫原檔。"""
+    if not role_store.KEY_RE.match(key):
+        return _bad_key_response(key)
+    if body.key and body.key.strip() != key:
+        return JSONResponse(
+            {"ok": False, "detail": f"body key={body.key!r} 與路徑 {key!r} 不一致"},
+            status_code=422,
+        )
+    if key not in roles.BY_KEY:
+        return JSONResponse({"ok": False, "detail": f"角色 {key!r} 不存在"}, status_code=404)
+    try:
+        role = role_store.save_role(
+            key, body.model_dump(exclude={"key", "system_prompt"}), body.system_prompt
+        )
+    except role_store.RoleFileError as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=422)
+    return JSONResponse({"ok": True, "role": _role_json(role)})
+
+
+@router.delete("/api/roles/{key}", dependencies=WRITE_DEPS)
+async def roles_delete(key: str) -> JSONResponse:
+    """刪除角色檔：file＝移除自建角色；override＝還原內建；純內建回 409、不存在回 404。"""
+    if not role_store.KEY_RE.match(key):
+        return _bad_key_response(key)
+    source = role_store.role_source(key)
+    if source == "builtin":
+        return JSONResponse(
+            {"ok": False, "detail": f"內建角色 {key!r} 不可刪除（刪除其覆蓋檔即還原內建）"},
+            status_code=409,
+        )
+    if source == "unknown":
+        return JSONResponse({"ok": False, "detail": f"角色 {key!r} 不存在"}, status_code=404)
+    role_store.delete_role_file(key)
+    return JSONResponse({"ok": True, "restored_builtin": source == "override"})
 
 
 # --- workspace（受保護）------------------------------------------------

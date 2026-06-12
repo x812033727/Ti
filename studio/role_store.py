@@ -39,11 +39,14 @@
 - ``parse_role_file(path) -> Role``：解析單一角色檔（壞檔 raise RoleFileError）。
 - ``validate_persona_body(body) -> None``：反空殼 persona 驗證（API 層共用）。
 - ``role_source(key) -> str``：'builtin' | 'override' | 'file' | 'unknown'。
+- ``save_role(key, frontmatter, body) -> Role``：驗證＋原子落檔＋reload（API 寫入用）。
+- ``delete_role_file(key) -> bool``：刪角色檔＋reload（file＝移除、override＝還原內建）。
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -150,6 +153,64 @@ def builtin_body(role: Role) -> str:
     return role.system_prompt.removeprefix(roles._COMMON)
 
 
+def _validation_reasons(e: ValidationError) -> str:
+    """把 pydantic 冗長錯誤壓成單行人讀原因（含未知欄位/缺必填欄位的明確指名）。"""
+    return "; ".join(
+        f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}" for err in e.errors()
+    )
+
+
+def role_file_path(key: str) -> Path:
+    """角色檔落點 ``<ROLES_DIR>/<key>.md``（呼叫端須先過 KEY_RE，防路徑穿越）。"""
+    return Path(config.ROLES_DIR) / f"{key}.md"
+
+
+def save_role(key: str, frontmatter: dict, body: str) -> Role:
+    """驗證並原子落檔 ``roles/<key>.md``（temp+rename），隨即 reload；回傳生效後的 Role。
+
+    與檔案載入同一套驗證（KEY_RE＋RoleFileModel＋validate_persona_body），
+    任何不合法 raise RoleFileError（API 層轉 422）。``frontmatter`` 不含 key／body。
+    """
+    if not KEY_RE.match(key or ""):
+        raise RoleFileError(f"key {key!r} 不合法（須符合 {KEY_RE.pattern}）")
+    try:
+        fm = RoleFileModel.model_validate({**frontmatter, "key": key})
+    except ValidationError as e:
+        raise RoleFileError(f"欄位驗證失敗：{_validation_reasons(e)}") from e
+    validate_persona_body(body)
+
+    content = (
+        "---\n"
+        + yaml.safe_dump(fm.model_dump(), allow_unicode=True, sort_keys=False)
+        + "---\n\n"
+        + body.strip()
+        + "\n"
+    )
+    roles_dir = Path(config.ROLES_DIR)
+    roles_dir.mkdir(parents=True, exist_ok=True)
+    # 原子寫：同目錄 temp（.tmp 結尾不被 *.md 掃描撿到）→ os.replace。
+    tmp = roles_dir / f".{key}.md.tmp"
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, role_file_path(key))
+    reload_roles()
+    return roles.BY_KEY[key]
+
+
+def delete_role_file(key: str) -> bool:
+    """刪除 ``roles/<key>.md`` 並 reload。回傳是否真的有檔被刪（無檔＝False，不動角色表）。
+
+    語意由呼叫端把關：file→移除自建角色、override→還原內建；純內建無檔可刪。
+    """
+    if not KEY_RE.match(key or ""):
+        raise RoleFileError(f"key {key!r} 不合法（須符合 {KEY_RE.pattern}）")
+    path = role_file_path(key)
+    if not path.is_file():
+        return False
+    path.unlink()
+    reload_roles()
+    return True
+
+
 def parse_role_file(path: Path) -> Role:
     """解析並驗證單一角色檔，回傳 frozen Role；任何不合法 raise RoleFileError。"""
     key = path.stem
@@ -172,12 +233,7 @@ def parse_role_file(path: Path) -> Role:
     try:
         fm = RoleFileModel.model_validate(data)
     except ValidationError as e:
-        # pydantic 訊息冗長，壓成單行人讀原因（含未知欄位/缺必填欄位的明確指名）。
-        reasons = "; ".join(
-            f"{'.'.join(str(p) for p in err['loc']) or '<root>'}: {err['msg']}"
-            for err in e.errors()
-        )
-        raise RoleFileError(f"frontmatter 欄位驗證失敗：{reasons}") from e
+        raise RoleFileError(f"frontmatter 欄位驗證失敗：{_validation_reasons(e)}") from e
 
     if fm.key is not None and fm.key != key:
         raise RoleFileError(f"frontmatter key={fm.key!r} 與檔名 {key!r} 不一致")
