@@ -237,8 +237,17 @@ def _pm_decompose_script(requirement: str) -> str:
             "驗收標準: add/sub 模組正確且各有測試；整合說明列出兩模組\n"
             "執行指令: python -m pytest -q"
         )
+    # 循序示範同時宣告議程子題＋主責（任務 #3 的疊加格式），讓離線冒煙能走完
+    # 「需求→議程拆解→分派→逐子題討論→彙整」全流程。第二子題刻意指派本場缺席的
+    # architect：現場實測 validate_assignees 硬驗證 fallback（修正記入 agenda_plan
+    # 事件的 corrections），這正是「絕不讓 LLM 即興分派直通」的展示。
+    # （並行示範腳本維持原樣：並行離線 e2e 釘的是波次/lane 語義，不疊議程。）
     return (
-        f"收到需求：{requirement}。我拆成三個任務循序完成。\n"
+        f"收到需求：{requirement}。我先列議程子題並指派主責，再拆成三個任務循序完成。\n"
+        "子題: 核心運算模組 | 設計 calculator.py 的四則運算與除零錯誤處理 | 四則正確、除以 0 報錯\n"
+        "負責: engineer\n"
+        "子題: 介面與說明 | 設計 main.py 命令列參數與 README 用法 | 一行指令可算出結果\n"
+        "負責: architect\n"
         "任務: 實作四則運算核心 calculator.py\n"
         "任務: 建立命令列介面 main.py\n"
         "任務: 補上 README 使用說明\n"
