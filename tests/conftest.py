@@ -26,8 +26,13 @@ import dotenv
 
 dotenv.load_dotenv = lambda *args, **kwargs: False
 
-# 2) 清光殘留的 TI_* 環境變數（含 TI_DISCUSS_*）：殘留值會讓既有測試默默改道
+# 2) 清掉殘留的 TI_* 環境變數（含 TI_DISCUSS_*）：殘留值會讓既有測試默默改道
 #    （如 legacy ↔ engine 路徑翻轉、critic/notes 開關翻轉）。測試要改設定一律
 #    `monkeypatch.setattr(config, "<欄位>", ...)` 改屬性，或 setenv 後 config.reload()。
-for _k in [k for k in os.environ if k.startswith("TI_")]:
+#
+#    例外——TI_SANDBOX*（TI_SANDBOX / TI_SANDBOX_NET / TI_SANDBOX_BWRAP…）必須保留：
+#    它們描述「主機沙箱能力」而非行為偏好，是 CI sandbox-test job 刻意注入的
+#    （ci.yml 設 TI_SANDBOX=1、TI_SANDBOX_NET=1；NET 預設 0，被清掉會讓 bwrap 走
+#    --unshare-net，在 GitHub runner 觸發 RTM_NEWADDR EPERM → 沙箱測試全紅）。
+for _k in [k for k in os.environ if k.startswith("TI_") and not k.startswith("TI_SANDBOX")]:
     os.environ.pop(_k, None)
