@@ -4,7 +4,7 @@
 - 每欄至少涵蓋 正常值／空值／邊界值／非法值（高風險欄全展開）。
 - select 欄須有「非法選項」案例。
 - 須含「超長輸入不撐破版面」案例。
-- 案例對齊實際欄位（17 個 select：4 基本＋2 Claude 模型＋11 進階組、2 combo、5 文字、3 秘密）。
+- 案例對齊實際欄位（25 個 select：4 基本＋2 Claude 模型＋8 角色模型＋11 進階組、2 combo、5 文字、3 秘密）。
 - 文件宣稱的「後端擋下非法 select」「秘密留空不變更」須為**真實行為**——
   以實際呼叫 settings.update() 佐證。
 """
@@ -110,6 +110,15 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_PROVIDER": ["TI_PROVIDER", "Provider"],
         "TI_MODEL_LEAD": ["TI_MODEL_LEAD", "主力模型"],
         "TI_MODEL_FAST": ["TI_MODEL_FAST", "快速模型"],
+        # 角色模型（8 欄）：彙整於 2.25 一條案例，逐 env 列名
+        "TI_MODEL_PM": ["TI_MODEL_PM"],
+        "TI_MODEL_ENGINEER": ["TI_MODEL_ENGINEER"],
+        "TI_MODEL_QA": ["TI_MODEL_QA"],
+        "TI_MODEL_SENIOR": ["TI_MODEL_SENIOR"],
+        "TI_MODEL_RESEARCHER": ["TI_MODEL_RESEARCHER"],
+        "TI_MODEL_ARCHITECT": ["TI_MODEL_ARCHITECT"],
+        "TI_MODEL_SECURITY": ["TI_MODEL_SECURITY"],
+        "TI_MODEL_DEVOPS": ["TI_MODEL_DEVOPS"],
         "TI_PARALLEL_LANES": ["TI_PARALLEL_LANES", "支線數"],
         "TI_PARALLEL_TASKS": ["TI_PARALLEL_TASKS", "任務並行"],
         "TI_PUBLISH_MERGE": ["TI_PUBLISH_MERGE", "自動合併"],

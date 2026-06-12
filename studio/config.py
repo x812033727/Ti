@@ -23,6 +23,22 @@ PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
 MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
 MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
 
+# 每個角色可分開覆寫模型（TI_MODEL_<角色KEY大寫>，如 TI_MODEL_ENGINEER）。
+# 值為空或 "auto" ＝ 不覆寫，沿用 LEAD_ROLES → MODEL_LEAD/FAST 的二分法（向下相容）。
+# 角色 key 清單定義在此而非 roles.py，避免 config ↔ roles 循環 import。
+ROLE_KEYS = ("pm", "engineer", "qa", "senior", "researcher", "architect", "security", "devops")
+
+
+def _role_models() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key in ROLE_KEYS:
+        val = os.getenv(f"TI_MODEL_{key.upper()}", "").strip()
+        out[key] = "" if val in ("", "auto") else val
+    return out
+
+
+ROLE_MODELS = _role_models()
+
 # OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
@@ -505,7 +521,7 @@ def reload() -> None:
     （huddle／critic／notes／lessons／reflexion／客觀閘門／self-refine／rlimits）——這些
     設定面板可改的項目；其餘（門禁、路徑、伺服器位址）維持啟動時的值。
     """
-    global PROVIDER, MODEL_LEAD, MODEL_FAST
+    global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
@@ -536,6 +552,7 @@ def reload() -> None:
     DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
     MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
+    ROLE_MODELS = _role_models()
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
     OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")
