@@ -220,6 +220,25 @@ def get_meta(session_id: str) -> dict | None:
         return None
 
 
+def mark_interrupted(session_id: str, note: str = "") -> bool:
+    """把卡在 running 的幽靈 meta 標為 error（服務重啟／行程被殺，finish_session 沒跑到）。
+
+    只在 meta 存在且 status==running 時動作（冪等，不覆寫已正常收尾的場次）；
+    順手補正 n_events——start_session 時寫 0，中斷後不會再有人更新，歷史列表會誤顯。
+    回傳是否有改動。
+    """
+    meta = get_meta(session_id)
+    if meta is None or meta.get("status") != "running":
+        return False
+    meta["status"] = "error"
+    meta["finished_at"] = time.time()
+    if note:
+        meta["note"] = note
+    meta["n_events"] = len(load_events(session_id))
+    _write_meta(session_id, meta)
+    return True
+
+
 def load_events(session_id: str) -> list[dict]:
     path = _events_path(session_id)
     if not path.is_file():
