@@ -288,6 +288,20 @@ FIELDS: tuple[Field, ...] = (
         group="進階",
     ),
     Field(
+        "TI_DISCUSS_MODE",
+        "架構討論模式（legacy 兩人辯論／round_robin 多角色依序／parallel 同輪並行）",
+        kind="select",
+        options=("legacy", "round_robin", "parallel"),
+        default="legacy",
+        group="進階",
+    ),
+    Field(
+        "TI_DISCUSS_MAX_ROUNDS",
+        "多角色討論最大輪數（空＝同辯論輪數 TI_DEBATE_ROUNDS）",
+        placeholder="2",
+        group="進階",
+    ),
+    Field(
         "TI_RESEARCH_TOOLS",
         "實作中即時研究（工程師／高工附加 WebSearch/WebFetch，預設關）",
         kind="select",

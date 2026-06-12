@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Protocol
 
 from . import adr, config, events, lessons, memory, publisher, reflexion, runner, workspace
+from .discussion import DiscussionEngine
 
 # 純函式層（決議解析／停滯偵測／任務依賴／波次規劃）已移至 flow.py；此處顯式 re-export
 # （redundant alias）保住既有 import 路徑（tests、autopilot、improver 皆 from
@@ -469,6 +470,11 @@ class StudioSession:
         """
         if rounds <= 0 or self._stop:
             return
+        # 分流：TI_DISCUSS_MODE=round_robin|parallel 時走 DiscussionEngine；
+        # 未設或 legacy（含非法值 fallback）時下方原始路徑一行不動（向後相容）。
+        if config.DISCUSS_MODE in ("round_robin", "parallel"):
+            await self._debate_via_engine(a, b, topic)
+            return
         await self.broadcast(
             events.phase_change(self.session_id, "架構討論", "工程師與高級工程師對齊做法")
         )
@@ -499,6 +505,47 @@ class StudioSession:
             )
             if adr.record(self.cwd, adr.parse_adr(distilled), session_id=self.session_id):
                 await self._commit(self._main_ctx, "架構決策：記錄 ADR")
+
+    async def _debate_via_engine(self, a: ExpertLike, b: ExpertLike, topic: str) -> None:
+        """DiscussionEngine 路徑（TI_DISCUSS_MODE=round_robin|parallel）。
+
+        外部資源全部注入（semaphore／broadcast／should_stop），discussion.py 不回頭
+        import orchestrator。結束後沿用既有 ADR 蒸餾落盤：蒸餾 prompt 餵
+        summary.final_positions 串接＋末輪 transcript（取代舊 proposal/critique 兩變數），
+        蒸餾指令與 adr.record 與舊路徑一致。
+        """
+        await self.broadcast(
+            events.phase_change(
+                self.session_id, "架構討論", f"多角色討論（{config.DISCUSS_MODE}）對齊做法"
+            )
+        )
+        engine = DiscussionEngine(
+            participants=[(a.role.name, a), (b.role.name, b)],
+            mode=config.DISCUSS_MODE,
+            max_rounds=max(config.DISCUSS_MAX_ROUNDS, 1),
+            semaphore=self._llm_semaphore(),
+            broadcast=self.broadcast,
+            should_stop=lambda: self._stop,
+        )
+        result = await engine.run(adr.context(self.cwd) + f"{topic}\n請對齊整體做法與檔案結構。")
+        if not (config.ADR_ENABLED and self.cwd and not self._stop and result.transcript):
+            return
+        positions = "\n\n".join(
+            f"【{name} 最終立場】{text}" for name, text in result.summary["final_positions"].items()
+        )
+        last_round = result.transcript[-1].round
+        last_texts = "\n\n".join(
+            f"@{u.speaker}：{u.text}" for u in result.transcript if u.round == last_round
+        )
+        distilled = await b.speak(
+            "把剛才架構討論的共識蒸餾成決策記錄：每條獨立、逐行輸出 `決策: <結論>`，"
+            "重要取捨可緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行。"
+            "只輸出格式行。\n\n"
+            f"{positions}\n\n【末輪發言】\n{last_texts}",
+            self.broadcast,
+        )
+        if adr.record(self.cwd, adr.parse_adr(distilled), session_id=self.session_id):
+            await self._commit(self._main_ctx, "架構決策：記錄 ADR")
 
     async def _architecture_decision(
         self,
