@@ -23,6 +23,8 @@ class Role:
     permission_mode: str
     system_prompt: str
     tags: list[str] = field(default_factory=list)
+    # 給「調度／選人」看的一句話描述（自訂角色檔的 frontmatter 欄位；內建角色暫空）。
+    description: str = ""
 
 
 _COMMON = (
@@ -248,9 +250,19 @@ def effective_tools(role: Role) -> list[str]:
     return tools
 
 
+# --- 內建角色的「純淨快照」（tuple，不可變）------------------------------
+# role_store.reload_roles() 以此為合併基底：檔案覆蓋同 key 內建後會 setattr 改寫上面的
+# 具名常數（PM/ENGINEER/...），故重建時必須回到這份 import 期凍結的原始定義，
+# 否則「刪掉覆蓋檔還原內建」會還原到被覆蓋過的版本。
+BUILTIN_CORE: tuple[Role, ...] = (PM, ENGINEER, QA, SENIOR)
+BUILTIN_OPTIONAL: tuple[Role, ...] = (RESEARCHER, ARCHITECT, SECURITY, DEVOPS)
+BUILTIN_ROLES: tuple[Role, ...] = BUILTIN_CORE + BUILTIN_OPTIONAL
+
 # 核心 4 角色永遠在；可選角色由 config.OPTIONAL_ROLES 控制（預設全開）。
-CORE_ROLES: list[Role] = [PM, ENGINEER, QA, SENIOR]
-_OPTIONAL_ROLES: list[Role] = [RESEARCHER, ARCHITECT, SECURITY, DEVOPS]
+# 注意：以下三者皆可能被 role_store.reload_roles()「原地變異」（[:] / clear+update），
+# 外部模組請維持 `from .roles import ROSTER` 式的模組級綁定即可拿到最新值，勿另存複本。
+CORE_ROLES: list[Role] = list(BUILTIN_CORE)
+_OPTIONAL_ROLES: list[Role] = list(BUILTIN_OPTIONAL)
 
 # 工作室成員（發言/顯示順序）
 ROSTER: list[Role] = CORE_ROLES + [r for r in _OPTIONAL_ROLES if r.key in config.OPTIONAL_ROLES]

@@ -19,6 +19,11 @@ dependencies = [
     "uvicorn[standard]>=0.31,<0.50",
     "python-dotenv>=1.0",
     "httpx>=0.27",
+    # role_store.py 直接 import：pydantic 鎖 v2（用了 ConfigDict/model_validate 等 v2-only API；
+    # fastapi>=0.110 仍允許 v1，不宣告下限的話解析器選到 v1 會讓 server 頂層 import 直接炸）；
+    # PyYAML 過去僅為 uvicorn[standard] 的轉依賴，直接 import 的套件必須直接宣告。
+    "pydantic>=2",
+    "PyYAML>=6",
 ]
 
 [project.optional-dependencies]

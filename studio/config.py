@@ -454,6 +454,10 @@ def env_path() -> str:
     return str(PROJECT_ROOT / ".env")
 
 
+# 自訂角色檔目錄（roles/*.md，Markdown＋YAML frontmatter，一檔一角色；格式與載入規則見
+# studio/role_store.py）。內建 8 角色為預設、同 key 檔案覆蓋；目錄不存在＝純內建行為。
+ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
+
 WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspaces")))
 HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
 # 跨場次教訓庫持久化檔（見 LESSONS_ENABLED）。預設置於專案根，已列入 .gitignore，不進版控。
@@ -596,7 +600,9 @@ def reload() -> None:
     global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
     global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
+    global ROLES_DIR
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+    ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
     LLM_MAX_CONCURRENCY = int(os.getenv("TI_LLM_MAX_CONCURRENCY", "9"))
