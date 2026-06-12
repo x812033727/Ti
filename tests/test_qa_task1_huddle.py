@@ -191,7 +191,10 @@ async def test_huddle_retry_success_marks_done(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_huddle_off_by_default():
+async def test_huddle_off_when_disabled(monkeypatch):
+    """關閉 huddle（預設已開，此處明確 pin 關）：行為同舊版線性管線。"""
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     bucket, broadcast = collect()
     experts = _experts(
         pm=["任務: 實作", "決議: 未完成", "檢討"],

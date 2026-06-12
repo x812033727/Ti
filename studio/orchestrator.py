@@ -405,12 +405,23 @@ class StudioSession:
         ctx.notes_buffer.clear()
 
     def _notes_context(self, ctx: LaneContext) -> str:
-        """讀回 NOTES.md，組成要注入實作 prompt 的前綴（停用/空白時回空字串）。"""
+        """讀回 NOTES.md，組成要注入實作 prompt 的前綴（停用/空白時回空字串）。
+
+        只取尾段 NOTES_MAX_CHARS 字（從段落邊界起切）：專案模式 NOTES.md 跨場次累積、
+        只增不減，全文注入會讓 context 無限膨脹。
+        """
         if not (config.NOTES_ENABLED and ctx.cwd):
             return ""
-        notes = workspace.read_notes(self.workspace_id)
-        if not notes.strip():
+        notes = workspace.read_notes(self.workspace_id).strip()
+        if not notes:
             return ""
+        cap = config.NOTES_MAX_CHARS
+        if cap > 0 and len(notes) > cap:
+            tail = notes[-cap:]
+            cut = tail.find("\n\n")
+            if 0 <= cut < len(tail) - 2:
+                tail = tail[cut + 2 :]
+            notes = tail.strip()
         return f"【團隊共用知識庫 NOTES.md（過往踩過的坑／決策／後續）】\n{notes}\n\n"
 
     # --- 立項/需求澄清（PRD）--------------------------------------------
@@ -1260,6 +1271,10 @@ class StudioSession:
 
             # --- 交付前自測（確定性 smoke-run）---
             smoke = await self._self_test(ctx, impl_text, bc)
+            # 自測指令是否為工程師「本輪自己宣告」：宣告者代表工程師聲稱此指令能展示本任務，
+            # 實敗才適用硬性閘門/就地精修；fallback 到 PM 的整體執行指令時只回報不硬退——
+            # 多任務場景下整體指令在前期任務本來就跑不起來，硬退回會誤殺（strict 模式除外）。
+            own_cmd = runner.parse_run_command(impl_text) is not None
             # --- (D) 單輪內自我精修：自測「實際執行」未通過時，讓同一工程師就地依執行紀錄再修 ---
             # 訊號是 runner 的確定性 exit code（非 LLM 自評），裁決權仍在 QA/高工/客觀閘門；同一
             # engineer 是有狀態對話，續一則帶 log 的訊息即可。rnd 不變、impl_history 每外輪仍只
@@ -1268,6 +1283,7 @@ class StudioSession:
                 config.SELF_REFINE_ITERS > 0
                 and smoke is not None
                 and not smoke.ok
+                and own_cmd
                 and not self._stop
             ):
                 for i in range(1, config.SELF_REFINE_ITERS + 1):
@@ -1355,14 +1371,20 @@ class StudioSession:
             )
 
             # --- (B) 客觀閘門（硬性否決）：交付前自測「實際執行」未通過 → 本輪強制退回，
-            # QA/高工的文字裁決推翻不了真實 exit code（守住反 reward-hacking）。只在自測真的有跑
-            # 且失敗時否決；strict 模式連「未宣告自測指令」也視為未通過。評審照常並行跑（評同一
-            # commit、文字仍是修正素材），附在閘門結論之後。---
+            # QA/高工的文字裁決推翻不了真實 exit code（守住反 reward-hacking）。只在「工程師
+            # 本輪自己宣告的自測指令」真的有跑且失敗時否決——fallback 到整體執行指令的失敗
+            # 只回報、不硬退（前期任務整體指令本來就跑不起來）；strict 模式維持全面嚴格：
+            # fallback 失敗與「未宣告自測指令」皆視為未通過。評審照常並行跑（評同一 commit、
+            # 文字仍是修正素材），附在閘門結論之後。---
             gate_veto = (
                 config.objective_gate_enabled()
                 and ctx.cwd is not None
                 and (
-                    (smoke is not None and not smoke.ok)
+                    (
+                        smoke is not None
+                        and not smoke.ok
+                        and (own_cmd or config.objective_gate_strict())
+                    )
                     or (smoke is None and config.objective_gate_strict())
                 )
             )

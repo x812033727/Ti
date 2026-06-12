@@ -114,7 +114,7 @@ FIELDS: tuple[Field, ...] = (
         "卡關討論 huddle（跑滿輪數仍未過時召集團隊找替代方案）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -130,7 +130,7 @@ FIELDS: tuple[Field, ...] = (
         "共用筆記 NOTES.md（跨任務累積踩過的坑／決策）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -138,7 +138,7 @@ FIELDS: tuple[Field, ...] = (
         "跨場次教訓庫（長期記憶，開場注入 PM 拆解）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -146,7 +146,7 @@ FIELDS: tuple[Field, ...] = (
         "任務級反思記憶（失敗輪蒸餾反思，後續輪／huddle 重試帶回）",
         kind="select",
         options=("0", "1"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -154,7 +154,7 @@ FIELDS: tuple[Field, ...] = (
         "客觀驗收閘門（0 關／1 自測實敗才否決／strict 連未宣告指令也退回）",
         kind="select",
         options=("0", "1", "strict"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(
@@ -162,7 +162,7 @@ FIELDS: tuple[Field, ...] = (
         "單輪內自我精修次數（自測未過就地再修，0 關）",
         kind="select",
         options=("0", "1", "2", "3"),
-        default="0",
+        default="1",
         group="進階",
     ),
     Field(

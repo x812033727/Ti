@@ -33,7 +33,7 @@ def test_exposed_in_settings_panel():
 
 
 def test_stable_defaults_in_isolated_env(tmp_path):
-    """乾淨環境（無 TI_* 覆寫、無 .env）下確認穩健式預設：C 開、A／B／D 關。"""
+    """乾淨環境（無 TI_* 覆寫、無 .env）下確認預設：A／B／C／D 全開（學習機制預設啟用）。"""
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     env = {k: v for k, v in os.environ.items() if not k.startswith("TI_")}
     env["PYTHONPATH"] = repo_root  # 子程序找得到 studio
@@ -47,4 +47,4 @@ def test_stable_defaults_in_isolated_env(tmp_path):
         [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=tmp_path
     )
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "True False '0' 0 4096 300 512"
+    assert r.stdout.strip() == "True True '1' 1 4096 300 512"

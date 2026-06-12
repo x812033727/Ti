@@ -48,6 +48,9 @@ def collect():
 @pytest.fixture(autouse=True)
 def _no_debate(monkeypatch):
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
+    # 本檔只驗停滯守門的輪數語義：pin 掉會加輪次/呼叫的機制（其預設已開）。
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
 
 
 def _experts(pm, eng, qa, senior):

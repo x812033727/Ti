@@ -23,6 +23,11 @@ async def test_offline_parallel_demo(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
     monkeypatch.setattr(config, "NOTES_ENABLED", True)
     monkeypatch.setattr(config, "OFFLINE_DELAY", 0.0)
+    # 學習機制 pin 關（預設已開）：自測指令（python -m pytest）是否可跑依賴 host 環境。
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
+    monkeypatch.setattr(config, "SELF_REFINE_ITERS", 0)
+    monkeypatch.setattr(config, "OBJECTIVE_GATE", "0")
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
 
     sid = "offpar"

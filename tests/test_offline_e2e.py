@@ -22,6 +22,12 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
     monkeypatch.setattr(config, "OFFLINE_DELAY", 0.0)
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
+    # 學習機制 pin 關（預設已開）：本 e2e 驗證確定性產出；自測指令是否可跑依賴
+    # host 環境，閘門/精修/反思語義另有專測。
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
+    monkeypatch.setattr(config, "SELF_REFINE_ITERS", 0)
+    monkeypatch.setattr(config, "OBJECTIVE_GATE", "0")
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
     from studio.server import app

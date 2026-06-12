@@ -25,6 +25,11 @@ def client(tmp_path, monkeypatch):
     # 刻意保持新機制開關為「關閉」，證明離線 demo 不依賴它們的預設值。
     monkeypatch.setattr(config, "CRITIC_ENABLED", False)
     monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
+    monkeypatch.setattr(config, "SELF_REFINE_ITERS", 0)
+    # 客觀閘門 pin 關：離線示範的自測指令依賴 host 環境（pytest 是否可執行），
+    # 閘門語義另有 tests/core 專測；此處只驗離線 demo 流程本身。
+    monkeypatch.setattr(config, "OBJECTIVE_GATE", "0")
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
     from studio.server import app

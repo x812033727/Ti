@@ -156,6 +156,7 @@ async def test_huddle_conclusion_written_to_notes(tmp_path, monkeypatch):
     """卡關討論結論寫進 NOTES（坑/決策來自討論）。"""
     monkeypatch.setattr(config, "NOTES_ENABLED", True)
     monkeypatch.setattr(config, "HUDDLE_ENABLED", True)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)  # 失敗輪不另蒸餾，保 hermetic
     monkeypatch.setattr(config, "ENABLE_GIT", False)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     sid = "huddlenotes"
@@ -181,6 +182,7 @@ async def test_critic_rejection_written_to_notes(tmp_path, monkeypatch):
     """critic 退回理由寫進 NOTES（決策/坑來自異議）。"""
     monkeypatch.setattr(config, "NOTES_ENABLED", True)
     monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)  # 失敗輪不另蒸餾，保 hermetic
     monkeypatch.setattr(config, "ENABLE_GIT", False)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     sid = "criticnotes"
@@ -205,7 +207,9 @@ async def test_critic_rejection_written_to_notes(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_notes_disabled_by_default(tmp_path, monkeypatch):
+async def test_notes_off_when_disabled(tmp_path, monkeypatch):
+    """關閉 NOTES（預設已開，此處明確 pin 關）：不寫檔、不注入。"""
+    monkeypatch.setattr(config, "NOTES_ENABLED", False)
     monkeypatch.setattr(config, "ENABLE_GIT", False)
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     sid = "off"
@@ -224,3 +228,28 @@ async def test_notes_disabled_by_default(tmp_path, monkeypatch):
     assert workspace.read_notes(sid) == ""
     assert not (workspace.workspace_path(sid) / "NOTES.md").exists()
     assert "團隊共用知識庫" not in experts["engineer"].prompts[0]
+
+
+def test_notes_context_truncates_to_tail(tmp_path, monkeypatch):
+    """NOTES 注入只取尾段 NOTES_MAX_CHARS 字（從段落邊界起）：防專案長跑 context 膨脹。"""
+    from studio.orchestrator import LaneContext
+
+    monkeypatch.setattr(config, "NOTES_ENABLED", True)
+    monkeypatch.setattr(config, "NOTES_MAX_CHARS", 120)
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    sid = "notescap"
+    workspace.create_workspace(sid)
+    workspace.append_note(sid, "舊段" * 200)  # 遠超上限的舊知識
+    workspace.append_note(sid, "新段重點：金額用整數分")
+
+    async def bc(ev):
+        pass
+
+    session = StudioSession(sid, bc, experts={}, cwd=workspace.workspace_path(sid))
+    ctx = LaneContext("main", workspace.workspace_path(sid), {})
+    text = session._notes_context(ctx)
+    assert "新段重點：金額用整數分" in text  # 最新知識保留
+    assert "舊段舊段舊段" not in text  # 超限舊段被截掉
+    # 上限為 0 時不截斷（停用治理）
+    monkeypatch.setattr(config, "NOTES_MAX_CHARS", 0)
+    assert "舊段舊段舊段" in session._notes_context(ctx)

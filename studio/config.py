@@ -38,23 +38,28 @@ MAX_ROUNDS = TASK_MAX_ROUNDS  # 舊名相容
 # 架構辯論的來回回合數（工程師 ⇄ 高級工程師）。
 DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
 
-# --- 內部討論機制（卡關 huddle，預設關閉以保既有測試/行為向後相容）---------
+# --- 內部討論機制（卡關 huddle）--------------------------------------------
 # 開啟後：任務跑滿 TASK_MAX_ROUNDS 仍未通過時，召集團隊 huddle 找替代方案並給 1 輪重試，
-# 仍失敗則明確標記為「已知限制」而非靜默帶過。離線 demo 由腳本自行開啟此開關展示。
-HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+# 仍失敗則明確標記為「已知限制」而非靜默帶過。只在「跑滿輪數仍失敗」的低頻路徑加成本，
+# 換得失敗被明示——預設開啟（要省可關）。
+HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
 
 # 異議檢查（critic）：放行前由獨立 critic 專挑「為何還不算完成」，提出實質反對才退回。
-# 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角），預設關閉。
+# 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角）。
+# 唯一在「成功路徑」上加成本的學習開關（每個通過任務都多一次獨立呼叫）且有誤退回風險，
+# 維持預設關閉（opt-in）。
 CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 
 # 共用知識庫（workspace 內 NOTES.md）：跨任務累積踩過的坑/決策/後續，實作時讀回、結束時寫入。
-# 不進交付物與檔案清單（見 workspace._IGNORE）。預設關閉以保既有行為。
-NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
+# 不進交付物與檔案清單（見 workspace._IGNORE）。純檔案 IO、無額外 LLM 呼叫——預設開啟；
+# 注入時只取尾段 NOTES_MAX_CHARS 字（從段落邊界起），防專案模式長跑 context 無限膨脹。
+NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
+NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
 
 # 跨場次教訓庫（lessons.json）：工作室的長期記憶。每場檢討蒸餾出可重用的「教訓」持久化，
 # 下次新討論開場注入 PM 拆解，讓工作室跨場次自我加強（避免重蹈、善用既有結論）。
-# 預設關閉以保既有行為（與 NOTES/HUDDLE/CRITIC 同為 opt-in）；LESSONS_MAX 為注入時取最新筆數。
-LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
+# 近零成本（搭檢討 prompt 順帶解析，無額外 LLM 呼叫）——預設開啟；LESSONS_MAX 為注入上限。
+LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
 
 # 立項/需求澄清：開場由 PM 評估需求是否模糊——模糊則列關鍵問題（≤3 條）等使用者回覆，
@@ -77,14 +82,17 @@ KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))  # 注入
 #   推翻真實 exit code（守住反 reward-hacking）。
 # C 子進程資源上限：runner 執行指令時套 RLIMIT，補 bwrap 沒有的記憶體／CPU／檔案大小防線。
 # D Self-Refine：單輪內自測未過時，讓同一工程師就地依執行紀錄再修一次。
-# 穩健式預設：C 預設開（純加固、無行為風險）；A／B／D 預設關（opt-in），保既有行為向後相容。
+# 預設組合（讓「越做越進步」的迴圈真的在跑）：A／B／C／D 全開——A 只在失敗輪多一次廉價
+# 呼叫且永不 raise；B 零 LLM 成本、只在「自測真的有跑且失敗」才否決（strict 仍 opt-in，
+# 會誤殺純文件類任務）；D 失敗才觸發、一次就地修常省下整輪 QA＋審查三連呼叫。
 # 與 TI_LESSONS／NOTES／HUDDLE／CRITIC 同列「進階流程」開關：env 仍是來源，且已納入設定面板
 # （settings.FIELDS「進階」組）與 reload()。消費端皆讀即時全域值，故面板存檔後下次討論即生效。
-REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
+REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
 REFLEXION_MAX = int(os.getenv("TI_REFLEXION_MAX", "5"))  # 注入時取最近 N 筆反思
-# 客觀閘門：0=關／1=開（有自測指令且實敗才否決）／strict=連「未宣告執行指令」也視為未通過。
-OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
-SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))  # 單輪內就地精修次數（0=關）
+# 客觀閘門：0=關／1=開（工程師本輪宣告的自測指令實敗才否決；fallback 整體指令只回報不硬退）
+# ／strict=fallback 失敗與「未宣告執行指令」皆視為未通過。
+OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
+SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))  # 單輪內就地精修次數（0=關）
 # 子進程資源上限（穩健式預設開）。每項 0=略過該限。RLIMIT_AS 算虛擬位址空間，V8／BLAS 會預留
 # 數 GB，故 4096MB 為真實工作負載的寬鬆下限（交付物 512MB 是玩具題尺度）；CPU 300s 遠高於
 # DEMO_TIMEOUT(60s wall)，只攔失控孤兒；FSIZE 512MB 擋單檔塞爆磁碟而不卡 pip wheel。
@@ -424,7 +432,7 @@ def reload() -> None:
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
-    global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, LESSONS_ENABLED
+    global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
@@ -458,13 +466,15 @@ def reload() -> None:
     PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
     PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
-    HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "0") not in ("0", "false", "False", "")
+    # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
+    HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
     CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
-    NOTES_ENABLED = os.getenv("TI_NOTES", "0") not in ("0", "false", "False", "")
-    LESSONS_ENABLED = os.getenv("TI_LESSONS", "0") not in ("0", "false", "False", "")
-    REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "0") not in ("0", "false", "False", "")
-    OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "0")
-    SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "0"))
+    NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
+    NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
+    LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
+    REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
+    OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
+    SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))

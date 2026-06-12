@@ -14,9 +14,19 @@ async def test_returns_empty_when_offline(monkeypatch, tmp_path):
     assert await providers.complete_once("s", "u", session_id="x", cwd=tmp_path) == ""
 
 
+async def test_returns_empty_when_provider_not_ready(monkeypatch, tmp_path):
+    """provider 無憑證時直接回空（走模板 fallback），不白等 SDK 啟動失敗。"""
+    monkeypatch.setattr(config, "OFFLINE_MODE", False)
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "")
+    assert await providers.complete_once("s", "u", session_id="x", cwd=tmp_path) == ""
+
+
 async def test_openai_branch_single_turn(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "OFFLINE_MODE", False)
     monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://localhost:9")  # provider_ready
     captured: dict = {}
 
     class _Msg:
@@ -47,6 +57,7 @@ async def test_openai_branch_single_turn(monkeypatch, tmp_path):
 async def test_never_raises_on_chat_error(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "OFFLINE_MODE", False)
     monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://localhost:9")  # provider_ready
 
     async def boom(*a, **k):
         raise RuntimeError("api down")
