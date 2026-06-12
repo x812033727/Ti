@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import re
 from dataclasses import dataclass
@@ -20,6 +21,29 @@ from enum import Enum
 from . import config, runner
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
+
+# 發佈目標 repo 的 per-session 覆寫（長期專案可設定自己的 publish_repo）。
+# 用 contextvar 而非函式參數逐層傳遞：publish 之後的 CI 驗證／自我修復迴圈
+# （verify_and_merge / ci_failure_logs / repush）都在同一個 asyncio task 內，
+# orchestrator 在 _maybe_publish 範圍設定一次即全程生效，且並行 session 互不干擾。
+_REPO_OVERRIDE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "ti_publish_repo_override", default=""
+)
+
+
+def current_repo() -> str:
+    """本次發佈流程實際使用的 repo：per-session 覆寫優先，否則全域 TI_PUBLISH_REPO。"""
+    return _REPO_OVERRIDE.get() or config.PUBLISH_REPO
+
+
+def set_repo_override(repo: str | None) -> contextvars.Token:
+    """設定 repo 覆寫（None/空＝無覆寫），回傳 token 供 reset_repo_override 還原。"""
+    return _REPO_OVERRIDE.set((repo or "").strip())
+
+
+def reset_repo_override(token: contextvars.Token) -> None:
+    _REPO_OVERRIDE.reset(token)
+
 
 # gh CLI 從環境（HOME 的 ~/.config/gh）讀 token；輸出不含 token，但對外回傳仍經 redact() 防呆。
 # 僅供 CI 自我修復迴圈取失敗日誌用（合併本身走 REST 的 _merge_flow）。
@@ -79,7 +103,8 @@ class PublishResult:
 
 
 def is_configured() -> bool:
-    return bool(config.GITHUB_TOKEN and config.PUBLISH_REPO)
+    """是否可發佈：需 token＋目標 repo（全域 TI_PUBLISH_REPO 或 per-session 覆寫）。"""
+    return bool(config.GITHUB_TOKEN and current_repo())
 
 
 def branch_name(session_id: str) -> str:
@@ -252,7 +277,7 @@ def _headers() -> dict:
 
 
 def _api(path: str) -> str:
-    return f"https://api.github.com/repos/{config.PUBLISH_REPO}{path}"
+    return f"https://api.github.com/repos/{current_repo()}{path}"
 
 
 async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
@@ -297,6 +322,51 @@ def pr_failure_detail(status_code: int, body: str) -> str:
             "（獨立程式碼庫的專案 workspace 無法對 base 開 PR）；分支已推送保存"
         )
     return f"PR 建立失敗（{status_code}）：{body[:200]}"
+
+
+async def _push_base(cwd, base: str, url: str) -> runner.RunOutput:
+    """把 workspace HEAD 直接推成遠端 base 分支（空 repo 的首次發佈初始化）。"""
+    return await runner.run_command_exec(
+        cwd,
+        ["git", "push", url, f"HEAD:refs/heads/{base}"],
+        timeout=120,
+        sandbox=False,
+        label="git push (init base)",
+    )
+
+
+async def _ensure_repo(repo: str, base: str) -> str:
+    """確保 per-project 發佈 repo 可用。回傳：
+
+    - "ready"：repo 存在且 base 分支存在 → 走正常「分支＋PR」流程。
+    - "empty"：repo 存在但沒有 base 分支（空 repo，含剛自動建立者）→ 首次發佈直接初始化 base。
+    - "unavailable: <原因>"：不存在且無法自動建立（owner 非 token 使用者／權限不足）。
+    """
+    import httpx
+
+    headers = _headers()
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(f"https://api.github.com/repos/{repo}", headers=headers)
+        if r.status_code == 200:
+            b = await client.get(
+                f"https://api.github.com/repos/{repo}/branches/{base}", headers=headers
+            )
+            return "ready" if b.status_code == 200 else "empty"
+        if r.status_code != 404:
+            return f"unavailable: 查詢 repo 失敗（{r.status_code}）"
+        # 不存在 → owner 是 token 使用者本人才能自動建立（私有 repo）
+        owner, _, name = repo.partition("/")
+        u = await client.get("https://api.github.com/user", headers=headers)
+        if u.status_code != 200 or u.json().get("login", "").lower() != owner.lower():
+            return "unavailable: repo 不存在，且 owner 非 token 使用者，無法自動建立"
+        c = await client.post(
+            "https://api.github.com/user/repos",
+            json={"name": name, "private": True, "description": "Ti Studio 專案成果"},
+            headers=headers,
+        )
+        if c.status_code in (200, 201):
+            return "empty"
+        return f"unavailable: 自動建立 repo 失敗（{c.status_code}）：{c.text[:120]}"
 
 
 async def _open_pr(payload: dict) -> tuple[bool, str]:
@@ -527,17 +597,56 @@ async def _merge_flow(
 
 
 async def publish(
-    cwd, session_id: str, requirement: str, *, make_pr: bool = True, merge: bool = False
+    cwd,
+    session_id: str,
+    requirement: str,
+    *,
+    make_pr: bool = True,
+    merge: bool = False,
+    repo: str | None = None,
+) -> PublishResult:
+    """發佈 workspace 成果。repo 給值＝per-project 覆寫（含自動建 repo／空 repo 初始化）。"""
+    token = set_repo_override(repo) if repo else None
+    try:
+        return await _publish_inner(cwd, session_id, requirement, make_pr=make_pr, merge=merge)
+    finally:
+        if token is not None:
+            reset_repo_override(token)
+
+
+async def _publish_inner(
+    cwd, session_id: str, requirement: str, *, make_pr: bool, merge: bool
 ) -> PublishResult:
     if not is_configured():
-        return PublishResult(False, "未設定 GITHUB_TOKEN 或 TI_PUBLISH_REPO，無法發佈")
+        return PublishResult(False, "未設定 GITHUB_TOKEN 或發佈 repo，無法發佈")
 
-    repo = config.PUBLISH_REPO
+    repo = current_repo()
     branch = branch_name(session_id)
 
     # 確保有 git repo 與至少一個 commit
     await runner.git_init(cwd)
     await runner.git_commit(cwd, "Ti Studio 成果")
+
+    # per-project 覆寫的 repo 可能不存在（自動建立）或是空的（首次發佈直接初始化 base）。
+    # 全域 TI_PUBLISH_REPO 維持原行為：不做存在性檢查，缺了由 push/PR 自然回報。
+    if _REPO_OVERRIDE.get():
+        state = await _ensure_repo(repo, config.PUBLISH_BASE)
+        if state.startswith("unavailable"):
+            return PublishResult(
+                False, "無法發佈：" + redact(state.partition(":")[2].strip() or state), repo=repo
+            )
+        if state == "empty":
+            init = await _push_base(cwd, config.PUBLISH_BASE, remote_url(repo, config.GITHUB_TOKEN))
+            if not init.ok:
+                return PublishResult(False, "首次發佈初始化失敗：" + redact(init.output), repo=repo)
+            return PublishResult(
+                True,
+                f"首次發佈：已初始化 {repo} 的 {config.PUBLISH_BASE}（成果已在主分支，無需 PR）",
+                branch=config.PUBLISH_BASE,
+                repo=repo,
+                pushed=True,
+                merged=True,
+            )
 
     push = await _push(cwd, branch, remote_url(repo, config.GITHUB_TOKEN))
     if not push.ok:
