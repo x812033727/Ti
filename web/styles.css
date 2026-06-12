@@ -1233,7 +1233,11 @@ input:focus-visible, select:focus-visible { outline: none; }
 
   /* 設定改為整頁：填滿畫面、底部留出分頁列空間 */
   .settings-panel { padding: 0; align-items: stretch; bottom: 72px; }
-  .settings-card { width: 100%; height: 100%; max-height: none; border-radius: 0; border: none; }
+  .settings-card { width: 100%; height: 100%; max-height: none; border-radius: 0; border: none; overflow-y: auto; }
+  /* 整頁捲動：表單不再內捲被壓扁；標題/儲存列 sticky 保持可達 */
+  .settings-form { flex: none; overflow: visible; }
+  .settings-head { position: sticky; top: 0; background: rgba(18, 19, 26, .96); z-index: 1; }
+  .settings-foot { position: sticky; bottom: 0; background: rgba(18, 19, 26, .96); z-index: 1; }
 
   /* toast 抬高避開分頁列 */
   #toast { bottom: 84px; }
