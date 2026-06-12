@@ -153,6 +153,12 @@ STALL_ROUNDS = int(os.getenv("TI_STALL_ROUNDS", "3"))
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
 MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 
+# 發言層 watchdog：max_turns 只限「回合數」，限不住單一工具呼叫卡死（如前景跑常駐
+# server），故另設時間軸保護。idle＝兩則串流訊息的間隔上限（有進展就重置，不誤殺正常
+# 長發言）；hard＝整次發言的總時長兜底。各自 0=停用。逾時走 Expert._abort_turn 回收。
+TURN_IDLE_TIMEOUT = float(os.getenv("TI_TURN_IDLE_TIMEOUT", "240"))
+TURN_HARD_TIMEOUT = float(os.getenv("TI_TURN_TIMEOUT", "1800"))
+
 # 啟用哪些「可選角色」（核心 4 角色永遠在）。逗號分隔；清空則只剩核心 4 角色。
 # 多一個角色 = 每場討論多幾次 LLM 呼叫（更耗額度、更久），要省可逐一移除。
 OPTIONAL_ROLES = {
@@ -508,6 +514,7 @@ def reload() -> None:
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
+    global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
     global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
@@ -558,6 +565,8 @@ def reload() -> None:
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
     SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
+    TURN_IDLE_TIMEOUT = float(os.getenv("TI_TURN_IDLE_TIMEOUT", "240"))
+    TURN_HARD_TIMEOUT = float(os.getenv("TI_TURN_TIMEOUT", "1800"))
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")

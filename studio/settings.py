@@ -214,6 +214,18 @@ FIELDS: tuple[Field, ...] = (
         group="進階",
     ),
     Field(
+        "TI_TURN_IDLE_TIMEOUT",
+        "發言閒置逾時秒數（串流多久無進展即中止該輪發言，0 關）",
+        placeholder="240",
+        group="進階",
+    ),
+    Field(
+        "TI_TURN_TIMEOUT",
+        "發言總時長上限秒數（單次發言的硬上限兜底，0 關）",
+        placeholder="1800",
+        group="進階",
+    ),
+    Field(
         "TI_RLIMITS",
         "子進程資源上限（記憶體／CPU／檔案大小防線，預設開）",
         kind="select",
