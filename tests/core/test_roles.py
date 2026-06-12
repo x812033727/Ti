@@ -38,6 +38,16 @@ def test_architect_is_read_only():
     assert "Write" not in r.allowed_tools and "Bash" not in r.allowed_tools
 
 
+def test_builtin_roles_all_have_description():
+    """守門：內建 8 角色的 description（給調度／選人看）必須全數非空。
+
+    對 import 期凍結的 BUILTIN_ROLES 快照驗證，不受 role_store 檔案覆蓋影響。
+    """
+    assert len(roles.BUILTIN_ROLES) == 8
+    for r in roles.BUILTIN_ROLES:
+        assert r.description.strip(), f"內建角色 {r.key} 的 description 為空"
+
+
 def test_security_approved_parses_verdict():
     assert security_approved("看起來沒問題。\n決議: 安全核可") is True
     assert security_approved("有路徑穿越風險。\n決議: 安全退回") is False
