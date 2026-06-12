@@ -57,20 +57,24 @@ def test_comment_mentions_proxyheaders_and_leftmost():
     assert "最左值" in block, f"註解需提及取最左值偽造：\n{block}"
 
 
-def test_comment_mentions_forwarded_allow_ips_baseline():
-    """面向 B：版本鎖為基線、需設 forwarded_allow_ips、嚴禁 "*"。"""
+def test_comment_mentions_forwarded_allow_ips_landed():
+    """面向 B：需設 forwarded_allow_ips、嚴禁 "*"，且註明防護已由 server.main() 落地（issue #0001）。"""
     lines = PYPROJECT.read_text(encoding="utf-8").splitlines()
     block = _comment_block_above(lines, _dep_line_index(lines))
     assert "forwarded_allow_ips" in block, f"註解需提醒設定 forwarded_allow_ips：\n{block}"
     assert ('"*"' in block) or ("嚴禁" in block), f'註解需警示嚴禁 "*"：\n{block}'
-    assert "基線" in block, f"註解需說明版本鎖僅為基線：\n{block}"
+    # issue #0001 已落地：註解由「基線」改為點明防護已在 server.main() 實際生效。
+    assert "落地" in block or "server.main()" in block, (
+        f"註解需說明防護已落地（server.main()）：\n{block}"
+    )
 
 
 def test_pyproject_still_valid_toml():
     """註解不得破壞 TOML 合法性。"""
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     deps = data["project"]["dependencies"]
-    assert any(d.startswith("uvicorn[standard]>=0.30") for d in deps), deps
+    # 下限已升至 0.31（issue #0001）；守住「有 uvicorn[standard]>=0.3x」而非釘死小版號。
+    assert any(d.startswith("uvicorn[standard]>=0.3") for d in deps), deps
 
 
 def test_comment_lines_are_proper_toml_comments():

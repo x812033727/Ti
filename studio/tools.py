@@ -6,10 +6,14 @@ function-calling 規格定義同名工具，並提供實際在 workspace cwd 上
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
+import socket
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
-from . import runner
+from . import config, runner
 from .workspace import safe_resolve
 
 # OpenAI function-calling 工具規格
@@ -69,14 +73,28 @@ _SPECS: dict[str, dict] = {
             },
         },
     },
+    "web_fetch": {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "抓取公開網頁內容供研究參考（受網域白名單與 SSRF 防護限制，輸出截斷）",
+            "parameters": {
+                "type": "object",
+                "properties": {"url": {"type": "string", "description": "http/https 網址"}},
+                "required": ["url"],
+            },
+        },
+    },
 }
 
-# 把 Claude 工具名對應到本層工具
+# 把 Claude 工具名對應到本層工具。WebSearch 在 OpenAI 路徑無對應本地工具（無可用搜尋 API），
+# 故不映射——研究員角色在 OpenAI 路徑因此自動獲得 web_fetch（WebFetch→web_fetch），屬合理增益。
 _CLAUDE_TO_LOCAL = {
     "Read": ["read_file"],
     "Write": ["write_file"],
     "Edit": ["edit_file"],
     "Bash": ["run_bash"],
+    "WebFetch": ["web_fetch"],
 }
 
 
@@ -95,6 +113,136 @@ def _safe_path(cwd: Path, rel: str, *, must_exist: bool = True) -> Path | None:
     讀取/編輯預設 must_exist=True；write_file 傳 False，避免尚未存在的新檔被誤擋。
     """
     return safe_resolve(Path(cwd), rel, must_exist=must_exist)
+
+
+# --- 研究抓取（web_fetch）：SSRF／網域白名單管控 -----------------------------
+# 政策的單一真實來源：research_url_check 同時供 OpenAI 路徑（execute web_fetch）與
+# Claude 路徑（experts._auto_allow_tool 攔 WebFetch）共用，確保兩條路徑施加相同管控。
+
+
+def _ip_block_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
+    """位址是否屬「不可抓取」範圍（私網/loopback/link-local/reserved 等）；可抓回 None。"""
+    mapped = getattr(ip, "ipv4_mapped", None)  # 還原 ::ffff:a.b.c.d 再判，杜絕繞過
+    if mapped is not None:
+        ip = mapped
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_unspecified
+        or ip.is_multicast
+    ):
+        return f"目標位址非公開網路: {ip}"
+    return None
+
+
+def research_url_check(url: str) -> str | None:
+    """研究抓取的 URL 政策檢查。None=放行；str=拒絕原因。
+
+    1. scheme 限 http/https；
+    2. hostname 為 IP 字面值時，私網/loopback/link-local/reserved/unspecified/multicast 一律拒（SSRF）；
+    3. 網域白名單非空時，hostname 須等於白名單項或為其子網域；空白名單＝公網全放（仍擋私網 IP）。
+
+    DNS 名稱解析後的位址檢查在實際連線前另做（見 _resolved_addr_reason），兩段式防護。
+    DNS rebinding（檢查與連線各解析一次）無法完全防禦，屬已知接受風險。
+    """
+    try:
+        parsed = urlparse((url or "").strip())
+    except ValueError:
+        return "URL 無法解析"
+    if parsed.scheme not in ("http", "https"):
+        return f"不支援的 scheme: {parsed.scheme or '(空)'}（僅允許 http/https）"
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return "URL 缺少 hostname"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None  # 非 IP 字面值（網域名）：此處不擋，留給 DNS 解析後檢查
+    if ip is not None:
+        reason = _ip_block_reason(ip)
+        if reason:
+            return reason
+    domains = config.RESEARCH_ALLOWED_DOMAINS
+    if domains:
+        h = host.lower()
+        if not any(h == d or h.endswith("." + d) for d in domains):
+            return f"網域不在白名單: {host}"
+    return None
+
+
+def _resolved_addr_reason(url: str) -> str | None:
+    """把 hostname 經 DNS 解析成位址後逐一過 _ip_block_reason；任一被擋即回原因。"""
+    host = urlparse(url).hostname or ""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return f"DNS 解析失敗: {host}"
+    for info in infos:
+        addr = info[4][0].split("%", 1)[0]  # 剝 IPv6 zone
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        reason = _ip_block_reason(ip)
+        if reason:
+            return reason
+    return None
+
+
+def _strip_html(html: str) -> str:
+    """輕量剝 HTML：去 script/style 與標籤、壓縮空白（不引入解析依賴）。"""
+    html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
+    html = re.sub(r"(?s)<[^>]+>", " ", html)
+    return re.sub(r"\s+", " ", html).strip()
+
+
+async def _http_get(url: str, timeout: float):
+    """實際 HTTP GET（注入縫：測試 monkeypatch 此函式餵假回應，免真連線）。
+
+    刻意關閉自動 redirect：由 _research_fetch 逐跳手動跟隨並對每一跳重跑完整管控。
+    """
+    import httpx
+
+    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+        return await client.get(url)
+
+
+async def _research_fetch(url: str) -> str:
+    """抓取網頁供研究：逐跳跟隨 redirect、每跳重驗管控、截斷輸出；任何錯誤回降級訊息（永不 raise）。"""
+    reason = research_url_check(url)
+    if reason:
+        return f"錯誤：研究抓取被拒（{reason}），請以既有知識續行"
+    current = url
+    try:
+        for _ in range(6):  # 原始 1 次 + 最多 5 跳 redirect
+            reason = research_url_check(current)
+            if reason:
+                return f"錯誤：研究抓取被拒（{reason}），請以既有知識續行"
+            dns_reason = _resolved_addr_reason(current)
+            if dns_reason:
+                return f"錯誤：研究抓取被拒（{dns_reason}），請以既有知識續行"
+            resp = await _http_get(current, config.RESEARCH_FETCH_TIMEOUT)
+            status = resp.status_code
+            if status in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("location", "")
+                if not loc:
+                    return "錯誤：研究抓取失敗（redirect 無 location），請以既有知識續行"
+                current = urljoin(current, loc)  # 解析相對 location
+                continue
+            ctype = resp.headers.get("content-type", "")
+            body = resp.text or ""
+            if "html" in ctype.lower():
+                body = _strip_html(body)
+            body = body.strip()
+            cap = config.RESEARCH_FETCH_MAX_CHARS
+            if len(body) > cap:
+                body = body[:cap] + "\n…（已截斷）"
+            return f"[HTTP {status}] {current}\n{body}"
+        return "錯誤：研究抓取失敗（redirect 次數過多），請以既有知識續行"
+    except Exception as exc:  # noqa: BLE001
+        return f"錯誤：研究抓取失敗（{type(exc).__name__}），請以既有知識續行"
 
 
 async def execute(name: str, args: dict, cwd: Path) -> str:
@@ -133,6 +281,9 @@ async def execute(name: str, args: dict, cwd: Path) -> str:
             result = await runner.run_command(cwd, args.get("command", ""))  # nosec B602
             return f"exit={result.exit_code}\n{result.output}"
 
+        if name == "web_fetch":
+            return await _research_fetch(str(args.get("url", "")))
+
         return f"錯誤：未知工具 {name}"
     except Exception as exc:  # noqa: BLE001
         return f"工具執行錯誤：{type(exc).__name__}: {exc}"
@@ -145,6 +296,8 @@ def summarize(name: str, args: dict) -> str:
         return f"{verb} {args.get('path', '')}"
     if name == "run_bash":
         return "執行: " + (args.get("command", "")[:120])
+    if name == "web_fetch":
+        return "網路抓取 " + (args.get("url", "")[:120])
     return name
 
 

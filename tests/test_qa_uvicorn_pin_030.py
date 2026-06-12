@@ -111,5 +111,6 @@ def test_ci_sync_version_constraint():
     text = CI.read_text(encoding="utf-8")
     bare = re.findall(r'"uvicorn\[standard\]"(?!\s*>=)', text)
     assert not bare, "ci.yml 仍有無版本約束的 uvicorn[standard] 列舉安裝"
-    pinned = re.findall(r"uvicorn\[standard\]>=0\.30", text)
+    # 守住「有 0.3x 下限約束」的原意、不再釘死小版號（下限已升至 0.31，見 issue #0001）。
+    pinned = re.findall(r"uvicorn\[standard\]>=0\.3\d", text)
     assert len(pinned) >= 2, f"ci.yml 兩處皆需鎖版，實得 {len(pinned)} 處"

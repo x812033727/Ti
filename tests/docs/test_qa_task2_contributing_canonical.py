@@ -77,43 +77,39 @@ def test_declares_single_source_of_truth():
     assert ("唯一權威" in t) or ("canonical" in t.lower()), "CONTRIBUTING 未宣告自身為唯一權威來源"
 
 
-EPIC_BASE = "4f32d3a"  # task 起點前最後一個共同 commit
+EPIC_BASE = "4f32d3a"  # 收斂 epic 起點前最後一個共同 commit
+EPIC_END = "11e4a51"  # 收斂 epic 的完成快照（最後一個動到本 epic 測試/交付的 commit）
+# 本守門驗證「CONTRIBUTING/README 收斂 epic 未引入新依賴」。原以 EPIC_BASE..HEAD 比對會隨
+# HEAD 前移而誤擋日後不相關的合法依賴變更（如 issue #0001 的 uvicorn 升版）；改為固定
+# EPIC_BASE..EPIC_END，永久只驗證該 epic 自身的 diff，不再受後續工作干擾。
 
 
-def _base_in_clone(base: str = EPIC_BASE) -> bool:
-    """base commit 是否存在於當前 clone（CI 預設 shallow fetch-depth:1 時可能不在）。"""
-    return (
+def _epic_range_in_clone() -> bool:
+    """epic 起訖 commit 是否都在當前 clone（CI shallow fetch-depth:1 時不在 → 略過歷史比對）。"""
+    return all(
         subprocess.run(
-            ["git", "cat-file", "-e", f"{base}^{{commit}}"],
+            ["git", "cat-file", "-e", f"{c}^{{commit}}"],
             cwd=ROOT,
             capture_output=True,
         ).returncode
         == 0
+        for c in (EPIC_BASE, EPIC_END)
     )
 
 
-# 標準 6：未引入新依賴（pyproject 自 task 起點未被本收斂改動）
+# 標準 6：未引入新依賴（pyproject 未被收斂 epic 改動；固定 EPIC_BASE..EPIC_END）
 def test_pyproject_unchanged_by_convergence():
-    # 與分叉點 4f32d3a 相比，pyproject 不應被改動。
-    # CI 的 actions/checkout 預設 shallow，祖先 commit 不在 clone 內 → git diff 會失敗；
-    # 此時退而確認 pyproject「工作區乾淨」（完整 clone／本地 gate 仍做歷史比對）。
-    if not _base_in_clone():
-        st = subprocess.run(
-            ["git", "status", "--short", "--", str(PYPROJECT)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
-        assert st.stdout.strip() == "", f"pyproject.toml 不應有未提交變更:\n{st.stdout}"
-        pytest.skip(f"base {EPIC_BASE} 不在 shallow clone，略過歷史 diff（已驗工作區乾淨）")
+    # 純歷史比對、與當前 HEAD 無關；CI shallow 無歷史 commit → 略過。
+    if not _epic_range_in_clone():
+        pytest.skip(f"epic 範圍 {EPIC_BASE}..{EPIC_END} 不在 shallow clone，略過歷史 diff")
     r = subprocess.run(
-        ["git", "diff", f"{EPIC_BASE}..HEAD", "--", str(PYPROJECT)],
+        ["git", "diff", f"{EPIC_BASE}..{EPIC_END}", "--", str(PYPROJECT)],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
     assert r.returncode == 0, f"git diff 失敗: {r.stderr}"
-    assert r.stdout.strip() == "", f"pyproject.toml 不應被本次收斂改動:\n{r.stdout}"
+    assert r.stdout.strip() == "", f"收斂 epic 不應改動 pyproject:\n{r.stdout}"
 
 
 # 標準 2 核心：canonical 指令「可正確執行」——實測 .venv 內各模組可被 -m 呼叫

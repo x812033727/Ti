@@ -225,6 +225,22 @@ DEVOPS = Role(
     ),
 )
 
+# 動工中即時研究會附加的工具（roadmap 階段二）。
+_RESEARCH_TOOLS = ("WebSearch", "WebFetch")
+
+
+def effective_tools(role: Role) -> list[str]:
+    """角色的有效工具清單（執行期計算，config.reload() 後下次建專家即生效）。
+
+    TI_RESEARCH_TOOLS 開啟時，工程師／高級工程師附加 WebSearch/WebFetch（實作中即時研究）；
+    其餘角色與關閉時一律原樣回傳 copy（不就地改動 frozen 的 role.allowed_tools）。
+    """
+    tools = list(role.allowed_tools)
+    if config.RESEARCH_TOOLS_ENABLED and role.key in ("engineer", "senior"):
+        tools += [t for t in _RESEARCH_TOOLS if t not in tools]
+    return tools
+
+
 # 核心 4 角色永遠在；可選角色由 config.OPTIONAL_ROLES 控制（預設全開）。
 CORE_ROLES: list[Role] = [PM, ENGINEER, QA, SENIOR]
 _OPTIONAL_ROLES: list[Role] = [RESEARCHER, ARCHITECT, SECURITY, DEVOPS]

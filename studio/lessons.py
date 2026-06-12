@@ -65,10 +65,14 @@ def _save(data: dict) -> None:
     tmp.replace(_path())
 
 
-def add_many(texts: list[str], *, session_id: str = "", requirement: str = "") -> int:
+def add_many(
+    texts: list[str], *, session_id: str = "", requirement: str = "", scope: str = "global"
+) -> int:
     """批次新增教訓（對既有內容去重），回傳實際新增數。
 
     去重採「全文（去前後空白）完全相符」：同一句教訓只留一筆，避免每場重提把庫塞爆。
+    scope 預設 "global"（可跨專案重用）；傳入專案 id 則為該專案專屬教訓（見 _scope_ok）。
+    新筆附 scope 與 use_count（被注入選中時 +1，供未來淘汰排序）；舊資料無此鍵時讀取端取預設。
     """
     cleaned = [t.strip() for t in texts if t and t.strip()]
     if not cleaned:
@@ -86,6 +90,8 @@ def add_many(texts: list[str], *, session_id: str = "", requirement: str = "") -
                     "session_id": session_id,
                     "requirement": (requirement or "")[:200],
                     "created_at": time.time(),
+                    "scope": scope,
+                    "use_count": 0,
                 }
             )
             existing.add(text)
@@ -97,11 +103,21 @@ def add_many(texts: list[str], *, session_id: str = "", requirement: str = "") -
         return n
 
 
-def recent(limit: int) -> list[dict]:
-    """取最新 limit 筆教訓（由新到舊）。limit <= 0 回空清單。"""
+def _scope_ok(item: dict, scope: str) -> bool:
+    """教訓是否在所求 scope 內可選：global 永遠可選；非 global 僅當 scope 相符才可選。
+
+    舊資料無 scope 鍵時視為 global（零遷移）。scope="" 預設＝只取 global，行為與現狀逐字相同。
+    """
+    item_scope = item.get("scope", "global")
+    return item_scope == "global" or item_scope == scope
+
+
+def recent(limit: int, *, scope: str = "") -> list[dict]:
+    """取最新 limit 筆教訓（由新到舊，依 scope 過濾）。limit <= 0 回空清單。"""
     if limit <= 0:
         return []
-    return list(reversed(_load()["lessons"]))[:limit]
+    items = [it for it in _load()["lessons"] if _scope_ok(it, scope)]
+    return list(reversed(items))[:limit]
 
 
 def _tokens(text: str) -> set[str]:
@@ -117,17 +133,17 @@ def _tokens(text: str) -> set[str]:
     return words | bigrams
 
 
-def relevant(limit: int, requirement: str) -> list[dict]:
+def relevant(limit: int, requirement: str, *, scope: str = "") -> list[dict]:
     """取與需求最相關的 limit 筆教訓（IDF 加權重疊分數降冪、同分新者優先）。
 
     做多種產品後教訓庫會混雜（無人機的坑不該注入網站任務）——按相關性挑選而非
     「最新 N 筆」。token 以庫內文件頻率做 IDF 加權：「做一」「一個」這類滿庫都是的
     泛用詞自動降權，主題詞（「無人」「人機」）自然勝出，無需維護停用詞表。
-    完全無相關（全部 0 分）時回空清單，由呼叫端退回最新 N 筆。
+    完全無相關（全部 0 分）時回空清單，由呼叫端退回最新 N 筆。依 scope 過濾（見 _scope_ok）。
     """
     if limit <= 0:
         return []
-    items = _load()["lessons"]
+    items = [it for it in _load()["lessons"] if _scope_ok(it, scope)]
     q = _tokens(requirement)
     if not q or not items:
         return []
@@ -146,21 +162,42 @@ def relevant(limit: int, requirement: str) -> list[dict]:
     return [it for _, it in scored[:limit]]
 
 
-def context(limit: int | None = None, requirement: str = "") -> str:
+def _bump_use_count(texts: list[str]) -> None:
+    """把被注入選中的教訓 use_count +1（鎖內 read-modify-write）；空清單即 no-op。
+
+    與挑選邏輯解耦：先挑後記，挑選本身不受 use_count 影響（不過度設計）。供未來淘汰排序用。
+    """
+    wanted = {t.strip() for t in texts if t and t.strip()}
+    if not wanted:
+        return
+    with _locked():
+        data = _load()
+        changed = False
+        for item in data["lessons"]:
+            if item.get("text", "").strip() in wanted:
+                item["use_count"] = item.get("use_count", 0) + 1
+                changed = True
+        if changed:
+            _save(data)
+
+
+def context(limit: int | None = None, requirement: str = "", scope: str = "") -> str:
     """組成要注入 PM 拆解 prompt 的教訓區塊；停用、無教訓或 limit<=0 時回 ""。
 
     有給 requirement 時優先按相關性挑選（避免跨領域教訓互相污染），
-    完全無相關或未給需求則退回「最新 N 筆」（原行為）。
+    完全無相關或未給需求則退回「最新 N 筆」（原行為）。依 scope 過濾（預設只取 global）。
+    被選中的教訓 use_count +1（供未來淘汰排序）。
     """
     if not config.LESSONS_ENABLED:
         return ""
     cap = config.LESSONS_MAX if limit is None else limit
-    rows = relevant(cap, requirement) if requirement.strip() else []
+    rows = relevant(cap, requirement, scope=scope) if requirement.strip() else []
     picked_by_relevance = bool(rows)
     if not rows:
-        rows = recent(cap)
+        rows = recent(cap, scope=scope)
     if not rows:
         return ""
+    _bump_use_count([r["text"] for r in rows])
     body = "\n".join(f"- {r['text']}" for r in rows)
     note = "依本次需求相關性挑選" if picked_by_relevance else "最新數筆"
     return (
@@ -172,3 +209,94 @@ def context(limit: int | None = None, requirement: str = "") -> str:
 def all_lessons() -> list[dict]:
     """回傳全部教訓（依儲存序，舊→新）；供檢視 / 測試。"""
     return list(_load()["lessons"])
+
+
+_DISTILL_SYSTEM = (
+    "你是教訓庫的維護者。下面是工作室跨場次累積的『教訓』條目（可能有語意重複、過時或冗長）。"
+    "請把相近的合併成一句、刪掉過時或無用的、保留仍有價值的，產出一份精簡、不重複的教訓清單。"
+    "嚴格規則：只輸出教訓行，每行格式固定為 `教訓: <一句精簡、可重用的經驗>`，"
+    "不要任何前言、編號或解說。輸出數量必須少於輸入數量（這是去重蒸餾，不是改寫）。"
+)
+
+
+def _parse_distilled(text: str) -> list[str]:
+    """從 LLM 蒸餾輸出抽出 `教訓: ...` 行（不設 5 條上限，與 orchestrator.parse_lessons 區隔）。"""
+    return [
+        m.strip() for m in re.findall(r"^\s*教訓\s*[:：]\s*(.+)$", text or "", re.M) if m.strip()
+    ]
+
+
+async def distill(*, session_id: str = "", cwd=None) -> int:
+    """用一次 LLM 把 global 教訓語意去重蒸餾，回傳淘汰筆數（0=未執行/無變化）。
+
+    雙閘低頻：庫內 global 筆數 ≥ THRESHOLD 且距上次蒸餾 ≥ INTERVAL 才跑。資料安全為核心——
+    LLM 失敗/離線（complete_once 回 ""）、輸出解析 0 筆、筆數未減少、或疑似大規模誤刪
+    （< 快照 ×20%）一律保留原庫回 0；絕不讓壞輸出清空長期記憶。無 LLM 時行為與現行 FIFO 相同。
+    呼叫端零判斷（全部閘與防呆在此）。project-scope 教訓不參與蒸餾、原樣保留。
+    """
+    if not (config.LESSONS_ENABLED and config.LESSONS_DISTILL):
+        return 0
+    # 1) 鎖內讀快照 + 前置閘
+    with _locked():
+        data = _load()
+        last = data.get("meta", {}).get("last_distill_at", 0)
+        snapshot = [
+            it.get("text", "")
+            for it in data["lessons"]
+            if it.get("scope", "global") == "global" and it.get("text", "").strip()
+        ]
+        if len(snapshot) < config.LESSONS_DISTILL_THRESHOLD:
+            return 0
+        if time.time() - last < config.LESSONS_DISTILL_INTERVAL:
+            return 0
+
+    # 2) 鎖外呼叫 LLM（永不 raise；離線/無憑證回 ""）
+    from . import providers
+
+    user = "\n".join(f"{i}. {t}" for i, t in enumerate(snapshot, start=1))
+    out = await providers.complete_once(
+        system=_DISTILL_SYSTEM,
+        user=user,
+        session_id=f"{session_id}:distill",
+        cwd=cwd,
+        timeout=120.0,
+    )
+    distilled = _parse_distilled(out)
+
+    # 3) 資料安全閘（任一命中即保留原庫）
+    n_snap = len(snapshot)
+    floor = max(1, int(n_snap * 0.2))
+    if not distilled or len(distilled) >= n_snap or len(distilled) < floor:
+        return 0
+
+    # 4) 套用（重新進鎖；防併發重複套用：last_distill_at 變動代表他人已蒸餾過）
+    with _locked():
+        data = _load()
+        if data.get("meta", {}).get("last_distill_at", 0) != last:
+            return 0
+        snap_set = set(snapshot)
+        # 快照後其他 session 新增的 global 筆（text 不在快照集合）一併保留，不被蒸餾蓋掉。
+        new_global = [
+            it
+            for it in data["lessons"]
+            if it.get("scope", "global") == "global" and it.get("text", "") not in snap_set
+        ]
+        project_items = [it for it in data["lessons"] if it.get("scope", "global") != "global"]
+        now = time.time()
+        distilled_items = [
+            {
+                "text": t,
+                "session_id": f"{session_id}:distill",
+                "requirement": "",
+                "created_at": now,
+                "scope": "global",
+                "use_count": 0,
+            }
+            for t in distilled
+        ]
+        data["lessons"] = (distilled_items + new_global + project_items)[-_MAX_STORE:]
+        meta = data.get("meta", {})
+        meta["last_distill_at"] = now
+        data["meta"] = meta
+        _save(data)
+        return n_snap - len(distilled_items)

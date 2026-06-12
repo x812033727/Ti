@@ -61,7 +61,16 @@ async def login_page() -> FileResponse:
 def main() -> None:
     import uvicorn
 
-    uvicorn.run(app, host=config.HOST, port=config.PORT)
+    # proxy_headers + forwarded_allow_ips：讓 uvicorn 的 ProxyHeadersMiddleware 僅採信
+    # 受信來源（預設本機）送來的 X-Forwarded-*，關閉「取最左值偽造 client IP」攻擊面
+    # （issue #0001）。forwarded_allow_ips() 偵測到 "*" 會在此 fail-closed 拒啟動。
+    uvicorn.run(
+        app,
+        host=config.HOST,
+        port=config.PORT,
+        proxy_headers=True,
+        forwarded_allow_ips=config.forwarded_allow_ips(),
+    )
 
 
 if __name__ == "__main__":

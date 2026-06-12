@@ -196,6 +196,25 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 `.env`(`TI_ACCESS_PASSWORD`)並即時生效;既有登入不會因此被登出(cookie 以 `TI_AUTH_SECRET`
 簽章,與密碼無關)。
 
+#### (C) 反向代理部署（X-Forwarded 信任鏈）
+
+把工作室放在負載平衡器／反向代理（Nginx、Traefik、ELB…）後面時，client 真實 IP 來自
+`X-Forwarded-*` 標頭。若不限制誰能設這些標頭，攻擊者可直連 app port 偽造 `X-Forwarded-For`
+冒充來源 IP，污染日誌、稽核、限流與 IP 白名單。本專案有**兩層獨立**的防線，各自設定：
+
+| 層級 | 設定 | 由誰處理 | 作用 |
+|---|---|---|---|
+| 傳輸層 | `TI_FORWARDED_ALLOW_IPS` | uvicorn `ProxyHeadersMiddleware` | 僅受信來源送來的 `X-Forwarded-*` 才被採信、改寫 ASGI scope 的 client IP/scheme |
+| 應用層 | `TI_TRUST_PROXY` / `TI_TRUSTED_PROXIES` | `studio/netutil.py` | 由右往左跳過受信代理、取最右非受信位址為真實 client，**不採信最左偽造值** |
+
+部署建議：
+
+- 把 `TI_FORWARDED_ALLOW_IPS` 設為 proxy 的私網範圍（例如 `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`，
+  K8s／Swarm 等 proxy IP 會變動的環境需用 CIDR——故依賴下限鎖在 `uvicorn>=0.31`）。
+- **嚴禁 `"*"`**（官方明確警告）；本專案偵測到 `"*"` 會 fail-closed 拒啟動。
+- proxy 端先 **strip 外部傳入的 `X-Forwarded-*`** 再自行附加（雙重防線）。
+- 確保 app port 只有受信代理連得到（防火牆／僅綁私網），避免攻擊者繞過 proxy 直連。
+
 ### 在現有的 GitHub 專案上工作
 
 想讓專家討論 / 修改一個現有專案，而不是從零開始：在頂部「GitHub repo 網址」欄位填入
@@ -249,8 +268,10 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_KNOWLEDGE` / `TI_KNOWLEDGE_MAX_CHARS` | 知識沉澱：調研結論持久化到 `docs/RESEARCH.md`，下場開場注入尾段（專案模式跨場次累積；設計決策見 `TI_ADR`） | 開啟 / 4000 |
 | `TI_DISCOVER_ROLES` | 持續改良「找問題」視角（csv）：senior 工程品質／pm 用戶價值／researcher 上網調研，多視角並行再彙整去重 | senior,pm,researcher |
 | `TI_LESSONS` / `TI_LESSONS_MAX` | 跨場次教訓庫（長期記憶）：每場檢討蒸餾可重用教訓存入 `lessons.json`，下次開場注入 PM 拆解，讓工作室越做越會。注入時**按本次需求相關性挑選**（IDF 加權，無人機的坑不會混進網站任務；無相關才退回最新）／`MAX` 為注入筆數 | 開啟 / 12 |
+| `TI_LESSONS_DISTILL` / `_THRESHOLD` / `_INTERVAL` | 教訓語意蒸餾：庫內 global 教訓超過 `THRESHOLD` 時，於檢討後用一次 LLM 把相近教訓合併、淘汰過時項（取代純 FIFO 截斷），兩次蒸餾最少間隔 `INTERVAL` 秒。LLM 失敗/離線/壞輸出一律保留原庫（絕不清空長期記憶），行為退回 FIFO | 開啟 / 200 / 86400 |
 | `TI_BLUEPRINT` / `TI_BLUEPRINT_SEED_MAX` | 產品藍圖：持續改良迴圈開跑時 PM 把願景展開成結構化藍圖（願景/用戶/功能 P0~P2/里程碑），落盤 `BLUEPRINT.md`＋`blueprint.json`、功能餵入專案 backlog（P0 優先出列，先於手排任務的預設 P1）；之後每輪改良與專案單場討論都注入藍圖前綴。每專案僅生成一次；解析失敗降級存原文、不擋迴圈。進階開關（env 或設定面板「進階」組）／`SEED_MAX` 為一次最多餵 backlog 的功能數 | 關閉 / 5 |
 | `TI_ADR` / `TI_ADR_MAX` | 架構決策記錄（ADR）：架構辯論／架構師定案後蒸餾成決策條目，落盤 workspace 的 `DECISIONS.md`（進交付物與 git）＋`adr.json`；後續場次的 PM 拆解與架構提案注入既有決策摘要，翻案須說明理由。進階開關（env 或設定面板「進階」組）／`MAX` 為注入時取最新筆數 | 關閉 / 8 |
+| `TI_RESEARCH_TOOLS` / `TI_RESEARCH_ALLOWED_DOMAINS` | 實作中即時研究：開啟後工程師／高級工程師附加 `WebSearch`/`WebFetch`，動工中可上網查官方 API、套件用法與最佳實踐（Claude 路徑 SDK 原生；OpenAI 路徑由 `web_fetch` 工具承接）。研究流量受網域白名單與 SSRF 防護（私網/loopback 位址永遠擋）限制；逾時/無網路自動降級「無調研續行」。註：Claude 的 `WebSearch` 流量在 Anthropic 端、無法施加本地白名單。進階開關（env 或設定面板「進階」組） | 關閉 / 空（不限網域） |
 | `TI_REFLEXION` / `TI_REFLEXION_MAX` | 任務級反思記憶（補「只帶上一輪原文」缺口）：失敗輪把 QA/高工意見蒸餾成反思存 per-session JSONL，後續輪/huddle 重試 prepend 回工程師 context／`MAX` 為注入筆數。進階開關（env 或設定面板「進階」組） | 開啟 / 5 |
 | `TI_OBJECTIVE_GATE` | 客觀驗收閘門：交付前自測「實際執行」失敗 → 該輪強制退回，不讓 QA/高工的文字裁決推翻真實 exit code（守住反 reward-hacking）。`1`=工程師本輪宣告的自測指令實敗才否決（fallback 整體指令只回報不硬退）；`strict`=fallback 失敗與「未宣告執行指令」皆視為未通過 | 1（開啟） |
 | `TI_SELF_REFINE_ITERS` | 單輪內自我精修：自測未過時讓同一工程師就地依執行紀錄再修一次（交付驗證前），上限 N 次 | 1（開啟） |
@@ -260,6 +281,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_HOST` / `TI_PORT` | 伺服器位址 | 0.0.0.0 / 8000 |
 | `TI_ACCESS_PASSWORD` | 設定後啟用登入門禁（共用密碼） | 未設定（停用） |
 | `TI_AUTH_SECRET` / `TI_AUTH_TTL` | cookie 簽章密鑰 / 登入有效秒數 | 隨機 / 604800 |
+| `TI_FORWARDED_ALLOW_IPS` | uvicorn ProxyHeaders 信任來源（傳輸層）：僅清單內來源送來的 `X-Forwarded-*` 會被採信改寫 client IP/scheme。預設僅本機；嚴禁 `"*"`（偵測到即拒啟動）。反向代理部署見下方小節。別名 `FORWARDED_ALLOW_IPS` | 127.0.0.1 |
 | `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
 | `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
 | `TI_PUBLISH_MERGE` | push／開 PR 後是否自動合併（先等 CI 通過才合併） | 0 |

@@ -13,7 +13,7 @@ import contextlib
 from pathlib import Path
 
 from . import config, events, tools
-from .roles import Role
+from .roles import Role, effective_tools
 
 
 def openai_model_for(role: Role) -> str:
@@ -32,7 +32,7 @@ class OpenAIExpert:
         self.cwd = cwd
         self._chat = chat
         self._model = model
-        self._tools = tools.specs_for(role.allowed_tools)
+        self._tools = tools.specs_for(effective_tools(role))
         self._messages: list[dict] = [{"role": "system", "content": role.system_prompt}]
 
     async def speak(self, prompt: str, broadcast) -> str:

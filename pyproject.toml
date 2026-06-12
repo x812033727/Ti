@@ -11,9 +11,12 @@ requires-python = ">=3.10"
 dependencies = [
     "claude-agent-sdk>=0.1.0",
     "fastapi>=0.110",
-    # 鎖定 uvicorn>=0.30 以強化 ProxyHeaders 信任鏈、避免 X-Forwarded-For 取最左值偽造 client IP。
-    # 注意：版本鎖僅為基線，實際防護需部署端設定 forwarded_allow_ips 為 proxy 私網範圍、嚴禁 "*"。
-    "uvicorn[standard]>=0.30,<0.50",
+    # 鎖定 uvicorn>=0.31 以強化 ProxyHeaders 信任鏈、避免 X-Forwarded-For 取最左值偽造 client IP。
+    # 下限提升至 0.31：CIDR 信任網段與 IPv6 支援在 0.31.0 才完整落地（K8s/Swarm 等 proxy IP
+    # 會變動的環境需 CIDR），讓「需要 CIDR」在依賴宣告層被保證，避免有人降到 0.30.x 而功能默默失效。
+    # 防護已由 server.main() 落地（issue #0001）：傳入 proxy_headers=True 與
+    # forwarded_allow_ips=config.forwarded_allow_ips()（預設 proxy 私網範圍、嚴禁 "*"）。
+    "uvicorn[standard]>=0.31,<0.50",
     "python-dotenv>=1.0",
     "httpx>=0.27",
 ]
@@ -46,6 +49,11 @@ target-version = "py310"
 select = ["E", "F", "I", "UP", "B"]
 # 行長由 formatter 處理，放寬個別過長行（多為中文註解）。
 ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# 把多個 `from x import a as a` 顯式 re-export（如 orchestrator 對 flow 的相容層）併成
+# 單一括號區塊，而非每個別名各自一行。
+combine-as-imports = true
 
 [tool.ruff.format]
 quote-style = "double"

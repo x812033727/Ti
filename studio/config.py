@@ -61,6 +61,12 @@ NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
 # 近零成本（搭檢討 prompt 順帶解析，無額外 LLM 呼叫）——預設開啟；LESSONS_MAX 為注入上限。
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
 LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
+# 教訓庫蒸餾：庫超過門檻時於檢討後用一次 LLM 把相近教訓合併、淘汰過時項（取代純 FIFO 截斷的
+# 粗暴遺忘）。低頻（門檻＋最小間隔雙閘）；LLM 失敗/離線/壞輸出一律靜默跳過、保留原庫，行為退
+# 回現行 FIFO——絕不讓壞輸出清空長期記憶。env-only（與 LESSONS_MAX 同級的 power-user 旋鈕）。
+LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "False", "")
+LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
+LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))  # 最小間隔（秒）
 
 # 需求澄清階段：拆解前 PM 先就模糊需求向使用者反問關鍵問題（附預設假設），等回覆逾時則按
 # 假設續行——流程絕不因等人而卡死。僅互動 session 生效（須有插話佇列）；autopilot／持續改良
@@ -88,6 +94,19 @@ BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
 # 架構提案注入既有決策摘要，翻案須說明理由——避免跨場次反覆推翻。預設關閉（opt-in）。
 ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
 ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))  # 注入時取最新 N 筆決策
+
+# 實作中即時研究（roadmap 階段二，opt-in 預設關）：開啟後工程師／高級工程師的工具清單
+# 附加 WebSearch/WebFetch，動工中可上網查官方 API、套件用法與最佳實踐。Claude 路徑由
+# SDK 原生支援；OpenAI function-calling 路徑由 tools.py 的 web_fetch 工具承接。
+RESEARCH_TOOLS_ENABLED = os.getenv("TI_RESEARCH_TOOLS", "0") not in ("0", "false", "False", "")
+# 研究網域白名單（csv，比對 hostname 尾綴）。空＝不限網域，但私網/loopback/link-local 等
+# 位址永遠擋（SSRF 防護不受白名單影響）。涵蓋 OpenAI 工具層（web_fetch）與 Claude 路徑
+# （WebFetch 經 can_use_tool 攔截）；Claude 的 WebSearch 流量不經本機、無法施加白名單（見 README）。
+RESEARCH_ALLOWED_DOMAINS = [
+    d.strip().lower() for d in os.getenv("TI_RESEARCH_ALLOWED_DOMAINS", "").split(",") if d.strip()
+]
+RESEARCH_FETCH_TIMEOUT = float(os.getenv("TI_RESEARCH_FETCH_TIMEOUT", "20"))  # 單次抓取逾時（秒）
+RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))  # 回應截斷上限
 
 # --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
 # A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
@@ -314,6 +333,38 @@ def reset_trusted_proxies() -> None:
     _trusted_proxies_cache = None
 
 
+# --- uvicorn ProxyHeaders 信任來源（傳輸層，啟動時固定）---------------------
+# 這是 uvicorn ProxyHeadersMiddleware 的設定：僅清單內來源送來的 X-Forwarded-* 會被
+# 採信並改寫 ASGI scope（client IP / scheme）。與上面應用層的 TI_TRUST_PROXY /
+# TI_TRUSTED_PROXIES（netutil 自行解析 XFF）互補、語意獨立、各自設定——一個在傳輸層
+# 由 uvicorn 改寫 scope，一個在應用層由 netutil 解析真實來源。
+# 預設僅信任本機；嚴禁 "*"（偵測到即拒啟動，見 forwarded_allow_ips()），否則攻擊者可自帶
+# X-Forwarded-For 偽造 client IP，污染日誌、稽核、限流與 IP 白名單等所有依賴 client IP 的邏輯。
+# 別名：未設 TI_ 前綴版時，沿用 uvicorn 生態慣用名 FORWARDED_ALLOW_IPS。
+FORWARDED_ALLOW_IPS = os.getenv(
+    "TI_FORWARDED_ALLOW_IPS", os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+)
+
+
+def forwarded_allow_ips() -> str:
+    """回傳啟動用的 forwarded_allow_ips；含 "*" 一律拒啟動（fail-closed）。
+
+    安全設定取 fail-closed：寧可在啟動時明確報錯給出正確寫法，也不讓服務帶著
+    「信任全部來源」的危險設定默默上線。空字串退回安全預設 "127.0.0.1"。
+    屬「啟動時固定」設定（同 HOST/PORT），刻意不納入 reload()。
+    """
+    raw = (FORWARDED_ALLOW_IPS or "").strip()
+    if not raw:
+        return "127.0.0.1"
+    if "*" in {item.strip() for item in raw.split(",")}:
+        raise SystemExit(
+            "TI_FORWARDED_ALLOW_IPS 嚴禁 '*'（會讓任何來源都能偽造 X-Forwarded-For）：\n"
+            "請改列負載平衡器／反向代理的私網 IP 或 CIDR，例如\n"
+            "  TI_FORWARDED_ALLOW_IPS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+        )
+    return raw
+
+
 # --- 路徑 ---------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -460,6 +511,9 @@ def reload() -> None:
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
     global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
+    global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
+    global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
+    global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -497,6 +551,9 @@ def reload() -> None:
     NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
     NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
     LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
+    LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "False", "")
+    LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
+    LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))
     REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
     SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))
@@ -515,3 +572,11 @@ def reload() -> None:
     BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
     ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
     ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))
+    RESEARCH_TOOLS_ENABLED = os.getenv("TI_RESEARCH_TOOLS", "0") not in ("0", "false", "False", "")
+    RESEARCH_ALLOWED_DOMAINS = [
+        d.strip().lower()
+        for d in os.getenv("TI_RESEARCH_ALLOWED_DOMAINS", "").split(",")
+        if d.strip()
+    ]
+    RESEARCH_FETCH_TIMEOUT = float(os.getenv("TI_RESEARCH_FETCH_TIMEOUT", "20"))
+    RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))

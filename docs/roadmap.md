@@ -6,20 +6,24 @@
 
 ## 階段二：研究能力
 
-1. **實作中即時研究**：`TI_RESEARCH_TOOLS`（opt-in）讓 ENGINEER/SENIOR 的 `allowed_tools`
-   附加 `WebSearch`/`WebFetch`。Claude 路徑由 SDK 原生支援；**OpenAI function-calling 路徑須在
-   `studio/tools.py` 補對應工具**（httpx 抓取＋摘要、輸出截斷），復用 `studio/netutil.py`
-   的位址防護（SSRF）。
-2. **研究網域白名單**：研究流量走 WebFetch 工具層（不經 Bash 沙箱），另設
-   `TI_RESEARCH_ALLOWED_DOMAINS` 控管；逾時/無網路降級為「無調研續行」。
-3. **可行性評估階段**：`_architecture_decision` 前插一輪 Researcher 對候選方案的
+1. ✅ **實作中即時研究（已落地）**：`TI_RESEARCH_TOOLS`（opt-in）讓 ENGINEER/SENIOR 的
+   `allowed_tools` 附加 `WebSearch`/`WebFetch`（`roles.effective_tools`）。Claude 路徑由 SDK
+   原生支援；OpenAI function-calling 路徑由 `studio/tools.py` 的 `web_fetch` 工具承接
+   （httpx 抓取＋剝 HTML 摘要、輸出截斷）。
+2. ✅ **研究網域白名單（已落地）**：`TI_RESEARCH_ALLOWED_DOMAINS` 控管研究流量；SSRF 防護
+   `tools.research_url_check`（scheme 限 http/https、私網/loopback/link-local 位址永遠擋、
+   DNS 解析後逐位址重驗、redirect 逐跳重驗）同時施加於 OpenAI 路徑（web_fetch）與 Claude
+   路徑（`experts._auto_allow_tool` 攔 WebFetch）；逾時/無網路降級為「無調研續行」。
+3. **可行性評估階段（待辦）**：`_architecture_decision` 前插一輪 Researcher 對候選方案的
    `重點:/建議:` 評估，結論餵入 ADR（與 `adr.record` 串接）。
-4. 接點：`studio/roles.py`、`studio/tools.py`、`studio/providers.py`、`studio/netutil.py`。
+4. 接點：`studio/roles.py`、`studio/tools.py`、`studio/providers.py`、`studio/experts.py`、
+   `studio/config.py`、`studio/settings.py`。
 
 ## 階段三：越做越進步迴圈
 
-1. **教訓庫語意去重與蒸餾**：`lessons.distill()`——定期用一次 LLM 把相近教訓合併、淘汰
-   過時項（取代全文相符去重＋FIFO 截斷）；教訓加 `scope`（global/project）與使用計數。
+1. ✅ **教訓庫語意去重與蒸餾（已落地）**：`lessons.distill()`——庫超門檻時於檢討後用一次
+   LLM 把相近教訓合併、淘汰過時項（雙閘低頻；LLM 失敗/離線/壞輸出一律保留原庫，退回 FIFO）；
+   教訓加 `scope`（global/project，`relevant`/`context` 按 scope 過濾）與 `use_count`（注入選中時 +1）。
 2. **記分卡回饋進流程**：`history._derive_scorecard` 按專案聚合（demo 通過率/退回率），
    注入 improver 的「找問題」與 `_compose_requirement` 前綴（擴充 `_recent_outcomes_context`），
    讓找問題對準弱項。
