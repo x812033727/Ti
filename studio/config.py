@@ -272,6 +272,11 @@ MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
 TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
 TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
 
+# 對偵測到的 rate_limit_error／429 做有限次退避重試——優先讀 retry-after，否則指數退避
+EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
+EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)  # 退避基數（秒）
+EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)  # 單次退避上限
+
 # 啟用哪些「可選角色」（核心 4 角色永遠在）。逗號分隔；清空則只剩核心 4 角色。
 # 多一個角色 = 每場討論多幾次 LLM 呼叫（更耗額度、更久），要省可逐一移除。
 OPTIONAL_ROLES = {
@@ -637,6 +642,7 @@ def reload() -> None:
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT
+    global EXPERT_RATE_LIMIT_RETRIES, EXPERT_RATE_LIMIT_BACKOFF, EXPERT_RATE_LIMIT_BACKOFF_CAP
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
     global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
@@ -695,6 +701,9 @@ def reload() -> None:
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
     TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
     TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
+    EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
+    EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)
+    EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
