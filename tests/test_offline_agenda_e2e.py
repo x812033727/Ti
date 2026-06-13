@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
@@ -189,6 +190,23 @@ def test_agenda_full_flow_engine_mode(client):
         f"sidecar rounds={data['rounds']} 應等於真實輪數 {max_anchor_round}（非寫死 0）"
     )
     assert data["rounds"] >= 1
+
+    # 5e) 驗收 #4 核心：conclusion.json 與 CONCLUSION.md **同 commit 入 git**，工作區
+    #     無未追蹤殘留。直接查真實 git 狀態（非靠事件推斷）——若 commit 漏納 sidecar
+    #     （如被 .gitignore 排除），檔案仍在、上面斷言仍綠，唯獨此處攔得住（排除假綠）。
+    ws_dir = config.WORKSPACE_ROOT / sid
+    if (ws_dir / ".git").exists():  # git 啟用時才驗（離線預設啟用，5a 已證有 commit）
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=ws_dir, capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        assert "conclusion.json" in tracked, "conclusion.json 應被 git 追蹤（與 md 同 commit）"
+        assert "CONCLUSION.md" in tracked
+        # git status 工作區不得殘留未追蹤的 conclusion.json（?? 前綴＝untracked）。
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=ws_dir, capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        untracked = [ln[3:] for ln in status if ln.startswith("??")]
+        assert "conclusion.json" not in untracked, f"conclusion.json 未追蹤殘留：{status}"
 
 
 def test_agenda_legacy_negative_control(legacy_client):
