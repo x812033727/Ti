@@ -442,11 +442,11 @@ async def run_one_task(task: dict) -> None:
     elif result.get("followups"):
         added = backlog.add_many(result["followups"], source="discovered")
         log.info("從討論新增 %d 個後續任務", added)
-    # autopilot 的 working clone 本身就是核心 repo（config.CORE_REPO），故判定的核心改動即進
-    # 本 backlog（與 improver 路由同一份），以 source="core" 標記供稽核、閉環自我改良。
-    if result.get("core_changes"):
-        added = backlog.add_items(result["core_changes"], source="core")
-        log.info("從討論新增 %d 個核心改動", added)
+    # autopilot 的 working clone 本身就是核心 repo（config.CORE_REPO），判定的核心改動經同一個
+    # 收斂點路由（與 improver/ws 共用，含近期完成去重，避免做完又重排），以 source="core" 標記。
+    core_added = backlog.route_core_changes(result.get("core_changes") or [])
+    if core_added:
+        log.info("從討論新增 %d 個核心改動", core_added)
 
     if not result.get("completed"):
         backlog.set_status(task["id"], "failed", note="討論未達完成")

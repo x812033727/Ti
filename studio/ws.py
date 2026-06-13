@@ -23,7 +23,7 @@ from . import (
     workspace,
 )
 from .events import StudioEvent
-from .improver import ProjectImprover, drain_result_to_backlogs, route_core_changes
+from .improver import ProjectImprover, drain_result_to_backlogs
 from .orchestrator import StudioSession
 
 router = APIRouter()
@@ -418,7 +418,7 @@ async def _run_plain_session(session: StudioSession, requirement: str) -> dict:
     """非專案的單場討論：無專案 backlog 可回填，但團隊判定的核心改動仍路由到主核心 repo
     （`核心改動:` 專指改 Ti 框架本身、與專案無關），由 autopilot 實作開獨立 PR。"""
     result = await session.run(requirement)
-    routed = route_core_changes(result)
+    routed = backlog.route_core_changes(result.get("core_changes") or [])
     if routed:
         await session.broadcast(
             events.phase_change(
