@@ -4,6 +4,7 @@
 防坑硬指令與 speaker 錨點來源；③ senior 全漏標前綴/空輸出 → fallback 退回規則式
 summary 骨架、行動段標明蒸餾失靈不冒充（驗收 #6）。
 """
+
 import asyncio
 
 from studio import conclusion
@@ -87,6 +88,16 @@ def test_空輸出也不崩潰走_fallback():
     r = asyncio.run(conclusion.summarize(StubSenior(""), _summary(), _transcript(), _noop))
     assert r["actions"] == ["（蒸餾失靈，無行動項）"]
     assert r["consensus"] == ["engineer 同意 senior"]
+
+
+def test_部分漏標_空鍵以規則骨架回填():
+    # senior 只給了行動，漏標共識/分歧/未決——規則層已知為真者不可被靜默丟棄
+    senior = StubSenior("行動: 補 rate limit 測試")
+    r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
+    assert r["actions"] == ["補 rate limit 測試"]  # LLM 給的照用
+    assert r["consensus"] == ["engineer 同意 senior"]  # 空鍵回填規則骨架
+    assert r["disagreements"] == ["qa 反對 engineer"]
+    assert r["open_questions"] == ["qa 反對 engineer"]
 
 
 def test_回傳固定四鍵齊全():

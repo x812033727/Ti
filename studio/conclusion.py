@@ -48,21 +48,23 @@ def _render_skeleton(summary: dict) -> str:
     """
     lines: list[str] = []
 
-    consensus = summary.get("consensus") or []
-    lines.append("● 明確同意（stance=同意，已扣除同時反對者）：")
-    lines.extend(f"  - {c}" for c in consensus) if consensus else lines.append("  - （無）")
+    def _section(header: str, items: list[str]) -> None:
+        lines.append(header)
+        if items:
+            lines.extend(f"  - {it}" for it in items)
+        else:
+            lines.append("  - （無）")
 
-    disagreements = summary.get("disagreements") or []
-    lines.append("● 分歧（stance=反對）：")
-    lines.extend(f"  - {d}" for d in disagreements) if disagreements else lines.append("  - （無）")
-
-    open_questions = summary.get("open_questions") or []
-    lines.append("● 未決（per-pair 末輪 stance 仍反對、未收斂）：")
-    lines.extend(f"  - {q}" for q in open_questions) if open_questions else lines.append("  - （無）")
-
-    unique = summary.get("unique_findings") or []
-    lines.append("● 無人回應的角色發言（unique findings，僅供區分『無人表態』≠共識）：")
-    lines.extend(f"  - {u}" for u in unique) if unique else lines.append("  - （無）")
+    _section("● 明確同意（stance=同意，已扣除同時反對者）：", list(summary.get("consensus") or []))
+    _section("● 分歧（stance=反對）：", list(summary.get("disagreements") or []))
+    _section(
+        "● 未決（per-pair 末輪 stance 仍反對、未收斂）：",
+        list(summary.get("open_questions") or []),
+    )
+    _section(
+        "● 無人回應的角色發言（unique findings，僅供區分『無人表態』≠共識）：",
+        list(summary.get("unique_findings") or []),
+    )
 
     final_positions = summary.get("final_positions") or {}
     lines.append("● 各角色末輪立場（錨點來源，speaker 天生帶在此）：")
@@ -138,5 +140,10 @@ async def summarize(
     parsed = flow.parse_conclusion(distilled or "")
     if _is_empty(parsed):
         return _fallback_from_summary(summary)
-    # parse_conclusion 已保證四鍵齊全，直接回傳。
+    # 部分漏標：senior 標了某些前綴卻漏了別的（如只給 `行動:`）。此時規則層已知為真的
+    # consensus/disagreements/open_questions 不可被靜默丟棄——空鍵以規則骨架回填，
+    # 比整碗接受 LLM 殘缺輸出更穩（高工建議）。actions 規則層無對應來源，照 LLM 輸出。
+    for key in ("consensus", "disagreements", "open_questions"):
+        if not parsed.get(key):
+            parsed[key] = list(summary.get(key) or [])
     return parsed
