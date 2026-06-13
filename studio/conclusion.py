@@ -47,6 +47,56 @@ def _is_empty(parsed: dict[str, list[str]]) -> bool:
     return not any(parsed.get(k) for k in _KEYS)
 
 
+# ── (round, speaker) 錨點：事實來源＝規則層 summary ＋ transcript，不賭 LLM ──────
+#
+# 規則層 ``_build_summary`` 的 consensus/disagreements/open_questions 條目格式固定為
+# ``f"{speaker} 同意/反對 {target}"``（無 round）；錨點所需的 round 在 transcript 的
+# Utterance.round 裡。本層把兩者對齊：對每條規則條目，回查它所依據的 mention pair 在
+# transcript 出現的末輪 round，附上 ``(R<round> <speaker>)`` 錨點。
+#
+# 為什麼放在 conclusion 層而非改 ``_build_summary``：#2 的三鍵格式為架構師凍結合約
+# （tests/core/test_discussion.py 精確比對），改它會跨 lane 破壞回歸；而「每條盡量帶
+# 錨點」本就是本任務（#4）職責，且 ``summarize`` 已收到 transcript，原料齊備。
+# 透過「以已知 pair 反向重建字串精確比對」對齊，不靠 split 字串（角色名可能含空白）。
+
+_VERB = {"consensus": "同意", "disagreements": "反對", "open_questions": "反對"}
+
+
+def _pair_rounds(transcript: list[Utterance]) -> dict[tuple[str, str], int]:
+    """transcript 中每個 (speaker, target) mention pair 的末輪 round（取最大）。"""
+    rounds: dict[tuple[str, str], int] = {}
+    for u in transcript:
+        for m in u.mentions:
+            pair = (m.speaker, m.target)
+            if pair not in rounds or u.round > rounds[pair]:
+                rounds[pair] = u.round
+    return rounds
+
+
+def _anchor_list(
+    entries: list[str], verb: str, pair_rounds: dict[tuple[str, str], int]
+) -> list[str]:
+    """對規則層條目附上 ``(R<round> <speaker>)`` 錨點；無對應 pair 者原樣保留。
+
+    以「用已知 pair 重建 ``f'{s} {verb} {t}'`` 與條目精確相等」配對，避免 split 解析在
+    角色名含空白時誤判。錨點只在規則條目真有 transcript 來源時才加——絕不憑空捏造。
+    """
+    out: list[str] = []
+    for e in entries:
+        suffix = ""
+        for (s, t), r in pair_rounds.items():
+            if e == f"{s} {verb} {t}":
+                suffix = f" (R{r} {s})"
+                break
+        out.append(f"{e}{suffix}")
+    return out
+
+
+def _anchored_from_summary(summary: dict, key: str, transcript: list[Utterance]) -> list[str]:
+    """取 summary[key] 的規則條目並附 (round, speaker) 錨點。"""
+    return _anchor_list(list(summary.get(key) or []), _VERB[key], _pair_rounds(transcript))
+
+
 def _render_skeleton(summary: dict) -> str:
     """把規則式 summary 渲染成 prompt 用的事實骨架（帶 speaker 錨點，供 senior 引用）。
 
@@ -111,16 +161,19 @@ def build_prompt(summary: dict, transcript: list[Utterance]) -> str:
     )
 
 
-def _fallback_from_summary(summary: dict) -> dict[str, list[str]]:
-    """蒸餾失靈時的降級結論：直接用規則式 summary 骨架填四鍵。
+def _fallback_from_summary(summary: dict, transcript: list[Utterance]) -> dict[str, list[str]]:
+    """蒸餾失靈時的降級結論：直接用規則式 summary 骨架填四鍵（帶 (round, speaker) 錨點）。
 
     consensus→共識、disagreements→分歧、open_questions→未決；行動段留空並標明
     蒸餾失靈（不以末輪發言冒充 action，設計決策）。仍回完整四鍵 dict，呼叫端可正常落盤。
+
+    三段規則條目均附 transcript 來源錨點——確保 fallback 路徑產出的 CONCLUSION.md
+    仍能「至少一條回指 transcript」（驗收 #5），不因走降級而失去可查證性（critic 退回點）。
     """
     return {
-        "consensus": list(summary.get("consensus") or []),
-        "disagreements": list(summary.get("disagreements") or []),
-        "open_questions": list(summary.get("open_questions") or []),
+        "consensus": _anchored_from_summary(summary, "consensus", transcript),
+        "disagreements": _anchored_from_summary(summary, "disagreements", transcript),
+        "open_questions": _anchored_from_summary(summary, "open_questions", transcript),
         "actions": [_FALLBACK_ACTION_NOTE],
     }
 
@@ -138,20 +191,22 @@ async def summarize(
 
     :param senior: 任何具 ``async speak(prompt, broadcast) -> str`` 的專家（含 StubExpert）。
     :param summary: ``discussion.DiscussionResult.summary``（規則式五鍵）。
-    :param transcript: 該場 ``Utterance`` 清單（僅用於取輪數）。
+    :param transcript: 該場 ``Utterance`` 清單（取輪數，並作為 (round, speaker) 錨點來源）。
     :returns: ``{"consensus", "disagreements", "open_questions", "actions"}`` 四鍵 list dict。
     """
     prompt = build_prompt(summary, transcript)
     distilled = await senior.speak(prompt, broadcast)
     parsed = flow.parse_conclusion(distilled or "")
     if _is_empty(parsed):
-        return _fallback_from_summary(summary)
+        return _fallback_from_summary(summary, transcript)
     # 部分漏標：senior 標了某些前綴卻漏了別的（如只給 `行動:`）。此時規則層已知為真的
-    # consensus/disagreements/open_questions 不可被靜默丟棄——空鍵以規則骨架回填，
-    # 比整碗接受 LLM 殘缺輸出更穩（高工建議）。actions 規則層無對應來源，照 LLM 輸出。
+    # consensus/disagreements/open_questions 不可被靜默丟棄——空鍵以規則骨架回填（帶
+    # 來源錨點），比整碗接受 LLM 殘缺輸出更穩（高工建議）。actions 規則層無對應來源，照
+    # LLM 輸出。回填用的是帶 (round, speaker) 錨點的規則條目——錨點來源為 transcript 事實，
+    # 不信任 LLM 自填（設計決策）；LLM 自行產出的非空鍵則維持其原文不強加錨點。
     for key in ("consensus", "disagreements", "open_questions"):
         if not parsed.get(key):
-            parsed[key] = list(summary.get(key) or [])
+            parsed[key] = _anchored_from_summary(summary, key, transcript)
     return parsed
 
 
