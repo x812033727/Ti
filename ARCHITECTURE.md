@@ -193,14 +193,17 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
 - **Ti 主核心 repo**：`config.CORE_REPO`，固定綁定 `AUTOPILOT_REPO`（預設 `x812033727/Ti`），
   即 Ti 框架本身。
 
-**路由規則**：討論／檢討階段，專家若判定「要滿足本需求，必須改動 Ti 核心框架本身
+**路由規則**：專家若判定「要滿足本需求，必須改動 Ti 核心框架本身
 （orchestrator／runner／發佈流程等），而非只改本專案程式碼」，就以結構化行
 `核心改動: [P0/bug] <描述>` 輸出（`flow.parse_core_changes` 解析，沿用 `[P0/bug]` 標籤慣例）。
-偵測**由專家在討論中判定**——非依檔案路徑、非人工標旗。
+偵測**由專家在討論中判定**——非依檔案路徑、非人工標旗。捕捉點有二：每場討論的**檢討**
+階段（`orchestrator._wrap_up` → `result["core_changes"]`），以及持續改良的**「找問題」**階段
+（`improver._discover_with_experts`）——兩者都把核心改動與專案任務分流。
 
-這些核心改動**不進專案 backlog、不混入專案 PR**：消費端（`improver._run_task`／`autopilot`）
+這些核心改動**不進專案 backlog、不混入專案 PR**：消費端（`improver`／`ws`／`autopilot`）
 以 `backlog.add_items(core, source="core")`（省略 `state_dir`＝核心 backlog
-`config.AUTOPILOT_STATE_DIR`）路由到 autopilot 在 drain 的那份佇列。autopilot 在
+`config.AUTOPILOT_STATE_DIR`，路由收斂在 `improver.route_core_changes`）路由到 autopilot 在
+drain 的那份佇列。autopilot 在
 `CORE_REPO` 的 working clone 上實作該改動、過 pytest／lint／no-SDK 閘門與分支保護失效保險，
 綠燈才對核心 repo 開**獨立 PR**（分支 `autopilot/task-<id>`，見 `autopilot._commit_push_merge`）。
 

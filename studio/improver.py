@@ -21,7 +21,7 @@ import uuid
 
 from . import backlog, blueprint, config, events, history, projects, repo_base, runner, workspace
 from .events import StudioEvent
-from .orchestrator import StudioSession, parse_structured_tasks
+from .orchestrator import StudioSession, parse_core_changes, parse_structured_tasks
 
 log = logging.getLogger("ti.improver")
 
@@ -435,8 +435,10 @@ class ProjectImprover:
         tail = (
             "找出最值得改良的 3~5 點，每點獨立一行，格式固定為 "
             "`任務: [P0/bug] <動詞開頭的具體任務>`——方括號標籤標注優先級"
-            "（P0 必須~P2 加分）與類型（feature/bug/improvement），標籤可省（視為 P1）。"
-            "只輸出任務行。"
+            "（P0 必須~P2 加分）與類型（feature/bug/improvement），標籤可省（視為 P1）。\n"
+            "若發現的是「要改 Ti 核心框架本身（orchestrator／runner／發佈流程等），而非本產品的"
+            "程式碼」，請改用 `核心改動: <描述>` 另行列出（會路由到 Ti 主核心 repo、不混進本專案）。"
+            "只輸出任務行或核心改動行。"
         )
         wid = projects.workspace_id(pid)
         prd_tail = workspace.read_prd_tail(wid, config.KNOWLEDGE_MAX_CHARS)
@@ -472,9 +474,14 @@ class ProjectImprover:
             self._recent_outcomes_context()
             + f"你正在審視長期產品專案「{self.project.get('name', '')}」。"
             "請從你的專業視角找出最值得改良的 3~5 點，每點獨立一行，"
-            "格式固定為 `任務: [P0/bug] <動詞開頭的具體任務>`（標籤可省，視為 P1）。"
-            "只輸出任務行。"
+            "格式固定為 `任務: [P0/bug] <動詞開頭的具體任務>`（標籤可省，視為 P1）；"
+            "若是要改 Ti 核心框架本身（非本產品程式碼）則改用 `核心改動: <描述>`（路由到主核心 repo）。"
+            "只輸出任務行或核心改動行。"
         )
+
+        core_buf: list[
+            dict
+        ] = []  # 找問題時辨識出的 Ti 核心議題（與專案任務分流，稍後路由核心 repo）
 
         async def _ask(key: str) -> list[dict]:
             expert = make_expert(BY_KEY[key], f"{sid}:{key}" if len(keys) > 1 else sid, cwd)
@@ -487,9 +494,29 @@ class ProjectImprover:
                     await expert.stop()
             if key == "researcher" and config.KNOWLEDGE_ENABLED:
                 workspace.append_doc(projects.workspace_id(pid), "RESEARCH.md", text)
+            # 單執行緒 asyncio：append 在 await 之後同步進行，視角間不會競態。
+            core_buf.extend(parse_core_changes(text))
             return parse_structured_tasks(text)
 
         proposals = await asyncio.gather(*(_ask(k) for k in keys))
+        # 找問題若辨識出 Ti 核心議題，與專案任務分流——路由到核心 backlog（依標題去重），
+        # 不進專案 backlog；由 autopilot 在主核心 repo 實作開獨立 PR（雙軌路由，見 route_core_changes）。
+        if core_buf:
+            uniq, seen_core = [], set()
+            for c in core_buf:
+                if c["title"] not in seen_core:
+                    seen_core.add(c["title"])
+                    uniq.append(c)
+            routed = route_core_changes({"core_changes": uniq})
+            if routed:
+                log.info("找問題：路由 %d 個核心改動到核心 backlog（%s）", routed, config.CORE_REPO)
+                await self.broadcast(
+                    events.phase_change(
+                        self.session_id,
+                        "核心改動",
+                        f"找問題辨識出 {routed} 項核心改動，已排入核心 repo（{config.CORE_REPO}）佇列",
+                    )
+                )
         # 角色輪替合併 + 依標題去重（recent_done 過濾與 DISCOVERY_MAX 截斷由呼叫端負責）。
         merged: list[dict] = []
         seen: set[str] = set()

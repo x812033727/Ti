@@ -151,3 +151,34 @@ async def test_one_view_failure_does_not_break_others(monkeypatch):
     items = await imp._discover_with_experts(project["id"], "sid5")
     assert "加上匯出功能" in [t["title"] for t in items]  # pm 視角不受 senior 失敗影響
     assert all(ex.stopped for ex in created.values())  # 失敗者也被 stop
+
+
+@pytest.mark.asyncio
+async def test_discovery_routes_core_changes_to_core_backlog(tmp_path, monkeypatch):
+    """找問題辨識出的 `核心改動:` 與專案任務分流：進核心 backlog（source=core），不進專案 backlog。"""
+    from studio import backlog
+
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "core")
+    monkeypatch.setattr(config, "DISCOVER_ROLES", ["senior", "pm"])
+
+    scripts = {
+        "senior": "任務: 補上錯誤處理\n核心改動: [P0/bug] orchestrator 應支援核心同步發佈",
+        "pm": "任務: 加上匯出功能",
+    }
+
+    def fake_make_expert(role: Role, session_id: str, cwd):
+        return _StubExpert(role, scripts.get(role.key, "任務: 通用建議"))
+
+    monkeypatch.setattr(providers, "make_expert", fake_make_expert)
+    imp, project = _improver()
+
+    items = await imp._discover_with_experts(project["id"], "sidc")
+    titles = [t["title"] for t in items]
+
+    # 核心改動不混進專案任務提案。
+    assert "orchestrator 應支援核心同步發佈" not in titles
+    assert "補上錯誤處理" in titles and "加上匯出功能" in titles
+    # 核心改動路由到核心 backlog（預設 state_dir＝AUTOPILOT_STATE_DIR），標記 source="core"。
+    core_tasks = backlog.list_tasks()
+    assert [t["title"] for t in core_tasks] == ["orchestrator 應支援核心同步發佈"]
+    assert all(t["source"] == "core" for t in core_tasks)
