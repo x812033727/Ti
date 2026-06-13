@@ -54,6 +54,7 @@ async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
     (main_repo / "data.db").write_text("x", encoding="utf-8")
     (main_repo / ".bashrc").write_text("", encoding="utf-8")
     (main_repo / ".mcp.json").write_text("", encoding="utf-8")
+    (main_repo / ".idea").write_text("", encoding="utf-8")  # 沙箱可能建 0-byte 檔(非目錄)
     (main_repo / ".venv").mkdir()
     (main_repo / ".venv" / "pyvenv.cfg").write_text("home=/x\n", encoding="utf-8")
     (main_repo / ".claude").mkdir()
@@ -71,7 +72,7 @@ async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
 
     tracked = (await runner.run_command_exec(main_repo, ["git", "ls-files"], sandbox=False)).output
     # junk 全部 untrack
-    for junk in (".venv/pyvenv.cfg", "data.db", ".bashrc", ".mcp.json", ".claude/settings.json"):
+    for junk in (".venv/pyvenv.cfg", "data.db", ".bashrc", ".mcp.json", ".claude/settings.json", ".idea"):
         assert junk not in tracked, f"{junk} 應已 untrack:\n{tracked}"
     # 真實專案檔保留
     assert "app.py" in tracked and "base.txt" in tracked

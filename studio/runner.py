@@ -758,7 +758,8 @@ _BASELINE_IGNORE_PATTERNS = [
     ".venv/", "venv/", "env/", "ENV/",
     "*.db", "*.db-shm", "*.db-wal", "*.sqlite", "*.sqlite3",
     ".env", "*.env.local",
-    ".idea/", ".vscode/",
+    # .idea/.vscode 用無斜線形式:沙箱可能建「同名 0-byte 檔」,目錄式 `.idea/` 擋不到檔
+    ".idea", ".vscode",
     # SDK 專家沙箱會把 HOME/設定 dotfiles 散落進 workspace（皆非專案內容,絕不交付）
     ".claude/", ".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile",
     ".gitconfig", ".gitmodules", ".ripgreprc", ".mcp.json",
