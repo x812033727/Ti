@@ -15,6 +15,7 @@ from studio.orchestrator import (
     pm_done,
     qa_passed,
     senior_approved,
+    shippable_verdict,
     text_similarity,
 )
 from studio.roles import BY_KEY, Role
@@ -88,6 +89,19 @@ def test_senior_parsing():
 def test_pm_done_parsing():
     assert pm_done("符合\n決議: 完成")
     assert not pm_done("還缺測試\n決議：未完成")
+
+
+def test_shippable_verdict():
+    # 全任務通過 → 完整出貨
+    assert shippable_verdict(all_ok=True, demo_veto=False, core_verified=False, stopped=False)
+    # 非全過但核心客觀證據通過（Demo 跑過且過）→ 帶已知限制出貨
+    assert shippable_verdict(all_ok=False, demo_veto=False, core_verified=True, stopped=False)
+    # 安全護欄：非全過且無任何客觀證據（沒跑過 Demo）→ 不出貨
+    assert not shippable_verdict(all_ok=False, demo_veto=False, core_verified=False, stopped=False)
+    # Demo 實際跑過且失敗（demo_veto）→ 硬擋,即使其餘看似 ok
+    assert not shippable_verdict(all_ok=True, demo_veto=True, core_verified=True, stopped=False)
+    # 被中止 → 一律不出貨
+    assert not shippable_verdict(all_ok=True, demo_veto=False, core_verified=True, stopped=True)
 
 
 def test_parse_tasks_bullets():

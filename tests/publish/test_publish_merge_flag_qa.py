@@ -93,7 +93,7 @@ async def test_maybe_publish_skips_when_auto_off(monkeypatch):
         called["n"] += 1
 
     monkeypatch.setattr(publisher, "publish", spy_publish)
-    await _make_orch()._maybe_publish(done=True)
+    await _make_orch()._maybe_publish(shippable=True)
     assert called["n"] == 0
 
 
@@ -110,7 +110,7 @@ async def test_maybe_publish_passes_merge_flag(monkeypatch, flag):
         return publisher.PublishResult(True, "ok")
 
     monkeypatch.setattr(publisher, "publish", spy_publish)
-    await _make_orch()._maybe_publish(done=True)
+    await _make_orch()._maybe_publish(shippable=True)
     assert seen["merge"] is flag
 
 
@@ -124,5 +124,5 @@ async def test_maybe_publish_skips_when_not_done(monkeypatch):
         called["n"] += 1
 
     monkeypatch.setattr(publisher, "publish", spy_publish)
-    await _make_orch()._maybe_publish(done=False)  # 未完成不發佈
+    await _make_orch()._maybe_publish(shippable=False)  # 未完成不發佈
     assert called["n"] == 0

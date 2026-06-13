@@ -82,6 +82,24 @@ def pm_done(text: str) -> bool:
     return bool(re.search(r"(已完成|達成|符合驗收)", text))
 
 
+def shippable_verdict(
+    *, all_ok: bool, demo_veto: bool, core_verified: bool, stopped: bool
+) -> bool:
+    """是否可出貨（可帶已知限制）——把「全有全無」放寬為「核心客觀證據通過即出貨」。
+
+    - stopped：被中止一律不出貨。
+    - demo_veto：最終 Demo／整合「實際跑過且失敗」＝客觀失敗,硬擋,不出貨。
+    - all_ok：所有任務都通過 → 完整出貨（原行為）。
+    - core_verified：最終 Demo／整合「實際跑過且通過」＝核心客觀證據,縱使有次要任務未過,
+      仍以「已知限制」版本出貨（未過任務記進交付物＋留 backlog）。
+    安全護欄:既非 all_ok、又無 core_verified（沒跑過 Demo、無任何客觀證據）時不出貨,
+    避免把未經驗證的半成品推出去。
+    """
+    if stopped or demo_veto:
+        return False
+    return all_ok or core_verified
+
+
 def parse_tasks(pm_text: str) -> list[str]:
     """從 PM 的拆解文字抽出任務條目。優先 `任務: ...`，否則退回條列項目。"""
     cap = config.MAX_TASKS

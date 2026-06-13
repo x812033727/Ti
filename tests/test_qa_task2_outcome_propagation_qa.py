@@ -134,7 +134,7 @@ async def test_maybe_publish_broadcasts_outcome_in_event(monkeypatch, outcome):
     monkeypatch.setattr(publisher, "publish", spy_publish)
 
     captured = []
-    await _make_orch(captured)._maybe_publish(done=True)
+    await _make_orch(captured)._maybe_publish(shippable=True)
 
     pub_events = [e for e in captured if e.type == events.EventType.PUBLISH_RESULT]
     assert len(pub_events) == 1
