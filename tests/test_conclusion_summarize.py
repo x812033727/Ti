@@ -49,28 +49,37 @@ def _transcript():
 
 
 def test_正常解析四前綴():
+    # 合規 senior：每條結論都帶取自骨架的有效錨點（speaker 存在於 transcript），
+    # 護欄（#2）全數放行、不加 （未錨定），原文照用。
     senior = StubSenior(
         "共識: engineer 與 senior 對齊混合範式 (R1 engineer)\n"
-        "分歧: qa 反對 engineer 的覆蓋率假設\n"
-        "未決: 上線時程未定\n"
-        "行動: 補測試覆蓋"
+        "分歧: qa 反對 engineer 的覆蓋率假設 (R2 qa)\n"
+        "未決: 上線時程未定 (R2 qa)\n"
+        "行動: 補測試覆蓋 (R1 engineer)"
     )
     r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
-    # 帶合法錨點 (R1 engineer) 且 engineer 真在 transcript → 護欄放行、不標未錨定。
+    # #2 護欄：有效 (R1 engineer) 錨點（engineer 在 transcript）→ 不誤標。
     assert r["consensus"] == ["engineer 與 senior 對齊混合範式 (R1 engineer)"]
-    # 其餘 LLM 自產條目無錨點 → 護欄標 `（未錨定）`（任務 #2）。
-    assert r["disagreements"] == ["qa 反對 engineer 的覆蓋率假設（未錨定）"]
-    assert r["open_questions"] == ["上線時程未定（未錨定）"]
-    assert r["actions"] == ["補測試覆蓋（未錨定）"]
+    # 其餘條目皆帶取自骨架的有效錨點（speaker 在 transcript）→ 護欄放行、不誤標。
+    assert r["disagreements"] == ["qa 反對 engineer 的覆蓋率假設 (R2 qa)"]
+    assert r["open_questions"] == ["上線時程未定 (R2 qa)"]
+    assert r["actions"] == ["補測試覆蓋 (R1 engineer)"]
 
 
-def test_prompt_含三條防坑硬指令與錨點來源():
+def test_prompt_含四條防坑硬指令與錨點來源():
     senior = StubSenior("共識: x")
     asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
     p = senior.prompt
     assert "不得新增未提及的結論" in p  # ① 防幻覺
     assert "無人反對 ≠ 共識" in p  # ② 防 Silent Agreement
     assert "強分歧必須保留並標明雙方" in p  # ③ 保留分歧
+    # ④ 自我校驗（任務 #1）：逐條自檢、查無依據者刪除，須可 grep（驗收 #1）
+    assert "④" in p
+    assert "逐條自我校驗" in p
+    assert "查無骨架依據者一律刪除" in p
+    # 四鍵前綴未被第④條擠散，仍可被 parse_conclusion 解析（驗收 #1）
+    for prefix in ("共識:", "分歧:", "未決:", "行動:"):
+        assert prefix in p
     # 錨點事實來源為規則骨架：speaker 帶在 final_positions / unique_findings
     assert "採用混合範式" in p
     assert "security" in p
@@ -96,9 +105,11 @@ def test_部分漏標_空鍵以規則骨架回填():
     # senior 只給了行動，漏標共識/分歧/未決——規則層已知為真者不可被靜默丟棄
     senior = StubSenior("行動: 補 rate limit 測試")
     r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
-    # LLM 給的 action 無錨點 → 護欄標未錨定（任務 #2，actions 永遠過護欄）。
+    # LLM 自產的 action 無 (round, speaker) 錨點 → 護欄（#2）標 （未錨定），與「有 transcript
+    # 來源」可視區分
     assert r["actions"] == ["補 rate limit 測試（未錨定）"]
-    assert r["consensus"] == ["engineer 同意 senior"]  # 空鍵回填規則骨架（不過護欄）
+    # 空鍵回填規則骨架——走 _anchored_from_summary、帶 transcript 真錨點，不被護欄重複標記
+    assert r["consensus"] == ["engineer 同意 senior"]
     assert r["disagreements"] == ["qa 反對 engineer"]
     assert r["open_questions"] == ["qa 反對 engineer"]
 
@@ -116,8 +127,8 @@ def test_prompt_含第四條自我校驗指令():
     """build_prompt 末尾須可 grep 到第④條自我校驗指令，且不破壞四前綴格式（驗收 #1）。"""
     p = conclusion.build_prompt(_summary(), _transcript())
     assert "④" in p
-    assert "逐條自檢" in p
-    assert "查無依據者刪除" in p
+    assert "逐條自我校驗" in p
+    assert "查無骨架依據者一律刪除" in p
     # 四前綴硬指令骨架不被破壞：四個輸出前綴仍在。
     for prefix in ("共識:", "分歧:", "未決:", "行動:"):
         assert prefix in p
@@ -134,8 +145,8 @@ def test_第四條指令不被誤解析成結論():
     p = conclusion.build_prompt(_summary(), _transcript())
     parsed = flow.parse_conclusion(p)
     flat = [item for items in parsed.values() for item in items]
-    assert not any("逐條自檢" in it for it in flat)
-    assert not any("查無依據者刪除" in it for it in flat)
+    assert not any("逐條自我校驗" in it for it in flat)
+    assert not any("查無骨架依據者一律刪除" in it for it in flat)
     # senior 真實輸出仍能被正確解析（端到端不破壞）已由 test_正常解析四前綴 覆蓋。
 
 
