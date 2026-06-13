@@ -58,7 +58,9 @@ def test_正常解析四前綴():
         "行動: 補測試覆蓋 (R1 engineer)"
     )
     r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
+    # #2 護欄：有效 (R1 engineer) 錨點（engineer 在 transcript）→ 不誤標。
     assert r["consensus"] == ["engineer 與 senior 對齊混合範式 (R1 engineer)"]
+    # 其餘條目皆帶取自骨架的有效錨點（speaker 在 transcript）→ 護欄放行、不誤標。
     assert r["disagreements"] == ["qa 反對 engineer 的覆蓋率假設 (R2 qa)"]
     assert r["open_questions"] == ["上線時程未定 (R2 qa)"]
     assert r["actions"] == ["補測試覆蓋 (R1 engineer)"]
@@ -106,7 +108,7 @@ def test_部分漏標_空鍵以規則骨架回填():
     # LLM 自產的 action 無 (round, speaker) 錨點 → 護欄（#2）標 （未錨定），與「有 transcript
     # 來源」可視區分
     assert r["actions"] == ["補 rate limit 測試（未錨定）"]
-    # 空鍵回填規則骨架——帶 transcript 真錨點、不被護欄重複標記
+    # 空鍵回填規則骨架——走 _anchored_from_summary、帶 transcript 真錨點，不被護欄重複標記
     assert r["consensus"] == ["engineer 同意 senior"]
     assert r["disagreements"] == ["qa 反對 engineer"]
     assert r["open_questions"] == ["qa 反對 engineer"]
