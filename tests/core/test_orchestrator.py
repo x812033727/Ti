@@ -115,6 +115,26 @@ async def test_record_known_limitations_writes_file_and_followups(tmp_path):
     assert "新增設定檔範例" in session._followups
 
 
+def test_no_file_progress_guard(tmp_path, monkeypatch):
+    # 連續多輪零檔案變更（幻覺寫檔:每輪換句話說卻沒動檔）→ 視為無進展、提早收斂。
+    from studio.orchestrator import LaneContext
+
+    async def nb(ev):
+        pass
+
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "STALL_ROUNDS", 3)
+    s = StudioSession("t", nb, experts={}, cwd=tmp_path)
+    ctx_dir = LaneContext("main", tmp_path, {})
+    ctx_none = LaneContext("main", None, {})
+
+    assert s._no_file_progress(ctx_none, 99) is False  # 無 cwd → 不誤殺
+    assert s._no_file_progress(ctx_dir, 2) is False  # streak < STALL_ROUNDS
+    assert s._no_file_progress(ctx_dir, 3) is True  # streak 達標 → 無進展
+    monkeypatch.setattr(config, "STALL_ROUNDS", 1)
+    assert s._no_file_progress(ctx_dir, 9) is False  # STALL_ROUNDS<=1 → 守門關閉
+
+
 def test_shippable_verdict():
     # 全任務通過 → 完整出貨
     assert shippable_verdict(all_ok=True, demo_veto=False, core_verified=False, stopped=False)
