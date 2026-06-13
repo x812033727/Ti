@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import json
 from pathlib import Path
 
 from studio import conclusion
@@ -138,6 +139,98 @@ def test_record_no_tmp_residue(tmp_path: Path):
     """atomic tmp-replace 寫入後不留 .md.tmp 殘檔。"""
     conclusion.record(tmp_path, _full(), session_id="s1")
     assert not (tmp_path / "CONCLUSION.md.tmp").exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+# ── 任務 #3：機讀 conclusion.json sidecar ────────────────────────────────────
+
+
+def test_record_writes_json_sidecar(tmp_path: Path):
+    """record 除 CONCLUSION.md 外另落合法 JSON sidecar，含 version/session_id/rounds＋四鍵（驗收 #3）。"""
+    conclusion.record(tmp_path, _full(), session_id="s42", rounds=3)
+    jpath = tmp_path / "conclusion.json"
+    assert jpath.is_file()
+    data = json.loads(jpath.read_text(encoding="utf-8"))  # 合法 JSON
+    assert data["version"] == 1
+    assert data["session_id"] == "s42"
+    assert data["rounds"] == 3
+    # 四鍵齊全且內容與輸入一致（機讀入口穩定）。
+    for key in ("consensus", "disagreements", "open_questions", "actions"):
+        assert data[key] == _full()[key]
+
+
+def test_record_sidecar_cwd_none_no_file():
+    """cwd None → md 與 sidecar 皆不落、回 None（驗收 #3）。"""
+    assert conclusion.record(None, _full(), session_id="s1", rounds=2) is None
+
+
+def test_record_sidecar_overwrites(tmp_path: Path):
+    """sidecar 與 md 同為覆寫式單檔，每場快照不累積。"""
+    conclusion.record(tmp_path, _full(), session_id="s1", rounds=1)
+    conclusion.record(
+        tmp_path,
+        {"consensus": ["新共識"], "disagreements": [], "open_questions": [], "actions": []},
+        session_id="s2",
+        rounds=5,
+    )
+    data = json.loads((tmp_path / "conclusion.json").read_text(encoding="utf-8"))
+    assert data["session_id"] == "s2"
+    assert data["rounds"] == 5
+    assert data["consensus"] == ["新共識"]
+
+
+def test_record_sidecar_no_tmp_residue(tmp_path: Path):
+    """atomic tmp-replace：sidecar 寫後不留 .json.tmp 殘檔（CLAUDE.md 鐵則）。"""
+    conclusion.record(tmp_path, _full(), session_id="s1", rounds=1)
+    assert not (tmp_path / "conclusion.json.tmp").exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_record_sidecar_failure_degrades_to_md_only(tmp_path: Path, monkeypatch):
+    """sidecar 寫入失敗 → 降級只保留 CONCLUSION.md、不拋例外、回傳 md path 不變（設計決策）。"""
+
+    real_write = conclusion.Path.write_text
+
+    def _selective(self, *a, **k):
+        # 只讓 sidecar 的 .json.tmp 寫入失敗，md 正常落盤。
+        if self.name.endswith(".json.tmp"):
+            raise OSError("disk full")
+        return real_write(self, *a, **k)
+
+    monkeypatch.setattr(conclusion.Path, "write_text", _selective, raising=True)
+    path = conclusion.record(tmp_path, _full(), session_id="s1", rounds=1)
+    # md 主檔仍落盤、回傳不變。
+    assert path == tmp_path / "CONCLUSION.md"
+    assert path.is_file()
+    # sidecar 不存在、且無殘留 tmp。
+    assert not (tmp_path / "conclusion.json").exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_record_sidecar_serialization_error_degrades(tmp_path: Path):
+    """名副其實的 best-effort：payload 含非 JSON 值（序列化丟 TypeError）也降級、不拋（高工建議）。
+
+    直接呼叫 _write_sidecar 注入不可序列化的 conclusion，驗證 except 網涵蓋 TypeError、
+    僅 log 不拋、且不留殘檔。
+    """
+
+    class _Unserializable:
+        pass
+
+    # 不經 record（其 list(...) 會吃掉），直接戳 _write_sidecar 注入壞值。
+    conclusion._write_sidecar(
+        tmp_path,
+        {
+            "consensus": [_Unserializable()],
+            "disagreements": [],
+            "open_questions": [],
+            "actions": [],
+        },
+        session_id="s1",
+        rounds=1,
+    )
+    # 序列化失敗 → 不拋例外、sidecar 不產出、無殘留 tmp。
+    assert not (tmp_path / "conclusion.json").exists()
     assert list(tmp_path.glob("*.tmp")) == []
 
 

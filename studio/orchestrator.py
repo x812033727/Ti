@@ -681,6 +681,7 @@ class StudioSession:
         )
         summary = build_summary(transcript)
         result = await conclusion.summarize(senior, summary, transcript, self.broadcast)
+        # 帶入真實輪數供 sidecar 機讀（設計決策 #4）：取整場 transcript 的末輪 round。
         path = conclusion.record(
             self.cwd,
             result,

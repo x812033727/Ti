@@ -262,6 +262,8 @@ async def summarize(
     backfilled: set[str] = set()
     for key in ("consensus", "disagreements", "open_questions"):
         if not parsed.get(key):
+            # 空鍵以規則骨架回填——這些是規則層事實、錨點由 _anchor_list 程式產生，
+            # 不過護欄（不會誤傷真來源）。
             parsed[key] = _anchored_from_summary(summary, key, transcript)
             backfilled.add(key)
     # 護欄（#2）：對未被規則回填的 LLM 自產非空鍵——含永遠走 LLM 原文的 actions——逐條
@@ -315,7 +317,10 @@ def _write_sidecar(
     try:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(_json_path(cwd))
-    except OSError as exc:  # 磁碟/權限等 IO 異常：降級，不拖垮主檔與後續 commit/broadcast
+    # 名副其實的 best-effort：除 OSError（IO/磁碟）外，也涵蓋序列化錯誤（TypeError/
+    # ValueError，如 payload 含非 JSON 值）——附屬 sidecar 任何失敗都降級，絕不向上拋出
+    # 拖垮 record→commit→broadcast 時序（高工第 2 輪審查建議）。
+    except (OSError, TypeError, ValueError) as exc:  # 降級：保 md，清理殘留 tmp
         log.warning("conclusion.json sidecar 寫入失敗，降級只保 CONCLUSION.md：%s", exc)
         with contextlib.suppress(OSError):
             if tmp.exists():
