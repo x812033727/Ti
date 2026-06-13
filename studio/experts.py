@@ -8,12 +8,16 @@ SDK 串流回來的訊息轉成 StudioEvent，透過注入的 broadcast callback
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import config, events, tools
 from .roles import Role, effective_tools
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     # 僅供型別檢查與註記用；執行期改在各函式內 local import，讓不需要 SDK 的
@@ -39,6 +43,116 @@ class ExpertTurnTimeout(Exception):
         super().__init__(reason)
         self.reason = reason  # "idle" | "hard"
         self.partial_text = partial_text
+
+
+class ExpertRateLimited(Exception):
+    """偵測到 429／rate_limit_error——交由 speak 層做有限次 retry-after 退避重試。
+
+    snippet＝命中錯誤的原文片段（供 log）；partial_text＝命中前已收到的合法文字。
+    retry_after＝從錯誤文字／例外解析到的建議等待秒數（無則 None，改走指數退避）。
+    """
+
+    def __init__(self, retry_after: float | None, snippet: str, partial_text: str = ""):
+        super().__init__(snippet)
+        self.retry_after = retry_after
+        self.snippet = snippet
+        self.partial_text = partial_text
+
+
+class ExpertAPIError(Exception):
+    """偵測到非限流的 API 錯誤文字（如 overloaded_error）——視為該輪失敗走 fallback。
+
+    與限流分屬兩條獨立失敗路徑：不重試，直接回傳不含核可關鍵詞的系統說明文字。
+    """
+
+    def __init__(self, kind: str, snippet: str, partial_text: str = ""):
+        super().__init__(snippet)
+        self.kind = kind
+        self.snippet = snippet
+        self.partial_text = partial_text
+
+
+# 失敗 fallback 文字的穩定標記子字串——單一事實來源，供下游（如冒煙報告）以純消費端
+# 方式從 transcript 計數 429／SDK 錯誤文字命中，避免兩端字串各寫一份而漂移。
+RATE_LIMIT_FALLBACK_MARKER = "因 API 限流（429）"
+API_ERROR_FALLBACK_MARKER = "發言收到 API 錯誤"
+
+# Anthropic 錯誤封包形如 {"type":"error","error":{"type":"rate_limit_error",...}}。
+# 錨定「JSON key:value 的錯誤型別 token」而非裸關鍵字，避免專家正常引用「rate limit／
+# error」字樣被誤殺（架構決策：禁用寬鬆關鍵字）。
+_API_ERR_RE = re.compile(
+    r'"type"\s*:\s*"(?P<kind>rate_limit_error|overloaded_error|api_error|'
+    r"authentication_error|permission_error|not_found_error|request_too_large|"
+    r'invalid_request_error|billing_error|timeout_error)"'
+)
+# 僅在 status/error code/HTTP 等明確前綴後出現的數字才視為狀態碼（裸數字不算）。
+_STATUS_RE = re.compile(
+    r"(?:status(?:\s*code)?|error\s*code|HTTP)\D{0,8}(?P<code>4\d\d|5\d\d)", re.I
+)
+# retry-after：header 或 JSON 欄位皆容忍（秒）。
+_RETRY_AFTER_RE = re.compile(r"retry[-_ ]?after[\"'\s:=]+(?P<sec>\d+(?:\.\d+)?)", re.I)
+# 視為 API 錯誤（走 fallback）的狀態碼；其餘僅當有錯誤型別 token 才算。
+_API_ERROR_CODES = {"400", "401", "403", "404", "413", "500", "502", "503", "529"}
+
+
+def _parse_retry_after(text: str) -> float | None:
+    m = _RETRY_AFTER_RE.search(text or "")
+    return float(m.group("sec")) if m else None
+
+
+def _classify_api_text(text: str) -> tuple[str, object] | None:
+    """判斷一段文字是否為 API 錯誤封包。
+
+    回傳 ("rate_limit", retry_after|None) ／ ("api_error", kind) ／ None。
+    rate_limit 條件：型別 token 為 rate_limit_error，或明確前綴後的狀態碼為 429。
+    """
+    if not text:
+        return None
+    m = _API_ERR_RE.search(text)
+    kind = m.group("kind") if m else None
+    sm = _STATUS_RE.search(text)
+    code = sm.group("code") if sm else None
+    if kind == "rate_limit_error" or code == "429":
+        return ("rate_limit", _parse_retry_after(text))
+    if kind:
+        return ("api_error", kind)
+    if code and code in _API_ERROR_CODES:
+        return ("api_error", f"HTTP {code}")
+    return None
+
+
+def _classify_failure(exc: Exception) -> tuple[str, float | None, str, str]:
+    """把 stream/query 拋出的例外歸類為 rate_limit／api_error／unknown。
+
+    回傳 (kind, retry_after, snippet, partial_text)。涵蓋兩種 SDK 失敗形態：
+    (a) 本模組從錯誤文字主動拋出的 ExpertRateLimited／ExpertAPIError；
+    (b) SDK 例外型 429（issue #812）——以 str(exc) 套同一錨定樣式辨識。
+    unknown 不吞，由呼叫端 re-raise，不掩蓋真正的程式錯誤。
+    """
+    if isinstance(exc, ExpertRateLimited):
+        return ("rate_limit", exc.retry_after, exc.snippet, exc.partial_text)
+    if isinstance(exc, ExpertAPIError):
+        return ("api_error", None, exc.snippet, exc.partial_text)
+    hit = _classify_api_text(str(exc))
+    if hit and hit[0] == "rate_limit":
+        return ("rate_limit", hit[1], str(exc)[:300], "")
+    if hit and hit[0] == "api_error":
+        return ("api_error", None, str(exc)[:300], "")
+    return ("unknown", None, "", "")
+
+
+def _backoff_delay(retry_after: float | None, attempt: int) -> float:
+    """退避秒數：優先採 retry-after，否則指數退避；皆夾在 cap 內。"""
+    cap = config.EXPERT_RATE_LIMIT_BACKOFF_CAP
+    if retry_after and retry_after > 0:
+        return min(retry_after, cap)
+    return min(config.EXPERT_RATE_LIMIT_BACKOFF * (2**attempt), cap)
+
+
+async def _sleep(seconds: float) -> None:
+    """退避等待的注入縫：測試 monkeypatch 本函式即可零實際等待並記錄延遲。"""
+    if seconds > 0:
+        await asyncio.sleep(seconds)
 
 
 # 哪些角色用主力（強但慢）模型，由 config.LEAD_ROLES 控制（可調、可在設定頁改）。
@@ -164,6 +278,16 @@ async def stream_to_events(
                 if isinstance(block, TextBlock):
                     text = block.text.strip()
                     if text:
+                        # 429／SDK 錯誤文字防線：部分 API 錯誤被塞進 AssistantMessage 文字
+                        # （issue #472），若當成正常發言進 transcript 會污染決議解析。命中
+                        # 即在此唯一收斂點拋出，交由 speak 層退避重試（限流）或走 fallback
+                        # （其它 API 錯誤），不廣播為正常訊息。
+                        hit = _classify_api_text(text)
+                        if hit is not None:
+                            partial = "\n".join(collected)
+                            if hit[0] == "rate_limit":
+                                raise ExpertRateLimited(hit[1], text[:300], partial)
+                            raise ExpertAPIError(str(hit[1]), text[:300], partial)
                         collected.append(text)
                         await broadcast(
                             events.expert_message(
@@ -217,22 +341,71 @@ class Expert:
         await self.start()
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
-
-        await self._client.query(prompt)
-        try:
-            text = await stream_to_events(
-                self._client.receive_response(),
-                self.session_id,
-                r,
-                broadcast,
-                idle_timeout=config.TURN_IDLE_TIMEOUT or None,
-                hard_timeout=config.TURN_HARD_TIMEOUT or None,
-            )
-        except ExpertTurnTimeout as exc:
-            text = await self._abort_turn(exc, broadcast)
-
+        text = await self._speak_with_retries(prompt, broadcast)
         await broadcast(events.expert_status(self.session_id, r.key, "idle"))
         return text
+
+    async def _speak_with_retries(self, prompt: str, broadcast: Broadcast) -> str:
+        """送 prompt 並串流；429／限流以有限次 retry-after 退避重試，其餘 API 錯誤走 fallback。
+
+        退避迴圈包住整段 `query()`＋`stream_to_events()`（架構決策：例外型 429 可能在
+        query 階段拋出，只包串流會漏接），且置於 watchdog（ExpertTurnTimeout）的更外層
+        ——逾時是另一條獨立失敗路徑，不被退避吞掉。未知例外一律 re-raise，不掩蓋真錯。
+        """
+        r = self.role
+        max_retries = max(0, config.EXPERT_RATE_LIMIT_RETRIES)
+        attempt = 0
+        while True:
+            try:
+                await self._client.query(prompt)
+                return await stream_to_events(
+                    self._client.receive_response(),
+                    self.session_id,
+                    r,
+                    broadcast,
+                    idle_timeout=config.TURN_IDLE_TIMEOUT or None,
+                    hard_timeout=config.TURN_HARD_TIMEOUT or None,
+                )
+            except ExpertTurnTimeout as exc:
+                return await self._abort_turn(exc, broadcast)
+            except Exception as exc:
+                kind, retry_after, snippet, partial = _classify_failure(exc)
+                if kind == "rate_limit":
+                    if attempt < max_retries:
+                        delay = _backoff_delay(retry_after, attempt)
+                        logger.warning(
+                            "專家 %s 撞限流（429，第 %d/%d 次重試），退避 %.1fs：%s",
+                            r.key,
+                            attempt + 1,
+                            max_retries,
+                            delay,
+                            snippet,
+                        )
+                        await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
+                        await _sleep(delay)
+                        attempt += 1
+                        continue
+                    logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, max_retries)
+                    return await self._fallback_note(
+                        f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {max_retries} 次仍失敗，本輪中止。",
+                        partial,
+                        broadcast,
+                    )
+                if kind == "api_error":
+                    logger.warning("專家 %s 收到 API 錯誤文字，走 fallback：%s", r.key, snippet)
+                    return await self._fallback_note(
+                        f"【系統】{API_ERROR_FALLBACK_MARKER}，本輪中止。", partial, broadcast
+                    )
+                raise
+
+    async def _fallback_note(self, note: str, partial_text: str, broadcast: Broadcast) -> str:
+        """限流／錯誤文字失敗時的收斂：對齊逾時 fallback 語義——回傳不含核可關鍵詞的
+        系統說明文字並照常廣播進 transcript，由下游既有機制視為未過。"""
+        r = self.role
+        if partial_text:
+            note += f"\n中止前的部分輸出：\n{partial_text}"
+        await broadcast(events.expert_message(self.session_id, r.key, r.name, r.avatar, note))
+        return note
 
     async def _abort_turn(self, exc: ExpertTurnTimeout, broadcast: Broadcast) -> str:
         """逾時後回收：先溫和 interrupt 並 drain 到 turn 邊界；不行才斷線重建。
