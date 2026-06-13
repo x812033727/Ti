@@ -181,6 +181,50 @@ async def _auto_allow_tool(
     return PermissionResultAllow()
 
 
+# SDK 內建的寫檔工具（Claude provider 用它們，不經 studio 的 tools.execute／safe_resolve）。
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _path_within(cwd: Path, raw: str) -> bool:
+    """raw（相對或絕對）解析後是否仍落在 cwd（含子目錄）內。解析失敗一律視為「不在內」。"""
+    try:
+        p = Path(raw)
+        target = p if p.is_absolute() else (cwd / p)
+        return target.resolve().is_relative_to(cwd.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def _make_can_use_tool(cwd: Path):
+    """產生綁定該專家 cwd 的權限回呼。
+
+    並行 lane 隔離的真正防線：Claude provider 的 SDK 內建 Write/Edit/MultiEdit/NotebookEdit
+    **不經** studio 的 `tools.execute`／`safe_resolve`，其檔案寫入是否限制在 cwd 內全靠 CLI
+    沙箱的 FS 邊界——而該邊界在巢狀沙箱／缺依賴時可能靜默未生效，導致 lane 專家把成果寫到
+    cwd 外的兄弟目錄（主工作樹），使「並行 lane 隔離」名不副實、合併變 no-op／撞未追蹤檔。
+    故在此於權限層硬擋「寫到 cwd 之外」（is_relative_to 判定，含絕對路徑與 `..` 逃逸），
+    與 OpenAI／離線路徑的 safe_resolve 對齊；其餘（WebFetch 管控、預設放行）沿用既有行為。
+    序列模式 cwd＝主工作目錄，專家本就在其中寫檔，不受影響。
+    """
+    cwd = Path(cwd)
+
+    async def can_use_tool(tool_name, tool_input, context):
+        from claude_agent_sdk import PermissionResultDeny
+
+        if tool_name in _WRITE_TOOLS:
+            data = tool_input or {}
+            raw = str(
+                data.get("file_path") or data.get("notebook_path") or data.get("path") or ""
+            )
+            if raw and not _path_within(cwd, raw):
+                return PermissionResultDeny(
+                    message=f"工作隔離：禁止寫入工作目錄外的路徑（{raw}）"
+                )
+        return await _auto_allow_tool(tool_name, tool_input, context)
+
+    return can_use_tool
+
+
 def _model_for(role: Role) -> str:
     """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。
 
@@ -221,7 +265,7 @@ def _build_client(role: Role, session_id: str, cwd: Path):
             system_prompt=role.system_prompt,
             allowed_tools=effective_tools(role),
             permission_mode=role.permission_mode,
-            can_use_tool=_auto_allow_tool,
+            can_use_tool=_make_can_use_tool(cwd),
             sandbox=config.expert_sandbox_settings(),
             cwd=str(cwd),
             model=_model_for(role),
