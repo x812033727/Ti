@@ -180,6 +180,35 @@ def parse_vision(text: str) -> str:
     return _last_match(text, r"願景\s*[:：]\s*(.+)") or ""
 
 
+# --- 結論彙整解析（共識／分歧／未決／行動） -------------------------------
+
+# 四前綴 → 結構化鍵；順序即輸出 dict 鍵順序。
+_CONCLUSION_PREFIXES = (
+    ("共識", "consensus"),
+    ("分歧", "disagreements"),
+    ("未決", "open_questions"),
+    ("行動", "actions"),
+)
+
+
+def parse_conclusion(text: str) -> dict[str, list[str]]:
+    """解析 senior 蒸餾輸出的四段行前綴 `共識:／分歧:／未決:／行動:`，回傳結構化 dict。
+
+    沿用既有行前綴 parser 範式（`^\\s*<標籤>\\s*[:：]\\s*(.+)$` ＋全形冒號容錯）；每個
+    前綴可出現多行，逐行收進對應 list（剝去前後空白、跳過空內容）。
+
+    四前綴全缺時回空骨架（四鍵皆空 list）而非拋例外，由呼叫端偵測空骨架走 fallback，
+    對齊 `adr.parse_adr` 「失敗即降級」。
+    """
+    result: dict[str, list[str]] = {key: [] for _, key in _CONCLUSION_PREFIXES}
+    for label, key in _CONCLUSION_PREFIXES:
+        for m in re.findall(rf"^\s*{label}\s*[:：]\s*(.+)$", text or "", re.M):
+            item = m.strip()
+            if item:
+                result[key].append(item)
+    return result
+
+
 # --- 議程解析（子題＋負責分派） -------------------------------------------
 
 # 解析端硬上限：prompt 的「2–5 個」只是建議不是防線，超出一律截斷並 log。
