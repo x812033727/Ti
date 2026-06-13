@@ -225,52 +225,46 @@ async def test_auto_allow_other_tools_always_allowed(fake_perm_sdk):
         assert isinstance(res, fake_perm_sdk.PermissionResultAllow)
 
 
-# ---------- experts._make_can_use_tool（cwd 寫入隔離：並行 lane 真正防線）----------
-async def test_can_use_tool_write_inside_cwd_allowed(tmp_path, fake_perm_sdk):
+# ---------- experts._make_fs_guard_hook（PreToolUse cwd 寫入隔離：並行 lane 真正防線）----------
+# 註：寫檔工具在 allowed_tools 內已預先允許、且工程師角色用 permission_mode="acceptEdits"
+# 會跳過 can_use_tool，故 cwd 限制改用「對所有工具一律先行」的 PreToolUse hook（實測唯一可靠）。
+def _denied(out) -> bool:
+    return (out or {}).get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+
+async def test_fs_guard_write_inside_cwd_allowed(tmp_path):
     from studio import experts
 
-    hook = experts._make_can_use_tool(tmp_path)
-    # 相對路徑（落在 cwd 內）
-    assert isinstance(
-        await hook("Write", {"file_path": "pkg/mod.py"}, None), fake_perm_sdk.PermissionResultAllow
-    )
-    # 絕對路徑但在 cwd 子樹內
+    hook = experts._make_fs_guard_hook(tmp_path)
+    # 相對路徑（落在 cwd 內）→ 放行（回 {}）
+    assert not _denied(await hook({"tool_name": "Write", "tool_input": {"file_path": "pkg/mod.py"}}, "id", None))
+    # 絕對路徑但在 cwd 子樹內 → 放行
     inside = str(tmp_path / "tests" / "t.py")
-    assert isinstance(
-        await hook("Edit", {"file_path": inside}, None), fake_perm_sdk.PermissionResultAllow
-    )
+    assert not _denied(await hook({"tool_name": "Edit", "tool_input": {"file_path": inside}}, "id", None))
 
 
-async def test_can_use_tool_write_outside_cwd_denied(tmp_path, fake_perm_sdk):
+async def test_fs_guard_write_outside_cwd_denied(tmp_path):
     from studio import experts
 
     lane = tmp_path / "proj.lanes" / "task-2"
     lane.mkdir(parents=True)
-    hook = experts._make_can_use_tool(lane)
+    hook = experts._make_fs_guard_hook(lane)
     # 寫到兄弟目錄（主工作樹）＝洩漏路徑，必須擋
     sibling = str(tmp_path / "proj" / "mod.py")
-    res = await hook("Write", {"file_path": sibling}, None)
-    assert isinstance(res, fake_perm_sdk.PermissionResultDeny)
+    assert _denied(await hook({"tool_name": "Write", "tool_input": {"file_path": sibling}}, "id", None))
     # `..` 逃逸同樣擋
-    res2 = await hook("Edit", {"file_path": "../proj/mod.py"}, None)
-    assert isinstance(res2, fake_perm_sdk.PermissionResultDeny)
+    assert _denied(await hook({"tool_name": "Edit", "tool_input": {"file_path": "../proj/mod.py"}}, "id", None))
+    # NotebookEdit 也涵蓋（notebook_path）
+    assert _denied(await hook({"tool_name": "NotebookEdit", "tool_input": {"notebook_path": sibling}}, "id", None))
 
 
-async def test_can_use_tool_still_enforces_webfetch_and_allows_reads(
-    tmp_path, monkeypatch, fake_perm_sdk
-):
+async def test_fs_guard_ignores_non_write_tools(tmp_path):
     from studio import experts
 
-    hook = experts._make_can_use_tool(tmp_path)
-    # 委派：WebFetch 仍受網域管控
-    monkeypatch.setattr(config, "RESEARCH_ALLOWED_DOMAINS", ["example.com"])
-    assert isinstance(
-        await hook("WebFetch", {"url": "http://evil.com/"}, None), fake_perm_sdk.PermissionResultDeny
-    )
-    # 非寫檔工具（Read／Bash）不受 cwd 路徑限制（只擋寫，避免誤傷研究讀取）
-    assert isinstance(
-        await hook("Read", {"file_path": "/etc/hosts"}, None), fake_perm_sdk.PermissionResultAllow
-    )
+    hook = experts._make_fs_guard_hook(tmp_path)
+    # 只擋寫；Read/Bash 不受 cwd 路徑限制（避免誤傷研究讀取／既有 bash 流程）
+    assert not _denied(await hook({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}, "id", None))
+    assert not _denied(await hook({"tool_name": "Bash", "tool_input": {"command": "ls /"}}, "id", None))
 
 
 # ---------- settings 註冊與非法值 ----------
