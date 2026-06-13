@@ -90,7 +90,13 @@ async def test_round_robin_order_context_and_transcript():
     # 第 1 輪沒有「上一輪」段落
     assert "【上一輪全員發言】" not in a.prompts[0]
     # summary 結構
-    assert set(res.summary) == {"consensus", "disagreements", "final_positions"}
+    assert set(res.summary) == {
+        "consensus",
+        "disagreements",
+        "final_positions",
+        "unique_findings",
+        "open_questions",
+    }
     assert res.summary["final_positions"]["丙"] == res.transcript[-1].text
 
 
@@ -201,7 +207,13 @@ async def test_stalled_marks_reason_and_summary_structure():
     eng = DiscussionEngine([(s.name, s) for s in stubs], mode="parallel", max_rounds=6)
     res = await eng.run("T")
     assert res.stop_reason == "stalled"
-    assert set(res.summary) == {"consensus", "disagreements", "final_positions"}
+    assert set(res.summary) == {
+        "consensus",
+        "disagreements",
+        "final_positions",
+        "unique_findings",
+        "open_questions",
+    }
     assert res.summary["final_positions"] == {n: "重複立場，無新進展" for n in ("甲", "乙", "丙")}
 
 
@@ -222,6 +234,93 @@ def test_summary_consensus_and_disagreements_from_mentions():
     assert summary["disagreements"] == sorted(summary["disagreements"])  # 穩定排序可重現
     assert "丙 同意 甲" not in summary["consensus"]  # 立場翻轉以分歧為準
     assert summary["final_positions"]["丙"] == "改反對"
+
+
+# --- 任務 #2：unique_findings / open_questions 機讀新鍵（零 LLM）-------------
+
+
+def _summary(transcript):
+    """以最小 engine 呼叫 _build_summary（純函式行為，與 participants 無關）。"""
+    eng = DiscussionEngine([("甲", StubExpert("甲"))], max_rounds=1)
+    return eng._build_summary(transcript)
+
+
+def test_open_questions_per_pair_last_round_stance():
+    """open_questions 取 per-pair 末輪 stance：先反對後同意→收斂不列入；
+    先同意後反對→末態反對列入。明確不可用扁平 disagree-agree 推導。"""
+    transcript = [
+        # 甲→乙：先反對(R1) 後同意(R2) → 收斂，不應列入 open_questions
+        Utterance(1, "甲", "反對乙", [Mention("甲", "乙", "反對")]),
+        Utterance(2, "甲", "改同意乙", [Mention("甲", "乙", "同意")]),
+        # 丙→丁：先同意(R1) 後反對(R2) → 末態反對，應列入 open_questions
+        Utterance(1, "丙", "同意丁", [Mention("丙", "丁", "同意")]),
+        Utterance(2, "丙", "改反對丁", [Mention("丙", "丁", "反對")]),
+    ]
+    summary = _summary(transcript)
+    assert summary["open_questions"] == ["丙 反對 丁"]
+    # 反向驗：扁平 disagree-agree 會誤把「甲 反對 乙」當未決（disagree 有、agree 也有→抵消？
+    # 實則「甲 反對 乙」末態已同意收斂，正確結果不含它），證明 per-pair 末輪判定的判別力。
+    assert "甲 反對 乙" not in summary["open_questions"]
+
+
+def test_open_questions_excludes_self_mention():
+    """self-mention 的反對不算 open_question（無跨角色分歧）。"""
+    transcript = [
+        Utterance(1, "甲", "自我反對", [Mention("甲", "甲", "反對")]),
+    ]
+    assert _summary(transcript)["open_questions"] == []
+
+
+def test_unique_findings_zero_mention_black_sample():
+    """黑樣本：全員零 mention（無人回應彼此）→ 全部進 unique_findings，
+    且 consensus 必為空（無明確同意），不誤判為強共識。"""
+    transcript = [
+        Utterance(1, "甲", "我的觀點A"),
+        Utterance(1, "乙", "我的觀點B"),
+        Utterance(1, "丙", "我的觀點C"),
+    ]
+    summary = _summary(transcript)
+    assert summary["unique_findings"] == ["丙", "乙", "甲"]
+    assert summary["consensus"] == []  # 結構保證：零 mention → 無假共識
+
+
+def test_unique_findings_partial_mention_grey_sample():
+    """灰樣本：部分角色被他人回應。被 mention 的 target 退出 unique_findings，
+    無人回應者保留——驗 role 粒度的真實語意（非只驗極端）。"""
+    transcript = [
+        # 甲 mention 乙 → 乙「被回應」退出 unique
+        Utterance(1, "甲", "回應乙", [Mention("甲", "乙", "同意")]),
+        Utterance(1, "乙", "我的觀點", []),
+        # 丙 無人回應 → 保留於 unique
+        Utterance(1, "丙", "孤立觀點", []),
+    ]
+    summary = _summary(transcript)
+    # 乙被回應而退出；甲、丙無人回應而保留
+    assert summary["unique_findings"] == ["丙", "甲"]
+
+
+def test_unique_findings_self_mention_not_counted_as_responded():
+    """self-mention 不算「被回應」：角色只引用自己時仍應留在 unique_findings
+    （防 self-mention 造成假陰性、漏掉真正無人回應的角色）。"""
+    transcript = [
+        Utterance(1, "甲", "自我引用", [Mention("甲", "甲", "同意")]),
+        Utterance(1, "乙", "回應甲", [Mention("乙", "甲", "同意")]),
+    ]
+    summary = _summary(transcript)
+    # 甲被乙回應而退出；乙無人回應而保留（self-mention 不會讓乙誤判為被回應）
+    assert summary["unique_findings"] == ["乙"]
+
+
+def test_new_keys_do_not_regress_existing_three():
+    """新鍵不影響既有三鍵行為（agree/disagree 仍含 self-mention、邏輯不變）。"""
+    transcript = [
+        Utterance(1, "甲", "支持乙", [Mention("甲", "乙", "同意")]),
+        Utterance(1, "乙", "反對丙", [Mention("乙", "丙", "反對")]),
+    ]
+    summary = _summary(transcript)
+    assert summary["consensus"] == ["甲 同意 乙"]
+    assert summary["disagreements"] == ["乙 反對 丙"]
+    assert summary["final_positions"] == {"甲": "支持乙", "乙": "反對丙"}
 
 
 def test_constructor_validation():

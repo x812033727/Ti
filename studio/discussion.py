@@ -44,7 +44,9 @@ semaphore / broadcast / should_stop 一律由呼叫端建構時注入。
 - ``Utterance(round: int, speaker: str, text: str, mentions: list[Mention])``
 - ``DiscussionResult(transcript: list[Utterance], stop_reason: str, summary: dict)``
   其中 ``stop_reason ∈ {"max_rounds", "stalled", "cancelled"}``；summary 含
-  ``consensus`` / ``disagreements`` / ``final_positions`` 三鍵。
+  ``consensus`` / ``disagreements`` / ``final_positions`` 三鍵，外加機讀
+  ``unique_findings``（無人回應的角色，role 粒度）與 ``open_questions``
+  （per-pair 末輪 stance 仍為反對者）兩鍵，皆由 mentions/stance 統計得出、零 LLM。
 """
 
 from __future__ import annotations
@@ -100,8 +102,9 @@ class DiscussionResult:
     """討論結果：結構化 transcript＋停止原因＋小結。
 
     stop_reason ∈ {"max_rounds", "stalled", "cancelled"}。
-    summary 固定含三鍵：consensus（共識清單）、disagreements（分歧清單）、
-    final_positions（{角色名: 末輪發言}）。
+    summary 固定含五鍵：consensus（共識清單）、disagreements（分歧清單）、
+    final_positions（{角色名: 末輪發言}）、unique_findings（無人回應的角色清單）、
+    open_questions（per-pair 末輪 stance 仍為反對者清單）。
     """
 
     transcript: list[Utterance]
@@ -321,23 +324,49 @@ class DiscussionEngine:
     # --- 小結（規則式、零 LLM 呼叫）---------------------------------------
     def _build_summary(self, transcript: list[Utterance]) -> dict:
         """從 transcript 推導小結（規則式、零 LLM 呼叫）。共識/分歧由各 Utterance 的
-        mentions（parse_mentions 解析結果）統計推導；final_positions 取各角色末輪發言。"""
+        mentions（parse_mentions 解析結果）統計推導；final_positions 取各角色末輪發言。
+
+        另含兩個機讀鍵（皆由 mentions/stance 統計得出、零 LLM）：
+        - ``unique_findings``：role 粒度——target 從未被任何「他人」mention 的角色
+          （無人回應者）。建圖時排除 self-mention（僅計 m.speaker != m.target），
+          避免角色自我引用被誤判為「已被回應」。此為角色粒度近似，非論點粒度遺漏偵測。
+        - ``open_questions``：per-pair 末輪 stance 判定——對每個 (speaker, target)
+          取最大 round 的末態 stance，末態為「反對」者列入（有反對且未收斂）。
+          明確不沿用扁平 agree/disagree set，以正確處理「先同意後反對」末態仍反對之 case。
+        """
         final_positions: dict[str, str] = {}
         for u in transcript:
             final_positions[u.speaker] = u.text
         agree: set[tuple[str, str]] = set()
         disagree: set[tuple[str, str]] = set()
+        # 新鍵專用統計（排除 self-mention，與既有 agree/disagree 分離以防回歸）：
+        speakers: set[str] = set()
+        responded_targets: set[str] = set()  # 被「他人」mention 過的角色
+        last_stance: dict[tuple[str, str], tuple[int, str]] = {}  # pair -> (末輪 round, stance)
         for u in transcript:
+            speakers.add(u.speaker)
             for m in u.mentions:
                 pair = (m.speaker, m.target)
                 if m.stance == "同意":
                     agree.add(pair)
                 elif m.stance == "反對":
                     disagree.add(pair)
+                if m.speaker != m.target:
+                    responded_targets.add(m.target)
+                    prev = last_stance.get(pair)
+                    # >= 讓同輪/後輪的較晚發言覆蓋，取末態 stance（transcript 為時序）
+                    if prev is None or u.round >= prev[0]:
+                        last_stance[pair] = (u.round, m.stance)
         consensus = [f"{s} 同意 {t}" for s, t in sorted(agree - disagree)]
         disagreements = [f"{s} 反對 {t}" for s, t in sorted(disagree)]
+        unique_findings = sorted(speakers - responded_targets)
+        open_questions = sorted(
+            f"{s} 反對 {t}" for (s, t), (_round, stance) in last_stance.items() if stance == "反對"
+        )
         return {
             "consensus": consensus,
             "disagreements": disagreements,
             "final_positions": final_positions,
+            "unique_findings": unique_findings,
+            "open_questions": open_questions,
         }
