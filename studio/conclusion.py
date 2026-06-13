@@ -9,10 +9,12 @@
   3. senior 漏標前綴（解析回空骨架）時 **fallback** 回規則式 summary 骨架，不崩潰、
      仍產出可落盤的結論 dict（驗收 #6）。
 
-防坑三條硬指令（字面寫入 prompt、可 grep 驗證）：
+防坑四條硬指令（字面寫入 prompt、可 grep 驗證）：
   ① 只彙整 transcript 出現過的論點，不得新增未提及的結論（防 Contextual Inference 幻覺）；
   ② 無人反對 ≠ 共識，需區分「明確同意」與「無人表態」（防 Silent Agreement 偏誤）；
-  ③ 強分歧須保留並標明雙方，不得抹平。
+  ③ 強分歧須保留並標明雙方，不得抹平；
+  ④ 逐條自我校驗：每條結論須能對應上方骨架的某 (round, speaker)，能對應者帶上錨點、
+     查無依據者刪除（單次自我校驗降 Contextual Inference 幻覺，零新增 LLM 呼叫）。
 
 落盤：:func:`record` 把彙整 dict 渲染成 ``CONCLUSION.md`` 四段 markdown（``## 共識／
 ## 分歧／## 未決事項／## 後續行動``），覆寫式單檔落 workspace 根（沿用 ``adr.py`` 的
@@ -164,7 +166,7 @@ def _render_skeleton(summary: dict) -> str:
 
 
 def build_prompt(summary: dict, transcript: list[Utterance]) -> str:
-    """以規則式 summary 為骨架組 senior 蒸餾 prompt，含三條防坑硬指令。
+    """以規則式 summary 為骨架組 senior 蒸餾 prompt，含四條防坑硬指令。
 
     錨點事實來源為規則層 summary（不信任 LLM 自填），故 prompt 提供 final_positions/
     unique_findings 的 speaker 錨點供其引用。
