@@ -44,7 +44,7 @@ const fixture = () => ({
 const calls = [];
 let wsCount = 0;
 const noop = () => {};
-const windowObj = { addEventListener: noop, location: { protocol: 'http:', host: 'x', href: '' } };
+const windowObj = { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } };
 function WebSocket() { wsCount += 1; return new RecEl('ws'); }
 
 const ctx = vm.createContext({
