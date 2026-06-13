@@ -94,7 +94,9 @@ def test_audit_has_no_phantom_routes(app):
     assert not phantom, f"盤點表列出不存在的路由：{phantom}"
 
 
-# --- 納管清單與架構決策一致（六個寫入端點全標 ✅）------------------------
+# --- 納管清單與架構決策一致（寫入端點全標 ✅）----------------------------
+# 任務 #2 新增 /api/roles 寫入端點（POST/PUT/DELETE 走 WRITE_DEPS=require_admin），
+# 依架構決策納管，與原六個寫入端點同列。
 def test_audit_managed_set_matches_decision():
     http_docs, _ = parse_audit()
     managed = {p for (m, p), mark in http_docs.items() if mark}
@@ -105,6 +107,8 @@ def test_audit_managed_set_matches_decision():
         "/api/autopilot/pause",
         "/api/autopilot/resume",
         "/api/autopilot/task",
+        "/api/roles",
+        "/api/roles/{key}",
     }
     assert managed == expected, f"納管清單與架構決策不符：{managed ^ expected}"
 

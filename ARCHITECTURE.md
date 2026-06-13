@@ -26,12 +26,13 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `config.py` | 集中設定：模型、輪數、辯論、Demo、git、門禁、路徑、伺服器；`reload()` 供執行期套用變更 |
 | `auth.py` | 單一密碼門禁：cookie token 簽章/驗證、`require_auth` 依賴、WS 檢查 |
 | `settings.py` | UI 可調設定（API key / provider / 模型 / GitHub token）：白名單、遮蔽秘密、寫入 .env、`config.reload()` |
-| `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish |
+| `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish、角色管理（`/api/roles`）、討論小組（`/api/groups`） |
 | `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
 | `orchestrator.py` | `StudioSession`：（選配）需求澄清 → 需求拆解 → 架構辯論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討 |
 | `discussion.py` | 多角色討論引擎（opt-in，`TI_DISCUSS_MODE`）：N 角色 `round_robin`/`parallel` 兩種發言調度、結構化 `回應 @角色名: 同意\|反對` 引用＋反諂媚硬指令、`flow.is_stalled` 提前收斂、規則式小結；semaphore/broadcast/should_stop 建構時注入，不 import orchestrator |
-| `roles.py` | 四位專家的角色定義與 system prompt |
+| `roles.py` | 內建 8 角色定義（CORE 4＋OPTIONAL 4）、共通守則 `_COMMON`；對外接面 `ROSTER`/`BY_KEY` |
+| `role_store.py` | 自訂角色檔（`roles/*.md`）載入/驗證/原子落檔＋討論小組（`roles/groups.yaml`）CRUD；「內建為預設、檔案同 key 覆蓋」合併進 `roles` 模組（見〈自訂角色與討論小組〉） |
 | `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，把串流回應轉成事件 |
 | `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容） |
 | `tools.py` | 非 Claude provider 的 function-calling 工具層（read/write/edit/bash…） |
@@ -61,6 +62,11 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 
 事件型別是前後端的契約，定義集中在 `events.py`，前端在 `web/app.js` 的
 `handleEvent()` 對應處理。
+
+拆解階段另送一筆 `agenda_plan` 快照（payload：`agenda` 子題列表
+〔title/description/criteria/assignee，assignee 已過硬驗證〕、`tasks` 任務清單、
+`edges` 依賴邊、`assignments` 分派表〔index 1-based〕、`corrections` 分派修正紀錄
+〔index 0-based〕），隨事件流入 `history/<id>.jsonl`，供事後重看與重播。
 
 ## 需求澄清（選配，`TI_CLARIFY`）
 
@@ -148,6 +154,108 @@ Ti 主核心 repo（雙軌路由）」），或再加 `mode: "improve"` 啟動**
   發言；ADR 開啟時由高工沿用既有蒸餾指令把 final_positions＋末輪發言收斂成決策落盤。
 - **依賴方向**：discussion.py 只依賴 stdlib＋`flow.py`＋`config.py`，semaphore／broadcast／
   should_stop 由 orchestrator 建構時注入（嚴禁反向 import，防循環依賴）。
+
+## 自訂角色與討論小組（`role_store.py`、`/api/roles`、`/api/groups`）
+
+內建 8 角色為預設；`roles/*.md` 角色檔同 key 覆蓋內建、新 key 追加。不放任何角色檔時，
+`ROSTER`/`BY_KEY` 行為與純內建完全一致。角色檔目錄由 `TI_ROLES_DIR` 指定
+（預設 `<專案根>/roles`，可在設定面板「進階」組調整）。
+
+### 角色檔格式（`roles/<key>.md`，Markdown＋YAML frontmatter、一檔一角色）
+
+檔名 stem 即角色 key，須符合 `^[a-z][a-z0-9_]{1,31}$`。範例檔見
+`roles/_example.md.sample`（載入器只掃 `*.md`，`.sample` 不會被載入）。
+
+frontmatter 欄位（pydantic 驗證、`extra="forbid"`——未知欄位明確報錯）：
+
+| 欄位 | 型別 | 必填 | 預設 | 說明 |
+|------|------|------|------|------|
+| `key` | str | 否 | 檔名 stem | 寫了必須與檔名一致，否則拒檔 |
+| `name` | str | **是** | — | 中文顯示名，去空白後不可為空 |
+| `avatar` | str | 否 | `"🤖"` | emoji |
+| `title` | str | 否 | 同 key | 職稱 |
+| `model` | str | 否 | `config.MODEL_FAST` | 空字串＝用預設 |
+| `allowed_tools` | list[str] | 否 | `["Read", "Grep"]` | 項目不可為空字串 |
+| `permission_mode` | str | 否 | `"default"` | 白名單 `{default, acceptEdits}` |
+| `tags` | list[str] | 否 | `[]` | 項目不可為空字串 |
+| `description` | str | 否 | `""` | 給調度／選人看的一句話描述 |
+
+body 即「角色專屬 system prompt」，載入時自動前置共通守則 `roles._COMMON`，檔案不必
+（也不應）手抄共通段。**反空殼 persona（micro-rules）**：body 去空白後須非空，且至少一行
+匹配 `(輸出|決議|驗證|格式|指令|決策)[:：]`——確保角色有可解析的出力格式，不收只有形容詞
+的空殼。內建 8 角色 body 全數通過此規則（有守門單測），覆蓋內建的「讀出→改→寫回」往返
+不會被卡死。
+
+載入/合併規則（`role_store.reload_roles()`）：
+
+- `BY_KEY` ＝ 全部內建（含被 `OPTIONAL_ROLES` 過濾者）＋全部合法檔案角色（BY_KEY ⊇ ROSTER）。
+- `ROSTER` ＝ 內建（同 key 檔案覆蓋後、沿用 `OPTIONAL_ROLES` 過濾）＋全部新 key 檔案角色（依 key 排序）。
+- 壞檔（缺必填欄位/YAML 壞/未知欄位/空殼 persona）逐檔拒絕並記 log（logger `ti.roles`），不影響其他檔與內建。
+- reload 為純同步、一次原地變異（`ROSTER[:]`/`BY_KEY.clear()+update()`/具名常數 setattr），既有 import 綁定保活、無並發空窗。
+- **reload 語意**：進行中 session 已快照 Role 物件，reload 只影響之後建立的 expert，不熱換進行中討論。
+
+### `/api/roles`（GET 掛 `require_auth`；POST/PUT/DELETE 掛 `require_admin`＝WRITE_DEPS）
+
+角色回傳形狀 `RoleJson`（GET 列表與寫入成功皆用此形）：
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| `key` | str | 角色 key |
+| `name` | str | 顯示名 |
+| `avatar` | str | emoji |
+| `title` | str | 職稱 |
+| `model` | str | 實際生效模型（預設已展開，非空字串） |
+| `allowed_tools` | list[str] | 工具白名單 |
+| `permission_mode` | str | `default` / `acceptEdits` |
+| `tags` | list[str] | 標籤 |
+| `description` | str | 一句話描述 |
+| `source` | str | `builtin`（純內建）/ `override`（檔案覆蓋內建）/ `file`（純檔案） |
+| `in_roster` | bool | 是否在 ROSTER（被 `OPTIONAL_ROLES` 過濾者為 false） |
+| `system_prompt` | str | **角色專屬段原文**（不含 _COMMON 前綴）——可直接改後 PUT 寫回 |
+
+請求體 `RoleBody`（POST 與 PUT 同形；PUT 為**整筆替換**，未給的選填欄位回到預設值）：
+
+| 欄位 | 型別 | 必填 | 說明 |
+|------|------|------|------|
+| `key` | str | POST 必填；PUT 選填 | 須符合 `^[a-z][a-z0-9_]{1,31}$`；PUT 給了須與路徑一致（不一致 422） |
+| `name` | str | 是 | 顯示名 |
+| `system_prompt` | str | 是 | 角色專屬段（不含 _COMMON）；須過反空殼 persona 規則，否則 422 |
+| `avatar` / `title` / `model` / `allowed_tools` / `permission_mode` / `tags` / `description` | 同角色檔 frontmatter | 否 | 預設值同上表 |
+
+端點與狀態碼（錯誤體為 `{"ok": false, "detail": str}`）：
+
+- `GET /api/roles` → `200 {"roles": [RoleJson]}`（內建＋檔案全部角色）。
+- `POST /api/roles`（body=RoleBody）→ `200 {"ok": true, "role": RoleJson}`。
+  內建 key＝建立覆蓋檔（允許）；key 已有角色檔回 `409`；key 格式/欄位/persona 驗證失敗回 `422`。
+- `PUT /api/roles/{key}`（body=RoleBody）→ `200 {"ok": true, "role": RoleJson}`。
+  內建角色＝寫覆蓋檔、檔案角色＝改寫原檔；key 不存在回 `404`；驗證失敗回 `422`。
+- `DELETE /api/roles/{key}` → `200 {"ok": true, "restored_builtin": bool}`。
+  `file`＝移除自建角色（restored_builtin=false）、`override`＝刪覆蓋檔還原內建（true）；
+  純內建回 `409`（不可刪）、不存在回 `404`、key 格式不合法回 `422`。
+
+寫入採 temp＋rename 原子落檔後立即 reload；POST body 的 key 與 PUT/DELETE 路徑參數走同一套
+`KEY_RE` 驗證（防路徑穿越）。
+
+### `/api/groups`（全部掛 `require_auth`）
+
+討論小組 `Group = {name: str, role_keys: list[str], mode: str}`，全部小組存單檔
+`roles/groups.yaml`（頂層 `groups:` 列表；temp＋rename 原子寫；載入器只掃 `*.md`，
+此檔不會被當角色檔）。
+
+寫入時驗證（違反回 `422`，逐條明確訊息）：role_keys 每個 key 必須存在於 `BY_KEY`、
+不得重複、成員 ≥2 人；`mode` 白名單 `{round_robin, parallel}`（無 legacy——legacy 是
+「無小組」的舊雙人路徑）；`name` 非空、≤64 字元。讀取端不重驗 key 存在性（角色檔可能
+事後被刪），讀回忠實呈現檔案內容。
+
+端點與狀態碼（錯誤體為 `{"error": str}`；groups.yaml 損壞回 `500`）：
+
+- `GET /api/groups` → `200 {"groups": [{name, role_keys, mode}]}`（檔案不存在＝空列表）。
+- `POST /api/groups`（body：`name: str` 必填、`role_keys: list[str]` 必填、`mode: str` 預設 `"round_robin"`）
+  → `200 {"group": {name, role_keys, mode}}`；驗證失敗 `422`；同名已存在 `409`。
+- `PUT /api/groups/{name}`（body：`role_keys: list[str]` 與 `mode: str` **皆必填**——整筆替換，
+  防漏帶 mode 被預設值默默重置；name 由路徑決定、不可改名）
+  → `200 {"group": {...}}`；驗證失敗 `422`；小組不存在 `404`。
+- `DELETE /api/groups/{name}` → `200 {"ok": true}`；不存在 `404 {"ok": false}`。
 
 ## 認證 / 門禁流程
 
@@ -241,5 +349,6 @@ autopilot 在 drain 的那份佇列。autopilot 在
 - `workspaces/project-<pid>/`：專案的固定 workspace（跨場次累積，不被 history 回收）。
 - `history/<session_id>.jsonl` + `.meta.json`：事件存檔與摘要。
 - `projects/<pid>/`：專案 meta 與專屬 backlog。
+- `roles/`：自訂角色檔（`<key>.md`）與討論小組設定（`groups.yaml`）；`_example.md.sample` 為範例（不被載入）。
 
-皆可由環境變數覆寫路徑（`TI_WORKSPACE_ROOT` / `TI_HISTORY_ROOT` / `TI_PROJECTS_ROOT`）。
+皆可由環境變數覆寫路徑（`TI_WORKSPACE_ROOT` / `TI_HISTORY_ROOT` / `TI_PROJECTS_ROOT` / `TI_ROLES_DIR`）。

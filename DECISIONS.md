@@ -73,3 +73,211 @@
 ## 移交待辦（不入 P0）——`discussion_round` 事件標籤供前端按輪分組、滾動摘要舊輪次、主持人 LLM 摘要與裁決、真實 LLM API 面驗證
 - 時間：2026-06-13 00:59
 
+## 角色檔格式採 Markdown＋YAML frontmatter、一檔一角色（`roles/<key>.md`）；frontmatter 欄位＝現有 Role 欄位（name/avatar/title/model/allowed_tools/permission_mode/tags，key 由檔名推導、寫明則須一致）＋新增 `description`（給未來 moderator 選人）；body 為角色專屬 prompt，載入時自動前置 `_COMMON`
+- 時間：2026-06-13 03:26
+- 理由：長文 prompt 放 body 最自然、git diff 友善、與 Claude Code subagents 慣例一致；自動前置 _COMMON 免每個自建角色手抄共通守則
+- 否決方案：單一大 YAML 檔（多行 prompt 醜、diff 差）；body 含完整 prompt 不前置 _COMMON（漏抄即行為不一致）
+
+## 解析用 PyYAML `safe_load`＋pydantic BaseModel 驗證（`extra="forbid"` 使未知欄位明確報錯），通過後轉 frozen Role；選填預設——model→`config.MODEL_FAST`、allowed_tools→`["Read","Grep"]`、permission_mode→`"default"`（白名單 `{default, acceptEdits}`）；零新依賴（PyYAML 6.0.3、pydantic 隨 fastapi 已在環境）
+- 時間：2026-06-13 03:26
+
+## 新增 `studio/role_store.py` 收納載入/驗證/落檔/組隊邏輯，roles.py 僅留內建定義與接面；`role_store.reload()` 為**純同步函式**：先完整 build 好新資料，再於無 await 的同步區塊一次原地變異——`ROSTER[:] =`、`BY_KEY.clear()+update()`、`CORE_ROLES[:] =`，且對被覆蓋的內建 key 一併 `setattr(roles, "PM"/"SENIOR"/...)` 更新具名常數
+- 時間：2026-06-13 03:26
+- 理由：orchestrator.py:45 等模組級綁定靠原地變異保活；improver.py:308、autopilot.py:387 用具名常數（函式內 import），不 setattr 會出現「同一角色兩種行為」；同步一次變異杜絕並發讀到 clear/update 空窗
+- 否決方案：重新賦值模組屬性（既有 import 綁定全失效）；reload 做成 async（引入空窗與重入問題）
+
+## 合併規則明定兩層——`BY_KEY` 含「全部內建（含被 OPTIONAL_ROLES 過濾者）＋全部合法檔案角色」，維持 BY_KEY ⊇ ROSTER 不對稱；`ROSTER` 為內建（同 key 檔案覆蓋後、沿用 OPTIONAL_ROLES 過濾）＋全部新 key 檔案角色；壞檔逐檔拒絕並 log 原因，不影響其他檔與內建
+- 時間：2026-06-13 03:26
+- 理由：improver.py:386 靠 `key not in BY_KEY` 判斷，BY_KEY 若縮成只含 ROSTER 會默默改變其行為
+
+## reload 語意明寫入文件——進行中 session 已快照 Role 物件，reload 只影響之後建立的 expert，不熱換進行中討論
+- 時間：2026-06-13 03:26
+
+## 新增 `config.ROLES_DIR = os.getenv("TI_ROLES_DIR", "<repo>/roles")`，加入 config.py reload global 區塊、settings.py FIELDS 白名單、`.env.example` 同步；測試一律 monkeypatch ROLES_DIR 指向 tmp_path，conftest.py 加 `delenv("TI_ROLES_DIR")` 防環境殘留
+- 時間：2026-06-13 03:26
+
+## `/api/roles` CRUD 照 routes.py 既有 pydantic Body＋auth 依賴慣例；GET 每筆帶 `source ∈ {builtin, override, file}` 與 body 原文；POST/PUT 落檔（temp+rename 原子寫）後立即 reload；DELETE：file→刪檔、override→刪檔還原內建、純 builtin→409；key 格式 `^[a-z][a-z0-9_]{1,31}$`，**POST body 與 PUT/DELETE 路徑參數同套驗證**（防路徑穿越）
+- 時間：2026-06-13 03:26
+
+## 空殼 persona 驗證規則——對「角色專屬 body 原文（前置 _COMMON 之前）」檢查：去空白後非空，且至少一行匹配 Python re `(輸出|決議|驗證|格式|指令|決策)[:：]`；不符回 422 並指明缺出力格式段落；檔案載入路徑同規則（拒檔記 log）；內建 8 角色定義本身不經此路徑
+- 時間：2026-06-13 03:26
+- 理由：原 ERE 對內建 engineer（僅「執行指令:」）與 architect（「設計決策:」）body 不匹配，會卡死 override 編輯往返，故擴入「指令｜決策」；驗證在前置 _COMMON 之前，否則 _COMMON 自帶匹配行會讓驗證形同虛設
+- 否決方案：規則只對非內建 key 強制（雙軌規則日後難維護，且新角色與 override 應同一標準）
+
+## 加一條守門單測：8 個內建角色 body 全數通過上述驗證規則——防未來改內建 prompt 時 override 往返回歸卡死
+- 時間：2026-06-13 03:26
+
+## Group 存單檔 `roles/groups.yaml`（`{name, role_keys[], mode}` 列表），邏輯併入 role_store.py；驗證三硬規則（key 存在於 BY_KEY、不重複、≥2 人）＋mode 白名單 `{round_robin, parallel}`，違反回 422；`/api/groups` CRUD 同 /api/roles 慣例
+- 時間：2026-06-13 03:26
+- 否決方案：mode 含 legacy（legacy 是無小組的舊路徑，組了小組即無 legacy 語意）
+
+## 範例角色檔放 `roles/_example.md.sample`，載入器只掃 `*.md`，範例不被載入
+- 時間：2026-06-13 03:26
+- 理由：守住驗收 #1「不放角色檔時行為與現狀完全一致」
+
+## 測試三層——role_store 離線單測（覆蓋內建/壞檔被拒/未知欄位報錯/出力格式驗證/內建 8 body 守門）、API 層 TestClient（CRUD＋各 4xx 案）、冒煙照任務 #5 真實啟動 server 走全流程
+- 時間：2026-06-13 03:26
+
+## 移交待辦（不入本輪）——moderator 依 description 自動選角（DyLAN 式）、角色檔 `{variable}` 插值、Web UI 角色編輯器
+- 時間：2026-06-13 03:26
+
+## 技術選型——零新依賴，沿用行前綴 regex 解析（flow.py 慣例）、broadcast 事件持久化（history JSONL 既有管道），不引入 JSON schema 結構化輸出
+- 時間：2026-06-13 05:58
+- 否決方案：JSON schema 結構化輸出——與 codebase 行前綴慣例不一致，且既有條列 fallback 已驗證可用
+
+## 模組切分——`flow.parse_agenda` 與 `flow.validate_assignees` 為純函式（離線可測）；orchestrator 只改拆解 prompt 與討論階段呼叫端；discussion.py 與 `parse_tasks_with_deps` 完全不動
+- 時間：2026-06-13 05:58
+
+## 介面——子題行 `子題: <標題> | <描述> | <成功準則>`，解析用 `split("|", 2)` 固定最多三段（後段全歸 criteria），缺段允許空；`負責: <role_key>` 緊跟所屬子題行，找不到前置子題時忽略＋log；無 `子題:` 行 fallback 單一子題（原需求全文），零回歸
+- 時間：2026-06-13 05:58
+- 理由：高工指出標題含 `|` 會錯切，`split("|", 2)` 一行解決，單測加此樣本
+
+## 分派硬驗證——合法集合＝本場實際出席角色 keys（experts dict）而非全域 BY_KEY；非法/缺漏 fallback 順序：`engineer` 若在出席集合，否則取第一個出席者（`fallback if fallback in available_keys else next(iter(available_keys))`），修正記錄入 log 與議程事件
+- 時間：2026-06-13 05:58
+- 理由：工程師與高工同點名 fallback 硬編 engineer 在自訂角色組合下自身就是非法 key；純函式不得依賴呼叫端保證
+- 否決方案：fallback 永遠 engineer——engineer 缺席時 fallback 結果仍非法，硬驗證形同虛設
+
+## assignee 消費端——逐子題討論階段由 orchestrator 讀取：該子題的提案方（先發言者）＝assignee 對應 expert，並在 topic 文字標明「主責: <角色名>」；同時隨 agenda_plan 事件持久化供重看
+- 時間：2026-06-13 05:58
+- 理由：高工正確指出無消費端就是死資料；先發言權是不改引擎介面下最小且有實效的消費方式
+
+## 持久化——events.py 新增 `EventType.AGENDA_PLAN` enum 成員＋`agenda_plan(session_id, agenda, tasks, assignments)` 建構子，經既有 broadcast→record_event 入 history；meta.json 與 history.py 不改；實作清單加一項：確認 web 前端對未知 event type 容錯忽略，會炸則補 default case
+- 時間：2026-06-13 05:58
+- 理由：工程師實跑確認 type 是 enum，只加函式不夠
+
+## ADR 蒸餾收斂為一次——逐子題只跑討論、收集各子題結論串接成單一 design_note，討論全部結束後做一次蒸餾、一筆 adr.record、一次 commit
+- 時間：2026-06-13 05:58
+- 理由：工程師實測指出逐子題各帶蒸餾＋commit 會 ×N 成本，且後續子題 adr.context 吃到前面子題決策造成干擾；高工同問聚合方式——統一收斂為一次最便宜且語意正確
+- 否決方案：每子題各自蒸餾＋commit——2–5 倍 token/時間成本、ADR 碎片化、子題間 context 互相污染
+
+## 成本上界——解析端硬上限子題數 5（超出截斷並 log，prompt 的 2–5 只是建議不是防線）；多子題時每子題討論輪數走新 config `TI_AGENDA_ROUNDS`（預設 1），總成本上界＝5×1 輪可控
+- 時間：2026-06-13 05:58
+- 理由：高工指出 prompt 約束不可當防線；5 子題 × 既有 DEBATE_ROUNDS 會讓架構階段成本失控
+
+## 粒度守則入拆解 prompt——「子題 2–5 個、每任務一句可驗收、探索型允許單子題不硬拆」字面寫入，可 grep 驗證
+- 時間：2026-06-13 05:58
+
+## 測試切分——flow 純函式單測（合法/非法 key、fallback 鏈含 engineer 缺席 case、標題含 `|`、單子題 fallback、超量截斷）＋8 角色 description 非空守門單測＋fake PM 腳本（含一合法一非法 key）流程測試＋#5 真實 server 冒煙特別驗證 PM 對疊加格式的遵循率，輸出回指輸入排除假綠
+- 時間：2026-06-13 05:58
+- 理由：工程師提醒拆解單次呼叫已產多種格式，再疊 `子題:`/`負責:` 格式負擔不小，fallback 路徑須在真實冒煙實測到
+
+## `parse_conclusion` 純函式置於 `flow.py`，沿用既有 `re.match(r"^\s*<標籤>\s*[:：]\s*(.+)$", line)` 行前綴範式＋全形冒號容錯，解析 `共識:／分歧:／未決:／行動:` 四前綴，回傳 `{"consensus":[], "disagreements":[], "open_questions":[], "actions":[]}` 結構化 dict
+- 時間：2026-06-13 10:44
+- 理由：flow.py 已有 7 處同款 parser，Python `re` 直接複用零風險
+- 否決方案：另起 JSON schema 或新解析範式——與既有慣例不一致、徒增負擔
+
+## 四前綴全缺時 `parse_conclusion` 回空骨架（四鍵皆空 list）而非拋例外，由呼叫端偵測空骨架走 fallback，對齊 `adr.parse_adr` 「失敗即降級」
+- 時間：2026-06-13 10:44
+
+## `discussion._build_summary` 既有三鍵 `consensus/disagreements/final_positions` 維持原扁平 `agree-disagree` set 邏輯完全不動，防回歸（驗收 #2）
+- 時間：2026-06-13 10:44
+
+## 新增 `open_questions` 鍵採 **per-pair 末輪 stance 判定**：對每個 `(speaker,target)` 取最大 `Utterance.round` 的末態 stance，末態為「反對」者列入 open_questions；明確禁止沿用扁平 agree/disagree set 推「未轉同意收斂」
+- 時間：2026-06-13 10:44
+- 理由：高工指出扁平 set 會讓「先同意後反對」末態仍反對者被 `disagree-agree` 誤排除、漏判未決；唯有取 per-pair 末輪 stance 才正確，這是設計合約層級漏洞，現在釘最便宜
+- 否決方案：工程師的純集合 `disagree-agree`——無法處理「先同意後反對」末態反對之 case，會漏判未決
+
+## `unique_findings` 定義為 **role 粒度**——target 從未被任何 speaker mention 的角色發言（無人回應者）；建構 mention 圖時排除 self-mention（僅計 `m.speaker != m.target`），並補 self-mention 黑樣本測試防假陰性
+- 時間：2026-06-13 10:44
+- 理由：工程師指出 self-mention 會讓角色誤判為「被回應」而漏掉 unique；同時標明此為角色粒度近似、非論點粒度遺漏偵測，避免日後誤用
+
+## `consensus` 維持僅取明確 `stance=同意` 的 mention，無 mention 的發言一律歸入 `unique_findings` 不進 consensus，以區分「明確同意」與「無人表態」
+- 時間：2026-06-13 10:44
+- 理由：工程師確認此為結構保證非測試運氣——零-mention transcript 的 `agree` 必為空集，假共識無生成路徑
+
+## 測試須含零-mention 黑樣本（角色全無 mention）＋**灰樣本（角色被部分 mention）**，確認 unique/open_questions 語意，避免判別力只驗極端一半
+- 時間：2026-06-13 10:44
+- 理由：高工指出零-mention 只驗極端，灰樣本才驗到 role 粒度的真實語意
+
+## 新增 `conclusion.py` 模組（對齊 `adr.py`），職責＝組 prompt＋接 senior one-shot＋呼叫 `parse_conclusion`＋fallback＋render markdown＋落盤，介面 `summarize(summary, transcript) -> dict` 與 `record(cwd, conclusion, *, session_id) -> Path`
+- 時間：2026-06-13 10:44
+
+## 結論蒸餾與 ADR 蒸餾分開兩次 senior one-shot 呼叫、不合併
+- 時間：2026-06-13 10:44
+- 理由：輸出格式（`共識:/分歧:/未決:/行動:` vs `設計決策:`）與職責不同，混一個 prompt 降遵循率；兩者皆×1 成本可控
+- 否決方案：合併成單次 senior 呼叫——省一次呼叫但拉低各自格式遵循率，不划算
+
+## 蒸餾 prompt 含三條防坑硬指令——①只彙整 transcript 出現過的論點、不得新增②無人反對≠共識，需區分明確同意與無人表態③強分歧須保留並標明雙方，字面寫入可 grep 驗證
+- 時間：2026-06-13 10:44
+
+## 蒸餾 prompt 要求每條結論盡量帶 `(round, speaker)` 錨點，但真錨點事實來源為規則層 summary（`final_positions`/`unique_findings` 天生帶 speaker），不信任 LLM 自填錨點；驗收「至少一條回指 transcript」由規則骨架保證
+- 時間：2026-06-13 10:44
+
+## `CONCLUSION.md` 每場覆寫式單檔、落 workspace 根，四段固定 `## 共識／## 分歧／## 未決事項／## 後續行動`，歷史保存靠 git commit 而非 append 累積
+- 時間：2026-06-13 10:44
+- 否決方案：學 adr.py append 累積——結論是本場快照，累積語意錯且會膨脹；多檔歷史回顧留待 M2
+
+## fallback 路徑——`parse_conclusion` 回空骨架時 `conclusion.record` 改用規則式 summary 骨架 render markdown：consensus→共識、disagreements→分歧、open_questions→未決；**行動段留空並標「（蒸餾失靈，無行動項）」，不以 final_positions 末輪發言冒充 action**
+- 時間：2026-06-13 10:44
+- 理由：高工指出末輪發言不是行動項，硬塞語意偏差；fallback 仍須產出 CONCLUSION.md（驗收 #6）但不偽造行動
+
+## `events.py` 新增 `EventType.CONCLUSION`＋`conclusion(session_id, path, summary)` 建構子，沿用既有 broadcast→record_event 入 history 管道；同步確認 web 前端對未知 event type 有 default 容錯，會炸則補 default case
+- 時間：2026-06-13 10:44
+
+## orchestrator 接線於 `_discuss_agenda` 討論全部結束後、ADR 蒸餾同階段，依序 summarize→record→commit（訊息「結論彙整：產出 CONCLUSION.md」）→broadcast CONCLUSION 事件，單一接點不散落
+- 時間：2026-06-13 10:44
+
+## 落盤 commit 沿用既有 `self._commit` 慣例，不引入 `fcntl` 鎖
+- 時間：2026-06-13 10:44
+- 理由：單檔每場覆寫一次、無同檔跨程序併發，鎖為過度設計（adr.py 的鎖是為 read-modify-write 累積＋跨場併發）
+
+## 移除原設計「ERE 可攜性」措辭——此處為 Python `re` 非 shell grep fallback，CLAUDE.md 的 lookbehind/PCRE 教訓不適用，`[:：]` 全形容錯沿用既有 parser 即可
+- 時間：2026-06-13 10:44
+- 理由：高工澄清，避免把掃描腳本的可攜性顧慮誤套到 Python 解析
+
+## 測試切分——`parse_conclusion` 四段正常解析／全形冒號／漏標回空骨架純函式測試；`_build_summary` 新鍵（含 per-pair 末輪 stance、self-mention 排除、零-mention 黑樣本、部分-mention 灰樣本）stance 路徑測試；離線 e2e 驗證跑完 workspace 根產出 CONCLUSION.md 四段且至少一條回指 transcript（自證對應、排除假綠）
+- 時間：2026-06-13 10:44
+
+## 任務#1 第④條自我校驗指令插入 `build_prompt` 的 159 行（硬指令③）與 160 行（「盡量帶 (round, speaker) 錨點」提示）之間
+- 時間：2026-06-13 12:23
+- 理由：經兩位親查核實該位置不動四鍵前綴格式，`flow.parse_conclusion` 解析不破壞（驗收#1）
+
+## 任務#1 第④條措辭須與 160 行「盡量帶錨點」語意對齊不打架——統一為「能對應骨架錨點者帶上，自檢確認每條都有骨架依據，查無依據者刪除」，避免 LLM 將「盡量帶」與「無依據即刪」理解成衝突
+- 時間：2026-06-13 12:23
+- 理由：工程師指出兩行語氣若對立會擾動 LLM 輸出；收斂為同一條「有依據才留、留則帶錨」的一致敘事
+
+## 任務#2 護欄套用範圍以「是否走 `_anchored_from_summary` 回填」為判別，凡未被回填的 LLM 自產非空鍵一律過護欄，明確涵蓋 `actions` 鍵
+- 時間：2026-06-13 12:23
+- 理由：工程師指出 `actions` 永遠走 LLM 原文、不在部分漏標回填範圍內，若護欄只列 consensus/disagreements/open_questions 則幻覺 action 漏網
+- 否決方案：寫死鍵名清單套護欄——會遺漏 actions，且與「回填條目不重複處理」的判別邏輯不一致
+
+## 任務#2 護欄 `_guard_anchor` 採「抽 `(R<n> <speaker>)` token + 驗 speaker 存在性」保守判別，抽不到或 speaker 不存在於 transcript 才加 `（未錨定）`
+- 時間：2026-06-13 12:23
+- 理由：LLM 自由文字無法用規則層 `f"{s} {verb} {t}"` 精確重建，保守策略寧漏標不誤傷真錨點；`re` 限 ERE 等價、不用 PCRE 符合 CLAUDE.md 可攜性鐵則
+- 否決方案：規則層精確重建比對——僅適用規則條目，套到 LLM 自由文字會大量誤標真來源條目
+
+## 任務#2 須在程式註解與 #5 交付說明標明護欄判別力上限為「只驗 speaker 出現、不驗 round 與論點對應」的盡力而為，非幻覺攔截保證，列為已知待辦
+- 時間：2026-06-13 12:23
+- 理由：高工指出「真 speaker＋幻覺論點」仍會漏標；須避免驗收#2 被誤解為護欄能保證攔幻覺，誠實暴露限制（CLAUDE.md 元認知鐵則）
+
+## 任務#3 `record` 雙寫採「md 主檔先寫保底、sidecar best-effort 後寫」語義——`conclusion.json` 寫入包 try，失敗降級為只保留 `CONCLUSION.md` ＋ log warning，不拋例外、不拖垮人讀主檔與既有 record→commit→broadcast 時序
+- 時間：2026-06-13 12:23
+- 理由：高工指出 `_record_conclusion` 無 try，sidecar 拋例外會中斷 commit/broadcast 且 md 已落卻未入 git；md 為驗收核心（#3/#5/#6）必落保底，sidecar 為 M2 前瞻附屬可降級
+- 否決方案：工程師「sidecar 先寫、md 後寫代表整組就緒」——順序技巧仍需包 try 才安全，且讓附屬檔擋在主檔前不符主檔優先級；改以「主檔先落＋附屬 best-effort」更穩
+
+## 任務#3 sidecar 寫入失敗的降級路徑須清理殘留 `.json.tmp`，收尾以 `git status` 確認 workspace 無未追蹤殘檔
+- 時間：2026-06-13 12:23
+- 理由：高工提醒 tmp-replace 失敗可能殘留 `.json.tmp`，沿用 `adr.py` 範式並符合 CLAUDE.md「臨時檔不落被掃描目錄、收尾 git status 驗無殘留」鐵則
+
+## 任務#3 sidecar schema 為 `{"version": 1, "session_id", "rounds", "consensus", "disagreements", "open_questions", "actions"}`，`record` 加 `rounds: int = 0` keyword-only 參數承載輪數，回傳值維持 `CONCLUSION.md` path 不變
+- 時間：2026-06-13 12:23
+- 理由：`version` 欄供 M2 演進辨識；回傳不變則 broadcast CONCLUSION 事件零影響；`cwd is None` 時兩檔皆不落、回 None（驗收#3）
+
+## 任務#4 orchestrator `_record_conclusion` 僅改一行——`conclusion.record(...)` 傳 `rounds=max((u.round for u in transcript), default=0)`，commit 範圍不需改動
+- 時間：2026-06-13 12:23
+- 理由：高工驗實 `git_commit` 為 `git add -A`（runner.py 605），sidecar 在 commit 前由 record 寫出即同 commit 入 git，#4 零接線假設成立（驗收#4）
+
+## 任務#4 維持既有 record→commit→broadcast 時序與單一接點不變，sidecar 僅為 record 內多寫一檔，不新增接點、不散落
+- 時間：2026-06-13 12:23
+
+## 任務#5 測試切分——`build_prompt` 第④條 grep＋前綴不破壞；`_guard_anchor` 純函式測（有效錨點／真 speaker＋幻覺論點／無錨點三類，含高工指定黑樣本）；`record` 雙寫 JSON 合法性＋四鍵＋session_id＋rounds＋`cwd=None` 雙不落；sidecar 寫失敗降級只保 md 的路徑測試
+- 時間：2026-06-13 12:23
+- 理由：護欄黑樣本須涵蓋「真 speaker＋幻覺論點」以驗判別力邊界並佐證已知限制
+
+## 任務#5 離線 e2e 須實跑「全員無反對」與「LLM 漏標前綴 fallback」兩條既有路徑，確認四段產出＋至少一條回指 transcript 無回歸，且第④條與 `_guard_anchor` 以實跑黑白樣本驗證、不只 grep
+- 時間：2026-06-13 12:23
+- 理由：兩位均強調 CLAUDE.md 鐵則「親自實跑、自證對應、排除假綠」，prompt/格式改動不靠讀碼下結論
+
+## 全程不砍既有架構——規則為骨、LLM 為肉、覆寫式單檔＋git 快照、md 人讀／json 機讀雙寫不變；三項皆低風險增量，#1/#2/#3 同檔不同函式可並行，#4 待 #3 sidecar 路徑定後接線，#5 收尾
+- 時間：2026-06-13 12:23
+

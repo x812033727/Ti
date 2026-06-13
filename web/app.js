@@ -319,6 +319,37 @@ function handleEvent(ev) {
       if (!replaying) interjectInput.focus();
       break;
     }
+    case "agenda_plan": {
+      // 拆解結果快照：議程子題＋主責分派（含硬驗證修正紀錄），重播歷史時也會經此渲染。
+      const items = p.agenda || [];
+      addSystem(`📋 議程拆解：${items.length} 個子題`);
+      items.forEach((a, i) => {
+        let line = `${i + 1}. ${a.title || ""}`;
+        if (a.description) line += `｜${a.description}`;
+        if (a.assignee) line += `（主責: ${a.assignee}）`;
+        addSystem(line);
+      });
+      (p.corrections || []).forEach((c) => {
+        addSystem(`↩️ 分派修正：子題 ${c.index + 1} 的「負責: ${c.given || "（缺漏）"}」→ ${c.assigned}`);
+      });
+      break;
+    }
+    case "conclusion": {
+      // 結論彙整快照：一場討論收斂後產出 CONCLUSION.md，渲染四段摘要（重播時亦經此）。
+      addSystem("📝 結論彙整：已產出 CONCLUSION.md");
+      const s = p.summary || {};
+      const sections = [
+        ["共識", s.consensus],
+        ["分歧", s.disagreements],
+        ["未決事項", s.open_questions],
+        ["後續行動", s.actions],
+      ];
+      sections.forEach(([label, items]) => {
+        const list = items || [];
+        if (list.length) addSystem(`【${label}】` + list.join("；"));
+      });
+      break;
+    }
     case "critic_review":
       if (p.passed) {
         addSystem("🔍 異議檢查放行（" + (p.gate || "") + " 視角）");

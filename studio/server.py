@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, config, history, routes, ws
+from . import auth, config, history, role_store, routes, ws
 
 # 沙箱啟用但缺依賴時 CLI 會靜默 fail-open（無沙箱執行），啟動時大聲示警。
 _sandbox_missing = config.sandbox_missing_deps()
@@ -27,6 +27,12 @@ if _sandbox_missing:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # 啟動時掃一次 roles/ 目錄，把自訂角色檔（內建為預設、同 key 覆蓋）合併進角色表。
+    # 壞檔已於 role_store 內逐檔拒絕並 log；此處兜底任何意外，絕不擋住服務啟動。
+    try:
+        role_store.reload_roles()
+    except Exception:  # noqa: BLE001
+        logging.getLogger("ti.roles").warning("角色檔載入失敗（沿用內建角色）", exc_info=True)
     # 啟動時掃一次 history 保留策略：把「停用回收期間／升級前」累積的舊 session 立即壓回上限內
     # （session 收尾時也會各自掃一次）。失敗絕不可擋住服務啟動。
     try:

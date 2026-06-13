@@ -13,7 +13,13 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# 專案根（單一來源；env_path() 與 load_dotenv 共用）。
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# 與 env_path()（settings/auth 的寫入端）同一路徑：固定載入專案根的 .env。
+# 不帶路徑的 load_dotenv() 會從 cwd 向上搜尋，在 worktree/子目錄跑測試時會載到
+# 上層部署環境的 .env（如門禁密碼），造成「寫入與載入路徑不一致」與測試環境污染。
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 def _env_float(name: str, default: float) -> float:
@@ -121,6 +127,29 @@ def _discuss_mode() -> str:
 
 
 DISCUSS_MODE = _discuss_mode()
+
+
+def _agenda_rounds() -> int:
+    """逐子題討論的每子題輪數：TI_AGENDA_ROUNDS，未設/留空/非法（含 <1）一律 1。
+
+    成本上界＝MAX_AGENDA_ITEMS(5) × AGENDA_ROUNDS(1)；prompt 的「2–5 個子題」只是
+    建議不是防線，解析端另有硬截斷（flow.MAX_AGENDA_ITEMS）。"""
+    raw = (os.getenv("TI_AGENDA_ROUNDS") or "").strip()
+    if not raw:
+        return 1
+    try:
+        val = int(raw)
+    except ValueError:
+        logger.warning("環境變數 TI_AGENDA_ROUNDS=%r 非整數，改用 1", raw)
+        return 1
+    if val < 1:
+        logger.warning("環境變數 TI_AGENDA_ROUNDS=%s 須 ≥1，改用 1", val)
+        return 1
+    return val
+
+
+# 多子題議程討論時，每個子題的討論輪數（單子題沿用 DISCUSS_MAX_ROUNDS）。
+AGENDA_ROUNDS = _agenda_rounds()
 
 # --- 內部討論機制（卡關 huddle）--------------------------------------------
 # 開啟後：任務跑滿 TASK_MAX_ROUNDS 仍未通過時，召集團隊 huddle 找替代方案並給 1 輪重試，
@@ -456,13 +485,17 @@ def forwarded_allow_ips() -> str:
 
 
 # --- 路徑 ---------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# PROJECT_ROOT 定義於檔案頂部（load_dotenv 之前，兩者共用單一來源）。
 
 
 def env_path() -> str:
     """持久化設定 / 秘密的 .env 路徑（settings 與 auth 共用此單一來源）。"""
     return str(PROJECT_ROOT / ".env")
 
+
+# 自訂角色檔目錄（roles/*.md，Markdown＋YAML frontmatter，一檔一角色；格式與載入規則見
+# studio/role_store.py）。內建 8 角色為預設、同 key 檔案覆蓋；目錄不存在＝純內建行為。
+ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
 
 WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspaces")))
 HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
@@ -599,7 +632,7 @@ def reload() -> None:
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
-    global DISCUSS_MAX_ROUNDS, DISCUSS_MODE
+    global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
@@ -610,7 +643,9 @@ def reload() -> None:
     global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
     global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
+    global ROLES_DIR
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+    ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
     LLM_MAX_CONCURRENCY = int(os.getenv("TI_LLM_MAX_CONCURRENCY", "9"))
@@ -625,6 +660,7 @@ def reload() -> None:
     DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
     DISCUSS_MAX_ROUNDS = _discuss_max_rounds()  # 依賴 DEBATE_ROUNDS，須在其後重算
     DISCUSS_MODE = _discuss_mode()
+    AGENDA_ROUNDS = _agenda_rounds()
     MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
     ROLE_MODELS = _role_models()

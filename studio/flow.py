@@ -9,9 +9,12 @@ import ...`，且對 `studio.orchestrator.<fn>` 的 monkeypatch 仍有效（orch
 from __future__ import annotations
 
 import difflib
+import logging
 import re
 
 from . import config
+
+log = logging.getLogger("ti.flow")
 
 # --- 決議解析 -----------------------------------------------------------
 
@@ -191,6 +194,150 @@ def parse_lessons(text: str) -> list[str]:
 def parse_vision(text: str) -> str:
     """從澄清/評估文字抽出 `願景: ...`（一句產品願景，回填專案 meta 用）；無標記回空字串。"""
     return _last_match(text, r"願景\s*[:：]\s*(.+)") or ""
+
+
+# --- 結論彙整解析（共識／分歧／未決／行動） -------------------------------
+
+# 四前綴 → 結構化鍵；順序即輸出 dict 鍵順序。
+_CONCLUSION_PREFIXES = (
+    ("共識", "consensus"),
+    ("分歧", "disagreements"),
+    ("未決", "open_questions"),
+    ("行動", "actions"),
+)
+
+
+def parse_conclusion(text: str) -> dict[str, list[str]]:
+    """解析 senior 蒸餾輸出的四段行前綴 `共識:／分歧:／未決:／行動:`，回傳結構化 dict。
+
+    沿用既有行前綴 parser 範式（`^\\s*<標籤>\\s*[:：]...(.+)$` ＋全形冒號容錯）；每個
+    前綴可出現多行，逐行收進對應 list（剝去前後空白、跳過空內容）。
+
+    注意：冒號後的水平空白用 `[^\\S\\n]*`（不含換行）而非 `\\s*`——`\\s` 含 `\\n`，若空
+    內容前綴行（如 LLM 只輸出 `共識:`）用 `\\s*` 會吃掉換行、把下一行整行吞入並錯分類，
+    跨前綴污染（全形空白 `\\u3000` 仍被 `[^\\S\\n]` 接受，容錯不受影響）。
+
+    四前綴全缺時回空骨架（四鍵皆空 list）而非拋例外，由呼叫端偵測空骨架走 fallback，
+    對齊 `adr.parse_adr` 「失敗即降級」。
+    """
+    result: dict[str, list[str]] = {key: [] for _, key in _CONCLUSION_PREFIXES}
+    for label, key in _CONCLUSION_PREFIXES:
+        for m in re.findall(rf"^[^\S\n]*{label}[^\S\n]*[:：][^\S\n]*(.+)$", text or "", re.M):
+            item = m.strip()
+            if item:
+                result[key].append(item)
+    return result
+
+
+# --- 議程解析（子題＋負責分派） -------------------------------------------
+
+# 解析端硬上限：prompt 的「2–5 個」只是建議不是防線，超出一律截斷並 log。
+MAX_AGENDA_ITEMS = 5
+
+
+def parse_agenda(text: str, requirement: str = "") -> list[dict]:
+    """從拆解文字抽出議程子題列表，每筆 {title, description, criteria, assignee}。
+
+    子題行：`子題: <標題> | <描述> | <成功準則>`——用 `split("|", 2)` 固定最多切三段，
+    多餘的 `|` 全部歸入成功準則（標題/描述不會被錯切）；全形 `｜` 先正規化為半形再切
+    （LLM 輸出常混用）；缺段允許為空字串。標題空、描述非空時以描述補位（log）；全段
+    皆空的子題行整行跳過（log），不產出空殼子題。
+    負責行：`負責: <role_key>` 附屬於其上方最近的子題行；找不到前置子題時忽略＋log；
+    key 後帶多餘文字（如 `負責: engineer (主寫)`）不符單一 token 規格——不採信、
+    記 warning（不靜默吞行），留待 validate_assignees fallback 兜底。
+    無任何 `子題:` 行時 fallback 為單一子題（原需求全文 requirement，缺則用 text），
+    不噴錯——探索型議題允許不硬拆。子題數超過 MAX_AGENDA_ITEMS 截斷並 log。
+    assignee 為原始字串、未經驗證；合法性交由 validate_assignees 硬驗證。
+
+    新 API、不入 orchestrator re-export：消費端一律 `from studio.flow import`。
+    """
+    items: list[dict] = []
+    cur: dict | None = None
+    truncated = 0
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*子題\s*[:：]\s*(.+)$", line)
+        if m:
+            if len(items) >= MAX_AGENDA_ITEMS:
+                truncated += 1
+                cur = None  # 被截斷子題的後續 `負責:` 一併忽略。
+                continue
+            body = m.group(1).replace("｜", "|")  # 全形管線正規化，避免整行誤入 title。
+            parts = [p.strip() for p in body.split("|", 2)]
+            parts += [""] * (3 - len(parts))
+            if not parts[0]:
+                if not parts[1] and not parts[2]:
+                    log.warning("議程解析：子題行全段皆空，整行跳過: %r", line.strip())
+                    cur = None  # 後續 `負責:` 不得附到上一個子題。
+                    continue
+                log.warning("議程解析：子題標題為空，以描述補位: %r", line.strip())
+                if parts[1]:
+                    parts[0], parts[1] = parts[1], ""
+                else:
+                    parts[0], parts[2] = parts[2], ""
+            cur = {
+                "title": parts[0],
+                "description": parts[1],
+                "criteria": parts[2],
+                "assignee": "",
+            }
+            items.append(cur)
+            continue
+        m = re.match(r"^\s*負責\s*[:：]\s*(.+?)\s*$", line)
+        if m:
+            tokens = m.group(1).split()
+            if cur is None:
+                log.warning("議程解析：`負責: %s` 找不到前置子題行，忽略", m.group(1))
+                continue
+            if len(tokens) != 1:
+                log.warning(
+                    "議程解析：`負責: %s` 不符單一 token 規格，不採信（交 validate 兜底）",
+                    m.group(1),
+                )
+                continue
+            cur["assignee"] = tokens[0]
+    if truncated:
+        log.warning("議程解析：子題數超過上限 %d，截斷 %d 筆", MAX_AGENDA_ITEMS, truncated)
+    if items:
+        return items
+    fallback_title = (requirement or text or "").strip() or "實作需求"
+    return [{"title": fallback_title, "description": "", "criteria": "", "assignee": ""}]
+
+
+def validate_assignees(
+    agenda: list[dict],
+    available_keys,
+    fallback: str = "engineer",
+) -> tuple[list[dict], list[dict]]:
+    """硬驗證議程分派：assignee 必須屬於本場實際出席角色集合 available_keys。
+
+    非法或缺漏時 fallback 順序：`fallback`（預設 engineer）若在出席集合，否則取
+    第一個出席者——純函式不依賴呼叫端保證 engineer 一定出席。available_keys 為空
+    時不修正（assignee 清空）、只記 log，不丟例外。
+
+    回傳 (新議程列表, 修正紀錄)；修正紀錄每筆 {index, given, assigned}，供呼叫端
+    記 log 與議程事件。輸入 agenda 不被就地修改。
+    """
+    keys = list(dict.fromkeys(available_keys or []))  # 去重、保序。
+    effective = fallback if fallback in keys else (keys[0] if keys else "")
+    out: list[dict] = []
+    corrections: list[dict] = []
+    for i, item in enumerate(agenda):
+        given = (item.get("assignee") or "").strip()
+        if given in keys:
+            out.append({**item, "assignee": given})
+            continue
+        out.append({**item, "assignee": effective})
+        corrections.append({"index": i, "given": given, "assigned": effective})
+        if not keys:
+            log.warning("議程分派：無可用角色集合，子題 #%d 的 `負責: %s` 清空", i, given)
+        else:
+            log.warning(
+                "議程分派：子題 #%d 的 `負責: %s` 非法或缺漏，fallback 至 %s",
+                i,
+                given or "(缺)",
+                effective,
+            )
+    return out, corrections
 
 
 def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:

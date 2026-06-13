@@ -17,8 +17,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import adr, config, events, lessons, memory, publisher, reflexion, runner, workspace
-from .discussion import DiscussionEngine
+from . import (
+    adr,
+    conclusion,
+    config,
+    events,
+    flow,
+    lessons,
+    memory,
+    publisher,
+    reflexion,
+    runner,
+    workspace,
+)
+from .discussion import DiscussionEngine, build_summary
 
 # 純函式層（決議解析／停滯偵測／任務依賴／波次規劃）已移至 flow.py；此處顯式 re-export
 # （redundant alias）保住既有 import 路徑（tests、autopilot、improver 皆 from
@@ -46,6 +58,18 @@ from .flow import (
 from .roles import ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
+
+# 拆解 prompt 的議程格式與粒度守則（micro-rules，字面可 grep 驗證）。{keys}＝本場實際
+# 出席角色的 role_key 清單；prompt 的「2–5 個」只是建議不是防線——解析端有
+# flow.MAX_AGENDA_ITEMS 硬截斷、分派端有 flow.validate_assignees 硬驗證兜底。
+AGENDA_PROMPT_RULES = (
+    "另外請輸出討論議程（與任務清單並列，兩者都要）：\n"
+    "  - 子題 2–5 個，每個子題獨立一行，格式固定為 "
+    "`子題: <標題> | <一句描述> | <成功準則>`；探索型議題允許單子題、不硬拆。\n"
+    "  - 每個 `子題:` 行的下一行宣告主責角色 `負責: <role_key>`"
+    "（role_key 限定下列其一：{keys}）。\n"
+    "  - 任務照上述 `任務:`/`依賴:` 行格式，每任務一句可驗收。\n"
+)
 
 
 class ExpertLike(Protocol):
@@ -127,6 +151,10 @@ class StudioSession:
         self._base_repo = (base_repo or "").strip()
         self._tasks: list[dict] = []  # {id, title, status}
         self._edges: list[tuple[int, int]] = []  # 任務依賴邊 (after, before)，並行分波用
+        # 議程子題 {title, description, criteria, assignee}（assignee 經 validate_assignees
+        # 硬驗證）與修正紀錄 {index, given, assigned}——供逐子題討論與後續持久化（任務 #4）。
+        self._agenda: list[dict] = []
+        self._agenda_corrections: list[dict] = []
         self._pending_human = ""  # 並行模式於波次邊界 drain 的插話，套用到該波各 lane
         self._parallel_metrics: dict = {}  # 並行可觀測性：波次/峰值支線/合併衝突/加速比
         # 全域 LLM 並發節流（lazy 建立，綁當前 event loop）；多 lane × 多 reviewer 時生效。
@@ -551,6 +579,124 @@ class StudioSession:
         if adr.record(self.cwd, adr.parse_adr(distilled), session_id=self.session_id):
             await self._commit(self._main_ctx, "架構決策：記錄 ADR")
 
+    async def _discuss_agenda(
+        self,
+        experts: dict[str, ExpertLike],
+        engineer: ExpertLike,
+        senior: ExpertLike,
+        requirement: str,
+    ) -> str:
+        """逐子題多角色討論（TI_DISCUSS_MODE=round_robin|parallel 且無架構師時的討論階段）。
+
+        每個子題以 self._agenda 的 assignee（已硬驗證）為提案方——排 participants 首位
+        取得先發言權，topic 文字標明「主責: <角色名>」；engineer/senior 為固定討論班底
+        （與 assignee 以實例去重）。多子題時每子題輪數走 config.AGENDA_ROUNDS（預設 1，
+        成本上界 5×1）；單子題（探索型/解析 fallback）沿用 DISCUSS_MAX_ROUNDS 與既有
+        engine 路徑行為對齊。引擎介面不動，只改呼叫端。
+
+        全部子題討論完後收斂為一次：各子題 final_positions 串接成單一結論文字，ADR 開啟
+        時做一次蒸餾、一筆 adr.record、一次 commit（絕不逐子題蒸餾——省 token 也避免
+        後續子題吃到前面子題決策造成干擾）。回傳串接結論作 design_note 供逐任務脈絡。
+        """
+        if config.DEBATE_ROUNDS <= 0 or self._stop:
+            return ""
+        agenda = self._agenda
+        multi = len(agenda) > 1
+        rounds = config.AGENDA_ROUNDS if multi else max(config.DISCUSS_MAX_ROUNDS, 1)
+        await self.broadcast(
+            events.phase_change(
+                self.session_id,
+                "架構討論",
+                f"逐子題多角色討論（{config.DISCUSS_MODE}，{len(agenda)} 個子題）",
+            )
+        )
+        conclusions: list[str] = []
+        all_transcript: list = []  # 跨子題聚合，供討論收斂後一次結論彙整落盤
+        for idx, item in enumerate(agenda, start=1):
+            if self._stop:
+                break
+            # assignee 已經 validate_assignees 硬驗證；空字串（無可用角色的極端案例）
+            # 兜底 engineer，確保提案方永遠存在。
+            assignee = experts.get(item.get("assignee", "")) or engineer
+            participants: list[tuple[str, ExpertLike]] = []
+            for ex in (assignee, engineer, senior):
+                if all(ex is not p for _, p in participants):
+                    participants.append((ex.role.name, ex))
+            topic_lines = [f"議程子題 {idx}/{len(agenda)}：{item['title']}"]
+            if item.get("description"):
+                topic_lines.append(f"描述: {item['description']}")
+            if item.get("criteria"):
+                topic_lines.append(f"成功準則: {item['criteria']}")
+            topic_lines.append(f"主責: {assignee.role.name}（先發言提案，其他人接著點評）")
+            engine = DiscussionEngine(
+                participants=participants,
+                mode=config.DISCUSS_MODE,
+                max_rounds=rounds,
+                semaphore=self._llm_semaphore(),
+                broadcast=self.broadcast,
+                should_stop=lambda: self._stop,
+            )
+            result = await engine.run(
+                adr.context(self.cwd)
+                + f"我們要實作這個需求：{requirement}\n"
+                + "\n".join(topic_lines)
+                + "\n請對齊此子題的做法與檔案結構。"
+            )
+            if result.transcript:
+                all_transcript.extend(result.transcript)
+                positions = "\n".join(
+                    f"【{name} 最終立場】{text}"
+                    for name, text in result.summary["final_positions"].items()
+                )
+                conclusions.append(f"〔子題 {idx}：{item['title']}〕\n{positions}")
+        if not conclusions:
+            return ""
+        merged = "\n\n".join(conclusions)
+        # 結論彙整落盤（與 ADR 解耦）：討論全部收斂後一次彙整→落盤→commit→broadcast。
+        # 必須在下方「ADR 關閉即提前 return」之前——CONCLUSION.md 不應因 ADR 關閉而不產出。
+        await self._record_conclusion(senior, all_transcript)
+        if not (config.ADR_ENABLED and self.cwd and not self._stop):
+            return merged
+        distilled = await senior.speak(
+            "把剛才各子題架構討論的共識蒸餾成決策記錄：每條獨立、逐行輸出 `決策: <結論>`，"
+            "重要取捨可緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行。"
+            "只輸出格式行。\n\n" + merged,
+            self.broadcast,
+        )
+        if adr.record(self.cwd, adr.parse_adr(distilled), session_id=self.session_id):
+            await self._commit(self._main_ctx, "架構決策：記錄 ADR")
+        return merged
+
+    async def _record_conclusion(self, senior: ExpertLike, transcript: list) -> None:
+        """討論收斂後彙整→落盤 CONCLUSION.md→commit→broadcast 一筆結論事件（單一接點）。
+
+        一場一次的終局快照：以跨子題聚合的整場 transcript 算規則式 summary，交 senior
+        蒸餾出四段結論（漏標前綴則 fallback 回規則骨架，見 conclusion.summarize），落
+        workspace 根、進 git，再廣播 CONCLUSION 事件。
+
+        時序保證（架構決策）：commit **先於** broadcast——先確保檔案入 git 再通知，避免
+        前端收到事件但檔案尚未落盤的空窗。落盤是事實來源、事件僅通知；broadcast 不回滾
+        已完成的 record/commit。無 cwd／已停止／空 transcript 時直接略過（不阻斷主流程）。
+        """
+        if not (self.cwd and not self._stop and transcript):
+            return
+        await self.broadcast(
+            events.phase_change(self.session_id, "結論彙整", "彙整討論結論並產出 CONCLUSION.md")
+        )
+        summary = build_summary(transcript)
+        result = await conclusion.summarize(senior, summary, transcript, self.broadcast)
+        # 帶入真實輪數供 sidecar 機讀（設計決策 #4）：取整場 transcript 的末輪 round。
+        path = conclusion.record(
+            self.cwd,
+            result,
+            session_id=self.session_id,
+            rounds=max((u.round for u in transcript), default=0),
+        )
+        if path is None:
+            return
+        await self._commit(self._main_ctx, "結論彙整：產出 CONCLUSION.md")
+        await self.broadcast(events.conclusion(self.session_id, str(path), result))
+
     async def _architecture_decision(
         self,
         architect: ExpertLike,
@@ -736,7 +882,8 @@ class StudioSession:
             + clarify_note
             + research_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
-            "請拆解成結構化任務清單與驗收標準，並宣告執行指令。",
+            "請拆解成結構化任務清單與驗收標準，並宣告執行指令。\n"
+            + AGENDA_PROMPT_RULES.format(keys=", ".join(experts.keys())),
             self.broadcast,
         )
         self._run_command = runner.parse_run_command(pm_plan)
@@ -750,6 +897,29 @@ class StudioSession:
                 for i, t in enumerate(parse_tasks(pm_plan), start=1)
             ]
             self._edges = []
+        # 議程：子題＋主責解析。assignee 硬驗證——合法集合＝本場實際出席角色 keys，
+        # 非法/缺漏 fallback engineer（engineer 缺席則第一個出席者），修正記 log（在
+        # validate_assignees 內）；絕不讓 LLM 即興分派直通。新 API 一律 from studio.flow。
+        self._agenda, self._agenda_corrections = flow.validate_assignees(
+            flow.parse_agenda(pm_plan, requirement=requirement),
+            list(experts.keys()),
+            fallback="engineer",
+        )
+        # 拆解結果快照（議程、任務、分派表＋修正紀錄）經 broadcast→record_event 入
+        # history，供事後重看；前端對 agenda_plan 有對應 case（重播可見）。
+        await self.broadcast(
+            events.agenda_plan(
+                self.session_id,
+                self._agenda,
+                self._tasks,
+                [
+                    {"index": i, "title": a["title"], "assignee": a["assignee"]}
+                    for i, a in enumerate(self._agenda, start=1)
+                ],
+                corrections=self._agenda_corrections,
+                edges=self._edges,
+            )
+        )
         await self._board()
         await self._commit(self._main_ctx, "PM 規劃：建立任務清單與驗收標準")
 
@@ -762,6 +932,10 @@ class StudioSession:
             design_note = await self._architecture_decision(
                 architect, engineer, senior, topic, research_notes
             )
+        elif config.DISCUSS_MODE in ("round_robin", "parallel"):
+            # 引擎模式：逐子題以 topic 餵 DiscussionEngine（引擎介面不動）；各子題結論
+            # 串接成 design_note，ADR 蒸餾/commit 收斂為一次（_discuss_agenda 內）。
+            design_note = await self._discuss_agenda(experts, engineer, senior, requirement)
         else:
             await self._debate(engineer, senior, topic=topic, rounds=config.DEBATE_ROUNDS)
 

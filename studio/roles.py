@@ -23,6 +23,8 @@ class Role:
     permission_mode: str
     system_prompt: str
     tags: list[str] = field(default_factory=list)
+    # 給「調度／選人」看的一句話職能描述（內建角色已補齊；自訂角色檔由 frontmatter 提供）。
+    description: str = ""
 
 
 _COMMON = (
@@ -42,6 +44,7 @@ PM = Role(
     allowed_tools=["Read", "Grep"],
     permission_mode="default",
     tags=["規劃", "驗收", "檢討"],
+    description="拆解需求為任務清單與驗收標準、判斷成果是否達標並主持檢討，不寫程式碼。",
     system_prompt=_COMMON
     + (
         "\n你的角色：專案經理（PM）。\n"
@@ -74,6 +77,7 @@ ENGINEER = Role(
     allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     permission_mode="acceptEdits",
     tags=["實作", "修正"],
+    description="依任務實際撰寫與修改可運行的程式碼，交付前自測並逐項修正審查意見。",
     system_prompt=_COMMON
     + (
         "\n你的角色：工程師。\n"
@@ -105,6 +109,7 @@ QA = Role(
     allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     permission_mode="acceptEdits",
     tags=["測試", "回報"],
+    description="撰寫並實際執行測試驗證產出是否符合驗收標準，回報 PASS/FAIL 與具體失敗點。",
     system_prompt=_COMMON
     + (
         "\n你的角色：驗證工程師（QA）。\n"
@@ -130,6 +135,7 @@ SENIOR = Role(
     allowed_tools=["Read", "Grep", "Glob", "Bash"],
     permission_mode="default",
     tags=["審查", "把關"],
+    description="審查程式碼的正確性、設計與可維護性，給出核可/退回決議與具體修正項目。",
     system_prompt=_COMMON
     + (
         "\n你的角色：高級工程師（程式碼審查者）。\n"
@@ -155,6 +161,7 @@ RESEARCHER = Role(
     allowed_tools=["WebSearch", "WebFetch", "Read", "Grep"],
     permission_mode="default",
     tags=["調研", "查資料"],
+    description="動工前上網調研套件、API、最佳實踐與常見坑，提供附來源的重點與建議。",
     system_prompt=_COMMON
     + (
         "\n你的角色：研究員。\n"
@@ -177,6 +184,7 @@ ARCHITECT = Role(
     allowed_tools=["Read", "Grep", "Glob"],
     permission_mode="default",
     tags=["設計", "決策"],
+    description="動工前定下技術選型、模組邊界與介面等設計決策，不直接寫程式碼。",
     system_prompt=_COMMON
     + (
         "\n你的角色：架構師（主導設計決策）。\n"
@@ -198,6 +206,7 @@ SECURITY = Role(
     allowed_tools=["Read", "Grep", "Bash"],
     permission_mode="default",
     tags=["資安", "把關"],
+    description="審查程式碼的注入、認證授權、機敏外洩等安全風險，給出安全核可/退回決議。",
     system_prompt=_COMMON
     + (
         "\n你的角色：資安審查員（安全把關）。\n"
@@ -220,6 +229,7 @@ DEVOPS = Role(
     allowed_tools=["Read", "Bash", "Glob"],
     permission_mode="default",
     tags=["整合", "環境"],
+    description="確保成果能在乾淨環境安裝相依並實際跑起來，回報整合 OK/FAIL 與阻礙。",
     system_prompt=_COMMON
     + (
         "\n你的角色：整合維運工程師。\n"
@@ -248,9 +258,19 @@ def effective_tools(role: Role) -> list[str]:
     return tools
 
 
+# --- 內建角色的「純淨快照」（tuple，不可變）------------------------------
+# role_store.reload_roles() 以此為合併基底：檔案覆蓋同 key 內建後會 setattr 改寫上面的
+# 具名常數（PM/ENGINEER/...），故重建時必須回到這份 import 期凍結的原始定義，
+# 否則「刪掉覆蓋檔還原內建」會還原到被覆蓋過的版本。
+BUILTIN_CORE: tuple[Role, ...] = (PM, ENGINEER, QA, SENIOR)
+BUILTIN_OPTIONAL: tuple[Role, ...] = (RESEARCHER, ARCHITECT, SECURITY, DEVOPS)
+BUILTIN_ROLES: tuple[Role, ...] = BUILTIN_CORE + BUILTIN_OPTIONAL
+
 # 核心 4 角色永遠在；可選角色由 config.OPTIONAL_ROLES 控制（預設全開）。
-CORE_ROLES: list[Role] = [PM, ENGINEER, QA, SENIOR]
-_OPTIONAL_ROLES: list[Role] = [RESEARCHER, ARCHITECT, SECURITY, DEVOPS]
+# 注意：以下三者皆可能被 role_store.reload_roles()「原地變異」（[:] / clear+update），
+# 外部模組請維持 `from .roles import ROSTER` 式的模組級綁定即可拿到最新值，勿另存複本。
+CORE_ROLES: list[Role] = list(BUILTIN_CORE)
+_OPTIONAL_ROLES: list[Role] = list(BUILTIN_OPTIONAL)
 
 # 工作室成員（發言/顯示順序）
 ROSTER: list[Role] = CORE_ROLES + [r for r in _OPTIONAL_ROLES if r.key in config.OPTIONAL_ROLES]
