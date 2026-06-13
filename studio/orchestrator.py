@@ -54,6 +54,7 @@ from .flow import (
     qa_passed as qa_passed,
     security_approved as security_approved,
     senior_approved as senior_approved,
+    shippable_verdict as shippable_verdict,
     text_similarity as text_similarity,
 )
 from .roles import ROSTER, Role
@@ -1042,8 +1043,20 @@ class StudioSession:
             )
         done = await self._wrap_up(pm, all_ok and not demo_veto)
 
+        # 5.5) 可帶「已知限制」出貨：把「全有全無」放寬為「核心客觀證據通過即發佈」。
+        #   未過的次要任務記成已知限制（寫進交付物＋回填 backlog），不再讓單一 flaky 小任務
+        #   永久擋住整個可用產品的交付。安全護欄在 shippable_verdict：沒跑過 Demo（無客觀證據）
+        #   又非全過時不出貨。完整完成（done）與可出貨（shippable）分流，completed 仍據實回報。
+        core_verified = demo is not None and demo.ok
+        shippable = shippable_verdict(
+            all_ok=all_ok, demo_veto=demo_veto, core_verified=core_verified, stopped=self._stop
+        )
+        unmet = [t for t in self._tasks if t.get("status") != "done"]
+        if shippable and not done and unmet:
+            await self._record_known_limitations(unmet)
+
         # 6) 視設定自動發佈成果到 GitHub（此時專家團隊仍在線，可在 CI 失敗時修正）
-        await self._maybe_publish(done, engineer)
+        await self._maybe_publish(shippable, engineer)
 
         return {
             "completed": done,
@@ -2041,8 +2054,37 @@ class StudioSession:
         )
         return done
 
-    async def _maybe_publish(self, done: bool, engineer: ExpertLike | None = None) -> None:
-        """專案完成且設定允許時自動發佈到 GitHub；接著驗 CI、失敗讓團隊修正重推、成功合併。
+    async def _record_known_limitations(self, unmet: list[dict]) -> None:
+        """帶已知限制出貨前：把未通過的次要任務寫進交付物 KNOWN_LIMITATIONS.md（隨發佈一起
+        commit,讓收件方一眼看到尚未滿足之處）,並回填 followups（持續改良迴圈下次續做）。"""
+        titles = [str(t.get("title", "")).strip() for t in unmet if t.get("title")]
+        titles = [t for t in titles if t]
+        if not self.cwd or not titles:
+            return
+        body = "# 已知限制（Known Limitations）\n\n" + (
+            "本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:\n\n"
+        ) + "\n".join(f"- [ ] {t}" for t in titles) + "\n"
+        try:
+            (self.cwd / "KNOWN_LIMITATIONS.md").write_text(body, encoding="utf-8")
+        except OSError:
+            log.warning("寫入 KNOWN_LIMITATIONS.md 失敗（略過,不影響發佈）", exc_info=True)
+        # 未過任務同時回填後續任務,確保不會因為「已出貨」而被遺忘。
+        seen = set(self._followups)
+        for t in titles:
+            if t not in seen:
+                seen.add(t)
+                self._followups.append(t)
+                self._followup_items.append({"title": t, "priority": 1, "type": "improvement"})
+        await self.broadcast(
+            events.phase_change(
+                self.session_id,
+                "帶限制出貨",
+                f"核心已通過驗證,以「已知限制」版本發佈（{len(titles)} 項未過任務記入 KNOWN_LIMITATIONS.md 並留待改良）",
+            )
+        )
+
+    async def _maybe_publish(self, shippable: bool, engineer: ExpertLike | None = None) -> None:
+        """專案可出貨且設定允許時自動發佈到 GitHub；接著驗 CI、失敗讓團隊修正重推、成功合併。
 
         首輪「等 CI→合併」沿用 publisher.publish(merge=)（REST，結局寫進 result.outcome）；CI 失敗
         則取日誌請 engineer 修正、重推，再以 verify_and_merge 重驗合併，最多 PUBLISH_CI_MAX_ROUNDS 輪。
@@ -2053,12 +2095,14 @@ class StudioSession:
         """
         token = publisher.set_repo_override(self._publish_repo)
         try:
-            await self._maybe_publish_inner(done, engineer)
+            await self._maybe_publish_inner(shippable, engineer)
         finally:
             publisher.reset_repo_override(token)
 
-    async def _maybe_publish_inner(self, done: bool, engineer: ExpertLike | None = None) -> None:
-        if not self.cwd or self._stop or not done:
+    async def _maybe_publish_inner(
+        self, shippable: bool, engineer: ExpertLike | None = None
+    ) -> None:
+        if not self.cwd or self._stop or not shippable:
             return
         if not (config.PUBLISH_AUTO and publisher.is_configured()):
             return
