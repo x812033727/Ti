@@ -21,7 +21,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ROLES_DIR", tmp_path)
     from studio.server import app
 
-    return TestClient(app)
+    # 寫入端點掛 WRITE_DEPS(require_admin)：門禁停用時退回僅限本機，故用 loopback peer 放行。
+    return TestClient(app, client=("127.0.0.1", 23456))
 
 
 # --- 驗收 #6：四種 4xx，逐一可歸因 ---------------------------------------

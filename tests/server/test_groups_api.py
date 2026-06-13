@@ -14,11 +14,12 @@ from studio import config
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → require_auth 放行
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → 寫入退回 loopback fail-safe
     monkeypatch.setattr(config, "ROLES_DIR", tmp_path)
     from studio.server import app
 
-    return TestClient(app)
+    # 寫入端點掛 WRITE_DEPS(require_admin)：門禁停用時退回僅限本機，故用 loopback peer 放行。
+    return TestClient(app, client=("127.0.0.1", 12345))
 
 
 def test_crud_happy_path(client):
@@ -128,3 +129,21 @@ def test_requires_auth_when_enabled(client, monkeypatch):
         ).status_code
         == 401
     )
+
+
+def test_writes_loopback_only_when_auth_disabled(tmp_path, monkeypatch):
+    """門禁停用時，寫入端點須掛 WRITE_DEPS(require_admin) 退回僅限本機。
+
+    非本機來源即使在門禁停用下也不得改 group（POST/PUT/DELETE 回 403）；GET 可讀。
+    這條鎖住 `/api/groups` 寫入須與 `/api/roles` 同級保護，杜絕把控制面裸露給 0.0.0.0。
+    """
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    monkeypatch.setattr(config, "ROLES_DIR", tmp_path)
+    from studio.server import app
+
+    remote = TestClient(app, client=("203.0.113.7", 40000))  # 非本機
+    payload = {"name": "g", "role_keys": ["engineer", "senior"], "mode": "round_robin"}
+    assert remote.post("/api/groups", json=payload).status_code == 403
+    assert remote.put("/api/groups/g", json={"role_keys": ["pm", "qa"]}).status_code == 403
+    assert remote.delete("/api/groups/g").status_code == 403
+    assert remote.get("/api/groups").status_code == 200  # 讀取不受限
