@@ -161,3 +161,70 @@
 - 時間：2026-06-13 05:58
 - 理由：工程師提醒拆解單次呼叫已產多種格式，再疊 `子題:`/`負責:` 格式負擔不小，fallback 路徑須在真實冒煙實測到
 
+## `parse_conclusion` 純函式置於 `flow.py`，沿用既有 `re.match(r"^\s*<標籤>\s*[:：]\s*(.+)$", line)` 行前綴範式＋全形冒號容錯，解析 `共識:／分歧:／未決:／行動:` 四前綴，回傳 `{"consensus":[], "disagreements":[], "open_questions":[], "actions":[]}` 結構化 dict
+- 時間：2026-06-13 10:44
+- 理由：flow.py 已有 7 處同款 parser，Python `re` 直接複用零風險
+- 否決方案：另起 JSON schema 或新解析範式——與既有慣例不一致、徒增負擔
+
+## 四前綴全缺時 `parse_conclusion` 回空骨架（四鍵皆空 list）而非拋例外，由呼叫端偵測空骨架走 fallback，對齊 `adr.parse_adr` 「失敗即降級」
+- 時間：2026-06-13 10:44
+
+## `discussion._build_summary` 既有三鍵 `consensus/disagreements/final_positions` 維持原扁平 `agree-disagree` set 邏輯完全不動，防回歸（驗收 #2）
+- 時間：2026-06-13 10:44
+
+## 新增 `open_questions` 鍵採 **per-pair 末輪 stance 判定**：對每個 `(speaker,target)` 取最大 `Utterance.round` 的末態 stance，末態為「反對」者列入 open_questions；明確禁止沿用扁平 agree/disagree set 推「未轉同意收斂」
+- 時間：2026-06-13 10:44
+- 理由：高工指出扁平 set 會讓「先同意後反對」末態仍反對者被 `disagree-agree` 誤排除、漏判未決；唯有取 per-pair 末輪 stance 才正確，這是設計合約層級漏洞，現在釘最便宜
+- 否決方案：工程師的純集合 `disagree-agree`——無法處理「先同意後反對」末態反對之 case，會漏判未決
+
+## `unique_findings` 定義為 **role 粒度**——target 從未被任何 speaker mention 的角色發言（無人回應者）；建構 mention 圖時排除 self-mention（僅計 `m.speaker != m.target`），並補 self-mention 黑樣本測試防假陰性
+- 時間：2026-06-13 10:44
+- 理由：工程師指出 self-mention 會讓角色誤判為「被回應」而漏掉 unique；同時標明此為角色粒度近似、非論點粒度遺漏偵測，避免日後誤用
+
+## `consensus` 維持僅取明確 `stance=同意` 的 mention，無 mention 的發言一律歸入 `unique_findings` 不進 consensus，以區分「明確同意」與「無人表態」
+- 時間：2026-06-13 10:44
+- 理由：工程師確認此為結構保證非測試運氣——零-mention transcript 的 `agree` 必為空集，假共識無生成路徑
+
+## 測試須含零-mention 黑樣本（角色全無 mention）＋**灰樣本（角色被部分 mention）**，確認 unique/open_questions 語意，避免判別力只驗極端一半
+- 時間：2026-06-13 10:44
+- 理由：高工指出零-mention 只驗極端，灰樣本才驗到 role 粒度的真實語意
+
+## 新增 `conclusion.py` 模組（對齊 `adr.py`），職責＝組 prompt＋接 senior one-shot＋呼叫 `parse_conclusion`＋fallback＋render markdown＋落盤，介面 `summarize(summary, transcript) -> dict` 與 `record(cwd, conclusion, *, session_id) -> Path`
+- 時間：2026-06-13 10:44
+
+## 結論蒸餾與 ADR 蒸餾分開兩次 senior one-shot 呼叫、不合併
+- 時間：2026-06-13 10:44
+- 理由：輸出格式（`共識:/分歧:/未決:/行動:` vs `設計決策:`）與職責不同，混一個 prompt 降遵循率；兩者皆×1 成本可控
+- 否決方案：合併成單次 senior 呼叫——省一次呼叫但拉低各自格式遵循率，不划算
+
+## 蒸餾 prompt 含三條防坑硬指令——①只彙整 transcript 出現過的論點、不得新增②無人反對≠共識，需區分明確同意與無人表態③強分歧須保留並標明雙方，字面寫入可 grep 驗證
+- 時間：2026-06-13 10:44
+
+## 蒸餾 prompt 要求每條結論盡量帶 `(round, speaker)` 錨點，但真錨點事實來源為規則層 summary（`final_positions`/`unique_findings` 天生帶 speaker），不信任 LLM 自填錨點；驗收「至少一條回指 transcript」由規則骨架保證
+- 時間：2026-06-13 10:44
+
+## `CONCLUSION.md` 每場覆寫式單檔、落 workspace 根，四段固定 `## 共識／## 分歧／## 未決事項／## 後續行動`，歷史保存靠 git commit 而非 append 累積
+- 時間：2026-06-13 10:44
+- 否決方案：學 adr.py append 累積——結論是本場快照，累積語意錯且會膨脹；多檔歷史回顧留待 M2
+
+## fallback 路徑——`parse_conclusion` 回空骨架時 `conclusion.record` 改用規則式 summary 骨架 render markdown：consensus→共識、disagreements→分歧、open_questions→未決；**行動段留空並標「（蒸餾失靈，無行動項）」，不以 final_positions 末輪發言冒充 action**
+- 時間：2026-06-13 10:44
+- 理由：高工指出末輪發言不是行動項，硬塞語意偏差；fallback 仍須產出 CONCLUSION.md（驗收 #6）但不偽造行動
+
+## `events.py` 新增 `EventType.CONCLUSION`＋`conclusion(session_id, path, summary)` 建構子，沿用既有 broadcast→record_event 入 history 管道；同步確認 web 前端對未知 event type 有 default 容錯，會炸則補 default case
+- 時間：2026-06-13 10:44
+
+## orchestrator 接線於 `_discuss_agenda` 討論全部結束後、ADR 蒸餾同階段，依序 summarize→record→commit（訊息「結論彙整：產出 CONCLUSION.md」）→broadcast CONCLUSION 事件，單一接點不散落
+- 時間：2026-06-13 10:44
+
+## 落盤 commit 沿用既有 `self._commit` 慣例，不引入 `fcntl` 鎖
+- 時間：2026-06-13 10:44
+- 理由：單檔每場覆寫一次、無同檔跨程序併發，鎖為過度設計（adr.py 的鎖是為 read-modify-write 累積＋跨場併發）
+
+## 移除原設計「ERE 可攜性」措辭——此處為 Python `re` 非 shell grep fallback，CLAUDE.md 的 lookbehind/PCRE 教訓不適用，`[:：]` 全形容錯沿用既有 parser 即可
+- 時間：2026-06-13 10:44
+- 理由：高工澄清，避免把掃描腳本的可攜性顧慮誤套到 Python 解析
+
+## 測試切分——`parse_conclusion` 四段正常解析／全形冒號／漏標回空骨架純函式測試；`_build_summary` 新鍵（含 per-pair 末輪 stance、self-mention 排除、零-mention 黑樣本、部分-mention 灰樣本）stance 路徑測試；離線 e2e 驗證跑完 workspace 根產出 CONCLUSION.md 四段且至少一條回指 transcript（自證對應、排除假綠）
+- 時間：2026-06-13 10:44
+
