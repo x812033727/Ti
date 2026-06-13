@@ -626,6 +626,9 @@ async def _publish_inner(
 
     # 確保有 git repo 與至少一個 commit
     await runner.git_init(cwd)
+    # 發佈前淨化:剔除沙箱/環境污染(.venv／*.db／HOME dotfiles／.claude),避免交付膨脹的髒 repo。
+    # 必須趕在下面這次「成果」commit 之前,讓交付的 HEAD 工作樹乾淨。
+    await runner.git_sanitize_workspace(cwd)
     await runner.git_commit(cwd, "Ti Studio 成果")
 
     # per-project 覆寫的 repo 可能不存在（自動建立）或是空的（首次發佈直接初始化 base）。
