@@ -44,6 +44,25 @@ async def test_worktree_add_commit_merge_happy(tmp_path, main_repo):
     assert (main_repo / "feature.txt").is_file()
 
 
+def test_write_baseline_gitignore_merges_and_preserves(tmp_path):
+    # 純檔案寫入(不需 .git):session 開工前呼叫,讓 junk 從不被追蹤。
+    gi = tmp_path / ".gitignore"
+    gi.write_text("# 專案自有\nmy_custom_dir/\n", encoding="utf-8")
+    runner.write_baseline_gitignore(tmp_path)
+    body = gi.read_text(encoding="utf-8")
+    assert "my_custom_dir/" in body, "既有內容須保留"
+    assert ".venv/" in body and "*.db" in body and ".claude/" in body and ".mcp.json" in body
+    # 冪等:重複呼叫不重覆灌
+    runner.write_baseline_gitignore(tmp_path)
+    assert gi.read_text(encoding="utf-8").count(".venv/") == 1
+
+
+def test_write_baseline_gitignore_creates_when_absent(tmp_path):
+    runner.write_baseline_gitignore(tmp_path)
+    assert (tmp_path / ".gitignore").exists()
+    assert ".venv/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+
+
 @pytest.mark.asyncio
 async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
     """發佈前淨化:已被追蹤的沙箱/環境 junk(.venv/*.db/HOME dotfiles/.claude)應被 untrack,
