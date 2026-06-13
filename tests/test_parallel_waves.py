@@ -406,6 +406,42 @@ async def _amr(value):
     return value
 
 
+@pytest.mark.asyncio
+async def test_lane_git_snapshot_debug_logs_and_never_throws(tmp_path, monkeypatch, caplog):
+    """lane git 快照診斷：DEBUG 開啟時記錄主工作樹 HEAD/狀態/分支是否 reachable；關閉時零成本。
+
+    這是定位「lane 成果漏進主工作樹」根因的儀表，必須安全（任何 git 失敗都不可拖垮主流程）。
+    """
+    import logging
+
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+    repo = tmp_path / "main"
+    repo.mkdir()
+    assert await runner.git_init(repo)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    assert await runner.git_commit(repo, "base") is not None
+
+    async def broadcast(ev):
+        pass
+
+    session = StudioSession("snap", broadcast, experts={}, cwd=repo)
+
+    # DEBUG 關閉（預設 INFO）：不應觸發、不報錯。
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="ti.orchestrator"):
+        await session._lane_git_snapshot("open", "task-1")
+    assert not [r for r in caplog.records if "lane-snapshot" in r.getMessage()]
+
+    # DEBUG 開啟：應記錄且不丟例外（即使分支不存在也安全）。
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="ti.orchestrator"):
+        await session._lane_git_snapshot("open", "task-1")  # task-1 不存在 → reachable 安全 False
+    snaps = [r.getMessage() for r in caplog.records if "lane-snapshot[open]" in r.getMessage()]
+    assert snaps, "DEBUG 等級應記錄 lane-snapshot"
+    assert "main_HEAD=" in snaps[0]
+
+
 class DepStub(LaneStub):
     """記錄各 lane 開工時，其 worktree 是否已看得到前一波合併進來的成果。"""
 

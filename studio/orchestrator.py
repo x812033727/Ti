@@ -1212,6 +1212,7 @@ class StudioSession:
         ctx = LaneContext(branch, wt, {}, branch=branch)
         ctx.experts = self._build_lane_experts(branch, wt)
         self._lane_ctxs.append(ctx)
+        await self._lane_git_snapshot("open", branch)
         return ctx
 
     def _build_lane_experts(self, suffix: str, cwd: Path) -> dict[str, ExpertLike]:
@@ -1236,6 +1237,44 @@ class StudioSession:
                 pass
         if self.cwd and ctx.cwd and ctx.branch:
             await runner.git_worktree_remove(self.cwd, ctx.cwd, ctx.branch)
+        await self._lane_git_snapshot("teardown", ctx.branch)
+
+    async def _lane_git_snapshot(self, where: str, branch: str | None = None) -> None:
+        """診斷用：DEBUG 等級時記錄主工作樹的 git 狀態，定位「lane 成果漏進主工作樹」根因。
+
+        並行 lane 隔離理應讓主工作樹（self.cwd）只透過 _merge_lane 取得成果；實測卻見主工作樹
+        出現未追蹤的 lane 檔、lane 分支 merge 變 no-op（master 未前進卻仍廣播「合併支線」）。
+        本快照在 lane 開/合/收邊界記錄主工作樹 HEAD、porcelain 狀態、以及該 lane 分支是否已
+        reachable，讓下一次乾淨重現把狀態轉變如實錄下，而非事後從已污染的 workspace 臆測。
+        以 log.debug 自動 gate（INFO 預設不觸發），且僅在啟用 DEBUG 時才跑 git——零行為改變、
+        平時零成本。設 `logging.getLogger("ti.orchestrator").setLevel(logging.DEBUG)` 即開。
+        """
+        if not (self.cwd and log.isEnabledFor(logging.DEBUG)):
+            return
+        try:
+            head = await runner.git_head_short(self.cwd)
+            st = await runner.run_command_exec(
+                self.cwd, ["git", "status", "--porcelain"], sandbox=False, timeout=20
+            )
+            reachable = None
+            if branch:
+                chk = await runner.run_command_exec(
+                    self.cwd,
+                    ["git", "merge-base", "--is-ancestor", branch, "HEAD"],
+                    sandbox=False,
+                    timeout=20,
+                )
+                reachable = chk.ok  # True＝該分支已併入主幹（merge 真的落地）
+            log.debug(
+                "lane-snapshot[%s] branch=%s main_HEAD=%s branch_reachable=%s status=%r",
+                where,
+                branch,
+                head,
+                reachable,
+                (st.output or "")[:600],
+            )
+        except Exception:  # noqa: BLE001 — 診斷絕不可拖垮主流程
+            log.debug("lane-snapshot[%s] branch=%s 失敗（已忽略）", where, branch, exc_info=True)
 
     async def _run_lane(
         self, ctx: LaneContext, lane_tasks: list[dict], plan_ctx: str
@@ -1337,7 +1376,16 @@ class StudioSession:
         就地解掉衝突標記後 commit，再 fast-forward 合回主幹——成功則保留 lane 已完成的所有
         commit（省去整段重跑）。解不掉才退回既有的「於最新主幹序列化重跑」fallback。
         """
+        await self._lane_git_snapshot("pre-merge", lr.ctx.branch)
         res = await runner.git_merge_worktree(self.cwd, lr.ctx.branch)
+        log.debug(
+            "merge-result branch=%s ok=%s conflict=%s blocked=%s out=%r",
+            lr.ctx.branch,
+            res.ok,
+            res.conflict,
+            res.blocked,
+            (res.output or "")[:300],
+        )
         if res.ok:
             h = await runner.git_head_short(self.cwd)
             if h:
@@ -1345,6 +1393,7 @@ class StudioSession:
                 await self.broadcast(
                     events.git_commit(self.session_id, f"合併支線 {lr.ctx.branch}", h)
                 )
+            await self._lane_git_snapshot("post-merge-ok", lr.ctx.branch)
             return lr.ok
         if res.conflict:
             self._parallel_metrics["merge_conflicts"] = (
