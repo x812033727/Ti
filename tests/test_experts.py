@@ -205,3 +205,52 @@ async def test_stop_after_start_disconnects(fake_expert):
     # stop 後可再次 stop 而不重複斷線
     await exp.stop()
     assert client.disconnects == 1
+
+
+# --- _build_client 接線回歸守門（lane 隔離真正防線必須被接上）-----------
+# 背景：lane 隔離靠 PreToolUse fs-guard hook（can_use_tool 對預先允許/acceptEdits 的寫檔
+# 工具不觸發）。這條接線一旦被改掉，lane 成果會無聲漏進主工作樹。此測試以假 SDK 捕捉
+# _build_client 實際傳入的 ClaudeAgentOptions，確認 hook 有接上且綁定到傳入的 cwd。
+def _install_fake_sdk(monkeypatch):
+    mod = types.ModuleType("claude_agent_sdk")
+
+    class ClaudeAgentOptions:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    class ClaudeSDKClient:
+        def __init__(self, options=None):
+            self.options = options
+
+    class HookMatcher:
+        def __init__(self, matcher=None, hooks=None):
+            self.matcher = matcher
+            self.hooks = hooks or []
+
+    mod.ClaudeAgentOptions = ClaudeAgentOptions
+    mod.ClaudeSDKClient = ClaudeSDKClient
+    mod.HookMatcher = HookMatcher
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", mod)
+    return mod
+
+
+def _deny(out) -> bool:
+    return (out or {}).get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+
+async def test_build_client_wires_pretooluse_fs_guard_bound_to_cwd(tmp_path, monkeypatch):
+    _install_fake_sdk(monkeypatch)
+    lane = tmp_path / "proj.lanes" / "task-1"
+    lane.mkdir(parents=True)
+
+    client = experts._build_client(BY_KEY["engineer"], "sid", lane)
+    hooks = client.options.hooks
+    assert "PreToolUse" in hooks, "PreToolUse hook 未接上——lane 隔離防線失效"
+    guard = hooks["PreToolUse"][0].hooks[0]
+
+    # 綁定到傳入的 cwd：寫到兄弟目錄（主工作樹）→ deny；寫到 cwd 內 → 放行
+    sibling = str(tmp_path / "proj" / "leak.py")
+    assert _deny(await guard({"tool_name": "Write", "tool_input": {"file_path": sibling}}, "id", None))
+    assert not _deny(
+        await guard({"tool_name": "Write", "tool_input": {"file_path": "ok.py"}}, "id", None)
+    )
