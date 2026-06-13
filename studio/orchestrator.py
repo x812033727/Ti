@@ -1472,10 +1472,15 @@ class StudioSession:
     async def _huddle(
         self, ctx: LaneContext, task: dict, context: str, broadcast: Broadcast | None = None
     ) -> str:
-        """召集卡關討論：依序讓在場角色針對 blocker 提替代方案。回傳彙整結論。
+        """召集卡關討論：讓在場角色針對 blocker 提替代方案。回傳彙整結論。
 
         召集 PM＋架構師＋工程師＋高級工程師（取自該 lane 的專家團隊），缺席角色
         （如 offline 無架構師）自動略過。並行 lane 傳入 tagged broadcast 供前端分流。
+
+        發言調度依 config.DISCUSS_MODE：round_robin/parallel（預設）走 DiscussionEngine
+        單輪（max_rounds=1，每人剛好一次）——parallel 即同輪並行（角色同時動工）；legacy
+        或在場 <2 退化時走原始循序逐行發言（逃生口）。兩條路徑的 event 形狀、participants
+        鍵清單、NOTES 寫入與回傳結論皆相同。
         """
         roster = [
             ("pm", ctx.experts.get("pm")),
@@ -1497,18 +1502,31 @@ class StudioSession:
             f"整體計畫供參考：\n{context}\n\n"
         )
         tag = self._lane_tag(ctx, task)
-        notes: list[str] = []
-        for key, ex in present:
-            prior = ("\n團隊目前的討論：\n" + "\n".join(notes)) if notes else ""
-            view = await self._speak(
-                ctx,
-                key,
-                blocker
-                + "請針對這個 blocker 提出可突破的替代做法或拆解方式，簡短具體、可立即執行。"
-                + prior,
-                tag,
+        ask = "請針對這個 blocker 提出可突破的替代做法或拆解方式，簡短具體、可立即執行。"
+        if config.DISCUSS_MODE in ("round_robin", "parallel") and len(present) >= 2:
+            # 並行/依序卡關討論：單輪（max_rounds=1）讓全員各針對 blocker 提一次替代方案。
+            # 名稱進 engine（唯一且無空白）；semaphore 由 engine 內部套用（不重複包）；
+            # broadcast 標籤化對齊 _speak（lane 分流）；should_stop 透傳。
+            engine = DiscussionEngine(
+                participants=[(ex.role.name, ex) for _, ex in present],
+                mode=config.DISCUSS_MODE,
+                max_rounds=1,
+                semaphore=self._llm_semaphore(),
+                broadcast=self._tagged_broadcast(tag),
+                should_stop=lambda: self._stop,
             )
-            notes.append(f"【{ex.role.name}】{view}")
+            result = await engine.run(blocker + ask)
+            # 依 present 順序＋{角色名: 發言} 映射回填：結論順序與 participants 鍵清單對齊
+            # （engine 依 participants 順序寫回、角色名唯一 → 順序決定性，不受 gather 完成序影響）。
+            by_name = {u.speaker: u.text for u in result.transcript}
+            notes = [f"【{ex.role.name}】{by_name.get(ex.role.name, '')}" for _, ex in present]
+        else:
+            # legacy（或在場 <2 退化）：原始循序逐行發言，逃生口、行為與現狀一致。
+            notes = []
+            for key, ex in present:
+                prior = ("\n團隊目前的討論：\n" + "\n".join(notes)) if notes else ""
+                view = await self._speak(ctx, key, blocker + ask + prior, tag)
+                notes.append(f"【{ex.role.name}】{view}")
         conclusion = "\n".join(notes)
         await self.broadcast(
             events.huddle(

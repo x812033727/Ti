@@ -129,6 +129,9 @@ def flow(monkeypatch):
     monkeypatch.setattr(config, "ADR_ENABLED", True)
     monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
+    # 這些掛點測試針對「legacy 兩人辯論 → ADR 蒸餾」的腳本化發言序（senior 第二次發言＝蒸餾）。
+    # 預設已是 parallel，engine 路徑的蒸餾接縫另由 test_discussion.py 專測，故此處 pin legacy。
+    monkeypatch.setattr(config, "DISCUSS_MODE", "legacy")
 
 
 async def test_architect_decision_recorded(tmp_path, flow):
@@ -183,6 +186,8 @@ async def test_adr_disabled_no_side_effects(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ADR_ENABLED", False)
     monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
+    # legacy 兩人辯論：senior 只有「點評＋審查」兩次（engine 路徑另測），故 pin legacy。
+    monkeypatch.setattr(config, "DISCUSS_MODE", "legacy")
     experts = _experts(
         pm=["任務: 實作", "決議: 完成", "檢討"],
         eng=["提案", "實作"],

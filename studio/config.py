@@ -96,14 +96,24 @@ def _discuss_max_rounds() -> int:
 # 多角色討論（DiscussionEngine）的最大輪數上限；預設取 DEBATE_ROUNDS。
 DISCUSS_MAX_ROUNDS = _discuss_max_rounds()
 
-# 多角色討論模式白名單：legacy＝舊「工程師⇄高級工程師」兩人往返（預設，行為與現狀一致）；
-# round_robin＝DiscussionEngine 依序發言；parallel＝同輪並行、輪間同步。
+# 多角色討論模式白名單：legacy＝舊「工程師⇄高級工程師」兩人往返（opt-out 逃生口）；
+# round_robin＝DiscussionEngine 依序發言；parallel＝同輪並行、輪間同步（**新預設**）。
 DISCUSS_MODES = ("legacy", "round_robin", "parallel")
+# 未設／留空時採用的預設模式。改為 parallel：架構討論與卡關 huddle 預設皆同輪並行（角色同時動工）。
+DISCUSS_MODE_DEFAULT = "parallel"
 
 
 def _discuss_mode() -> str:
-    """TI_DISCUSS_MODE：白名單外（含拼錯）一律 fallback legacy（向後相容、絕不誤開新路徑）。"""
-    raw = (os.getenv("TI_DISCUSS_MODE") or "").strip() or "legacy"
+    """TI_DISCUSS_MODE 解析：
+
+    - 未設／留空／純空白 → 採新預設 DISCUSS_MODE_DEFAULT（parallel）；留空＝「未設定」，
+      須等同未設（沿用本檔 .env 留空慣例），不可變成第三種行為。
+    - 非空但非法（拼錯／大小寫／round-robin）→ 安全退回 legacy 並記 warning
+      （守住「絕不誤開新路徑」：打錯字是未知意圖，退保守路徑而非新預設）。
+    """
+    raw = (os.getenv("TI_DISCUSS_MODE") or "").strip()
+    if not raw:
+        return DISCUSS_MODE_DEFAULT
     if raw not in DISCUSS_MODES:
         logger.warning("環境變數 TI_DISCUSS_MODE=%r 不在白名單 %s，改用 legacy", raw, DISCUSS_MODES)
         return "legacy"
