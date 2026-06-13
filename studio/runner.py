@@ -773,6 +773,26 @@ _JUNK_PATHS = [
 ]
 
 
+def write_baseline_gitignore(cwd: Path | str) -> None:
+    """把 baseline 忽略樣式併入 cwd/.gitignore（保留專案既有內容,只補缺的）。純檔案寫入、
+    不需 .git——故可在 session 一開始（任何 commit 之前）就呼叫,讓 SDK 沙箱散落的 dotfiles／
+    .venv／*.db 等 junk **從不被 `git add -A` 追蹤**（乾淨歷史＋乾淨 lane 分支,減少合併摩擦）。
+    與 git_sanitize_workspace（發佈前對「已追蹤」junk 兜底 untrack）互補。失敗吞掉不拋。"""
+    try:
+        root = Path(cwd)
+        if not root.is_dir():
+            return
+        gi = root / ".gitignore"
+        existing = gi.read_text(encoding="utf-8", errors="replace") if gi.exists() else ""
+        have = {ln.strip() for ln in existing.splitlines()}
+        missing = [p for p in _BASELINE_IGNORE_PATTERNS if p not in have]
+        if missing:
+            block = "\n# --- Ti baseline（自動補上,避免追蹤/交付沙箱/環境 junk）---\n" + "\n".join(missing) + "\n"
+            gi.write_text((existing.rstrip("\n") + "\n" if existing else "") + block, encoding="utf-8")
+    except OSError:
+        log.warning("寫入 baseline .gitignore 失敗（略過）", exc_info=True)
+
+
 async def git_sanitize_workspace(repo: Path | str) -> None:
     """發佈前淨化 workspace,避免交付被沙箱/環境污染的 repo（.venv／*.db／HOME dotfiles／
     .claude 等,實測曾使交付 repo 膨脹到 2000+ 檔)。
@@ -786,16 +806,7 @@ async def git_sanitize_workspace(repo: Path | str) -> None:
     root = Path(repo)
     if not (root / ".git").exists():
         return
-    try:
-        gi = root / ".gitignore"
-        existing = gi.read_text(encoding="utf-8", errors="replace") if gi.exists() else ""
-        have = {ln.strip() for ln in existing.splitlines()}
-        missing = [p for p in _BASELINE_IGNORE_PATTERNS if p not in have]
-        if missing:
-            block = "\n# --- Ti baseline（自動補上,避免交付沙箱/環境 junk）---\n" + "\n".join(missing) + "\n"
-            gi.write_text((existing.rstrip("\n") + "\n" if existing else "") + block, encoding="utf-8")
-    except OSError:
-        log.warning("寫入 baseline .gitignore 失敗（略過）", exc_info=True)
+    write_baseline_gitignore(root)
     # 已追蹤的 junk → untrack（--ignore-unmatch:沒中也不報錯;-r:含目錄如 .venv/.claude）
     await run_command_exec(
         root,

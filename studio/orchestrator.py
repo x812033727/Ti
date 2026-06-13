@@ -824,6 +824,11 @@ class StudioSession:
             "commit": None,
             "vision": "",
         }
+        # 開工前先寫 baseline .gitignore（純檔案寫入、不需 .git）:讓 SDK 沙箱散落的 dotfiles／
+        # .venv／*.db 等 junk 從不被 `git add -A` 追蹤——乾淨歷史＋乾淨 lane 分支（與 #126 發佈前
+        # 兜底淨化互補）。cwd=None 的單元測試自然略過。
+        if self.cwd is not None:
+            runner.write_baseline_gitignore(self.cwd)
         try:
             result = await self._run(requirement)
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
