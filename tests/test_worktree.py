@@ -45,6 +45,43 @@ async def test_worktree_add_commit_merge_happy(tmp_path, main_repo):
 
 
 @pytest.mark.asyncio
+async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
+    """發佈前淨化:已被追蹤的沙箱/環境 junk(.venv/*.db/HOME dotfiles/.claude)應被 untrack,
+    且 baseline 樣式併入 .gitignore;真正的專案檔保留。"""
+    await _seed(main_repo)
+    # 模擬被早期 git add -A 收進去的污染 + 真實專案檔
+    (main_repo / "app.py").write_text("print('real')\n", encoding="utf-8")
+    (main_repo / "data.db").write_text("x", encoding="utf-8")
+    (main_repo / ".bashrc").write_text("", encoding="utf-8")
+    (main_repo / ".mcp.json").write_text("", encoding="utf-8")
+    (main_repo / ".idea").write_text("", encoding="utf-8")  # 沙箱可能建 0-byte 檔(非目錄)
+    (main_repo / ".venv").mkdir()
+    (main_repo / ".venv" / "pyvenv.cfg").write_text("home=/x\n", encoding="utf-8")
+    (main_repo / ".claude").mkdir()
+    (main_repo / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    await runner.run_command_exec(main_repo, ["git", "add", "-A"], sandbox=False)
+    await runner.run_command_exec(main_repo, ["git", "commit", "-m", "polluted"], sandbox=False)
+
+    tracked_before = (
+        await runner.run_command_exec(main_repo, ["git", "ls-files"], sandbox=False)
+    ).output
+    assert ".venv/pyvenv.cfg" in tracked_before and "data.db" in tracked_before
+
+    await runner.git_sanitize_workspace(main_repo)
+    await runner.git_commit(main_repo, "sanitized")
+
+    tracked = (await runner.run_command_exec(main_repo, ["git", "ls-files"], sandbox=False)).output
+    # junk 全部 untrack
+    for junk in (".venv/pyvenv.cfg", "data.db", ".bashrc", ".mcp.json", ".claude/settings.json", ".idea"):
+        assert junk not in tracked, f"{junk} 應已 untrack:\n{tracked}"
+    # 真實專案檔保留
+    assert "app.py" in tracked and "base.txt" in tracked
+    # baseline 樣式併入 .gitignore
+    gi = (main_repo / ".gitignore").read_text(encoding="utf-8")
+    assert ".venv/" in gi and "*.db" in gi and ".claude/" in gi
+
+
+@pytest.mark.asyncio
 async def test_git_has_changes_detects_dirty_worktree(tmp_path, main_repo):
     """git_has_changes：乾淨工作樹回 False、有未追蹤/未提交變更回 True。
 

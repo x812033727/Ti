@@ -752,6 +752,60 @@ async def git_head_short(repo: Path | str) -> str | None:
     return r.output.strip() if r.ok else None
 
 
+# 發佈前淨化用:絕不該交付的環境/沙箱/快取產物。baseline .gitignore 樣式 + 已追蹤時 untrack 路徑。
+_BASELINE_IGNORE_PATTERNS = [
+    "__pycache__/", "*.py[cod]", "*.egg-info/", ".eggs/", "build/", "dist/", ".Python",
+    ".venv/", "venv/", "env/", "ENV/",
+    "*.db", "*.db-shm", "*.db-wal", "*.sqlite", "*.sqlite3",
+    ".env", "*.env.local",
+    # .idea/.vscode 用無斜線形式:沙箱可能建「同名 0-byte 檔」,目錄式 `.idea/` 擋不到檔
+    ".idea", ".vscode",
+    # SDK 專家沙箱會把 HOME/設定 dotfiles 散落進 workspace（皆非專案內容,絕不交付）
+    ".claude/", ".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile",
+    ".gitconfig", ".gitmodules", ".ripgreprc", ".mcp.json",
+]
+# 已被早期 `git add -A` 追蹤的 junk（.gitignore 擋不到已追蹤檔,須顯式 untrack）。
+_JUNK_PATHS = [
+    ".venv", "venv", "env", "ENV", ".claude", ".idea", ".vscode", "__pycache__",
+    "dist", "build", ".eggs", ".bashrc", ".bash_profile", ".profile", ".zshrc",
+    ".zprofile", ".gitconfig", ".gitmodules", ".ripgreprc", ".mcp.json",
+    "*.db", "*.db-shm", "*.db-wal", "*.pyc", "*.egg-info",
+]
+
+
+async def git_sanitize_workspace(repo: Path | str) -> None:
+    """發佈前淨化 workspace,避免交付被沙箱/環境污染的 repo（.venv／*.db／HOME dotfiles／
+    .claude 等,實測曾使交付 repo 膨脹到 2000+ 檔)。
+
+    兩步:① 把 baseline 忽略樣式併入 .gitignore（保留專案既有內容,只補缺的,讓後續 `git add`
+    不再收 junk）;② 對「已被追蹤」的 junk 顯式 `git rm -r --cached`（.gitignore 只擋未追蹤檔,
+    junk 一旦被早期 commit 追蹤就得顯式移除）。最終發佈 commit 即不含這些 junk。任何失敗都
+    吞掉不拋(淨化不可拖垮發佈)。應在「發佈前的最後一次 commit」之前呼叫。"""
+    if not config.ENABLE_GIT or not _git_available():
+        return
+    root = Path(repo)
+    if not (root / ".git").exists():
+        return
+    try:
+        gi = root / ".gitignore"
+        existing = gi.read_text(encoding="utf-8", errors="replace") if gi.exists() else ""
+        have = {ln.strip() for ln in existing.splitlines()}
+        missing = [p for p in _BASELINE_IGNORE_PATTERNS if p not in have]
+        if missing:
+            block = "\n# --- Ti baseline（自動補上,避免交付沙箱/環境 junk）---\n" + "\n".join(missing) + "\n"
+            gi.write_text((existing.rstrip("\n") + "\n" if existing else "") + block, encoding="utf-8")
+    except OSError:
+        log.warning("寫入 baseline .gitignore 失敗（略過）", exc_info=True)
+    # 已追蹤的 junk → untrack（--ignore-unmatch:沒中也不報錯;-r:含目錄如 .venv/.claude）
+    await run_command_exec(
+        root,
+        ["git", "rm", "-r", "--cached", "--ignore-unmatch", "--", *_JUNK_PATHS],
+        timeout=60,
+        sandbox=False,
+        label="git rm --cached junk",
+    )
+
+
 async def git_has_changes(repo: Path | str) -> bool:
     """工作樹是否有未提交變更（含未追蹤檔）。用於偵測「工程師那輪聲稱寫檔卻零變更」的
     幻覺寫檔——`git status --porcelain` 有任何輸出即 True。git 不可用／查詢失敗一律回 False
