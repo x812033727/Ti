@@ -194,15 +194,19 @@ _CONCLUSION_PREFIXES = (
 def parse_conclusion(text: str) -> dict[str, list[str]]:
     """解析 senior 蒸餾輸出的四段行前綴 `共識:／分歧:／未決:／行動:`，回傳結構化 dict。
 
-    沿用既有行前綴 parser 範式（`^\\s*<標籤>\\s*[:：]\\s*(.+)$` ＋全形冒號容錯）；每個
+    沿用既有行前綴 parser 範式（`^\\s*<標籤>\\s*[:：]...(.+)$` ＋全形冒號容錯）；每個
     前綴可出現多行，逐行收進對應 list（剝去前後空白、跳過空內容）。
+
+    注意：冒號後的水平空白用 `[^\\S\\n]*`（不含換行）而非 `\\s*`——`\\s` 含 `\\n`，若空
+    內容前綴行（如 LLM 只輸出 `共識:`）用 `\\s*` 會吃掉換行、把下一行整行吞入並錯分類，
+    跨前綴污染（全形空白 `\\u3000` 仍被 `[^\\S\\n]` 接受，容錯不受影響）。
 
     四前綴全缺時回空骨架（四鍵皆空 list）而非拋例外，由呼叫端偵測空骨架走 fallback，
     對齊 `adr.parse_adr` 「失敗即降級」。
     """
     result: dict[str, list[str]] = {key: [] for _, key in _CONCLUSION_PREFIXES}
     for label, key in _CONCLUSION_PREFIXES:
-        for m in re.findall(rf"^\s*{label}\s*[:：]\s*(.+)$", text or "", re.M):
+        for m in re.findall(rf"^[^\S\n]*{label}[^\S\n]*[:：][^\S\n]*(.+)$", text or "", re.M):
             item = m.strip()
             if item:
                 result[key].append(item)
