@@ -56,6 +56,13 @@ def route_core_changes(result: dict) -> int:
     開「獨立 PR」——絕不進專案 backlog／PR。
     """
     core = result.get("core_changes") or []
+    if not core:
+        return 0
+    # 與「找問題」(_discover) 一致：路由前過濾近期已完成的同名核心改動。_is_duplicate 只擋
+    # pending/in_progress，擋不到 done——否則同一條核心改動做完後，被別場/別輪討論再次提出時會
+    # 重複排入核心 backlog，對核心 repo 開出重複/空轉的外部 PR。EVAL_MEMORY=0 時不過濾（向後相容）。
+    done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
+    core = [c for c in core if c.get("title", "").strip() not in done]
     return backlog.add_items(core, source="core") if core else 0
 
 

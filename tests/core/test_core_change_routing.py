@@ -92,3 +92,29 @@ def test_route_core_changes_empty_is_noop(dirs):
     assert route_core_changes({"core_changes": []}) == 0
     assert route_core_changes({}) == 0  # 無鍵也安全
     assert backlog.list_tasks() == []
+
+
+def test_route_core_changes_skips_recently_done(dirs, monkeypatch):
+    """完成後不重複路由：同名核心改動做完標 done 後再次出現，不應再排入（避免重複/空轉外部 PR）。"""
+    monkeypatch.setattr(config, "AUTOPILOT_EVAL_MEMORY", 20)
+    item = {"title": "改 orchestrator 發佈流程", "priority": 1, "type": "improvement"}
+
+    assert route_core_changes({"core_changes": [item]}) == 1
+    task = backlog.list_tasks()[0]
+    backlog.set_status(task["id"], "done")
+
+    # 同一條再次被討論提出 → 因近期已完成被過濾，不重複排入。
+    assert route_core_changes({"core_changes": [item]}) == 0
+    assert len(backlog.list_tasks()) == 1
+
+
+def test_route_core_changes_no_dedup_when_memory_zero(dirs, monkeypatch):
+    """EVAL_MEMORY=0 時關閉近期完成過濾（向後相容）：仍受 _is_duplicate 的 pending 去重保護。"""
+    monkeypatch.setattr(config, "AUTOPILOT_EVAL_MEMORY", 0)
+    item = {"title": "改 runner", "priority": 1, "type": "improvement"}
+
+    assert route_core_changes({"core_changes": [item]}) == 1
+    backlog.set_status(backlog.list_tasks()[0]["id"], "done")
+    # 記憶為 0＝不過濾近期完成，故 done 後同名可再排入。
+    assert route_core_changes({"core_changes": [item]}) == 1
+    assert len(backlog.list_tasks()) == 2
