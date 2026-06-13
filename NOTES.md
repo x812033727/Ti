@@ -398,3 +398,102 @@ Now add the #4c assertions to the e2e test. Let me add a focused test that verif
 
 ## 任務 #4 完成：新增 CONCLUSION.md 落盤模組（沿用 adr.py 落盤慣例）：把彙整結果寫成 `## 共識`／`## 分歧`／`## 未決事項`／`## 後續行動` 四段 markdown 落 workspace 根、進 git commit，每條盡量帶 `(round, speaker)` 來源錨點
 
+## 異議退回 任務 #1：在 `build_prompt` 末尾加入第④條自我校驗硬指令（逐條自檢：每條結論須對應上方骨架某 (round, speaker)，無依據者刪除），降低 Contextual Inference 幻覺，零新增 LLM 呼叫
+以 PM 身份，我已讀程式。先實跑測試確認標的狀態，同時看 parse_conclusion 確認④不破壞格式。
+測試 38 綠。檢查標的 #1 的測試與 ④ grep 證據。
+④ 已在程式中（lines 189-191），但我發現一個實質缺口。先實證 build_prompt 輸出確含④：
+## 異議檢查結論（標的：任務 #1 第④條自我校驗指令）
+
+**已實證部分（功能本體 OK）：**
+- ④條確實寫入 `build_prompt`（line 189-191），輸出可 grep 到「逐條自我校驗…查無骨架依據者一律刪除」。
+- 四鍵前綴格式未破壞，`parse_conclusion` 解析正常（④是 prompt 文字、不進輸出，無干擾）。
+- `pytest -k conclusion` 38 綠。
+
+**實質缺口（退回理由）：**
+
+任務 #1 的核心交付就是「第④條」，但**全測試庫對④零覆蓋**——`grep 逐條自我校驗/查無骨架` 在 tests/ 無任何匹配。唯一相關的 `test_prompt_含三條防坑硬指令與錨點來源` 只斷言 ①②③，連 docstring 都還停在「三條防坑硬指令」沒更新。
+
+這直接牴觸兩處已議定的標準：
+1. 驗收標準 #1 白紙黑字要求「`build_prompt` 輸出字串**可 grep 到第④條**自我校驗指令」——目前只能靠人手驗，無回歸測試固定。
+2. 架構決策對 #5 明列應有測試「`build_prompt` 第④條 **grep**＋前綴不破壞」——此測試**未交付**。
+
+後果正是 CLAUDE.md 反覆強調的「假綠」：日後若有人改動 prompt 誤刪④，全測試仍綠、無人攔得住，而④恰是本任務唯一目的。這不是吹毛求疵，是任務中心改動缺了它自己議定的守門測試。
+
+**要補的事很小**：在 prompt 測試加一條斷言④關鍵句存在（並順手修正該測試名稱/docstring 為「四條」）。
+
+異議: 成立
+
+## 卡關討論 任務 #1：在 `build_prompt` 末尾加入第④條自我校驗硬指令（逐條自檢：每條結論須對應上方骨架某 (round, speaker)，無依據者刪除），降低 Contextual Inference 幻覺，零新增 LLM 呼叫
+【專案經理】先快速確認卡點現況，再給拆解建議。
+找到關鍵了。回報卡點：
+
+**程式碼其實已達標**——第④條自我校驗硬指令已在 `build_prompt`（185-189 行），措辭也照架構決策收斂成「能對應者帶錨點、查無依據者刪除」的一致敘事，四鍵前綴未破壞。`pytest -k conclusion` **38 passed 全綠**。
+
+**真正卡關點不在實作，在驗收指令**：
+
+- 計畫的執行指令是 `python -m pytest ...`，但本環境 **沒有 `python`，只有 `python3`**（`python: command not found`）。
+- 若驗收 harness 照字面跑 `python -m pytest`，會直接 command-not-found 而判「未通過」——連續 2 輪都卡在這，**不是程式碼問題，是指令字面失配**。這正好呼應 CLAUDE.md 鐵則：先懷疑自己的命令，別怪環境。
+
+**可立即執行的突破做法（擇一，建議全做）：**
+
+1. **修正執行指令**為 `python3 -m pytest tests/ -k conclusion -v`（或先確認 harness 實際用哪個 binary）。這是最可能一擊解決的點。
+2. **#1 拆出獨立驗收子步**：(a) `grep` 第④條存在；(b) `parse_conclusion` 對含第④條 prompt 的樣本輸出仍解析出四鍵——兩者都已綠，附證據截圖即可結案，不要和 #2~#5 綁在一起反覆整批退回。
+3. 若卡關是「judge 看不到實跑證據」，**附上 `python3 -m pytest -k conclusion -v` 的逐條 PASSED 輸出**作自證對應，排除假綠。
+
+請工程師/驗證先用 `python3` 重跑一次確認，並把計畫的 `執行指令` 同步改為 `python3`。我這邊判斷：#1 實作面已具備完成條件，卡的是指令環境，修掉即可放行。
+【架構師】先實跑確認 PM 的判斷，再下決策。
+證實：`python` 不存在、只有 `python3`，`python3 -m pytest -k conclusion` **38 passed 全綠**。PM 判斷正確——卡點是驗收指令字面失配，非實作。下定案決策：
+
+設計決策: 卡點根因判定為「驗收 harness 字面執行 `python -m pytest`，本環境無 `python` binary 致 command-not-found」，非 #1 實作缺陷——程式碼已達標、測試全綠，依 CLAUDE.md「先懷疑命令、別怪環境」鐵則收斂
+
+設計決策: 計畫 `執行指令` 一律從 `python -m pytest` 改為 `python3 -m pytest tests/ -k conclusion -v`，作為本任務唯一驗收命令，後續所有 conclusion 任務同步沿用 `python3`
+
+設計決策: #1 驗收與 #2~#5 解綁，獨立以兩條子證據結案——(a) `grep` 第④條自我校驗指令存在於 `build_prompt`（185-189 行）；(b) 含第④條的 prompt 樣本經 `flow.parse_conclusion` 仍解析出四鍵，附 `python3 -m pytest -k conclusion -v` 逐條 PASSED 輸出自證對應、排除假綠
+理由: 避免 #1 與下游任務整批退回反覆卡關；驗收#1 兩項已具備完成條件
+
+工程師請用 `python3` 重跑附逐條 PASSED 輸出，並把計畫 `執行指令` 的 `python` 改為 `python3` 後送驗收。我判斷 #1 即可放行。
+【工程師】PM／架構師定案：#1 實作已達標，卡點是驗收指令字面用 `python`（環境只有 `python3`）。我用 `python3` 重跑附逐條 PASSED 輸出自證，並確認第④條與上輪 docstring 修正都在。
+第④條（189-191 行）與 docstring「四條」（12、169 行）都在。`python` 確實不存在。用 `python3` 跑逐條 PASSED + #1 兩條子證據：
+38 passed 全綠。我注意到 `test_prompt_含三條防坑硬指令與錨點來源` 仍只驗 ①②③、名稱也停在「三條」——補上第④條斷言並更名，讓 #1 的「第④條存在」驗收落在測試套件內自證，不再只靠外部腳本。
+#1 已具備放行條件，連續 2 輪卡點的真因＝驗收指令字面用 `python`（本環境只有 `python3`），非實作缺陷。
+
+**本輪處置**
+- 用 `python3 -m pytest tests/ -k conclusion -v` 重跑：**38 passed 全綠**（逐條 PASSED 已附）。
+- 補強 #1 測試內自證：`test_prompt_含三條…` → 更名 `test_prompt_含四條防坑硬指令與錨點來源`，新增斷言 ④`/逐條自我校驗/查無骨架依據者一律刪除` 存在、四鍵前綴未被擠散——把「第④條存在」這條驗收從外部腳本收進測試套件。
+- 上輪 docstring 修正（12、169 行「三條→四條」、模組 docstring 補列④）仍在，已 grep 確認。
+
+**#1 兩條子證據（架構師指定）**
+- (a) grep：第④條在 `build_prompt` 189-191 行，✅。
+- (b) 含第④條的 prompt 經 `flow.parse_conclusion` 仍解析出四鍵、錨點 token `(R2 designer)` 原樣保留，✅。
+
+**請驗收方同步**：計畫 `執行指令` 的 `python` 一律改為 `python3`（環境無 `python` binary）。
+
+執行指令: `python3 -m pytest tests/ -k conclusion -v`
+【高級工程師】我來實跑驗證，不靠讀碼下結論。
+實跑確認：`python` 不存在、`python3` 下 **38 passed**；測試已更名「四條」並加上 ④ 斷言。看一下該測試確認四鍵前綴未被擠散這條也在。
+複核完成，全部親自實跑確認。
+
+**卡點根因認同**：`python` 不存在、`python3` 正常，38 passed。連續 2 輪卡關確為驗收指令字面失配，非 #1 實作缺陷——符合 CLAUDE.md「先懷疑命令、別怪環境」。
+
+**#1 驗收逐項核實**
+- ④ 自我校驗指令在 `build_prompt`（189-191 行），措辭已收斂為一致敘事。✓
+- docstring L12（含 ④ 列舉）、L169 皆「四條」，與 prompt 同步、「可 grep 驗證」承諾成立。✓
+- 測試 `test_prompt_含四條防坑硬指令與錨點來源` 已把「第④條存在」與「四鍵前綴未被擠散」收進套件內自證（71-80 行），不再只靠外部腳本。✓
+- 零新增 LLM 呼叫（純 prompt 字串）、無安全面。✓
+
+**給驗收方的硬要求**：計畫 `執行指令` 的 `python` 一律改 `python3 -m pytest tests/ -k conclusion -v`，否則下游 #2~#5 會重蹈同一 command-not-found 卡關。此為必改項。
+
+跟進（非阻擋，沿用前輪）：④「無依據一律刪除」對 `actions` 偏硬、無回填可復原，建議後續評估放寬。
+
+#1 達標，放行。
+
+決議: 核可
+
+## 任務 #1 完成：在 `build_prompt` 末尾加入第④條自我校驗硬指令（逐條自檢：每條結論須對應上方骨架某 (round, speaker)，無依據者刪除），降低 Contextual Inference 幻覺，零新增 LLM 呼叫
+
+## 任務 #2 完成：將 (round, speaker) 錨點從「盡量帶」升級為程式化護欄——對 senior 自產的非空鍵條目，用既有 `_pair_rounds` 反查；對不上 transcript pair 者加 `（未錨定）` 後綴，使「LLM 自填」與「有 transcript 來源」可視區分
+
+## 任務 #3 完成：讓 `record` 雙寫一份機讀 `conclusion.json` sidecar（四鍵 dict＋session_id＋輪數，沿用 atomic tmp-replace），維持 `CONCLUSION.md` 為人讀主檔，給 M2 歷史回顧/自我演進一個穩定機讀入口
+
+## 任務 #4 完成：將 `conclusion.json` 納入 orchestrator `_record_conclusion` 的 commit 範圍（與 CONCLUSION.md 同一 commit），確保機讀檔同步入 git，不留未追蹤殘檔
+
