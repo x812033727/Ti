@@ -752,6 +752,22 @@ async def git_head_short(repo: Path | str) -> str | None:
     return r.output.strip() if r.ok else None
 
 
+async def git_has_changes(repo: Path | str) -> bool:
+    """工作樹是否有未提交變更（含未追蹤檔）。用於偵測「工程師那輪聲稱寫檔卻零變更」的
+    幻覺寫檔——`git status --porcelain` 有任何輸出即 True。git 不可用／查詢失敗一律回 False
+    （保守:無法確認就不誤判幻覺,避免對正常流程注入錯誤糾正）。"""
+    if not config.ENABLE_GIT or not _git_available():
+        return False
+    r = await run_command_exec(
+        Path(repo),
+        ["git", "status", "--porcelain"],
+        timeout=20,
+        sandbox=False,
+        label="git status",
+    )
+    return bool(r.ok and r.output.strip())
+
+
 async def git_current_branch(repo: Path | str) -> str | None:
     """回傳 repo 目前所在分支名（detached / 失敗回 None）。merge 目標即主分支。"""
     if not _git_available():

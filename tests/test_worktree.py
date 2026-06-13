@@ -45,6 +45,18 @@ async def test_worktree_add_commit_merge_happy(tmp_path, main_repo):
 
 
 @pytest.mark.asyncio
+async def test_git_has_changes_detects_dirty_worktree(tmp_path, main_repo):
+    """git_has_changes：乾淨工作樹回 False、有未追蹤/未提交變更回 True。
+
+    用於偵測「工程師那輪聲稱寫檔卻零變更」的幻覺寫檔（_work_task 無進展收斂）。
+    """
+    await _seed(main_repo)
+    assert await runner.git_has_changes(main_repo) is False, "剛 commit 完應乾淨"
+    (main_repo / "new.txt").write_text("x\n", encoding="utf-8")  # 未追蹤檔
+    assert await runner.git_has_changes(main_repo) is True, "有未追蹤檔應為 dirty"
+
+
+@pytest.mark.asyncio
 async def test_merge_blocked_by_untracked_file_is_recoverable(tmp_path, main_repo):
     """主工作樹有未追蹤檔、lane 帶同名檔時，git 連 merge 都不啟動就報錯——
 
