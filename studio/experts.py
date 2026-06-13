@@ -181,6 +181,61 @@ async def _auto_allow_tool(
     return PermissionResultAllow()
 
 
+# SDK 內建的寫檔工具（Claude provider 用它們，不經 studio 的 tools.execute／safe_resolve）。
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _path_within(cwd: Path, raw: str) -> bool:
+    """raw（相對或絕對）解析後是否仍落在 cwd（含子目錄）內。解析失敗一律視為「不在內」。"""
+    try:
+        p = Path(raw)
+        target = p if p.is_absolute() else (cwd / p)
+        return target.resolve().is_relative_to(cwd.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def _make_fs_guard_hook(cwd: Path):
+    """產生綁定該專家 cwd 的 PreToolUse hook：硬擋寫檔工具寫到 cwd 之外。
+
+    並行 lane 隔離的真正防線。Claude provider 的專家用 SDK 內建 Write/Edit/MultiEdit/
+    NotebookEdit，**不經** studio 的 `tools.execute`／`safe_resolve`；其檔案寫入是否限制在
+    cwd 內全靠 claude-agent-sdk 的 CLI 沙箱 FS 邊界——而 `SandboxSettings` 無 FS 欄位，該
+    邊界在巢狀沙箱／缺依賴時會靜默失效（實測：sandbox 開著、寫 cwd 外兄弟目錄仍成功），
+    導致 lane 專家把成果寫到主工作樹，使並行隔離名不副實、合併變 no-op／撞未追蹤檔。
+
+    為何用 PreToolUse hook 而非 `can_use_tool`：`can_use_tool` 只對「未預先允許」的工具諮詢，
+    寫檔工具在 allowed_tools 內已預先允許，且工程師等角色用 `permission_mode="acceptEdits"`
+    會自動接受編輯而完全跳過 `can_use_tool`（實測 hook 0 次呼叫）。PreToolUse hook 則對所有
+    工具呼叫一律先行、不受 allow-list／permission_mode 影響，是唯一可靠的攔截點。
+
+    回傳 deny（permissionDecision=deny）擋下 cwd 外的寫入；其餘一律放行（回 {}）。只擋寫、
+    不擋讀（避免誤傷研究讀取）。序列模式 cwd＝主工作目錄，專家本就在其中寫檔，不受影響。
+    """
+    root = Path(cwd)
+
+    async def pre_tool_use(input_data, tool_use_id, context):
+        tool_name = (input_data or {}).get("tool_name", "")
+        if tool_name in _WRITE_TOOLS:
+            data = (input_data or {}).get("tool_input", {}) or {}
+            raw = str(
+                data.get("file_path") or data.get("notebook_path") or data.get("path") or ""
+            )
+            if raw and not _path_within(root, raw):
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"工作隔離：禁止寫入工作目錄（{root}）之外的路徑（{raw}）"
+                        ),
+                    }
+                }
+        return {}
+
+    return pre_tool_use
+
+
 def _model_for(role: Role) -> str:
     """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。
 
@@ -214,7 +269,7 @@ def _build_client(role: Role, session_id: str, cwd: Path):
     從而在未安裝 claude-agent-sdk、不連線的情況下驗證 Expert 生命週期。
     執行期內容與原 __init__ 完全相同。
     """
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
 
     return ClaudeSDKClient(
         options=ClaudeAgentOptions(
@@ -222,6 +277,9 @@ def _build_client(role: Role, session_id: str, cwd: Path):
             allowed_tools=effective_tools(role),
             permission_mode=role.permission_mode,
             can_use_tool=_auto_allow_tool,
+            # PreToolUse hook 把寫檔限制在該專家的 cwd 內（並行 lane 隔離的真正防線；
+            # can_use_tool 對預先允許的寫檔工具不觸發，見 _make_fs_guard_hook 說明）。
+            hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_make_fs_guard_hook(cwd)])]},
             sandbox=config.expert_sandbox_settings(),
             cwd=str(cwd),
             model=_model_for(role),

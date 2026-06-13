@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from studio import config, events, runner, workspace
-from studio.orchestrator import StudioSession
+from studio.orchestrator import LaneContext, LaneResult, StudioSession
 from studio.roles import BY_KEY, Role
 
 
@@ -344,6 +344,102 @@ async def test_merge_conflict_resolved_in_lane(tmp_path, monkeypatch):
     # 主幹拿到化解後的結果，且 worktree 已清乾淨。
     assert (cwd / "shared.txt").read_text(encoding="utf-8") == "resolved\n"
     assert not (tmp_path / f"{cwd.name}.lanes").exists()
+
+
+@pytest.mark.asyncio
+async def test_merge_lane_blocked_by_worktree_falls_back_not_dropped(tmp_path, monkeypatch):
+    """合併被工作樹擋下（未追蹤檔／未提交修改，blocked=True）時，lane 任務應走序列化重跑
+
+    回收，而非像過去那樣被當未知硬失敗靜默丟棄。回歸守門：曾因 git 的「untracked working
+    tree files would be overwritten」不含 "CONFLICT" 而落到硬失敗分支，整條 lane 成果消失、
+    session 仍帶殘缺產出繼續。
+    """
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+
+    async def broadcast(ev):
+        pass
+
+    session = StudioSession("blocked", broadcast, experts={}, cwd=tmp_path / "main")
+    session._main_ctx = LaneContext("main", tmp_path / "main", {})
+
+    # 合併一律回 blocked；abort 不該被呼叫（無 MERGE_HEAD）；重跑記錄走主 lane 的任務。
+    aborted = []
+    reran: list[dict] = []
+    monkeypatch.setattr(
+        runner,
+        "git_merge_worktree",
+        lambda *a, **k: _amr(
+            runner.MergeResult(
+                ok=False,
+                conflict=False,
+                blocked=True,
+                output="error: The following untracked working tree files would be overwritten by merge:\n\tmdtoc/parser.py",
+            )
+        ),
+    )
+    monkeypatch.setattr(runner, "git_merge_abort", lambda *a, **k: _amr(aborted.append(a)))
+
+    async def _fake_rerun(ctx, task, plan_ctx):
+        reran.append((ctx, task))
+        return True
+
+    monkeypatch.setattr(session, "_run_task_in_lane", _fake_rerun)
+
+    lane = LaneContext("task-2", tmp_path / "main.lanes" / "task-2", {}, branch="task-2")
+    lane.notes_buffer.append("半完成筆記")
+    lr = LaneResult(ctx=lane, tasks=[{"id": 2, "title": "實作 parser.py"}], ok=True)
+
+    ok = await session._merge_lane(lr, "plan-ctx")
+
+    assert ok is True, "blocked 經序列化重跑回收後應視為成功"
+    assert [t["id"] for _c, t in reran] == [2], "lane 的任務應在主 lane 序列化重跑"
+    assert all(c is session._main_ctx for c, _t in reran), "重跑須落在主工作樹（main_ctx）"
+    assert aborted == [], "blocked 無 MERGE_HEAD，不該呼叫 git merge --abort"
+    assert session._parallel_metrics.get("merge_blocked") == 1
+    assert session._parallel_metrics.get("conflict_retries") == 1
+    assert lane.notes_buffer == [], "改以序列化重跑為準，lane 中途筆記應清空"
+
+
+async def _amr(value):
+    """把同步值包成 awaitable，給 monkeypatch 替換 async runner 函式用。"""
+    return value
+
+
+@pytest.mark.asyncio
+async def test_lane_git_snapshot_debug_logs_and_never_throws(tmp_path, monkeypatch, caplog):
+    """lane git 快照診斷：DEBUG 開啟時記錄主工作樹 HEAD/狀態/分支是否 reachable；關閉時零成本。
+
+    這是定位「lane 成果漏進主工作樹」根因的儀表，必須安全（任何 git 失敗都不可拖垮主流程）。
+    """
+    import logging
+
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+    repo = tmp_path / "main"
+    repo.mkdir()
+    assert await runner.git_init(repo)
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    assert await runner.git_commit(repo, "base") is not None
+
+    async def broadcast(ev):
+        pass
+
+    session = StudioSession("snap", broadcast, experts={}, cwd=repo)
+
+    # DEBUG 關閉（預設 INFO）：不應觸發、不報錯。
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="ti.orchestrator"):
+        await session._lane_git_snapshot("open", "task-1")
+    assert not [r for r in caplog.records if "lane-snapshot" in r.getMessage()]
+
+    # DEBUG 開啟：應記錄且不丟例外（即使分支不存在也安全）。
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="ti.orchestrator"):
+        await session._lane_git_snapshot("open", "task-1")  # task-1 不存在 → reachable 安全 False
+    snaps = [r.getMessage() for r in caplog.records if "lane-snapshot[open]" in r.getMessage()]
+    assert snaps, "DEBUG 等級應記錄 lane-snapshot"
+    assert "main_HEAD=" in snaps[0]
 
 
 class DepStub(LaneStub):
