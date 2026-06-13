@@ -497,3 +497,5 @@ Now add the #4c assertions to the e2e test. Let me add a focused test that verif
 
 ## 任務 #4 完成：將 `conclusion.json` 納入 orchestrator `_record_conclusion` 的 commit 範圍（與 CONCLUSION.md 同一 commit），確保機讀檔同步入 git，不留未追蹤殘檔
 
+## 任務 #5 完成：為 #1~#4 補測試並實跑黑白樣本回歸：含「全員無反對」「LLM 漏標前綴 fallback」兩條既有路徑，確認自我校驗指令、未錨定標記、JSON sidecar 三者皆無回歸
+
