@@ -111,3 +111,37 @@ Sources: [Orchestration of MAS](https://arxiv.org/html/2601.13671v1) · [Self-Re
 
 Sources: [Council Mode](https://arxiv.org/html/2604.02923v1) · [Sequential Consensus Building](https://www.tdcommons.org/cgi/viewcontent.cgi?article=9892&context=dpubs_series) · [Dialogue Summarization Hallucination (ACL)](https://aclanthology.org/2024.acl-long.677/) · [Refining Meeting Summaries with LLM Feedback](https://arxiv.org/pdf/2407.11919) · [Catfish Agent: Silence is Not Consensus](https://arxiv.org/html/2505.21503v1) · [Multi-Agent Conversational Task-Solving](https://arxiv.org/pdf/2410.22932) · [ICLR 2025 Multi-LLM Debate Blogpost](https://d2jud02ci9yv69.cloudfront.net/2025-04-28-mad-159/blog/mad/) · [Action-Item-Driven Summarization](https://arxiv.org/pdf/2312.17581)
 
+## 2026-06-13 12:19
+
+先看現有程式碼脈絡，同時載入搜尋工具。
+已有 `studio/conclusion.py` 與兩個 conclusion 測試——本輪不是從零。先看現況確認真缺口。
+`conclusion.py` 已大致實作完成（共識/分歧/未決/行動四段、規則骨架+LLM 蒸餾+fallback+落盤都有）。確認還缺什麼接線。
+功能其實已實作並過審（task #4 完成）。本輪是迭代既有模組。我只查兩個**尚未覆蓋的前瞻缺口**：(1) 單次蒸餾如何加輕量自我校驗降幻覺；(2) 結論除了 markdown，是否該存機讀格式供 M2 歷史回顧/自我演進消費。
+調研完成。功能已實作過審，本輪屬迭代，故只補兩個前瞻缺口的新發現。
+
+---
+
+**重點**
+
+- 重點: 現況盤點——`studio/conclusion.py` 已實作完整（規則骨架→senior 一次蒸餾→四前綴解析→漏標 fallback→`CONCLUSION.md` 四段落盤＋git commit＋`(round, speaker)` 錨點），對齊先前調研。本輪非從零，是迭代既有模組。
+
+- 重點: 單次蒸餾仍是「一次生成、不自檢」。2025 研究指出，在同一次呼叫尾端加**輕量自我校驗**（生成後自問「每條結論是否都能在來源骨架找到依據？不能就棄/標註」）可降幻覺率 9.7–53.3%，召回僅損 0.4–5.7%，且不需多輪 round-trip（[Verify / Factual Self-Verification](https://arxiv.org/pdf/2602.02018)、[CoT+RAG+Self-Consistency+Self-Verification](https://arxiv.org/pdf/2505.09031)）。比先前調研提的「兩段式 extract-then-refine」更省一次 LLM 呼叫，適合本專案 one-shot 慣例。
+
+- 重點: 摘要事實校驗可拆成「逐條 claim 對來源核對」（Factored Verification），與本模組已有的 `(round, speaker)` 錨點天然契合——錨點不只是可讀性，可直接當「每條結論必須對得上一個 transcript pair，否則丟棄」的程式化護欄（[Factored Verification](https://arxiv.org/pdf/2310.10627)）。本模組目前錨點只「盡量帶」、不強制驗證。
+
+- 重點: 存檔格式之爭，對「個人/小團隊規模」的明確結論是 **markdown-first 足矣，不需上 RAG/向量庫**：把 LLM 當編譯器、產出可互連的 markdown wiki 即為知識庫，少量規模下 embedding 反而是過度工程（[Karpathy LLM Wiki](https://venturebeat.com/data/karpathy-shares-llm-knowledge-base-architecture-that-bypasses-rag-with-an)、[LLM Wiki vs RAG](https://www.mindstudio.ai/blog/llm-wiki-vs-rag-knowledge-base)）。本專案現有「CONCLUSION.md＋git 歷史」路線方向正確。
+
+- 重點: 但 markdown 給人讀、機器消費（M2 歷史回顧/自我演進回饋要檢索引用過往結論）需要穩定 key。最佳實踐是**雙寫**：markdown（人讀）＋輕量 schema JSON sidecar（機讀），primitives 技術中立、可日後再疊索引（[同上 MindStudio](https://www.mindstudio.ai/blog/karpathy-llm-wiki-pattern-knowledge-base-without-rag)、[Markdown vs JSON for LLMs](https://www.craftmarkdown.com/markdown-vs-json-for-llms)）。本模組目前只落 markdown，四鍵 dict 在記憶體內未持久化成機讀檔。
+
+**建議**
+
+- 建議: 本輪如要提升品質，優先做**單次自我校驗**而非加第二次 LLM 呼叫：在 `build_prompt` 末尾加第④條硬指令「逐條自檢：每條結論須對應上方骨架的某 (round, speaker)，無依據者刪除」。零新增呼叫、貼合 one-shot 慣例，預期顯著降 Contextual Inference 幻覺。
+
+- 建議: 把 `(round, speaker)` 錨點從「盡量帶」升級為**程式化護欄**（可選、漸進）：對 senior 產出的非空鍵條目，用既有 `_pair_rounds` 反查是否對得上 transcript pair；對不上的標記（如加 `(未錨定)` 後綴）而非靜默保留——讓「LLM 自填內容」與「有 transcript 來源」在 `CONCLUSION.md` 上可視區分，沿用既有反向重建比對手法，不需新依賴。
+
+- 建議: 若 M2 即將動工，本輪可順手讓 `record` **雙寫**一份 `conclusion.json`（就是現成四鍵 dict＋session_id＋輪數，沿用 atomic tmp-replace），給未來「歷史回顧/自我演進」一個穩定機讀入口；維持 markdown 為人讀主檔。**不要**現在引入向量庫/RAG——當前規模屬過度工程，git＋markdown＋json sidecar 已足。
+
+- 建議: 維持「規則為骨、LLM 為肉」與覆寫式單檔＋git 快照的既有架構，**不要砍掉重練**。上述三點都是低風險增量，且須照 CLAUDE.md 教訓——任何 prompt/格式改動都要實跑黑白樣本（含「全員無反對」「LLM 漏標前綴」兩條既有 fallback 路徑）驗證無回歸，不靠讀碼下結論。
+
+Sources: [Factual Self-Verification (Verify)](https://arxiv.org/pdf/2602.02018) · [CoT+RAG+Self-Consistency+Self-Verification](https://arxiv.org/pdf/2505.09031) · [Factored Verification](https://arxiv.org/pdf/2310.10627) · [Karpathy LLM Wiki (VentureBeat)](https://venturebeat.com/data/karpathy-shares-llm-knowledge-base-architecture-that-bypasses-rag-with-an) · [LLM Wiki vs RAG (MindStudio)](https://www.mindstudio.ai/blog/llm-wiki-vs-rag-knowledge-base) · [Markdown vs JSON for LLMs](https://www.craftmarkdown.com/markdown-vs-json-for-llms)
+
