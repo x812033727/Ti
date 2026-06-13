@@ -257,6 +257,16 @@ body 即「角色專屬 system prompt」，載入時自動前置共通守則 `ro
   → `200 {"group": {...}}`；驗證失敗 `422`；小組不存在 `404`。
 - `DELETE /api/groups/{name}` → `200 {"ok": true}`；不存在 `404 {"ok": false}`。
 
+#### 小組接通討論（WS 開場 `group` 欄位）
+
+啟動 session 時 WS 開場 payload 可帶 `group: <小組名>`（選填）。指定後：架構討論階段改以
+**小組成員為班底、小組 `mode` 進行**（見 `orchestrator._group_participants` /
+`_discuss_agenda`），優先於「有架構師」與全域 `TI_DISCUSS_MODE` 兩條預設路徑——即使
+`TI_DISCUSS_MODE=legacy` 也會因選了小組而走逐子題多角色討論。議程主責（assignee）若在
+小組內則排首位取得提案先發言權，否則沿用小組原序。未知小組名／`groups.yaml` 損壞時 WS 即早
+回 error 並關閉。成員以本場出席角色解析，**可解析成員 <2 名時退回預設討論班底**（不靜默退化
+成單人討論）；未帶 `group` 時行為與現狀完全一致。
+
 ## 認證 / 門禁流程
 
 門禁由 `TI_ACCESS_PASSWORD` 控制，**預設停用**（向後相容）。

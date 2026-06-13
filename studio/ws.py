@@ -19,6 +19,7 @@ from . import (
     history,
     projects,
     repo_base,
+    role_store,
     runner,
     workspace,
 )
@@ -148,12 +149,31 @@ async def ws(websocket: WebSocket) -> None:
         repo_branch = (data.get("repo_branch") or "").strip() or None
         project_id = (data.get("project_id") or "").strip()
         improve_mode = (data.get("mode") or "").strip() == "improve"
+        group_name = (data.get("group") or "").strip()
 
         project = projects.get(project_id) if project_id else None
         if project_id and project is None:
             await websocket.send_json({"type": "error", "payload": {"message": "找不到該專案"}})
             await websocket.close()
             return
+
+        # 選用討論小組（可選）：以小組成員＋小組 mode 進行架構討論。未知名稱／設定檔損壞即早退。
+        group = None
+        if group_name:
+            try:
+                group = role_store.get_group(group_name)
+            except role_store.GroupFileError as e:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"message": f"討論小組設定檔損壞：{e}"}}
+                )
+                await websocket.close()
+                return
+            if group is None:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"message": f"找不到討論小組「{group_name}」"}}
+                )
+                await websocket.close()
+                return
         if improve_mode and project is None:
             await websocket.send_json(
                 {"type": "error", "payload": {"message": "持續改良需先選擇一個專案"}}
@@ -319,6 +339,7 @@ async def ws(websocket: WebSocket) -> None:
             publish_repo=(project.get("publish_repo") or None) if project is not None else None,
             # 僅在 workspace 確實同步自目標 repo 時告知 session（prompt 不對專家說謊）。
             base_repo=base_repo if base_sync.based else None,
+            group=group,
         )
         if config.OFFLINE_MODE:
             # 離線並行 demo：每條 lane 用假專家工廠（各自寫該任務的檔），無金鑰也能跑多支線。
