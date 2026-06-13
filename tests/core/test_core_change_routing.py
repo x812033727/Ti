@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from studio import backlog, config
-from studio.improver import drain_result_to_backlogs
+from studio.improver import drain_result_to_backlogs, route_core_changes
 
 
 @pytest.fixture
@@ -74,4 +74,21 @@ def test_routing_legacy_result_without_core_changes_key(dirs):
     result = {"completed": True, "followups": ["舊式後續"]}
     added, routed = drain_result_to_backlogs(result, project_dir)
     assert routed == 0
+    assert backlog.list_tasks() == []
+
+
+def test_route_core_changes_standalone(dirs):
+    """route_core_changes 獨立路由核心改動——供非專案單場討論（ws._run_plain_session）共用。"""
+    core_dir, _ = dirs
+    result = {"core_changes": [{"title": "改 runner 沙箱", "priority": 0, "type": "bug"}]}
+    routed = route_core_changes(result)
+    assert routed == 1
+    core_tasks = backlog.list_tasks()  # 預設 state_dir＝核心 backlog
+    assert {t["title"] for t in core_tasks} == {"改 runner 沙箱"}
+    assert all(t["source"] == "core" for t in core_tasks)
+
+
+def test_route_core_changes_empty_is_noop(dirs):
+    assert route_core_changes({"core_changes": []}) == 0
+    assert route_core_changes({}) == 0  # 無鍵也安全
     assert backlog.list_tasks() == []
