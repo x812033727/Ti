@@ -13,7 +13,13 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# 專案根（單一來源；env_path() 與 load_dotenv 共用）。
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# 與 env_path()（settings/auth 的寫入端）同一路徑：固定載入專案根的 .env。
+# 不帶路徑的 load_dotenv() 會從 cwd 向上搜尋，在 worktree/子目錄跑測試時會載到
+# 上層部署環境的 .env（如門禁密碼），造成「寫入與載入路徑不一致」與測試環境污染。
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 def _env_float(name: str, default: float) -> float:
@@ -469,7 +475,7 @@ def forwarded_allow_ips() -> str:
 
 
 # --- 路徑 ---------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# PROJECT_ROOT 定義於檔案頂部（load_dotenv 之前，兩者共用單一來源）。
 
 
 def env_path() -> str:
