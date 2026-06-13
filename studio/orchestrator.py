@@ -1357,28 +1357,48 @@ class StudioSession:
                     self._parallel_metrics.get("lane_resolved", 0) + 1
                 )
                 return lr.ok
-            lr.ctx.notes_buffer.clear()  # 解不掉 → 丟棄 lane 筆記，改以序列化重跑為準。
-            await self.broadcast(
-                events.phase_change(
-                    self.session_id,
-                    "合併衝突",
-                    f"支線 {lr.ctx.branch} 衝突且 lane 內無法化解，於最新主幹序列化重跑",
-                )
+            return await self._serialize_lane_rerun(
+                lr,
+                plan_ctx,
+                reason=f"支線 {lr.ctx.branch} 衝突且 lane 內無法化解，於最新主幹序列化重跑",
             )
-            ok = True
-            for task in lr.tasks:
-                if self._stop:
-                    ok = False
-                    break
-                self._parallel_metrics["conflict_retries"] = (
-                    self._parallel_metrics.get("conflict_retries", 0) + 1
-                )
-                ok = await self._run_task_in_lane(self._main_ctx, task, plan_ctx) and ok
-            return ok
+        if res.blocked:
+            # 合併還沒開始就被工作樹擋下（主工作樹有未追蹤檔會被覆寫，或有未提交本地修改）：
+            # 無 MERGE_HEAD 可 abort，且這些檔案就在主工作樹裡。直接序列化重跑——重跑在主工
+            # 作樹就地完成、git_commit 的 `add -A` 會把既有檔案一併收進來，不會像過去那樣把
+            # 整條 lane 成果當未知硬失敗丟掉、讓 session 帶著殘缺產出繼續。
+            self._parallel_metrics["merge_blocked"] = (
+                self._parallel_metrics.get("merge_blocked", 0) + 1
+            )
+            return await self._serialize_lane_rerun(
+                lr,
+                plan_ctx,
+                reason=(
+                    f"支線 {lr.ctx.branch} 因主工作樹未追蹤檔／未提交修改無法合併，"
+                    "於最新主幹序列化重跑"
+                ),
+            )
         await self.broadcast(
             events.error(self.session_id, f"支線 {lr.ctx.branch} 合併失敗：{res.output[:200]}")
         )
         return False
+
+    async def _serialize_lane_rerun(self, lr: LaneResult, plan_ctx: str, *, reason: str) -> bool:
+        """lane 無法乾淨合回主幹時的共用 fallback：丟棄 lane 筆記，於最新主幹（主工作樹）
+        逐一序列化重跑該 lane 的任務。內容衝突解不掉、與工作樹受阻（未追蹤檔／未提交修改）
+        都走這條，確保並行成果一律有去處、不被靜默丟棄。"""
+        lr.ctx.notes_buffer.clear()  # 改以序列化重跑為準，丟棄並行 lane 的中途筆記。
+        await self.broadcast(events.phase_change(self.session_id, "合併衝突", reason))
+        ok = True
+        for task in lr.tasks:
+            if self._stop:
+                ok = False
+                break
+            self._parallel_metrics["conflict_retries"] = (
+                self._parallel_metrics.get("conflict_retries", 0) + 1
+            )
+            ok = await self._run_task_in_lane(self._main_ctx, task, plan_ctx) and ok
+        return ok
 
     async def _resolve_conflict_in_lane(self, lr: LaneResult, plan_ctx: str) -> bool:
         """在 lane 的 worktree 內就地化解與主幹的合併衝突，成功則 fast-forward 合回主幹。

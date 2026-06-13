@@ -45,6 +45,30 @@ async def test_worktree_add_commit_merge_happy(tmp_path, main_repo):
 
 
 @pytest.mark.asyncio
+async def test_merge_blocked_by_untracked_file_is_recoverable(tmp_path, main_repo):
+    """主工作樹有未追蹤檔、lane 帶同名檔時，git 連 merge 都不啟動就報錯——
+
+    訊息不含 "CONFLICT"，過去被誤判為未知硬失敗而靜默吞掉並行成果。這裡確認改判為
+    blocked（可復原），呼叫端據此走序列化重跑而非丟棄。實測來源：並行 lane 端到端跑時
+    出現的「untracked working tree files would be overwritten by merge」。
+    """
+    await _seed(main_repo)
+    wt = tmp_path / "lanes" / "lane-task-9"
+    assert await runner.git_worktree_add(main_repo, wt, "task-9")
+
+    # lane 新增一個「主幹尚未追蹤」的檔並 commit。
+    (wt / "feature.txt").write_text("from lane\n", encoding="utf-8")
+    assert await runner.git_commit(wt, "lane adds feature.txt") is not None
+    # 主工作樹有同名「未追蹤」檔（未 commit）——git merge 會拒絕覆寫。
+    (main_repo / "feature.txt").write_text("untracked in main\n", encoding="utf-8")
+
+    res = await runner.git_merge_worktree(main_repo, "task-9")
+    assert not res.ok
+    assert res.blocked, f"未追蹤檔擋下的合併應判為 blocked：{res.output!r}"
+    assert not res.conflict, "工作樹受阻不是內容衝突，不應誤判為 conflict"
+
+
+@pytest.mark.asyncio
 async def test_merge_conflict_detected_then_abort_clean(tmp_path, main_repo):
     await _seed(main_repo)
     wt = tmp_path / "lanes" / "lane-task-3"

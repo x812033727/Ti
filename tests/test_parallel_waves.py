@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from studio import config, events, runner, workspace
-from studio.orchestrator import StudioSession
+from studio.orchestrator import LaneContext, LaneResult, StudioSession
 from studio.roles import BY_KEY, Role
 
 
@@ -344,6 +344,66 @@ async def test_merge_conflict_resolved_in_lane(tmp_path, monkeypatch):
     # 主幹拿到化解後的結果，且 worktree 已清乾淨。
     assert (cwd / "shared.txt").read_text(encoding="utf-8") == "resolved\n"
     assert not (tmp_path / f"{cwd.name}.lanes").exists()
+
+
+@pytest.mark.asyncio
+async def test_merge_lane_blocked_by_worktree_falls_back_not_dropped(tmp_path, monkeypatch):
+    """合併被工作樹擋下（未追蹤檔／未提交修改，blocked=True）時，lane 任務應走序列化重跑
+
+    回收，而非像過去那樣被當未知硬失敗靜默丟棄。回歸守門：曾因 git 的「untracked working
+    tree files would be overwritten」不含 "CONFLICT" 而落到硬失敗分支，整條 lane 成果消失、
+    session 仍帶殘缺產出繼續。
+    """
+    monkeypatch.setattr(config, "ENABLE_GIT", True)
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+
+    async def broadcast(ev):
+        pass
+
+    session = StudioSession("blocked", broadcast, experts={}, cwd=tmp_path / "main")
+    session._main_ctx = LaneContext("main", tmp_path / "main", {})
+
+    # 合併一律回 blocked；abort 不該被呼叫（無 MERGE_HEAD）；重跑記錄走主 lane 的任務。
+    aborted = []
+    reran: list[dict] = []
+    monkeypatch.setattr(
+        runner,
+        "git_merge_worktree",
+        lambda *a, **k: _amr(
+            runner.MergeResult(
+                ok=False,
+                conflict=False,
+                blocked=True,
+                output="error: The following untracked working tree files would be overwritten by merge:\n\tmdtoc/parser.py",
+            )
+        ),
+    )
+    monkeypatch.setattr(runner, "git_merge_abort", lambda *a, **k: _amr(aborted.append(a)))
+
+    async def _fake_rerun(ctx, task, plan_ctx):
+        reran.append((ctx, task))
+        return True
+
+    monkeypatch.setattr(session, "_run_task_in_lane", _fake_rerun)
+
+    lane = LaneContext("task-2", tmp_path / "main.lanes" / "task-2", {}, branch="task-2")
+    lane.notes_buffer.append("半完成筆記")
+    lr = LaneResult(ctx=lane, tasks=[{"id": 2, "title": "實作 parser.py"}], ok=True)
+
+    ok = await session._merge_lane(lr, "plan-ctx")
+
+    assert ok is True, "blocked 經序列化重跑回收後應視為成功"
+    assert [t["id"] for _c, t in reran] == [2], "lane 的任務應在主 lane 序列化重跑"
+    assert all(c is session._main_ctx for c, _t in reran), "重跑須落在主工作樹（main_ctx）"
+    assert aborted == [], "blocked 無 MERGE_HEAD，不該呼叫 git merge --abort"
+    assert session._parallel_metrics.get("merge_blocked") == 1
+    assert session._parallel_metrics.get("conflict_retries") == 1
+    assert lane.notes_buffer == [], "改以序列化重跑為準，lane 中途筆記應清空"
+
+
+async def _amr(value):
+    """把同步值包成 awaitable，給 monkeypatch 替換 async runner 函式用。"""
+    return value
 
 
 class DepStub(LaneStub):

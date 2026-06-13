@@ -545,6 +545,15 @@ _REPO_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?$", re.
 # 進而在 `git clone ... --branch <branch>` 被 git 當成參數注入（如 --upload-pack）。
 _BRANCH_RE = re.compile(r"^[\w./][\w./-]{0,199}$")
 
+# git merge 在「還沒開始合併」就被工作樹擋下的訊息（未追蹤檔會被覆寫／有未提交本地修改）。
+# 這些不含 "CONFLICT"，故與內容衝突分開辨識；皆屬可復原（序列化重跑），不該當硬失敗。
+_MERGE_BLOCKED_RE = re.compile(
+    r"untracked working tree files would be overwritten"
+    r"|local changes to the following files would be overwritten"
+    r"|Please (commit your changes or stash|move or remove)",
+    re.IGNORECASE,
+)
+
 
 def is_valid_repo_url(url: str) -> bool:
     return bool(_REPO_RE.match((url or "").strip()))
@@ -646,11 +655,20 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
 
 @dataclass
 class MergeResult:
-    """git merge 結果。conflict=True 表示遇到合併衝突（呼叫端應 abort 後序列化重跑）。"""
+    """git merge 結果。
+
+    conflict=True：內容合併衝突（同檔雙方都改），呼叫端應 abort 後走「lane 內解衝突／
+    序列化重跑」fallback。
+    blocked=True：合併還沒開始就被工作樹擋下（主工作樹有未追蹤檔會被覆寫，或有未提交的
+    本地修改），git 連 merge 都不啟動、無 MERGE_HEAD 可 abort。這同樣是「可復原」失敗
+    （序列化重跑會在主工作樹就地把既有檔案 commit 進來），呼叫端不該當成未知硬失敗而把
+    lane 成果丟掉。這類訊息不含 "CONFLICT" 字樣，過去被誤判為硬失敗、靜默吞掉並行成果。
+    """
 
     ok: bool
     conflict: bool
     output: str
+    blocked: bool = False
 
 
 async def git_worktree_add(
@@ -782,7 +800,8 @@ async def git_merge_worktree(repo: Path | str, branch: str) -> MergeResult:
     if r.ok:
         return MergeResult(ok=True, conflict=False, output=r.output)
     conflict = bool(re.search(r"CONFLICT|Automatic merge failed", r.output))
-    return MergeResult(ok=False, conflict=conflict, output=r.output)
+    blocked = not conflict and bool(_MERGE_BLOCKED_RE.search(r.output))
+    return MergeResult(ok=False, conflict=conflict, output=r.output, blocked=blocked)
 
 
 async def git_merge_abort(repo: Path | str) -> None:
@@ -830,7 +849,8 @@ async def git_merge_ref_into(repo: Path | str, ref: str) -> MergeResult:
     if r.ok:
         return MergeResult(ok=True, conflict=False, output=r.output)
     conflict = bool(re.search(r"CONFLICT|Automatic merge failed", r.output))
-    return MergeResult(ok=False, conflict=conflict, output=r.output)
+    blocked = not conflict and bool(_MERGE_BLOCKED_RE.search(r.output))
+    return MergeResult(ok=False, conflict=conflict, output=r.output, blocked=blocked)
 
 
 async def git_conflict_markers_present(repo: Path | str) -> bool:
