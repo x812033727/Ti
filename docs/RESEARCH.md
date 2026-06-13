@@ -73,3 +73,41 @@ Sources: [CrewAI Agents](https://docs.crewai.com/en/concepts/agents) · [CrewAI 
 
 Sources: [Orchestration of MAS](https://arxiv.org/html/2601.13671v1) · [Self-Resource Allocation](https://arxiv.org/pdf/2504.02051) · [Task Decomposition Strategies](https://apxml.com/courses/agentic-llm-memory-architectures/chapter-4-complex-planning-tool-integration/task-decomposition-strategies) · [CrewAI Issue #4783](https://github.com/crewAIInc/crewAI/issues/4783) · [TDS: CrewAI manager 失靈分析](https://towardsdatascience.com/why-crewais-manager-worker-architecture-fails-and-how-to-fix-it/) · [CrewAI Processes](https://docs.crewai.com/en/concepts/processes) · [LangChain Plan-and-Execute](https://www.langchain.com/blog/planning-agents) · [GenAI Patterns: Plan and Execute](https://www.genaipatterns.dev/patterns/agents/plan-and-execute) · [FAME](https://arxiv.org/pdf/2502.13001) · [MiniFed](https://arxiv.org/pdf/2410.18012) · [合成討論系統設計](https://arxiv.org/html/2503.16505)
 
+## 2026-06-13 10:35
+
+先看現有程式碼脈絡，同時載入搜尋工具。
+現況很清楚：已有 `DiscussionResult.summary`（規則式從 mentions 統計 consensus/disagreements/final_positions，零 LLM）與 ADR 蒸餾的 prompt 慣例。本輪缺口是「把多角色討論彙整成**結構化結論文件**（共識＋分歧）」的做法與坑。我針對缺口查。
+夠了，核心缺口已覆蓋。彙整如下。
+
+---
+
+**重點**
+
+- 重點: 「結論彙整」最佳實踐是把整合輸出明確分四類，而非單一摘要：**共識點 / 分歧點 / 獨特見解(unique findings) / 綜合分析**——這能保住少數意見、同時濾掉個別幻覺，優於只做多數決（[Council Mode](https://arxiv.org/html/2604.02923v1)）。本專案 summary 現有 consensus/disagreements/final_positions，缺「unique findings / 未決事項」這一類。
+
+- 重點: 共識量化可用「LLM-as-judge 給 0.0(完全分歧)→1.0(完全共識) 分數」，並要求輸出 consensus components、disagreement focal points、**evidence strength（證據強度）**——讓分歧不只列出、還標明強弱（[Sequential Consensus Building](https://www.tdcommons.org/cgi/viewcontent.cgi?article=9892&context=dpubs_series)、上引 Council Mode）。
+
+- 重點: 會議摘要最大坑是 **Contextual Inference 幻覺**——LLM 會基於對話旁證生成「看似合理但原文沒明說」的推論。對策是兩段式：先抽取、再以原文做事實校驗/refine（九類錯誤含 omission/irrelevance/structural）（[Dialogue Summarization Hallucination](https://aclanthology.org/2024.acl-long.677/)、[Refining Meeting Summaries with LLM Feedback](https://arxiv.org/pdf/2407.11919)）。
+
+- 重點: 「沉默 ≠ 共識」（Silent Agreement / Agreement Bias）是多角色彙整的系統性偏誤——無人反對常被誤判為共識。要主動監測「未被挑戰的點、被忽略的差異、論證不足」（[Catfish Agent](https://arxiv.org/html/2505.21503v1)）。本專案發言已有 `Mention.stance(同意/反對)` 與反諂媚硬指令，正好可餵彙整器辨識「真共識 vs 沒人講話」。
+
+- 重點: 結論彙整不要「靜默地把強分歧平均掉」；也要注意發言長度不均會讓某角色壟斷討論、扭曲彙整的代表性（[Conversational Task-Solving](https://arxiv.org/pdf/2410.22932)、[ICLR MAD Blogpost](https://d2jud02ci9yv69.cloudfront.net/2025-04-28-mad-159/blog/mad/)）。
+
+- 重點: action-item 導向摘要（先抽「待辦/決議」再組織全文）對長會議轉錄更準（[Action-Item-Driven Summarization](https://arxiv.org/pdf/2312.17581)）——對齊本專案既有 `後續任務:`/`決策:` 行解析慣例。
+
+**建議**
+
+- 建議: **沿用既有兩層輸出慣例**做新交付物：產一份 `CONCLUSION.md`（人讀 markdown，落 workspace 根、進 git），結構固定四段：`## 共識`、`## 分歧`（每條標證據強度/雙方立場）、`## 未決事項/獨特見解`、`## 後續行動`。機讀面沿用 `summary` dict 擴充 `unique_findings`/`open_questions` 兩鍵即可，不另引 JSON schema。
+
+- 建議: 彙整採「**規則式為骨、LLM 為肉**」混合：先用既有 `_build_summary()` 從 `Mention.stance` 統計出 consensus/disagreement 骨架（事實錨點、防幻覺），再用一次 LLM 蒸餾把骨架擴寫成可讀結論——沿用 ADR 蒸餾的 one-shot prompt 範式（逐行 `共識:` / `分歧:` / `未決:` / `行動:` 前綴），交給 `flow.py` 行前綴 parser 解析。**禁止**讓 LLM 純自由生成整份結論（會 Contextual Inference 幻覺）。
+
+- 建議: prompt 內加防坑硬指令三條：①「只彙整 transcript 出現過的論點，不得新增未提及的結論」（防幻覺）；②「無人反對 ≠ 共識，需區分『明確同意』與『無人表態』」（防 Silent Agreement，可用 stance 計數佐證）；③「強分歧必須保留並標明雙方，不得抹平」。
+
+- 建議: 解析新增 `共識:`/`分歧:`/`未決:`/`行動ः` 四個行前綴 parser 純函式（沿用 `^\s*<標籤>\s*[:：]\s*(.+?)$` ERE 慣例＋全形冒號容錯），並對「LLM 漏標前綴」做 fallback：退回直接輸出 `final_positions` 摘要，不崩潰。
+
+- 建議: 每條結論盡量帶來源錨點（如 `(R2 engineer)` 指向第幾輪哪角色），對齊 transcript 的 `(round, speaker)` metadata——這是降幻覺、可查證的低成本手段，也讓 `CONCLUSION.md` 可回溯。
+
+- 建議: 測試照 StubExpert 慣例補三類純函式/流程測試：①四段前綴正常解析；②LLM 漏標前綴→fallback 不崩潰；③「全員無反對」不被誤判為強共識（驗證 stance 計數路徑）。
+
+Sources: [Council Mode](https://arxiv.org/html/2604.02923v1) · [Sequential Consensus Building](https://www.tdcommons.org/cgi/viewcontent.cgi?article=9892&context=dpubs_series) · [Dialogue Summarization Hallucination (ACL)](https://aclanthology.org/2024.acl-long.677/) · [Refining Meeting Summaries with LLM Feedback](https://arxiv.org/pdf/2407.11919) · [Catfish Agent: Silence is Not Consensus](https://arxiv.org/html/2505.21503v1) · [Multi-Agent Conversational Task-Solving](https://arxiv.org/pdf/2410.22932) · [ICLR 2025 Multi-LLM Debate Blogpost](https://d2jud02ci9yv69.cloudfront.net/2025-04-28-mad-159/blog/mad/) · [Action-Item-Driven Summarization](https://arxiv.org/pdf/2312.17581)
+
