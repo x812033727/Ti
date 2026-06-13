@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# 與 env_path()（settings/auth 的寫入端）同一路徑：固定載入專案根的 .env。
+# 不帶路徑的 load_dotenv() 會從 cwd 向上搜尋，在 worktree/子目錄跑測試時會載到
+# 上層部署環境的 .env（如門禁密碼），造成「寫入與載入路徑不一致」與測試環境污染。
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 def _env_float(name: str, default: float) -> float:
