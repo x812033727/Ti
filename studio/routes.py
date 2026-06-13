@@ -638,7 +638,7 @@ async def groups_list() -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.post("/api/groups", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/groups", dependencies=WRITE_DEPS)
 async def groups_create(body: GroupBody) -> JSONResponse:
     """建立小組。驗證失敗（key 不存在/重複/<2 人/非法 mode）回 422；同名已存在回 409。"""
     try:
@@ -652,7 +652,7 @@ async def groups_create(body: GroupBody) -> JSONResponse:
     return JSONResponse({"group": group})
 
 
-@router.put("/api/groups/{name}", dependencies=[Depends(auth.require_auth)])
+@router.put("/api/groups/{name}", dependencies=WRITE_DEPS)
 async def groups_update(name: str, body: GroupUpdateBody) -> JSONResponse:
     """整筆更新小組（role_keys＋mode）。驗證失敗回 422；小組不存在回 404。"""
     try:
@@ -666,7 +666,7 @@ async def groups_update(name: str, body: GroupUpdateBody) -> JSONResponse:
     return JSONResponse({"group": group})
 
 
-@router.delete("/api/groups/{name}", dependencies=[Depends(auth.require_auth)])
+@router.delete("/api/groups/{name}", dependencies=WRITE_DEPS)
 async def groups_delete(name: str) -> JSONResponse:
     """刪除小組；不存在回 404。"""
     try:
