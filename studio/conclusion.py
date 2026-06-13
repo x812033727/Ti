@@ -9,16 +9,21 @@
   3. senior 漏標前綴（解析回空骨架）時 **fallback** 回規則式 summary 骨架，不崩潰、
      仍產出可落盤的結論 dict（驗收 #6）。
 
-防坑三條硬指令（字面寫入 prompt、可 grep 驗證）：
+防坑四條硬指令（字面寫入 prompt、可 grep 驗證）：
   ① 只彙整 transcript 出現過的論點，不得新增未提及的結論（防 Contextual Inference 幻覺）；
   ② 無人反對 ≠ 共識，需區分「明確同意」與「無人表態」（防 Silent Agreement 偏誤）；
-  ③ 強分歧須保留並標明雙方，不得抹平。
+  ③ 強分歧須保留並標明雙方，不得抹平；
+  ④ 逐條自我校驗：每條結論須能對應上方骨架的某 (round, speaker)，能對應者帶上錨點、
+     查無依據者刪除（單次自我校驗降 Contextual Inference 幻覺，零新增 LLM 呼叫）。
 
 落盤：:func:`record` 把彙整 dict 渲染成 ``CONCLUSION.md`` 四段 markdown（``## 共識／
 ## 分歧／## 未決事項／## 後續行動``），覆寫式單檔落 workspace 根（沿用 ``adr.py`` 的
 cwd 定位與 atomic tmp-replace 慣例）。每場一份快照，歷史保存靠 git commit 而非 append
 累積——commit 由 orchestrator 接線時以既有 ``self._commit`` 慣例執行（任務 #5），本模組
 只負責「render＋落盤」，不直接呼叫 git，方便純檔案 IO 單元測試。
+
+並雙寫機讀 ``conclusion.json`` sidecar（任務 #3）——markdown 給人讀、json 給 M2 歷史
+回顧/自我演進機器消費；sidecar 為 best-effort 附屬，失敗不拖垮人讀主檔。
 
 純邏輯與 LLM 呼叫解耦：``summarize`` 只依賴傳入的 ``senior.speak``，方便以 StubExpert 測試。
 """
@@ -104,21 +109,19 @@ def _anchored_from_summary(summary: dict, key: str, transcript: list[Utterance])
 
 
 # ── (round, speaker) 錨點護欄（任務 #2）────────────────────────────────────────
+# 對 senior **自產**（非由 ``_anchored_from_summary`` 回填）的非空鍵條目做「盡力而為」的
+# 錨點驗證：抽出 ``(R<n> <speaker>)`` token，要求 speaker 真實存在於 transcript；抽不到
+# 或 speaker 不存在 ⇒ 加 ``（未錨定）`` 後綴，讓「LLM 自填」與「有 transcript 來源」在
+# CONCLUSION.md 上可視區分。
 #
-# 對 senior **自產**（非由 `_anchored_from_summary` 回填）的非空鍵條目做保守查驗：
-# 抽 `(R<n> <speaker>)` token、驗該 speaker 是否真的在 transcript 出現過；抽不到錨點、
-# 或 speaker 不存在於 transcript 者，加 `（未錨定）` 後綴——讓「LLM 自填」與「有
-# transcript 來源」在 CONCLUSION.md 上可視區分。
+# 已知限制（設計決策／CLAUDE.md 元認知鐵則，誠實標明、非攔截保證）：護欄只驗
+# 「speaker 出現」，**不驗** round 正確、**不驗** 論點與該 (round, speaker) 真正對應——
+# 「真 speaker＋幻覺論點」（LLM 借真名編造未發生的論點）仍會漏標。護欄是可視化輔助、
+# 非幻覺攔截保證。``re`` 僅用 ERE 等價語法、不用 PCRE/lookbehind（CLAUDE.md 可攜性鐵則）。
 #
-# 已知限制（設計決策，誠實暴露）：本護欄僅「盡力而為」——只驗 speaker 是否出現，
-#   **不驗** round 是否吻合、**不驗** 該條論點是否真對應 transcript 的某 pair。
-#   故「真 speaker＋幻覺論點」（LLM 借真名編造未發生的論點）仍會通過、不被標記。
-#   護欄是可視化輔助、非幻覺攔截保證。`re` 僅用 ERE 等價語法（無 PCRE/lookbehind），
-#   符合 CLAUDE.md 可攜性鐵則。
-#
-# 保守策略：寧漏標不誤傷——一條含多個錨點時，只要任一錨點的 speaker 屬實即視為已錨定。
-
-_ANCHOR_RE = re.compile(r"\(R\d+ ([^)]+)\)")
+# 保守策略：寧漏標不誤傷——一條含多個錨點時，只要任一錨點的 speaker 屬實即視為已錨定；
+# 已標 ``（未錨定）`` 者不重複標（冪等）。
+_ANCHOR_TOKEN = re.compile(r"\(R\d+\s+(.+?)\)")
 _UNANCHORED = "（未錨定）"
 
 
@@ -128,21 +131,21 @@ def _transcript_speakers(transcript: list[Utterance]) -> set[str]:
 
 
 def _guard_anchor(entry: str, speakers: set[str]) -> str:
-    """對單條 LLM 自產條目查驗錨點；無有效錨點則加 `（未錨定）`。
-
-    有效＝條目含至少一個 `(R<n> <speaker>)` 且該 speaker 確在 transcript 出現。
-    已標 `（未錨定）` 者不重複標（冪等）。
+    """LLM 自產條目的盡力驗錨：含至少一個有效 ``(R<n> <speaker>)`` 錨點（speaker 須在
+    transcript）才放行，否則標 ``（未錨定）``。空白條目與已標記者原樣返回（冪等）。
     """
+    if not (entry or "").strip():
+        return entry
     if entry.endswith(_UNANCHORED):
         return entry
-    for m in _ANCHOR_RE.finditer(entry):
+    for m in _ANCHOR_TOKEN.finditer(entry):
         if m.group(1).strip() in speakers:
             return entry
     return f"{entry}{_UNANCHORED}"
 
 
 def _guard_list(entries: list[str], transcript: list[Utterance]) -> list[str]:
-    """對一串 LLM 自產條目逐條套錨點護欄。"""
+    """對一串 LLM 自產條目逐條套錨點護欄（speaker 有效性以 transcript 為準）。"""
     speakers = _transcript_speakers(transcript)
     return [_guard_anchor(e, speakers) for e in entries]
 
@@ -187,7 +190,7 @@ def _render_skeleton(summary: dict) -> str:
 
 
 def build_prompt(summary: dict, transcript: list[Utterance]) -> str:
-    """以規則式 summary 為骨架組 senior 蒸餾 prompt，含三條防坑硬指令。
+    """以規則式 summary 為骨架組 senior 蒸餾 prompt，含四條防坑硬指令。
 
     錨點事實來源為規則層 summary（不信任 LLM 自填），故 prompt 提供 final_positions/
     unique_findings 的 speaker 錨點供其引用。
@@ -207,10 +210,9 @@ def build_prompt(summary: dict, transcript: list[Utterance]) -> str:
         "① 只彙整上方骨架/transcript 出現過的論點，不得新增未提及的結論。\n"
         "② 無人反對 ≠ 共識：只有『明確同意』才算共識，『無人表態』不得列為共識。\n"
         "③ 強分歧必須保留並標明雙方，不得抹平成單一說法。\n"
-        "④ 自我校驗：逐條檢查每條結論是否都能對應上方骨架的某 (round, speaker)；"
-        "能對應者帶上該錨點（例如「(R2 engineer)」），查無骨架依據者一律刪除、不得保留。\n"
-        "（錨點一律取自上方骨架，不得自行杜撰 round 或 speaker；"
-        "有依據才留、留則帶錨——這是一致準則，不是「盡量」。）\n"
+        "④ 逐條自我校驗：輸出後重讀每一條結論，確認它都能對應上方骨架的某 "
+        "(round, speaker)——能對應者帶上該錨點（例如「(R2 engineer)」，須取自上方骨架）；"
+        "查無骨架依據者一律刪除，不得保留沒有來源的結論。\n"
     )
 
 
@@ -256,17 +258,18 @@ async def summarize(
     # consensus/disagreements/open_questions 不可被靜默丟棄——空鍵以規則骨架回填（帶
     # 來源錨點），比整碗接受 LLM 殘缺輸出更穩（高工建議）。actions 規則層無對應來源，照
     # LLM 輸出。回填用的是帶 (round, speaker) 錨點的規則條目——錨點來源為 transcript 事實，
-    # 不信任 LLM 自填（設計決策）；LLM 自行產出的非空鍵則維持其原文不強加錨點。
-    # 護欄判別以「是否走 _anchored_from_summary 回填」為界（設計決策）：
-    #   - 空鍵 → 以規則骨架回填，錨點來自 transcript 事實，不過護欄（不可能未錨定）。
-    #   - 非空鍵 → senior 自產，過護欄：無有效 (round, speaker) 錨點者標 （未錨定）。
+    # 不信任 LLM 自填（設計決策）。
+    backfilled: set[str] = set()
     for key in ("consensus", "disagreements", "open_questions"):
         if not parsed.get(key):
             parsed[key] = _anchored_from_summary(summary, key, transcript)
-        else:
-            parsed[key] = _guard_list(parsed[key], transcript)
-    # actions 永遠走 LLM 原文、不在回填範圍內（設計決策明確涵蓋），一律過護欄。
-    parsed["actions"] = _guard_list(parsed.get("actions") or [], transcript)
+            backfilled.add(key)
+    # 護欄（#2）：對未被規則回填的 LLM 自產非空鍵——含永遠走 LLM 原文的 actions——逐條
+    # 驗錨。回填條目已帶 transcript 真錨點、不重複處理（以 backfilled 判別，非寫死鍵名）。
+    for key in _KEYS:
+        if key in backfilled:
+            continue
+        parsed[key] = _guard_list(parsed.get(key) or [], transcript)
     return parsed
 
 
@@ -288,36 +291,35 @@ def _json_path(cwd: Path) -> Path:
     return Path(cwd) / "conclusion.json"
 
 
-# sidecar schema 版本——供 M2 歷史回顧/自我演進辨識格式演進（設計決策）。
+# sidecar schema 版本——供 M2 歷史回顧/自我演進辨識結構演進（設計決策）。
 _SIDECAR_VERSION = 1
 
 
 def _write_sidecar(
     cwd: Path, conclusion: dict[str, list[str]], session_id: str, rounds: int
 ) -> None:
-    """best-effort 雙寫機讀 conclusion.json（四鍵＋version＋session_id＋rounds）。
+    """best-effort 雙寫機讀 ``conclusion.json``（沿用 adr.py atomic tmp-replace）。
 
-    沿用 adr.py 的 atomic tmp-replace。失敗時清理 .json.tmp 殘留並 log warning、**不拋例外**
-    ——md 為人讀主檔/驗收核心已先落保底，sidecar 為 M2 前瞻附屬，異常時可降級為只保 md。
+    schema：``{"version", "session_id", "rounds", 四鍵}``。失敗不拋例外——降級為只保留
+    ``CONCLUSION.md`` ＋ log warning，並清理殘留 ``.json.tmp``，不留未追蹤殘檔（設計決策／
+    CLAUDE.md：收尾須無殘留）。md 主檔為驗收核心、永遠先落保底；sidecar 為 M2 前瞻附屬、
+    可降級。
     """
     data = {
         "version": _SIDECAR_VERSION,
         "session_id": session_id,
         "rounds": rounds,
-        "consensus": list(conclusion.get("consensus") or []),
-        "disagreements": list(conclusion.get("disagreements") or []),
-        "open_questions": list(conclusion.get("open_questions") or []),
-        "actions": list(conclusion.get("actions") or []),
+        **{k: list(conclusion.get(k) or []) for k in _KEYS},
     }
     tmp = _json_path(cwd).with_suffix(".json.tmp")
     try:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(_json_path(cwd))
-    except OSError:
-        log.warning("conclusion.json sidecar 寫入失敗，降級為只保 CONCLUSION.md", exc_info=True)
-        # 清理可能殘留的 .json.tmp，避免 workspace 留未追蹤殘檔（CLAUDE.md 鐵則）。
+    except OSError as exc:  # 磁碟/權限等 IO 異常：降級，不拖垮主檔與後續 commit/broadcast
+        log.warning("conclusion.json sidecar 寫入失敗，降級只保 CONCLUSION.md：%s", exc)
         with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
+            if tmp.exists():
+                tmp.unlink()
 
 
 def render_markdown(conclusion: dict[str, list[str]]) -> str:
@@ -345,31 +347,32 @@ def record(
     session_id: str = "",
     rounds: int = 0,
 ) -> Path | None:
-    """把結論 dict 渲染成 ``CONCLUSION.md`` 落 workspace 根（覆寫式單檔），回傳路徑。
+    """把結論渲染成 ``CONCLUSION.md``（人讀主檔）落 workspace 根，並雙寫 ``conclusion.json``
+    （機讀 sidecar，供 M2 歷史回顧/自我演進），回傳 ``CONCLUSION.md`` 路徑。
 
-    雙寫（任務 #3）：``CONCLUSION.md`` 人讀主檔 ＋ ``conclusion.json`` 機讀 sidecar
-    （供 M2 歷史回顧/自我演進）。語義為「主檔先寫保底、sidecar best-effort 後寫」——
-    sidecar 寫入失敗只降級為保留 md ＋ log warning，不拋例外、不影響回傳（設計決策）。
-
-    沿用 ``adr.py`` 的 atomic tmp-replace 寫入（避免半截檔）。每場覆寫——結論是本場快照，
-    歷史保存靠 git commit（orchestrator 接線），非 append 累積。
+    寫入語義（設計決策）：**md 主檔先寫保底**（驗收核心），**sidecar best-effort 後寫**——
+    sidecar 失敗只降級為 log warning＋清 tmp，不拋例外、不拖垮主檔與既有 record→commit→
+    broadcast 時序。沿用 ``adr.py`` 的 atomic tmp-replace 寫入（避免半截檔）。每場覆寫——
+    結論是本場快照，歷史保存靠 git commit（兩檔同 commit 由 orchestrator 的 ``git add -A``
+    納入，#4），非 append 累積。
 
     ``cwd`` 為 None（無 workspace 的單元測試）時兩檔皆不落、回 None；其餘永遠產出 md
     （即便四鍵皆空也寫出四段骨架，確保 fallback 路徑仍有 CONCLUSION.md，驗收 #6）。
 
     :param conclusion: :func:`summarize` 回傳的四鍵 dict（已含 fallback 處理）。
-    :param session_id: 寫入 sidecar、並供呼叫端紀錄/事件用，md 落盤本身不依賴。
-    :param rounds: 該場討論輪數，寫入 sidecar（人讀 md 不含此欄）。
+    :param session_id: 寫入 sidecar 供機讀消費端定位；md 落盤本身不依賴。
+    :param rounds: 該場討論輪數，寫入 sidecar（keyword-only，預設 0；人讀 md 不含此欄）。
     :returns: 寫出的 ``CONCLUSION.md`` 路徑，或 ``cwd is None`` 時 ``None``。
     """
     if cwd is None:
         return None
+    conclusion = conclusion or {}
     # 主檔先落保底：md 為驗收核心（#3/#5/#6），務必在 best-effort sidecar 之前完成。
     path = _md_path(cwd)
-    text = render_markdown(conclusion or {})
+    text = render_markdown(conclusion)
     tmp = path.with_suffix(".md.tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
     # 機讀 sidecar best-effort 後寫：失敗不拖垮主檔與回傳。
-    _write_sidecar(cwd, conclusion or {}, session_id, rounds)
+    _write_sidecar(Path(cwd), conclusion, session_id, rounds)
     return path

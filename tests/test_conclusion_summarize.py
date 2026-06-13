@@ -49,28 +49,37 @@ def _transcript():
 
 
 def test_正常解析四前綴():
+    # 合規 senior：每條結論都帶取自骨架的有效錨點（speaker 存在於 transcript），
+    # 護欄（#2）全數放行、不加 （未錨定），原文照用。
     senior = StubSenior(
         "共識: engineer 與 senior 對齊混合範式 (R1 engineer)\n"
-        "分歧: qa 反對 engineer 的覆蓋率假設\n"
-        "未決: 上線時程未定\n"
-        "行動: 補測試覆蓋"
+        "分歧: qa 反對 engineer 的覆蓋率假設 (R2 qa)\n"
+        "未決: 上線時程未定 (R2 qa)\n"
+        "行動: 補測試覆蓋 (R1 engineer)"
     )
     r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
     # #2 護欄：有效 (R1 engineer) 錨點（engineer 在 transcript）→ 不誤標。
     assert r["consensus"] == ["engineer 與 senior 對齊混合範式 (R1 engineer)"]
-    # 其餘 LLM 自產條目無錨點 → 標 （未錨定），可視區分「LLM 自填」與「有來源」。
-    assert r["disagreements"] == ["qa 反對 engineer 的覆蓋率假設（未錨定）"]
-    assert r["open_questions"] == ["上線時程未定（未錨定）"]
-    assert r["actions"] == ["補測試覆蓋（未錨定）"]
+    # 其餘條目皆帶取自骨架的有效錨點（speaker 在 transcript）→ 護欄放行、不誤標。
+    assert r["disagreements"] == ["qa 反對 engineer 的覆蓋率假設 (R2 qa)"]
+    assert r["open_questions"] == ["上線時程未定 (R2 qa)"]
+    assert r["actions"] == ["補測試覆蓋 (R1 engineer)"]
 
 
-def test_prompt_含三條防坑硬指令與錨點來源():
+def test_prompt_含四條防坑硬指令與錨點來源():
     senior = StubSenior("共識: x")
     asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
     p = senior.prompt
     assert "不得新增未提及的結論" in p  # ① 防幻覺
     assert "無人反對 ≠ 共識" in p  # ② 防 Silent Agreement
     assert "強分歧必須保留並標明雙方" in p  # ③ 保留分歧
+    # ④ 自我校驗（任務 #1）：逐條自檢、查無依據者刪除，須可 grep（驗收 #1）
+    assert "④" in p
+    assert "逐條自我校驗" in p
+    assert "查無骨架依據者一律刪除" in p
+    # 四鍵前綴未被第④條擠散，仍可被 parse_conclusion 解析（驗收 #1）
+    for prefix in ("共識:", "分歧:", "未決:", "行動:"):
+        assert prefix in p
     # 錨點事實來源為規則骨架：speaker 帶在 final_positions / unique_findings
     assert "採用混合範式" in p
     assert "security" in p
@@ -96,10 +105,11 @@ def test_部分漏標_空鍵以規則骨架回填():
     # senior 只給了行動，漏標共識/分歧/未決——規則層已知為真者不可被靜默丟棄
     senior = StubSenior("行動: 補 rate limit 測試")
     r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
-    # LLM 給的 actions 照用，但無錨點 → 過護欄標 （未錨定）。
+    # LLM 自產的 action 無 (round, speaker) 錨點 → 護欄（#2）標 （未錨定），與「有 transcript
+    # 來源」可視區分
     assert r["actions"] == ["補 rate limit 測試（未錨定）"]
-    # 空鍵回填規則骨架：走 _anchored_from_summary，不過護欄（不會被誤標）。
-    assert r["consensus"] == ["engineer 同意 senior"]  # 空鍵回填規則骨架
+    # 空鍵回填規則骨架——走 _anchored_from_summary、帶 transcript 真錨點，不被護欄重複標記
+    assert r["consensus"] == ["engineer 同意 senior"]
     assert r["disagreements"] == ["qa 反對 engineer"]
     assert r["open_questions"] == ["qa 反對 engineer"]
 
