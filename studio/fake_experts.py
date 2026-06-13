@@ -273,7 +273,10 @@ def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str
             session_id,
             cwd,
             scripts=[
-                "我建議分成核心模組 calculator.py 與介面 main.py，先核心再介面。",
+                # 帶結構化引用（回應 @角色: 同意/反對）—— 讓討論 transcript 產生真實
+                # mention pair，使結論彙整能落出帶 (round, speaker) 錨點的 CONCLUSION.md。
+                "我建議分成核心模組 calculator.py 與介面 main.py，先核心再介面。\n"
+                "回應 @高級工程師: 同意 介面與核心分開、錯誤用例外的做法。",
                 "已完成本任務，並自己跑過確認可執行。",
             ],
             action_marker="任務 #",
