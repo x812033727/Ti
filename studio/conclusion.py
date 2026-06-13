@@ -14,12 +14,18 @@
   ② 無人反對 ≠ 共識，需區分「明確同意」與「無人表態」（防 Silent Agreement 偏誤）；
   ③ 強分歧須保留並標明雙方，不得抹平。
 
-落盤（``record`` / ``CONCLUSION.md`` render）為後續任務職責，本模組只負責「彙整成 dict」。
+落盤：:func:`record` 把彙整 dict 渲染成 ``CONCLUSION.md`` 四段 markdown（``## 共識／
+## 分歧／## 未決事項／## 後續行動``），覆寫式單檔落 workspace 根（沿用 ``adr.py`` 的
+cwd 定位與 atomic tmp-replace 慣例）。每場一份快照，歷史保存靠 git commit 而非 append
+累積——commit 由 orchestrator 接線時以既有 ``self._commit`` 慣例執行（任務 #5），本模組
+只負責「render＋落盤」，不直接呼叫 git，方便純檔案 IO 單元測試。
+
 純邏輯與 LLM 呼叫解耦：``summarize`` 只依賴傳入的 ``senior.speak``，方便以 StubExpert 測試。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import flow
@@ -147,3 +153,63 @@ async def summarize(
         if not parsed.get(key):
             parsed[key] = list(summary.get(key) or [])
     return parsed
+
+
+# ── 落盤（任務 #4）──────────────────────────────────────────────────────────
+# CONCLUSION.md 固定四段，鍵→標題的對應（順序即渲染順序）。
+_SECTIONS = (
+    ("consensus", "共識"),
+    ("disagreements", "分歧"),
+    ("open_questions", "未決事項"),
+    ("actions", "後續行動"),
+)
+
+
+def _md_path(cwd: Path) -> Path:
+    return Path(cwd) / "CONCLUSION.md"
+
+
+def render_markdown(conclusion: dict[str, list[str]]) -> str:
+    """把四鍵結論 dict 渲染成固定四段 markdown，永遠輸出四段（空段標「（無）」）。
+
+    每條結論逐條列為 bullet，原樣保留字串內的 ``(round, speaker)`` 錨點（錨點由規則層
+    summary 帶入，見 ``summarize``）——不在此處增刪內容，純格式化。
+    """
+    lines = ["# 討論結論", ""]
+    for key, title in _SECTIONS:
+        lines.append(f"## {title}")
+        items = [it.strip() for it in (conclusion.get(key) or []) if (it or "").strip()]
+        if items:
+            lines.extend(f"- {it}" for it in items)
+        else:
+            lines.append("- （無）")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def record(
+    cwd: Path | None,
+    conclusion: dict[str, list[str]],
+    *,
+    session_id: str = "",
+) -> Path | None:
+    """把結論 dict 渲染成 ``CONCLUSION.md`` 落 workspace 根（覆寫式單檔），回傳路徑。
+
+    沿用 ``adr.py`` 的 atomic tmp-replace 寫入（避免半截檔）。每場覆寫——結論是本場快照，
+    歷史保存靠 git commit（orchestrator #5 接線），非 append 累積。
+
+    ``cwd`` 為 None（無 workspace 的單元測試）時不落盤、回 None；其餘永遠產出檔案
+    （即便四鍵皆空也寫出四段骨架，確保 fallback 路徑仍有 CONCLUSION.md，驗收 #6）。
+
+    :param conclusion: :func:`summarize` 回傳的四鍵 dict（已含 fallback 處理）。
+    :param session_id: 僅供呼叫端紀錄/事件用，落盤本身不依賴。
+    :returns: 寫出的 ``CONCLUSION.md`` 路徑，或 ``cwd is None`` 時 ``None``。
+    """
+    if cwd is None:
+        return None
+    path = _md_path(cwd)
+    text = render_markdown(conclusion or {})
+    tmp = path.with_suffix(".md.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    return path
