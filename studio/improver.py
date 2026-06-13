@@ -47,32 +47,13 @@ OFFLINE_BLUEPRINT = """願景: 做一個讓使用者輕鬆上手的示範產品
 DISCOVERY_MAX = 5
 
 
-def route_core_changes(result: dict) -> int:
-    """把一場討論判定的核心改動路由到核心 backlog（回傳路由數）。
-
-    與專案無關——`核心改動:` 專指「改 Ti 框架本身」，任何 session（專案／單場／autopilot）
-    發現都進同一份核心 backlog（省略 state_dir＝預設 config.AUTOPILOT_STATE_DIR，正是 autopilot
-    在 drain 的那份），由 autopilot 在核心 repo（config.CORE_REPO）的 working clone 實作、過閘門、
-    開「獨立 PR」——絕不進專案 backlog／PR。
-    """
-    core = result.get("core_changes") or []
-    if not core:
-        return 0
-    # 與「找問題」(_discover) 一致：路由前過濾近期已完成的同名核心改動。_is_duplicate 只擋
-    # pending/in_progress，擋不到 done——否則同一條核心改動做完後，被別場/別輪討論再次提出時會
-    # 重複排入核心 backlog，對核心 repo 開出重複/空轉的外部 PR。EVAL_MEMORY=0 時不過濾（向後相容）。
-    done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
-    core = [c for c in core if c.get("title", "").strip() not in done]
-    return backlog.add_items(core, source="core") if core else 0
-
-
 def drain_result_to_backlogs(result: dict, project_state_dir) -> tuple[int, int]:
     """把一場討論結果分流回填 backlog，回傳 (回填的後續任務數, 路由的核心改動數)。
 
     雙軌路由的單一決策點（見 ARCHITECTURE.md「專案 repo 與 Ti 主核心 repo」）：
       - 後續任務（`後續任務:`）→ 專案 backlog（`project_state_dir`），迴圈自我補給。
         優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
-      - 核心改動（`核心改動:`）→ 核心 backlog（見 route_core_changes）。
+      - 核心改動（`核心改動:`）→ 核心 backlog（見 backlog.route_core_changes，含近期完成去重）。
     """
     items = result.get("followup_items") or []
     followups = result.get("followups") or []
@@ -80,7 +61,7 @@ def drain_result_to_backlogs(result: dict, project_state_dir) -> tuple[int, int]
         added = backlog.add_items(items, source="discovered", state_dir=project_state_dir)
     else:
         added = backlog.add_many(followups, source="discovered", state_dir=project_state_dir)
-    return added, route_core_changes(result)
+    return added, backlog.route_core_changes(result.get("core_changes") or [])
 
 
 class ProjectImprover:
@@ -506,15 +487,15 @@ class ProjectImprover:
             return parse_structured_tasks(text)
 
         proposals = await asyncio.gather(*(_ask(k) for k in keys))
-        # 找問題若辨識出 Ti 核心議題，與專案任務分流——路由到核心 backlog（依標題去重），
-        # 不進專案 backlog；由 autopilot 在主核心 repo 實作開獨立 PR（雙軌路由，見 route_core_changes）。
+        # 找問題若辨識出 Ti 核心議題，與專案任務分流——路由到核心 backlog（依標題去重），不進專案
+        # backlog；由 autopilot 在主核心 repo 實作開獨立 PR（雙軌路由，見 backlog.route_core_changes）。
         if core_buf:
             uniq, seen_core = [], set()
             for c in core_buf:
                 if c["title"] not in seen_core:
                     seen_core.add(c["title"])
                     uniq.append(c)
-            routed = route_core_changes({"core_changes": uniq})
+            routed = backlog.route_core_changes(uniq)
             if routed:
                 log.info("找問題：路由 %d 個核心改動到核心 backlog（%s）", routed, config.CORE_REPO)
                 await self.broadcast(

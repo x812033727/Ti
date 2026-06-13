@@ -11,7 +11,8 @@ from __future__ import annotations
 import pytest
 
 from studio import backlog, config
-from studio.improver import drain_result_to_backlogs, route_core_changes
+from studio.backlog import route_core_changes
+from studio.improver import drain_result_to_backlogs
 
 
 @pytest.fixture
@@ -78,10 +79,9 @@ def test_routing_legacy_result_without_core_changes_key(dirs):
 
 
 def test_route_core_changes_standalone(dirs):
-    """route_core_changes 獨立路由核心改動——供非專案單場討論（ws._run_plain_session）共用。"""
+    """backlog.route_core_changes 是雙軌路由的單一收斂點——所有消費端（improver/ws/autopilot）共用。"""
     core_dir, _ = dirs
-    result = {"core_changes": [{"title": "改 runner 沙箱", "priority": 0, "type": "bug"}]}
-    routed = route_core_changes(result)
+    routed = route_core_changes([{"title": "改 runner 沙箱", "priority": 0, "type": "bug"}])
     assert routed == 1
     core_tasks = backlog.list_tasks()  # 預設 state_dir＝核心 backlog
     assert {t["title"] for t in core_tasks} == {"改 runner 沙箱"}
@@ -89,8 +89,8 @@ def test_route_core_changes_standalone(dirs):
 
 
 def test_route_core_changes_empty_is_noop(dirs):
-    assert route_core_changes({"core_changes": []}) == 0
-    assert route_core_changes({}) == 0  # 無鍵也安全
+    assert route_core_changes([]) == 0
+    assert route_core_changes(None) == 0  # None 也安全
     assert backlog.list_tasks() == []
 
 
@@ -99,12 +99,12 @@ def test_route_core_changes_skips_recently_done(dirs, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_EVAL_MEMORY", 20)
     item = {"title": "改 orchestrator 發佈流程", "priority": 1, "type": "improvement"}
 
-    assert route_core_changes({"core_changes": [item]}) == 1
+    assert route_core_changes([item]) == 1
     task = backlog.list_tasks()[0]
     backlog.set_status(task["id"], "done")
 
     # 同一條再次被討論提出 → 因近期已完成被過濾，不重複排入。
-    assert route_core_changes({"core_changes": [item]}) == 0
+    assert route_core_changes([item]) == 0
     assert len(backlog.list_tasks()) == 1
 
 
@@ -113,8 +113,8 @@ def test_route_core_changes_no_dedup_when_memory_zero(dirs, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_EVAL_MEMORY", 0)
     item = {"title": "改 runner", "priority": 1, "type": "improvement"}
 
-    assert route_core_changes({"core_changes": [item]}) == 1
+    assert route_core_changes([item]) == 1
     backlog.set_status(backlog.list_tasks()[0]["id"], "done")
     # 記憶為 0＝不過濾近期完成，故 done 後同名可再排入。
-    assert route_core_changes({"core_changes": [item]}) == 1
+    assert route_core_changes([item]) == 1
     assert len(backlog.list_tasks()) == 2

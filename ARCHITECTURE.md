@@ -201,9 +201,9 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
 （`improver._discover_with_experts`）——兩者都把核心改動與專案任務分流。
 
 這些核心改動**不進專案 backlog、不混入專案 PR**：消費端（`improver`／`ws`／`autopilot`）
-以 `backlog.add_items(core, source="core")`（省略 `state_dir`＝核心 backlog
-`config.AUTOPILOT_STATE_DIR`，路由收斂在 `improver.route_core_changes`）路由到 autopilot 在
-drain 的那份佇列。autopilot 在
+一律經單一收斂點 `backlog.route_core_changes(items)` 路由（`source="core"`、省略 `state_dir`＝
+核心 backlog `config.AUTOPILOT_STATE_DIR`、並過濾近期已完成的同名項目避免重複/空轉 PR）到
+autopilot 在 drain 的那份佇列。autopilot 在
 `CORE_REPO` 的 working clone 上實作該改動、過 pytest／lint／no-SDK 閘門與分支保護失效保險，
 綠燈才對核心 repo 開**獨立 PR**（分支 `autopilot/task-<id>`，見 `autopilot._commit_push_merge`）。
 
