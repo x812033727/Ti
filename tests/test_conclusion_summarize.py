@@ -56,10 +56,12 @@ def test_正常解析四前綴():
         "行動: 補測試覆蓋"
     )
     r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
+    # #2 護欄：有效 (R1 engineer) 錨點（engineer 在 transcript）→ 不誤標。
     assert r["consensus"] == ["engineer 與 senior 對齊混合範式 (R1 engineer)"]
-    assert r["disagreements"] == ["qa 反對 engineer 的覆蓋率假設"]
-    assert r["open_questions"] == ["上線時程未定"]
-    assert r["actions"] == ["補測試覆蓋"]
+    # 其餘 LLM 自產條目無錨點 → 標 （未錨定），可視區分「LLM 自填」與「有來源」。
+    assert r["disagreements"] == ["qa 反對 engineer 的覆蓋率假設（未錨定）"]
+    assert r["open_questions"] == ["上線時程未定（未錨定）"]
+    assert r["actions"] == ["補測試覆蓋（未錨定）"]
 
 
 def test_prompt_含三條防坑硬指令與錨點來源():
@@ -94,7 +96,9 @@ def test_部分漏標_空鍵以規則骨架回填():
     # senior 只給了行動，漏標共識/分歧/未決——規則層已知為真者不可被靜默丟棄
     senior = StubSenior("行動: 補 rate limit 測試")
     r = asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
-    assert r["actions"] == ["補 rate limit 測試"]  # LLM 給的照用
+    # LLM 給的 actions 照用，但無錨點 → 過護欄標 （未錨定）。
+    assert r["actions"] == ["補 rate limit 測試（未錨定）"]
+    # 空鍵回填規則骨架：走 _anchored_from_summary，不過護欄（不會被誤標）。
     assert r["consensus"] == ["engineer 同意 senior"]  # 空鍵回填規則骨架
     assert r["disagreements"] == ["qa 反對 engineer"]
     assert r["open_questions"] == ["qa 反對 engineer"]

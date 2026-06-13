@@ -681,7 +681,12 @@ class StudioSession:
         )
         summary = build_summary(transcript)
         result = await conclusion.summarize(senior, summary, transcript, self.broadcast)
-        path = conclusion.record(self.cwd, result, session_id=self.session_id)
+        path = conclusion.record(
+            self.cwd,
+            result,
+            session_id=self.session_id,
+            rounds=max((u.round for u in transcript), default=0),
+        )
         if path is None:
             return
         await self._commit(self._main_ctx, "結論彙整：產出 CONCLUSION.md")
