@@ -484,6 +484,10 @@ AUTOPILOT_STATE_DIR = Path(os.getenv("TI_AUTOPILOT_STATE_DIR", str(PROJECT_ROOT 
 AUTOPILOT_WORK_DIR = Path(os.getenv("TI_AUTOPILOT_WORK_DIR", "/opt/ti-autopilot-work"))
 AUTOPILOT_DEPLOY_DIR = Path(os.getenv("TI_AUTOPILOT_DEPLOY_DIR", str(PROJECT_ROOT)))
 AUTOPILOT_REPO = os.getenv("TI_AUTOPILOT_REPO", "x812033727/Ti")  # owner/repo
+# 主核心 repo：Ti 框架本身。專案討論中判定「需改 Ti 核心」的改動一律路由到這裡、開獨立 PR
+# （絕不混入專案 repo）。固定綁定 AUTOPILOT_REPO，確保「路由目標」恆等於「autopilot 實際實作
+# 並發佈核心改動的 repo」——兩者不可分歧（見 ARCHITECTURE.md「專案 repo 與 Ti 主核心 repo」）。
+CORE_REPO = AUTOPILOT_REPO
 AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
