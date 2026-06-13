@@ -91,6 +91,30 @@ def test_pm_done_parsing():
     assert not pm_done("還缺測試\n決議：未完成")
 
 
+async def test_record_known_limitations_writes_file_and_followups(tmp_path):
+    # 帶已知限制出貨前置：未過任務寫進 KNOWN_LIMITATIONS.md＋回填 followups（下輪改良續做）。
+    bucket, broadcast = [], None
+    captured = []
+
+    async def bc(ev):
+        captured.append(ev)
+
+    session = StudioSession("t", bc, experts={}, cwd=tmp_path)
+    unmet = [
+        {"id": 1, "title": "撰寫 README.md", "status": "review"},
+        {"id": 2, "title": "新增設定檔範例", "status": "review"},
+    ]
+    await session._record_known_limitations(unmet)
+
+    f = tmp_path / "KNOWN_LIMITATIONS.md"
+    assert f.exists(), "應寫出 KNOWN_LIMITATIONS.md"
+    body = f.read_text(encoding="utf-8")
+    assert "撰寫 README.md" in body and "新增設定檔範例" in body
+    # 未過任務回填 followups,確保「已出貨」不等於「遺忘」
+    assert "撰寫 README.md" in session._followups
+    assert "新增設定檔範例" in session._followups
+
+
 def test_shippable_verdict():
     # 全任務通過 → 完整出貨
     assert shippable_verdict(all_ok=True, demo_veto=False, core_verified=False, stopped=False)
