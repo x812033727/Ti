@@ -47,6 +47,27 @@ OFFLINE_BLUEPRINT = """願景: 做一個讓使用者輕鬆上手的示範產品
 DISCOVERY_MAX = 5
 
 
+def drain_result_to_backlogs(result: dict, project_state_dir) -> tuple[int, int]:
+    """把一場討論結果分流回填 backlog，回傳 (回填的後續任務數, 路由的核心改動數)。
+
+    雙軌路由的單一決策點（見 ARCHITECTURE.md「專案 repo 與 Ti 主核心 repo」）：
+      - 後續任務（`後續任務:`）→ 專案 backlog（`project_state_dir`），迴圈自我補給。
+        優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
+      - 核心改動（`核心改動:`）→ 核心 backlog（省略 state_dir＝預設 config.AUTOPILOT_STATE_DIR，
+        正是 autopilot 在 drain 的那份），由 autopilot 在核心 repo（config.CORE_REPO）的 working
+        clone 實作、過閘門、開「獨立 PR」——絕不進專案 backlog／PR。
+    """
+    items = result.get("followup_items") or []
+    followups = result.get("followups") or []
+    if items:
+        added = backlog.add_items(items, source="discovered", state_dir=project_state_dir)
+    else:
+        added = backlog.add_many(followups, source="discovered", state_dir=project_state_dir)
+    core = result.get("core_changes") or []
+    routed = backlog.add_items(core, source="core") if core else 0
+    return added, routed
+
+
 class ProjectImprover:
     """單一專案的持續改良迴圈。介面與 StudioSession 對齊（session_id / broadcast /
     request_stop），讓 ws._pump_interventions 不需分支即可共用插話/停止管線。"""
@@ -219,16 +240,21 @@ class ProjectImprover:
             self._record_sid = None
 
         completed = bool(result.get("completed"))
-        # 檢討發現的後續任務回填專案 backlog —— 迴圈的自我補給線。
-        # 優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
-        items = result.get("followup_items") or []
-        followups = result.get("followups") or []
-        if items:
-            added = backlog.add_items(items, source="discovered", state_dir=sdir)
-        else:
-            added = backlog.add_many(followups, source="discovered", state_dir=sdir)
+        # 一場討論結果分流回填：後續任務→專案 backlog；核心改動→核心 backlog（見雙軌路由）。
+        added, routed = drain_result_to_backlogs(result, sdir)
         if added:
             log.info("專案 %s 從討論回填 %d 個後續任務", pid, added)
+        if routed:
+            log.info(
+                "專案 %s 路由 %d 個核心改動到核心 backlog（%s）", pid, routed, config.CORE_REPO
+            )
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id,
+                    "核心改動",
+                    f"已將 {routed} 項核心改動排入核心 repo（{config.CORE_REPO}）的改良佇列",
+                )
+            )
         backlog.set_status(
             task["id"],
             "done" if completed else "failed",

@@ -29,6 +29,7 @@ from .flow import (
     critic_blocks as critic_blocks,
     is_stalled as is_stalled,
     parse_clarify as parse_clarify,
+    parse_core_changes as parse_core_changes,
     parse_followups as parse_followups,
     parse_followups_meta as parse_followups_meta,
     parse_lessons as parse_lessons,
@@ -140,6 +141,9 @@ class StudioSession:
         self._stop = False
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
         self._followup_items: list[dict] = []  # 同上、含 priority/type（消費端優先用這份）
+        self._core_changes: list[
+            dict
+        ] = []  # 判定需改 Ti 核心的項目（路由到核心 backlog，autopilot 實作開獨立 PR）
         self._vision = ""  # 澄清階段抽出的一句產品願景（回填專案 meta 用）
         self._last_commit: str | None = None  # 最近一次主分支 workspace commit 短 hash
         # 主（循序）lane 的隔離狀態；於 _run 建立後，所有對主 workspace 的操作都走它。
@@ -596,6 +600,7 @@ class StudioSession:
             "completed": False,
             "followups": [],
             "followup_items": [],
+            "core_changes": [],
             "commit": None,
             "vision": "",
         }
@@ -805,6 +810,7 @@ class StudioSession:
             "completed": done,
             "followups": self._followups,
             "followup_items": self._followup_items,
+            "core_changes": self._core_changes,
             "commit": self._last_commit,
             "vision": self._vision,
         }
@@ -1646,7 +1652,11 @@ class StudioSession:
             "若過程中發現尚未解決的問題或值得改善之處，請在最後逐行列出後續任務，"
             "每行格式固定為 `後續任務: <動詞開頭的具體任務>`（沒有就不必列）；"
             "可在任務前加 `[P0/bug]` 樣式的標籤標注優先級（P0 必須~P2 加分）與類型"
-            "（feature/bug/improvement），標籤可省。"
+            "（feature/bug/improvement），標籤可省。\n"
+            "另外，若團隊判定「要滿足本需求，必須改動 Ti 核心框架本身（orchestrator／runner／"
+            "發佈流程等），而非只改本專案的程式碼」，請逐行列出，格式固定為 "
+            "`核心改動: <一句具體描述要改 Ti 核心的什麼>`（可加 `[P0/bug]` 標籤；沒有就不必列）。"
+            "這類項目不會進本專案 repo，會被路由到 Ti 主核心 repo 另開獨立 PR。"
         )
         if config.LESSONS_ENABLED:
             retro_prompt += (
@@ -1662,6 +1672,21 @@ class StudioSession:
                 seen.add(item["title"])
                 self._followup_items.append(item)
                 self._followups.append(item["title"])
+        # 核心改動：判定需改 Ti 核心框架的項目，與後續任務分流——不進專案 backlog／PR，
+        # 由消費端（improver／autopilot）路由到核心 backlog，autopilot 對核心 repo 開獨立 PR。
+        core_seen = {c["title"] for c in self._core_changes}
+        for item in parse_core_changes(retro):
+            if item["title"] not in core_seen:
+                core_seen.add(item["title"])
+                self._core_changes.append(item)
+        if self._core_changes:
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id,
+                    "核心改動",
+                    f"判定需改 Ti 核心 {len(self._core_changes)} 項，將路由到核心 repo（{config.CORE_REPO}）",
+                )
+            )
         if config.LESSONS_ENABLED:
             lessons.add_many(
                 parse_lessons(retro),
