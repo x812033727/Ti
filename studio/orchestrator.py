@@ -17,8 +17,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from . import adr, config, events, flow, lessons, memory, publisher, reflexion, runner, workspace
-from .discussion import DiscussionEngine
+from . import (
+    adr,
+    conclusion,
+    config,
+    events,
+    flow,
+    lessons,
+    memory,
+    publisher,
+    reflexion,
+    runner,
+    workspace,
+)
+from .discussion import DiscussionEngine, build_summary
 
 # 純函式層（決議解析／停滯偵測／任務依賴／波次規劃）已移至 flow.py；此處顯式 re-export
 # （redundant alias）保住既有 import 路徑（tests、autopilot、improver 皆 from
@@ -595,6 +607,7 @@ class StudioSession:
             )
         )
         conclusions: list[str] = []
+        all_transcript: list = []  # 跨子題聚合，供討論收斂後一次結論彙整落盤
         for idx, item in enumerate(agenda, start=1):
             if self._stop:
                 break
@@ -626,6 +639,7 @@ class StudioSession:
                 + "\n請對齊此子題的做法與檔案結構。"
             )
             if result.transcript:
+                all_transcript.extend(result.transcript)
                 positions = "\n".join(
                     f"【{name} 最終立場】{text}"
                     for name, text in result.summary["final_positions"].items()
@@ -634,6 +648,9 @@ class StudioSession:
         if not conclusions:
             return ""
         merged = "\n\n".join(conclusions)
+        # 結論彙整落盤（與 ADR 解耦）：討論全部收斂後一次彙整→落盤→commit→broadcast。
+        # 必須在下方「ADR 關閉即提前 return」之前——CONCLUSION.md 不應因 ADR 關閉而不產出。
+        await self._record_conclusion(senior, all_transcript)
         if not (config.ADR_ENABLED and self.cwd and not self._stop):
             return merged
         distilled = await senior.speak(
@@ -645,6 +662,30 @@ class StudioSession:
         if adr.record(self.cwd, adr.parse_adr(distilled), session_id=self.session_id):
             await self._commit(self._main_ctx, "架構決策：記錄 ADR")
         return merged
+
+    async def _record_conclusion(self, senior: ExpertLike, transcript: list) -> None:
+        """討論收斂後彙整→落盤 CONCLUSION.md→commit→broadcast 一筆結論事件（單一接點）。
+
+        一場一次的終局快照：以跨子題聚合的整場 transcript 算規則式 summary，交 senior
+        蒸餾出四段結論（漏標前綴則 fallback 回規則骨架，見 conclusion.summarize），落
+        workspace 根、進 git，再廣播 CONCLUSION 事件。
+
+        時序保證（架構決策）：commit **先於** broadcast——先確保檔案入 git 再通知，避免
+        前端收到事件但檔案尚未落盤的空窗。落盤是事實來源、事件僅通知；broadcast 不回滾
+        已完成的 record/commit。無 cwd／已停止／空 transcript 時直接略過（不阻斷主流程）。
+        """
+        if not (self.cwd and not self._stop and transcript):
+            return
+        await self.broadcast(
+            events.phase_change(self.session_id, "結論彙整", "彙整討論結論並產出 CONCLUSION.md")
+        )
+        summary = build_summary(transcript)
+        result = await conclusion.summarize(senior, summary, transcript, self.broadcast)
+        path = conclusion.record(self.cwd, result, session_id=self.session_id)
+        if path is None:
+            return
+        await self._commit(self._main_ctx, "結論彙整：產出 CONCLUSION.md")
+        await self.broadcast(events.conclusion(self.session_id, str(path), result))
 
     async def _architecture_decision(
         self,

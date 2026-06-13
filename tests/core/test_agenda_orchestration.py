@@ -215,8 +215,16 @@ async def test_discuss_agenda_single_distill_and_commit(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
     monkeypatch.setattr(config, "ADR_ENABLED", True)
     eng = StubExpert(BY_KEY["engineer"], ["工程師立場"])
+    # senior 發言序：子題1、子題2、結論蒸餾、ADR 蒸餾（結論在 ADR 前，見 _discuss_agenda）。
+    # 結論蒸餾須給一個獨立腳本，避免搶走 ADR 的 `決策:` 腳本（高工退回點）。
     senior = StubExpert(
-        BY_KEY["senior"], ["高工立場", "高工立場", "決策: 資料層用 JSONL\n理由: 簡單可附加"]
+        BY_KEY["senior"],
+        [
+            "高工立場",
+            "高工立場",
+            "共識: 工程師 同意 高級工程師",
+            "決策: 資料層用 JSONL\n理由: 簡單可附加",
+        ],
     )
     experts = {"engineer": eng, "senior": senior}
     _, broadcast = collect()
@@ -228,11 +236,16 @@ async def test_discuss_agenda_single_distill_and_commit(tmp_path, monkeypatch):
     await session._discuss_agenda(experts, eng, senior, "做一個記帳 CLI")
 
     assert eng.calls == 2  # 2 子題 × 1 輪
-    assert senior.calls == 3  # 2 子題發言＋僅 1 次蒸餾
-    distill = senior.prompts[-1]
+    assert senior.calls == 4  # 2 子題發言＋1 次結論蒸餾＋1 次 ADR 蒸餾
+    # 結論蒸餾排在 ADR 之前（prompts[2]），不得搶走 ADR 的輸入。
+    assert "結構化結論" in senior.prompts[2]
+    distill = senior.prompts[-1]  # 最後一次仍是 ADR 蒸餾
     assert "蒸餾成決策記錄" in distill
     assert "〔子題 1：資料層〕" in distill and "〔子題 2：介面層〕" in distill
+    # ADR 仍拿到正確的 `決策:` 輸入、只記一次（結論蒸餾未污染）。
     assert [e["decision"] for e in adr.all_entries(tmp_path)] == ["資料層用 JSONL"]
+    # 結論彙整副產物：CONCLUSION.md 確實落盤（接線生效）。
+    assert (tmp_path / "CONCLUSION.md").is_file()
 
 
 @pytest.mark.asyncio

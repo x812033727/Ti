@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -121,6 +123,47 @@ def test_agenda_full_flow_engine_mode(client):
     assert len(replay) == len(evs)
     saved = [e for e in replay if e["type"] == "agenda_plan"]
     assert len(saved) == 1 and saved[0]["payload"] == plan
+
+    # 5) 結論彙整落盤（任務 #4 驗收 #4/#5/#7）：CONCLUSION.md 產出、四段齊全、進 git、
+    #    至少一條結論帶 (round, speaker) 錨點且回指 transcript 實際發言（自證對應、排除假綠）。
+    md = (config.WORKSPACE_ROOT / sid / "CONCLUSION.md").read_text(encoding="utf-8")
+    for header in ("## 共識", "## 分歧", "## 未決事項", "## 後續行動"):
+        assert header in md, f"CONCLUSION.md 缺少 {header} 段"
+
+    # 5a) 已被 git commit：有「結論彙整」commit 事件，且 broadcast 一筆 conclusion 事件。
+    commit_msgs = [e["payload"]["message"] for e in by_type.get("git_commit", [])]
+    assert any("結論彙整" in m for m in commit_msgs), "CONCLUSION.md 應有對應 git commit"
+    conc_evs = by_type.get("conclusion", [])
+    assert len(conc_evs) == 1, "應 broadcast 恰一筆 conclusion 事件"
+    assert conc_evs[0]["payload"]["path"].endswith("CONCLUSION.md")
+    assert set(conc_evs[0]["payload"]["summary"]) == {
+        "consensus",
+        "disagreements",
+        "open_questions",
+        "actions",
+    }
+
+    # 5b) 自證對應：抽一條帶 (R<round> <speaker>) 錨點的結論，反查該輪該角色確有此 mention。
+    anchors = re.findall(r"\(R(\d+)\s+([^\s)]+)\)", md)
+    assert anchors, "CONCLUSION.md 至少一條結論須帶 (round, speaker) 錨點"
+    round_no, speaker = anchors[0]
+    # 錨點 speaker 必為本場討論真實參與者，且其發言確含結構化引用（mention）。
+    spoken = [
+        e["payload"]["text"] for e in by_type["expert_message"] if e["payload"]["name"] == speaker
+    ]
+    assert spoken, f"錨點 speaker={speaker} 並非本場發言者（假綠）"
+    assert any("回應 @" in t for t in spoken), (
+        "錨點所指角色的發言應含結構化引用，方能回指 transcript"
+    )
+
+    # 5c) 反向防幻覺：共識段每條結論都能回指規則層（帶錨點或標「（無）」），
+    #     不得出現 transcript 未產生的憑空 mention。
+    consensus_block = md.split("## 共識", 1)[1].split("##", 1)[0]
+    for line in consensus_block.splitlines():
+        line = line.strip()
+        if not line.startswith("- ") or line == "- （無）":
+            continue
+        assert "(R" in line, f"共識結論缺錨點、疑似幻覺：{line}"
 
 
 def test_agenda_legacy_negative_control(legacy_client):

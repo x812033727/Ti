@@ -321,6 +321,22 @@ function handleEvent(ev) {
       });
       break;
     }
+    case "conclusion": {
+      // 結論彙整快照：一場討論收斂後產出 CONCLUSION.md，渲染四段摘要（重播時亦經此）。
+      addSystem("📝 結論彙整：已產出 CONCLUSION.md");
+      const s = p.summary || {};
+      const sections = [
+        ["共識", s.consensus],
+        ["分歧", s.disagreements],
+        ["未決事項", s.open_questions],
+        ["後續行動", s.actions],
+      ];
+      sections.forEach(([label, items]) => {
+        const list = items || [];
+        if (list.length) addSystem(`【${label}】` + list.join("；"));
+      });
+      break;
+    }
     case "critic_review":
       if (p.passed) {
         addSystem("🔍 異議檢查放行（" + (p.gate || "") + " 視角）");
