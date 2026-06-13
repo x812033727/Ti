@@ -76,7 +76,7 @@ function fetchStub(url, opts) {
 }
 
 const ctx = vm.createContext({
-  document, window: { addEventListener: noop, location: { protocol: 'http:', host: 'x', href: '' } },
+  document, window: { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } },
   location: { protocol: 'http:', host: 'x', href: '' }, WebSocket: function () { return new RecEl('ws'); },
   fetch: fetchStub, console, setTimeout: (f) => 0, setInterval: () => 0,
   clearTimeout: noop, clearInterval: noop,

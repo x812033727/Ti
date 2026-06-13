@@ -58,7 +58,7 @@ const document = {
   body: new RecEl('body'),
 };
 const noop = () => {};
-const windowObj = { addEventListener: noop, location: { protocol: 'http:', host: 'x', href: '' } };
+const windowObj = { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } };
 function WebSocket() { return new RecEl('ws'); }
 
 const ctx = vm.createContext({

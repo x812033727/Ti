@@ -30,7 +30,7 @@ const doc = {
 
 const sandbox = {
   document: doc,
-  window: { addEventListener: () => {} },
+  window: { addEventListener: () => {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
   location: { protocol: "http:", host: "localhost", href: "" },
   WebSocket: function () { return makeStub(); },
   fetch: () => Promise.resolve({ json: () => Promise.resolve({}), ok: true }),
