@@ -231,3 +231,54 @@ async def test_huddle_conclusion_seeded_into_retry(monkeypatch):
     # 工程師最後一次（重試）prompt 應帶入 huddle 替代方案
     retry_prompt = experts["engineer"].prompts[-1]
     assert "卡關 huddle 替代方案" in retry_prompt
+
+
+# --- 卡關討論並行化：預設並行 + legacy 逃生口 ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_huddle_runs_parallel_by_default(monkeypatch):
+    """預設 DISCUSS_MODE=parallel：huddle 走 DiscussionEngine 單輪同輪並行，
+    event 形狀／participants 鍵清單／單輪發言次數皆與舊循序版一致。"""
+    assert config.DISCUSS_MODE == "parallel"  # 新預設（conftest 清 env，import 時即 parallel）
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["v1", "v2", "v3", "huddle 後重試"],
+        qa=["驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    discuss = [
+        e for e in bucket if e.type == events.EventType.HUDDLE and not e.payload["limitation"]
+    ]
+    assert len(discuss) == 1
+    assert discuss[0].payload["participants"] == ["pm", "engineer", "senior"]
+    # 單輪：每角色剛好一次 → 工程師＝主迴圈滿輪 + huddle 1 + 重試 1（與循序版相同）
+    assert experts["engineer"].calls == config.TASK_MAX_ROUNDS + 2
+
+
+@pytest.mark.asyncio
+async def test_huddle_legacy_mode_still_serial(monkeypatch):
+    """逃生口：DISCUSS_MODE=legacy 時 huddle 維持原始循序逐行發言，行為與現狀一致。"""
+    monkeypatch.setattr(config, "DISCUSS_MODE", "legacy")
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", True)
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=["任務: 實作", "決議: 未完成", "檢討"],
+        eng=["v1", "v2", "v3", "huddle 後重試"],
+        qa=["驗證: FAIL"],
+        senior=["決議: 退回"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    await session.run("需求")
+
+    discuss = [
+        e for e in bucket if e.type == events.EventType.HUDDLE and not e.payload["limitation"]
+    ]
+    assert len(discuss) == 1
+    assert discuss[0].payload["participants"] == ["pm", "engineer", "senior"]
+    assert experts["engineer"].calls == config.TASK_MAX_ROUNDS + 2

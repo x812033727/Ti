@@ -211,6 +211,9 @@ async def test_per_task_iteration_two_tasks():
 @pytest.mark.asyncio
 async def test_debate_runs(monkeypatch):
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
+    # 此測驗 legacy 兩人辯論（提案→點評）的發言計數；預設已是 parallel，engine 路徑
+    # 由 test_discussion.py 專測，故此處 pin legacy 以驗逃生口行為不變。
+    monkeypatch.setattr(config, "DISCUSS_MODE", "legacy")
     bucket, broadcast = collect()
     experts = _experts(
         pm=["任務: 實作", "決議: 完成", "檢討"],
