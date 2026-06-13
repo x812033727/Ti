@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -164,6 +165,30 @@ def test_agenda_full_flow_engine_mode(client):
         if not line.startswith("- ") or line == "- （無）":
             continue
         assert "(R" in line, f"共識結論缺錨點、疑似幻覺：{line}"
+
+    # 5d) 機讀 sidecar（任務 #3＋#4 接線）：conclusion.json 與 md 同場落盤、schema 完整，
+    #     且 rounds 為真實輪數——攔截「orchestrator 漏傳 rounds → 恆為 0」的接線缺口。
+    sidecar = config.WORKSPACE_ROOT / sid / "conclusion.json"
+    assert sidecar.is_file(), "conclusion.json sidecar 應與 CONCLUSION.md 同場落盤"
+    data = json.loads(sidecar.read_text(encoding="utf-8"))  # 合法 JSON
+    assert data["version"] == 1
+    assert data["session_id"] == sid
+    assert set(data) == {
+        "version",
+        "session_id",
+        "rounds",
+        "consensus",
+        "disagreements",
+        "open_questions",
+        "actions",
+    }
+    # 真實輪數＝md 錨點觀察到的最大 round（來自 transcript Utterance.round）；rounds 必 ≥1
+    # 且等於該值——若 orchestrator 漏傳 rounds，這裡會是 0、斷言失敗（自證對應、排除假綠）。
+    max_anchor_round = max(int(r) for r, _ in anchors)
+    assert data["rounds"] == max_anchor_round, (
+        f"sidecar rounds={data['rounds']} 應等於真實輪數 {max_anchor_round}（非寫死 0）"
+    )
+    assert data["rounds"] >= 1
 
 
 def test_agenda_legacy_negative_control(legacy_client):

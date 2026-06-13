@@ -207,6 +207,33 @@ def test_record_sidecar_failure_degrades_to_md_only(tmp_path: Path, monkeypatch)
     assert list(tmp_path.glob("*.tmp")) == []
 
 
+def test_record_sidecar_serialization_error_degrades(tmp_path: Path):
+    """名副其實的 best-effort：payload 含非 JSON 值（序列化丟 TypeError）也降級、不拋（高工建議）。
+
+    直接呼叫 _write_sidecar 注入不可序列化的 conclusion，驗證 except 網涵蓋 TypeError、
+    僅 log 不拋、且不留殘檔。
+    """
+
+    class _Unserializable:
+        pass
+
+    # 不經 record（其 list(...) 會吃掉），直接戳 _write_sidecar 注入壞值。
+    conclusion._write_sidecar(
+        tmp_path,
+        {
+            "consensus": [_Unserializable()],
+            "disagreements": [],
+            "open_questions": [],
+            "actions": [],
+        },
+        session_id="s1",
+        rounds=1,
+    )
+    # 序列化失敗 → 不拋例外、sidecar 不產出、無殘留 tmp。
+    assert not (tmp_path / "conclusion.json").exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_render_markdown_pure_filters_blank_items():
     """render 純函式：剝空白、跳過空字串條目。"""
     md = conclusion.render_markdown(

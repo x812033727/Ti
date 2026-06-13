@@ -303,7 +303,10 @@ def _write_sidecar(
     try:
         jtmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         jtmp.replace(jpath)
-    except OSError as exc:  # 落盤失敗：降級保留 md，清理殘留 tmp
+    # 名副其實的 best-effort：除 OSError（IO/磁碟）外，也涵蓋序列化錯誤（TypeError/
+    # ValueError，如 payload 含非 JSON 值）——附屬 sidecar 任何失敗都降級，絕不向上拋出
+    # 拖垮 record→commit→broadcast 時序（高工建議）。
+    except (OSError, TypeError, ValueError) as exc:  # 失敗：降級保留 md，清理殘留 tmp
         logger.warning("conclusion.json sidecar 寫入失敗，降級為僅保留 CONCLUSION.md：%s", exc)
         try:
             jtmp.unlink(missing_ok=True)

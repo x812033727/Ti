@@ -681,7 +681,9 @@ class StudioSession:
         )
         summary = build_summary(transcript)
         result = await conclusion.summarize(senior, summary, transcript, self.broadcast)
-        path = conclusion.record(self.cwd, result, session_id=self.session_id)
+        # 帶入真實輪數供 sidecar 機讀（設計決策 #4）：取整場 transcript 的末輪 round。
+        rounds = max((u.round for u in transcript), default=0)
+        path = conclusion.record(self.cwd, result, session_id=self.session_id, rounds=rounds)
         if path is None:
             return
         await self._commit(self._main_ctx, "結論彙整：產出 CONCLUSION.md")
