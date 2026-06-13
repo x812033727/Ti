@@ -426,6 +426,97 @@
       "rejected": "",
       "session_id": "pjac99386bbc",
       "created_at": 1781318684.968069
+    },
+    {
+      "decision": "任務#1 第④條自我校驗指令插入 `build_prompt` 的 159 行（硬指令③）與 160 行（「盡量帶 (round, speaker) 錨點」提示）之間",
+      "rationale": "經兩位親查核實該位置不動四鍵前綴格式，`flow.parse_conclusion` 解析不破壞（驗收#1）",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799076
+    },
+    {
+      "decision": "任務#1 第④條措辭須與 160 行「盡量帶錨點」語意對齊不打架——統一為「能對應骨架錨點者帶上，自檢確認每條都有骨架依據，查無依據者刪除」，避免 LLM 將「盡量帶」與「無依據即刪」理解成衝突",
+      "rationale": "工程師指出兩行語氣若對立會擾動 LLM 輸出；收斂為同一條「有依據才留、留則帶錨」的一致敘事",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.379911
+    },
+    {
+      "decision": "任務#2 護欄套用範圍以「是否走 `_anchored_from_summary` 回填」為判別，凡未被回填的 LLM 自產非空鍵一律過護欄，明確涵蓋 `actions` 鍵",
+      "rationale": "工程師指出 `actions` 永遠走 LLM 原文、不在部分漏標回填範圍內，若護欄只列 consensus/disagreements/open_questions 則幻覺 action 漏網",
+      "rejected": "寫死鍵名清單套護欄——會遺漏 actions，且與「回填條目不重複處理」的判別邏輯不一致",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799124
+    },
+    {
+      "decision": "任務#2 護欄 `_guard_anchor` 採「抽 `(R<n> <speaker>)` token + 驗 speaker 存在性」保守判別，抽不到或 speaker 不存在於 transcript 才加 `（未錨定）`",
+      "rationale": "LLM 自由文字無法用規則層 `f\"{s} {verb} {t}\"` 精確重建，保守策略寧漏標不誤傷真錨點；`re` 限 ERE 等價、不用 PCRE 符合 CLAUDE.md 可攜性鐵則",
+      "rejected": "規則層精確重建比對——僅適用規則條目，套到 LLM 自由文字會大量誤標真來源條目",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799133
+    },
+    {
+      "decision": "任務#2 須在程式註解與 #5 交付說明標明護欄判別力上限為「只驗 speaker 出現、不驗 round 與論點對應」的盡力而為，非幻覺攔截保證，列為已知待辦",
+      "rationale": "高工指出「真 speaker＋幻覺論點」仍會漏標；須避免驗收#2 被誤解為護欄能保證攔幻覺，誠實暴露限制（CLAUDE.md 元認知鐵則）",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799143
+    },
+    {
+      "decision": "任務#3 `record` 雙寫採「md 主檔先寫保底、sidecar best-effort 後寫」語義——`conclusion.json` 寫入包 try，失敗降級為只保留 `CONCLUSION.md` ＋ log warning，不拋例外、不拖垮人讀主檔與既有 record→commit→broadcast 時序",
+      "rationale": "高工指出 `_record_conclusion` 無 try，sidecar 拋例外會中斷 commit/broadcast 且 md 已落卻未入 git；md 為驗收核心（#3/#5/#6）必落保底，sidecar 為 M2 前瞻附屬可降級",
+      "rejected": "工程師「sidecar 先寫、md 後寫代表整組就緒」——順序技巧仍需包 try 才安全，且讓附屬檔擋在主檔前不符主檔優先級；改以「主檔先落＋附屬 best-effort」更穩",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799152
+    },
+    {
+      "decision": "任務#3 sidecar 寫入失敗的降級路徑須清理殘留 `.json.tmp`，收尾以 `git status` 確認 workspace 無未追蹤殘檔",
+      "rationale": "高工提醒 tmp-replace 失敗可能殘留 `.json.tmp`，沿用 `adr.py` 範式並符合 CLAUDE.md「臨時檔不落被掃描目錄、收尾 git status 驗無殘留」鐵則",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799162
+    },
+    {
+      "decision": "任務#3 sidecar schema 為 `{\"version\": 1, \"session_id\", \"rounds\", \"consensus\", \"disagreements\", \"open_questions\", \"actions\"}`，`record` 加 `rounds: int = 0` keyword-only 參數承載輪數，回傳值維持 `CONCLUSION.md` path 不變",
+      "rationale": "`version` 欄供 M2 演進辨識；回傳不變則 broadcast CONCLUSION 事件零影響；`cwd is None` 時兩檔皆不落、回 None（驗收#3）",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799171
+    },
+    {
+      "decision": "任務#4 orchestrator `_record_conclusion` 僅改一行——`conclusion.record(...)` 傳 `rounds=max((u.round for u in transcript), default=0)`，commit 範圍不需改動",
+      "rationale": "高工驗實 `git_commit` 為 `git add -A`（runner.py 605），sidecar 在 commit 前由 record 寫出即同 commit 入 git，#4 零接線假設成立（驗收#4）",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799176
+    },
+    {
+      "decision": "任務#4 維持既有 record→commit→broadcast 時序與單一接點不變，sidecar 僅為 record 內多寫一檔，不新增接點、不散落",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799183
+    },
+    {
+      "decision": "任務#5 測試切分——`build_prompt` 第④條 grep＋前綴不破壞；`_guard_anchor` 純函式測（有效錨點／真 speaker＋幻覺論點／無錨點三類，含高工指定黑樣本）；`record` 雙寫 JSON 合法性＋四鍵＋session_id＋rounds＋`cwd=None` 雙不落；sidecar 寫失敗降級只保 md 的路徑測試",
+      "rationale": "護欄黑樣本須涵蓋「真 speaker＋幻覺論點」以驗判別力邊界並佐證已知限制",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.379919
+    },
+    {
+      "decision": "任務#5 離線 e2e 須實跑「全員無反對」與「LLM 漏標前綴 fallback」兩條既有路徑，確認四段產出＋至少一條回指 transcript 無回歸，且第④條與 `_guard_anchor` 以實跑黑白樣本驗證、不只 grep",
+      "rationale": "兩位均強調 CLAUDE.md 鐵則「親自實跑、自證對應、排除假綠」，prompt/格式改動不靠讀碼下結論",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799195
+    },
+    {
+      "decision": "全程不砍既有架構——規則為骨、LLM 為肉、覆寫式單檔＋git 快照、md 人讀／json 機讀雙寫不變；三項皆低風險增量，#1/#2/#3 同檔不同函式可並行，#4 待 #3 sidecar 路徑定後接線，#5 收尾",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8fd2961355",
+      "created_at": 1781324639.3799207
     }
   ]
 }
