@@ -23,7 +23,7 @@ from . import (
     workspace,
 )
 from .events import StudioEvent
-from .improver import ProjectImprover
+from .improver import ProjectImprover, drain_result_to_backlogs
 from .orchestrator import StudioSession
 
 router = APIRouter()
@@ -332,7 +332,7 @@ async def ws(websocket: WebSocket) -> None:
         run_coro = (
             _run_project_session(session, requirement, project)
             if project is not None
-            else session.run(requirement)
+            else _run_plain_session(session, requirement)
         )
         run_task = asyncio.create_task(run_coro)
         # slot 隨 run_task 完成釋放（無論是否 detach、是否斷線），一次性、不重複。
@@ -393,13 +393,17 @@ async def _run_project_session(session: StudioSession, requirement: str, project
         req = requirement
     result = await session.run(req)
     sdir = projects.state_dir(project["id"])
-    # 優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
-    items = result.get("followup_items") or []
-    followups = result.get("followups") or []
-    if items:
-        backlog.add_items(items, source="discovered", state_dir=sdir)
-    elif followups:
-        backlog.add_many(followups, source="discovered", state_dir=sdir)
+    # 結果分流回填（雙軌路由單一決策點）：後續任務→專案 backlog；核心改動→核心 backlog，
+    # 由 autopilot 在主核心 repo 實作開獨立 PR。單場討論同樣參與——下次持續改良迴圈現成供給。
+    _added, routed = drain_result_to_backlogs(result, sdir)
+    if routed:
+        await session.broadcast(
+            events.phase_change(
+                session.session_id,
+                "核心改動",
+                f"已將 {routed} 項核心改動排入核心 repo（{config.CORE_REPO}）的改良佇列",
+            )
+        )
     # 立項抽出的願景回填專案 meta（僅當原本為空；下一場開場即可前綴）。
     new_vision = (result.get("vision") or "").strip()
     if new_vision and not vision:
@@ -407,6 +411,22 @@ async def _run_project_session(session: StudioSession, requirement: str, project
     projects.record_session(
         project["id"], session.session_id, requirement[:80], bool(result.get("completed"))
     )
+    return result
+
+
+async def _run_plain_session(session: StudioSession, requirement: str) -> dict:
+    """非專案的單場討論：無專案 backlog 可回填，但團隊判定的核心改動仍路由到主核心 repo
+    （`核心改動:` 專指改 Ti 框架本身、與專案無關），由 autopilot 實作開獨立 PR。"""
+    result = await session.run(requirement)
+    routed = backlog.route_core_changes(result.get("core_changes") or [])
+    if routed:
+        await session.broadcast(
+            events.phase_change(
+                session.session_id,
+                "核心改動",
+                f"已將 {routed} 項核心改動排入核心 repo（{config.CORE_REPO}）的改良佇列",
+            )
+        )
     return result
 
 

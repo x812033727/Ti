@@ -1,5 +1,14 @@
 # 專案協作記憶
 
+## 架構鐵則：專案 repo vs Ti 主核心 repo（雙軌路由）
+
+- **專案改動**進專案 repo（`projects.effective_repo`：per-project `publish_repo` → 全域 `TI_PUBLISH_REPO`）。
+- **Ti 核心框架改動**（orchestrator／runner／發佈流程等）一律路由到 **`config.CORE_REPO`（固定
+  `x812033727/Ti`）的獨立 PR**，**絕不混入專案 repo**。
+- 判定方式：由專家在討論／檢討中以結構化行 `核心改動: <描述>` 表態（`flow.parse_core_changes`），
+  消費端以 `backlog.add_items(core, source="core")`（省略 `state_dir`＝核心 backlog）路由，
+  autopilot 在核心 repo 實作並開 PR。詳見 `ARCHITECTURE.md`「專案 repo 與 Ti 主核心 repo」。
+
 ## 工程師 — 長期經驗
 
 ### 非預期輸出：先懷疑自己的命令，絕不先怪「環境污染」

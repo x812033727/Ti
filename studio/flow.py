@@ -123,6 +123,7 @@ def parse_clarify(text: str) -> list[dict]:
 # 順序不拘；解析失敗一律退回預設（P1 / improvement），絕不因標籤寫壞丟任務。
 _RE_TAGGED_TASK = re.compile(r"^\s*任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
 _RE_TAGGED_FOLLOWUP = re.compile(r"^\s*後續任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
+_RE_CORE_CHANGE = re.compile(r"^\s*核心改動\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
 
 
 def _parse_item_tag(tag: str) -> dict:
@@ -166,6 +167,21 @@ def parse_followups_meta(text: str) -> list[dict]:
     return [
         {"title": title.strip(), **_parse_item_tag(tag)}
         for tag, title in _RE_TAGGED_FOLLOWUP.findall(text or "")
+        if title.strip()
+    ][:10]
+
+
+def parse_core_changes(text: str) -> list[dict]:
+    """從專家輸出抽出 `核心改動: [P0/bug] <說明>` 行——代表「要滿足本專案需求，必須改動 Ti 核心
+    框架本身（orchestrator／runner／發佈流程等），而非專案自己的程式碼」。
+
+    回傳結構化任務 {title, priority, type}（與 parse_followups_meta 同形），供路由到核心 backlog
+    （config.CORE_REPO＝x812033727/Ti），由 autopilot 在核心 repo 的 working clone 實作、過閘門、
+    開「獨立 PR」——絕不混入專案 repo。標籤缺省取預設（P1／improvement）。
+    """
+    return [
+        {"title": title.strip(), **_parse_item_tag(tag)}
+        for tag, title in _RE_CORE_CHANGE.findall(text or "")
         if title.strip()
     ][:10]
 

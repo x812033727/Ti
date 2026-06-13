@@ -449,10 +449,10 @@ def _phases(bucket):
     ]
 
 
-async def test_debate_legacy_path_when_mode_unset(monkeypatch):
-    """TI_DISCUSS_MODE 未設（conftest 已清 env）→ DISCUSS_MODE=legacy，
-    _debate 走舊「提案→點評」路徑，絕不建構 DiscussionEngine。"""
-    assert config.DISCUSS_MODE == "legacy"  # conftest 清過 env，import 時即 legacy
+async def test_debate_legacy_path_when_mode_legacy(monkeypatch):
+    """DISCUSS_MODE=legacy（opt-out 逃生口）→ _debate 走舊「提案→點評」路徑，
+    絕不建構 DiscussionEngine。預設已是 parallel，此處顯式 pin legacy 驗逃生口。"""
+    monkeypatch.setattr(config, "DISCUSS_MODE", "legacy")
 
     import studio.orchestrator as orch
 
@@ -547,19 +547,27 @@ async def test_debate_engine_stop_propagates(tmp_path, monkeypatch):
 
 
 def test_discuss_mode_env_parsing(monkeypatch):
-    """TI_DISCUSS_MODE 的 env 解析：白名單值生效；未設/留空/拼錯/大小寫不符 fallback legacy。"""
+    """TI_DISCUSS_MODE 的 env 解析：白名單值生效；未設/留空＝採新預設 parallel；
+    非空但拼錯/大小寫不符＝安全退回 legacy（絕不誤開新路徑）。"""
     try:
         for good in ("round_robin", "parallel", "legacy"):
             monkeypatch.setenv("TI_DISCUSS_MODE", good)
             config.reload()
             assert config.DISCUSS_MODE == good
-        for bad in ("", "  ", "moderator", "PARALLEL", "round-robin"):
+        # 留空／純空白 ＝「未設定」＝ 採新預設 parallel（沿用 .env 留空慣例）
+        for blank in ("", "  "):
+            monkeypatch.setenv("TI_DISCUSS_MODE", blank)
+            config.reload()
+            assert config.DISCUSS_MODE == "parallel", repr(blank)
+        # 非空但非法（拼錯／大小寫／round-robin）＝ 安全退回 legacy
+        for bad in ("moderator", "PARALLEL", "round-robin"):
             monkeypatch.setenv("TI_DISCUSS_MODE", bad)
             config.reload()
             assert config.DISCUSS_MODE == "legacy", bad
+        # 未設 ＝ 採新預設 parallel
         monkeypatch.delenv("TI_DISCUSS_MODE")
         config.reload()
-        assert config.DISCUSS_MODE == "legacy"
+        assert config.DISCUSS_MODE == "parallel"
     finally:
         monkeypatch.undo()
         config.reload()  # 還原全域，避免污染其他測試

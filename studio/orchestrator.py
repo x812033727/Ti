@@ -41,6 +41,7 @@ from .flow import (
     critic_blocks as critic_blocks,
     is_stalled as is_stalled,
     parse_clarify as parse_clarify,
+    parse_core_changes as parse_core_changes,
     parse_followups as parse_followups,
     parse_followups_meta as parse_followups_meta,
     parse_lessons as parse_lessons,
@@ -168,6 +169,9 @@ class StudioSession:
         self._stop = False
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
         self._followup_items: list[dict] = []  # 同上、含 priority/type（消費端優先用這份）
+        self._core_changes: list[
+            dict
+        ] = []  # 判定需改 Ti 核心的項目（路由到核心 backlog，autopilot 實作開獨立 PR）
         self._vision = ""  # 澄清階段抽出的一句產品願景（回填專案 meta 用）
         self._last_commit: str | None = None  # 最近一次主分支 workspace commit 短 hash
         # 主（循序）lane 的隔離狀態；於 _run 建立後，所有對主 workspace 的操作都走它。
@@ -742,6 +746,7 @@ class StudioSession:
             "completed": False,
             "followups": [],
             "followup_items": [],
+            "core_changes": [],
             "commit": None,
             "vision": "",
         }
@@ -979,6 +984,7 @@ class StudioSession:
             "completed": done,
             "followups": self._followups,
             "followup_items": self._followup_items,
+            "core_changes": self._core_changes,
             "commit": self._last_commit,
             "vision": self._vision,
         }
@@ -1640,10 +1646,15 @@ class StudioSession:
     async def _huddle(
         self, ctx: LaneContext, task: dict, context: str, broadcast: Broadcast | None = None
     ) -> str:
-        """召集卡關討論：依序讓在場角色針對 blocker 提替代方案。回傳彙整結論。
+        """召集卡關討論：讓在場角色針對 blocker 提替代方案。回傳彙整結論。
 
         召集 PM＋架構師＋工程師＋高級工程師（取自該 lane 的專家團隊），缺席角色
         （如 offline 無架構師）自動略過。並行 lane 傳入 tagged broadcast 供前端分流。
+
+        發言調度依 config.DISCUSS_MODE：round_robin/parallel（預設）走 DiscussionEngine
+        單輪（max_rounds=1，每人剛好一次）——parallel 即同輪並行（角色同時動工）；legacy
+        或在場 <2 退化時走原始循序逐行發言（逃生口）。兩條路徑的 event 形狀、participants
+        鍵清單、NOTES 寫入與回傳結論皆相同。
         """
         roster = [
             ("pm", ctx.experts.get("pm")),
@@ -1665,18 +1676,31 @@ class StudioSession:
             f"整體計畫供參考：\n{context}\n\n"
         )
         tag = self._lane_tag(ctx, task)
-        notes: list[str] = []
-        for key, ex in present:
-            prior = ("\n團隊目前的討論：\n" + "\n".join(notes)) if notes else ""
-            view = await self._speak(
-                ctx,
-                key,
-                blocker
-                + "請針對這個 blocker 提出可突破的替代做法或拆解方式，簡短具體、可立即執行。"
-                + prior,
-                tag,
+        ask = "請針對這個 blocker 提出可突破的替代做法或拆解方式，簡短具體、可立即執行。"
+        if config.DISCUSS_MODE in ("round_robin", "parallel") and len(present) >= 2:
+            # 並行/依序卡關討論：單輪（max_rounds=1）讓全員各針對 blocker 提一次替代方案。
+            # 名稱進 engine（唯一且無空白）；semaphore 由 engine 內部套用（不重複包）；
+            # broadcast 標籤化對齊 _speak（lane 分流）；should_stop 透傳。
+            engine = DiscussionEngine(
+                participants=[(ex.role.name, ex) for _, ex in present],
+                mode=config.DISCUSS_MODE,
+                max_rounds=1,
+                semaphore=self._llm_semaphore(),
+                broadcast=self._tagged_broadcast(tag),
+                should_stop=lambda: self._stop,
             )
-            notes.append(f"【{ex.role.name}】{view}")
+            result = await engine.run(blocker + ask)
+            # 依 present 順序＋{角色名: 發言} 映射回填：結論順序與 participants 鍵清單對齊
+            # （engine 依 participants 順序寫回、角色名唯一 → 順序決定性，不受 gather 完成序影響）。
+            by_name = {u.speaker: u.text for u in result.transcript}
+            notes = [f"【{ex.role.name}】{by_name.get(ex.role.name, '')}" for _, ex in present]
+        else:
+            # legacy（或在場 <2 退化）：原始循序逐行發言，逃生口、行為與現狀一致。
+            notes = []
+            for key, ex in present:
+                prior = ("\n團隊目前的討論：\n" + "\n".join(notes)) if notes else ""
+                view = await self._speak(ctx, key, blocker + ask + prior, tag)
+                notes.append(f"【{ex.role.name}】{view}")
         conclusion = "\n".join(notes)
         await self.broadcast(
             events.huddle(
@@ -1820,7 +1844,11 @@ class StudioSession:
             "若過程中發現尚未解決的問題或值得改善之處，請在最後逐行列出後續任務，"
             "每行格式固定為 `後續任務: <動詞開頭的具體任務>`（沒有就不必列）；"
             "可在任務前加 `[P0/bug]` 樣式的標籤標注優先級（P0 必須~P2 加分）與類型"
-            "（feature/bug/improvement），標籤可省。"
+            "（feature/bug/improvement），標籤可省。\n"
+            "另外，若團隊判定「要滿足本需求，必須改動 Ti 核心框架本身（orchestrator／runner／"
+            "發佈流程等），而非只改本專案的程式碼」，請逐行列出，格式固定為 "
+            "`核心改動: <一句具體描述要改 Ti 核心的什麼>`（可加 `[P0/bug]` 標籤；沒有就不必列）。"
+            "這類項目不會進本專案 repo，會被路由到 Ti 主核心 repo 另開獨立 PR。"
         )
         if config.LESSONS_ENABLED:
             retro_prompt += (
@@ -1836,6 +1864,21 @@ class StudioSession:
                 seen.add(item["title"])
                 self._followup_items.append(item)
                 self._followups.append(item["title"])
+        # 核心改動：判定需改 Ti 核心框架的項目，與後續任務分流——不進專案 backlog／PR，
+        # 由消費端（improver／autopilot）路由到核心 backlog，autopilot 對核心 repo 開獨立 PR。
+        core_seen = {c["title"] for c in self._core_changes}
+        for item in parse_core_changes(retro):
+            if item["title"] not in core_seen:
+                core_seen.add(item["title"])
+                self._core_changes.append(item)
+        if self._core_changes:
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id,
+                    "核心改動",
+                    f"判定需改 Ti 核心 {len(self._core_changes)} 項，將路由到核心 repo（{config.CORE_REPO}）",
+                )
+            )
         if config.LESSONS_ENABLED:
             lessons.add_many(
                 parse_lessons(retro),

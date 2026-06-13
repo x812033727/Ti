@@ -289,10 +289,11 @@ FIELDS: tuple[Field, ...] = (
     ),
     Field(
         "TI_DISCUSS_MODE",
-        "架構討論模式（legacy 兩人辯論／round_robin 多角色依序／parallel 同輪並行）",
+        "討論模式（legacy 循序兩人辯論／round_robin 多角色依序／parallel 同輪並行；"
+        "預設並行，含架構討論與卡關 huddle）",
         kind="select",
         options=("legacy", "round_robin", "parallel"),
-        default="legacy",
+        default="parallel",
         group="進階",
     ),
     Field(

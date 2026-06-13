@@ -25,6 +25,19 @@ function setRunning(running) {
   stopBtn.disabled = !running;
   interjectInput.disabled = !running;
   interjectBtn.disabled = !running;
+  $("#deckStop").classList.toggle("hidden", !running); // 收合列的停止鈕只在執行中顯示
+  if (!running) setDeckCollapsed(false);               // 討論結束自動展開，方便開下一場
+}
+
+// --- 啟動列收合：手機按「開始」後自動收成單列，點擊即展開 -----------------
+const deck = document.querySelector(".command-deck");
+const MOBILE_MQ = window.matchMedia("(max-width: 900px)");
+function setDeckCollapsed(collapsed) {
+  deck.classList.toggle("collapsed", collapsed);
+  if (collapsed) {
+    const req = reqInput.value.trim();
+    $("#deckSummary").textContent = req || ($("#improveChk").checked ? "♻️ 持續改良中…" : "（無需求）");
+  }
 }
 
 function scrollStream() { stream.scrollTop = stream.scrollHeight; }
@@ -406,6 +419,7 @@ function start() {
   workspaceId = null;
   closeHistory();
   setRunning(true);
+  if (MOBILE_MQ.matches) setDeckCollapsed(true); // 手機：開始後收合啟動列，騰出討論空間
   setPhase("連線中…");
 
   const payload = { requirement, repo_url: repoUrl };
@@ -582,12 +596,35 @@ function closeHistory() { historyPanel.classList.add("hidden"); }
 // --- Autopilot 自主迴圈 ------------------------------------------------
 const autopilotPanel = $("#autopilotPanel");
 
+// 迷你狀態：縮成一條狀態列（手機浮在分頁列上方、桌機右下小卡），輕量輪詢保持計數新鮮
+let apMiniTimer = null;
+function clearApMini() {
+  autopilotPanel.classList.remove("mini");
+  $("#apMini").classList.add("hidden");
+  if (apMiniTimer) { clearInterval(apMiniTimer); apMiniTimer = null; }
+}
+
 async function openAutopilot() {
+  clearApMini();
   autopilotPanel.classList.remove("hidden");
   await refreshAutopilot();
 }
 
-function closeAutopilot() { autopilotPanel.classList.add("hidden"); }
+function closeAutopilot() {
+  clearApMini();
+  autopilotPanel.classList.add("hidden");
+}
+
+function minimizeAutopilot() {
+  autopilotPanel.classList.add("mini");
+  $("#apMini").classList.remove("hidden");
+  if (!apMiniTimer) apMiniTimer = setInterval(refreshAutopilot, 20000);
+}
+
+async function expandAutopilot() {
+  clearApMini();
+  await refreshAutopilot();
+}
 
 async function refreshAutopilot() {
   try {
@@ -598,6 +635,7 @@ async function refreshAutopilot() {
       `完成 ${c.done || 0}・失敗 ${c.failed || 0}${st.dryrun ? "　(dryrun)" : ""}`;
     $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
     $("#apToggle").dataset.paused = st.paused ? "1" : "0";
+    $("#apMini").textContent = `${st.paused ? "⏸" : "▶"} 待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}`;
     const list = await (await fetch("/api/autopilot/backlog")).json();
     const ul = $("#apBacklog");
     ul.innerHTML = "";
@@ -609,6 +647,7 @@ async function refreshAutopilot() {
     });
   } catch (e) {
     $("#apState").textContent = "讀取失敗（autopilot 服務可能未啟動）";
+    $("#apMini").textContent = "讀取失敗";
   }
 }
 
@@ -1211,9 +1250,16 @@ $("#historyBtn").onclick = openHistory;
 $("#historyClose").onclick = closeHistory;
 $("#historyCleanup").onclick = cleanupCompleted;
 $("#autopilotBtn").onclick = openAutopilot;
-$("#autopilotClose").onclick = closeAutopilot;
+// head 內按鈕需 stopPropagation：迷你狀態下整條標題列可點擊展開
+$("#autopilotClose").onclick = (e) => { e.stopPropagation(); closeAutopilot(); };
+$("#autopilotMin").onclick = (e) => { e.stopPropagation(); minimizeAutopilot(); };
+$("#autopilotHead").onclick = () => {
+  if (autopilotPanel.classList.contains("mini")) expandAutopilot();
+};
 $("#apToggle").onclick = toggleAutopilot;
 $("#apAddBtn").onclick = addAutopilotTask;
+$("#deckBar").onclick = () => setDeckCollapsed(false);
+$("#deckStop").onclick = (e) => { e.stopPropagation(); stop(); };
 $("#metricsBtn").onclick = openMetrics;
 $("#metricsClose").onclick = closeMetrics;
 $("#metricsRefresh").onclick = refreshMetrics;

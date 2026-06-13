@@ -102,14 +102,24 @@ def _discuss_max_rounds() -> int:
 # 多角色討論（DiscussionEngine）的最大輪數上限；預設取 DEBATE_ROUNDS。
 DISCUSS_MAX_ROUNDS = _discuss_max_rounds()
 
-# 多角色討論模式白名單：legacy＝舊「工程師⇄高級工程師」兩人往返（預設，行為與現狀一致）；
-# round_robin＝DiscussionEngine 依序發言；parallel＝同輪並行、輪間同步。
+# 多角色討論模式白名單：legacy＝舊「工程師⇄高級工程師」兩人往返（opt-out 逃生口）；
+# round_robin＝DiscussionEngine 依序發言；parallel＝同輪並行、輪間同步（**新預設**）。
 DISCUSS_MODES = ("legacy", "round_robin", "parallel")
+# 未設／留空時採用的預設模式。改為 parallel：架構討論與卡關 huddle 預設皆同輪並行（角色同時動工）。
+DISCUSS_MODE_DEFAULT = "parallel"
 
 
 def _discuss_mode() -> str:
-    """TI_DISCUSS_MODE：白名單外（含拼錯）一律 fallback legacy（向後相容、絕不誤開新路徑）。"""
-    raw = (os.getenv("TI_DISCUSS_MODE") or "").strip() or "legacy"
+    """TI_DISCUSS_MODE 解析：
+
+    - 未設／留空／純空白 → 採新預設 DISCUSS_MODE_DEFAULT（parallel）；留空＝「未設定」，
+      須等同未設（沿用本檔 .env 留空慣例），不可變成第三種行為。
+    - 非空但非法（拼錯／大小寫／round-robin）→ 安全退回 legacy 並記 warning
+      （守住「絕不誤開新路徑」：打錯字是未知意圖，退保守路徑而非新預設）。
+    """
+    raw = (os.getenv("TI_DISCUSS_MODE") or "").strip()
+    if not raw:
+        return DISCUSS_MODE_DEFAULT
     if raw not in DISCUSS_MODES:
         logger.warning("環境變數 TI_DISCUSS_MODE=%r 不在白名單 %s，改用 legacy", raw, DISCUSS_MODES)
         return "legacy"
@@ -517,6 +527,10 @@ AUTOPILOT_STATE_DIR = Path(os.getenv("TI_AUTOPILOT_STATE_DIR", str(PROJECT_ROOT 
 AUTOPILOT_WORK_DIR = Path(os.getenv("TI_AUTOPILOT_WORK_DIR", "/opt/ti-autopilot-work"))
 AUTOPILOT_DEPLOY_DIR = Path(os.getenv("TI_AUTOPILOT_DEPLOY_DIR", str(PROJECT_ROOT)))
 AUTOPILOT_REPO = os.getenv("TI_AUTOPILOT_REPO", "x812033727/Ti")  # owner/repo
+# 主核心 repo：Ti 框架本身。專案討論中判定「需改 Ti 核心」的改動一律路由到這裡、開獨立 PR
+# （絕不混入專案 repo）。固定綁定 AUTOPILOT_REPO，確保「路由目標」恆等於「autopilot 實際實作
+# 並發佈核心改動的 repo」——兩者不可分歧（見 ARCHITECTURE.md「專案 repo 與 Ti 主核心 repo」）。
+CORE_REPO = AUTOPILOT_REPO
 AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")

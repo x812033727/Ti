@@ -220,3 +220,23 @@ def recent_done_titles(limit: int, *, state_dir: Path | None = None) -> set[str]
         list_tasks("done", state_dir=state_dir), key=lambda t: t.get("updated_at", 0), reverse=True
     )
     return {t["title"].strip() for t in done[:limit]}
+
+
+def route_core_changes(items: list[dict]) -> int:
+    """把判定的核心改動路由到核心 backlog（雙軌路由的單一收斂點），回傳實際路由數。
+
+    `核心改動:` 專指「改 Ti 框架本身」、與專案無關——任何來源（檢討／找問題／單場討論／autopilot）
+    都進同一份核心 backlog（省略 state_dir＝預設 config.AUTOPILOT_STATE_DIR，正是 autopilot 在 drain
+    的那份），以 source="core" 標記供稽核；由 autopilot 在核心 repo（config.CORE_REPO）的 working
+    clone 實作、過閘門、開「獨立 PR」——絕不進專案 backlog／PR。
+
+    路由前過濾近期已完成的同名項目：_is_duplicate 只擋 pending/in_progress、擋不到 done，否則同一條
+    核心改動做完後被別場/別輪再次提出時會重複排入、對核心 repo 開重複/空轉的外部 PR（與「找問題」
+    _discover 的去重一致）。AUTOPILOT_EVAL_MEMORY=0 時回空集合＝不過濾，向後相容。
+    """
+    items = items or []
+    if not items:
+        return 0
+    done = recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
+    items = [c for c in items if c.get("title", "").strip() not in done]
+    return add_items(items, source="core") if items else 0

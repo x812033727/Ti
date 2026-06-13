@@ -144,6 +144,50 @@ def test_parse_tasks_structured():
 
 
 @pytest.mark.asyncio
+async def test_retro_captures_core_changes_into_result():
+    """端到端：檢討輸出的 `核心改動:` 行被捕捉進 result['core_changes']，且與後續任務分流。
+
+    守住 prompt→parse→累加→回傳的整條接線——這是雙軌路由的源頭，斷了消費端（improver／ws／
+    autopilot）就拿不到核心改動。
+    """
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=[
+            "任務: 實作 BMI",
+            "決議: 完成",
+            (
+                "做得不錯。\n"
+                "後續任務: 補更多輸入驗證\n"
+                "核心改動: [P0/bug] orchestrator 應支援核心改動同步發佈\n"
+                "核心改動: runner 沙箱加白名單"
+            ),
+        ],
+        eng=["已建立 bmi.py"],
+        qa=["測試全過\n驗證: PASS"],
+        senior=["品質良好\n決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    result = await session.run("做一個 BMI CLI")
+
+    # 核心改動被結構化捕捉（含標籤解析）。
+    assert [c["title"] for c in result["core_changes"]] == [
+        "orchestrator 應支援核心改動同步發佈",
+        "runner 沙箱加白名單",
+    ]
+    assert result["core_changes"][0] == {
+        "title": "orchestrator 應支援核心改動同步發佈",
+        "priority": 0,
+        "type": "bug",
+    }
+    # 與後續任務分流：核心改動不滲進 followups，後續任務也不被核心改動吃掉。
+    assert result["followups"] == ["補更多輸入驗證"]
+    assert "orchestrator 應支援核心改動同步發佈" not in result["followups"]
+    # 有廣播「核心改動」phase 讓使用者看見路由意圖。
+    phases = [e.payload.get("phase") for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "核心改動" in phases
+
+
+@pytest.mark.asyncio
 async def test_happy_path_one_task_one_round():
     bucket, broadcast = collect()
     experts = _experts(
@@ -211,6 +255,9 @@ async def test_per_task_iteration_two_tasks():
 @pytest.mark.asyncio
 async def test_debate_runs(monkeypatch):
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
+    # 此測驗 legacy 兩人辯論（提案→點評）的發言計數；預設已是 parallel，engine 路徑
+    # 由 test_discussion.py 專測，故此處 pin legacy 以驗逃生口行為不變。
+    monkeypatch.setattr(config, "DISCUSS_MODE", "legacy")
     bucket, broadcast = collect()
     experts = _experts(
         pm=["任務: 實作", "決議: 完成", "檢討"],

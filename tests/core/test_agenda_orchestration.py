@@ -128,7 +128,8 @@ async def test_run_parses_agenda_and_hard_validates_assignee(monkeypatch):
 
     monkeypatch.setattr(orch, "DiscussionEngine", Boom)
     monkeypatch.setattr(config, "DEBATE_ROUNDS", 0)
-    assert config.DISCUSS_MODE == "legacy"  # conftest 清 env
+    # 預設已改 parallel（#115）；顯式 pin legacy 驗「逃生口」路徑零回歸（不建構 DiscussionEngine）。
+    monkeypatch.setattr(config, "DISCUSS_MODE", "legacy")
     bucket, broadcast = collect()
     experts = _experts([PM_PLAN_WITH_AGENDA, "決議: 完成", "檢討 OK"])
     session = StudioSession("t", broadcast, experts=experts, cwd=None)

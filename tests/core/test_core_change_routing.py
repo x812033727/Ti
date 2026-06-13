@@ -1,0 +1,120 @@
+"""雙軌路由的單元測試（不需 LLM）：一場討論結果如何分流回填兩份 backlog。
+
+關鍵不變式（見 ARCHITECTURE.md「專案 repo 與 Ti 主核心 repo」）：
+  - 後續任務 → 專案 backlog（per-project state_dir）。
+  - 核心改動 → 核心 backlog（預設 config.AUTOPILOT_STATE_DIR，autopilot 在 drain 的那份）。
+  - 兩集合不相交：核心改動絕不落入專案 backlog／PR。
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from studio import backlog, config
+from studio.backlog import route_core_changes
+from studio.improver import drain_result_to_backlogs
+
+
+@pytest.fixture
+def dirs(tmp_path, monkeypatch):
+    """分開的核心 backlog 目錄與專案 backlog 目錄。"""
+    core_dir = tmp_path / "core"
+    project_dir = tmp_path / "project"
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", core_dir)
+    return core_dir, project_dir
+
+
+def test_core_repo_is_pinned_to_ti():
+    # 主核心 repo 固定為 Ti 框架本身（綁定 AUTOPILOT_REPO，預設 x812033727/Ti）。
+    assert config.CORE_REPO == config.AUTOPILOT_REPO
+    assert config.CORE_REPO == "x812033727/Ti"
+
+
+def test_routing_splits_followups_and_core_changes(dirs):
+    core_dir, project_dir = dirs
+    result = {
+        "completed": True,
+        "followups": ["補專案測試"],
+        "followup_items": [{"title": "補專案測試", "priority": 1, "type": "improvement"}],
+        "core_changes": [{"title": "改 orchestrator", "priority": 0, "type": "feature"}],
+    }
+
+    added, routed = drain_result_to_backlogs(result, project_dir)
+    assert added == 1 and routed == 1
+
+    project_titles = {t["title"] for t in backlog.list_tasks(state_dir=project_dir)}
+    core_tasks = backlog.list_tasks()  # 省略 state_dir＝核心 backlog（AUTOPILOT_STATE_DIR）
+    core_titles = {t["title"] for t in core_tasks}
+
+    # 各歸其位。
+    assert project_titles == {"補專案測試"}
+    assert core_titles == {"改 orchestrator"}
+    # 兩集合不相交——核心改動沒有滲進專案 backlog，反之亦然。
+    assert project_titles.isdisjoint(core_titles)
+    # 核心項目以 source="core" 標記，供稽核。
+    assert all(t["source"] == "core" for t in core_tasks)
+
+
+def test_routing_no_core_changes_leaves_core_backlog_empty(dirs):
+    core_dir, project_dir = dirs
+    result = {
+        "completed": True,
+        "followup_items": [{"title": "只是專案後續", "priority": 1, "type": "improvement"}],
+        "core_changes": [],
+    }
+
+    added, routed = drain_result_to_backlogs(result, project_dir)
+    assert added == 1 and routed == 0
+    assert backlog.list_tasks() == []  # 核心 backlog 不被無關專案工作污染
+    assert {t["title"] for t in backlog.list_tasks(state_dir=project_dir)} == {"只是專案後續"}
+
+
+def test_routing_legacy_result_without_core_changes_key(dirs):
+    """舊 result（無 core_changes 鍵）不應爆炸——用 .get 安全退回。"""
+    core_dir, project_dir = dirs
+    result = {"completed": True, "followups": ["舊式後續"]}
+    added, routed = drain_result_to_backlogs(result, project_dir)
+    assert routed == 0
+    assert backlog.list_tasks() == []
+
+
+def test_route_core_changes_standalone(dirs):
+    """backlog.route_core_changes 是雙軌路由的單一收斂點——所有消費端（improver/ws/autopilot）共用。"""
+    core_dir, _ = dirs
+    routed = route_core_changes([{"title": "改 runner 沙箱", "priority": 0, "type": "bug"}])
+    assert routed == 1
+    core_tasks = backlog.list_tasks()  # 預設 state_dir＝核心 backlog
+    assert {t["title"] for t in core_tasks} == {"改 runner 沙箱"}
+    assert all(t["source"] == "core" for t in core_tasks)
+
+
+def test_route_core_changes_empty_is_noop(dirs):
+    assert route_core_changes([]) == 0
+    assert route_core_changes(None) == 0  # None 也安全
+    assert backlog.list_tasks() == []
+
+
+def test_route_core_changes_skips_recently_done(dirs, monkeypatch):
+    """完成後不重複路由：同名核心改動做完標 done 後再次出現，不應再排入（避免重複/空轉外部 PR）。"""
+    monkeypatch.setattr(config, "AUTOPILOT_EVAL_MEMORY", 20)
+    item = {"title": "改 orchestrator 發佈流程", "priority": 1, "type": "improvement"}
+
+    assert route_core_changes([item]) == 1
+    task = backlog.list_tasks()[0]
+    backlog.set_status(task["id"], "done")
+
+    # 同一條再次被討論提出 → 因近期已完成被過濾，不重複排入。
+    assert route_core_changes([item]) == 0
+    assert len(backlog.list_tasks()) == 1
+
+
+def test_route_core_changes_no_dedup_when_memory_zero(dirs, monkeypatch):
+    """EVAL_MEMORY=0 時關閉近期完成過濾（向後相容）：仍受 _is_duplicate 的 pending 去重保護。"""
+    monkeypatch.setattr(config, "AUTOPILOT_EVAL_MEMORY", 0)
+    item = {"title": "改 runner", "priority": 1, "type": "improvement"}
+
+    assert route_core_changes([item]) == 1
+    backlog.set_status(backlog.list_tasks()[0]["id"], "done")
+    # 記憶為 0＝不過濾近期完成，故 done 後同名可再排入。
+    assert route_core_changes([item]) == 1
+    assert len(backlog.list_tasks()) == 2
