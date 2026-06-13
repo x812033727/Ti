@@ -64,13 +64,20 @@ def test_正常解析四前綴():
     assert r["actions"] == ["補測試覆蓋 (R1 engineer)"]
 
 
-def test_prompt_含三條防坑硬指令與錨點來源():
+def test_prompt_含四條防坑硬指令與錨點來源():
     senior = StubSenior("共識: x")
     asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
     p = senior.prompt
     assert "不得新增未提及的結論" in p  # ① 防幻覺
     assert "無人反對 ≠ 共識" in p  # ② 防 Silent Agreement
     assert "強分歧必須保留並標明雙方" in p  # ③ 保留分歧
+    # ④ 自我校驗（任務 #1）：逐條自檢、查無依據者刪除，須可 grep（驗收 #1）
+    assert "④" in p
+    assert "逐條自我校驗" in p
+    assert "查無骨架依據者一律刪除" in p
+    # 四鍵前綴未被第④條擠散，仍可被 parse_conclusion 解析（驗收 #1）
+    for prefix in ("共識:", "分歧:", "未決:", "行動:"):
+        assert prefix in p
     # 錨點事實來源為規則骨架：speaker 帶在 final_positions / unique_findings
     assert "採用混合範式" in p
     assert "security" in p
