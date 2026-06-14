@@ -19,8 +19,11 @@ import json
 import time
 from pathlib import Path
 
-from . import config
-from .secure_write import secure_write_root
+from . import config, secure_write
+
+# 唯一 choke point：backlog.json 寫入經 secure_write.secure_write_root。
+# module-level alias 兼顧可被測試 monkeypatch。
+secure_write_root = secure_write.secure_write_root
 
 VALID_STATUS = ("pending", "in_progress", "done", "failed")
 

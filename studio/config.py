@@ -663,8 +663,8 @@ def _parse_require_chown() -> str:
     if raw == "warn":
         logger.warning("TI_REQUIRE_CHOWN 降級至 warn：state 寫入 chown 失敗時僅警告、不阻擋")
         return "warn"
-    # off 同義：複用 env_bool 慣例判布林假值，避免另維護一份同義詞表（single source of truth）。
-    if raw == "off" or not env_bool("TI_REQUIRE_CHOWN", True):
+    # off 同義：複用 env_bool 慣例判布林假值，外加常見停用字 no（env_bool 假值集不含）。
+    if raw in ("off", "no") or not env_bool("TI_REQUIRE_CHOWN", True):
         logger.warning("TI_REQUIRE_CHOWN 降級至 off：完全停用 state 寫入的 root owner 驗證")
         return "off"
     logger.warning("TI_REQUIRE_CHOWN=%r 無法辨識，fail-safe 取 strict", raw)
