@@ -3,7 +3,8 @@
 純檔案 IO + monkeypatch，不打 LLM/網路。涵蓋：
 - pre-filter 對高重疊提案歸零、對黑樣本零誤殺；
 - 比對範圍涵蓋 pending + in_progress（與 prompt 禁止清單對齊）；
-- 閾值集中為單一模組常數、可由 env override 調整；
+- 閾值集中為單一模組常數（0.75，詞集 Jaccard 實測定值），可調整（測試以 monkeypatch 模擬）；
+- 詞集 Jaccard 攔下語序調換改寫，並以反向哨兵證明「詞集高重疊但意圖相反」不誤殺；
 - 端到端 `_evaluate_self`（mock Expert.speak）下高重疊提案實際進場數為 0；
 - `_is_duplicate` 字串等值契約未被改動、既有任務不被刪除。
 
@@ -34,6 +35,7 @@ def state(tmp_path, monkeypatch):
 def test_threshold_is_single_module_constant():
     assert hasattr(config, "AUTOPILOT_DEDUP_RATIO")
     assert isinstance(config.AUTOPILOT_DEDUP_RATIO, float)
+    # 單一可調常數：0.75（詞集 Jaccard 實測定值；治隧道主防線是子系統覆蓋計數器，另案）。
     assert config.AUTOPILOT_DEDUP_RATIO == pytest.approx(0.75)
 
 
@@ -52,7 +54,7 @@ def test_uses_stdlib_no_extra_dep():
 
 
 def test_high_overlap_filtered_to_zero(monkeypatch):
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
+    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
     existing = ["修復登入逾時的重試邏輯", "替 backlog 模組補上單元測試"]
     proposals = [
         "修正登入逾時的重試邏輯",  # 同義詞替換，實測 Jaccard 0.833
@@ -63,7 +65,7 @@ def test_high_overlap_filtered_to_zero(monkeypatch):
 
 
 def test_distinct_topics_all_kept(monkeypatch):
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
+    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
     existing = ["修復登入逾時的重試邏輯"]
     proposals = ["重構前端首頁的載入動畫", "為設定檔加上 schema 驗證", "撰寫部署腳本的回滾流程"]
     kept = autopilot._filter_pending_duplicates(proposals, existing)
@@ -71,7 +73,7 @@ def test_distinct_topics_all_kept(monkeypatch):
 
 
 def test_mixed_keeps_only_non_overlapping(monkeypatch):
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
+    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
     existing = ["修復登入逾時的重試邏輯"]
     proposals = ["修正登入逾時的重試邏輯", "為設定檔加上 schema 驗證"]
     kept = autopilot._filter_pending_duplicates(proposals, existing)
@@ -79,18 +81,19 @@ def test_mixed_keeps_only_non_overlapping(monkeypatch):
 
 
 def test_empty_existing_returns_all_unchanged(monkeypatch):
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
+    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
     proposals = ["任務 A", "任務 B"]
     assert autopilot._filter_pending_duplicates(proposals, []) == proposals
 
 
-def test_threshold_env_override_effect(monkeypatch):
-    # 閾值可調：放寬到 0.99 時，同義改寫（Jaccard 0.833）不再被擋。
+def test_threshold_is_adjustable(monkeypatch):
+    # 單一常數可調（非 env override）：放寬到 0.99 時，同義改寫（Jaccard 0.833）不再被擋；
+    # 收緊到 0.55 仍擋住。證明閾值收斂為單一可調常數。
     existing = ["修復登入逾時的重試邏輯"]
     proposals = ["修正登入逾時的重試邏輯"]
     monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.99)
     assert autopilot._filter_pending_duplicates(proposals, existing) == proposals
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
+    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
     assert autopilot._filter_pending_duplicates(proposals, existing) == []
 
 
@@ -101,6 +104,8 @@ def test_threshold_env_override_effect(monkeypatch):
 
 def test_boundary_ratios_documented():
     # 釘住詞集 Jaccard 在閾值兩側的行為（取代舊 SequenceMatcher 邊界測試）。
+    # 比較對象用現行單一常數，避免日後調 threshold 時無聲改變判別。
+    thr = config.AUTOPILOT_DEDUP_RATIO
     cases = [
         ("修復登入逾時的重試邏輯", "修正登入逾時的重試邏輯", 0.75, True),  # 同義詞 → 擋
         ("替 backlog 模組補上單元測試", "替 backlog 模組補上單測", 0.75, True),  # 縮寫 → 擋
@@ -108,7 +113,7 @@ def test_boundary_ratios_documented():
     ]
     for a, b, bound, should_block in cases:
         r = autopilot._token_set_similarity(a, b)
-        assert (r >= 0.75) == should_block, f"{a!r}<>{b!r} jaccard={r:.3f}"
+        assert (r >= thr) == should_block, f"{a!r}<>{b!r} jaccard={r:.3f} thr={thr}"
         if should_block:
             assert r >= bound
         else:
@@ -123,6 +128,17 @@ def test_token_reorder_now_blocked(monkeypatch):
     proposals = ["為重試機制加上 retry 上限"]
     assert autopilot._token_set_similarity(proposals[0], existing[0]) == pytest.approx(1.0)
     assert autopilot._filter_pending_duplicates(proposals, existing) == []
+
+
+def test_reverse_sentinel_opposite_intent_not_blocked(monkeypatch):
+    # 反向哨兵（誠實判別力，非假綠）：詞集高重疊但語意相反的合法不同任務，0.75 下不得誤殺。
+    # 「提高重試上限」↔「降低重試上限」共享「重試/上限」但方向相反，Jaccard≈0.5 < 0.75 → 放行。
+    # 這正是 Jaccard 相較「降閾值硬擋」的優勢：靠詞集差異區分，而非賭 ratio 邊界。
+    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
+    existing = ["提高重試上限"]
+    proposals = ["降低重試上限"]  # 方向相反，理應視為不同任務
+    assert autopilot._token_set_similarity(proposals[0], existing[0]) < 0.75
+    assert autopilot._filter_pending_duplicates(proposals, existing) == proposals  # 未誤殺
 
 
 # ---------------------------------------------------------------------------
