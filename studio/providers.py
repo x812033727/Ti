@@ -194,16 +194,14 @@ async def complete_once(
 
     限流（429／5xx）退避職責分層：本層**刻意不**自套第二層 `run_with_retries`（架構決策
     否決雙層重試——避免與 speak() 內部退避疊加成語義不清的指數退避）。退避是 `speak()`
-    層的職責，分兩端：
+    層的職責，**兩端皆已收斂**於同一 `make_retry_config()` 的 `EXPERT_RATE_LIMIT_*` 旋鈕：
     - Claude 端 `experts.Expert.speak()` 經 `_speak_with_retries()` → `run_with_retries`
-      做有限次退避，耗盡才回退空字串；與本層共用 `make_retry_config()` 的
-      `EXPERT_RATE_LIMIT_*` 旋鈕。此端限流不會冒泡到本層。
-    - OpenAI 端 `OpenAIExpert.speak()` 的退避骨幹由 task #2 補上；**在其併入本 lane 前**，
-      OpenAI 路徑的限流（如 openai.RateLimitError）會直接冒泡到下方 `except Exception`
-      兜底回 ""（無退避）——這是已知的跨任務依賴缺口，非本層自身缺陷。
+      做有限次退避，耗盡才回退空字串；此端限流不會冒泡到本層。
+    - OpenAI 端 `OpenAIExpert.speak()` 同樣經 `run_with_retries` 吸收限流（429／5xx），
+      耗盡才回退空字串；此端限流亦不會冒泡到本層。
     因此下方 `except Exception` 是最終兜底（非「限流永不走到這」）：吞掉逾時
-    （`asyncio.wait_for` 的 `asyncio.TimeoutError`）、上游尚未吸收的限流、與未預期錯誤，
-    維持「永不 raise」合約；並記 warning（含 traceback）供生產診斷，不靜默吞噬。
+    （`asyncio.wait_for` 的 `asyncio.TimeoutError`）與未預期錯誤（含上游骨幹原樣 re-raise
+    的未知例外），維持「永不 raise」合約；並記 warning（含 traceback）供生產診斷，不靜默吞噬。
     """
     if cwd is None or config.OFFLINE_MODE or not config.provider_ready():
         # provider 無憑證時直接走模板 fallback：避免每次失敗輪都白等 SDK 啟動失敗
@@ -228,10 +226,11 @@ async def complete_once(
         expert = make_expert(role, f"{session_id}:reflect", cwd)
         return await asyncio.wait_for(expert.speak(user, _noop), timeout=timeout)
     except Exception:
-        # 最終兜底層：守住「永不 raise」合約。退避是 speak() 層職責（Claude 經
-        # _speak_with_retries→run_with_retries；OpenAI 待 task #2 併入），本層刻意不套第二層
-        # 重試（架構決策否決雙層退避）。這裡吞逾時（wait_for 的 asyncio.TimeoutError）、
-        # 上游尚未吸收的限流、與未預期錯誤；記 warning（含 traceback）避免靜默吞噬難以診斷。
+        # 最終兜底層：守住「永不 raise」合約。退避是 speak() 層職責，兩端皆已收斂於
+        # run_with_retries（Claude 經 _speak_with_retries、OpenAI 經 OpenAIExpert.speak），
+        # 限流在 speak 層被吸收、不冒泡到此；本層刻意不套第二層重試（架構決策否決雙層退避）。
+        # 這裡吞逾時（wait_for 的 asyncio.TimeoutError）與未預期錯誤；記 warning（含 traceback）
+        # 避免靜默吞噬難以診斷。
         logger.warning("complete_once 降級回空字串（session=%s）", session_id, exc_info=True)
         return ""
     finally:

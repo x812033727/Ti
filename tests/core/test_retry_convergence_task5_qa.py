@@ -134,6 +134,18 @@ def test_both_speak_ends_use_unified_entry(tree, fn_name, label):
     assert _calls_named(fn, "run_with_retries") >= 1, f"{label} 應走 run_with_retries"
 
 
+def test_no_stale_task2_pending_prose_in_providers():
+    """providers.py 散文不得殘留「OpenAI 端退避待 task #2 併入／會無退避冒泡」這類過時敘述。
+
+    task #2 已併入（OpenAIExpert.speak 已接 run_with_retries），此類字樣會與「三端收斂」
+    結論直接矛盾、誤導除錯者排除「OpenAI 退避耗盡」這個真實成因。防其回潮。
+    """
+    # 純文字掃描（涵蓋 AST 看不到的 docstring／註解）；ERE 友善、不依賴 PCRE。
+    stale_markers = ["待 task #2", "在其併入本 lane 前", "task #2 補上", "尚未吸收的限流"]
+    hits = [m for m in stale_markers if m in PROV_SRC]
+    assert not hits, f"providers.py 殘留過時 task#2 敘述（與三端收斂矛盾）：{hits}"
+
+
 def test_make_retry_config_single_definition_in_experts():
     """make_retry_config 唯一定義在 experts.py（providers 共用之，非各自為政）。"""
     defs = [
