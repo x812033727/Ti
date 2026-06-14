@@ -99,6 +99,22 @@ async def _sleep(seconds: float) -> None:
     await llm_caller._default_sleep(seconds)
 
 
+def _make_retry_observer(role_key: str) -> llm_caller.Observer:
+    """experts 層的結構化 observe sink：把中介層 task #4 的可觀測事件落成 log。
+
+    本 sink 為**純記錄**接點——只寫 log、不改任何控制流（向後相容鐵則：加裝觀測性不得
+    改變既有行為，sink 拋例外亦由 `llm_caller._emit` 吞掉）。它與 idle/hard timeout 正交：
+    逾時走 EV_TIMEOUT 獨立事件、不混入退避計數。before_sleep 的人類可讀 log＋broadcast 仍由
+    `_on_retry` 負責；本 sink 補上「結構化欄位（kind/delay/total_delay/outcome…）」供 metrics
+    收斂。事件名沿用中介層的穩定 `EV_*` 契約，不在 experts 自定義字串。
+    """
+
+    def observe(event: str, fields) -> None:
+        logger.info("llm_retry 專家=%s 事件=%s %s", role_key, event, dict(fields))
+
+    return observe
+
+
 # 哪些角色用主力（強但慢）模型，由 config.LEAD_ROLES 控制（可調、可在設定頁改）。
 
 
@@ -403,7 +419,10 @@ class Expert:
         async def _on_timeout(exc: BaseException) -> str:
             return await self._abort_turn(exc, broadcast)
 
-        return await llm_caller.run_with_retries(
+        # 接上中介層 task #4 的可觀測接點：metrics 累加退避次數/延遲，observe sink 落結構化 log。
+        # 兩者皆純記錄、不改控制流；逾時走 passthrough 獨立路徑（outcome="timeout"），與退避正交。
+        metrics = llm_caller.RetryMetrics()
+        text = await llm_caller.run_with_retries(
             _attempt,
             max_retries=max_retries,
             backoff=_backoff_delay,
@@ -413,7 +432,12 @@ class Expert:
             on_api_error=_on_api_error,
             passthrough=(ExpertTurnTimeout,),
             on_passthrough=_on_timeout,
+            metrics=metrics,
+            observe=_make_retry_observer(r.key),
         )
+        if metrics.retries or metrics.outcome not in ("success", ""):
+            logger.info("專家 %s 發言收斂：%s", r.key, metrics.to_dict())
+        return text
 
     async def _fallback_note(self, note: str, partial_text: str, broadcast: Broadcast) -> str:
         """限流／錯誤文字失敗時的收斂：對齊逾時 fallback 語義——回傳不含核可關鍵詞的
