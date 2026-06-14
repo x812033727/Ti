@@ -11,6 +11,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from . import llm_caller
+
 logger = logging.getLogger(__name__)
 
 # 專案根（單一來源；env_path() 與 load_dotenv 共用）。
@@ -276,6 +278,25 @@ TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
 EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
 EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)  # 退避基數（秒）
 EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)  # 單次退避上限
+# 退避抖動比例 ∈ [0.0, 1.0]；預設 0.0＝關閉，回傳確定值，與既有行為完全等價（暴露入口型，
+# 非預設啟用）。>0 時 backoff_delay 會在 [delay*(1-jitter), delay] 區間隨機抖動以防 thundering herd。
+EXPERT_RATE_LIMIT_JITTER = _env_float("TI_RATELIMIT_JITTER", 0.0)
+
+
+def make_retry_config() -> llm_caller.RetryConfig:
+    """由 config 全域組裝統一的 `RetryConfig`，作為 orchestrator／experts 的單一取用點。
+
+    刻意讀 **module 全域變數**（非 `os.getenv`）：測試端 `monkeypatch.setattr(config, ...)`
+    與 `reload()` 改的都是全域，call-time 讀全域才能即時反映變更；直接 getenv 會繞過
+    monkeypatch 造成假綠。夾值／型別／jitter 邊界一律交由 `RetryConfig.__post_init__` 統管。
+    """
+    return llm_caller.RetryConfig(
+        max_retries=EXPERT_RATE_LIMIT_RETRIES,
+        base_delay=EXPERT_RATE_LIMIT_BACKOFF,
+        cap=EXPERT_RATE_LIMIT_BACKOFF_CAP,
+        jitter=EXPERT_RATE_LIMIT_JITTER,
+    )
+
 
 # 啟用哪些「可選角色」（核心 4 角色永遠在）。逗號分隔；清空則只剩核心 4 角色。
 # 多一個角色 = 每場討論多幾次 LLM 呼叫（更耗額度、更久），要省可逐一移除。
@@ -643,6 +664,7 @@ def reload() -> None:
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT
     global EXPERT_RATE_LIMIT_RETRIES, EXPERT_RATE_LIMIT_BACKOFF, EXPERT_RATE_LIMIT_BACKOFF_CAP
+    global EXPERT_RATE_LIMIT_JITTER
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
     global CLARIFY_MAX_QUESTIONS, DISCOVER_ROLES
     global BLUEPRINT_ENABLED, BLUEPRINT_SEED_MAX, ADR_ENABLED, ADR_MAX
@@ -704,6 +726,7 @@ def reload() -> None:
     EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
     EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)
     EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)
+    EXPERT_RATE_LIMIT_JITTER = _env_float("TI_RATELIMIT_JITTER", 0.0)
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
