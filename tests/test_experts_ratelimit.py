@@ -429,3 +429,65 @@ async def test_speak_online_path_uses_jitter(
     assert _record_sleep == [2.0, 4.0], (
         f"jitter=False 時期望確定值 [2.0, 4.0]，實際得到 {_record_sleep}"
     )
+
+
+async def test_concurrent_experts_backoff_is_dispersed(
+    fake_sdk, monkeypatch, _rl_config_jitter_on, _record_sleep
+):
+    """並發分散性測試（驗收 #5）：N 個 expert 同時撞 429，記錄到的退避延遲呈分散。
+
+    每位 expert 連撞 2 次無 retry-after 的 429（走指數 jitter 分支），第 3 次成功；
+    RETRIES=2、BACKOFF=2.0 → 各自在 attempt 0/1 各睡一次（純指數 ceiling 為 2.0、4.0）。
+
+    正向樣本（jitter=True）：以 asyncio.gather 並發跑完，記錄到 N*2 個延遲，全落在 [0, cap]，
+    且**相異值數量遠大於 2**——這是「不同步」的嚴格證據：若 N 個 client 每輪都同步重試，
+    attempt 0、attempt 1 各只會產生 1 個確定值（共 2 個相異值）；相異值 > 2 即代表至少某一輪
+    各 client 取到不同延遲、被打散，避免 thundering herd。
+
+    反向黑樣本（jitter=False）：同樣並發跑完，延遲退化為確定值集合 `{2.0, 4.0}`（恰 2 個相異值），
+    證明上面的分散性確實來自 jitter，本測試有真判別力、排除假綠。
+    """
+    import asyncio
+    import random as _random
+
+    N = 24
+    exc = RuntimeError(_RATE_LIMIT_JSON)  # 無 retry-after → 走指數 jitter 分支
+
+    def make_client(role, sid, cwd):
+        ok_stream = [
+            fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("ok")]),
+            fake_sdk.ResultMessage(),
+        ]
+        return _ScriptedClient(fake_sdk, query_effects=[exc, exc], stream_msgs=ok_stream)
+
+    monkeypatch.setattr(experts, "_build_client", make_client)
+
+    # --- 正向樣本：jitter=True 並發 ---
+    _random.seed(2024)  # 固定種子 → 結果可重現、非 flaky
+    crew = [experts.Expert(BY_KEY["engineer"], f"sess-{i}", "/tmp/x") for i in range(N)]
+    _, broadcast = collect()
+    results = await asyncio.gather(*(e.speak("做點事", broadcast) for e in crew))
+
+    assert all(t == "ok" for t in results)
+    assert len(_record_sleep) == N * 2  # 每位 expert 兩次退避（attempt 0、1）
+    assert all(0.0 <= d <= 60.0 for d in _record_sleep), f"delay 超出 [0,cap]：{_record_sleep}"
+    # 分散鐵證：相異值遠多於 2（同步時恰為 2）；同時 range>0。
+    distinct = len(set(_record_sleep))
+    assert distinct > 2, f"相異延遲值僅 {distinct} 個 → 各 client 同步重試（thundering herd）"
+    assert distinct >= N, f"相異延遲值 {distinct} 偏少，分散性不足：{sorted(set(_record_sleep))}"
+    assert min(_record_sleep) < max(_record_sleep), "並發延遲完全相同 → 未分散"
+
+    # --- 反向黑樣本：jitter=False 並發，延遲退化為確定值 {2.0, 4.0} ---
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
+    _record_sleep.clear()
+    crew2 = [experts.Expert(BY_KEY["engineer"], f"sess-{i}", "/tmp/x") for i in range(N)]
+    _, broadcast2 = collect()
+    results2 = await asyncio.gather(*(e.speak("做點事", broadcast2) for e in crew2))
+
+    assert all(t == "ok" for t in results2)
+    assert len(_record_sleep) == N * 2
+    # 全部退化為純指數確定值：只有 {2.0, 4.0} 兩種，無 jitter 即無分散。
+    assert set(_record_sleep) == {2.0, 4.0}, (
+        f"jitter=False 應退化為確定值 {{2.0, 4.0}}，實得 {sorted(set(_record_sleep))}"
+    )
+    assert _record_sleep.count(2.0) == N and _record_sleep.count(4.0) == N
