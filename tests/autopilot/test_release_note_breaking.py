@@ -146,6 +146,8 @@ def test_changelog_exists():
 def test_version_single_source_of_truth(changelog):
     """驗收 #1：版本字串存在，且與 pyproject 單一事實來源一致。"""
     ver = pyproject_version()
+    # TODO(升版門衛)：下次 bump pyproject 版本時，須同步改此處期望值與 CHANGELOG 的版本區塊。
+    # 此硬寫值是刻意的 breaking-change 門衛，確保升版必伴隨 release note 更新。
     assert ver == "0.2.0", f"pyproject 版本非預期 0.2.0：{ver}"
     assert ver in changelog, f"CHANGELOG 未含 pyproject 版本字串 {ver!r}"
 
