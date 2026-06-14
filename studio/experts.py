@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import config, events, tools
+from . import config, events, llm_caller, tools
 from .roles import Role, effective_tools
 
 logger = logging.getLogger(__name__)
@@ -45,31 +44,19 @@ class ExpertTurnTimeout(Exception):
         self.partial_text = partial_text
 
 
-class ExpertRateLimited(Exception):
-    """偵測到 429／rate_limit_error——交由 speak 層做有限次 retry-after 退避重試。
+class ExpertRateLimited(llm_caller.RateLimitSignal):
+    """experts 層的限流訊號別名——交由 speak 層做有限次 retry-after 退避重試。
 
-    snippet＝命中錯誤的原文片段（供 log）；partial_text＝命中前已收到的合法文字。
-    retry_after＝從錯誤文字／例外解析到的建議等待秒數（無則 None，改走指數退避）。
+    分類／退避邏輯已上收到核心 `llm_caller`；本子類僅保留 experts 慣用名，並讓
+    `llm_caller.classify_failure` 以 isinstance(RateLimitSignal) 統一辨識。
     """
 
-    def __init__(self, retry_after: float | None, snippet: str, partial_text: str = ""):
-        super().__init__(snippet)
-        self.retry_after = retry_after
-        self.snippet = snippet
-        self.partial_text = partial_text
 
-
-class ExpertAPIError(Exception):
-    """偵測到非限流的 API 錯誤文字（如 overloaded_error）——視為該輪失敗走 fallback。
+class ExpertAPIError(llm_caller.APIErrorSignal):
+    """experts 層的 API 錯誤訊號別名——非限流錯誤文字，視為該輪失敗走 fallback。
 
     與限流分屬兩條獨立失敗路徑：不重試，直接回傳不含核可關鍵詞的系統說明文字。
     """
-
-    def __init__(self, kind: str, snippet: str, partial_text: str = ""):
-        super().__init__(snippet)
-        self.kind = kind
-        self.snippet = snippet
-        self.partial_text = partial_text
 
 
 # 失敗 fallback 文字的穩定標記子字串——單一事實來源，供下游（如冒煙報告）以純消費端
@@ -77,76 +64,23 @@ class ExpertAPIError(Exception):
 RATE_LIMIT_FALLBACK_MARKER = "因 API 限流（429）"
 API_ERROR_FALLBACK_MARKER = "發言收到 API 錯誤"
 
-# Anthropic 錯誤封包形如 {"type":"error","error":{"type":"rate_limit_error",...}}。
-# 錨定「JSON key:value 的錯誤型別 token」而非裸關鍵字，避免專家正常引用「rate limit／
-# error」字樣被誤殺（架構決策：禁用寬鬆關鍵字）。
-_API_ERR_RE = re.compile(
-    r'"type"\s*:\s*"(?P<kind>rate_limit_error|overloaded_error|api_error|'
-    r"authentication_error|permission_error|not_found_error|request_too_large|"
-    r'invalid_request_error|billing_error|timeout_error)"'
-)
-# 僅在 status/error code/HTTP 等明確前綴後出現的數字才視為狀態碼（裸數字不算）。
-_STATUS_RE = re.compile(
-    r"(?:status(?:\s*code)?|error\s*code|HTTP)\D{0,8}(?P<code>4\d\d|5\d\d)", re.I
-)
-# retry-after：header 或 JSON 欄位皆容忍（秒）。
-_RETRY_AFTER_RE = re.compile(r"retry[-_ ]?after[\"'\s:=]+(?P<sec>\d+(?:\.\d+)?)", re.I)
-# 視為 API 錯誤（走 fallback）的狀態碼；其餘僅當有錯誤型別 token 才算。
-_API_ERROR_CODES = {"400", "401", "403", "404", "413", "500", "502", "503", "529"}
-
-
-def _parse_retry_after(text: str) -> float | None:
-    m = _RETRY_AFTER_RE.search(text or "")
-    return float(m.group("sec")) if m else None
-
-
-def _classify_api_text(text: str) -> tuple[str, object] | None:
-    """判斷一段文字是否為 API 錯誤封包。
-
-    回傳 ("rate_limit", retry_after|None) ／ ("api_error", kind) ／ None。
-    rate_limit 條件：型別 token 為 rate_limit_error，或明確前綴後的狀態碼為 429。
-    """
-    if not text:
-        return None
-    m = _API_ERR_RE.search(text)
-    kind = m.group("kind") if m else None
-    sm = _STATUS_RE.search(text)
-    code = sm.group("code") if sm else None
-    if kind == "rate_limit_error" or code == "429":
-        return ("rate_limit", _parse_retry_after(text))
-    if kind:
-        return ("api_error", kind)
-    if code and code in _API_ERROR_CODES:
-        return ("api_error", f"HTTP {code}")
-    return None
-
-
-def _classify_failure(exc: Exception) -> tuple[str, float | None, str, str]:
-    """把 stream/query 拋出的例外歸類為 rate_limit／api_error／unknown。
-
-    回傳 (kind, retry_after, snippet, partial_text)。涵蓋兩種 SDK 失敗形態：
-    (a) 本模組從錯誤文字主動拋出的 ExpertRateLimited／ExpertAPIError；
-    (b) SDK 例外型 429（issue #812）——以 str(exc) 套同一錨定樣式辨識。
-    unknown 不吞，由呼叫端 re-raise，不掩蓋真正的程式錯誤。
-    """
-    if isinstance(exc, ExpertRateLimited):
-        return ("rate_limit", exc.retry_after, exc.snippet, exc.partial_text)
-    if isinstance(exc, ExpertAPIError):
-        return ("api_error", None, exc.snippet, exc.partial_text)
-    hit = _classify_api_text(str(exc))
-    if hit and hit[0] == "rate_limit":
-        return ("rate_limit", hit[1], str(exc)[:300], "")
-    if hit and hit[0] == "api_error":
-        return ("api_error", None, str(exc)[:300], "")
-    return ("unknown", None, "", "")
+# 錯誤文字分類器已上收到核心 `llm_caller`（provider 無關，可被 experts／providers 共用）。
+# 此處保留 experts 慣用的私有名作為穩定別名，呼叫端與既有測試無需改動。
+_classify_api_text = llm_caller.classify_api_text
+_classify_failure = llm_caller.classify_failure
 
 
 def _backoff_delay(retry_after: float | None, attempt: int) -> float:
-    """退避秒數：優先採 retry-after，否則指數退避；皆夾在 cap 內。"""
-    cap = config.EXPERT_RATE_LIMIT_BACKOFF_CAP
-    if retry_after and retry_after > 0:
-        return min(retry_after, cap)
-    return min(config.EXPERT_RATE_LIMIT_BACKOFF * (2**attempt), cap)
+    """退避秒數：委派核心 `llm_caller.backoff_delay`，base／cap 由 experts 的 config 帶入。
+
+    本薄包裝在呼叫時讀取 config（而非載入期），故設定頁／測試 monkeypatch config 後即時生效。
+    """
+    return llm_caller.backoff_delay(
+        retry_after,
+        attempt,
+        base=config.EXPERT_RATE_LIMIT_BACKOFF,
+        cap=config.EXPERT_RATE_LIMIT_BACKOFF_CAP,
+    )
 
 
 async def _sleep(seconds: float) -> None:
