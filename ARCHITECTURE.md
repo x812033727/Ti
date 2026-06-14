@@ -33,8 +33,8 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `discussion.py` | 多角色討論引擎（opt-in，`TI_DISCUSS_MODE`）：N 角色 `round_robin`/`parallel` 兩種發言調度、結構化 `回應 @角色名: 同意\|反對` 引用＋反諂媚硬指令、`flow.is_stalled` 提前收斂、規則式小結；semaphore/broadcast/should_stop 建構時注入，不 import orchestrator |
 | `roles.py` | 內建 8 角色定義（CORE 4＋OPTIONAL 4）、共通守則 `_COMMON`；對外接面 `ROSTER`/`BY_KEY` |
 | `role_store.py` | 自訂角色檔（`roles/*.md`）載入/驗證/原子落檔＋討論小組（`roles/groups.yaml`）CRUD；「內建為預設、檔案同 key 覆蓋」合併進 `roles` 模組（見〈自訂角色與討論小組〉） |
-| `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，把串流回應轉成事件 |
-| `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容） |
+| `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，把串流回應轉成事件；持有唯一退避工廠 `make_retry_config()`（見〈LLM 韌性中介層（retry 子系統）〉） |
+| `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容）；OpenAI 端收斂於同一 `run_with_retries`、SDK 內建 retry 設 0（見〈LLM 韌性中介層（retry 子系統）〉） |
 | `tools.py` | 非 Claude provider 的 function-calling 工具層（read/write/edit/bash…） |
 | `runner.py` | 確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git；web 服務 HTTP 驗收（`run_http_demo`：啟動服務→輪詢探測→收掉，僅限 localhost；沙箱保留 PID/唯讀隔離、該次共享 loopback） |
 | `workspace.py` | 每個 session 的沙箱工作目錄（安全路徑、列檔、讀檔、打包 zip 匯出） |
@@ -292,6 +292,53 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
   最後呼叫 `config.reload()` 重新載入可調設定，**下次討論即生效，無需重啟**。
   存取密碼（`auth.set_password`）亦走同一安全寫入路徑。
 - Claude 模型選擇靠 `experts._model_for(role)` 在每個 session 建立專家時即時讀取 `config`。
+
+## LLM 韌性中介層（retry 子系統）
+
+所有 provider 的限流／過載退避都收斂於同一條資料流，**provider 層不自帶任何 retry**：
+
+`make_retry_config()` → `RetryConfig` → `run_with_retries`
+
+- **`make_retry_config()`（`experts.py`）＝唯一退避工廠入口**。它是全系統取得退避策略的
+  *單一真實來源*：call-time 讀 `config.EXPERT_RATE_LIMIT_*` 四值，回傳一個 `RetryConfig`。
+  Claude 端（`experts._speak_with_retries`）與 OpenAI 端（`providers.OpenAIExpert.speak`）皆
+  import 這同一個工廠，沒有第二個來源。
+- **`RetryConfig`（`llm_caller.py`）＝唯一參數載體**。provider 無關、零 config 依賴的
+  dataclass，集中描述退避四旋鈕（`max_retries`／`base`／`cap`／`jitter`）＋注入點
+  （`backoff`／`sleep`）。呼叫端只傳這一個物件，再經 `cfg.as_kwargs()` 平鋪成
+  `run_with_retries` 的關鍵字參數。
+- **`run_with_retries`（`llm_caller.py`）＝執行骨幹**。provider 無關的重試迴圈：反覆呼叫
+  `attempt_fn`，依 `classify_failure` 把 429（限流）／529（過載）分流退避、`api_error`
+  直接收斂、`passthrough`（如逾時）獨立放行。Claude／OpenAI 兩端的差異只在各自的
+  `attempt_fn`（一次 query＋串流）；**退避邏輯本身只有這一份**。
+
+### 新 provider 接入契約
+
+接第三方 provider 時，退避一律走以下三步，不得自造：
+
+1. 呼叫 `make_retry_config()` 取得 `RetryConfig`（拿到全系統統一的退避旋鈕）。
+2. `cfg.as_kwargs()` 平鋪（封裝 `max_retries`／`backoff`／`sleep` 三鍵）。
+3. 傳入 `run_with_retries(attempt_fn, **cfg.as_kwargs(), ...)` 執行；call-site 專屬 callback
+   （`on_rate_limit_exhausted`／`on_api_error`／`on_retry`…）由呼叫端另行平鋪傳入。
+
+**架構決策——禁止 provider 層自帶第二層 retry**：若 SDK 內建 retry，必須關閉（OpenAI 端設
+`max_retries=0`，見 `providers.py`），讓退避只由外層 `run_with_retries` 統一控制。理由：兩層
+retry 會疊乘，退避延遲指數級爆炸並繞過統一旋鈕與可觀測性。
+*偵測提示*：症狀為 log 出現指數級累積等待（單次 retry 延遲超過
+`EXPERT_RATE_LIMIT_BACKOFF_CAP` 數倍）；可 grep retry 紀錄行的 delay 欄位確認是否異常放大。
+
+### 語意備忘
+
+- **jitter 為比例值（非秒數），範圍 `[0,1]`**：它是退避秒數上的隨機抖動*比例*，用來打散多
+  節點同步重試（thundering herd）。`[0,1]` 是穩定契約而非易變參數——`RetryConfig.__post_init__`
+  把超出範圍的值夾回（`llm_caller.py` clamp `0.0 <= jitter <= 1.0`），比例 >1 本就無語意。
+  退避秒數的精確公式以 `llm_caller.py` 的 `backoff_delay` 實作為唯一真相，文件不複製公式。
+- **`max_retries` call-time clamp ≥0**：工廠端與 `RetryConfig.__post_init__` 皆把負值夾為 0
+  （防呆於最近端，外部合約清晰）。
+- **架構伏筆（非現行需求）**：工廠 `make_retry_config()` 目前置於 `experts.py`。若未來接入
+  第三個 provider（非 Claude、非 OpenAI），可考慮把工廠上移至 `providers.py` 或
+  `llm_caller.py`，讓 `experts` 不再是唯一持有者；現階段兩端 import 同一工廠已足夠，**不搬移**。
+- 本子系統設計與業界 exponential-backoff-with-jitter 慣例對齊（自造但有據，未引入 retry 套件）。
 
 ## 指定 GitHub repo（在現有專案上工作）
 
