@@ -34,15 +34,6 @@ from _repo import REPO_ROOT
 _SDK_ROOTS = {"claude_agent_sdk"}
 
 
-def _is_typechecking_test(test: ast.expr) -> bool:
-    """判斷某個 `if` 的條件是否為 TYPE_CHECKING（`TYPE_CHECKING` 或 `typing.TYPE_CHECKING`）。"""
-    if isinstance(test, ast.Name):
-        return test.id == "TYPE_CHECKING"
-    if isinstance(test, ast.Attribute):
-        return test.attr == "TYPE_CHECKING"
-    return False
-
-
 def _unguarded_sdk_imports(source: str) -> list[str]:
     """回傳 source 中「未守護的頂層 SDK import」名稱清單；空 list 代表乾淨。
 
