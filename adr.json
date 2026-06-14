@@ -587,6 +587,83 @@
       "rejected": "",
       "session_id": "apf031a661a2",
       "created_at": 1781424332.749057
+    },
+    {
+      "decision": "`RetryConfig` dataclass 定義在 `llm_caller.py`，含 `max_retries: int = 3`、`base_delay: float = 2.0`、`cap: float = 60.0`、`jitter: float = 0.0` 四欄位",
+      "rationale": "llm_caller 的領域型別；config.py import llm_caller，不成環",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176113
+    },
+    {
+      "decision": "`__post_init__` 驗證順序固定為：① clamp `max_retries = max(0, max_retries)`、② clamp `base_delay = max(1e-9, base_delay)`、③ clamp `cap = max(cap, base_delay)`、④ `jitter ∉ [0.0, 1.0]` 則 `raise ValueError`",
+      "rationale": "clamp 順序若反，base 被夾正後 cap 可能仍低於新 base；③ 依賴 ② 結果，順序不可對調",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176144
+    },
+    {
+      "decision": "`backoff_delay` 頂層加 `jitter` 守門：`jitter < 0 or jitter > 1` 時 `raise ValueError`，移除原 line 286 靜默夾值邏輯",
+      "rationale": "統一兩條路徑（cfg/純量）的語意——jitter 超界是呼叫端 bug，應報錯而非靜默修正",
+      "rejected": "「純量路徑保留 clamp、cfg 路徑拋錯」——行為不一致，呼叫端難以預測，維護成本高",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176153
+    },
+    {
+      "decision": "`backoff_delay` 接受 `cfg: RetryConfig | None = None` kwarg；**cfg 有值時完全屏蔽 base/cap/jitter 三個純量參數，僅 `rand=` 仍有效**；兩者同時傳以 cfg 為準，並在 docstring 明文說明",
+      "rationale": "消歧義，避免維護者猜測優先序",
+      "rejected": "「cfg 覆蓋、純量可再 override」——混用場景不合理且難測試",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176163
+    },
+    {
+      "decision": "`RetryConfig.make_backoff_fn()` 實作為 `lambda ra, att: backoff_delay(ra, att, cfg=self)`，單一真實來源，不自行展開 base/cap/jitter",
+      "rationale": "避免兩處邏輯漂移；工程師指出此為正確收斂點",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176175
+    },
+    {
+      "decision": "`run_with_retries` 新增 `cfg: RetryConfig | None = None`；`max_retries` 改為 `int | None = None`；兩者皆 None 時 `raise ValueError`（需補單測覆蓋此路徑）；cfg 提供的 backoff 可被明確傳入的 `backoff=` 參數覆蓋",
+      "rationale": "現有唯一呼叫端明確傳 `max_retries=N`，改 None 預設向後相容；保留 `backoff=` 覆蓋供測試注入",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176184
+    },
+    {
+      "decision": "`config.py` 新增 `EXPERT_RATE_LIMIT_JITTER = _env_float(\"TI_RATELIMIT_JITTER\", 0.0)` 全域，並納入 `reload()` 的 `global` 宣告與刷新區塊；`make_retry_config()` 為普通函式，**不**進 global 宣告",
+      "rationale": "工程師指正——函式物件不被重新賦值，進 global 無意義；reload-aware 的關鍵是工廠在 call-time 讀 module 全域變數而非 `os.getenv`",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176191
+    },
+    {
+      "decision": "`make_retry_config()` 內部讀 `config.EXPERT_RATE_LIMIT_RETRIES / BACKOFF / BACKOFF_CAP / JITTER` 四個全域，**禁止直接呼叫 `os.getenv`**",
+      "rationale": "測試端 `monkeypatch.setattr(config, \"EXPERT_RATE_LIMIT_JITTER\", 值)` 必須能即時生效；直接 getenv 繞過 monkeypatch 導致測試假綠",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176206
+    },
+    {
+      "decision": "`experts._backoff_delay` 簡化為 `return llm_caller.backoff_delay(retry_after, attempt, cfg=config.make_retry_config())`；`_speak_with_retries` 改傳 `cfg=config.make_retry_config()`，移除 `max_retries=max(0, ...)` 與 `backoff=_backoff_delay` 兩行重複碼",
+      "rationale": "max_retries 夾值責任轉移到 `RetryConfig.__post_init__`，experts 不再持有退避參數",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176215
+    },
+    {
+      "decision": "SDK 雙重重試風險（provider 未設 `max_retries=0`）**不納入本 PR**，但須在 `run_with_retries` 或 experts provider 初始化點補 `# TODO: 各 provider SDK 應設 max_retries=0 避免雙重重試` 的程式碼內 TODO 註記",
+      "rationale": "高級工程師指出「只在 PR description 很容易消失」，程式碼 TODO 才有追蹤性",
+      "rejected": "直接範圍內修改——需逐一確認各 provider 初始化點，混入會模糊本 PR 邊界",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176241
+    },
+    {
+      "decision": "測試須含以下三組：① `jitter=0.0` 確定值反向黑樣本（注入固定 rand，斷言輸出等於計算值）；② `jitter>0` 注入固定 rand 驗上下界正向樣本；③ `max_retries=None + cfg=None` 觸發 ValueError；所有 config 屬性異動一律 `monkeypatch.setattr`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap617738e076",
+      "created_at": 1781426146.5176253
     }
   ]
 }
