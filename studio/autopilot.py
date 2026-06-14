@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import difflib
 import json
 import logging
 import os
@@ -378,10 +379,115 @@ def _recent_outcomes_context() -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _pending_titles() -> list[str]:
+    """目前仍在排隊／進行中的任務標題（pending + in_progress），供 prompt 注入與 pre-filter 對齊。
+
+    純讀 backlog、無 LLM/網路。兩層防線（prompt 禁止清單、進場 pre-filter）的覆蓋範圍以此統一，
+    避免「措辭滑溜的 in_progress 重複」漏網。標題在回傳前壓平換行並限長 200 字，作為嵌入 prompt
+    前的明確防線（即使日後新增寫入 backlog 的路徑也不會讓多行標題穿透 prompt 結構）。
+    """
+    rows = [t for t in backlog.list_tasks() if t.get("status") in ("pending", "in_progress")]
+    # 拼接前消毒：壓平內嵌換行、限長，明確阻斷標題穿透 prompt 結構（即使未來新增寫入路徑）。
+    return [t["title"].strip().replace("\n", " ")[:200] for t in rows if t.get("title", "").strip()]
+
+
+def _pending_awareness_context(titles: list[str] | None = None) -> str:
+    """把目前 pending/in_progress 標題整理成 bullet 清單（只回資料，不含任何硬指令）。
+
+    刻意只輸出「清單內容」、不內嵌指令：函式重用時不會把指令帶著走，且可單獨斷言清單內容。
+    硬指令由 `_build_discovery_prompt` 在組裝層附加。無任何排隊任務時回 ""。
+    """
+    titles = _pending_titles() if titles is None else titles
+    if not titles:
+        return ""
+    lines = ["【目前已在排隊／進行中的任務（請勿與下列任何項目實質重疊）】"]
+    lines += [f"- {t}" for t in titles]
+    return "\n".join(lines) + "\n\n"
+
+
+def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None = None) -> str:
+    """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
+
+    結構：近期成敗回顧 + pending-awareness 清單 + 任務基底說明 + 兩條硬指令。
+    兩條硬指令（禁止實質重疊、優先廣度覆蓋不同子系統）明確置於組裝層，為上層決策而非資料層職責。
+    參數預設由 backlog 即時讀取；測試可注入字串以隔離 backlog 狀態。
+    """
+    outcomes = _recent_outcomes_context() if outcomes is None else outcomes
+    pending = _pending_awareness_context() if pending is None else pending
+    # 措辭隨清單存否切換：有清單才講「上列」，避免空清單時硬指令 1 措辭懸空指向不存在的清單。
+    rule_1 = (
+        "1. 不得提出與上列任何已在排隊／進行中項目實質重疊者（同一主題換句話說也算重疊，一律避開）。\n"
+        if pending
+        else "1. 目前尚無排隊／進行中任務，但各點之間仍不得實質重疊（同一主題換句話說也算）。\n"
+    )
+    return (
+        outcomes
+        + pending
+        + (
+            "你正在審視「Ti Studio」這個 AI 多專家自主開發工作室專案本身（原始碼就在你的工作目錄）。\n"
+            "請用 Read/Grep 快速瀏覽程式碼與測試，找出最值得改善的 3~5 點（bug、缺測試、可讀性、"
+            "功能缺口、安全），每點獨立一行,格式固定為 `任務: <動詞開頭的具體任務>`。只輸出任務行。\n"
+            "硬性要求：\n"
+            + rule_1
+            + "2. 優先廣度：每點須來自不同子系統，優先覆蓋近期未碰過的模組，禁止往同一主題反覆疊加。"
+        )
+    )
+
+
+def _normalize_for_dedup(s: str) -> str:
+    """相似度比對前的正規化：壓平換行、strip、轉小寫、去首尾標點。
+
+    proposals 是完整句子、existing_titles 是標題，長度差會稀釋 SequenceMatcher.ratio()；
+    先 normalize 可緩解（仍是字元級比對，無法處理同義改寫）。獨立成 helper 方便日後替換策略。
+    """
+    s = s.replace("\n", " ").strip().lower()
+    return s.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
+
+
+def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
+    """進場 pre-filter：丟掉與任一 existing 標題相似度超過 AUTOPILOT_DEDUP_RATIO 的提案。
+
+    僅作用於本次 LLM 提案進場前，不回溯清洗 backlog、不刪除/合併任何既有任務，也不改動
+    `backlog._is_duplicate` 的完成去重契約（兩者互補：此處擋語意相近、那裡擋字串等值）。
+    比對範圍與 `_pending_awareness_context` 注入 prompt 的禁止清單對齊（pending + in_progress），
+    使「prompt 要求不重疊」與「pre-filter 實際擋截」覆蓋一致，避免措辭滑溜的重複漏網。
+
+    # O(n×m)，其中 n=proposals 數、m=existing 數；existing 預期 < 50 筆，若規模增長需重估。
+    """
+    if not existing_titles:
+        return proposals
+    norm_existing = [_normalize_for_dedup(t) for t in existing_titles]
+    kept: list[str] = []
+    for p in proposals:
+        np_ = _normalize_for_dedup(p)
+        hit = next(
+            (
+                e
+                for e in norm_existing
+                if difflib.SequenceMatcher(None, np_, e).ratio() >= config.AUTOPILOT_DEDUP_RATIO
+            ),
+            None,
+        )
+        if hit is not None:
+            log.debug("pre-filter 丟棄與排隊任務高相似的提案：%r（近似 %r）", p, hit)
+            continue
+        kept.append(p)
+    return kept
+
+
 async def _evaluate_self(clone: str) -> int:
     """backlog 空時，用一位資深專家審視 Ti 自身並產出改善任務。回傳新增數。
 
     會先把迴圈自身的近期成敗回饋給專家（self-reinforcing）：避免重提已完成、避開已知失敗做法。
+    並注入目前 pending/in_progress 標題（pending-awareness）＋兩條硬指令（禁止實質重疊、優先廣度
+    覆蓋不同子系統），讓專家在產出階段就迴避與排隊任務重疊。prompt 組裝抽到 `_build_discovery_prompt`
+    以利單測。
+
+    專家產出後再過兩道進場過濾，才交給 `backlog.add_many`：
+      1. 丟掉與近期已完成標題完全相符者（`_recent_done_titles`），補 backlog 去重對 done 的缺口。
+      2. 進場 pre-filter（`_filter_pending_duplicates`）：丟掉與 pending/in_progress 標題語意相近
+         （SequenceMatcher.ratio ≥ `AUTOPILOT_DEDUP_RATIO`）者，與 prompt 注入的禁止清單範圍對齊。
+    兩道過濾僅作用於本次提案進場，皆不改動 `backlog._is_duplicate` 的字串等值去重契約，與其互補。
     """
     from .experts import Expert
     from .roles import SENIOR
@@ -392,11 +498,7 @@ async def _evaluate_self(clone: str) -> int:
     async def _noop(_ev):
         return None
 
-    prompt = _recent_outcomes_context() + (
-        "你正在審視「Ti Studio」這個 AI 多專家自主開發工作室專案本身（原始碼就在你的工作目錄）。\n"
-        "請用 Read/Grep 快速瀏覽程式碼與測試，找出最值得改善的 3~5 點（bug、缺測試、可讀性、"
-        "功能缺口、安全），每點獨立一行,格式固定為 `任務: <動詞開頭的具體任務>`。只輸出任務行。"
-    )
+    prompt = _build_discovery_prompt()
     try:
         text = await ex.speak(prompt, _noop)
     finally:
@@ -405,6 +507,9 @@ async def _evaluate_self(clone: str) -> int:
     # 過濾掉與近期已完成標題完全相符者（補 backlog 去重對 done 的缺口，避免剛完成又重排）。
     done_titles = _recent_done_titles()
     tasks = [t for t in parse_tasks(text) if t.strip() not in done_titles]
+    # 進場 pre-filter：丟掉與目前 pending/in_progress 高相似（語意相近）的提案，與 prompt 注入的
+    # 禁止清單對齊。不動 backlog._is_duplicate 的字串等值去重契約，兩者互補。
+    tasks = _filter_pending_duplicates(tasks, _pending_titles())
     n = backlog.add_many(tasks, source="eval")
     log.info("自我評估產出 %d 個新任務", n)
     return n
