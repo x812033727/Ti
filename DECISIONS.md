@@ -456,6 +456,7 @@
 - 時間：2026-06-14 23:01
 - 理由：0.75 是初始估值，中文字元級比對在同義改寫場景（「修復」vs「修正」）效果有限，上線後大概率需要調整；env override 讓調閾值的成本降為零，不需發版。
 - 否決方案：硬編碼純常數——Engineer 明確指出這閾值之後大概率要調，不留出口是自縛手腳。
+- **撤回（2026-06-14，critic 退回第 2 輪）**：與驗收標準 #4「零新 env 變數」直接衝突，此架構決策未對賬書面契約即拍板，屬假共識。實作已收斂為純模組常數 `AUTOPILOT_DEDUP_RATIO = 0.75`（移除 `TI_AUTOPILOT_DEDUP_RATIO`）。日後若確需 env override，須先由 PM 正式修訂驗收標準 #4 再加回。
 
 ## `_filter_pending_duplicates(proposals, existing_titles)` 比對前對雙方執行 normalize（`.strip().lower()`，去除首尾標點），以緩解長短句 ratio 被長度差稀釋的問題；normalize 邏輯獨立為內部 helper，方便日後替換。
 - 時間：2026-06-14 23:01
