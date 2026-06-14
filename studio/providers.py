@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 
 from . import config, events, llm_caller, tools
+from .experts import _make_retry_observer as make_retry_observer
 from .experts import make_retry_config
 from .roles import Role, effective_tools
 
@@ -121,14 +122,22 @@ class OpenAIExpert:
             )
             return ""
 
+        # 與 Claude 端 _speak_with_retries 對稱接上可觀測接點：metrics 累加退避次數／延遲，
+        # observe sink 落結構化 log。兩者皆純記錄、不改控制流。
+        metrics = llm_caller.RetryMetrics()
         try:
-            return await llm_caller.run_with_retries(
+            text = await llm_caller.run_with_retries(
                 _attempt,
                 **cfg.as_kwargs(),
                 on_retry=_on_retry,
                 on_rate_limit_exhausted=_on_rate_limit_exhausted,
                 on_api_error=_on_api_error,
+                metrics=metrics,
+                observe=make_retry_observer(r.key),
             )
+            if metrics.retries or metrics.outcome not in ("success", ""):
+                logger.info("OpenAI 專家 %s 發言收斂：%s", r.key, metrics.to_dict())
+            return text
         finally:
             await broadcast(events.expert_status(self.session_id, r.key, "idle"))
 
