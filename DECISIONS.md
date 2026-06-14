@@ -801,3 +801,13 @@
 ## 本次不引入 semantic-release / git tag 自動化；在 CHANGELOG 或 DECISIONS 加「架構伏筆：」標注留接入點，非現行需求
 - 時間：2026-06-15 07:18
 
+## [任務 #1 落地] release note 檔案路徑 = 根目錄 `CHANGELOG.md`（Keep a Changelog）、本次版本字串 = `0.2.0`，pyproject.toml 已升版
+- 時間：2026-06-15 07:19
+- 角色：工程師
+- 落地內容：
+  1. 已執行排雷 `grep -rn "0.1.0" tests/` → **無命中**，既有測試未硬寫舊版本字串，升版無連帶紅燈風險。
+  2. `pyproject.toml` `version` 由 `0.1.0` → `0.2.0`，作為版本單一事實來源；後續 CHANGELOG.md 與測試一律從此處讀取（tomllib），不在他處硬寫版本字串。
+  3. release note 落點確認為 repo 根目錄 `CHANGELOG.md`（先前無任何 CHANGELOG/RELEASE 檔，本次新建為 #2 任務範圍）。
+- 範圍守線：本任務僅決策＋升版，**不碰 chown 程式邏輯**（`config.py` 已 strict 預設、warn/off 三態、錯值 fail-safe，均維持原狀）。
+- 架構伏筆：semantic-release / git tag 自動擷取 `BREAKING CHANGE:` footer 留待未來；本次 CHANGELOG 為人工維護。
+
