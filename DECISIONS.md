@@ -626,3 +626,31 @@
 - 理由：口頭「已知限制」六個月後消失；進 backlog 才有人負責，本場範圍不擴張。
 - 否決方案：順手補 Claude path 對稱保護——需改 experts.py 且無對應測試，屬本場範圍外的鍍金，拒絕。
 
+## `studio/__init__.py` 在 `__version__` 行之後插入 `from . import secure_write`，全檔其他內容不動。
+- 時間：2026-06-15 04:47
+- 理由：讓 `from studio import secure_write` 的語意由「隱性 submodule lookup」變為「顯式套件匯出」，消除測試執行順序對 collection 的影響，且是業界標準做法。
+- 否決方案：補 `__all__`——會把現有未宣告的 submodule 全部屏蔽，範圍遠超本場需求；否決在 `secure_write.py` 改動 import 鏈——問題根源在 `__init__.py`，不應改 production logic。
+
+## 動工前以 `python3 -c "import studio"` 確認 import chain（`studio` → `secure_write` → `config`）無 side effect 或 circular dep，通過才合入。
+- 時間：2026-06-15 04:47
+- 理由：`__init__.py` 加入 import 後，`studio` 套件任何人 import 都會觸發 `secure_write` 的 import；若 `config` 有 import-time side effect，才會在此炸——用一條命令最便宜地確認。
+- 否決方案：不驗直接合入——代價是若有問題，所有用 `import studio` 的測試與工具全炸，修復成本高。
+
+## `studio/secure_write.py` line 79 的 `SecureWriteError` 訊息改為 `f"fchown(0,0) 失敗（非 root？）：{target}：{e}"`，其餘字串不動。
+- 時間：2026-06-15 04:47
+- 理由：`target`（`str`，來自 line 55 `os.fspath(path)`）在 except 塊可見；此格式同時滿足驗收測試三條斷言：`str(target) in msg`、`"chown" in msg.lower()`、`msg.strip() != ""`。
+- 否決方案：改測試斷言放寬——「error message 含路徑」是可行動錯誤訊息的基本品質，應由 production code 承諾，弱化斷言即弱化契約；否決只放 `os.path.basename(target)`——`str(target)` 是全路徑，basename 不能通過斷言。
+
+## 撤銷原任務 #2（修正 `test_qa_task3_failclosed_contract.py` 的 monkeypatch 對象）。`monkeypatch.setattr(os, "fchown", ...)` 與 `monkeypatch.setattr(secure_write.os, "fchown", ...)` 作用在同一 singleton 物件上，無 bug，兩者等效。
+- 時間：2026-06-15 04:47
+- 理由：`secure_write.py` 的 `import os` 與測試的 `import os` 均拿到 `sys.modules['os']`；patch 其屬性 `fchown` 即全域生效。研究員此點判斷有誤，不應引入不必要的改動。
+- 否決方案：改為 `monkeypatch.setattr(secure_write, "os", ...)` 替換整個 os 物件——等效但侵入性更高；此方式值得寫進跟進待辦（防日後有人把 `import os` 改成 `from os import fchown`），本場不動。
+
+## `test_studio_exports.py` 防呆測試列為核心 backlog 跟進待辦，本場不新增。
+- 時間：2026-06-15 04:47
+- 理由：本場驗收邊界是「7 模組 collection 通過且測試全綠」，防呆 guard 屬獨立改善項，硬塞只會讓範圍失控、驗收條件混淆。
+- 否決方案：本場一起補——不阻擋進度卻增加 scope；先驗 7 模組全綠、再獨立 PR 補 guard，風險更低。
+
+## 任務 #1（`__init__.py`）與 任務 #2-new（`secure_write.py` 錯誤訊息）並行起手，任務 #3（全量驗收 `pytest tests/autopilot/ -q`）待兩者合入後統一執行，驗收口徑為「7 模組全收集 + 全綠 + 無回歸」。
+- 時間：2026-06-15 04:47
+
