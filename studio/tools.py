@@ -6,11 +6,13 @@ function-calling 規格定義同名工具，並提供實際在 workspace cwd 上
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import re
 import socket
 from pathlib import Path
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from . import config, runner
@@ -124,6 +126,81 @@ def is_idempotent(name: str) -> bool:
     一律回 True（視為冪等）。理由見 ``NON_IDEMPOTENT_TOOLS`` 上方註解。
     """
     return name not in NON_IDEMPOTENT_TOOLS
+
+
+# --- session 內去重快取結構與 key 推導（任務 #2）---------------------------
+# 【key 不依賴呼叫端 tc.id】OpenAI 重放會重新生成新的 tool_call id，用 tc.id 當 key 在
+# 重放時必 miss、去重直接失效。改由「工具名 + 已解析參數（+ attempt 內出現序號）」推導：
+# retry 重放同一輪工具迴圈時，tool_name 與 args 內容不變 → 同 key 命中。
+def dedup_key(tool_name: str, args: dict) -> str:
+    """從工具名與**已解析的 args dict** 推導去重 base key（不依賴 tc.id）。
+
+    這是「內容指紋」——僅辨識「哪個工具、什麼參數」，不含呼叫序號。實際入快取的 key 由
+    ``DedupCache.key_for`` 在此基礎上再附 attempt 內出現序號（見該類說明）；單獨使用本
+    函式僅在測試辨識內容相等性時有意義。
+
+    ``args`` 必須是 ``tools.parse_args`` 之後的 dict，不可傳 ``tc.function.arguments``
+    原始 JSON 字串——後者序列化順序不穩定會讓 ``sort_keys`` 失效、同參數產生假 miss。
+    """
+    # sort_keys=True 確保鍵序無關，同一組 args 永遠得到同一 digest。
+    digest = hashlib.sha256(
+        json.dumps(args, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    # [:16]＝64 bits：per-speak 工具呼叫數極小（< 100），碰撞機率 < 5×10⁻¹⁸，足夠。
+    return f"{tool_name}:{digest}"
+
+
+class DedupCache:
+    """單次 ``speak()`` 內的去重快取（任務 #2）。純記憶體、無外部相依、不落檔、無 TTL。
+
+    【scope】＝**單次 speak（非整個 session）**：容器由 ``OpenAIExpert`` 持有、`speak()`
+    入口換上新實例（見 #4 接入），天然提供 session/speak 隔離。措辭澄清——標題寫「session
+    內」，實作 scope 更窄（per-speak），功能上更安全。
+
+    【兩層狀態、不同生命週期】
+    - ``_results``：完整 key → 首次成功結果。**跨 attempt 保留**，retry 重放命中即回首次
+      結果、不重執行副作用。值型別實際為 str（execute 回傳），標注從嚴用 Any。
+    - ``_seen``：base key → 該 attempt 內已出現次數。**每個 attempt 由 ``new_attempt()``
+      重置**，用來區分「retry 重放同一呼叫」與「同一 attempt 內 LLM 合法地下了多次相同
+      args 的呼叫」。
+
+    【為何必須有 occurrence 對齊——這是純 args hash 的正確性盲點】
+    若 key 只含 ``tool_name+args``，同一 attempt 內 LLM 連下兩次 ``echo x >> log`` 會在
+    第二次誤命中、只 append 一行（副作用「少跑」、靜默資料遺失，方向比「多跑」嚴重一個
+    量級且在零-retry 正常路徑就觸發）。納入 attempt 內出現序號後：零-retry 路徑的合法重複
+    各得不同 key（都執行）；只有「跨 attempt、同位置」的重放才命中——這才是去重要擋的對象。
+
+    【重放對齊的前提】retry 的 ``_attempt`` 從頭重跑整輪工具迴圈，相同呼叫序列下第 N 次
+    相同 (tool, args) 仍對齊到同一 ``#N``。此前提與純 args hash 相同（皆假設重放給相同
+    args）；occurrence 只在「合法重複」情境嚴格更好，不會更差。
+    """
+
+    def __init__(self) -> None:
+        self._results: dict[str, Any] = {}
+        self._seen: dict[str, int] = {}
+
+    def new_attempt(self) -> None:
+        """每次 ``_attempt`` 開始時呼叫：重置 attempt 內出現計數，保留跨 attempt 的結果快取。"""
+        self._seen = {}
+
+    def key_for(self, tool_name: str, args: dict) -> str:
+        """推導本次呼叫的完整去重 key 並遞增 attempt 內出現序號（命中與否都遞增以維持對齊）。
+
+        同一 attempt 內第 N 次相同 (tool_name, args) → 後綴 ``#N`` 不同 → 不同 key；
+        重放（``new_attempt()`` 後重跑同序列）時第 N 次仍對齊同一 ``#N`` → 命中。
+        """
+        base = dedup_key(tool_name, args)
+        n = self._seen.get(base, 0)
+        self._seen[base] = n + 1
+        return f"{base}#{n}"
+
+    def get(self, key: str) -> Any | None:
+        """回傳已快取結果；未命中回 None。"""
+        return self._results.get(key)
+
+    def put(self, key: str, result: Any) -> None:
+        """寫入首次成功結果。呼叫端須在副作用成功之後才寫（失敗不寫，防假命中，見 #3）。"""
+        self._results[key] = result
 
 
 def specs_for(allowed_claude_tools: list[str]) -> list[dict]:
