@@ -1,0 +1,229 @@
+"""核心 LLM 韌性中介層 `studio/llm_caller.py` 單元測試。
+
+驗證 provider 無關契約：分類器（含反向黑樣本）、退避（retry-after 優先＋夾 cap＋指數）、
+重試骨幹 `run_with_retries`（限流退避重試→成功／耗盡 fallback、API 錯誤不重試、逾時等
+passthrough 獨立路徑、未知例外 re-raise）。全程不需真 SDK、不連線、注入 fake sleep。
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from studio import llm_caller as lc
+
+_RATE_LIMIT_JSON = '{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}'
+_OVERLOADED_JSON = '{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}'
+
+
+# --- classify_api_text：錨定判別 + 反向黑樣本 --------------------------
+
+
+def test_classify_rate_limit_error_json():
+    assert lc.classify_api_text(_RATE_LIMIT_JSON) == ("rate_limit", None)
+
+
+def test_classify_reads_retry_after():
+    assert lc.classify_api_text(_RATE_LIMIT_JSON + " retry-after: 7") == ("rate_limit", 7.0)
+
+
+def test_classify_status_429():
+    assert lc.classify_api_text("API Error: status code 429") == ("rate_limit", None)
+
+
+def test_classify_overloaded_is_api_error():
+    assert lc.classify_api_text(_OVERLOADED_JSON) == ("api_error", "overloaded_error")
+
+
+def test_classify_http_503_is_api_error():
+    assert lc.classify_api_text("API Error: HTTP 503") == ("api_error", "HTTP 503")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "回應 @架構師: 同意。我們之前撞到 rate limit error 與 429，但已修好。",
+        "建議對 overloaded error 做退避重試。",
+        "這支測試有 429 個案例，error 訊息要更清楚。",
+        "",
+    ],
+)
+def test_classify_normal_speech_not_misclassified(text):
+    assert lc.classify_api_text(text) is None
+
+
+# --- classify_failure：例外分類 ----------------------------------------
+
+
+def test_classify_failure_signal_objects():
+    assert lc.classify_failure(lc.RateLimitSignal(3.0, "snip", "partial")) == (
+        "rate_limit",
+        3.0,
+        "snip",
+        "partial",
+    )
+    assert lc.classify_failure(lc.APIErrorSignal("overloaded_error", "snip", "p")) == (
+        "api_error",
+        None,
+        "snip",
+        "p",
+    )
+
+
+def test_classify_failure_exception_text_429():
+    kind, retry_after, _, _ = lc.classify_failure(RuntimeError(_RATE_LIMIT_JSON))
+    assert kind == "rate_limit"
+
+
+def test_classify_failure_unknown():
+    assert lc.classify_failure(ValueError("boom")) == ("unknown", None, "", "")
+
+
+# --- backoff_delay：retry-after 優先、指數、夾 cap ----------------------
+
+
+def test_backoff_prefers_retry_after_and_caps():
+    assert lc.backoff_delay(5.0, 0, base=2.0, cap=10.0) == 5.0
+    assert lc.backoff_delay(99.0, 0, base=2.0, cap=10.0) == 10.0  # retry-after 也夾 cap
+    assert lc.backoff_delay(None, 0, base=2.0, cap=10.0) == 2.0  # 指數 2×2^0
+    assert lc.backoff_delay(None, 2, base=2.0, cap=10.0) == 8.0  # 2×2^2
+    assert lc.backoff_delay(None, 5, base=2.0, cap=10.0) == 10.0  # 夾 cap
+
+
+# --- run_with_retries：骨幹控制流 --------------------------------------
+
+
+@pytest.fixture
+def recorder():
+    """共用注入：記錄 sleep 延遲與 before_sleep hook 呼叫。"""
+    delays: list[float] = []
+    retries: list[tuple] = []
+
+    async def sleep(s):
+        delays.append(s)
+
+    async def on_retry(attempt, limit, delay, snippet):
+        retries.append((attempt, limit, delay))
+
+    return delays, retries, sleep, on_retry
+
+
+async def test_run_rate_limit_retry_then_success(recorder):
+    delays, retries, sleep, on_retry = recorder
+    calls = {"n": 0}
+
+    async def attempt():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise lc.RateLimitSignal(None, "limited")
+        return "ok"
+
+    async def exhausted(snip, partial):  # 不應被呼叫
+        raise AssertionError
+
+    async def api_err(snip, partial):
+        raise AssertionError
+
+    out = await lc.run_with_retries(
+        attempt,
+        max_retries=2,
+        on_rate_limit_exhausted=exhausted,
+        on_api_error=api_err,
+        backoff=lambda ra, a: 2.0 * (2**a),
+        sleep=sleep,
+        on_retry=on_retry,
+    )
+    assert out == "ok"
+    assert calls["n"] == 2
+    assert delays == [2.0]
+    assert retries == [(0, 2, 2.0)]  # before_sleep hook 收到 attempt=0、limit=2、delay=2.0
+
+
+async def test_run_rate_limit_exhausted_fallback(recorder):
+    delays, _, sleep, on_retry = recorder
+
+    async def attempt():
+        raise lc.RateLimitSignal(None, "always-limited", "半句")
+
+    async def exhausted(snip, partial):
+        return f"FALLBACK:{snip}:{partial}"
+
+    async def api_err(snip, partial):
+        raise AssertionError
+
+    out = await lc.run_with_retries(
+        attempt,
+        max_retries=2,
+        on_rate_limit_exhausted=exhausted,
+        on_api_error=api_err,
+        backoff=lambda ra, a: 2.0 * (2**a),
+        sleep=sleep,
+        on_retry=on_retry,
+    )
+    assert out == "FALLBACK:always-limited:半句"
+    assert delays == [2.0, 4.0]  # RETRIES=2：指數退避兩次
+
+
+async def test_run_api_error_no_retry():
+    delays: list[float] = []
+
+    async def sleep(s):
+        delays.append(s)
+
+    async def attempt():
+        raise lc.APIErrorSignal("overloaded_error", "over", "半句")
+
+    async def exhausted(snip, partial):
+        raise AssertionError
+
+    async def api_err(snip, partial):
+        return f"APIERR:{snip}:{partial}"
+
+    out = await lc.run_with_retries(
+        attempt,
+        max_retries=3,
+        on_rate_limit_exhausted=exhausted,
+        on_api_error=api_err,
+        sleep=sleep,
+    )
+    assert out == "APIERR:over:半句"
+    assert delays == []  # 不重試、不退避
+
+
+async def test_run_passthrough_handled():
+    class Timeout(Exception):
+        pass
+
+    async def attempt():
+        raise Timeout("idle")
+
+    async def passthrough_handler(exc):
+        return f"TIMEOUT:{exc}"
+
+    async def noop(*a):
+        raise AssertionError
+
+    out = await lc.run_with_retries(
+        attempt,
+        max_retries=3,
+        on_rate_limit_exhausted=noop,
+        on_api_error=noop,
+        passthrough=(Timeout,),
+        on_passthrough=passthrough_handler,
+    )
+    assert out == "TIMEOUT:idle"
+
+
+async def test_run_unknown_reraised():
+    async def attempt():
+        raise ValueError("boom")
+
+    async def noop(*a):
+        raise AssertionError
+
+    with pytest.raises(ValueError, match="boom"):
+        await lc.run_with_retries(
+            attempt,
+            max_retries=3,
+            on_rate_limit_exhausted=noop,
+            on_api_error=noop,
+        )
