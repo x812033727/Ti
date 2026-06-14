@@ -349,6 +349,68 @@ async def test_speak_unknown_exception_reraised(fake_sdk, monkeypatch, _rl_confi
     assert _record_sleep == []
 
 
+# --- wiring 測試（B 法）：monkeypatch 工廠回傳改值，驗退避行為隨之改變 ------
+#
+# 任務 #3：證明 speak 觸發路徑「真的取用 make_retry_config 的回傳值」來決定重試，
+# 而非繞過工廠直讀 config。手法＝patch `experts.make_retry_config` 回傳改造後的
+# RetryConfig，注入「每次都命中限流」的串流（保證打到 max_retries 上限），再斷言
+# 實際 query 次數＝1+max_retries。注意：本檔 _rl_config 設 config RETRIES=2，但下列
+# 測試的重試次數一律跟著「工廠回傳值」走（1 或 3），與 config 的 2 脫鉤——這正是
+# wiring 證明：取值路徑經過工廠，而非散讀 config。退避秒數另由 _record_sleep 佐證
+# base/cap/jitter 同樣源自工廠回傳。
+
+
+async def _run_until_rate_limit_exhausted(fake_sdk, monkeypatch, cfg):
+    """patch 工廠回傳 cfg，注入永遠命中限流的串流，跑完 speak，回傳 client 供斷言。"""
+    monkeypatch.setattr(experts, "make_retry_config", lambda: cfg)
+    rl_stream = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_RATE_LIMIT_JSON)])]
+    client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=rl_stream)
+    exp = _make_expert(monkeypatch, client)
+    bucket, broadcast = collect()
+    text = await exp.speak("做點事", broadcast)
+    return client, text, bucket
+
+
+async def test_speak_wiring_b_factory_max_retries_1_retries_once(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """B 法核心：工廠回 max_retries=1 → 實際只重試 1 次（初次 + 1 = 2 次 query）。"""
+    cfg = experts.RetryConfig(max_retries=1, base=2.0, cap=60.0, jitter=0.0)
+    client, text, _ = await _run_until_rate_limit_exhausted(fake_sdk, monkeypatch, cfg)
+
+    assert client.queries == 2  # 初次 + 1 次重試，跟著工廠的 max_retries=1（非 config 的 2）
+    assert _record_sleep == [2.0]  # 只退避 1 次；秒數＝cfg.base，證明 base 亦源自工廠
+    assert "限流" in text and "中止" in text  # 耗盡後走 fallback
+    assert "核可" not in text and "同意" not in text
+
+
+async def test_speak_wiring_b_factory_max_retries_3_retries_thrice(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """B 法反向對照：同一 config（RETRIES=2）下，工廠改回 max_retries=3 → 重試 3 次。
+
+    與上一條對照：重試次數 2 vs 4 隨「工廠回傳」改變而非隨 config，排除假綠、坐實
+    取值路徑經過 make_retry_config。
+    """
+    cfg = experts.RetryConfig(max_retries=3, base=2.0, cap=60.0, jitter=0.0)
+    client, text, _ = await _run_until_rate_limit_exhausted(fake_sdk, monkeypatch, cfg)
+
+    assert client.queries == 4  # 初次 + 3 次重試，跟著工廠的 max_retries=3（非 config 的 2）
+    assert _record_sleep == [2.0, 4.0, 8.0]  # 指數退避 3 次、夾 cap=60，秒數源自 cfg.base/cap
+    assert "限流" in text and "中止" in text
+
+
+async def test_speak_wiring_b_factory_base_drives_backoff(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """B 法補強：工廠回傳的 base 直接決定退避秒數——改 base=5.0，首次退避即為 5.0。"""
+    cfg = experts.RetryConfig(max_retries=1, base=5.0, cap=60.0, jitter=0.0)
+    client, _, _ = await _run_until_rate_limit_exhausted(fake_sdk, monkeypatch, cfg)
+
+    assert client.queries == 2
+    assert _record_sleep == [5.0]  # base 由工廠帶入 → 退避秒數隨之改變（非 config 的 2.0）
+
+
 async def test_speak_wires_middleware_observability(
     fake_sdk, monkeypatch, _rl_config, _record_sleep
 ):
