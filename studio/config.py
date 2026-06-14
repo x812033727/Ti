@@ -39,7 +39,8 @@ def _env_float(name: str, default: float) -> float:
 
 
 # --- Provider / 模型 ----------------------------------------------------
-# 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）或 openai（含 OpenAI 相容/本地模型）。
+# 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）、openai（含 OpenAI 相容/本地模型），
+# 或 minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面，與 openai 共用 function-calling 工具迴圈）。
 PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
 
 # Claude 模型 ID。PM / 高級工程師需要較強的推理；工程師 / 驗證工程師偏重速度。
@@ -68,6 +69,13 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")
 OPENAI_MODEL_FAST = os.getenv("TI_OPENAI_MODEL_FAST", "gpt-4o-mini")
 OPENAI_MAX_STEPS = int(os.getenv("TI_OPENAI_MAX_STEPS", "12"))
+
+# MiniMax（OpenAI 相容介面；訂閱或 API key 皆走此路）。base_url 預設官方端點、可改；
+# 模型 ID 走 MiniMax 自家命名（如 MiniMax-M3）。憑證與 OpenAI 分開存放，互不污染。
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
+MINIMAX_MODEL_LEAD = os.getenv("TI_MINIMAX_MODEL_LEAD", "MiniMax-M3")
+MINIMAX_MODEL_FAST = os.getenv("TI_MINIMAX_MODEL_FAST", "MiniMax-M3")
 
 # --- 流程 ---------------------------------------------------------------
 # 每個任務「實作→驗證→審查」的最大改進輪數，避免無止盡迴圈。
@@ -636,6 +644,9 @@ def claude_cli_logged_in() -> bool:
 
 def provider_ready() -> bool:
     """目前選定的 provider 是否具備可執行的憑證/設定。"""
+    if PROVIDER == "minimax":
+        # MiniMax base_url 有預設端點，故只認 API key 是否填妥。
+        return bool(MINIMAX_API_KEY)
     if PROVIDER == "openai":
         return bool(OPENAI_API_KEY or OPENAI_BASE_URL)
     # claude provider：環境變數金鑰，或已登入的 claude CLI 訂閱皆可。
@@ -651,6 +662,7 @@ def reload() -> None:
     """
     global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
+    global MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL_LEAD, MINIMAX_MODEL_FAST
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
@@ -694,6 +706,10 @@ def reload() -> None:
     OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")
     OPENAI_MODEL_FAST = os.getenv("TI_OPENAI_MODEL_FAST", "gpt-4o-mini")
     OPENAI_MAX_STEPS = int(os.getenv("TI_OPENAI_MAX_STEPS", "12"))
+    MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+    MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
+    MINIMAX_MODEL_LEAD = os.getenv("TI_MINIMAX_MODEL_LEAD", "MiniMax-M3")
+    MINIMAX_MODEL_FAST = os.getenv("TI_MINIMAX_MODEL_FAST", "MiniMax-M3")
     GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
     PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")
     PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")
