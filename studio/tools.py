@@ -394,6 +394,53 @@ async def execute(name: str, args: dict, cwd: Path) -> str:
         return f"工具執行錯誤：{type(exc).__name__}: {exc}"
 
 
+# --- 去重感知的 execute（任務 #3）-------------------------------------------
+# execute() 永不 raise，失敗以「錯誤字串」回傳。寫快取必須在副作用成功之後，否則
+# 失敗結果被快取會造成「假命中」——重放跳過副作用卻回傳舊錯誤，把問題靜默遮蔽（架構決策）。
+_ERROR_PREFIXES = ("錯誤：", "工具執行錯誤：")
+
+
+def _is_error_result(result: Any) -> bool:
+    """判斷 execute 回傳是否代表「副作用未成功」——這類結果不入快取（防假命中）。
+
+    execute 的所有失敗路徑（找不到檔案、路徑越界、edit old 不唯一、未知工具、外層
+    例外兜底）一律以 ``_ERROR_PREFIXES`` 開頭。
+
+    注意 ``run_bash`` 的 ``exit=N\\n...`` 即使 N≠0 也**不**算失敗：指令已實際執行、副作用
+    已發生，屬成功路徑須入快取，否則重放會把同一指令再跑一次（正是去重要擋的災難）。
+    僅當 run_bash 連啟動都失敗（外層 except → 「工具執行錯誤：」）才不快取、容許重試。
+    """
+    return isinstance(result, str) and result.startswith(_ERROR_PREFIXES)
+
+
+async def execute_deduped(
+    name: str, args: dict, cwd: Path, cache: "DedupCache | None"
+) -> str:
+    """去重感知的 ``execute``：非冪等工具經 per-speak cache 防 retry 重放重執行副作用。
+
+    - ``cache is None`` 或冪等工具（``is_idempotent`` True，含 read_file/write_file/
+      web_fetch/未知工具）：直接走 ``execute``，不碰快取，行為與接入前完全一致（驗收 #3）。
+    - 非冪等工具（``NON_IDEMPOTENT_TOOLS``）：以 ``cache.key_for`` 推導對齊「attempt 內出現
+      序號」的 key——
+        * 命中 → 回首次成功結果、**不重執行底層副作用**（驗收 #2）；
+        * 未命中 → 執行，且**僅在副作用成功後**寫快取（失敗不寫，驗收 #5）。
+
+    ``key_for`` 只對非冪等工具呼叫，故其 attempt 內出現序號僅在非冪等呼叫間遞增；重放時
+    整輪迴圈重跑、非冪等呼叫序列相同 → 同位置對齊同一 key（冪等工具夾在中間無害重放，
+    不影響對齊）。
+    """
+    if cache is None or is_idempotent(name):
+        return await execute(name, args, cwd)
+    key = cache.key_for(name, args)
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
+    result = await execute(name, args, cwd)
+    if not _is_error_result(result):
+        cache.put(key, result)  # 副作用成功後才寫，防假命中
+    return result
+
+
 def summarize(name: str, args: dict) -> str:
     """給 UI 顯示的一行摘要。"""
     if name in ("read_file", "write_file", "edit_file"):
