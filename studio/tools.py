@@ -98,6 +98,26 @@ _CLAUDE_TO_LOCAL = {
 }
 
 
+# --- 工具冪等性分類（單一真實來源）-----------------------------------------
+# 由 providers 層的 per-speak 去重邏輯讀取：speak() 的 retry 會把整輪工具迴圈重放，
+# 已成功執行的非冪等工具會被重跑造成副作用疊加。列入此集合的工具會走去重路徑
+# （同 session + 同 key 的第二次呼叫回首次結果、不重執行副作用）。
+#
+# 【維護者注意】新增工具時，必須評估其重放語意並決定是否納入此集合：
+#   - edit_file：以「old 須唯一」做就地替換，重放時 old 已被換掉 → 第二次必失敗。非冪等。
+#   - run_bash：執行任意 shell 指令，可能含 `>> append`、`git push`、`curl POST` 等，
+#               重放即災難；且命令內容無法靜態判斷冪等性，一律保守歸為非冪等。
+#   - write_file：覆寫語意，同 args 重跑結果相同 → 天然冪等，刻意不納管（納管後 args
+#                 不同時去重也攔不住，多一道邏輯卻無實際保護；殘留風險見 #6 黑樣本）。
+#   - read_file / web_fetch：唯讀，無副作用 → 不納管。
+NON_IDEMPOTENT_TOOLS: frozenset[str] = frozenset({"edit_file", "run_bash"})
+
+
+def is_idempotent(name: str) -> bool:
+    """工具是否冪等（可安全重放）。非冪等工具須由去重層保護，不可直接重執行副作用。"""
+    return name not in NON_IDEMPOTENT_TOOLS
+
+
 def specs_for(allowed_claude_tools: list[str]) -> list[dict]:
     """依角色的 Claude 工具清單，回傳對應的 OpenAI 工具規格（read_file 一律提供）。"""
     names = {"read_file"}
