@@ -184,6 +184,8 @@ def _rl_config(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", 2)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 60.0)
+    # 退避值斷言需確定性 → 關閉 jitter（jitter 行為另有專測）。
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", 0.0)
 
 
 @pytest.fixture
@@ -405,8 +407,32 @@ async def test_speak_observe_failure_does_not_break_flow(
 def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", 0.0)  # 確定性斷言
     assert experts._backoff_delay(5.0, 0) == 5.0  # 採 retry-after
     assert experts._backoff_delay(99.0, 0) == 10.0  # retry-after 也夾 cap
     assert experts._backoff_delay(None, 0) == 2.0  # 指數：2 × 2^0
     assert experts._backoff_delay(None, 2) == 8.0  # 2 × 2^2
     assert experts._backoff_delay(None, 5) == 10.0  # 夾 cap
+
+
+def test_backoff_delay_applies_config_jitter(monkeypatch):
+    """experts 呼叫端把 config 的 jitter 旗標傳進核心 backoff_delay（#133）。
+
+    用固定 rand=1.0 取退避上下界：
+    - 529／指數路徑 jitter「向下」散開 → nominal×(1−j)；
+    - 429／retry-after 路徑 jitter「向上」微抖、夾 cap → min(nominal×(1+j), cap)。
+    jitter=0 時兩路徑皆回確定 nominal（與舊行為等價）。
+    """
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 60.0)
+    monkeypatch.setattr(llm_caller.random, "random", lambda: 1.0)  # 取 jitter 邊界
+
+    # 預設 jitter 開（0.5）：529 路徑向下散開、429 路徑向上微抖。
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", 0.5)
+    assert experts._backoff_delay(None, 0) == 2.0 * (1 - 0.5)  # 1.0
+    assert experts._backoff_delay(10.0, 0) == min(10.0 * (1 + 0.5), 60.0)  # 15.0
+
+    # jitter=0：回確定 nominal，行為與關閉時等價。
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", 0.0)
+    assert experts._backoff_delay(None, 0) == 2.0
+    assert experts._backoff_delay(10.0, 0) == 10.0
