@@ -226,6 +226,8 @@ async def test_speak_non_ratelimit_api_error_returns_empty_no_retry(_cfg, _no_wa
     assert out == ""
     assert chat.calls == 1  # 反向對照：未重試
     assert len(_no_wait) == 0
+    # 與限流耗盡對稱：非限流回退同樣不得含核可關鍵詞（不污染上層核可判定）
+    assert not any(k in out for k in _APPROVAL_KEYWORDS)
     assert "idle" in _statuses(bucket)
 
 
