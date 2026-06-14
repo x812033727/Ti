@@ -78,15 +78,15 @@ _classify_failure = llm_caller.classify_failure
 
 
 def _backoff_delay(retry_after: float | None, attempt: int) -> float:
-    """退避秒數：委派核心 `llm_caller.backoff_delay`，base／cap 由 experts 的 config 帶入。
+    """退避秒數：委派核心 `llm_caller.backoff_delay`，base／cap／jitter 全由統一入口帶入。
 
-    本薄包裝在呼叫時讀取 config（而非載入期），故設定頁／測試 monkeypatch config 後即時生效。
+    本薄包裝在呼叫時組裝 `config.make_retry_config()`（而非載入期），故設定頁／測試
+    monkeypatch config 後即時生效；不再各自硬接 base/cap，jitter 一併納管。
     """
     return llm_caller.backoff_delay(
         retry_after,
         attempt,
-        base=config.EXPERT_RATE_LIMIT_BACKOFF,
-        cap=config.EXPERT_RATE_LIMIT_BACKOFF_CAP,
+        cfg=config.make_retry_config(),
     )
 
 
@@ -376,7 +376,10 @@ class Expert:
         - 未知例外由骨幹原樣 re-raise，不掩蓋真錯。
         """
         r = self.role
-        max_retries = max(0, config.EXPERT_RATE_LIMIT_RETRIES)
+        # 退避參數（max_retries／base／cap／jitter）一律走統一入口；夾值責任在
+        # RetryConfig.__post_init__，experts 不再持有退避參數。
+        cfg = config.make_retry_config()
+        max_retries = cfg.max_retries
 
         async def _attempt() -> str:
             await self._client.query(prompt)
@@ -422,8 +425,7 @@ class Expert:
         metrics = llm_caller.RetryMetrics()
         text = await llm_caller.run_with_retries(
             _attempt,
-            max_retries=max_retries,
-            backoff=_backoff_delay,
+            cfg=cfg,
             sleep=_sleep,
             on_retry=_on_retry,
             on_rate_limit_exhausted=_on_rate_limit_exhausted,
