@@ -39,7 +39,8 @@ _STATUS_RE = re.compile(
 # retry-after：header 或 JSON 欄位皆容忍（秒）。
 _RETRY_AFTER_RE = re.compile(r"retry[-_ ]?after[\"'\s:=]+(?P<sec>\d+(?:\.\d+)?)", re.I)
 # 視為 API 錯誤（走 fallback）的狀態碼；其餘僅當有錯誤型別 token 才算。
-_API_ERROR_CODES = {"400", "401", "403", "404", "413", "500", "502", "503", "529"}
+# 註：429→rate_limit、529→overloaded 在前面優先分流，故不列於此（避免名實不符的死碼）。
+_API_ERROR_CODES = {"400", "401", "403", "404", "413", "500", "502", "503"}
 
 # 退避預設值（純量預設，不讀 config——呼叫端自行帶入專案設定，保持 provider 無關）。
 DEFAULT_BACKOFF_BASE = 2.0
@@ -62,10 +63,25 @@ class RateLimitSignal(Exception):
         self.partial_text = partial_text
 
 
-class APIErrorSignal(Exception):
-    """偵測到非限流的 API 錯誤文字（如 overloaded_error）——視為該輪失敗走 fallback。
+class OverloadedSignal(Exception):
+    """偵測到 529／overloaded_error——伺服器過載，可退避重試但**走純指數退避**。
 
-    與限流分屬兩條獨立失敗路徑：不重試，直接走呼叫端提供的 fallback 收斂。
+    與 429 分屬兩條退避路徑：529 無 `retry-after`，故 `run_with_retries` 一律以
+    retry_after=None 走指數退避＋jitter；重試耗盡後收斂到 on_api_error（不另開 callback，
+    保持公開介面穩定）。snippet＝命中片段、partial_text＝命中前已收到的合法文字。
+    """
+
+    def __init__(self, kind: str, snippet: str, partial_text: str = ""):
+        super().__init__(snippet)
+        self.kind = kind
+        self.snippet = snippet
+        self.partial_text = partial_text
+
+
+class APIErrorSignal(Exception):
+    """偵測到非限流／非過載的 API 錯誤文字（如 auth/HTTP 503）——視為該輪失敗走 fallback。
+
+    與限流（429 退避）／過載（529 退避）分屬獨立失敗路徑：不重試，直接走呼叫端 fallback 收斂。
     """
 
     def __init__(self, kind: str, snippet: str, partial_text: str = ""):
@@ -84,8 +100,12 @@ def parse_retry_after(text: str) -> float | None:
 def classify_api_text(text: str) -> tuple[str, object] | None:
     """判斷一段文字是否為 API 錯誤封包。
 
-    回傳 ("rate_limit", retry_after|None) ／ ("api_error", kind) ／ None。
-    rate_limit 條件：型別 token 為 rate_limit_error，或明確前綴後的狀態碼為 429。
+    回傳 ("rate_limit", retry_after|None) ／ ("overloaded", kind) ／ ("api_error", kind) ／ None。
+    分流（依序）：
+    - rate_limit（429 退避）：型別 token 為 rate_limit_error，或明確前綴後的狀態碼為 429。
+    - overloaded（529 退避）：型別 token 為 overloaded_error，或狀態碼為 529（Issue #1258：
+      串流過載錯誤即使 HTTP 顯示 200，也應以型別 token 判為過載而非當正常文字）。
+    - api_error（不重試走 fallback）：其餘錯誤型別 token，或 _API_ERROR_CODES 內的狀態碼。
     """
     if not text:
         return None
@@ -95,6 +115,8 @@ def classify_api_text(text: str) -> tuple[str, object] | None:
     code = sm.group("code") if sm else None
     if kind == "rate_limit_error" or code == "429":
         return ("rate_limit", parse_retry_after(text))
+    if kind == "overloaded_error" or code == "529":
+        return ("overloaded", kind or "HTTP 529")
     if kind:
         return ("api_error", kind)
     if code and code in _API_ERROR_CODES:
@@ -103,20 +125,25 @@ def classify_api_text(text: str) -> tuple[str, object] | None:
 
 
 def classify_failure(exc: Exception) -> tuple[str, float | None, str, str]:
-    """把 stream/query 拋出的例外歸類為 rate_limit／api_error／unknown。
+    """把 stream/query 拋出的例外歸類為 rate_limit／overloaded／api_error／unknown。
 
     回傳 (kind, retry_after, snippet, partial_text)。涵蓋兩種 SDK 失敗形態：
-    (a) 本層從錯誤文字主動拋出的 RateLimitSignal／APIErrorSignal（含其子類）；
-    (b) SDK 例外型 429（issue #812）——以 str(exc) 套同一錨定樣式辨識。
-    unknown 不吞，由呼叫端 re-raise，不掩蓋真正的程式錯誤。
+    (a) 本層從錯誤文字主動拋出的 RateLimitSignal／OverloadedSignal／APIErrorSignal（含其子類）；
+    (b) SDK 例外型 429／529（issue #812／#1258）——以 str(exc) 套同一錨定樣式辨識。
+    rate_limit（429）與 overloaded（529）皆可退避重試，但走不同退避策略（見 run_with_retries）；
+    overloaded 無 retry_after（恆 None）。unknown 不吞，由呼叫端 re-raise，不掩蓋真正的程式錯誤。
     """
     if isinstance(exc, RateLimitSignal):
         return ("rate_limit", exc.retry_after, exc.snippet, exc.partial_text)
+    if isinstance(exc, OverloadedSignal):
+        return ("overloaded", None, exc.snippet, exc.partial_text)
     if isinstance(exc, APIErrorSignal):
         return ("api_error", None, exc.snippet, exc.partial_text)
     hit = classify_api_text(str(exc))
     if hit and hit[0] == "rate_limit":
         return ("rate_limit", hit[1], str(exc)[:300], "")
+    if hit and hit[0] == "overloaded":
+        return ("overloaded", None, str(exc)[:300], "")
     if hit and hit[0] == "api_error":
         return ("api_error", None, str(exc)[:300], "")
     return ("unknown", None, "", "")
@@ -185,8 +212,11 @@ async def run_with_retries(
     """provider 無關的重試迴圈骨幹。
 
     反覆呼叫 attempt_fn（通常＝一次 query()＋串流），依 classify_failure 的分類分流：
-    - rate_limit：在 max_retries 內退避重試（延遲由 backoff 計算，預設 backoff_delay），
-      重試耗盡呼叫 on_rate_limit_exhausted(snippet, partial) 收斂並回傳其結果。
+    - rate_limit（429）：在 max_retries 內退避重試，延遲＝backoff(retry_after, attempt)（以
+      retry-after 為主），重試耗盡呼叫 on_rate_limit_exhausted(snippet, partial) 收斂。
+    - overloaded（529）：在 max_retries 內退避重試，但延遲＝backoff(None, attempt)（純指數退避，
+      強制忽略 retry_after），重試耗盡收斂到 on_api_error(snippet, partial)（共用 callback、
+      不另開介面）。429／529 共用同一 max_retries／jitter／cap，僅退避來源不同。
     - api_error：不重試，直接呼叫 on_api_error(snippet, partial) 收斂並回傳其結果。
     - passthrough（如逾時例外）：屬另一條獨立失敗路徑，不被退避吞掉；有 on_passthrough
       則交它處理並回傳，否則原樣 re-raise。
@@ -208,15 +238,20 @@ async def run_with_retries(
             raise
         except Exception as exc:
             kind, retry_after, snippet, partial = classify_failure(exc)
-            if kind == "rate_limit":
+            if kind in ("rate_limit", "overloaded"):
                 if attempt < limit:
-                    delay = backoff(retry_after, attempt)
+                    # 429 以 retry-after 為主；529 過載無 retry-after，強制走純指數退避。
+                    ra = retry_after if kind == "rate_limit" else None
+                    delay = backoff(ra, attempt)
                     if on_retry is not None:
                         await on_retry(attempt, limit, delay, snippet)
                     await sleep(delay)
                     attempt += 1
                     continue
-                return await on_rate_limit_exhausted(snippet, partial)
+                # 退避耗盡：429 走限流 fallback；529 走通用 API 錯誤 fallback（不另開 callback）。
+                if kind == "rate_limit":
+                    return await on_rate_limit_exhausted(snippet, partial)
+                return await on_api_error(snippet, partial)
             if kind == "api_error":
                 return await on_api_error(snippet, partial)
             raise

@@ -30,11 +30,20 @@ def test_classify_status_429():
     assert lc.classify_api_text("API Error: status code 429") == ("rate_limit", None)
 
 
-def test_classify_overloaded_is_api_error():
-    assert lc.classify_api_text(_OVERLOADED_JSON) == ("api_error", "overloaded_error")
+def test_classify_overloaded_is_overloaded_retryable():
+    # 529／overloaded 改分到可退避的 overloaded 類（不再是 api_error），走純指數退避重試。
+    assert lc.classify_api_text(_OVERLOADED_JSON) == ("overloaded", "overloaded_error")
+
+
+def test_classify_status_529_is_overloaded():
+    assert lc.classify_api_text("API Error: status code 529 overloaded") == (
+        "overloaded",
+        "HTTP 529",
+    )
 
 
 def test_classify_http_503_is_api_error():
+    # 503（非 529）仍屬不重試的 api_error，確保只有 529 被分到過載退避路徑。
     assert lc.classify_api_text("API Error: HTTP 503") == ("api_error", "HTTP 503")
 
 
@@ -244,6 +253,67 @@ async def test_run_api_error_no_retry():
     )
     assert out == "APIERR:over:半句"
     assert delays == []  # 不重試、不退避
+
+
+async def test_run_overloaded_529_retries_pure_exponential_then_fallback(recorder):
+    # 529 過載：可退避重試，但走純指數退避（忽略任何 retry_after），耗盡後走 on_api_error。
+    delays, retries, sleep, on_retry = recorder
+    seen_retry_after: list = []
+
+    async def attempt():
+        raise lc.OverloadedSignal("overloaded_error", "overloaded", "半句")
+
+    async def exhausted(snip, partial):  # 529 不應走限流 fallback
+        raise AssertionError
+
+    async def api_err(snip, partial):
+        return f"APIERR:{snip}:{partial}"
+
+    def backoff(retry_after, attempt):
+        seen_retry_after.append(retry_after)  # 證明 529 一律收到 retry_after=None
+        return 2.0 * (2**attempt)
+
+    out = await lc.run_with_retries(
+        attempt,
+        max_retries=2,
+        on_rate_limit_exhausted=exhausted,
+        on_api_error=api_err,
+        backoff=backoff,
+        sleep=sleep,
+        on_retry=on_retry,
+    )
+    assert out == "APIERR:overloaded:半句"  # 耗盡後走通用 API 錯誤 fallback
+    assert delays == [2.0, 4.0]  # 純指數退避兩次（RETRIES=2）
+    assert seen_retry_after == [None, None]  # 529 路徑強制 retry_after=None
+    assert retries == [(0, 2, 2.0), (1, 2, 4.0)]  # before_sleep hook 收到兩次
+
+
+async def test_run_overloaded_retry_then_success(recorder):
+    # 529 退避後該輪成功：不走 fallback，回傳正常結果。
+    delays, _, sleep, on_retry = recorder
+    calls = {"n": 0}
+
+    async def attempt():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise lc.OverloadedSignal("overloaded_error", "overloaded")
+        return "ok"
+
+    async def noop(*a):
+        raise AssertionError
+
+    out = await lc.run_with_retries(
+        attempt,
+        max_retries=3,
+        on_rate_limit_exhausted=noop,
+        on_api_error=noop,
+        backoff=lambda ra, a: 2.0 * (2**a),
+        sleep=sleep,
+        on_retry=on_retry,
+    )
+    assert out == "ok"
+    assert calls["n"] == 2
+    assert delays == [2.0]
 
 
 async def test_run_passthrough_handled():
