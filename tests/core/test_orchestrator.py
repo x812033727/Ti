@@ -93,7 +93,6 @@ def test_pm_done_parsing():
 
 async def test_record_known_limitations_writes_file_and_followups(tmp_path):
     # 帶已知限制出貨前置：未過任務寫進 KNOWN_LIMITATIONS.md＋回填 followups（下輪改良續做）。
-    bucket, broadcast = [], None
     captured = []
 
     async def bc(ev):

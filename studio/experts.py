@@ -178,9 +178,7 @@ def _make_fs_guard_hook(cwd: Path):
         tool_name = (input_data or {}).get("tool_name", "")
         if tool_name in _WRITE_TOOLS:
             data = (input_data or {}).get("tool_input", {}) or {}
-            raw = str(
-                data.get("file_path") or data.get("notebook_path") or data.get("path") or ""
-            )
+            raw = str(data.get("file_path") or data.get("notebook_path") or data.get("path") or "")
             if raw and not _path_within(root, raw):
                 return {
                     "hookSpecificOutput": {

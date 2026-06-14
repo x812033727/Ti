@@ -237,10 +237,14 @@ async def test_fs_guard_write_inside_cwd_allowed(tmp_path):
 
     hook = experts._make_fs_guard_hook(tmp_path)
     # 相對路徑（落在 cwd 內）→ 放行（回 {}）
-    assert not _denied(await hook({"tool_name": "Write", "tool_input": {"file_path": "pkg/mod.py"}}, "id", None))
+    assert not _denied(
+        await hook({"tool_name": "Write", "tool_input": {"file_path": "pkg/mod.py"}}, "id", None)
+    )
     # 絕對路徑但在 cwd 子樹內 → 放行
     inside = str(tmp_path / "tests" / "t.py")
-    assert not _denied(await hook({"tool_name": "Edit", "tool_input": {"file_path": inside}}, "id", None))
+    assert not _denied(
+        await hook({"tool_name": "Edit", "tool_input": {"file_path": inside}}, "id", None)
+    )
 
 
 async def test_fs_guard_write_outside_cwd_denied(tmp_path):
@@ -251,11 +255,19 @@ async def test_fs_guard_write_outside_cwd_denied(tmp_path):
     hook = experts._make_fs_guard_hook(lane)
     # 寫到兄弟目錄（主工作樹）＝洩漏路徑，必須擋
     sibling = str(tmp_path / "proj" / "mod.py")
-    assert _denied(await hook({"tool_name": "Write", "tool_input": {"file_path": sibling}}, "id", None))
+    assert _denied(
+        await hook({"tool_name": "Write", "tool_input": {"file_path": sibling}}, "id", None)
+    )
     # `..` 逃逸同樣擋
-    assert _denied(await hook({"tool_name": "Edit", "tool_input": {"file_path": "../proj/mod.py"}}, "id", None))
+    assert _denied(
+        await hook({"tool_name": "Edit", "tool_input": {"file_path": "../proj/mod.py"}}, "id", None)
+    )
     # NotebookEdit 也涵蓋（notebook_path）
-    assert _denied(await hook({"tool_name": "NotebookEdit", "tool_input": {"notebook_path": sibling}}, "id", None))
+    assert _denied(
+        await hook(
+            {"tool_name": "NotebookEdit", "tool_input": {"notebook_path": sibling}}, "id", None
+        )
+    )
 
 
 async def test_fs_guard_ignores_non_write_tools(tmp_path):
@@ -263,8 +275,12 @@ async def test_fs_guard_ignores_non_write_tools(tmp_path):
 
     hook = experts._make_fs_guard_hook(tmp_path)
     # 只擋寫；Read/Bash 不受 cwd 路徑限制（避免誤傷研究讀取／既有 bash 流程）
-    assert not _denied(await hook({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}, "id", None))
-    assert not _denied(await hook({"tool_name": "Bash", "tool_input": {"command": "ls /"}}, "id", None))
+    assert not _denied(
+        await hook({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}, "id", None)
+    )
+    assert not _denied(
+        await hook({"tool_name": "Bash", "tool_input": {"command": "ls /"}}, "id", None)
+    )
 
 
 # ---------- settings 註冊與非法值 ----------

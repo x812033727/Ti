@@ -250,7 +250,9 @@ async def test_build_client_wires_pretooluse_fs_guard_bound_to_cwd(tmp_path, mon
 
     # 綁定到傳入的 cwd：寫到兄弟目錄（主工作樹）→ deny；寫到 cwd 內 → 放行
     sibling = str(tmp_path / "proj" / "leak.py")
-    assert _deny(await guard({"tool_name": "Write", "tool_input": {"file_path": sibling}}, "id", None))
+    assert _deny(
+        await guard({"tool_name": "Write", "tool_input": {"file_path": sibling}}, "id", None)
+    )
     assert not _deny(
         await guard({"tool_name": "Write", "tool_input": {"file_path": "ok.py"}}, "id", None)
     )

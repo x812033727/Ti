@@ -45,6 +45,7 @@ for _k in [k for k in os.environ if k.startswith("TI_") and not k.startswith("TI
 # 新版 starlette,~20 個測試會在 setup 就 TypeError。此處還原相容:有 client= 時包一層 ASGI
 # app 覆寫 scope["client"],版本無關、純測試、不動生產相依。已有 client= 的舊版則不 patch。
 import inspect as _inspect  # noqa: E402
+
 import starlette.testclient as _sttc  # noqa: E402
 
 if "client" not in _inspect.signature(_sttc.TestClient.__init__).parameters:

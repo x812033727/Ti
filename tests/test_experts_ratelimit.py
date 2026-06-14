@@ -357,7 +357,7 @@ async def test_speak_wires_middleware_observability(
     """
     seen: list[str] = []
     monkeypatch.setattr(
-        experts, "_make_retry_observer", lambda key: (lambda ev, fields: seen.append(ev))
+        experts, "_make_retry_observer", lambda key: lambda ev, fields: seen.append(ev)
     )
     rl_stream = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_RATE_LIMIT_JSON)])]
     client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=rl_stream)

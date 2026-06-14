@@ -91,7 +91,14 @@ async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
 
     tracked = (await runner.run_command_exec(main_repo, ["git", "ls-files"], sandbox=False)).output
     # junk 全部 untrack
-    for junk in (".venv/pyvenv.cfg", "data.db", ".bashrc", ".mcp.json", ".claude/settings.json", ".idea"):
+    for junk in (
+        ".venv/pyvenv.cfg",
+        "data.db",
+        ".bashrc",
+        ".mcp.json",
+        ".claude/settings.json",
+        ".idea",
+    ):
         assert junk not in tracked, f"{junk} 應已 untrack:\n{tracked}"
     # 真實專案檔保留
     assert "app.py" in tracked and "base.txt" in tracked
