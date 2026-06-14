@@ -125,6 +125,12 @@ async def complete_once(
     走現有 provider 抽象（make_expert）：claude 用無工具的一次性 Expert、openai 用無工具 chat。
     任何例外／逾時／離線／無 cwd 一律回 ""，讓呼叫端走模板 fallback——絕不讓反思失敗拖垮主迴圈。
     SDK import 維持 lazy（在 Expert 建構時），CI 無 SDK 環境只要不實際呼叫即安全。
+
+    限流（429／5xx）退避職責分層：本層**不**自套第二層 run_with_retries——限流已由
+    `expert.speak()` 內部的 `run_with_retries`（與 Claude 端共用 `make_retry_config()` 旋鈕）
+    吸收：命中即有限次退避重試，耗盡才回退空字串。故 rate_limit 在退避骨幹處理完畢前不會
+    冒泡到此；下方 `except Exception` 僅作兜底，吞掉逾時（`asyncio.wait_for` 的
+    `asyncio.TimeoutError`）與未預期的未知錯誤，維持「永不 raise」合約。
     """
     if cwd is None or config.OFFLINE_MODE or not config.provider_ready():
         # provider 無憑證時直接走模板 fallback：避免每次失敗輪都白等 SDK 啟動失敗
@@ -149,6 +155,8 @@ async def complete_once(
         expert = make_expert(role, f"{session_id}:reflect", cwd)
         return await asyncio.wait_for(expert.speak(user, _noop), timeout=timeout)
     except Exception:
+        # 兜底層：429／5xx 限流已在 speak() 內部退避骨幹吸收（耗盡才回 ""），不會走到這。
+        # 此處僅吞逾時（wait_for 的 asyncio.TimeoutError）與未預期錯誤，守住「永不 raise」。
         return ""
     finally:
         if expert is not None:
