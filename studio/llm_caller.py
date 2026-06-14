@@ -423,9 +423,7 @@ class RetryConfig:
         # 捕捉 clamp 後的本地值（非 self），故建構後更改屬性不影響已生成 callback。
         if self.backoff is None:
             _b, _c, _j = self.base, self.cap, self.jitter
-            self.backoff = lambda ra, att: backoff_delay(
-                ra, att, base=_b, cap=_c, jitter=_j
-            )
+            self.backoff = lambda ra, att: backoff_delay(ra, att, base=_b, cap=_c, jitter=_j)
 
     def as_kwargs(self) -> dict[str, object]:
         """展開為 `run_with_retries(**cfg.as_kwargs())` 可直接吃的關鍵字字典。
