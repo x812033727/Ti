@@ -298,6 +298,21 @@ def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
     assert experts._backoff_delay(None, 5) == 10.0  # 夾 cap
 
 
+def test_backoff_delay_jitter_off_equals_pure_exponential(monkeypatch):
+    """旗標顯式關閉時，指數分支回傳純指數值（與舊行為等價），且完全不呼叫 jitter。"""
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
+    # 旗標關閉時若誤呼叫 random.uniform，即視為回歸
+    monkeypatch.setattr(
+        experts.random, "uniform", lambda *a: pytest.fail("旗標關閉時不該呼叫 jitter")
+    )
+    assert experts._backoff_delay(None, 0) == 2.0  # 2 × 2^0
+    assert experts._backoff_delay(None, 2) == 8.0  # 2 × 2^2
+    assert experts._backoff_delay(None, 5) == 10.0  # 夾 cap
+    assert experts._backoff_delay(None, 30) == 10.0  # 大 attempt 仍夾 cap
+
+
 def test_backoff_delay_jitter_within_ceiling(monkeypatch):
     """旗標開啟時，指數分支回傳值落在 [0, min(base*2^n, cap)]，永不為負/超過 cap。"""
     import random as _random
