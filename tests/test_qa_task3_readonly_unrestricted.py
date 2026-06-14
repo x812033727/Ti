@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import pytest
+from _routes import iter_routes
 from fastapi.testclient import TestClient
 
 from studio import config
@@ -50,7 +51,7 @@ def app():
 
 
 def _route_dep_funcs(app, path, method):
-    for route in app.routes:
+    for route in iter_routes(app):
         if getattr(route, "path", None) == path and method in getattr(route, "methods", set()):
             return {getattr(d.dependency, "__name__", None) for d in route.dependencies}
     raise AssertionError(f"找不到路由 {method} {path}")

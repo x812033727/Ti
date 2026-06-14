@@ -396,3 +396,46 @@
 ## 零新外部依賴（無 tenacity）、零新 env 變數；三端統一走 `EXPERT_RATE_LIMIT_*` 旋鈕。
 - 時間：2026-06-14 21:01
 
+## `RetryConfig` 新增三 field：`base: float = DEFAULT_BACKOFF_BASE`、`cap: float = DEFAULT_BACKOFF_CAP`、`jitter: float = DEFAULT_BACKOFF_JITTER`，`backoff` 改為 `Callable | None = None`；欄位順序：`max_retries`（唯一必填）→ `base/cap/jitter/backoff/sleep`（均有預設值）。
+- 時間：2026-06-14 21:50
+- 理由：dataclass 必填在前、選填在後，無重排衝突；現有唯一生產呼叫點（`experts.py:116`）全程 keyword，grep 已確認零位置參數地雷。
+- 否決方案：`kw_only=True`——Python 3.10+ 限定，且現有已全 keyword，多此加限制。
+
+## `__post_init__` 對非法輸入先 `warnings.warn`（`stacklevel=2`）再 silent clamp，不拋例外；四條防線：`cap <= 0 → DEFAULT_BACKOFF_CAP`、`base <= 0 → DEFAULT_BACKOFF_BASE`、`max_retries < 0 → 0`、`jitter` 超 [0,1] → `max(0.0, min(1.0, ...))`。
+- 時間：2026-06-14 21:50
+- 理由：高工要求至少 `warnings.warn`——讓呼叫方錯誤輸入在 log 留跡，但不破壞執行路徑；`base=0` 對 529 路徑產出 0 延遲（thundering herd），納入防線。
+- 否決方案：`raise ValueError`——破壞「不拋例外」的既有合約語意，且 clamp 已保安全；否決 pure silent clamp——高工指出生產環境 debug 代價太高。
+
+## `__post_init__` 自動生成 backoff 時，先取本地變數再捕捉，**不捕捉 `self`**：`_b, _c, _j = self.base, self.cap, self.jitter`，再 `lambda ra, att: backoff_delay(ra, att, base=_b, cap=_c, jitter=_j)`。
+- 時間：2026-06-14 21:50
+- 理由：捕捉 `self` 會讓事後 mutate 屬性靜默改變退避行為；本地變數捕捉在 clamp 完成後固化，語意清晰且無副作用。
+- 否決方案：`frozen=True`——`__post_init__` 內 `self.backoff = ...` 需改 `object.__setattr__` 繞過凍結，程式碼可讀性損失大於收益；否決文件標註「視為不可變」但不修閉包——未消除工程師指出的真實風險。
+
+## `RetryConfig` 加 docstring 一行：「`base/cap/jitter` 於建構後視為不可變——更改屬性不影響已生成的 `backoff` callback。」
+- 時間：2026-06-14 21:50
+- 理由：技術上仍可 mutate（不加 frozen），故需文件警語守住語意邊界，防止未來維護者誤用。
+
+## `__post_init__` 末尾才判斷 `if self.backoff is None`（clamp 全部完成後），`backoff` 顯式傳入時跳過生成，不覆蓋。
+- 時間：2026-06-14 21:50
+- 理由：此路徑服務 `experts.make_retry_config`（傳 `backoff=_backoff_delay`）——顯式注入優先是設計契約，wiring 測試 L176 以 `is experts._backoff_delay` 斷言守門。
+
+## `experts.make_retry_config` 不遷移，繼續傳 `backoff=_backoff_delay, sleep=_sleep`；`_backoff_delay` 保留為 lazy config-read 錨點。
+- 時間：2026-06-14 21:50
+- 理由：遷移會讓 `test_make_retry_config_wiring_qa.py:176` 的 `is _backoff_delay` 斷言失守；且 lazy read（retry 時才讀 config）語意優於 construction-time 快照——兩路並行，各有適用場景。
+
+## `as_kwargs()` 不修改，繼續 export `{max_retries, backoff, sleep}`；`__post_init__` 後 `backoff` 保證非 None，無需 None guard。
+- 時間：2026-06-14 21:50
+
+## 測試補強五條——① `jitter=0` 黑樣本（`rand=lambda:1.0`，確定值不受隨機源影響）；② `jitter=0.25, rand=lambda:1.0` 白樣本（429 路徑不早於 retry_after、529 路徑抖動到下界）；③ clamp 邊界四條（`cap=0`、`base=0`、`max_retries=-1`、`jitter=1.5`）各加 `pytest.warns` 確認 warning 有發；④ 顯式 `backoff=<fn>` 注入後 `__post_init__` 不覆蓋；⑤ 既有 `_backoff_delay` 測試（L407–438）零修改即綠。
+- 時間：2026-06-14 21:50
+
+## 零新外部依賴、零新 env 變數；`llm_caller.py` 模組邊界不讀 config（新欄位預設值來自模組級 `DEFAULT_*` 常量，非 config 模組）。
+- 時間：2026-06-14 21:50
+
+## 【task #5 定稿】`RetryConfig` 統一退避入口最終簽章與相容策略（以程式碼實況為準，校正早期討論草案）
+- 時間：2026-06-14 22:30
+- 最終簽章（`studio/llm_caller.py`）：`RetryConfig(max_retries: int, base=DEFAULT_BACKOFF_BASE=2.0, cap=DEFAULT_BACKOFF_CAP=60.0, jitter=DEFAULT_BACKOFF_JITTER=0.0, backoff: Callable|None=None, sleep=_default_sleep)`；`as_kwargs()` 維持 export `{max_retries, backoff, sleep}` 不變。
+- 相容策略：① 不傳 base/cap/jitter ⇒ 採 DEFAULT_*（jitter=0 確定值），自動生成退避等價舊 `backoff_delay` 預設，既有測試零改斷言即綠；② 顯式 `backoff` 注入優先（`__post_init__` 末尾 `if self.backoff is None` 才生成）；③ 非法值先 `warnings.warn(stacklevel=2)` 再 clamp，不拋例外不除零。
+- 消費端定稿校正：早期決策記「`make_retry_config` 不遷移」，**實況已收斂**為「base/cap/jitter 欄位（建構快照）＋ `backoff=_backoff_delay`（retry lazy-read）同源同一組 `EXPERT_RATE_LIMIT_*` 鍵」雙路並存（experts.py:122-128）——欄位值與實際退避行為常態一致，且保留 lazy-read 語意（QA `test_negative_control_distinguishes_lazy_from_snapshot` 鎖死禁建構快照）。文件定稿一律以程式碼實況為準。
+- 否決方案：`frozen=True`（可讀性損失 > 收益，改以 docstring 警語守 mutate 邊界，限制已登錄 KNOWN_LIMITATIONS）；jitter 預設改 0.25（破壞既有確定值測試斷言，向後相容優先，保留 0.0）。
+

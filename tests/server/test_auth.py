@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from _routes import iter_routes
 from fastapi.testclient import TestClient
 
 from studio import auth, config
@@ -253,7 +254,7 @@ READ_ENDPOINTS = [
 
 
 def _route_dep_names(app, method, path):
-    for r in app.routes:
+    for r in iter_routes(app):
         if getattr(r, "path", None) == path and method in getattr(r, "methods", set()):
             return [d.call.__name__ for d in r.dependant.dependencies]
     raise AssertionError(f"route not found: {method} {path}")

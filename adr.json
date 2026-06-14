@@ -727,6 +727,69 @@
       "rejected": "",
       "session_id": "ap6e19134877",
       "created_at": 1781442117.16196
+    },
+    {
+      "decision": "`RetryConfig` 新增三 field：`base: float = DEFAULT_BACKOFF_BASE`、`cap: float = DEFAULT_BACKOFF_CAP`、`jitter: float = DEFAULT_BACKOFF_JITTER`，`backoff` 改為 `Callable | None = None`；欄位順序：`max_retries`（唯一必填）→ `base/cap/jitter/backoff/sleep`（均有預設值）。",
+      "rationale": "dataclass 必填在前、選填在後，無重排衝突；現有唯一生產呼叫點（`experts.py:116`）全程 keyword，grep 已確認零位置參數地雷。",
+      "rejected": "`kw_only=True`——Python 3.10+ 限定，且現有已全 keyword，多此加限制。",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.3342419
+    },
+    {
+      "decision": "`__post_init__` 對非法輸入先 `warnings.warn`（`stacklevel=2`）再 silent clamp，不拋例外；四條防線：`cap <= 0 → DEFAULT_BACKOFF_CAP`、`base <= 0 → DEFAULT_BACKOFF_BASE`、`max_retries < 0 → 0`、`jitter` 超 [0,1] → `max(0.0, min(1.0, ...))`。",
+      "rationale": "高工要求至少 `warnings.warn`——讓呼叫方錯誤輸入在 log 留跡，但不破壞執行路徑；`base=0` 對 529 路徑產出 0 延遲（thundering herd），納入防線。",
+      "rejected": "`raise ValueError`——破壞「不拋例外」的既有合約語意，且 clamp 已保安全；否決 pure silent clamp——高工指出生產環境 debug 代價太高。",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.3342443
+    },
+    {
+      "decision": "`__post_init__` 自動生成 backoff 時，先取本地變數再捕捉，**不捕捉 `self`**：`_b, _c, _j = self.base, self.cap, self.jitter`，再 `lambda ra, att: backoff_delay(ra, att, base=_b, cap=_c, jitter=_j)`。",
+      "rationale": "捕捉 `self` 會讓事後 mutate 屬性靜默改變退避行為；本地變數捕捉在 clamp 完成後固化，語意清晰且無副作用。",
+      "rejected": "`frozen=True`——`__post_init__` 內 `self.backoff = ...` 需改 `object.__setattr__` 繞過凍結，程式碼可讀性損失大於收益；否決文件標註「視為不可變」但不修閉包——未消除工程師指出的真實風險。",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.3342454
+    },
+    {
+      "decision": "`RetryConfig` 加 docstring 一行：「`base/cap/jitter` 於建構後視為不可變——更改屬性不影響已生成的 `backoff` callback。」",
+      "rationale": "技術上仍可 mutate（不加 frozen），故需文件警語守住語意邊界，防止未來維護者誤用。",
+      "rejected": "",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.3342462
+    },
+    {
+      "decision": "`__post_init__` 末尾才判斷 `if self.backoff is None`（clamp 全部完成後），`backoff` 顯式傳入時跳過生成，不覆蓋。",
+      "rationale": "此路徑服務 `experts.make_retry_config`（傳 `backoff=_backoff_delay`）——顯式注入優先是設計契約，wiring 測試 L176 以 `is experts._backoff_delay` 斷言守門。",
+      "rejected": "",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.334247
+    },
+    {
+      "decision": "`experts.make_retry_config` 不遷移，繼續傳 `backoff=_backoff_delay, sleep=_sleep`；`_backoff_delay` 保留為 lazy config-read 錨點。",
+      "rationale": "遷移會讓 `test_make_retry_config_wiring_qa.py:176` 的 `is _backoff_delay` 斷言失守；且 lazy read（retry 時才讀 config）語意優於 construction-time 快照——兩路並行，各有適用場景。",
+      "rejected": "",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.3342495
+    },
+    {
+      "decision": "`as_kwargs()` 不修改，繼續 export `{max_retries, backoff, sleep}`；`__post_init__` 後 `backoff` 保證非 None，無需 None guard。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.33425
+    },
+    {
+      "decision": "測試補強五條——① `jitter=0` 黑樣本（`rand=lambda:1.0`，確定值不受隨機源影響）；② `jitter=0.25, rand=lambda:1.0` 白樣本（429 路徑不早於 retry_after、529 路徑抖動到下界）；③ clamp 邊界四條（`cap=0`、`base=0`、`max_retries=-1`、`jitter=1.5`）各加 `pytest.warns` 確認 warning 有發；④ 顯式 `backoff=<fn>` 注入後 `__post_init__` 不覆蓋；⑤ 既有 `_backoff_delay` 測試（L407–438）零修改即綠。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.3342507
+    },
+    {
+      "decision": "零新外部依賴、零新 env 變數；`llm_caller.py` 模組邊界不讀 config（新欄位預設值來自模組級 `DEFAULT_*` 常量，非 config 模組）。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd07cb2cd7d",
+      "created_at": 1781445030.3342514
     }
   ]
 }

@@ -14,6 +14,7 @@ import re
 
 import pytest
 from _repo import REPO_ROOT
+from _routes import iter_routes
 from fastapi.routing import APIRoute
 from starlette.routing import WebSocketRoute
 
@@ -60,7 +61,7 @@ def parse_audit():
 def app_http_routes(app):
     """{(method, path): has_require_admin} for every APIRoute（自動排除框架/靜態）。"""
     out = {}
-    for r in app.routes:
+    for r in iter_routes(app):
         if isinstance(r, APIRoute):
             deps = {getattr(d.dependency, "__name__", None) for d in r.dependencies}
             for m in (r.methods or set()) - {"HEAD", "OPTIONS"}:
@@ -123,7 +124,7 @@ def test_audit_ws_listed_and_auth_only(app):
     assert "/ws" in ws_docs, "盤點表未列載 /ws"
     assert ws_docs.get("/ws") is False, "盤點表不應把 /ws 標為（本機）納管：核心入口刻意不限本機"
     # app 確有 /ws WebSocket 入口
-    ws_paths = {r.path for r in app.routes if isinstance(r, WebSocketRoute)}
+    ws_paths = {r.path for r in iter_routes(app) if isinstance(r, WebSocketRoute)}
     assert "/ws" in ws_paths
     # ws.py 改以 auth.is_authed 守護，且不再做本機限定
     src = WS_SRC.read_text(encoding="utf-8")

@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from _routes import iter_routes
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
@@ -99,7 +100,7 @@ def test_require_loopback_detail_does_not_leak_source(monkeypatch):
 
 # --- AC2：兩端點 dependencies 掛 require_admin 複合門禁 --------------------
 def _route_dep_funcs(app, path):
-    for route in app.routes:
+    for route in iter_routes(app):
         if getattr(route, "path", None) == path:
             return {getattr(d.dependency, "__name__", None) for d in route.dependencies}
     raise AssertionError(f"找不到路由 {path}")

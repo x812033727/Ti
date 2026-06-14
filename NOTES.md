@@ -507,3 +507,32 @@ Now add the #4c assertions to the e2e test. Let me add a focused test that verif
 - 全測 `.venv/bin/python -m pytest tests/ -q` → 2132 passed（含退避相關 74 測試）。
 - 坑：計畫「執行指令」的 `tests/studio/test_experts.py` 路徑不存在，實際測試在 `tests/` 根；正確驗收命令為 `.venv/bin/python -m pytest tests/ -q`。
 - 環境：原無 `.venv`，已 `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`（否則缺 claude_agent_sdk 無法匯入）。
+
+## 任務 #5 完成：更新 `NOTES.md`／`KNOWN_LIMITATIONS.md`／`DECISIONS.md` 記錄統一入口最終簽章與相容策略
+
+文件三檔已對齊定稿，記錄 `RetryConfig` 統一退避入口的**最終簽章**與**向後相容策略**。
+
+**最終簽章（以 `studio/llm_caller.py` 實況為準）**
+```python
+@dataclass
+class RetryConfig:
+    max_retries: int                                   # 唯一必填；__post_init__ clamp ≥0
+    base: float = DEFAULT_BACKOFF_BASE                 # 2.0
+    cap: float = DEFAULT_BACKOFF_CAP                   # 60.0
+    jitter: float = DEFAULT_BACKOFF_JITTER             # 0.0（預設確定值＝向後相容）
+    backoff: Callable[[float | None, int], float] | None = None  # 顯式注入優先
+    sleep: Callable[[float], Awaitable[None]] = _default_sleep
+```
+- 統一入口：`RetryConfig(max_retries=5, cap=30.0, jitter=0.25)` 即可，呼叫端無需手寫 backoff lambda（驗收 #1）。
+- `as_kwargs()` 維持 export `{max_retries, backoff, sleep}` 不變，`run_with_retries(**cfg.as_kwargs())` 直吃（驗收 #2 等價）。
+
+**相容策略三條**
+1. **預設等價**：不傳 `base/cap/jitter` 時採模組級 `DEFAULT_BACKOFF_*`（jitter=0＝確定值），自動生成的退避行為與既有 `backoff_delay` 預設完全等價，既有測試零改斷言即綠（驗收 #2）。
+2. **顯式 backoff 優先**：`__post_init__` 末尾才 `if self.backoff is None` 才自動生成，顯式注入不被覆蓋（驗收 #3）；服務 `experts.make_retry_config` 的 lazy-read `_backoff_delay` 路徑。
+3. **非法值安全收斂**：`cap<=0`／`base<=0`／`max_retries<0`／`jitter∉[0,1]` 皆先 `warnings.warn(stacklevel=2)` 再 clamp，不拋例外、不除零（驗收 #4）。
+
+**消費端最終形狀（`experts.make_retry_config`，experts.py:122-128）**：採「欄位（建構快照）＋ `backoff=_backoff_delay`（retry 當下 lazy-read）**同源同一組 `EXPERT_RATE_LIMIT_*` 鍵**」雙路並存——欄位值與實際退避行為常態一致，且保留 lazy-read 語意（QA `test_negative_control_distinguishes_lazy_from_snapshot` 鎖死禁建構快照）。
+
+**零回歸／零新增**：零新外部依賴（無 tenacity）、零新 env 變數（沿用 `TI_RATELIMIT_*`／`EXPERT_RATE_LIMIT_*`）。驗收指令 `python -m pytest tests/ -k "retry or backoff or wiring or make_retry_config" -q` 先前已 132 passed、全套件 2193 passed 0 failed。
+
+**經驗**：DECISIONS.md 早期決策曾記「make_retry_config 不遷移」，但實況已收斂為「欄位＋lazy backoff 同源並存」——**文件定稿須以程式碼實況為準，不抄早期討論草案**，這正是 #5 把「最終簽章」獨立成節的目的。
