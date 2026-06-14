@@ -125,6 +125,16 @@ class RetryConfig:
         if not (0.0 <= self.jitter <= 1.0):
             raise ValueError(f"jitter 必須落在 [0.0, 1.0]，收到 {self.jitter!r}")
 
+    def make_backoff_fn(self) -> Callable[[float | None, int], float]:
+        """產出綁定本 cfg 的 backoff callable，簽章＝`(retry_after, attempt) -> delay`。
+
+        實作刻意委派回 `backoff_delay(ra, att, cfg=self)`——base／cap／jitter 全由本 cfg
+        在 `backoff_delay` 內統一展開，**不**在此處自行讀欄位計算，確保退避邏輯只有一處
+        真實來源，避免兩處公式漂移（架構決策：單一收斂點）。供 `run_with_retries` 在未明確
+        傳 `backoff=` 時取用。
+        """
+        return lambda retry_after, attempt: backoff_delay(retry_after, attempt, cfg=self)
+
 
 class RateLimitSignal(Exception):
     """偵測到 429／rate_limit_error——交由 `run_with_retries` 做有限次退避重試。
@@ -312,6 +322,7 @@ def backoff_delay(
     cap: float = DEFAULT_BACKOFF_CAP,
     jitter: float = DEFAULT_BACKOFF_JITTER,
     rand: Callable[[], float] | None = None,
+    cfg: RetryConfig | None = None,
 ) -> float:
     """退避秒數：429／529 分流退避，皆夾在 cap 內，並可選 jitter 防 thundering herd。
 
@@ -324,12 +335,24 @@ def backoff_delay(
       equal-jitter「向下」散開，落點 ∈ [nominal×(1－jitter), nominal]，把同時撞限流／過載的
       多端錯開，避免同步重試形成 thundering herd。
 
-    jitter ∈ [0,1]（0＝關閉，回傳確定值，與舊行為等價，故既有測試零回歸）；超出範圍自動夾。
+    **設定來源（cfg vs 純量）**：傳入 `cfg`（`RetryConfig`）時，base／cap／jitter 三個純量
+    參數**完全被屏蔽**，一律取 cfg 對應欄位；僅 `rand=` 仍有效（測試注入隨機源）。不傳 cfg
+    時沿用 base／cap／jitter 純量（向後相容，預設值即舊行為）。兩者同時傳以 cfg 為準。
+
+    jitter ∈ [0,1]（0＝關閉，回傳確定值，與舊行為等價，故既有測試零回歸）；**超界（含 NaN）
+    直接 `raise ValueError`**——超界＝呼叫端 bug，不靜默夾值（統一 cfg／純量語意；cfg 路徑的
+    jitter 已於 `__post_init__` 驗過，純量路徑在此守門）。
     rand 為隨機源注入縫（預設 `random.random`，回傳 [0,1)），測試可注入固定值驗證退避上下界。
-    base／cap 由呼叫端帶入（如各專案的 config），本層不讀全域設定以保持 provider 無關。
+    base／cap 由呼叫端帶入（如各專案的 config）或經 cfg 提供，本層不讀全域設定以保持 provider 無關。
     """
+    if cfg is not None:
+        # cfg 完全屏蔽純量 base/cap/jitter（消歧義，避免維護者猜優先序）；rand 仍有效。
+        base, cap, jitter = cfg.base_delay, cfg.cap, cfg.jitter
+    # jitter 守門：超界（含 NaN，因 NaN 任何比較皆 False）＝呼叫端 bug，報錯不靜默夾值。
+    if not (0.0 <= jitter <= 1.0):
+        raise ValueError(f"jitter 必須落在 [0.0, 1.0]，收到 {jitter!r}")
     _rand = random.random if rand is None else rand
-    j = 0.0 if jitter <= 0 else min(1.0, jitter)
+    j = jitter
     if retry_after and retry_after > 0:
         # 429：retry-after 為主，jitter 僅向上、夾 cap。
         nominal = min(retry_after, cap)
@@ -412,9 +435,10 @@ async def _default_sleep(seconds: float) -> None:
 async def run_with_retries(
     attempt_fn: Callable[[], Awaitable],
     *,
-    max_retries: int,
+    max_retries: int | None = None,
     on_rate_limit_exhausted: Callable[[str, str], Awaitable],
     on_api_error: Callable[[str, str], Awaitable],
+    cfg: RetryConfig | None = None,
     backoff: Callable[[float | None, int], float] | None = None,
     sleep: Callable[[float], Awaitable[None]] = _default_sleep,
     on_retry: Callable[[int, int, float, str], Awaitable[None]] | None = None,
@@ -449,11 +473,18 @@ async def run_with_retries(
     - **正交不互吞**：逾時（passthrough）走 EV_TIMEOUT 並標記 `outcome="timeout"`，**不**經過
       退避分流、**不**計入 retries／total_delay；退避迴圈只處理限流，兩條路徑互不掩蓋。
     """
+    # 設定來源（cfg vs 純量）：max_retries／backoff 皆可由 cfg 提供，明確傳入的純量參數覆蓋之。
+    # 兩者皆 None＝呼叫端未指定上限，屬 bug，報錯而非靜默退化為 0 次重試。
+    if cfg is None and max_retries is None:
+        raise ValueError("run_with_retries 需指定 max_retries 或 cfg，兩者皆為 None")
+    effective_max = max_retries if max_retries is not None else cfg.max_retries
     if backoff is None:
-        backoff = backoff_delay
+        # 未明確傳 backoff：有 cfg 用 cfg 綁定的退避（統一 jitter/cap/base），否則用純量預設。
+        backoff = cfg.make_backoff_fn() if cfg is not None else backoff_delay
     if metrics is None:
         metrics = RetryMetrics()
-    limit = max(0, max_retries)
+    # TODO: 各 provider SDK 應設 max_retries=0 避免與本層雙重重試（研究員重點5，移交待辦）。
+    limit = max(0, effective_max)
     attempt = 0
     while True:
         try:

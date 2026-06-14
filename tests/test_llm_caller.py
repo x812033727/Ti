@@ -226,13 +226,103 @@ def test_backoff_529_jitter_within_band_and_capped():
         assert nominal * 0.5 <= d <= nominal  # 落在 equal-jitter 帶內、不超 cap
 
 
-def test_backoff_jitter_clamped_to_unit_range():
-    # jitter>1 自動夾為 1：429 上界=nominal×2、529 下界=0。
-    assert lc.backoff_delay(4.0, 0, base=2.0, cap=60.0, jitter=5.0, rand=lambda: 1.0) == 8.0
-    assert lc.backoff_delay(None, 1, base=2.0, cap=60.0, jitter=5.0, rand=lambda: 1.0) == 0.0
+def test_backoff_jitter_out_of_range_raises():
+    # 架構決策：jitter 超界＝呼叫端 bug，報錯而非靜默夾值（統一 cfg／純量兩路徑語意）。
+    with pytest.raises(ValueError):
+        lc.backoff_delay(4.0, 0, base=2.0, cap=60.0, jitter=5.0, rand=lambda: 1.0)
+    with pytest.raises(ValueError):
+        lc.backoff_delay(None, 1, base=2.0, cap=60.0, jitter=-0.5, rand=lambda: 1.0)
+    # NaN 也被攔下（NaN 任何比較皆 False）。
+    with pytest.raises(ValueError):
+        lc.backoff_delay(None, 1, base=2.0, cap=60.0, jitter=float("nan"))
+
+
+# --- backoff_delay：cfg（RetryConfig）入口 ----------------------------
+
+
+def test_backoff_cfg_equivalent_to_scalars():
+    # cfg 路徑與等價純量路徑回傳相同（jitter=0 確定值）。
+    cfg = lc.RetryConfig(max_retries=3, base_delay=2.0, cap=10.0, jitter=0.0)
+    for ra, att in [(5.0, 0), (99.0, 0), (None, 0), (None, 2), (None, 5)]:
+        assert lc.backoff_delay(ra, att, cfg=cfg) == lc.backoff_delay(
+            ra, att, base=2.0, cap=10.0, jitter=0.0
+        )
+
+
+def test_backoff_cfg_shadows_scalar_params():
+    # 傳 cfg 時 base/cap/jitter 純量完全被屏蔽，一律取 cfg 欄位。
+    cfg = lc.RetryConfig(base_delay=2.0, cap=10.0, jitter=0.0)
+    # 即使純量給了離譜值，輸出仍由 cfg 決定（529 指數：2×2^2=8）。
+    assert lc.backoff_delay(None, 2, base=999.0, cap=1.0, jitter=1.0, cfg=cfg) == 8.0
+
+
+def test_backoff_cfg_jitter_bounds():
+    # cfg.jitter>0：429 向上加、夾 cap，注入固定 rand 驗上界。
+    cfg = lc.RetryConfig(base_delay=2.0, cap=60.0, jitter=0.5)
+    assert lc.backoff_delay(4.0, 0, cfg=cfg, rand=lambda: 1.0) == 4.0 * 1.5
+    # 529 equal-jitter 向下：nominal×(1-0.5×1.0)=8×0.5=4。
+    assert lc.backoff_delay(None, 2, cfg=cfg, rand=lambda: 1.0) == 4.0
+
+
+def test_make_backoff_fn_matches_backoff_delay():
+    cfg = lc.RetryConfig(base_delay=2.0, cap=10.0, jitter=0.0)
+    fn = cfg.make_backoff_fn()
+    assert fn(None, 2) == lc.backoff_delay(None, 2, cfg=cfg)
+    assert fn(5.0, 0) == lc.backoff_delay(5.0, 0, cfg=cfg)
 
 
 # --- run_with_retries：骨幹控制流 --------------------------------------
+
+
+async def test_run_with_retries_requires_max_retries_or_cfg():
+    # max_retries 與 cfg 皆 None＝呼叫端未指定上限，報 ValueError。
+    async def attempt():
+        return "ok"
+
+    async def on_rl(s, p):
+        return "rl"
+
+    async def on_api(s, p):
+        return "api"
+
+    with pytest.raises(ValueError):
+        await lc.run_with_retries(
+            attempt,
+            on_rate_limit_exhausted=on_rl,
+            on_api_error=on_api,
+        )
+
+
+async def test_run_with_retries_uses_cfg_max_and_backoff():
+    # 只給 cfg（不給 max_retries／backoff）：上限與退避皆由 cfg 取得。
+    delays: list[float] = []
+
+    async def sleep(s):
+        delays.append(s)
+
+    calls = {"n": 0}
+
+    async def attempt():
+        calls["n"] += 1
+        raise lc.RateLimitSignal(None, "429")
+
+    async def on_rl(s, p):
+        return "exhausted"
+
+    async def on_api(s, p):
+        return "api"
+
+    cfg = lc.RetryConfig(max_retries=2, base_delay=2.0, cap=60.0, jitter=0.0)
+    out = await lc.run_with_retries(
+        attempt,
+        cfg=cfg,
+        on_rate_limit_exhausted=on_rl,
+        on_api_error=on_api,
+        sleep=sleep,
+    )
+    assert out == "exhausted"
+    assert calls["n"] == 3  # 初次 + 2 次重試
+    assert delays == [2.0, 4.0]  # cfg 退避：2×2^0, 2×2^1
 
 
 @pytest.fixture
