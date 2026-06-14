@@ -100,6 +100,26 @@ async def _sleep(seconds: float) -> None:
     await llm_caller._default_sleep(seconds)
 
 
+def make_retry_config() -> llm_caller.RetryConfig:
+    """工廠：call-time 讀 config 退避四值，回傳統一的 `RetryConfig` 物件。
+
+    這是 experts 層退避策略的**單一真實來源**——`_speak_with_retries` 只需取得本物件、
+    再經 `cfg.as_kwargs()` 平鋪傳入 `run_with_retries`，取代散傳 max_retries/backoff/sleep。
+
+    config 四值的取用時機：
+    - `max_retries` 於本工廠呼叫時讀 `config.EXPERT_RATE_LIMIT_RETRIES`（並 clamp ≥0，
+      讓外部合約清晰、防呆在最近端），故設定頁／測試 monkeypatch config 後即時反映。
+    - `backoff`／`sleep` 直接引用模組級 lazy 函式 `_backoff_delay`／`_sleep`；前者於**被呼叫時**
+      才讀 `EXPERT_RATE_LIMIT_BACKOFF`／`_CAP`／`_JITTER`（見 `_backoff_delay`），故同樣是
+      call-time 讀值、非載入期快照。不在此另建 closure 包裝，避免多層包裝增加可讀性負擔。
+    """
+    return llm_caller.RetryConfig(
+        max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES),
+        backoff=_backoff_delay,
+        sleep=_sleep,
+    )
+
+
 def _make_retry_observer(role_key: str) -> llm_caller.Observer:
     """experts 層的結構化 observe sink：把中介層 task #4 的可觀測事件落成 log。
 
@@ -377,7 +397,7 @@ class Expert:
         - 未知例外由骨幹原樣 re-raise，不掩蓋真錯。
         """
         r = self.role
-        max_retries = max(0, config.EXPERT_RATE_LIMIT_RETRIES)
+        cfg = make_retry_config()
 
         async def _attempt() -> str:
             await self._client.query(prompt)
@@ -402,9 +422,9 @@ class Expert:
             await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
 
         async def _on_rate_limit_exhausted(snippet: str, partial: str) -> str:
-            logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, max_retries)
+            logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, cfg.max_retries)
             return await self._fallback_note(
-                f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {max_retries} 次仍失敗，本輪中止。",
+                f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {cfg.max_retries} 次仍失敗，本輪中止。",
                 partial,
                 broadcast,
             )
@@ -423,9 +443,7 @@ class Expert:
         metrics = llm_caller.RetryMetrics()
         text = await llm_caller.run_with_retries(
             _attempt,
-            max_retries=max_retries,
-            backoff=_backoff_delay,
-            sleep=_sleep,
+            **cfg.as_kwargs(),
             on_retry=_on_retry,
             on_rate_limit_exhausted=_on_rate_limit_exhausted,
             on_api_error=_on_api_error,

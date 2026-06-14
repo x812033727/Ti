@@ -363,6 +363,37 @@ async def _default_sleep(seconds: float) -> None:
         await asyncio.sleep(seconds)
 
 
+@dataclass
+class RetryConfig:
+    """`run_with_retries` 退避三參數的結構化載體（provider 無關，零 config 依賴）。
+
+    對應 `run_with_retries` 的同名 keyword 參數：
+    - `max_retries`：限流／過載的最大退避重試次數（工廠端已 clamp ≥0）。
+    - `backoff`：退避秒數計算 callback，簽章 `(retry_after, attempt) -> float`。
+    - `sleep`：等待實作，簽章 `(seconds) -> Awaitable[None]`（測試可注入零等待）。
+
+    供消費層（如 experts.make_retry_config）以單一物件集中描述 config 驅動的退避策略，
+    呼叫端只傳一個物件、再經 `as_kwargs()` 平鋪傳入，取代散傳三個關鍵字參數。
+    """
+
+    max_retries: int
+    backoff: Callable[[float | None, int], float]
+    sleep: Callable[[float], Awaitable[None]] = _default_sleep
+
+    def as_kwargs(self) -> dict[str, object]:
+        """展開為 `run_with_retries(**cfg.as_kwargs())` 可直接吃的關鍵字字典。
+
+        僅封裝 config 驅動的三參數（max_retries／backoff／sleep）；
+        其餘 call-site 專屬 callback（on_rate_limit_exhausted／on_api_error／
+        on_retry／passthrough…）仍由呼叫端平鋪傳入，不在此封裝。
+        """
+        return {
+            "max_retries": self.max_retries,
+            "backoff": self.backoff,
+            "sleep": self.sleep,
+        }
+
+
 async def run_with_retries(
     attempt_fn: Callable[[], Awaitable],
     *,

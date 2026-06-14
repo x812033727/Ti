@@ -316,3 +316,38 @@
 ## 任務#2/#3/#4 三組測試互不依賴，可並行撰寫；任務#5 排最後，執行 `.venv/bin/python -m pytest tests/core/test_providers.py -q` 確認全綠、無真實網路 I/O
 - 時間：2026-06-14 16:05
 
+## `RetryConfig` dataclass 新增於 `llm_caller.py`，緊鄰 `run_with_retries`，欄位為 `max_retries: int`、`backoff: Callable[[float|None, int], float]`、`sleep: Callable[[float], Awaitable[None]]`
+- 時間：2026-06-14 20:00
+- 理由：llm_caller 是 `run_with_retries` 介面的所有者，RetryConfig 是其參數的結構化型別；零 config 依賴確保模組維持 provider-agnostic
+- 否決方案：放 `experts.py` — 會讓下游 import `experts` 才能取得型別，破壞 llm_caller 作為穩定公開介面的角色
+
+## `RetryConfig` 提供 `as_kwargs() -> dict` 方法，明確回傳 `{"max_retries": self.max_retries, "backoff": self.backoff, "sleep": self.sleep}`，docstring 標注「僅封裝 config-driven 三參數，call-site callback 鉤平鋪傳入」
+- 時間：2026-06-14 20:00
+- 理由：Callable 欄位無法 `dataclasses.asdict()` 序列化；docstring 說明消除後來者對「其餘 6 個 kwargs 為何未封裝」的困惑（高工意見）
+- 否決方案：`dataclasses.asdict()` — Callable 欄位崩潰；`**cfg.__dict__` — 繞過 dataclass 抽象且語義不清
+
+## `make_retry_config()` 落點 `experts.py`，call-time 讀 config，回傳 `RetryConfig(max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES), backoff=_backoff_delay, sleep=_sleep)`
+- 時間：2026-06-14 20:00
+- 理由：讀 config 的責任屬消費層；工廠在 `experts.py` 保持 `llm_caller` config-free
+- 否決方案：放 `config.py` — config 模組不應 import experts 的 Callable；放 `llm_caller.py` — 違反 provider-agnostic 原則
+
+## `max(0, ...)` clamp 移入 `make_retry_config()` 內部，`RetryConfig.max_retries` 保證 ≥0；移除 `_speak_with_retries` L380 的本地讀值
+- 時間：2026-06-14 20:00
+- 理由：工程師指出 clamp 語義不可在「移除本地變數」時靜默丟失；高工補充 `run_with_retries` 雖在 L410 也有 `max(0, ...)`，但在工廠明訂讓外部合約清晰、防呆在最近端
+
+## `_speak_with_retries` 改動點：① 刪 L380 本地 `max_retries` 讀值；② 插入 `cfg = make_retry_config()`；③ `run_with_retries` 呼叫改傳 `**cfg.as_kwargs()`；④ L405/L407 fallback 字串的 `{max_retries}` 改為 `{cfg.max_retries}`
+- 時間：2026-06-14 20:00
+- 理由：工程師與高工同步指出 L405/L407 仍引用局部變數，改後若不替換即 NameError；此為實作必補項，納入最小化改動清單
+
+## `_backoff_delay`、`_sleep` 保留為 `experts.py` 模組級 lazy 函式，`make_retry_config()` 直接以函式物件引用傳入 `RetryConfig`；不在工廠內另建 closure
+- 時間：2026-06-14 20:00
+- 理由：兩者已是 call-time 讀 config 的 lazy closure（L83-91 既有範本），直接引用等價；不重複造 closure 避免多層包裝增加可讀性負擔
+
+## wiring 測試用 `mocker.spy(experts, "make_retry_config")`（保留真實邏輯），斷言 `spy.assert_called_once()`；補反向對照：`monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", 7)` 後再呼工廠，斷言 `cfg.max_retries == 7`
+- 時間：2026-06-14 20:00
+- 理由：spy 不替換實現，可同時驗「有取用」與「值正確流入」；反向對照排假綠（高工確認）
+- 否決方案：`mocker.patch("make_retry_config")` 直接替換 — 只驗呼叫、跳過真實值流，無法確認 config 值是否正確傳入
+
+## 任務#5 grep 驗收對象為 `max_retries` 與 `_backoff_delay` 的所有引用點，確認無第二套散傳退避呼叫點，且 L405/L407 已改為 `cfg.max_retries`（工程師建議：grep max_retries 引用點可順帶抓出此細節）
+- 時間：2026-06-14 20:00
+
