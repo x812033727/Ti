@@ -122,8 +122,8 @@ async def test_no_second_retry_layer_single_delegation(monkeypatch, tmp_path):
     fake = _FakeExpert(rate_limited)
     _inject(monkeypatch, fake)
     out = await providers.complete_once("s", "u", session_id="x", cwd=tmp_path)
-    assert out == ""               # 耗盡才回退空字串
-    assert fake.speak_calls == 1   # ★ 關鍵：本層不重試，恰好委派一次（無雙層退避）
+    assert out == ""  # 耗盡才回退空字串
+    assert fake.speak_calls == 1  # ★ 關鍵：本層不重試，恰好委派一次（無雙層退避）
     assert fake.stopped == 1
 
 
