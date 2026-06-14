@@ -439,3 +439,43 @@
 - 消費端定稿校正：早期決策記「`make_retry_config` 不遷移」，**實況已收斂**為「base/cap/jitter 欄位（建構快照）＋ `backoff=_backoff_delay`（retry lazy-read）同源同一組 `EXPERT_RATE_LIMIT_*` 鍵」雙路並存（experts.py:122-128）——欄位值與實際退避行為常態一致，且保留 lazy-read 語意（QA `test_negative_control_distinguishes_lazy_from_snapshot` 鎖死禁建構快照）。文件定稿一律以程式碼實況為準。
 - 否決方案：`frozen=True`（可讀性損失 > 收益，改以 docstring 警語守 mutate 邊界，限制已登錄 KNOWN_LIMITATIONS）；jitter 預設改 0.25（破壞既有確定值測試斷言，向後相容優先，保留 0.0）。
 
+## `_pending_awareness_context()` 只回傳資料（pending + in_progress 標題的 bullet 清單），不內嵌任何硬指令。
+- 時間：2026-06-14 23:01
+- 理由：函式若同時輸出資料與指令，重用時指令會帶著走，語意邊界模糊；分離後可單獨測試「清單內容」而非「整段提示文字」。
+- 否決方案：把「不得提出與現有 pending 實質重疊」等硬指令寫進此函式——Senior 已標為設計異味，雖不阻擋本輪，本次直接避開比留技術債好。
+
+## 兩條硬指令（「不得提出與上列任何項目實質重疊者」、「每點須來自不同子系統，優先覆蓋近期未碰過的模組」）移至 `_evaluate_self` 的 prompt 組裝層，緊接 `_pending_awareness_context()` 輸出之後，明確為上層決策。
+- 時間：2026-06-14 23:01
+
+## `_pending_awareness_context()` 與 `_filter_pending_duplicates()` 的清單來源統一為 `list_tasks("pending") + list_tasks("in_progress")`，兩者對齊，prompt 禁止清單與 pre-filter 擋截範圍完全一致。
+- 時間：2026-06-14 23:01
+- 理由：prompt 注入了 in_progress 任務要求不重疊，若 pre-filter 不擋 in_progress，「措辭滑溜的 in_progress 重複」仍可漏網——兩層防線的覆蓋範圍必須對齊。
+- 否決方案：pending_titles 只含 pending——Engineer 與 Senior 均已指出此遺漏。
+
+## `AUTOPILOT_DEDUP_RATIO` 以 `float(os.getenv("AUTOPILOT_DEDUP_RATIO", "0.75"))` 初始化為模組頂層常數，支援免改碼的運行期調整。
+- 時間：2026-06-14 23:01
+- 理由：0.75 是初始估值，中文字元級比對在同義改寫場景（「修復」vs「修正」）效果有限，上線後大概率需要調整；env override 讓調閾值的成本降為零，不需發版。
+- 否決方案：硬編碼純常數——Engineer 明確指出這閾值之後大概率要調，不留出口是自縛手腳。
+
+## `_filter_pending_duplicates(proposals, existing_titles)` 比對前對雙方執行 normalize（`.strip().lower()`，去除首尾標點），以緩解長短句 ratio 被長度差稀釋的問題；normalize 邏輯獨立為內部 helper，方便日後替換。
+- 時間：2026-06-14 23:01
+- 理由：proposals 是完整句子，existing_titles 是標題，不 normalize 直接比對時 SequenceMatcher.ratio() 會被長度差稀釋，0.75 實際攔截率低於預期。
+
+## PR 必須附 3–5 組中文邊界測試案例，記錄實測 ratio 值，涵蓋：同義詞替換（「修復」/「修正」）、縮寫（「單測」/「單元測試」）、英中混排（「retry/重試」）、完全不同主題（應為低 ratio 黑樣本）；測試案例本身成為閾值選取的溯源依據。
+- 時間：2026-06-14 23:01
+- 理由：0.75 目前是憑感覺拍的數字，無邊界案例則日後漏報時無從溯源；Senior 已明確列為核可條件。
+
+## `_filter_pending_duplicates` docstring 加一行複雜度說明：`# O(n×m)，其中 n=proposals 數、m=existing 數；existing 預期 < 50 筆，若規模增長需重估`。
+- 時間：2026-06-14 23:01
+
+## 軟上限（topic cap）本輪不實作，決議記入 DECISIONS：理由為 topic bucket 分類需額外語意邏輯、誤殺風險尚未量化、prompt 廣度指示 + pre-filter 已覆蓋主要場景；待未來有隧道數據再評估。
+- 時間：2026-06-14 23:01
+- 否決方案：本輪同時做 topic cap——過度設計，且 bucket 分類若用關鍵詞切割容易誤殺跨模組任務。
+
+## 測試四組（在原三組基礎上加一組）：(a) `_pending_awareness_context()` 輸出含每筆 pending + in_progress 標題；(b) prompt 組裝字串含兩條硬指令關鍵字；(c) `_filter_pending_duplicates()` feed 高重疊清單回傳為空，feed 不重疊清單全數保留；(d) 既有 autopilot/backlog 測試零回歸（不改動既有測試檔）。
+- 時間：2026-06-14 23:01
+- 理由：原設計把 (b) 與 (a) 合在同一個斷言——指令移到組裝層後需獨立斷言；(c) 需同時驗黑樣本（不重疊不誤殺）。
+
+## `_is_duplicate`（`backlog.py`）及 `add_many` 契約完全不動；pre-filter 僅作用於本次 LLM 提案進場前，不回溯清洗現有 backlog，不刪除/合併任何既有任務。
+- 時間：2026-06-14 23:01
+
