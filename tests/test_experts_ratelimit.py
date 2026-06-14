@@ -18,7 +18,7 @@ import types
 
 import pytest
 
-from studio import config, events, experts
+from studio import config, events, experts, llm_caller
 from studio.roles import BY_KEY
 
 # --- 共用 ---------------------------------------------------------------
@@ -345,6 +345,61 @@ async def test_speak_unknown_exception_reraised(fake_sdk, monkeypatch, _rl_confi
         await exp.speak("做點事", broadcast)
     assert client.queries == 1
     assert _record_sleep == []
+
+
+async def test_speak_wires_middleware_observability(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """task #5 接線：experts 的 speak 路徑確實接上中介層 task #4 的 metrics/observe 接點。
+
+    驗證（a）退避時 observe sink 收到中介層穩定 EV_* 事件、（b）RetryMetrics 累加退避次數/延遲，
+    且為純記錄——對外回傳文字與既有 fallback 語義不變（向後相容）。
+    """
+    seen: list[str] = []
+    monkeypatch.setattr(
+        experts, "_make_retry_observer", lambda key: (lambda ev, fields: seen.append(ev))
+    )
+    rl_stream = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_RATE_LIMIT_JSON)])]
+    client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=rl_stream)
+    exp = _make_expert(monkeypatch, client)
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    # 對外行為不變：限流耗盡走 fallback、不含核可詞
+    assert "限流" in text and "中止" in text
+    assert _record_sleep == [2.0, 4.0]
+    # 觀測接點被觸發：退避兩次（EV_RETRY）後收斂到限流耗盡（EV_RATE_LIMIT_EXHAUSTED）
+    assert seen.count(llm_caller.EV_RETRY) == 2
+    assert llm_caller.EV_RATE_LIMIT_EXHAUSTED in seen
+
+
+async def test_speak_observe_failure_does_not_break_flow(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """observe sink 拋例外不得影響重試控制流（向後相容鐵則：觀測性不改既有行為）。"""
+
+    def boom_observer(key):
+        def observe(ev, fields):
+            raise RuntimeError("sink 壞了")
+
+        return observe
+
+    monkeypatch.setattr(experts, "_make_retry_observer", boom_observer)
+    exc = RuntimeError(_RATE_LIMIT_JSON + " retry-after: 1")
+    ok_stream = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("重試後完成發言")]),
+        fake_sdk.ResultMessage(),
+    ]
+    client = _ScriptedClient(fake_sdk, query_effects=[exc], stream_msgs=ok_stream)
+    exp = _make_expert(monkeypatch, client)
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert text == "重試後完成發言"  # sink 爆掉，主流程照常重試成功
+    assert client.queries == 2
+    assert _record_sleep == [1.0]
 
 
 def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
