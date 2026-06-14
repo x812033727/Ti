@@ -436,3 +436,61 @@ def test_backoff_delay_applies_config_jitter(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", 0.0)
     assert experts._backoff_delay(None, 0) == 2.0
     assert experts._backoff_delay(10.0, 0) == 10.0
+
+
+# --- 任務 #4：A 法 wiring 測試（spy 驗「取用路徑」呼叫工廠且回傳值流入骨幹）------
+#
+# 與 B 法（monkeypatch 工廠回傳改值、驗退避行為隨之改變）互補：A 法「不改變真實行為」，
+# 只在原函式外包一層記錄器（語義同 pytest-mock 的 mocker.spy——保留真實實作、額外記錄
+# 呼叫），斷言觸發 speak 時：
+#   1) make_retry_config 在觸發路徑上被呼叫且「僅一次」；
+#   2) 該次呼叫的「回傳值」確實流入 llm_caller.run_with_retries（max_retries 同源）。
+#
+# 註：本專案 dev 依賴未含 pytest-mock，故以 monkeypatch 自製等效 spy——零外部依賴、
+#     可在乾淨 CI 直接跑，且行為與 mocker.spy 一致（委派真實實作、僅旁路記錄）。
+
+
+async def test_speak_spies_factory_called_once_and_return_flows_into_run_with_retries(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """A 法：spy 斷言 make_retry_config 在 speak 觸發路徑被呼叫且僅一次，回傳值流入骨幹。"""
+    # --- spy #1：工廠（委派真實實作、記錄每次呼叫的回傳 cfg）---------------------
+    real_factory = experts.make_retry_config
+    factory_returns: list[experts.RetryConfig] = []
+
+    def spy_make_retry_config():
+        cfg = real_factory()
+        factory_returns.append(cfg)
+        return cfg
+
+    monkeypatch.setattr(experts, "make_retry_config", spy_make_retry_config)
+
+    # --- spy #2：骨幹（委派真實實作、攔截傳入的 max_retries 以證回傳值流入）-------
+    real_run_with_retries = llm_caller.run_with_retries
+    captured: dict = {}
+
+    async def spy_run_with_retries(*args, **kwargs):
+        captured["max_retries"] = kwargs.get("max_retries")
+        return await real_run_with_retries(*args, **kwargs)
+
+    monkeypatch.setattr(llm_caller, "run_with_retries", spy_run_with_retries)
+
+    # 一次成功發言：不需重試也不觸發 _backoff_delay，確保工廠呼叫數純由 speak 路徑貢獻。
+    ok_stream = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("正常發言")]),
+        fake_sdk.ResultMessage(),
+    ]
+    client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=ok_stream)
+    exp = _make_expert(monkeypatch, client)
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert text == "正常發言"
+    # 1) 觸發路徑確實呼叫工廠，且僅一次（_backoff_delay 維持不內呼工廠，故不會累加）。
+    assert len(factory_returns) == 1, f"工廠應僅被呼叫一次，實得 {len(factory_returns)} 次"
+    # 2) 工廠回傳值流入骨幹：run_with_retries 收到的 max_retries 即工廠回傳的 cfg.max_retries。
+    assert captured["max_retries"] == factory_returns[0].max_retries
+    # 自證對應：_rl_config 設 RETRIES=2 → 工廠回傳 2 → 骨幹收到 2（排除假綠的固定值對照）。
+    assert factory_returns[0].max_retries == 2
+    assert captured["max_retries"] == 2
