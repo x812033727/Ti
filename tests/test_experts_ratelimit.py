@@ -166,6 +166,8 @@ def _rl_config(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", 2)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 60.0)
+    # 退避確定值測試顯式關閉 jitter 隔離（#3 將 default 改 "1" 後仍穩定）。
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
 
 
 @pytest.fixture
@@ -288,9 +290,22 @@ async def test_speak_unknown_exception_reraised(fake_sdk, monkeypatch, _rl_confi
     assert _record_sleep == []
 
 
+def test_jitter_default_enabled(monkeypatch):
+    """#3 接點：不設 env var 時 reload 後 jitter 預設啟用；防 default 被誤改回 '0'。"""
+    monkeypatch.delenv("TI_RATELIMIT_BACKOFF_JITTER", raising=False)
+    config.reload()
+    assert config.EXPERT_RATE_LIMIT_BACKOFF_JITTER is True
+    monkeypatch.setenv("TI_RATELIMIT_BACKOFF_JITTER", "0")
+    config.reload()
+    assert config.EXPERT_RATE_LIMIT_BACKOFF_JITTER is False
+    monkeypatch.delenv("TI_RATELIMIT_BACKOFF_JITTER", raising=False)
+    config.reload()  # 還原為預設，避免污染後續測試
+
+
 def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
     assert experts._backoff_delay(5.0, 0) == 5.0  # 採 retry-after
     assert experts._backoff_delay(99.0, 0) == 10.0  # retry-after 也夾 cap
     assert experts._backoff_delay(None, 0) == 2.0  # 指數：2 × 2^0
@@ -335,3 +350,66 @@ def test_backoff_delay_jitter_on_retry_after_not_jittered(monkeypatch):
     )
     assert experts._backoff_delay(5.0, 0) == 5.0
     assert experts._backoff_delay(99.0, 0) == 10.0  # 夾 cap，不抖
+
+
+# --- _speak_with_retries：jitter 開啟時線上重試路徑佐證 -----------------
+
+
+@pytest.fixture
+def _rl_config_jitter_on(monkeypatch):
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0.0)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", 2)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 60.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", True)
+
+
+async def test_speak_online_path_uses_jitter(
+    fake_sdk, monkeypatch, _rl_config_jitter_on, _record_sleep
+):
+    """佐證測試：jitter 預設開啟時，_speak_with_retries 走的退避值不等於純指數 ceiling。
+
+    正向樣本：seed=42，2 次 429 後成功，delays 應落在 [0, 60] 且不恰好等於 [2.0, 4.0]。
+    反向黑樣本：同測試函式內關閉 jitter 後重跑，delays 恰好等於確定值 [2.0, 4.0]。
+    """
+    import random as _random
+
+    # --- 正向樣本：jitter=True ---
+    _random.seed(42)
+    ok_stream = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("ok")]),
+        fake_sdk.ResultMessage(),
+    ]
+    exc = RuntimeError(_RATE_LIMIT_JSON)  # 無 retry-after，走指數分支
+    client = _ScriptedClient(fake_sdk, query_effects=[exc, exc], stream_msgs=ok_stream)
+    exp = _make_expert(monkeypatch, client)
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert text == "ok"
+    assert len(_record_sleep) == 2
+    assert all(0.0 <= d <= 60.0 for d in _record_sleep), f"delay 超出 cap 範圍：{_record_sleep}"
+    # jitter 鐵證：至少一個 delay 不等於對應純指數 ceiling（[2.0, 4.0]）
+    assert _record_sleep != [2.0, 4.0], f"delays {_record_sleep} 與純指數完全相同，jitter 沒有生效"
+
+    # --- 反向黑樣本：jitter=False，delays 應恰為確定值 ---
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
+    _random.seed(99)  # jitter=False 不用 random，seed 對結果無影響
+    _record_sleep.clear()
+    ok_stream2 = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("ok")]),
+        fake_sdk.ResultMessage(),
+    ]
+    client2 = _ScriptedClient(fake_sdk, query_effects=[exc, exc], stream_msgs=ok_stream2)
+    exp2 = _make_expert(monkeypatch, client2)
+    _, broadcast2 = collect()
+
+    text2 = await exp2.speak("做點事", broadcast2)
+
+    assert text2 == "ok"
+    assert len(_record_sleep) == 2
+    assert _record_sleep == [2.0, 4.0], (
+        f"jitter=False 時期望確定值 [2.0, 4.0]，實際得到 {_record_sleep}"
+    )
