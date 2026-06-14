@@ -97,6 +97,8 @@ def test_audit_has_no_phantom_routes(app):
 # --- 納管清單與架構決策一致（寫入端點全標 ✅）----------------------------
 # 任務 #2 新增 /api/roles 寫入端點（POST/PUT/DELETE 走 WRITE_DEPS=require_admin），
 # 依架構決策納管，與原六個寫入端點同列。
+# #120 起 /api/groups 寫入端點（POST/PUT/DELETE）亦改用 WRITE_DEPS(require_admin)，
+# 與 /api/roles 同級保護（groups.yaml 為組隊/mode 注入面），一併納管。
 def test_audit_managed_set_matches_decision():
     http_docs, _ = parse_audit()
     managed = {p for (m, p), mark in http_docs.items() if mark}
@@ -109,6 +111,8 @@ def test_audit_managed_set_matches_decision():
         "/api/autopilot/task",
         "/api/roles",
         "/api/roles/{key}",
+        "/api/groups",
+        "/api/groups/{name}",
     }
     assert managed == expected, f"納管清單與架構決策不符：{managed ^ expected}"
 

@@ -27,6 +27,7 @@ class NoCacheStaticFiles(StaticFiles):
         resp.headers["Cache-Control"] = _NO_CACHE
         return resp
 
+
 # 沙箱啟用但缺依賴時 CLI 會靜默 fail-open（無沙箱執行），啟動時大聲示警。
 _sandbox_missing = config.sandbox_missing_deps()
 if _sandbox_missing:
@@ -67,7 +68,9 @@ app.include_router(ws.router)
 async def index(request: Request) -> FileResponse:
     # 門禁啟用且尚未登入時，導向登入頁。
     if config.auth_enabled() and not auth.is_authed(request):
-        return FileResponse(str(config.WEB_DIR / "login.html"), headers={"Cache-Control": _NO_CACHE})
+        return FileResponse(
+            str(config.WEB_DIR / "login.html"), headers={"Cache-Control": _NO_CACHE}
+        )
     return FileResponse(str(config.WEB_DIR / "index.html"), headers={"Cache-Control": _NO_CACHE})
 
 

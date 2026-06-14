@@ -82,9 +82,7 @@ def pm_done(text: str) -> bool:
     return bool(re.search(r"(已完成|達成|符合驗收)", text))
 
 
-def shippable_verdict(
-    *, all_ok: bool, demo_veto: bool, core_verified: bool, stopped: bool
-) -> bool:
+def shippable_verdict(*, all_ok: bool, demo_veto: bool, core_verified: bool, stopped: bool) -> bool:
     """是否可出貨（可帶已知限制）——把「全有全無」放寬為「核心客觀證據通過即出貨」。
 
     - stopped：被中止一律不出貨。

@@ -754,22 +754,66 @@ async def git_head_short(repo: Path | str) -> str | None:
 
 # 發佈前淨化用:絕不該交付的環境/沙箱/快取產物。baseline .gitignore 樣式 + 已追蹤時 untrack 路徑。
 _BASELINE_IGNORE_PATTERNS = [
-    "__pycache__/", "*.py[cod]", "*.egg-info/", ".eggs/", "build/", "dist/", ".Python",
-    ".venv/", "venv/", "env/", "ENV/",
-    "*.db", "*.db-shm", "*.db-wal", "*.sqlite", "*.sqlite3",
-    ".env", "*.env.local",
+    "__pycache__/",
+    "*.py[cod]",
+    "*.egg-info/",
+    ".eggs/",
+    "build/",
+    "dist/",
+    ".Python",
+    ".venv/",
+    "venv/",
+    "env/",
+    "ENV/",
+    "*.db",
+    "*.db-shm",
+    "*.db-wal",
+    "*.sqlite",
+    "*.sqlite3",
+    ".env",
+    "*.env.local",
     # .idea/.vscode 用無斜線形式:沙箱可能建「同名 0-byte 檔」,目錄式 `.idea/` 擋不到檔
-    ".idea", ".vscode",
+    ".idea",
+    ".vscode",
     # SDK 專家沙箱會把 HOME/設定 dotfiles 散落進 workspace（皆非專案內容,絕不交付）
-    ".claude/", ".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile",
-    ".gitconfig", ".gitmodules", ".ripgreprc", ".mcp.json",
+    ".claude/",
+    ".bashrc",
+    ".bash_profile",
+    ".profile",
+    ".zshrc",
+    ".zprofile",
+    ".gitconfig",
+    ".gitmodules",
+    ".ripgreprc",
+    ".mcp.json",
 ]
 # 已被早期 `git add -A` 追蹤的 junk（.gitignore 擋不到已追蹤檔,須顯式 untrack）。
 _JUNK_PATHS = [
-    ".venv", "venv", "env", "ENV", ".claude", ".idea", ".vscode", "__pycache__",
-    "dist", "build", ".eggs", ".bashrc", ".bash_profile", ".profile", ".zshrc",
-    ".zprofile", ".gitconfig", ".gitmodules", ".ripgreprc", ".mcp.json",
-    "*.db", "*.db-shm", "*.db-wal", "*.pyc", "*.egg-info",
+    ".venv",
+    "venv",
+    "env",
+    "ENV",
+    ".claude",
+    ".idea",
+    ".vscode",
+    "__pycache__",
+    "dist",
+    "build",
+    ".eggs",
+    ".bashrc",
+    ".bash_profile",
+    ".profile",
+    ".zshrc",
+    ".zprofile",
+    ".gitconfig",
+    ".gitmodules",
+    ".ripgreprc",
+    ".mcp.json",
+    "*.db",
+    "*.db-shm",
+    "*.db-wal",
+    "*.pyc",
+    "*.egg-info",
 ]
 
 
@@ -787,8 +831,14 @@ def write_baseline_gitignore(cwd: Path | str) -> None:
         have = {ln.strip() for ln in existing.splitlines()}
         missing = [p for p in _BASELINE_IGNORE_PATTERNS if p not in have]
         if missing:
-            block = "\n# --- Ti baseline（自動補上,避免追蹤/交付沙箱/環境 junk）---\n" + "\n".join(missing) + "\n"
-            gi.write_text((existing.rstrip("\n") + "\n" if existing else "") + block, encoding="utf-8")
+            block = (
+                "\n# --- Ti baseline（自動補上,避免追蹤/交付沙箱/環境 junk）---\n"
+                + "\n".join(missing)
+                + "\n"
+            )
+            gi.write_text(
+                (existing.rstrip("\n") + "\n" if existing else "") + block, encoding="utf-8"
+            )
     except OSError:
         log.warning("寫入 baseline .gitignore 失敗（略過）", exc_info=True)
 

@@ -2066,9 +2066,12 @@ class StudioSession:
         titles = [t for t in titles if t]
         if not self.cwd or not titles:
             return
-        body = "# 已知限制（Known Limitations）\n\n" + (
-            "本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:\n\n"
-        ) + "\n".join(f"- [ ] {t}" for t in titles) + "\n"
+        body = (
+            "# 已知限制（Known Limitations）\n\n"
+            + ("本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:\n\n")
+            + "\n".join(f"- [ ] {t}" for t in titles)
+            + "\n"
+        )
         try:
             (self.cwd / "KNOWN_LIMITATIONS.md").write_text(body, encoding="utf-8")
         except OSError:

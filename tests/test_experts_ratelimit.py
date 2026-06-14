@@ -18,7 +18,7 @@ import types
 
 import pytest
 
-from studio import config, events, experts
+from studio import config, events, experts, llm_caller
 from studio.roles import BY_KEY
 
 # --- 共用 ---------------------------------------------------------------
@@ -68,6 +68,8 @@ def fake_sdk(monkeypatch):
 
 _RATE_LIMIT_JSON = '{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}'
 _OVERLOADED_JSON = '{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}'
+# 真正不重試的 API 錯誤樣本（非 429／529）——驗證「直接 fallback、不退避」路徑。
+_AUTH_ERROR_JSON = '{"type":"error","error":{"type":"authentication_error","message":"bad key"}}'
 
 
 # --- _classify_api_text：錨定判別 + 反向黑樣本 --------------------------
@@ -89,8 +91,13 @@ def test_classify_status_429_is_rate_limit():
     )
 
 
-def test_classify_overloaded_is_api_error():
-    assert experts._classify_api_text(_OVERLOADED_JSON) == ("api_error", "overloaded_error")
+def test_classify_overloaded_is_overloaded_retryable():
+    # 529／overloaded 改分到可退避的 overloaded 類（純指數退避重試），不再直接 fallback。
+    assert experts._classify_api_text(_OVERLOADED_JSON) == ("overloaded", "overloaded_error")
+
+
+def test_classify_auth_error_is_api_error():
+    assert experts._classify_api_text(_AUTH_ERROR_JSON) == ("api_error", "authentication_error")
 
 
 def test_classify_http_503_is_api_error():
@@ -134,13 +141,24 @@ async def test_stream_raises_rate_limited_with_partial(fake_sdk):
     assert all("rate_limit_error" not in t for t in texts)
 
 
-async def test_stream_raises_api_error_on_overloaded(fake_sdk):
+async def test_stream_raises_overloaded_on_overloaded(fake_sdk):
+    # 串流命中 overloaded(529) → 拋可退避的 ExpertOverloaded（交 speak 層純指數退避重試）。
     role = BY_KEY["engineer"]
     _, broadcast = collect()
     msgs = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_OVERLOADED_JSON)])]
-    with pytest.raises(experts.ExpertAPIError) as ei:
+    with pytest.raises(experts.ExpertOverloaded) as ei:
         await experts.stream_to_events(_agen(msgs), "s", role, broadcast)
     assert ei.value.kind == "overloaded_error"
+
+
+async def test_stream_raises_api_error_on_auth_error(fake_sdk):
+    # 非 429／529 的 API 錯誤（authentication_error）→ 拋不重試的 ExpertAPIError。
+    role = BY_KEY["engineer"]
+    _, broadcast = collect()
+    msgs = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_AUTH_ERROR_JSON)])]
+    with pytest.raises(experts.ExpertAPIError) as ei:
+        await experts.stream_to_events(_agen(msgs), "s", role, broadcast)
+    assert ei.value.kind == "authentication_error"
 
 
 async def test_stream_normal_speech_with_error_words_passes(fake_sdk):
@@ -259,10 +277,10 @@ async def test_speak_rate_limit_text_retries_then_fallback(
 async def test_speak_api_error_text_fallback_no_retry(
     fake_sdk, monkeypatch, _rl_config, _record_sleep
 ):
-    """非限流 API 錯誤文字（overloaded）→ 直接 fallback、不重試。"""
+    """非限流／非過載 API 錯誤文字（authentication_error）→ 直接 fallback、不重試。"""
     stream = [
         fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("中止前的半句")]),
-        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_OVERLOADED_JSON)]),
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_AUTH_ERROR_JSON)]),
     ]
     client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=stream)
     exp = _make_expert(monkeypatch, client)
@@ -276,6 +294,47 @@ async def test_speak_api_error_text_fallback_no_retry(
     assert _record_sleep == []
 
 
+async def test_speak_overloaded_529_retries_pure_exponential_then_fallback(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """端到端：overloaded(529) 真的會退避重試（純指數退避），耗盡後才走 API 錯誤 fallback。
+
+    驗收 #3：529 走純指數退避＋夾 cap＋最大次數——直接反證「529 不重試」的舊行為已修正。
+    """
+    ov_stream = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_OVERLOADED_JSON)])]
+    client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=ov_stream)
+    exp = _make_expert(monkeypatch, client)
+    bucket, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert "API 錯誤" in text and "中止" in text  # 耗盡後走通用 API 錯誤 fallback
+    assert "核可" not in text and "同意" not in text  # 下游不會誤判為通過
+    assert client.queries == 3  # 初次 + 2 次重試（RETRIES=2）——確實有重試
+    assert _record_sleep == [2.0, 4.0]  # 純指數退避（忽略任何 retry-after）、夾 cap=60
+    assert any("中止" in ev.payload.get("text", "") for ev in bucket)
+
+
+async def test_speak_overloaded_529_retry_then_succeeds(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """overloaded(529) 退避後該輪恢復正常 → 回傳正常發言、不走 fallback。"""
+    exc = RuntimeError(_OVERLOADED_JSON)  # 例外型 529（query 階段拋出）
+    ok_stream = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("過載退避後完成發言")]),
+        fake_sdk.ResultMessage(),
+    ]
+    client = _ScriptedClient(fake_sdk, query_effects=[exc], stream_msgs=ok_stream)
+    exp = _make_expert(monkeypatch, client)
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert text == "過載退避後完成發言"
+    assert client.queries == 2  # 初次 + 1 次重試
+    assert _record_sleep == [2.0]  # 純指數退避：2 × 2^0
+
+
 async def test_speak_unknown_exception_reraised(fake_sdk, monkeypatch, _rl_config, _record_sleep):
     """未知例外不被吞，原樣 re-raise，不掩蓋真正的程式錯誤。"""
     client = _ScriptedClient(fake_sdk, query_effects=[ValueError("boom")], stream_msgs=[])
@@ -286,6 +345,61 @@ async def test_speak_unknown_exception_reraised(fake_sdk, monkeypatch, _rl_confi
         await exp.speak("做點事", broadcast)
     assert client.queries == 1
     assert _record_sleep == []
+
+
+async def test_speak_wires_middleware_observability(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """task #5 接線：experts 的 speak 路徑確實接上中介層 task #4 的 metrics/observe 接點。
+
+    驗證（a）退避時 observe sink 收到中介層穩定 EV_* 事件、（b）RetryMetrics 累加退避次數/延遲，
+    且為純記錄——對外回傳文字與既有 fallback 語義不變（向後相容）。
+    """
+    seen: list[str] = []
+    monkeypatch.setattr(
+        experts, "_make_retry_observer", lambda key: lambda ev, fields: seen.append(ev)
+    )
+    rl_stream = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_RATE_LIMIT_JSON)])]
+    client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=rl_stream)
+    exp = _make_expert(monkeypatch, client)
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    # 對外行為不變：限流耗盡走 fallback、不含核可詞
+    assert "限流" in text and "中止" in text
+    assert _record_sleep == [2.0, 4.0]
+    # 觀測接點被觸發：退避兩次（EV_RETRY）後收斂到限流耗盡（EV_RATE_LIMIT_EXHAUSTED）
+    assert seen.count(llm_caller.EV_RETRY) == 2
+    assert llm_caller.EV_RATE_LIMIT_EXHAUSTED in seen
+
+
+async def test_speak_observe_failure_does_not_break_flow(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """observe sink 拋例外不得影響重試控制流（向後相容鐵則：觀測性不改既有行為）。"""
+
+    def boom_observer(key):
+        def observe(ev, fields):
+            raise RuntimeError("sink 壞了")
+
+        return observe
+
+    monkeypatch.setattr(experts, "_make_retry_observer", boom_observer)
+    exc = RuntimeError(_RATE_LIMIT_JSON + " retry-after: 1")
+    ok_stream = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("重試後完成發言")]),
+        fake_sdk.ResultMessage(),
+    ]
+    client = _ScriptedClient(fake_sdk, query_effects=[exc], stream_msgs=ok_stream)
+    exp = _make_expert(monkeypatch, client)
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert text == "重試後完成發言"  # sink 爆掉，主流程照常重試成功
+    assert client.queries == 2
+    assert _record_sleep == [1.0]
 
 
 def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
