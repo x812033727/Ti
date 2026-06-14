@@ -6,11 +6,11 @@
 
 <!-- 架構伏筆：未來可接入 semantic-release，自動擷取 commit footer 的 BREAKING CHANGE: 生成本區塊；本次為人工維護。 -->
 
-## [0.2.0] - 2026-06-15
+## ⚠️ Breaking Changes
 
-### ⚠️ Breaking Changes
+> 獨立頂層區塊，彙整所有破壞性變更；各版本節內亦保留對應摘要供版本歷史檢索。
 
-#### `TI_REQUIRE_CHOWN` 預設已改為 `strict`
+### `TI_REQUIRE_CHOWN` 預設已改為 `strict`（自 `0.2.0` 起）
 
 - **① 行為變動**：state 檔案（history meta/events、`backlog.json`）的安全寫入模式
   `TI_REQUIRE_CHOWN` **已改為 `strict` 預設**。寫入後會驗證檔案 owner 為 `root`（uid 0）且
@@ -46,6 +46,13 @@
 
 **遷移指引**：完整說明見 README 的「state 安全寫入（TI_REQUIRE_CHOWN）」小節，
 以及 `.env.example` 內的 `TI_REQUIRE_CHOWN` 範例。
+
+## [0.2.0] - 2026-06-15
+
+### ⚠️ Breaking Changes
+
+- `TI_REQUIRE_CHOWN` 預設已改為 `strict`（自 `0.2.0` 起生效）。完整四要素（行為變動／原因／
+  before-after 遷移／生效版本）見本檔頂端的 [⚠️ Breaking Changes](#️-breaking-changes) 獨立區塊。
 
 ### Changed
 
