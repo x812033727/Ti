@@ -55,6 +55,9 @@ class OpenAIExpert:
         self._model = model
         self._tools = tools.specs_for(effective_tools(role))
         self._messages: list[dict] = [{"role": "system", "content": role.system_prompt}]
+        # per-speak 去重快取：speak() 入口會換上新實例（防跨 speak 結果洩漏）。此處先建一份，
+        # 避免有人新增旁路呼叫路徑時踩 AttributeError（架構決策）。
+        self._dedup_cache = tools.DedupCache()
 
     async def speak(self, prompt: str, broadcast) -> str:
         """送出 prompt，跑 function-calling 工具迴圈，回傳完整發言文字。
@@ -65,9 +68,10 @@ class OpenAIExpert:
           （對齊既有 except→"" 行為），未知例外由骨幹原樣 re-raise，不掩蓋真錯。
         - idle 廣播置於 `finally`，覆蓋成功／限流耗盡／api_error／未知例外四路徑。
 
-        retry 假設工具呼叫為冪等——429 多發生在 `_chat`（LLM 呼叫）階段，工具執行本身不觸發
-        限流。寫入型／非冪等工具不在此 retry 的安全保證範圍內，須於 `tools.execute` 層自行
-        防護；整輪工具迴圈被重放的機率低，但維護者須知此前提。
+        429 多發生在 `_chat`（LLM 呼叫）階段，工具執行本身不觸發限流。整輪工具迴圈被重放時，
+        寫入型／非冪等工具的重執行防護由 **providers 層 per-speak `_dedup_cache`** 處理
+        （`tools.execute_deduped`：同一 key 第二次命中回首次結果、不重跑副作用），非 tools.execute
+        層。Claude provider 路徑尚無此保護（已開核心 backlog 票，見任務 #2 架構決策）。
         """
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
@@ -76,9 +80,14 @@ class OpenAIExpert:
         # snapshot + [user_msg] 還原，確保多次嘗試不把歷史重複累加。
         snapshot = list(self._messages)
         user_msg = {"role": "user", "content": prompt}
+        # 每次 speak 重建去重快取：scope=單次 speak，跨 speak 不共用（防前一輪結果洩漏）。
+        self._dedup_cache = tools.DedupCache()
 
         async def _attempt() -> str:
             self._messages[:] = snapshot + [user_msg]
+            # 每個 attempt 重置 attempt-內出現序號（保留跨 attempt 的結果快取），確保
+            # retry 重放整輪迴圈時同位置的非冪等呼叫對齊回首次 key、命中不重執行副作用。
+            self._dedup_cache.new_attempt()
             collected: list[str] = []
             for _ in range(config.OPENAI_MAX_STEPS):
                 resp = await self._chat(self._messages, self._tools, self._model)
@@ -91,7 +100,9 @@ class OpenAIExpert:
                     for tc in tool_calls:
                         name = tc.function.name
                         args = tools.parse_args(tc.function.arguments)
-                        result = await tools.execute(name, args, self.cwd)
+                        result = await tools.execute_deduped(
+                            name, args, self.cwd, self._dedup_cache
+                        )
                         await broadcast(
                             events.tool_use(
                                 self.session_id, r.key, name, tools.summarize(name, args)
