@@ -33,6 +33,18 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def _no_sandbox(monkeypatch):
+    """關閉 bwrap sandbox，讓 run_bash 在本機直跑（副作用實際落地）。
+
+    SANDBOX_ENABLED 預設 True；bwrap 缺席的環境下 ``_sandbox_blocked`` 會回傳一段**不以
+    ``_ERROR_PREFIXES`` 開頭**的訊息 → 被 ``execute_deduped`` 誤判為成功而入快取、且 append
+    從未真正發生，使對齊測試以 ``FileNotFoundError`` 非預期炸掉並掩蓋真正邏輯。測試只關心
+    去重對齊，不關心 sandbox，故統一關閉；檔案操作仍隔離在 pytest ``tmp_path`` 內。
+    """
+    monkeypatch.setattr(config, "SANDBOX_ENABLED", False)
+
+
 # =============================================================================
 # A. 重放去重：副作用只跑一次（驗收 #2）—— 對齊性質鎖定
 # =============================================================================
@@ -104,14 +116,12 @@ def test_web_fetch_not_deduped_passthrough(tmp_path, monkeypatch):
     cache = tools.DedupCache()
     cache.new_attempt()
     args = {"url": "https://example.com/a"}
-    # 放毒：若 web_fetch 誤走快取會回它
-    base = tools.dedup_key("web_fetch", args)
-    cache.put(f"{base}#0", "假命中：不該被回傳")
 
     r1 = _run(tools.execute_deduped("web_fetch", args, tmp_path, cache))
     r2 = _run(tools.execute_deduped("web_fetch", args, tmp_path, cache))
 
-    assert "假命中" not in r1 and "假命中" not in r2
+    # 不必植毒：is_idempotent("web_fetch")==True → execute_deduped 在 key_for 前就直通，
+    # 永不查快取。直接以「fetch 被呼叫兩次」證明未去重即足夠（毒值會是死代碼，反混淆意圖）。
     assert r1 == r2 == "[HTTP 200] https://example.com/a\nbody"
     assert calls == [args["url"], args["url"]]  # 每次都真的抓，不去重
 
@@ -220,6 +230,7 @@ async def test_BLACK_speak_replay_changed_args_double_side_effect(_retry_cfg, tm
     out = await expert.speak("做事", _collect())
 
     assert out == "完成"
+    assert chat.calls == 4, f"LLM 被呼叫 {chat.calls} 次，預期 4 次（確認 speak 消費完整腳本）"
     # 限制顯式化：args 改變使去重漏命中，append 跑了兩次
     assert (tmp_path / "log.txt").read_text().splitlines() == ["hi", "hi"]
 
