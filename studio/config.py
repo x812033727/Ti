@@ -631,6 +631,11 @@ AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 #   不動 backlog 既有去重契約。
 AUTOPILOT_DEDUP_RATIO = 0.75
 
+# AUTOPILOT_SUBSYSTEM_MAX：自我評估 discovery 時，若同一子系統（以標題關鍵詞識別）的 pending/
+#   in_progress 任務數達此門檻，視為「已過多」——prompt 會主動把該子系統列出，提示 LLM 在生成階段
+#   就繞開，逼出主題廣度（避免回聲腔對同一模組反覆疊加）。單一純模組常數、無 env override。
+AUTOPILOT_SUBSYSTEM_MAX = 2
+
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
 def env_bool(name: str, default: bool) -> bool:
