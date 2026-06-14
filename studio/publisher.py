@@ -16,6 +16,7 @@ import contextvars
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from . import config, runner
@@ -261,6 +262,38 @@ def summarize_checks(check_runs: list | None, status: dict | None) -> tuple[str,
     return "pass", "CI 全數通過"
 
 
+def _parse_ci_ts(s: str | None) -> datetime | None:
+    """解析 check-run 的 ISO8601 時間戳（如 2026-06-14T08:09:21Z）。無法解析回 None。"""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def is_infra_ci_failure(check_runs: list | None, *, max_seconds: float = 30.0) -> bool:
+    """判定 CI 紅是否為「基礎設施/帳務問題」（spending limit 等）而非真實程式碼失敗。
+
+    特徵：所有「失敗」的 check 都在數秒內 conclusion=failure（零步驟秒掛）。保守規則：
+    - 無任何失敗 check → False（沒東西可繞過）。
+    - 任一失敗 check 缺時間戳 → False（無法證明秒掛，不冒險繞過）。
+    - 任一失敗 check 執行超過 max_seconds → False（真的有跑＝真實失敗，保留待人工）。
+    只看失敗的 check；成功 check 跑多久都不影響判定。
+    """
+    failed = [r for r in (check_runs or []) if r.get("conclusion") in _FAIL_CONCLUSIONS]
+    if not failed:
+        return False
+    for r in failed:
+        start = _parse_ci_ts(r.get("started_at"))
+        end = _parse_ci_ts(r.get("completed_at"))
+        if start is None or end is None:
+            return False
+        if (end - start).total_seconds() > max_seconds:
+            return False
+    return True
+
+
 def _backoff(attempt: int, base: float) -> float:
     """指數 backoff，封頂 60 秒。attempt 從 0 起算。"""
     return min(base * (2**attempt), 60.0)
@@ -482,7 +515,15 @@ async def _wait_for_ci(
 
         fetch_errors = 0  # 查詢成功就重置連續失敗計數
         state, last_detail = summarize_checks(*fetched)
-        if state in ("pass", "fail"):
+        if state == "fail":
+            # 帳務/基礎設施秒掛 + 開關開 → 回 infra_fail，讓 _merge_flow 不早退、照常合併。
+            if config.PUBLISH_BYPASS_INFRA_CI and is_infra_ci_failure(fetched[0]):
+                return (
+                    "infra_fail",
+                    f"CI 失敗但研判為基礎設施/帳務問題（所有失敗 check 秒掛）：{last_detail}",
+                )
+            return state, last_detail
+        if state == "pass":
             return state, last_detail
         # pending
         if waited >= timeout:
@@ -570,9 +611,12 @@ async def _merge_flow(
         if ci_state == "error":
             return MergeOutcome.ERROR, ci_detail
 
-        # CI pass / 無 CI → 嘗試合併
+        # CI pass / 無 CI / infra_fail（帳務秒掛已研判可繞過）→ 嘗試合併
+        bypassed_infra = ci_state == "infra_fail"
         outcome, detail, retryable = await _merge_pr(number, payload)
         if outcome == MergeOutcome.MERGED:
+            if bypassed_infra:
+                detail = f"{detail}（已繞過基礎設施/帳務 CI 失敗：{ci_detail}）"
             return outcome, detail
         last_outcome, last_detail = outcome, detail
 

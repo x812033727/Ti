@@ -300,7 +300,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_IMPROVE_MAX_FAILS` / `TI_IMPROVE_COOLDOWN` | 連續失敗幾輪即停 ／ 每輪之間喘息秒數 | 2 / 0 |
 | `TI_HISTORY_MAX_COUNT` / `TI_HISTORY_MAX_AGE` | 自動回收：最多保留幾個非 running session ／ 最後活動超過幾秒即回收（含 history 的 meta+events 與其 workspace 產出）；0=該規則停用 | 200 / 0 |
 | `TI_MAX_CONCURRENT_SESSIONS` | 同時進行的討論場次上限（每場會起多個專家子程序/LLM 連線）；超過時新的 `/ws` 連線被拒（送 error 後 close 1013）。0=不限 | 8 |
-| `TI_REQUIRE_CHOWN` | root-only state 寫入（history meta/events、backlog.json）的擁有者強制驗證模式：`strict`=驗證未過即 fail-closed（拒寫、不留半成品）／`warn`=記錄後放行／`off`=顯式逃生開關，靜默放行。不認得的值 fail-safe 取 `strict`。詳見下方「root-only 寫入保護」補充 | strict |
+| `TI_REQUIRE_CHOWN` | root-only state 寫入（history meta/events、backlog.json）的擁有者強制驗證模式：`strict`=驗證未過即 fail-closed（拒寫、不留半成品）／`warn`=記錄後放行／`off`=顯式逃生開關，靜默放行。不認得的值 fail-safe 取 `strict`。**預設 `strict`（安全側，breaking change）**，詳見下方「root-only 寫入保護」補充 | strict（預設安全） |
 
 #### Autopilot 安全旗標補充
 

@@ -67,8 +67,22 @@ def _parse_require_chown(raw: str | None) -> str:
     return "strict"  # 設錯值 fail-safe 取 strict，不靜默放行
 
 
-def _warn_if_chown_weakened() -> None:
-    """config 載入時，對任何「顯式非 strict」記一條明顯 warning（取代逐次寫入洗版）。"""
+def _warn_require_chown(raw: str | None) -> None:
+    """config 載入時記一條明顯 warning（取代逐次寫入洗版）：
+    - 顯式降級（warn/off/false…）→『降級』提醒安全保證被放寬。
+    - 無法辨識的值 → 記『無法辨識』並說明已 fail-safe 取 strict。
+    - 未設定或顯式 strict → 安全預設，不記 warning。
+    """
+    v = (raw or "").strip().lower()
+    if not v or v == "strict":
+        return
+    known = REQUIRE_CHOWN_MODES + _REQUIRE_CHOWN_TRUTHY + _REQUIRE_CHOWN_FALSY
+    if v not in known:
+        logger.warning(
+            "TI_REQUIRE_CHOWN=%r 無法辨識，已 fail-safe 取 strict（絕不靜默降級為 off）。",
+            raw,
+        )
+        return
     if REQUIRE_CHOWN != "strict":
         logger.warning(
             "TI_REQUIRE_CHOWN=%s：已將 root-only state 寫入的擁有者強制驗證降級/放寬"
@@ -85,7 +99,7 @@ def require_chown_mode() -> str:
     return REQUIRE_CHOWN
 
 
-_warn_if_chown_weakened()
+_warn_require_chown(os.getenv("TI_REQUIRE_CHOWN"))
 
 
 # --- Provider / 模型 ----------------------------------------------------
@@ -448,6 +462,16 @@ PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
 # 註冊出現的寬限秒數（避免「尚未註冊」被誤判為無 CI 而提前合併）。
 PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
 PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
+# 基礎設施/帳務 CI 秒掛繞過：GitHub Actions 命中 spending limit 時所有 job 數秒內
+# conclusion=failure 且零步驟——CI 紅其實是帳務問題、非程式碼失敗。開啟後自動合併在「所有
+# 失敗 check 皆秒掛」時繞過「CI 紅→待人工」閘直接合併（發佈前 sandbox 已驗碼）。預設關閉
+# （安全側）：繞過 CI 紅有風險，需明確 opt-in。
+PUBLISH_BYPASS_INFRA_CI = os.getenv("TI_PUBLISH_BYPASS_INFRA_CI", "0") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 
 # --- 登入 / 門禁（單一共用密碼，預設關閉）------------------------------
 # 設定 TI_ACCESS_PASSWORD 後即啟用門禁：使用者需在登入頁輸入正確密碼才能進入工作室。
@@ -689,7 +713,7 @@ def reload() -> None:
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
-    global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
+    global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE, PUBLISH_BYPASS_INFRA_CI
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
@@ -707,7 +731,7 @@ def reload() -> None:
     global ROLES_DIR, REQUIRE_CHOWN
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     REQUIRE_CHOWN = _parse_require_chown(os.getenv("TI_REQUIRE_CHOWN"))
-    _warn_if_chown_weakened()
+    _warn_require_chown(os.getenv("TI_REQUIRE_CHOWN"))
     ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
@@ -742,6 +766,12 @@ def reload() -> None:
     PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
     PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
     PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
+    PUBLISH_BYPASS_INFRA_CI = os.getenv("TI_PUBLISH_BYPASS_INFRA_CI", "0") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
     # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
     HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
