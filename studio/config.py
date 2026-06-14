@@ -631,6 +631,14 @@ AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 #   不動 backlog 既有去重契約。
 AUTOPILOT_DEDUP_RATIO = 0.75
 
+# AUTOPILOT_SUBSYSTEM_MAX_PENDING：自我評估「提案進場」的第二道（廣度）防線 K。從標題以 regex 抽出
+#   「涉及子系統」（_extract_subsystems），若某子系統在現有 pending/in_progress 已達 K 筆，該子系統的
+#   新提案一律拒——避免 LLM 不換標題卻反覆對同一模組（backlog、discovery…）疊加任務（topic echo
+#   chamber）。純模組常數、零 env、零新依賴。僅作用於本次提案進場：不回溯刪改 backlog、不動
+#   `backlog._is_duplicate` 的字串等值去重契約（與第一道 difflib 相似度防線互補）。3 為初始估值
+#   （同一子系統最多排 3 筆，第 3 筆起的新提案被擋），日後調整改此處一個值即可。
+AUTOPILOT_SUBSYSTEM_MAX_PENDING = 3
+
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
 def env_bool(name: str, default: bool) -> bool:
