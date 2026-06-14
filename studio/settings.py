@@ -176,6 +176,28 @@ FIELDS: tuple[Field, ...] = (
         placeholder="MiniMax-M3",
         group="MiniMax",
     ),
+    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax 混用，
+    # 例如把 tool-calling 吃重的工程師／QA 留 claude、討論型角色走 minimax。
+    *(
+        Field(
+            f"TI_PROVIDER_{key.upper()}",
+            f"{zh} provider（auto＝沿用全域）",
+            kind="select",
+            options=("auto", "claude", "openai", "minimax"),
+            default="auto",
+            group="混用（每角色 provider）",
+        )
+        for key, zh in (
+            ("pm", "專案經理"),
+            ("engineer", "工程師"),
+            ("qa", "驗證工程師"),
+            ("senior", "高級工程師"),
+            ("researcher", "研究員"),
+            ("architect", "架構師"),
+            ("security", "資安審查"),
+            ("devops", "整合維運"),
+        )
+    ),
     Field(
         "GITHUB_TOKEN",
         "GitHub Token（clone 私有 repo／發佈成果）",
