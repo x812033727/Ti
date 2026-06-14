@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,45 @@ API_ERROR_FALLBACK_MARKER = "發言收到 API 錯誤"
 # 此處保留 experts 慣用的私有名作為穩定別名，呼叫端與既有測試無需改動。
 _classify_api_text = llm_caller.classify_api_text
 _classify_failure = llm_caller.classify_failure
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    """限流退避的整組配置——把散落於 config 的四個常數收斂成單一值物件。
+
+    `_speak_with_retries` 由 `make_retry_config()` 取得本實例後，以欄位組裝 max_retries
+    與 backoff，使退避行為的「取值路徑」集中可測（monkeypatch 工廠即可整組替換）。
+    """
+
+    max_retries: int
+    base: float
+    cap: float
+    jitter: float
+
+    def __post_init__(self) -> None:
+        # 防衛性驗證：base／cap ≤ 0 會讓 backoff_delay 算出 delay≤0，退化成無延遲的
+        # busy-retry（把 max_retries 次瞬間打完）；jitter 出界會讓退避時點分布失真。
+        # 環境變數誤設時在建構點即時 fail-fast，而非下游靜默失效。
+        if self.base <= 0:
+            raise ValueError(f"RetryConfig.base 必須 > 0，收到 {self.base}")
+        if self.cap <= 0:
+            raise ValueError(f"RetryConfig.cap 必須 > 0，收到 {self.cap}")
+        if not (0.0 <= self.jitter <= 1.0):
+            raise ValueError(f"RetryConfig.jitter 必須 ∈ [0, 1]，收到 {self.jitter}")
+
+
+def make_retry_config() -> RetryConfig:
+    """工廠：呼叫時（非載入期）讀 config 對應常數，回傳 `RetryConfig` 實例。
+
+    刻意 lazy（每次呼叫即時讀 config），故設定頁／測試 monkeypatch config 或
+    `config.reload` 重綁常數後，下次呼叫即時反映，不被載入期 cache 釘死。
+    """
+    return RetryConfig(
+        max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES),
+        base=config.EXPERT_RATE_LIMIT_BACKOFF,
+        cap=config.EXPERT_RATE_LIMIT_BACKOFF_CAP,
+        jitter=config.EXPERT_RATE_LIMIT_BACKOFF_JITTER,
+    )
 
 
 def _backoff_delay(retry_after: float | None, attempt: int) -> float:
@@ -377,7 +417,10 @@ class Expert:
         - 未知例外由骨幹原樣 re-raise，不掩蓋真錯。
         """
         r = self.role
-        max_retries = max(0, config.EXPERT_RATE_LIMIT_RETRIES)
+        # 退避配置統一由工廠取得（call-time 讀 config）；max_retries 與 backoff 皆由
+        # cfg 欄位驅動，experts 層不再直接散讀 config.EXPERT_RATE_LIMIT_*。
+        cfg = make_retry_config()
+        max_retries = cfg.max_retries
 
         async def _attempt() -> str:
             await self._client.query(prompt)
@@ -424,7 +467,9 @@ class Expert:
         text = await llm_caller.run_with_retries(
             _attempt,
             max_retries=max_retries,
-            backoff=_backoff_delay,
+            backoff=lambda retry_after, attempt: llm_caller.backoff_delay(
+                retry_after, attempt, base=cfg.base, cap=cfg.cap, jitter=cfg.jitter
+            ),
             sleep=_sleep,
             on_retry=_on_retry,
             on_rate_limit_exhausted=_on_rate_limit_exhausted,
