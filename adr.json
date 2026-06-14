@@ -643,6 +643,90 @@
       "rejected": "",
       "session_id": "ap56fd03a05c",
       "created_at": 1781438433.2761645
+    },
+    {
+      "decision": "`providers.py` 頂層直接 `from .experts import make_retry_config`，不新增模組、不複製工廠。",
+      "rationale": "experts.py 無任何 providers import（循環依賴不存在），共用同一 `EXPERT_RATE_LIMIT_*` 旋鈕保持三端一致。",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619449
+    },
+    {
+      "decision": "`OpenAIExpert.speak()` 將整個工具迴圈（`for _ in range(OPENAI_MAX_STEPS)`）打包為單一 `_attempt`，交 `run_with_retries` 控制退避。",
+      "rationale": "對齊 Claude 端「一次 attempt = 一個完整 turn」語義；逐步包裝需在上層處理 `resp` 型態歧義，複雜度不值得。",
+      "rejected": "逐 `_chat` 單步包裝（複雜、需把 resp 從 attempt_fn 回傳再由外層繼續處理，架構破碎）。",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619496
+    },
+    {
+      "decision": "工具副作用冪等性為**隱性合約**，選擇接受（方案 a）；但 `_attempt` 函式上方 comment 必須明文標注「retry 假設工具呼叫冪等，寫入型工具不在此重試保證範圍；非冪等工具須在 tools.execute 層自行防護」。",
+      "rationale": "429 多發生在 `_chat` 呼叫階段；工具執行本身不觸發限流；重放機率低但必須讓維護者知道這個前提。",
+      "rejected": "方案 b（只包 `_chat` 的逐步退避）——回到複雜的多層包裝，首次 rate_limit 發生在工具執行後時仍需 rollback 邏輯，代價更高。",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619508
+    },
+    {
+      "decision": "`speak()` 進入時 `snapshot = list(self._messages)`；user 訊息 append 與 `collected = []` 搬入 `_attempt` 內部；retry 時以 `self._messages[:] = snapshot + [user_msg]` 恢復，確保訊息不重複累加。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619518
+    },
+    {
+      "decision": "`idle` broadcast 置於 `run_with_retries` 呼叫外的 `finally` 塊，覆蓋成功、限流耗盡、api_error、unknown exception 四路徑。",
+      "rationale": "",
+      "rejected": "將 idle 保留在 `_attempt` 末尾——rate_limit_exhausted 路徑不經 `_attempt` 正常結束，會漏播 idle。",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619527
+    },
+    {
+      "decision": "`on_retry` hook 廣播 `expert_status(\"thinking\")` 並 `logger.warning`，鏡像 Claude 端 `_on_retry` 行為。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619542
+    },
+    {
+      "decision": "`on_rate_limit_exhausted` 與 `on_api_error` 皆 `return \"\"`；logger.warning 必須包含 expert name、exception snippet、已重試次數，確保排查有跡可循。",
+      "rationale": "高工指出空字串與真實空回應在上層無法區分，詳細 log 是唯一補救手段。",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.161955
+    },
+    {
+      "decision": "`classify_failure(exc)` 作為 OpenAI 例外分類的唯一入口；wiring 測試中必須加一條直接斷言 `classify_failure(fake_openai_rate_limit_error)` 的行為——若 `retry_after` 為 None 則明文標注走固定退避路徑（可接受），若能解析則斷言非 None；禁止「假設能命中」而不驗。",
+      "rationale": "高工標為 🔴 高風險——`classify_api_text` 原設計針對 Claude 格式，OpenAI RateLimitError 字串格式差異若導致命中失敗，會靜默退化為預設退避而非 retry-after 優先，難以察覺。",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619558
+    },
+    {
+      "decision": "`providers.py` 層不自行解析 `retry_after`，零修改 `llm_caller.py`。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619568
+    },
+    {
+      "decision": "`complete_once()` 改動極小——`except Exception: return \"\"` 保留（永不 raise 合約不變），加 comment 說明「429 已由 speak() 內部 run_with_retries 吸收，此處 except 僅兜底未知錯誤」；不在 complete_once 層套第二層 run_with_retries。",
+      "rationale": "",
+      "rejected": "complete_once 套外層 run_with_retries（雙層重試，且與 speak() 內部退避疊加語義不清）。",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619582
+    },
+    {
+      "decision": "wiring 測試四項必測——① `mocker.spy(experts, \"make_retry_config\")` 斷言 called_once；② `monkeypatch EXPERT_RATE_LIMIT_RETRIES=7` 後斷言 `run_with_retries` 實收 `max_retries=7`（反向對照排假綠）；③ `classify_failure` 對偽造 OpenAI RateLimitError 的行為顯式斷言；④ 重試耗盡時 speak 回傳 `\"\"` 且不含核可關鍵詞（工程師指出的 partial broadcast 不一致風險）。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.1619592
+    },
+    {
+      "decision": "零新外部依賴（無 tenacity）、零新 env 變數；三端統一走 `EXPERT_RATE_LIMIT_*` 旋鈕。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6e19134877",
+      "created_at": 1781442117.16196
     }
   ]
 }
