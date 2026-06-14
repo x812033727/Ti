@@ -6,6 +6,7 @@ function-calling 規格定義同名工具，並提供實際在 workspace cwd 上
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import re
@@ -124,6 +125,30 @@ def is_idempotent(name: str) -> bool:
     一律回 True（視為冪等）。理由見 ``NON_IDEMPOTENT_TOOLS`` 上方註解。
     """
     return name not in NON_IDEMPOTENT_TOOLS
+
+
+# --- session 內去重快取的 key 推導（任務 #2）-------------------------------
+# 【快取結構】per-speak 純記憶體 `dict[str, Any]`，由 providers.OpenAIExpert 持有並在
+# 每次 `speak()` 入口清空（見 #4 接入）。鍵＝本函式產生的字串，值＝tools.execute 首次
+# 成功返回的結果。重放（retry 重跑整輪工具迴圈）時同 key 命中即回首次結果、不重執行副作用。
+# 刻意不落檔、無 TTL、無外部相依——重放只發生在「同一 provider 物件、單次 speak 內」，
+# 純記憶體 dict 已足夠；落檔／Redis／Temporal 皆為超出範圍的鍍金（PM 已定案砍除）。
+#
+# 【key 不依賴呼叫端 tc.id】OpenAI 重放會重新生成新的 tool_call id，用 tc.id 當 key 在
+# 重放時必 miss、去重直接失效。改由「工具名 + 已解析參數」推導：retry 重放同一輪工具
+# 迴圈時，tool_name 與 args 內容不變 → 同 key 命中。
+def dedup_key(tool_name: str, args: dict) -> str:
+    """從工具名與**已解析的 args dict** 推導 session 內去重 key（不依賴 tc.id）。
+
+    ``args`` 必須是 ``tools.parse_args`` 之後的 dict，不可傳 ``tc.function.arguments``
+    原始 JSON 字串——後者序列化順序不穩定會讓 ``sort_keys`` 失效、同參數產生假 miss。
+    """
+    # sort_keys=True 確保鍵序無關，同一組 args 永遠得到同一 digest。
+    digest = hashlib.sha256(
+        json.dumps(args, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    # [:16]＝64 bits：per-speak 工具呼叫數極小（< 100），碰撞機率 < 5×10⁻¹⁸，足夠。
+    return f"{tool_name}:{digest}"
 
 
 def specs_for(allowed_claude_tools: list[str]) -> list[dict]:
