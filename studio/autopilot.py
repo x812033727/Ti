@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import difflib
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -437,15 +437,49 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
 def _normalize_for_dedup(s: str) -> str:
     """相似度比對前的正規化：壓平換行、strip、轉小寫、去首尾標點。
 
-    proposals 是完整句子、existing_titles 是標題，長度差會稀釋 SequenceMatcher.ratio()；
-    先 normalize 可緩解（仍是字元級比對，無法處理同義改寫）。獨立成 helper 方便日後替換策略。
+    供 `_tokenize_for_dedup` 前置使用；獨立成 helper 方便測試與日後替換策略。
     """
     s = s.replace("\n", " ").strip().lower()
     return s.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
 
 
+# CJK 統一表意文字（含擴展 A）區段——逐字當作一個 token，不依賴外部分詞器（不引入 jieba）。
+_CJK_RE = re.compile(r"[㐀-䶿一-鿿]")
+# ASCII 英數連續片段（如 backlog、ci、retry）整段當作一個 token，大小寫已由 normalize 壓平。
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize_for_dedup(s: str) -> set[str]:
+    """把標題切成「詞集」：ASCII 英數片段整段成 token、CJK 逐字成 token，丟標點空白。
+
+    純 stdlib（re），不引入分詞依賴。CJK 逐字是刻意取捨：同義改寫常共享字根（如「補測試」/
+    「新增測試」共享「測試」），逐字交集比字元序列比對更穩；代價是字級分詞無法辨識「補↔新增」
+    這類無共享字的同義替換（見 known-limitation 測試）。
+    """
+    s = _normalize_for_dedup(s)
+    toks = set(_ASCII_TOKEN_RE.findall(s))
+    toks.update(_CJK_RE.findall(s))
+    return toks
+
+
+def _token_set_similarity(a: str, b: str) -> float:
+    """詞集 Jaccard 相似度：|A∩B| / |A∪B|，任一為空回 0.0。
+
+    取代舊的 `difflib.SequenceMatcher`（字元序列比對）。Jaccard 是集合運算、與語序無關，
+    因此能抓到舊策略漏掉的「語序調換」改寫（如「為 retry 機制加上重試上限」↔
+    「為重試機制加上 retry 上限」：SequenceMatcher≈0.625 漏網，Jaccard=1.0 攔下）。
+    """
+    ta, tb = _tokenize_for_dedup(a), _tokenize_for_dedup(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
 def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
-    """進場 pre-filter：丟掉與任一 existing 標題相似度超過 AUTOPILOT_DEDUP_RATIO 的提案。
+    """進場 pre-filter：丟掉與任一 existing 標題詞集相似度 ≥ AUTOPILOT_DEDUP_RATIO 的提案。
+
+    相似度用 `_token_set_similarity`（詞集 Jaccard）取代舊的字元序列比對，以捕中文同義改寫
+    與語序調換。閾值集中為單一常數 `config.AUTOPILOT_DEDUP_RATIO`。
 
     僅作用於本次 LLM 提案進場前，不回溯清洗 backlog、不刪除/合併任何既有任務，也不改動
     `backlog._is_duplicate` 的完成去重契約（兩者互補：此處擋語意相近、那裡擋字串等值）。
@@ -456,15 +490,13 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
     """
     if not existing_titles:
         return proposals
-    norm_existing = [_normalize_for_dedup(t) for t in existing_titles]
     kept: list[str] = []
     for p in proposals:
-        np_ = _normalize_for_dedup(p)
         hit = next(
             (
                 e
-                for e in norm_existing
-                if difflib.SequenceMatcher(None, np_, e).ratio() >= config.AUTOPILOT_DEDUP_RATIO
+                for e in existing_titles
+                if _token_set_similarity(p, e) >= config.AUTOPILOT_DEDUP_RATIO
             ),
             None,
         )
