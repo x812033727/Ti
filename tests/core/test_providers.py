@@ -109,3 +109,26 @@ async def test_complete_once_openai_chat_raises_returns_empty(monkeypatch, tmp_p
     assert out == ""
     # 反向對照：確實有走到 openai 路徑並觸發 chat（否則是 guard 短路的假綠）
     assert called["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_complete_once_openai_chat_non_runtime_exception_also_degrades(monkeypatch, tmp_path):
+    """邊界：驗 except Exception 為廣捕——非 RuntimeError（此處 ValueError）也降級回 "" 不外拋。"""
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OFFLINE_MODE", False)
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://local")
+
+    called = {"n": 0}
+
+    async def exploding_chat(messages, tools_, model):
+        called["n"] += 1
+        raise ValueError("非預期型別")
+
+    monkeypatch.setattr(providers, "_openai_chat", exploding_chat)
+
+    out = await providers.complete_once(
+        "你是反思器", "請反思", session_id="s", cwd=tmp_path, timeout=1.0
+    )
+
+    assert out == ""
+    assert called["n"] == 1
