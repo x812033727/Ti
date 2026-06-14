@@ -161,6 +161,7 @@ def test_BLACK_replay_changes_args_misses_dedup_final_api(tmp_path):
 
 # --- providers.speak 整合層的已知限制黑樣本（最貼近生產路徑）---
 
+
 def _msg(content=None, tool_calls=None):
     return SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=tool_calls))]

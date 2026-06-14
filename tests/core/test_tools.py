@@ -128,7 +128,9 @@ def test_read_file_and_web_fetch_not_managed():
 def test_classification_covers_all_three_write_tools():
     # 標準 #1：分類須明列 write_file/edit_file/run_bash 三者各自的策略，
     # 每一個都要有可判定的決策（不能漏掉任何一個）。
-    decisions = {name: tools.is_idempotent(name) for name in ("write_file", "edit_file", "run_bash")}
+    decisions = {
+        name: tools.is_idempotent(name) for name in ("write_file", "edit_file", "run_bash")
+    }
     assert decisions == {"write_file": True, "edit_file": False, "run_bash": False}
 
 

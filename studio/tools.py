@@ -143,9 +143,7 @@ def dedup_key(tool_name: str, args: dict) -> str:
     原始 JSON 字串——後者序列化順序不穩定會讓 ``sort_keys`` 失效、同參數產生假 miss。
     """
     # sort_keys=True 確保鍵序無關，同一組 args 永遠得到同一 digest。
-    digest = hashlib.sha256(
-        json.dumps(args, sort_keys=True).encode("utf-8")
-    ).hexdigest()[:16]
+    digest = hashlib.sha256(json.dumps(args, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     # [:16]＝64 bits：per-speak 工具呼叫數極小（< 100），碰撞機率 < 5×10⁻¹⁸，足夠。
     return f"{tool_name}:{digest}"
 
@@ -413,9 +411,7 @@ def _is_error_result(result: Any) -> bool:
     return isinstance(result, str) and result.startswith(_ERROR_PREFIXES)
 
 
-async def execute_deduped(
-    name: str, args: dict, cwd: Path, cache: DedupCache | None
-) -> str:
+async def execute_deduped(name: str, args: dict, cwd: Path, cache: DedupCache | None) -> str:
     """去重感知的 ``execute``：非冪等工具經 per-speak cache 防 retry 重放重執行副作用。
 
     - ``cache is None`` 或冪等工具（``is_idempotent`` True，含 read_file/write_file/

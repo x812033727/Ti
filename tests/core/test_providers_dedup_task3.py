@@ -67,9 +67,7 @@ def _cfg(monkeypatch):
 
 
 def _expert(chat, tmp_path):
-    return providers.OpenAIExpert(
-        BY_KEY["engineer"], "sess", tmp_path, chat=chat, model="m"
-    )
+    return providers.OpenAIExpert(BY_KEY["engineer"], "sess", tmp_path, chat=chat, model="m")
 
 
 def _rate_limit_err():

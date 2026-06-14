@@ -22,7 +22,7 @@ def _run(coro):
 def test_replay_runbash_side_effect_runs_once(tmp_path):
     """跨 attempt 重放：同一 run_bash 重放命中快取 → append 只發生一次。"""
     cache = tools.DedupCache()
-    cmd = {"command": 'echo line >> log.txt'}
+    cmd = {"command": "echo line >> log.txt"}
 
     cache.new_attempt()
     r1 = _run(tools.execute_deduped("run_bash", cmd, tmp_path, cache))
@@ -101,7 +101,7 @@ def test_runbash_nonzero_exit_is_cached(tmp_path):
     """run_bash 非零 exit 仍算副作用已發生 → 入快取，重放不重跑（防重複副作用）。"""
     cache = tools.DedupCache()
     # 指令：append 一行後以非零退出
-    cmd = {"command": 'echo x >> c.txt; exit 3'}
+    cmd = {"command": "echo x >> c.txt; exit 3"}
 
     cache.new_attempt()
     r1 = _run(tools.execute_deduped("run_bash", cmd, tmp_path, cache))
@@ -117,7 +117,7 @@ def test_runbash_nonzero_exit_is_cached(tmp_path):
 def test_legit_duplicate_in_attempt_both_run(tmp_path):
     """反向黑樣本（驗收 #6）：同一 attempt 內合法重複的 run_bash append，兩次都要執行。"""
     cache = tools.DedupCache()
-    cmd = {"command": 'echo dup >> d.txt'}
+    cmd = {"command": "echo dup >> d.txt"}
 
     cache.new_attempt()
     _run(tools.execute_deduped("run_bash", cmd, tmp_path, cache))
@@ -155,5 +155,9 @@ def test_error_result_contract_matches_execute_failures(tmp_path):
     assert tools._is_error_result(r)
 
     # 反向：成功路徑不被判失敗（否則合法結果不入快取，去重失效）
-    assert not tools._is_error_result(_run(tools.execute("write_file", {"path": "ok.txt", "content": "z"}, tmp_path)))
-    assert not tools._is_error_result(_run(tools.execute("run_bash", {"command": "exit 5"}, tmp_path)))
+    assert not tools._is_error_result(
+        _run(tools.execute("write_file", {"path": "ok.txt", "content": "z"}, tmp_path))
+    )
+    assert not tools._is_error_result(
+        _run(tools.execute("run_bash", {"command": "exit 5"}, tmp_path))
+    )
