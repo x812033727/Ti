@@ -48,3 +48,26 @@ adr.lock
 
 # 沙箱 ro-bind 測試的 host 探針檔（test_qa_ro_bind_reject_qa.py，正常即時清理；防誤 commit）
 .ti_ro_bind_probe_*.txt
+
+# --- Ti baseline（自動補上,避免追蹤/交付沙箱/環境 junk）---
+.Python
+env/
+ENV/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.env.local
+.idea
+.vscode
+.claude/
+.bashrc
+.bash_profile
+.profile
+.zshrc
+.zprofile
+.gitconfig
+.gitmodules
+.ripgreprc
+.mcp.json
