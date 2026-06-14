@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from pathlib import Path
 
-from . import config, events, tools
+from . import config, events, llm_caller, tools
+from .experts import _make_retry_observer as make_retry_observer, make_retry_config
 from .roles import Role, effective_tools
+
+logger = logging.getLogger(__name__)
 
 
 def openai_model_for(role: Role) -> str:
@@ -36,41 +40,103 @@ class OpenAIExpert:
         self._messages: list[dict] = [{"role": "system", "content": role.system_prompt}]
 
     async def speak(self, prompt: str, broadcast) -> str:
+        """送出 prompt，跑 function-calling 工具迴圈，回傳完整發言文字。
+
+        整個工具迴圈打包為單一 `_attempt`，交核心 `llm_caller.run_with_retries` 控制退避，
+        與 Claude 端（experts._speak_with_retries）共用同一 `make_retry_config()` 旋鈕：
+        - 命中 429／5xx（限流／過載）時走有限次退避重試；非限流 API 錯誤與重試耗盡皆回退空字串
+          （對齊既有 except→"" 行為），未知例外由骨幹原樣 re-raise，不掩蓋真錯。
+        - idle 廣播置於 `finally`，覆蓋成功／限流耗盡／api_error／未知例外四路徑。
+
+        retry 假設工具呼叫為冪等——429 多發生在 `_chat`（LLM 呼叫）階段，工具執行本身不觸發
+        限流。寫入型／非冪等工具不在此 retry 的安全保證範圍內，須於 `tools.execute` 層自行
+        防護；整輪工具迴圈被重放的機率低，但維護者須知此前提。
+        """
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
-        self._messages.append({"role": "user", "content": prompt})
-        collected: list[str] = []
+        cfg = make_retry_config()
+        # speak 進入時快照訊息歷史；user 訊息與 collected 都搬進 _attempt，retry 時以
+        # snapshot + [user_msg] 還原，確保多次嘗試不把歷史重複累加。
+        snapshot = list(self._messages)
+        user_msg = {"role": "user", "content": prompt}
 
-        for _ in range(config.OPENAI_MAX_STEPS):
-            resp = await self._chat(self._messages, self._tools, self._model)
-            msg = resp.choices[0].message
-            tool_calls = getattr(msg, "tool_calls", None) or []
-            self._messages.append(_assistant_dict(msg, tool_calls))
+        async def _attempt() -> str:
+            self._messages[:] = snapshot + [user_msg]
+            collected: list[str] = []
+            for _ in range(config.OPENAI_MAX_STEPS):
+                resp = await self._chat(self._messages, self._tools, self._model)
+                msg = resp.choices[0].message
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                self._messages.append(_assistant_dict(msg, tool_calls))
 
-            if tool_calls:
-                await broadcast(events.expert_status(self.session_id, r.key, "working"))
-                for tc in tool_calls:
-                    name = tc.function.name
-                    args = tools.parse_args(tc.function.arguments)
-                    result = await tools.execute(name, args, self.cwd)
+                if tool_calls:
+                    await broadcast(events.expert_status(self.session_id, r.key, "working"))
+                    for tc in tool_calls:
+                        name = tc.function.name
+                        args = tools.parse_args(tc.function.arguments)
+                        result = await tools.execute(name, args, self.cwd)
+                        await broadcast(
+                            events.tool_use(
+                                self.session_id, r.key, name, tools.summarize(name, args)
+                            )
+                        )
+                        self._messages.append(
+                            {"role": "tool", "tool_call_id": tc.id, "content": result}
+                        )
+                    continue
+
+                text = (msg.content or "").strip()
+                if text:
+                    collected.append(text)
                     await broadcast(
-                        events.tool_use(self.session_id, r.key, name, tools.summarize(name, args))
+                        events.expert_message(self.session_id, r.key, r.name, r.avatar, text)
                     )
-                    self._messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": result}
-                    )
-                continue
+                break
 
-            text = (msg.content or "").strip()
-            if text:
-                collected.append(text)
-                await broadcast(
-                    events.expert_message(self.session_id, r.key, r.name, r.avatar, text)
-                )
-            break
+            return "\n".join(collected)
 
-        await broadcast(events.expert_status(self.session_id, r.key, "idle"))
-        return "\n".join(collected)
+        async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:
+            logger.warning(
+                "OpenAI 專家 %s 撞限流／過載（429／5xx，第 %d/%d 次重試），退避 %.1fs：%s",
+                r.key,
+                attempt + 1,
+                limit,
+                delay,
+                snippet,
+            )
+            await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
+
+        async def _on_rate_limit_exhausted(snippet: str, partial: str) -> str:
+            logger.warning(
+                "OpenAI 專家 %s 限流重試耗盡（%d 次），回退空字串：%s",
+                r.key,
+                cfg.max_retries,
+                snippet,
+            )
+            return ""
+
+        async def _on_api_error(snippet: str, partial: str) -> str:
+            logger.warning("OpenAI 專家 %s 收到 API 錯誤，回退空字串：%s", r.key, snippet)
+            return ""
+
+        # 與 Claude 端 _speak_with_retries 對稱接上可觀測接點：metrics 累加退避次數／延遲，
+        # observe sink 落結構化 log。兩者皆純記錄、不改控制流。
+        metrics = llm_caller.RetryMetrics()
+        try:
+            text = await llm_caller.run_with_retries(
+                _attempt,
+                **cfg.as_kwargs(),
+                on_retry=_on_retry,
+                on_rate_limit_exhausted=_on_rate_limit_exhausted,
+                on_api_error=_on_api_error,
+                metrics=metrics,
+                observe=make_retry_observer(r.key),
+            )
+            if metrics.retries or metrics.outcome not in ("success", ""):
+                logger.info("OpenAI 專家 %s 發言收斂：%s", r.key, metrics.to_dict())
+            return text
+        finally:
+            await broadcast(events.expert_status(self.session_id, r.key, "idle"))
 
     async def stop(self) -> None:
         pass
