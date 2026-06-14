@@ -499,3 +499,11 @@ Now add the #4c assertions to the e2e test. Let me add a focused test that verif
 
 ## 任務 #5 完成：為 #1~#4 補測試並實跑黑白樣本回歸：含「全員無反對」「LLM 漏標前綴 fallback」兩條既有路徑，確認自我校驗指令、未錨定標記、JSON sidecar 三者皆無回歸
 
+
+## 任務 #5（RetryConfig 收斂）完成：grep 驗收散傳退避入口無死碼殘留 + 全測零回歸
+- grep `\b(max_retries|backoff|sleep)\s*=` 於 `studio/*.py`：退避三參數**唯一**建構點在 `experts.make_retry_config()`（experts.py:117-119）；單一 `run_with_retries` 呼叫點（experts.py:444）走 `**cfg.as_kwargs()`。
+- 排除非散傳項：`llm_caller.py:438 backoff=backoff_delay` 是骨幹內部預設；`publisher.py` 的 `sleep=asyncio.sleep` 是 PR 輪詢（與 LLM 退避正交）。
+- `_speak_with_retries` 已無本地 max_retries 讀值，L425/427 fallback 字串改用 `cfg.max_retries`。無雙軌、無死碼。
+- 全測 `.venv/bin/python -m pytest tests/ -q` → 2132 passed（含退避相關 74 測試）。
+- 坑：計畫「執行指令」的 `tests/studio/test_experts.py` 路徑不存在，實際測試在 `tests/` 根；正確驗收命令為 `.venv/bin/python -m pytest tests/ -q`。
+- 環境：原無 `.venv`，已 `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`（否則缺 claude_agent_sdk 無法匯入）。
