@@ -64,12 +64,12 @@ def test_verify_command_present():
     assert "ok" in sec
 
 
-# ---- 驗收標準 4：Python ≥3.10 + .venv 不進版控 ----
+# ---- 驗收標準 4：Python ≥3.11 + .venv 不進版控 ----
 def test_python_version_noted():
     sec = _section("執行環境前置")
-    assert re.search(r"3\.10", sec), "前置段未標明 Python 3.10"
+    assert re.search(r"3\.11", sec), "前置段未標明 Python 3.11"
     # 與 pyproject 對齊
-    assert 'requires-python = ">=3.10"' in PYPROJECT
+    assert 'requires-python = ">=3.11"' in PYPROJECT
 
 
 def test_venv_gitignored():

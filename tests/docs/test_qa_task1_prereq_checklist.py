@@ -1,7 +1,7 @@
 """任務 #1 驗收：「執行環境前置」段開頭新增「前置條件 checklist」。
 
 對應 PM 驗收標準 1：段開頭有 checklist，依「依賴／secrets／token」三類，
-明確涵蓋 Python ≥ 3.10、ANTHROPIC_API_KEY（必備）、GITHUB_TOKEN 與登入密碼（標選填）。
+明確涵蓋 Python ≥ 3.11、ANTHROPIC_API_KEY（必備）、GITHUB_TOKEN 與登入密碼（標選填）。
 
 並守住設計紅線：checklist 不得寫出 TI_AUTOPILOT_* 完整變數名（首現須留在「設定」表）。
 """
@@ -52,10 +52,10 @@ def test_checklist_three_categories():
     assert "token" in block.lower(), "checklist 缺『token』類"
 
 
-# ---- 依賴：Python ≥ 3.10 ----
+# ---- 依賴：Python ≥ 3.11 ----
 def test_checklist_python_version():
     block = _checklist_block()
-    assert "3.10" in block, "checklist 未列 Python ≥ 3.10"
+    assert "3.11" in block, "checklist 未列 Python ≥ 3.11"
     assert "Python" in block
 
 

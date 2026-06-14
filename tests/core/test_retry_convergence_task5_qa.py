@@ -36,6 +36,7 @@ EXP_TREE = ast.parse(EXP_SRC)
 
 # ---------- AST 工具 ----------
 
+
 def _funcs(tree: ast.AST):
     """回傳 name -> FunctionDef（含 async），名稱重複時保留最後一個。"""
     out: dict[str, ast.AST] = {}
@@ -59,6 +60,7 @@ def _calls_named(node: ast.AST, name: str) -> int:
 
 
 # ---------- 結構不變式 ----------
+
 
 def test_providers_imports_shared_factory_not_own():
     """providers.py 必須從 experts 借 make_retry_config，且不自建工廠／不複製 RetryConfig。"""
@@ -113,7 +115,11 @@ def test_providers_has_no_raw_sleep_retry():
     for node in ast.walk(PROV_TREE):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             mod = node.func.value
-            if node.func.attr == "sleep" and isinstance(mod, ast.Name) and mod.id in {"asyncio", "time"}:
+            if (
+                node.func.attr == "sleep"
+                and isinstance(mod, ast.Name)
+                and mod.id in {"asyncio", "time"}
+            ):
                 bad.append(f"{mod.id}.sleep@line{node.lineno}")
     assert not bad, f"providers.py 不應有裸 sleep 退避：{bad}"
 
@@ -157,6 +163,7 @@ def test_make_retry_config_single_definition_in_experts():
 
 
 # ---------- runtime 反向對照（排 import 快照假綠） ----------
+
 
 def _oneshot_role() -> Role:
     return Role(

@@ -20,7 +20,6 @@ import pytest
 from studio import config, experts, llm_caller, providers
 from studio.roles import BY_KEY
 
-
 # --- 共用 fakes ----------------------------------------------------------------
 
 
