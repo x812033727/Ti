@@ -34,6 +34,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `roles.py` | 內建 8 角色定義（CORE 4＋OPTIONAL 4）、共通守則 `_COMMON`；對外接面 `ROSTER`/`BY_KEY` |
 | `role_store.py` | 自訂角色檔（`roles/*.md`）載入/驗證/原子落檔＋討論小組（`roles/groups.yaml`）CRUD；「內建為預設、檔案同 key 覆蓋」合併進 `roles` 模組（見〈自訂角色與討論小組〉） |
 | `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，把串流回應轉成事件；持有唯一退避工廠 `make_retry_config()`（見〈LLM 韌性中介層（retry 子系統）〉） |
+| `llm_caller.py` | provider 無關的 retry 骨幹：`RetryConfig`（唯一參數載體，`as_kwargs()` 平鋪）＋ `run_with_retries`（執行迴圈）＋ `backoff_delay`（退避公式唯一真相）（見〈LLM 韌性中介層（retry 子系統）〉） |
 | `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容）；OpenAI 端收斂於同一 `run_with_retries`、SDK 內建 retry 設 0（見〈LLM 韌性中介層（retry 子系統）〉） |
 | `tools.py` | 非 Claude provider 的 function-calling 工具層（read/write/edit/bash…） |
 | `runner.py` | 確定性執行：跑程式/Demo、偵測入口、workspace 內獨立 git；web 服務 HTTP 驗收（`run_http_demo`：啟動服務→輪詢探測→收掉，僅限 localhost；沙箱保留 PID/唯讀隔離、該次共享 loopback） |
