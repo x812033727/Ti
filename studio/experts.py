@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,34 @@ API_ERROR_FALLBACK_MARKER = "發言收到 API 錯誤"
 # 此處保留 experts 慣用的私有名作為穩定別名，呼叫端與既有測試無需改動。
 _classify_api_text = llm_caller.classify_api_text
 _classify_failure = llm_caller.classify_failure
+
+
+@dataclass(frozen=True)
+class RetryConfig:
+    """限流退避的整組配置——把散落於 config 的四個常數收斂成單一值物件。
+
+    `_speak_with_retries` 由 `make_retry_config()` 取得本實例後，以欄位組裝 max_retries
+    與 backoff，使退避行為的「取值路徑」集中可測（monkeypatch 工廠即可整組替換）。
+    """
+
+    max_retries: int
+    base: float
+    cap: float
+    jitter: float
+
+
+def make_retry_config() -> RetryConfig:
+    """工廠：呼叫時（非載入期）讀 config 對應常數，回傳 `RetryConfig` 實例。
+
+    刻意 lazy（每次呼叫即時讀 config），故設定頁／測試 monkeypatch config 或
+    `config.reload` 重綁常數後，下次呼叫即時反映，不被載入期 cache 釘死。
+    """
+    return RetryConfig(
+        max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES),
+        base=config.EXPERT_RATE_LIMIT_BACKOFF,
+        cap=config.EXPERT_RATE_LIMIT_BACKOFF_CAP,
+        jitter=config.EXPERT_RATE_LIMIT_BACKOFF_JITTER,
+    )
 
 
 def _backoff_delay(retry_after: float | None, attempt: int) -> float:
