@@ -257,8 +257,12 @@ def _build_client(role: Role, session_id: str, cwd: Path):
     從而在未安裝 claude-agent-sdk、不連線的情況下驗證 Expert 生命週期。
     執行期內容與原 __init__ 完全相同。
 
-    重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，
-    避免雙層疊乘——勿在此 client 層加任何重試旋鈕。
+    # 重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，避免雙層疊乘。
+    # ClaudeAgentOptions 不暴露 max_retries 旋鈕（與 OpenAI SDK 不同），故無需也無從顯式設 0——
+    # Claude 路徑天然即為單層退避；切勿在此 client 層另加任何重試/退避旋鈕，否則會與外層
+    # run_with_retries 疊乘。對比 OpenAI 路徑：openai SDK 內建 max_retries（預設 2），須在
+    # providers.py 的 AsyncOpenAI(...) 另行顯式設 max_retries=0 才能達到同等的「單層退避」語意
+    # （該對應義務由 OpenAI 路徑各自落實）。
     """
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
 
