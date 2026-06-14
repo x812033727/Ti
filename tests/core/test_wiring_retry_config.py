@@ -34,7 +34,7 @@ class FakeChat:
         self.responses = responses
         self.calls = 0
 
-    async def __call__(self, messages, tools, model):
+    async def __call__(self, messages, tools, model, **_kw):
         self.calls += 1
         r = self.responses[min(self.calls - 1, len(self.responses) - 1)]
         if isinstance(r, Exception):
@@ -49,7 +49,7 @@ class ExplodingChat:
         self.exc = exc
         self.calls = 0
 
-    async def __call__(self, messages, tools, model):
+    async def __call__(self, messages, tools, model, **_kw):
         self.calls += 1
         raise self.exc
 

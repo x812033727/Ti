@@ -138,8 +138,11 @@ def test_make_expert_mixed_per_role(monkeypatch, tmp_path):
     pm = providers.make_expert(BY_KEY["pm"], "t", tmp_path)
     assert isinstance(pm, providers.OpenAIExpert)
     # 非覆寫角色走 Claude 路徑（Expert，延後 import）。
+    from studio import experts
     from studio.experts import Expert
 
+    # monkeypatch _build_client：不需真 SDK、不連線即可驗證型別分派。
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd: object())
     qa = providers.make_expert(BY_KEY["qa"], "t", tmp_path)
     assert isinstance(qa, Expert)
 

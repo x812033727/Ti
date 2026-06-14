@@ -41,7 +41,7 @@ async def test_openai_branch_single_turn(monkeypatch, tmp_path):
     class _Resp:
         choices = [_Choice()]
 
-    async def fake_chat(messages, tools_, model):
+    async def fake_chat(messages, tools_, model, **_kw):
         captured["messages"] = messages
         captured["tools"] = tools_
         return _Resp()

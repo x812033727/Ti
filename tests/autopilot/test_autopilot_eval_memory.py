@@ -83,8 +83,8 @@ def test_recent_done_titles_for_filter(state):
 
 def test_pending_awareness_context_includes_pending_and_in_progress(state):
     """_pending_awareness_context() 須包含所有 pending 與 in_progress 標題。"""
-    t1 = backlog.add("修復登入漏洞")
-    t2 = backlog.add("新增搜尋功能")
+    backlog.add("修復登入漏洞")
+    backlog.add("新增搜尋功能")
     t3 = backlog.add("優化資料庫查詢")
     backlog.set_status(t3["id"], "in_progress")
     # done/failed 不應出現
@@ -110,8 +110,8 @@ def test_build_discovery_prompt_contains_pending_titles_and_directives(state):
     - 含「不得提出與現有 pending 實質重疊」（措辭近似）
     - 含「優先廣度」（措辭近似）
     """
-    t1 = backlog.add("重構 config 模組")
-    t2 = backlog.add("補強 backlog 測試")
+    backlog.add("重構 config 模組")
+    backlog.add("補強 backlog 測試")
     prompt = autopilot._build_discovery_prompt()
     # 標題出現在 prompt 中
     assert "重構 config 模組" in prompt
@@ -139,9 +139,9 @@ def test_filter_pending_duplicates_high_overlap_filtered(state):
     existing = ["修復登入漏洞"]
     # 幾乎相同的提案
     proposals = [
-        "修復登入漏洞",           # 完全相同
-        "修復 登入 漏洞",          # 僅多空白
-        "修復登入的漏洞",          # 極近似
+        "修復登入漏洞",  # 完全相同
+        "修復 登入 漏洞",  # 僅多空白
+        "修復登入的漏洞",  # 極近似
     ]
     result = autopilot._filter_pending_duplicates(proposals, existing)
     # 所有高重疊提案應被過濾，進場數為 0
@@ -176,7 +176,7 @@ def test_filter_does_not_modify_backlog_or_existing_tasks(state):
     驗收標準 3：僅作用於提案進場前，不改動 backlog 的 _is_duplicate 去重契約。
     """
     # 建立既有 pending 任務
-    t1 = backlog.add("修復登入漏洞")
+    backlog.add("修復登入漏洞")
     before_count = len(backlog.list_tasks())
     # 過濾（無論丟棄幾個），backlog 不受影響
     autopilot._filter_pending_duplicates(["修復登入漏洞"], ["修復登入漏洞"])
