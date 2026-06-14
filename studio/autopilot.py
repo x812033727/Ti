@@ -378,10 +378,70 @@ def _recent_outcomes_context() -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _pending_titles() -> list[str]:
+    """目前仍在排隊／進行中的任務標題（pending + in_progress），供 prompt 注入與 pre-filter 對齊。
+
+    純讀 backlog、無 LLM/網路。兩層防線（prompt 禁止清單、進場 pre-filter）的覆蓋範圍以此統一，
+    避免「措辭滑溜的 in_progress 重複」漏網。標題在回傳前壓平換行並限長 200 字，作為嵌入 prompt
+    前的明確防線（即使日後新增寫入 backlog 的路徑也不會讓多行標題穿透 prompt 結構）。
+    """
+    rows = [t for t in backlog.list_tasks() if t.get("status") in ("pending", "in_progress")]
+    # 拼接前消毒：壓平內嵌換行、限長，明確阻斷標題穿透 prompt 結構（即使未來新增寫入路徑）。
+    return [
+        t["title"].strip().replace("\n", " ")[:200]
+        for t in rows
+        if t.get("title", "").strip()
+    ]
+
+
+def _pending_awareness_context(titles: list[str] | None = None) -> str:
+    """把目前 pending/in_progress 標題整理成 bullet 清單（只回資料，不含任何硬指令）。
+
+    刻意只輸出「清單內容」、不內嵌指令：函式重用時不會把指令帶著走，且可單獨斷言清單內容。
+    硬指令由 `_build_discovery_prompt` 在組裝層附加。無任何排隊任務時回 ""。
+    """
+    titles = _pending_titles() if titles is None else titles
+    if not titles:
+        return ""
+    lines = ["【目前已在排隊／進行中的任務（請勿與下列任何項目實質重疊）】"]
+    lines += [f"- {t}" for t in titles]
+    return "\n".join(lines) + "\n\n"
+
+
+def _build_discovery_prompt(
+    *, outcomes: str | None = None, pending: str | None = None
+) -> str:
+    """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
+
+    結構：近期成敗回顧 + pending-awareness 清單 + 任務基底說明 + 兩條硬指令。
+    兩條硬指令（禁止實質重疊、優先廣度覆蓋不同子系統）明確置於組裝層，為上層決策而非資料層職責。
+    參數預設由 backlog 即時讀取；測試可注入字串以隔離 backlog 狀態。
+    """
+    outcomes = _recent_outcomes_context() if outcomes is None else outcomes
+    pending = _pending_awareness_context() if pending is None else pending
+    # 措辭隨清單存否切換：有清單才講「上列」，避免空清單時硬指令 1 措辭懸空指向不存在的清單。
+    rule_1 = (
+        "1. 不得提出與上列任何已在排隊／進行中項目實質重疊者（同一主題換句話說也算重疊，一律避開）。\n"
+        if pending else
+        "1. 目前尚無排隊／進行中任務，但各點之間仍不得實質重疊（同一主題換句話說也算）。\n"
+    )
+    return outcomes + pending + (
+        "你正在審視「Ti Studio」這個 AI 多專家自主開發工作室專案本身（原始碼就在你的工作目錄）。\n"
+        "請用 Read/Grep 快速瀏覽程式碼與測試，找出最值得改善的 3~5 點（bug、缺測試、可讀性、"
+        "功能缺口、安全），每點獨立一行,格式固定為 `任務: <動詞開頭的具體任務>`。只輸出任務行。\n"
+        "硬性要求：\n"
+        + rule_1 +
+        "2. 優先廣度：每點須來自不同子系統，優先覆蓋近期未碰過的模組，禁止往同一主題反覆疊加。"
+    )
+
+
 async def _evaluate_self(clone: str) -> int:
     """backlog 空時，用一位資深專家審視 Ti 自身並產出改善任務。回傳新增數。
 
     會先把迴圈自身的近期成敗回饋給專家（self-reinforcing）：避免重提已完成、避開已知失敗做法。
+    並注入目前 pending/in_progress 標題（pending-awareness）＋兩條硬指令（禁止實質重疊、優先廣度
+    覆蓋不同子系統），讓專家在產出階段就迴避與排隊任務重疊。prompt 組裝抽到 `_build_discovery_prompt`
+    以利單測。
     """
     from .experts import Expert
     from .roles import SENIOR
@@ -392,11 +452,7 @@ async def _evaluate_self(clone: str) -> int:
     async def _noop(_ev):
         return None
 
-    prompt = _recent_outcomes_context() + (
-        "你正在審視「Ti Studio」這個 AI 多專家自主開發工作室專案本身（原始碼就在你的工作目錄）。\n"
-        "請用 Read/Grep 快速瀏覽程式碼與測試，找出最值得改善的 3~5 點（bug、缺測試、可讀性、"
-        "功能缺口、安全），每點獨立一行,格式固定為 `任務: <動詞開頭的具體任務>`。只輸出任務行。"
-    )
+    prompt = _build_discovery_prompt()
     try:
         text = await ex.speak(prompt, _noop)
     finally:
