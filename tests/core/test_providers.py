@@ -167,7 +167,10 @@ async def test_complete_once_openai_exception_degrades(monkeypatch, tmp_path):
     """任務 #4：_openai_chat 拋例外時回 "" 且不外拋（驗 except Exception: return ""）。"""
     _setup_openai(monkeypatch)
 
+    called = {"n": 0}
+
     async def exploding_chat(messages, tools_, model):
+        called["n"] += 1
         raise RuntimeError("API 炸了")
 
     monkeypatch.setattr(providers, "_openai_chat", exploding_chat)
@@ -177,3 +180,26 @@ async def test_complete_once_openai_exception_degrades(monkeypatch, tmp_path):
     )
 
     assert out == ""
+    # 反向對照：確實有走到 openai 路徑並觸發 chat（否則是 guard 短路的假綠）
+    assert called["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_complete_once_openai_chat_non_runtime_exception_also_degrades(monkeypatch, tmp_path):
+    """邊界：驗 except Exception 為廣捕——非 RuntimeError（此處 ValueError）也降級回 "" 不外拋。"""
+    _setup_openai(monkeypatch)
+
+    called = {"n": 0}
+
+    async def exploding_chat(messages, tools_, model):
+        called["n"] += 1
+        raise ValueError("非預期型別")
+
+    monkeypatch.setattr(providers, "_openai_chat", exploding_chat)
+
+    out = await providers.complete_once(
+        "你是反思器", "請反思", session_id="s", cwd=tmp_path, timeout=1.0
+    )
+
+    assert out == ""
+    assert called["n"] == 1
