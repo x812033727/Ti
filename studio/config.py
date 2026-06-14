@@ -38,6 +38,28 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# 布林值同義詞（single source of truth；env_bool 與 _parse_require_chown 共用，避免兩份清單漂移）。
+_TRUE_VALUES = ("1", "true", "yes", "on")
+_FALSE_VALUES = ("0", "false", "no", "off")
+
+
+def env_bool(name: str, default: bool) -> bool:
+    """讀布林環境變數：1/true/yes/on→True、0/false/no/off→False（大小寫不敏感）。
+
+    空字串／空白／None（未設定）一律回 default——對齊本檔 .env 留空＝未設定的容錯慣例；
+    非空但無法辨識的值記 warning 後同樣退回 default（不臆測意圖）。
+    """
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in _TRUE_VALUES:
+        return True
+    if raw in _FALSE_VALUES:
+        return False
+    logger.warning("環境變數 %s=%r 非布林值，改用預設 %s", name, raw, default)
+    return default
+
+
 # --- Provider / 模型 ----------------------------------------------------
 # 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）、openai（含 OpenAI 相容/本地模型），
 # 或 minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面，與 openai 共用 function-calling 工具迴圈）。
@@ -406,6 +428,48 @@ def expert_sandbox_settings() -> dict | None:
             "allowUnixSockets": [],
         },
     }
+
+
+# --- 安全寫入（root-owned state，fail-closed）-----------------------------
+# secure_write_root 寫入 root state 檔時的稽核模式。三態：
+#   strict（預設、安全側）：chown 失敗／owner≠root／nlink≠1 一律 raise，半截檔不落地。
+#   warn：fchown 失敗只記 warning 後放行（過渡期用，明示「已知可能非 root」）。
+#   off：完全跳過 fchown/fstat 驗證、靜默放行（還原成無安全驗證的舊行為）。
+# Breaking change：預設由「無驗證」改為 strict。非 root 環境若需沿用舊行為，過渡期可設 warn 或 off。
+REQUIRE_CHOWN_MODES = ("strict", "warn", "off")
+
+
+def _parse_require_chown() -> str:
+    """解析 TI_REQUIRE_CHOWN 為三態之一，預設與無法辨識值皆 fail-safe 取 strict。
+
+    - 未設／留空 → strict（安全預設，靜默不記 warning）。
+    - strict 或其布林同義詞（1/true/yes/on）→ strict（顯式選安全側，亦靜默）。
+    - warn → warn；off 或其布林同義詞（0/false/no）→ off：兩者皆為顯式「降級」，記 warning
+      留下稽核軌跡（import time 觸發，systemd journal 可見）。
+    - 其餘無法辨識值 → 記「無法辨識」warning 並 fail-safe 取 strict（打錯字＝未知意圖，退安全側）。
+    """
+    raw = (os.getenv("TI_REQUIRE_CHOWN") or "").strip().lower()
+    if not raw:
+        return "strict"
+    if raw == "strict" or raw in _TRUE_VALUES:
+        return "strict"
+    if raw == "warn":
+        logger.warning("TI_REQUIRE_CHOWN=%r：安全驗證降級至 warn（chown 失敗只記警告不阻擋）", raw)
+        return "warn"
+    if raw == "off" or raw in _FALSE_VALUES:
+        logger.warning("TI_REQUIRE_CHOWN=%r：安全驗證降級至 off（完全跳過 root owner 驗證）", raw)
+        return "off"
+    logger.warning("TI_REQUIRE_CHOWN=%r 無法辨識，fail-safe 取 strict", raw)
+    return "strict"
+
+
+# 模組頂層常數：import 時一次解析完畢；importlib.reload(config) 即可切值（無需 cache 失效）。
+REQUIRE_CHOWN = _parse_require_chown()
+
+
+def require_chown_mode() -> str:
+    """目前的安全寫入稽核模式（strict／warn／off）。回傳頂層常數，無副作用、不重讀 env。"""
+    return REQUIRE_CHOWN
 
 
 # --- 離線示範模式 -------------------------------------------------------
