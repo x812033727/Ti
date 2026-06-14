@@ -27,7 +27,6 @@ from studio.llm_caller import (
     backoff_delay,
 )
 
-
 # --- ① 自動生成：backoff is None → __post_init__ 依 base/cap/jitter 建閉包 --------
 
 
@@ -38,11 +37,17 @@ def test_autogen_backoff_matches_backoff_delay_defaults():
     assert cfg.backoff is not None
     # 429 路徑（retry_after 為主）與 529 路徑（指數）皆對齊 backoff_delay 預設輸出。
     assert cfg.backoff(5.0, 0) == backoff_delay(
-        5.0, 0, base=DEFAULT_BACKOFF_BASE, cap=DEFAULT_BACKOFF_CAP,
+        5.0,
+        0,
+        base=DEFAULT_BACKOFF_BASE,
+        cap=DEFAULT_BACKOFF_CAP,
         jitter=DEFAULT_BACKOFF_JITTER,
     )
     assert cfg.backoff(None, 2) == backoff_delay(
-        None, 2, base=DEFAULT_BACKOFF_BASE, cap=DEFAULT_BACKOFF_CAP,
+        None,
+        2,
+        base=DEFAULT_BACKOFF_BASE,
+        cap=DEFAULT_BACKOFF_CAP,
         jitter=DEFAULT_BACKOFF_JITTER,
     )
 
@@ -201,6 +206,9 @@ def test_as_kwargs_default_backoff_equivalent_to_legacy():
     bk = cfg.as_kwargs()["backoff"]
     for ra, att in [(5.0, 0), (None, 0), (None, 3), (120.0, 0)]:
         assert bk(ra, att) == backoff_delay(
-            ra, att, base=DEFAULT_BACKOFF_BASE, cap=DEFAULT_BACKOFF_CAP,
+            ra,
+            att,
+            base=DEFAULT_BACKOFF_BASE,
+            cap=DEFAULT_BACKOFF_CAP,
             jitter=DEFAULT_BACKOFF_JITTER,
         )
