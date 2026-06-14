@@ -123,9 +123,7 @@ async def test_complete_once_guard_cwd_none(monkeypatch):
     fake = FakeChat([_msg(content="不該被呼叫")])
     monkeypatch.setattr(providers, "_openai_chat", fake)
 
-    out = await providers.complete_once(
-        "sys", "user", session_id="s", cwd=None, timeout=1.0
-    )
+    out = await providers.complete_once("sys", "user", session_id="s", cwd=None, timeout=1.0)
 
     assert out == ""
     assert fake.seen == []
@@ -138,9 +136,7 @@ async def test_complete_once_guard_offline(monkeypatch, tmp_path):
     fake = FakeChat([_msg(content="不該被呼叫")])
     monkeypatch.setattr(providers, "_openai_chat", fake)
 
-    out = await providers.complete_once(
-        "sys", "user", session_id="s", cwd=tmp_path, timeout=1.0
-    )
+    out = await providers.complete_once("sys", "user", session_id="s", cwd=tmp_path, timeout=1.0)
 
     assert out == ""
     assert fake.seen == []
@@ -154,9 +150,7 @@ async def test_complete_once_guard_provider_not_ready(monkeypatch, tmp_path):
     fake = FakeChat([_msg(content="不該被呼叫")])
     monkeypatch.setattr(providers, "_openai_chat", fake)
 
-    out = await providers.complete_once(
-        "sys", "user", session_id="s", cwd=tmp_path, timeout=1.0
-    )
+    out = await providers.complete_once("sys", "user", session_id="s", cwd=tmp_path, timeout=1.0)
 
     assert out == ""
     assert fake.seen == []
@@ -175,9 +169,7 @@ async def test_complete_once_openai_exception_degrades(monkeypatch, tmp_path):
 
     monkeypatch.setattr(providers, "_openai_chat", exploding_chat)
 
-    out = await providers.complete_once(
-        "sys", "user", session_id="s", cwd=tmp_path, timeout=1.0
-    )
+    out = await providers.complete_once("sys", "user", session_id="s", cwd=tmp_path, timeout=1.0)
 
     assert out == ""
     # 反向對照：確實有走到 openai 路徑並觸發 chat（否則是 guard 短路的假綠）
