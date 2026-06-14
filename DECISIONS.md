@@ -654,3 +654,33 @@
 ## 任務 #1（`__init__.py`）與 任務 #2-new（`secure_write.py` 錯誤訊息）並行起手，任務 #3（全量驗收 `pytest tests/autopilot/ -q`）待兩者合入後統一執行，驗收口徑為「7 模組全收集 + 全綠 + 無回歸」。
 - 時間：2026-06-15 04:47
 
+## `studio/providers.py:203` 的 `openai.AsyncOpenAI(...)` 加入 `max_retries=0`，行尾補單行註解 `# 讓位給 run_with_retries，避免 SDK 內建重試與外層退避雙層疊乘`。
+- 時間：2026-06-15 05:28
+- 理由：這是語意約束（SDK 永遠讓位），不是策略旋鈕；約束就在決策點旁，閱讀者不需跳外部文件。
+- 否決方案：抽成 `config.SDK_MAX_RETRIES`——製造「可設非零」誤讀空間，且旋鈕沒有合理的非零使用情境。
+
+## MiniMax 等 OpenAI 相容 provider 共用 `_openai_chat` → `_openai_client_args` 同一路徑，`max_retries=0` 一次修到位，不個別處理。
+- 時間：2026-06-15 05:28
+
+## 測試接縫為 `monkeypatch.setattr("openai.AsyncOpenAI", mock_cls)`（patch 頂層模組，非 `studio.providers.openai.AsyncOpenAI`），原因是 `_openai_chat` 用 lazy `import openai`，patch 本地屬性攔不到；PR 描述須明確說明此選擇。
+- 時間：2026-06-15 05:28
+- 理由：高級工程師指出 lazy import 的陷阱——patch 目標錯，測試永遠綠但鑑別力為零，連反向樣本的優點也被抵消。
+- 否決方案：`monkeypatch.setattr("studio.providers.openai.AsyncOpenAI", ...)`——因 lazy import 不在 module 載入時綁定屬性，patch 無效。
+
+## 正向斷言用 `mock_cls.call_args.kwargs["max_retries"] == 0`（驗收傳入的建構參數），不實際建構真實 client。
+- 時間：2026-06-15 05:28
+
+## 反向樣本（證明測試有鑑別力）用 `openai.AsyncOpenAI(api_key="sk-test").max_retries == 2`，必須帶 `api_key` 避免 `OpenAIError`；「2」為 SDK 外部預設值，未來若 SDK 改預設會無辜變紅，屬可接受的已知風險，在測試註解說明即可。
+- 時間：2026-06-15 05:28
+
+## `experts.py::_build_client()` 的 docstring 補兩行明確說明：`# 重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，避免雙層疊乘。`
+- 時間：2026-06-15 05:28
+- 理由：「一行補充」措辭模糊，未來維護者可能「好心」加上重試；明確點名 ClaudeSDKClient 無額外退避，才能防止誤改。
+- 否決方案：寫進 KNOWN_LIMITATIONS 或新增測試——前者需跳外部文件、後者屬越界驗收（Claude 重試行為應由 Ti SDK 側守）。
+
+## `_openai_chat` 每次建構新 `AsyncOpenAI` client（無連線池重用）列為**範圍外技術債**，進下個 sprint backlog，本次不阻擋。
+- 時間：2026-06-15 05:28
+
+## 全量驗收指令 `python3 -m pytest tests/autopilot/ tests/core/ -q`，基線 1058 passed；任何回歸（含 push_merge_flags、merge_outcomes、_wait_for_ci）皆視為阻斷，不允許「範圍外測試變紅」被忽略。
+- 時間：2026-06-15 05:28
+
