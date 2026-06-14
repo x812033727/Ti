@@ -100,6 +100,26 @@ async def _sleep(seconds: float) -> None:
     await llm_caller._default_sleep(seconds)
 
 
+def make_retry_config() -> llm_caller.RetryConfig:
+    """工廠：call-time 讀 config 退避四值，回傳統一的 `RetryConfig` 物件。
+
+    這是 experts 層退避策略的**單一真實來源**——`_speak_with_retries` 只需取得本物件、
+    再經 `cfg.as_kwargs()` 平鋪傳入 `run_with_retries`，取代散傳 max_retries/backoff/sleep。
+
+    config 四值的取用時機：
+    - `max_retries` 於本工廠呼叫時讀 `config.EXPERT_RATE_LIMIT_RETRIES`（並 clamp ≥0，
+      讓外部合約清晰、防呆在最近端），故設定頁／測試 monkeypatch config 後即時反映。
+    - `backoff`／`sleep` 直接引用模組級 lazy 函式 `_backoff_delay`／`_sleep`；前者於**被呼叫時**
+      才讀 `EXPERT_RATE_LIMIT_BACKOFF`／`_CAP`／`_JITTER`（見 `_backoff_delay`），故同樣是
+      call-time 讀值、非載入期快照。不在此另建 closure 包裝，避免多層包裝增加可讀性負擔。
+    """
+    return llm_caller.RetryConfig(
+        max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES),
+        backoff=_backoff_delay,
+        sleep=_sleep,
+    )
+
+
 def _make_retry_observer(role_key: str) -> llm_caller.Observer:
     """experts 層的結構化 observe sink：把中介層 task #4 的可觀測事件落成 log。
 
