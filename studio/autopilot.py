@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import difflib
 import json
 import logging
 import os
@@ -439,8 +438,7 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
 def _normalize_for_dedup(s: str) -> str:
     """相似度比對前的正規化：壓平換行、strip、轉小寫、去首尾標點。
 
-    proposals 是完整句子、existing_titles 是標題，長度差會稀釋 SequenceMatcher.ratio()；
-    先 normalize 可緩解（仍是字元級比對，無法處理同義改寫）。獨立成 helper 方便日後替換策略。
+    供 `_tokenize_for_dedup` 前置使用；獨立成 helper 方便測試與日後替換策略。
     """
     s = s.replace("\n", " ").strip().lower()
     return s.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
@@ -491,9 +489,42 @@ def _count_subsystem_coverage(titles: list[str]) -> Counter[str]:
     return cov
 
 
+# CJK 統一表意文字（含擴展 A）區段——逐字當作一個 token，不依賴外部分詞器（不引入 jieba）。
+_CJK_RE = re.compile(r"[㐀-䶿一-鿿]")
+# ASCII 英數連續片段（如 backlog、ci、retry）整段當作一個 token，大小寫已由 normalize 壓平。
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize_for_dedup(s: str) -> set[str]:
+    """把標題切成「詞集」：ASCII 英數片段整段成 token、CJK 逐字成 token，丟標點空白。
+
+    純 stdlib（re），不引入分詞依賴。CJK 逐字是刻意取捨：同義改寫常共享字根（如「補測試」/
+    「新增測試」共享「測試」），逐字交集比字元序列比對更穩；代價是字級分詞無法辨識「補↔新增」
+    這類無共享字的同義替換（見 known-limitation 測試）。
+    """
+    s = _normalize_for_dedup(s)
+    toks = set(_ASCII_TOKEN_RE.findall(s))
+    toks.update(_CJK_RE.findall(s))
+    return toks
+
+
+def _token_set_similarity(a: str, b: str) -> float:
+    """詞集 Jaccard 相似度：|A∩B| / |A∪B|，任一為空回 0.0。
+
+    取代舊的 `difflib.SequenceMatcher`（字元序列比對）。Jaccard 是集合運算、與語序無關，
+    因此能抓到舊策略漏掉的「語序調換」改寫（如「為 retry 機制加上重試上限」↔
+    「為重試機制加上 retry 上限」：SequenceMatcher≈0.625 漏網，Jaccard=1.0 攔下）。
+    """
+    ta, tb = _tokenize_for_dedup(a), _tokenize_for_dedup(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
 def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
     """進場 pre-filter：兩道互補防線，皆只作用於本次提案進場，皆不回溯刪改 backlog、不動
-    `backlog._is_duplicate` 的字串等值去重契約。
+    `backlog._is_duplicate` 的字串等值去重契約。第一道相似度用 `_token_set_similarity`
+    （詞集 Jaccard，取代舊字元序列比對）以捕中文同義改寫與語序調換。
 
     第一道（相似度）：丟掉與任一 existing 標題相似度 ≥ `AUTOPILOT_DEDUP_RATIO` 者（擋換句話說的重複）。
     第二道（子系統覆蓋廣度）：以 regex 從標題抽「涉及子系統」，若某子系統在 existing 已達
@@ -506,15 +537,13 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
     """
     if not existing_titles:
         return proposals
-    norm_existing = [_normalize_for_dedup(t) for t in existing_titles]
     kept: list[str] = []
     for p in proposals:
-        np_ = _normalize_for_dedup(p)
         hit = next(
             (
                 e
-                for e in norm_existing
-                if difflib.SequenceMatcher(None, np_, e).ratio() >= config.AUTOPILOT_DEDUP_RATIO
+                for e in existing_titles
+                if _token_set_similarity(p, e) >= config.AUTOPILOT_DEDUP_RATIO
             ),
             None,
         )
@@ -549,7 +578,7 @@ async def _evaluate_self(clone: str) -> int:
     專家產出後再過兩道進場過濾，才交給 `backlog.add_many`：
       1. 丟掉與近期已完成標題完全相符者（`_recent_done_titles`），補 backlog 去重對 done 的缺口。
       2. 進場 pre-filter（`_filter_pending_duplicates`）：丟掉與 pending/in_progress 標題語意相近
-         （SequenceMatcher.ratio ≥ `AUTOPILOT_DEDUP_RATIO`）者，與 prompt 注入的禁止清單範圍對齊。
+         （詞集 Jaccard `_token_set_similarity` ≥ `AUTOPILOT_DEDUP_RATIO`）者，與 prompt 注入的禁止清單範圍對齊。
     兩道過濾僅作用於本次提案進場，皆不改動 `backlog._is_duplicate` 的字串等值去重契約，與其互補。
     """
     from .experts import Expert
