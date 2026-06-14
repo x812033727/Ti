@@ -115,10 +115,15 @@ def has_failsafe_note(text: str) -> bool:
 
 
 def has_warn_escape_hatch(text: str) -> bool:
-    """非 root 顯式設 warn 或 off 的逃生艙說明。"""
-    has_warn = "warn" in text and "off" in text
+    """非 root 顯式設 warn 或 off 的逃生艙說明。
+
+    用精準 regex 匹配 TI_REQUIRE_CHOWN=warn/off，不用裸 substring——
+    避免被其他文字裡的 "warning" 假命中（高工審查 #1）。
+    """
+    has_warn = bool(re.search(r"TI_REQUIRE_CHOWN\s*=\s*warn|CHOWN[^\n]{0,40}=\s*warn", text))
+    has_off = bool(re.search(r"TI_REQUIRE_CHOWN\s*=\s*off|CHOWN[^\n]{0,40}=\s*off", text))
     has_nonroot = bool(re.search(r"非\s*root|root[^\n]{0,30}(部署|執行)", text))
-    return has_warn and has_nonroot
+    return has_warn and has_off and has_nonroot
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +153,10 @@ def test_version_single_source_of_truth(changelog):
     ver = pyproject_version()
     # TODO(升版門衛)：下次 bump pyproject 版本時，須同步改此處期望值與 CHANGELOG 的版本區塊。
     # 此硬寫值是刻意的 breaking-change 門衛，確保升版必伴隨 release note 更新。
-    assert ver == "0.2.0", f"pyproject 版本非預期 0.2.0：{ver}"
+    assert ver == "0.2.0", (
+        f"pyproject 版本非預期 0.2.0：{ver}"
+        "（若為刻意升版，請同步更新本測試 L151 期望值與 CHANGELOG 版本區塊）"
+    )
     assert ver in changelog, f"CHANGELOG 未含 pyproject 版本字串 {ver!r}"
 
 
@@ -238,6 +246,15 @@ def test_black_sample_elements_out_of_order(changelog):
     scrambled = "（自 0.2.0 起生效）\n" + changelog
     # 生效版本被前置後，i_version 變成最小，順序遞增不再成立
     assert not four_elements_in_order(scrambled), "黑樣本失效：四要素順序錯置仍判為合格"
+
+
+def test_black_sample_missing_warn_escape_hatch(changelog):
+    """移除逃生艙說明（warn/off 改回 strict），warn/off 檢測必須翻紅。"""
+    polluted = re.sub(
+        r"TI_REQUIRE_CHOWN\s*=\s*(warn|off)", "TI_REQUIRE_CHOWN=strict", changelog
+    )
+    polluted = re.sub(r"(?<!\w)(warn|off)(?!\w)", "strict", polluted)
+    assert not has_warn_escape_hatch(polluted), "黑樣本失效：缺逃生艙說明仍判為存在"
 
 
 def test_black_sample_missing_failsafe(changelog):
