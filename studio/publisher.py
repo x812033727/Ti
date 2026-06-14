@@ -16,6 +16,7 @@ import contextvars
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from . import config, runner
@@ -261,6 +262,40 @@ def summarize_checks(check_runs: list | None, status: dict | None) -> tuple[str,
     return "pass", "CI 全數通過"
 
 
+def _check_run_seconds(run: dict) -> float | None:
+    """check-run 的執行秒數（completed_at − started_at）。任一時間缺漏／解析失敗回 None。"""
+    started, completed = run.get("started_at"), run.get("completed_at")
+    if not started or not completed:
+        return None
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    try:
+        return (datetime.strptime(completed, fmt) - datetime.strptime(started, fmt)).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
+def is_infra_ci_failure(check_runs: list | None, *, max_seconds: float | None = None) -> bool:
+    """所有「失敗」的 check 都在極短時間內結束（從未真正執行）→ 研判為基礎設施/帳務問題，
+    而非程式碼失敗，故可繞過自設 CI 閘直接合併。
+
+    典型情境：GitHub Actions 命中 spending limit 時，每個 job 於數秒內 conclusion=failure
+    且零步驟執行（started_at≈completed_at）。真實 lint/test 失敗光是 checkout＋setup 就遠超
+    此門檻，故「全部失敗 check 皆秒掛」是可靠且保守的判準。
+
+    保守性鐵則（寧可不繞過、保留待人工，也不誤放未驗證的碼）：需有失敗 check，且**每一個**都
+    拿得到「短於門檻」的執行時間；任一失敗 check 時間缺漏或超門檻一律回 False。
+    """
+    max_seconds = config.PUBLISH_INFRA_CI_MAX_SECONDS if max_seconds is None else max_seconds
+    failed = [r for r in (check_runs or []) if r.get("conclusion") in _FAIL_CONCLUSIONS]
+    if not failed:
+        return False
+    for r in failed:
+        secs = _check_run_seconds(r)
+        if secs is None or secs > max_seconds:
+            return False
+    return True
+
+
 def _backoff(attempt: int, base: float) -> float:
     """指數 backoff，封頂 60 秒。attempt 從 0 起算。"""
     return min(base * (2**attempt), 60.0)
@@ -482,6 +517,13 @@ async def _wait_for_ci(
 
         fetch_errors = 0  # 查詢成功就重置連續失敗計數
         state, last_detail = summarize_checks(*fetched)
+        # CI「失敗」但研判為基礎設施/帳務秒掛（非程式碼問題）→ 回 infra_fail，交 _merge_flow 繞過合併。
+        if state == "fail" and config.PUBLISH_BYPASS_INFRA_CI and is_infra_ci_failure(fetched[0]):
+            return (
+                "infra_fail",
+                f"CI 失敗但研判為基礎設施/帳務（所有失敗 check 於 "
+                f"{int(config.PUBLISH_INFRA_CI_MAX_SECONDS)}s 內秒掛、未實際執行）：{last_detail}",
+            )
         if state in ("pass", "fail"):
             return state, last_detail
         # pending
@@ -570,9 +612,12 @@ async def _merge_flow(
         if ci_state == "error":
             return MergeOutcome.ERROR, ci_detail
 
-        # CI pass / 無 CI → 嘗試合併
+        # CI pass / 無 CI / infra_fail（CI 秒掛＝基礎設施/帳務、非程式碼失敗）→ 嘗試合併。
+        # infra_fail 不早退，照常走合併；若分支其實受保護，_merge_pr 會回 BLOCKED 自然 fall back。
         outcome, detail, retryable = await _merge_pr(number, payload)
         if outcome == MergeOutcome.MERGED:
+            if ci_state == "infra_fail":
+                detail = f"已繞過基礎設施/帳務 CI 失敗合併（{ci_detail}）；merge sha={detail}"
             return outcome, detail
         last_outcome, last_detail = outcome, detail
 
