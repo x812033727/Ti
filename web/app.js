@@ -481,11 +481,13 @@ async function onProjectChange() {
   const pid = $("#projectSelect").value;
   const repoInput = $("#repoUrl");
   const repoTag = $("#projectRepo");
+  const delBtn = $("#deckDeleteProject");
   if (pid === "__new__") { createProjectFlow(); return; }
   if (!pid) {
     // 一次性討論：還原一次性 UI
     repoInput.classList.remove("hidden");
     repoTag.classList.add("hidden");
+    delBtn.classList.add("hidden");
     $("#improveChk").checked = false;
     updateStartLabel();
     return;
@@ -496,6 +498,8 @@ async function onProjectChange() {
   repoTag.classList.remove("hidden");
   repoTag.classList.remove("unset");
   repoTag.textContent = "🎯 載入中…";
+  delBtn.classList.remove("hidden");
+  delBtn.onclick = () => deleteProject(pid, pid); // 名稱載入後改用真名
   updateStartLabel();
   try {
     const d = await (await fetch(`/api/projects/${pid}`)).json();
@@ -510,6 +514,7 @@ async function onProjectChange() {
       repoTag.classList.add("unset");
     }
     repoTag.onclick = () => setProjectPublishRepo(pid, p.publish_repo || "");
+    delBtn.onclick = () => deleteProject(pid, p.name || pid);
     updateStartLabel(pending);
   } catch (e) {
     repoTag.textContent = "🎯 無法載入專案 repo（點此設定）";
@@ -880,6 +885,7 @@ async function deleteProject(pid, name) {
     closeProjectPanel();
     $("#projectSelect").value = "";
     await loadProjects();
+    onProjectChange(); // 還原啟動列（收起 repo 標籤／刪除鈕、回到一次性討論）
   } catch (e) { toast("刪除失敗：" + e.message, "err"); }
 }
 
