@@ -281,3 +281,40 @@
 ## 全程不砍既有架構——規則為骨、LLM 為肉、覆寫式單檔＋git 快照、md 人讀／json 機讀雙寫不變；三項皆低風險增量，#1/#2/#3 同檔不同函式可並行，#4 待 #3 sidecar 路徑定後接線，#5 收尾
 - 時間：2026-06-13 12:23
 
+## 演算法選 Full Jitter：`random.uniform(0, min(cap, base * 2**attempt))`，封在 `_backoff_delay` 指數分支，不新增函式
+- 時間：2026-06-14 15:00
+- 理由：無狀態、零新依賴、asyncio 單執行緒 random 不需 lock
+- 否決方案：Decorrelated Jitter——需 Expert 實例存 `_last_backoff`，引入物件耦合，效益不成比例
+
+## `retry_after` 有值時維持 `min(retry_after, cap)`，完全不加 jitter，不論旗標開關
+- 時間：2026-06-14 15:00
+
+## config 新增 `EXPERT_RATE_LIMIT_BACKOFF_JITTER`，bool 解析採既有範式：`os.getenv("TI_RATELIMIT_BACKOFF_JITTER", "0") not in ("0", "false", "False", "")`
+- 時間：2026-06-14 15:00
+- 理由：對齊現有所有旗標的解析風格；若只判 `== "1"` 則用戶設 `"true"` 靜默失效
+- 否決方案：單純 `== "1"` 判斷——行為不一致，已被工程師否決
+
+## config.py 須三處同步新增——①module-level 宣告行（≈L278）、②`reload_config()` 內 `global` 宣告行（≈L645）、③`reload_config()` 內賦值行（≈L704-706）；缺任一處則 runtime reload 靜默失效
+- 時間：2026-06-14 15:00
+- 理由：高級工程師指出這是最容易漏的一步，三點一次列清
+
+## `#3`「呼叫端開啟」= 將 config.py 該 env 的 default 從 `"0"` 改為 `"1"`，一行，不在 orchestrator 散落全域賦值
+- 時間：2026-06-14 15:00
+- 否決方案：在 orchestrator 直接 `config.EXPERT_RATE_LIMIT_BACKOFF_JITTER = True`——全域狀態寫入散落，難追蹤
+
+## 實作順序鎖定為：①補 `#4` 測試並以 `monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", ...)` 隔離 → ②確認測試全綠 → ③再改 config default 為 `"1"`（`#3`）
+- 時間：2026-06-14 15:00
+- 理由：高級工程師指出若順序顛倒，CI 立刻紅燈；現有 `test_backoff_delay_*` 因 default 仍 `"0"` 保持綠
+
+## `#4` 確定性測試以 `monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", True/False)` 顯式隔離，搭配 `random.seed(固定值)` 讓結果可重現，斷言值落在 `[0, min(cap, base*2^attempt)]` 區間
+- 時間：2026-06-14 15:00
+- 否決方案：靠 env default 隱式控制——環境污染風險，被工程師明確反對
+
+## 並發分散性測試改為 N≥20 個 expert，斷言換成 `min(delays) < max(delays)`（range > 0）且全部延遲落在 `[0, cap]` 區間，取代 `stdev > base/2` 門檻
+- 時間：2026-06-14 15:00
+- 理由：N=5 時 uniform(0,4.0) 的樣本 stdev 存在合法低值組合，門檻不穩；min/max/range 語意更清晰且對任意 N 都穩固
+- 否決方案：stdev 門檻 N=5——高級工程師已驗算存在 stdev < 1.0 的合法樣本，門檻失守
+
+## `_sleep` 作為唯一測試注入縫，monkeypatch 後記錄 `seconds` 至清單，並發測試以 `asyncio.gather` 驅動，全程純記憶體無網路呼叫
+- 時間：2026-06-14 15:00
+
