@@ -87,12 +87,85 @@ def test_make_expert_openai(monkeypatch, tmp_path):
     assert isinstance(ex, providers.OpenAIExpert)
 
 
-@pytest.mark.asyncio
-async def test_complete_once_openai_chat_raises_returns_empty(monkeypatch, tmp_path):
-    """例外降級：_openai_chat 拋例外時 complete_once 回 "" 不外拋（驗 except Exception: return ""）。"""
+# --- complete_once OpenAI 路徑測試（任務 #2/#3/#4）---------------------------
+
+
+def _setup_openai(monkeypatch, *, ready=True, offline=False):
+    """設定 config 讓 complete_once 走 openai 分支且 provider_ready() 可控。
+
+    一律用 monkeypatch.setattr，測後自動還原，不污染後續測試。
+    """
     monkeypatch.setattr(config, "PROVIDER", "openai")
-    monkeypatch.setattr(config, "OFFLINE_MODE", False)
-    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://local")  # 令 provider_ready() 過 guard
+    monkeypatch.setattr(config, "OFFLINE_MODE", offline)
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://local" if ready else "")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "")
+
+
+@pytest.mark.asyncio
+async def test_complete_once_openai_success(monkeypatch, tmp_path):
+    """任務 #2：成功路徑回傳正確純文字，且僅呼叫 chat 一次。"""
+    _setup_openai(monkeypatch)
+    fake = FakeChat([_msg(content="反思結論", tool_calls=None)])
+    monkeypatch.setattr(providers, "_openai_chat", fake)
+
+    out = await providers.complete_once(
+        "你是反思器", "請反思", session_id="s", cwd=tmp_path, timeout=1.0
+    )
+
+    assert out == "反思結論"
+    assert len(fake.seen) == 1  # 純 content 首回合即收斂
+
+
+@pytest.mark.asyncio
+async def test_complete_once_guard_cwd_none(monkeypatch):
+    """任務 #3①：cwd=None 直接回 "" 且不觸碰 _openai_chat。"""
+    _setup_openai(monkeypatch)
+    fake = FakeChat([_msg(content="不該被呼叫")])
+    monkeypatch.setattr(providers, "_openai_chat", fake)
+
+    out = await providers.complete_once(
+        "sys", "user", session_id="s", cwd=None, timeout=1.0
+    )
+
+    assert out == ""
+    assert fake.seen == []
+
+
+@pytest.mark.asyncio
+async def test_complete_once_guard_offline(monkeypatch, tmp_path):
+    """任務 #3②：OFFLINE_MODE=True 直接回 "" 且不觸碰 _openai_chat。"""
+    _setup_openai(monkeypatch, offline=True)
+    fake = FakeChat([_msg(content="不該被呼叫")])
+    monkeypatch.setattr(providers, "_openai_chat", fake)
+
+    out = await providers.complete_once(
+        "sys", "user", session_id="s", cwd=tmp_path, timeout=1.0
+    )
+
+    assert out == ""
+    assert fake.seen == []
+
+
+@pytest.mark.asyncio
+async def test_complete_once_guard_provider_not_ready(monkeypatch, tmp_path):
+    """任務 #3③：provider_ready()=False（PROVIDER=openai 但金鑰/URL 皆空）回 "" 不觸碰 chat。"""
+    _setup_openai(monkeypatch, ready=False)
+    assert config.provider_ready() is False  # 自證守門條件成立
+    fake = FakeChat([_msg(content="不該被呼叫")])
+    monkeypatch.setattr(providers, "_openai_chat", fake)
+
+    out = await providers.complete_once(
+        "sys", "user", session_id="s", cwd=tmp_path, timeout=1.0
+    )
+
+    assert out == ""
+    assert fake.seen == []
+
+
+@pytest.mark.asyncio
+async def test_complete_once_openai_exception_degrades(monkeypatch, tmp_path):
+    """任務 #4：_openai_chat 拋例外時回 "" 且不外拋（驗 except Exception: return ""）。"""
+    _setup_openai(monkeypatch)
 
     called = {"n": 0}
 
@@ -103,7 +176,7 @@ async def test_complete_once_openai_chat_raises_returns_empty(monkeypatch, tmp_p
     monkeypatch.setattr(providers, "_openai_chat", exploding_chat)
 
     out = await providers.complete_once(
-        "你是反思器", "請反思", session_id="s", cwd=tmp_path, timeout=1.0
+        "sys", "user", session_id="s", cwd=tmp_path, timeout=1.0
     )
 
     assert out == ""
@@ -114,9 +187,7 @@ async def test_complete_once_openai_chat_raises_returns_empty(monkeypatch, tmp_p
 @pytest.mark.asyncio
 async def test_complete_once_openai_chat_non_runtime_exception_also_degrades(monkeypatch, tmp_path):
     """邊界：驗 except Exception 為廣捕——非 RuntimeError（此處 ValueError）也降級回 "" 不外拋。"""
-    monkeypatch.setattr(config, "PROVIDER", "openai")
-    monkeypatch.setattr(config, "OFFLINE_MODE", False)
-    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://local")
+    _setup_openai(monkeypatch)
 
     called = {"n": 0}
 
