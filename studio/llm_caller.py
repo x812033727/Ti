@@ -23,6 +23,7 @@ import asyncio
 import logging
 import random
 import re
+import warnings
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 
@@ -368,17 +369,63 @@ class RetryConfig:
     """`run_with_retries` 退避三參數的結構化載體（provider 無關，零 config 依賴）。
 
     對應 `run_with_retries` 的同名 keyword 參數：
-    - `max_retries`：限流／過載的最大退避重試次數（工廠端已 clamp ≥0）。
-    - `backoff`：退避秒數計算 callback，簽章 `(retry_after, attempt) -> float`。
+    - `max_retries`：限流／過載的最大退避重試次數（`__post_init__` 已 clamp ≥0）。
+    - `base`／`cap`／`jitter`：退避退避三旋鈕，當 `backoff is None` 時由 `__post_init__`
+      依此自動生成退避 callback（語意同 `backoff_delay(..., base, cap, jitter)`）。
+    - `backoff`：退避秒數計算 callback，簽章 `(retry_after, attempt) -> float`；顯式傳入
+      時優先於自動生成（`__post_init__` 不覆蓋）。
     - `sleep`：等待實作，簽章 `(seconds) -> Awaitable[None]`（測試可注入零等待）。
 
     供消費層（如 experts.make_retry_config）以單一物件集中描述 config 驅動的退避策略，
     呼叫端只傳一個物件、再經 `as_kwargs()` 平鋪傳入，取代散傳三個關鍵字參數。
+
+    向後相容：不傳 `base/cap/jitter` 時採模組級 `DEFAULT_BACKOFF_*` 預設（jitter 預設 0
+    ＝確定值），自動生成的退避行為與既有 `backoff_delay` 預設等價，既有測試零回歸。
+
+    不可變性警語：`base/cap/jitter` 於建構後視為不可變——建構後更改這些屬性**不會**影響
+    `__post_init__` 已生成的 `backoff` callback（閉包在 clamp 完成後固化本地值，不捕捉 self）。
     """
 
     max_retries: int
-    backoff: Callable[[float | None, int], float]
+    base: float = DEFAULT_BACKOFF_BASE
+    cap: float = DEFAULT_BACKOFF_CAP
+    jitter: float = DEFAULT_BACKOFF_JITTER
+    backoff: Callable[[float | None, int], float] | None = None
     sleep: Callable[[float], Awaitable[None]] = _default_sleep
+
+    def __post_init__(self) -> None:
+        # 非法輸入：先 warn 留跡（stacklevel=2 指回呼叫端），再 silent clamp，不拋例外。
+        if self.cap <= 0:
+            warnings.warn(
+                f"RetryConfig.cap={self.cap!r} 非正，已 clamp 為 {DEFAULT_BACKOFF_CAP}",
+                stacklevel=2,
+            )
+            self.cap = DEFAULT_BACKOFF_CAP
+        if self.base <= 0:
+            warnings.warn(
+                f"RetryConfig.base={self.base!r} 非正，已 clamp 為 {DEFAULT_BACKOFF_BASE}",
+                stacklevel=2,
+            )
+            self.base = DEFAULT_BACKOFF_BASE
+        if self.max_retries < 0:
+            warnings.warn(
+                f"RetryConfig.max_retries={self.max_retries!r} 為負，已 clamp 為 0",
+                stacklevel=2,
+            )
+            self.max_retries = 0
+        if not (0.0 <= self.jitter <= 1.0):
+            warnings.warn(
+                f"RetryConfig.jitter={self.jitter!r} 超出 [0,1]，已夾回範圍",
+                stacklevel=2,
+            )
+            self.jitter = max(0.0, min(1.0, self.jitter))
+        # 自動生成退避：僅在未顯式注入時觸發；顯式 backoff 優先（設計契約）。
+        # 捕捉 clamp 後的本地值（非 self），故建構後更改屬性不影響已生成 callback。
+        if self.backoff is None:
+            _b, _c, _j = self.base, self.cap, self.jitter
+            self.backoff = lambda ra, att: backoff_delay(
+                ra, att, base=_b, cap=_c, jitter=_j
+            )
 
     def as_kwargs(self) -> dict[str, object]:
         """展開為 `run_with_retries(**cfg.as_kwargs())` 可直接吃的關鍵字字典。
