@@ -106,15 +106,24 @@ def make_retry_config() -> llm_caller.RetryConfig:
     這是 experts 層退避策略的**單一真實來源**——`_speak_with_retries` 只需取得本物件、
     再經 `cfg.as_kwargs()` 平鋪傳入 `run_with_retries`，取代散傳 max_retries/backoff/sleep。
 
-    config 四值的取用時機：
+    config 取用時機：
     - `max_retries` 於本工廠呼叫時讀 `config.EXPERT_RATE_LIMIT_RETRIES`（並 clamp ≥0，
       讓外部合約清晰、防呆在最近端），故設定頁／測試 monkeypatch config 後即時反映。
-    - `backoff`／`sleep` 直接引用模組級 lazy 函式 `_backoff_delay`／`_sleep`；前者於**被呼叫時**
-      才讀 `EXPERT_RATE_LIMIT_BACKOFF`／`_CAP`／`_JITTER`（見 `_backoff_delay`），故同樣是
-      call-time 讀值、非載入期快照。不在此另建 closure 包裝，避免多層包裝增加可讀性負擔。
+    - `base/cap/jitter` 於本工廠呼叫時自 `config.EXPERT_RATE_LIMIT_BACKOFF`／`_CAP`／`_JITTER`
+      帶入 `RetryConfig` 對應欄位——讓回傳物件的欄位值**與實際退避行為一致**（避免「物件欄位
+      顯示預設 0，實際退避卻用 config 0.5」的不一致；高工審查指出），並符合 task #3 spec 的
+      `RetryConfig(max_retries=, cap=, jitter=)` 統一入口寫法。
+    - `backoff` 仍顯式注入模組級 lazy 函式 `_backoff_delay`（`__post_init__` 對顯式 backoff 不
+      覆蓋），使其於**被呼叫時（retry 當下）**才讀 config——保留 lazy-read 語意（架構決策＋QA
+      反向假綠對照 `test_negative_control_distinguishes_lazy_from_snapshot` 鎖死，禁建構快照）。
+      欄位（建構快照）與 backoff（retry lazy）同源同一組 config 鍵，常態下一致。
+    - `sleep` 引用模組級 `_sleep`（測試 monkeypatch 接點）。
     """
     return llm_caller.RetryConfig(
         max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES),
+        base=config.EXPERT_RATE_LIMIT_BACKOFF,
+        cap=config.EXPERT_RATE_LIMIT_BACKOFF_CAP,
+        jitter=config.EXPERT_RATE_LIMIT_BACKOFF_JITTER,
         backoff=_backoff_delay,
         sleep=_sleep,
     )

@@ -101,7 +101,7 @@ def _no_wait(monkeypatch):
 
 @pytest.fixture
 def _cfg(monkeypatch):
-    def _apply(*, retries, base=0.0, cap=60.0, jitter=0.0):
+    def _apply(*, retries, base=2.0, cap=60.0, jitter=0.0):
         monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", retries)
         monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", base)
         monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", cap)
