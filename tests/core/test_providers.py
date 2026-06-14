@@ -85,3 +85,27 @@ def test_make_expert_openai(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "PROVIDER", "openai")
     ex = providers.make_expert(BY_KEY["pm"], "t", tmp_path)
     assert isinstance(ex, providers.OpenAIExpert)
+
+
+@pytest.mark.asyncio
+async def test_complete_once_openai_chat_raises_returns_empty(monkeypatch, tmp_path):
+    """例外降級：_openai_chat 拋例外時 complete_once 回 "" 不外拋（驗 except Exception: return ""）。"""
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OFFLINE_MODE", False)
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://local")  # 令 provider_ready() 過 guard
+
+    called = {"n": 0}
+
+    async def exploding_chat(messages, tools_, model):
+        called["n"] += 1
+        raise RuntimeError("API 炸了")
+
+    monkeypatch.setattr(providers, "_openai_chat", exploding_chat)
+
+    out = await providers.complete_once(
+        "你是反思器", "請反思", session_id="s", cwd=tmp_path, timeout=1.0
+    )
+
+    assert out == ""
+    # 反向對照：確實有走到 openai 路徑並觸發 chat（否則是 guard 短路的假綠）
+    assert called["n"] == 1
