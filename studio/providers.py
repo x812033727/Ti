@@ -14,8 +14,7 @@ import logging
 from pathlib import Path
 
 from . import config, events, llm_caller, tools
-from .experts import _make_retry_observer as make_retry_observer
-from .experts import make_retry_config
+from .experts import _make_retry_observer as make_retry_observer, make_retry_config
 from .roles import Role, effective_tools
 
 logger = logging.getLogger(__name__)
@@ -117,9 +116,7 @@ class OpenAIExpert:
             return ""
 
         async def _on_api_error(snippet: str, partial: str) -> str:
-            logger.warning(
-                "OpenAI 專家 %s 收到 API 錯誤，回退空字串：%s", r.key, snippet
-            )
+            logger.warning("OpenAI 專家 %s 收到 API 錯誤，回退空字串：%s", r.key, snippet)
             return ""
 
         # 與 Claude 端 _speak_with_retries 對稱接上可觀測接點：metrics 累加退避次數／延遲，
