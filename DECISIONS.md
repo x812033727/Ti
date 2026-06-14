@@ -281,3 +281,38 @@
 ## 全程不砍既有架構——規則為骨、LLM 為肉、覆寫式單檔＋git 快照、md 人讀／json 機讀雙寫不變；三項皆低風險增量，#1/#2/#3 同檔不同函式可並行，#4 待 #3 sidecar 路徑定後接線，#5 收尾
 - 時間：2026-06-13 12:23
 
+## 任務#1 僅確認 `providers.py:107–108`（make_expert openai 分支）與 `providers.py:149`（complete_once 呼叫 make_expert）兩處行號，**零程式碼改動**，鏈路已閉合
+- 時間：2026-06-14 16:05
+
+## 所有新測試追加進 `tests/core/test_providers.py` 尾端，複用既有 `FakeChat`/`_msg`/`_tc`，不新增測試檔
+- 時間：2026-06-14 16:05
+
+## **所有 config 屬性異動一律用 `monkeypatch.setattr(config, "屬性名", 值)`，禁止直接賦值**，確保測後自動還原，不污染後續測試
+- 時間：2026-06-14 16:05
+- 理由：config 是模組級全域；直接賦值無還原機制，PROVIDER/OFFLINE_MODE 會洩漏，任務#5 補跑雖能抓但原因難追；現有 line 85 已有正確示範，新測試須一致
+
+## 注入點選 `monkeypatch.setattr(providers, "_openai_chat", fake_chat_instance)`
+- 時間：2026-06-14 16:05
+- 理由：`make_expert` 在 call-time 才取 `_openai_chat`（非 import-time 閉包），patch 模組屬性確實截斷真實外呼，且比 patch SDK 內部更穩定
+
+## **成功路徑測試（任務#2）** 需設定以下四項 monkeypatch：`PROVIDER="openai"`、`OFFLINE_MODE=False`、`OPENAI_BASE_URL="http://local"`（令 provider_ready() 走 openai 分支且回 True）；傳 `timeout=1.0`；斷言回傳等於注入文字且 `fake.seen` 長度為 1
+- 時間：2026-06-14 16:05
+
+## 成功路徑注入 `_msg(content="文字", tool_calls=None)` 並斷言 `speak` 首回合收斂（`seen` 長度 1）；若實跑發現 speak 有額外包裝導致斷言失敗，須對應調整，**以實跑結果為準，不靠讀碼猜測**
+- 時間：2026-06-14 16:05
+- 理由：工程師指出「純 content 首回合收斂」是未在設計中明寫的假設，須實跑自證，符合 CLAUDE.md「親自實跑、自證對應」鐵則
+
+## **短路守門三態（任務#3）** 各自一支測試，每支均裝 FakeChat spy 並斷言 `fake.seen == []` 作反向對照排假綠；三態分別為：① `cwd=None`（其餘 config 無須特設）、② `OFFLINE_MODE=True`＋`PROVIDER="openai"`＋`OPENAI_BASE_URL="http://local"`、③ `PROVIDER="openai"`＋`OPENAI_API_KEY=""`＋`OPENAI_BASE_URL=""`
+- 時間：2026-06-14 16:05
+
+## **`provider_ready()=False` 守門測試（第三態）必須同時設 `PROVIDER="openai"`**，否則函數走 claude 分支不讀 OPENAI_* 變數，guard 驗的是 CI 有無 claude 憑證，非目標行為
+- 時間：2026-06-14 16:05
+- 否決方案：僅設雙空字串不設 PROVIDER——高工確認 `config.py:621` 先判斷 PROVIDER 分支，不設 openai 會靜默走錯分支，假綠/假紅均有可能
+
+## **例外降級測試（任務#4）** 用 inline `async def exploding_chat(...): raise RuntimeError("API 炸了")`，同時設 `PROVIDER="openai"`＋`OFFLINE_MODE=False`＋`OPENAI_BASE_URL="http://local"` 讓 guard 通過，斷言 `complete_once` 回 `""` 且不外拋
+- 時間：2026-06-14 16:05
+- 否決方案：新建 ExplodingChat class——inline async def 已足夠覆蓋 `except Exception: return ""` 路徑，無需增加 class
+
+## 任務#2/#3/#4 三組測試互不依賴，可並行撰寫；任務#5 排最後，執行 `.venv/bin/python -m pytest tests/core/test_providers.py -q` 確認全綠、無真實網路 I/O
+- 時間：2026-06-14 16:05
+
