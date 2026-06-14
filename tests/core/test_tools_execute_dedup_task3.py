@@ -132,3 +132,28 @@ def test_cache_none_passthrough(tmp_path):
     (tmp_path / "p.txt").write_text("z")
     r = _run(tools.execute_deduped("read_file", {"path": "p.txt"}, tmp_path, None))
     assert r == "z"
+
+
+def test_error_result_contract_matches_execute_failures(tmp_path):
+    """契約鎖定（回應審查）：execute 的各失敗路徑回傳都被 _is_error_result 判為失敗。
+
+    防 `_ERROR_PREFIXES` 與 execute 實際錯誤訊息脫鉤——若日後新增失敗路徑用了不同前綴、
+    此測試會紅，逼迫同步更新，避免失敗結果被靜默寫進快取（假命中）。
+    同時反向確認：成功路徑（含 run_bash 非零 exit）不被誤判為失敗。
+    """
+    fails = [
+        ("read_file", {"path": "nope"}),  # 找不到檔案
+        ("edit_file", {"path": "nope", "old": "a", "new": "b"}),  # 找不到檔案
+        ("write_file", {"path": "../../etc/x", "content": "z"}),  # 路徑越界
+        ("bogus_tool", {}),  # 未知工具
+    ]
+    for name, args in fails:
+        assert tools._is_error_result(_run(tools.execute(name, args, tmp_path))), name
+    # edit old 不存在/不唯一
+    (tmp_path / "x.txt").write_text("no match")
+    r = _run(tools.execute("edit_file", {"path": "x.txt", "old": "ZZZ", "new": "b"}, tmp_path))
+    assert tools._is_error_result(r)
+
+    # 反向：成功路徑不被判失敗（否則合法結果不入快取，去重失效）
+    assert not tools._is_error_result(_run(tools.execute("write_file", {"path": "ok.txt", "content": "z"}, tmp_path)))
+    assert not tools._is_error_result(_run(tools.execute("run_bash", {"command": "exit 5"}, tmp_path)))

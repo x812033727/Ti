@@ -414,7 +414,7 @@ def _is_error_result(result: Any) -> bool:
 
 
 async def execute_deduped(
-    name: str, args: dict, cwd: Path, cache: "DedupCache | None"
+    name: str, args: dict, cwd: Path, cache: DedupCache | None
 ) -> str:
     """去重感知的 ``execute``：非冪等工具經 per-speak cache 防 retry 重放重執行副作用。
 
