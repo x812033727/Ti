@@ -84,9 +84,12 @@ def _backoff_delay(retry_after: float | None, attempt: int) -> float:
 
 
 async def _sleep(seconds: float) -> None:
-    """退避等待的注入縫：測試 monkeypatch 本函式即可零實際等待並記錄延遲。"""
-    if seconds > 0:
-        await asyncio.sleep(seconds)
+    """退避等待的注入縫：測試 monkeypatch 本函式即可零實際等待並記錄延遲。
+
+    實作委派核心 `llm_caller._default_sleep`，不再重複維護 sleep body（消除重複邏輯）；
+    此薄包裝僅作為 experts 層的 monkeypatch 接點，傳入 run_with_retries 的 sleep。
+    """
+    await llm_caller._default_sleep(seconds)
 
 
 # 哪些角色用主力（強但慢）模型，由 config.LEAD_ROLES 控制（可調、可在設定頁改）。
@@ -338,57 +341,70 @@ class Expert:
         return text
 
     async def _speak_with_retries(self, prompt: str, broadcast: Broadcast) -> str:
-        """送 prompt 並串流；429／限流以有限次 retry-after 退避重試，其餘 API 錯誤走 fallback。
+        """送 prompt 並串流；統一走核心 `llm_caller.run_with_retries` 重試骨幹。
 
-        退避迴圈包住整段 `query()`＋`stream_to_events()`（架構決策：例外型 429 可能在
-        query 階段拋出，只包串流會漏接），且置於 watchdog（ExpertTurnTimeout）的更外層
-        ——逾時是另一條獨立失敗路徑，不被退避吞掉。未知例外一律 re-raise，不掩蓋真錯。
+        本方法只負責「把 experts 的零件接上中介層」，不再自維護退避迴圈：
+        - attempt_fn＝一次 `query()`＋`stream_to_events()`（架構決策：例外型 429 可能在
+          query 階段拋出，只包串流會漏接，故整段包進 attempt_fn 由骨幹重試）。
+        - `ExpertTurnTimeout` 透過 passthrough 走 `_abort_turn`——逾時是另一條獨立失敗
+          路徑，骨幹不把它當限流退避吞掉。
+        - before_sleep 的 log＋broadcast("thinking") 掛在 on_retry hook。
+        - 限流重試耗盡／非限流 API 錯誤皆收斂到 `_fallback_note`（不含核可關鍵詞）。
+        - 未知例外由骨幹原樣 re-raise，不掩蓋真錯。
         """
         r = self.role
         max_retries = max(0, config.EXPERT_RATE_LIMIT_RETRIES)
-        attempt = 0
-        while True:
-            try:
-                await self._client.query(prompt)
-                return await stream_to_events(
-                    self._client.receive_response(),
-                    self.session_id,
-                    r,
-                    broadcast,
-                    idle_timeout=config.TURN_IDLE_TIMEOUT or None,
-                    hard_timeout=config.TURN_HARD_TIMEOUT or None,
-                )
-            except ExpertTurnTimeout as exc:
-                return await self._abort_turn(exc, broadcast)
-            except Exception as exc:
-                kind, retry_after, snippet, partial = _classify_failure(exc)
-                if kind == "rate_limit":
-                    if attempt < max_retries:
-                        delay = _backoff_delay(retry_after, attempt)
-                        logger.warning(
-                            "專家 %s 撞限流（429，第 %d/%d 次重試），退避 %.1fs：%s",
-                            r.key,
-                            attempt + 1,
-                            max_retries,
-                            delay,
-                            snippet,
-                        )
-                        await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
-                        await _sleep(delay)
-                        attempt += 1
-                        continue
-                    logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, max_retries)
-                    return await self._fallback_note(
-                        f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {max_retries} 次仍失敗，本輪中止。",
-                        partial,
-                        broadcast,
-                    )
-                if kind == "api_error":
-                    logger.warning("專家 %s 收到 API 錯誤文字，走 fallback：%s", r.key, snippet)
-                    return await self._fallback_note(
-                        f"【系統】{API_ERROR_FALLBACK_MARKER}，本輪中止。", partial, broadcast
-                    )
-                raise
+
+        async def _attempt() -> str:
+            await self._client.query(prompt)
+            return await stream_to_events(
+                self._client.receive_response(),
+                self.session_id,
+                r,
+                broadcast,
+                idle_timeout=config.TURN_IDLE_TIMEOUT or None,
+                hard_timeout=config.TURN_HARD_TIMEOUT or None,
+            )
+
+        async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:
+            logger.warning(
+                "專家 %s 撞限流（429，第 %d/%d 次重試），退避 %.1fs：%s",
+                r.key,
+                attempt + 1,
+                limit,
+                delay,
+                snippet,
+            )
+            await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
+
+        async def _on_rate_limit_exhausted(snippet: str, partial: str) -> str:
+            logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, max_retries)
+            return await self._fallback_note(
+                f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {max_retries} 次仍失敗，本輪中止。",
+                partial,
+                broadcast,
+            )
+
+        async def _on_api_error(snippet: str, partial: str) -> str:
+            logger.warning("專家 %s 收到 API 錯誤文字，走 fallback：%s", r.key, snippet)
+            return await self._fallback_note(
+                f"【系統】{API_ERROR_FALLBACK_MARKER}，本輪中止。", partial, broadcast
+            )
+
+        async def _on_timeout(exc: BaseException) -> str:
+            return await self._abort_turn(exc, broadcast)
+
+        return await llm_caller.run_with_retries(
+            _attempt,
+            max_retries=max_retries,
+            backoff=_backoff_delay,
+            sleep=_sleep,
+            on_retry=_on_retry,
+            on_rate_limit_exhausted=_on_rate_limit_exhausted,
+            on_api_error=_on_api_error,
+            passthrough=(ExpertTurnTimeout,),
+            on_passthrough=_on_timeout,
+        )
 
     async def _fallback_note(self, note: str, partial_text: str, broadcast: Broadcast) -> str:
         """限流／錯誤文字失敗時的收斂：對齊逾時 fallback 語義——回傳不含核可關鍵詞的

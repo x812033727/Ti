@@ -43,6 +43,9 @@ packages = ["studio"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# 把專案根目錄釘上 sys.path，讓 `from studio import ...` 在 bare `pytest`（非
+# `python3 -m pytest`）下也能解析——後者才會自動把 cwd 加入 sys.path，前者不會。
+pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "realgit: 走本機真 git（file:// URL，零網路）的整合測試，豁免「禁真子程序」保險絲",

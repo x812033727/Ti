@@ -135,7 +135,11 @@ def backoff_delay(
     return min(base * (2**attempt), cap)
 
 
-async def _noop_sleep(seconds: float) -> None:
+async def _default_sleep(seconds: float) -> None:
+    """run_with_retries 的預設等待實作（非 noop——seconds>0 時真的等）。
+
+    呼叫端通常會注入自己的 sleep（測試 monkeypatch 即零實際等待並記錄延遲）。
+    """
     if seconds > 0:
         await asyncio.sleep(seconds)
 
@@ -147,7 +151,7 @@ async def run_with_retries(
     on_rate_limit_exhausted: Callable[[str, str], Awaitable],
     on_api_error: Callable[[str, str], Awaitable],
     backoff: Callable[[float | None, int], float] | None = None,
-    sleep: Callable[[float], Awaitable[None]] = _noop_sleep,
+    sleep: Callable[[float], Awaitable[None]] = _default_sleep,
     on_retry: Callable[[int, int, float, str], Awaitable[None]] | None = None,
     passthrough: tuple[type[BaseException], ...] = (),
     on_passthrough: Callable[[BaseException], Awaitable] | None = None,
