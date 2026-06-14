@@ -277,7 +277,8 @@ EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
 EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)  # 退避基數（秒）
 EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)  # 單次退避上限
 # 指數退避是否加 Full Jitter（多 expert 同撞 429 時打散重試時點，避免 thundering herd）。
-# 預設關閉以維持與純指數退避完全等價的行為；retry_after 分支不受影響、永不抖動。
+# 預設開啟（default "1"）；多 expert 同撞 429 時打散重試，避免 thundering herd。
+# 設 TI_RATELIMIT_BACKOFF_JITTER=0 可關閉回純指數退避；retry_after 分支永不抖動。
 EXPERT_RATE_LIMIT_BACKOFF_JITTER = os.getenv("TI_RATELIMIT_BACKOFF_JITTER", "1") not in ("0", "false", "False", "")
 
 # 啟用哪些「可選角色」（核心 4 角色永遠在）。逗號分隔；清空則只剩核心 4 角色。
@@ -708,6 +709,7 @@ def reload() -> None:
     EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
     EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)
     EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)
+    # 預設開啟（default "1"）；設 TI_RATELIMIT_BACKOFF_JITTER=0 可關閉回純指數退避。
     EXPERT_RATE_LIMIT_BACKOFF_JITTER = os.getenv("TI_RATELIMIT_BACKOFF_JITTER", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))

@@ -290,6 +290,18 @@ async def test_speak_unknown_exception_reraised(fake_sdk, monkeypatch, _rl_confi
     assert _record_sleep == []
 
 
+def test_jitter_default_enabled(monkeypatch):
+    """#3 接點：不設 env var 時 reload 後 jitter 預設啟用；防 default 被誤改回 '0'。"""
+    monkeypatch.delenv("TI_RATELIMIT_BACKOFF_JITTER", raising=False)
+    config.reload()
+    assert config.EXPERT_RATE_LIMIT_BACKOFF_JITTER is True
+    monkeypatch.setenv("TI_RATELIMIT_BACKOFF_JITTER", "0")
+    config.reload()
+    assert config.EXPERT_RATE_LIMIT_BACKOFF_JITTER is False
+    monkeypatch.delenv("TI_RATELIMIT_BACKOFF_JITTER", raising=False)
+    config.reload()  # 還原為預設，避免污染後續測試
+
+
 def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
