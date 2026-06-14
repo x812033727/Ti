@@ -20,6 +20,7 @@ import re
 import sys
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from . import backlog, config, deploy, history, runner
@@ -443,6 +444,51 @@ def _normalize_for_dedup(s: str) -> str:
     return s.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
 
 
+# 子系統關鍵詞 → 從標題抽「涉及的子系統」，供「同子系統 pending 過多即拒」的廣度防線（第二道）使用。
+# 邊界策略（動工前已實測釘住）：
+#   - 英文/latin 詞一律加 `\b` 邊界，避免 `ci`→`social`、`merge`→`emergence`、`decide` 等子詞誤命中。
+#   - CJK 詞（去重/評估）用「純子字串」而非 lookahead/`\b`：實測 `(?<!\w)去重(?!\w)` 與
+#     `(?<![^\s，。！？])去重(?![^\s，。！？])` 在連續中文標題（如「改善去重邏輯效能」「強化提案去重」）
+#     **完全不命中**——CJK 周邊無空白/標點邊界，邊界寫法反而漏抓真正想攔的子系統。去重/評估皆為具
+#     辨識度的多字詞，子字串誤命中風險極低，故對 CJK 不加邊界。匹配一律 re.IGNORECASE。
+# 同一標題可命中多個子系統（各記一次）；下方統一以正規名收斂單複數變體（experts↔expert…）。
+_SUBSYSTEM_PATTERNS: list[tuple[str, str]] = [
+    ("backlog", r"\bbacklog\b"),
+    ("discovery", r"\bdiscovery\b"),
+    ("autopilot", r"\bautopilot\b"),
+    ("experts", r"\bexperts?\b"),
+    ("providers", r"\bproviders?\b"),
+    ("runner", r"\brunner\b"),
+    ("orchestrator", r"\borchestrat\w*\b"),
+    ("secure_write", r"\bsecure[\s_-]?write\b"),
+    ("branch_protect", r"\bbranch[\s_-]?protect\w*\b"),
+    ("ci", r"\bci\b"),
+    ("merge", r"\bmerge\b"),
+    ("去重", r"去重"),
+    ("評估", r"評估"),
+]
+_SUBSYSTEM_COMPILED: list[tuple[str, re.Pattern[str]]] = [
+    (name, re.compile(pat, re.IGNORECASE)) for name, pat in _SUBSYSTEM_PATTERNS
+]
+
+
+def _extract_subsystems(title: str) -> set[str]:
+    """從單一標題抽出涉及的子系統正規名集合（無命中則空集合）。匹配固定套 re.IGNORECASE。"""
+    return {name for name, rx in _SUBSYSTEM_COMPILED if rx.search(title)}
+
+
+def _count_subsystem_coverage(titles: list[str]) -> Counter[str]:
+    """統計一批標題在各子系統的覆蓋筆數，回傳 collections.Counter[str]（支援 `[k] >= K` 比較）。
+
+    一個標題若同時命中多個子系統，對每個子系統各計一次（廣度判斷以「涉及」為準，非互斥分類）。
+    """
+    cov: Counter[str] = Counter()
+    for t in titles:
+        for s in _extract_subsystems(t):
+            cov[s] += 1
+    return cov
+
+
 # CJK 統一表意文字（含擴展 A）區段——逐字當作一個 token，不依賴外部分詞器（不引入 jieba）。
 _CJK_RE = re.compile(r"[㐀-䶿一-鿿]")
 # ASCII 英數連續片段（如 backlog、ci、retry）整段當作一個 token，大小寫已由 normalize 壓平。
@@ -476,16 +522,17 @@ def _token_set_similarity(a: str, b: str) -> float:
 
 
 def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
-    """進場 pre-filter：丟掉與任一 existing 標題詞集相似度 ≥ AUTOPILOT_DEDUP_RATIO 的提案。
+    """進場 pre-filter：兩道互補防線，皆只作用於本次提案進場，皆不回溯刪改 backlog、不動
+    `backlog._is_duplicate` 的字串等值去重契約。第一道相似度用 `_token_set_similarity`
+    （詞集 Jaccard，取代舊字元序列比對）以捕中文同義改寫與語序調換。
 
-    相似度用 `_token_set_similarity`（詞集 Jaccard）取代舊的字元序列比對，以捕中文同義改寫
-    與語序調換。閾值集中為單一常數 `config.AUTOPILOT_DEDUP_RATIO`。
+    第一道（相似度）：丟掉與任一 existing 標題相似度 ≥ `AUTOPILOT_DEDUP_RATIO` 者（擋換句話說的重複）。
+    第二道（子系統覆蓋廣度）：以 regex 從標題抽「涉及子系統」，若某子系統在 existing 已達
+        `AUTOPILOT_SUBSYSTEM_MAX_PENDING`(K) 筆，該子系統的新提案一律拒——擋 LLM 不換標題卻反覆對同一
+        模組疊加（topic echo chamber）。已通過第一道的提案，其子系統計入 running count，避免同一批提案
+        一次塞爆同一子系統。
 
-    僅作用於本次 LLM 提案進場前，不回溯清洗 backlog、不刪除/合併任何既有任務，也不改動
-    `backlog._is_duplicate` 的完成去重契約（兩者互補：此處擋語意相近、那裡擋字串等值）。
-    比對範圍與 `_pending_awareness_context` 注入 prompt 的禁止清單對齊（pending + in_progress），
-    使「prompt 要求不重疊」與「pre-filter 實際擋截」覆蓋一致，避免措辭滑溜的重複漏網。
-
+    比對/計數範圍與 `_pending_awareness_context` 注入 prompt 的禁止清單對齊（pending + in_progress）。
     # O(n×m)，其中 n=proposals 數、m=existing 數；existing 預期 < 50 筆，若規模增長需重估。
     """
     if not existing_titles:
@@ -504,7 +551,20 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
             log.debug("pre-filter 丟棄與排隊任務高相似的提案：%r（近似 %r）", p, hit)
             continue
         kept.append(p)
-    return kept
+    # 第二道：子系統覆蓋廣度防線。coverage 以 existing 為基底，接受的提案逐筆累加進去。
+    coverage = _count_subsystem_coverage(existing_titles)
+    k = config.AUTOPILOT_SUBSYSTEM_MAX_PENDING
+    final: list[str] = []
+    for p in kept:
+        subs = _extract_subsystems(p)
+        crowded = sorted(s for s in subs if coverage[s] >= k)
+        if crowded:
+            log.debug("pre-filter 丟棄子系統已過多(≥%d)的提案：%r（子系統 %s）", k, p, crowded)
+            continue
+        for s in subs:
+            coverage[s] += 1
+        final.append(p)
+    return final
 
 
 async def _evaluate_self(clone: str) -> int:
