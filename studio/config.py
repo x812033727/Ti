@@ -86,6 +86,7 @@ def role_provider(key: str) -> str:
     """角色的 per-role provider 覆寫（無覆寫回 ""）。"""
     return ROLE_PROVIDERS.get(key, "")
 
+
 # OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
@@ -622,6 +623,12 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 #   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
 #   0 = 停用（還原成無狀態評估）。
 AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
+
+# AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用 difflib.SequenceMatcher 對每個提案與目前
+#   pending/in_progress 標題算相似度，ratio 超過此閾值即視為實質重疊、丟棄（記 log.debug）。
+#   0.75 為初始估值；中文字元級比對在同義改寫（「修復」vs「修正」）效果有限，上線後大概率需微調，
+#   故開 env override 讓調閾值零成本、不需發版。僅作用於本次提案進場，不動 backlog 既有去重契約。
+AUTOPILOT_DEDUP_RATIO = float(os.getenv("TI_AUTOPILOT_DEDUP_RATIO", "0.75"))
 
 
 # --- 專案（長期產品）與持續改良迴圈 ---------------------------------------
