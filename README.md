@@ -60,7 +60,7 @@
 
 ## 執行環境前置
 
-零先備知識也能照做。本專案統一使用專案內的虛擬環境 `.venv`，**需 Python ≥ 3.10**
+零先備知識也能照做。本專案統一使用專案內的虛擬環境 `.venv`，**需 Python ≥ 3.11**
 （對齊 `pyproject.toml` 的 `requires-python`）。下列範例以 macOS / Linux 為主，
 完整路徑寫法 `.venv/bin/python3` 可**免 activate**直接使用（避免誤用系統 Python）；
 **Windows 對應為 `.venv\Scripts\python`**（啟動則為 `.venv\Scripts\activate`）。
@@ -69,7 +69,7 @@
 
 <!-- 維護注意：勿在此 checklist 寫出 TI_AUTOPILOT_* 完整變數名，首現須留在下方「[設定](#設定)」表。 -->
 
-- **依賴**：Python ≥ 3.10（對齊 `pyproject.toml` 的 `requires-python`）、`git`。
+- **依賴**：Python ≥ 3.11（對齊 `pyproject.toml` 的 `requires-python`）、`git`。
 - **secrets**：`ANTHROPIC_API_KEY`（**必備**，預設由 Claude 後端驅動專家；切換 OpenAI 見下方「[設定](#設定)」）。
 - **token／選填**：`GITHUB_TOKEN`（發佈成果到 GitHub 時才需）、登入密碼（啟用登入門禁才需，見「[登入 / 門禁（選填）](#登入--門禁選填)」）。
 
@@ -127,7 +127,7 @@ cp .env.example .env                                         # 3. 建 .env，填
 
 ## 安裝
 
-需要 Python 3.10+ 與 [Claude Code](https://code.claude.com) 執行環境。
+需要 Python 3.11+ 與 [Claude Code](https://code.claude.com) 執行環境。
 套件安裝請依上方「[執行環境前置](#執行環境前置)」第 3 步完成（`.venv/bin/python3 -m pip install -e ".[dev]"`），
 之後只需準備環境變數檔：
 

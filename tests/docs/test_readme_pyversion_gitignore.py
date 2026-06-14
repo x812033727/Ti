@@ -1,7 +1,7 @@
 """任務 #3 驗收（驗收標準 4）：
-- README 標明需 Python ≥3.10，且與 pyproject `requires-python` 一致。
+- README 標明需 Python ≥3.11，且與 pyproject `requires-python` 一致。
 - README 明確提到 `.venv/` 已在 `.gitignore`、不提交；且 .gitignore 實際含 .venv/。
-- 文件聲明與「執行環境前置」段對齊，並對齊當前執行環境（≥3.10）。
+- 文件聲明與「執行環境前置」段對齊，並對齊當前執行環境（≥3.11）。
 """
 
 import re
@@ -22,17 +22,17 @@ def _env_section() -> str:
 
 
 def test_pyproject_requires_310():
-    assert 'requires-python = ">=3.10"' in PYPROJECT
+    assert 'requires-python = ">=3.11"' in PYPROJECT
 
 
 def test_readme_states_python_310_in_env_section():
-    """前置段須標明 Python ≥3.10（容許 ≥/>=/3.10+ 等寫法）。"""
+    """前置段須標明 Python ≥3.11（容許 ≥/>=/3.11+ 等寫法）。"""
     sec = _env_section()
-    assert re.search(r"Python\s*(≥|>=)?\s*3\.10|3\.10\s*\+", sec), "前置段未明確標明 Python 3.10"
+    assert re.search(r"Python\s*(≥|>=)?\s*3\.11|3\.11\s*\+", sec), "前置段未明確標明 Python 3.11"
 
 
 def test_readme_version_consistent_with_pyproject():
-    """README 不得出現與 >=3.10 矛盾的最低版本要求（如 3.8/3.9）。"""
+    """README 不得出現與 >=3.11 矛盾的最低版本要求（如 3.8/3.9）。"""
     bad = re.findall(r"Python\s*(?:≥|>=)?\s*3\.(?:[6-9])\b", README)
     assert not bad, f"README 出現與 pyproject 矛盾的版本要求: {bad}"
 
@@ -51,5 +51,5 @@ def test_gitignore_actually_ignores_venv():
 
 
 def test_runtime_python_satisfies_requirement():
-    """當前驗證環境本身 ≥3.10，確保文件要求對應可達成的真實環境。"""
-    assert sys.version_info >= (3, 10), f"執行環境 Python 過舊: {sys.version_info}"
+    """當前驗證環境本身 ≥3.11，確保文件要求對應可達成的真實環境。"""
+    assert sys.version_info >= (3, 11), f"執行環境 Python 過舊: {sys.version_info}"
