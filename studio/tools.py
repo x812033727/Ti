@@ -98,6 +98,34 @@ _CLAUDE_TO_LOCAL = {
 }
 
 
+# --- 工具冪等性分類（單一真實來源）-----------------------------------------
+# 【將由】providers 層的 per-speak 去重邏輯讀取（待實作，見任務 #3/#4）：speak() 的 retry
+# 會把整輪工具迴圈重放，已成功執行的非冪等工具會被重跑造成副作用疊加。去重層接上後，
+# 列入此集合的工具會走去重路徑（同 session + 同 key 的第二次呼叫回首次結果、不重執行副作用）。
+# 目前本檔僅定義「分類標記」，providers.py 尚未引用——現行執行行為與改動前完全一致。
+#
+# 【預設策略】白名單式 fail-open：不在此集合的工具一律視為冪等（is_idempotent 回 True）。
+# 取捨——新增工具若漏評估會「靜默允許重放」而非「靜默擋住」；選 fail-open 是因為錯誤地
+# 去重一個其實非冪等的工具（漏副作用）比錯誤地放行一個冪等工具（多跑一次無害重放）後果更壞，
+# 故預設不納管、由維護者顯式加入集合。新增工具務必依下列語意評估是否納入：
+#   - edit_file：以「old 須唯一」做就地替換，重放時 old 已被換掉 → 第二次必失敗。非冪等。
+#   - run_bash：執行任意 shell 指令，可能含 `>> append`、`git push`、`curl POST` 等，
+#               重放即災難；且命令內容無法靜態判斷冪等性，一律保守歸為非冪等。
+#   - write_file：覆寫語意，同 args 重跑結果相同 → 天然冪等，刻意不納管（納管後 args
+#                 不同時去重也攔不住，多一道邏輯卻無實際保護；殘留風險見 #6 黑樣本）。
+#   - read_file / web_fetch：唯讀，無副作用 → 不納管。
+NON_IDEMPOTENT_TOOLS: frozenset[str] = frozenset({"edit_file", "run_bash"})
+
+
+def is_idempotent(name: str) -> bool:
+    """工具是否冪等（可安全重放）。非冪等工具須由去重層保護，不可直接重執行副作用。
+
+    預設策略為白名單式 fail-open：不在 ``NON_IDEMPOTENT_TOOLS`` 內的工具（含未知工具）
+    一律回 True（視為冪等）。理由見 ``NON_IDEMPOTENT_TOOLS`` 上方註解。
+    """
+    return name not in NON_IDEMPOTENT_TOOLS
+
+
 def specs_for(allowed_claude_tools: list[str]) -> list[dict]:
     """依角色的 Claude 工具清單，回傳對應的 OpenAI 工具規格（read_file 一律提供）。"""
     names = {"read_file"}
