@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from . import config
+from .secure_write import secure_write_root
 
 VALID_STATUS = ("pending", "in_progress", "done", "failed")
 
@@ -79,10 +80,13 @@ def _load(state_dir: Path | None) -> dict:
 
 
 def _save(data: dict, state_dir: Path | None) -> None:
+    # 由各公開函式在 _locked() 範圍內呼叫；secure_write_root 的內部 tmp+rename 在 flock
+    # 保護下執行，無 TOCTOU。原子 + symlink 防護 + 依 TI_REQUIRE_CHOWN 驗證 root owner。
     _dir(state_dir).mkdir(parents=True, exist_ok=True)
-    tmp = _path(state_dir).with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(_path(state_dir))
+    secure_write_root(
+        _path(state_dir),
+        json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
+    )
 
 
 def add(

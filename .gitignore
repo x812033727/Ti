@@ -29,7 +29,9 @@ workspaces/
 
 # Autopilot 執行期狀態目錄（AUTOPILOT_STATE_DIR，預設 PROJECT_ROOT/autopilot）
 # 含 deploy.lock / backlog.json / backlog.lock 等運維狀態，不得進版控。
-autopilot/
+# 錨定 repo 根：原 `autopilot/`（無錨定）會誤殺 tests/autopilot/ 測試目錄，
+# 使該目錄下新增的測試檔（如 test_secure_write*.py）無法 git add。
+/autopilot/
 
 # Session history archive
 history/
