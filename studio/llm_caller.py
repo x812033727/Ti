@@ -80,6 +80,43 @@ DEFAULT_BACKOFF_CAP = 60.0
 DEFAULT_BACKOFF_JITTER = 0.0
 
 
+@dataclass
+class RetryConfig:
+    """統一退避設定入口：把散落的 max_retries／base_delay／cap／jitter 收斂成單一物件。
+
+    orchestrator／providers／experts 都從同一個 `RetryConfig` 取值，不再各自硬編碼。
+    四欄位語意對齊 `backoff_delay`：
+    - `max_retries`：退避重試上限次數（負數夾為 0）。
+    - `base_delay`：指數退避乘數（529／無 retry-after 路徑的 base，夾為正數）。
+    - `cap`：單次退避秒數上限（夾為不小於 base_delay）。
+    - `jitter`：抖動比例 ∈ [0.0, 1.0]（0＝關閉，回傳確定值，與既有行為等價）。
+
+    建構時 `__post_init__` 先做型別轉換（非數值 → TypeError／ValueError），再依固定順序夾值：
+    ① `max_retries = max(0, max_retries)`；② `base_delay = max(1e-9, base_delay)`；
+    ③ `cap = max(cap, base_delay)`（依賴 ② 的結果，順序不可對調）；
+    ④ `jitter ∉ [0.0, 1.0]` 直接 `raise ValueError`（超界＝呼叫端 bug，不靜默夾值）。
+    """
+
+    max_retries: int = 3
+    base_delay: float = DEFAULT_BACKOFF_BASE
+    cap: float = DEFAULT_BACKOFF_CAP
+    jitter: float = DEFAULT_BACKOFF_JITTER
+
+    def __post_init__(self) -> None:
+        # 型別驗證：非數值輸入在此即報錯，不留到退避計算時才炸。
+        self.max_retries = int(self.max_retries)
+        self.base_delay = float(self.base_delay)
+        self.cap = float(self.cap)
+        self.jitter = float(self.jitter)
+        # 夾值順序固定（見 docstring）：③ cap 依賴 ② 夾正後的 base_delay。
+        self.max_retries = max(0, self.max_retries)
+        self.base_delay = max(1e-9, self.base_delay)
+        self.cap = max(self.cap, self.base_delay)
+        # jitter 超界＝呼叫端 bug，報錯而非靜默修正（統一 cfg／純量兩路徑語意）。
+        if self.jitter < 0.0 or self.jitter > 1.0:
+            raise ValueError(f"jitter 必須落在 [0.0, 1.0]，收到 {self.jitter!r}")
+
+
 class RateLimitSignal(Exception):
     """偵測到 429／rate_limit_error——交由 `run_with_retries` 做有限次退避重試。
 
