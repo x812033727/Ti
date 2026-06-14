@@ -51,6 +51,78 @@ def test_classify_normal_speech_not_misclassified(text):
     assert lc.classify_api_text(text) is None
 
 
+# --- _SSE_ERROR_TYPE_TO_STATUS：對照表 + SSE 防線（Issue #1258）---------
+
+
+def test_sse_error_status_mapping_complete():
+    # 對照表齊全：429／529 為核心分流碼，其餘常見型別亦有對應。
+    assert lc.sse_error_status("rate_limit_error") == 429
+    assert lc.sse_error_status("overloaded_error") == 529
+    assert lc.sse_error_status("api_error") == 500
+    assert lc.sse_error_status("authentication_error") == 401
+    assert lc.sse_error_status("not_found_error") == 404
+    assert lc.sse_error_status("invalid_request_error") == 400
+    assert lc.sse_error_status("unknown_kind") is None
+    assert lc.sse_error_status(None) is None
+
+
+def test_is_rate_limit_type_only_429():
+    assert lc.is_rate_limit_type("rate_limit_error") is True
+    assert lc.is_rate_limit_type("overloaded_error") is False
+    assert lc.is_rate_limit_type("unknown_kind") is False
+
+
+def test_classify_sse_error_rate_limit_signal():
+    sig = lc.classify_sse_error("rate_limit_error", "slow down retry-after: 9", partial_text="半句")
+    assert isinstance(sig, lc.RateLimitSignal)
+    assert sig.retry_after == 9.0
+    assert sig.partial_text == "半句"
+
+
+def test_classify_sse_error_overloaded_is_api_error():
+    sig = lc.classify_sse_error("overloaded_error", "model overloaded")
+    assert isinstance(sig, lc.APIErrorSignal)
+    assert sig.kind == "overloaded_error"
+
+
+def test_classify_sse_error_unknown_is_conservative_api_error():
+    # 未知型別保守視為 api_error（不可誤判為可無限退避的限流）。
+    sig = lc.classify_sse_error("mystery_error")
+    assert isinstance(sig, lc.APIErrorSignal)
+
+
+def test_sse_overloaded_ignores_bogus_status_200():
+    # Issue #1258 核心場景：HTTP 200 但 SSE error 為 overloaded → 正確判 api_error/529。
+    text = '{"type":"error","error":{"type":"overloaded_error"}} status code 200'
+    assert lc.classify_api_text(text) == ("api_error", "overloaded_error")
+
+
+def test_sse_rate_limit_ignores_bogus_status_200():
+    text = '{"type":"error","error":{"type":"rate_limit_error"}} status code 200'
+    assert lc.classify_api_text(text) == ("rate_limit", None)
+
+
+class _FakeAPIStatusError(Exception):
+    """模擬 SDK 把 SSE error 包成 status_code=200、真實型別藏在 .body 的形態。"""
+
+    def __init__(self, status_code, body):
+        super().__init__(f"APIStatusError status_code={status_code}")
+        self.status_code = status_code
+        self.body = body
+
+
+def test_classify_failure_sse_body_overloaded_ignores_status_200():
+    exc = _FakeAPIStatusError(200, {"type": "error", "error": {"type": "overloaded_error"}})
+    kind, retry_after, _, _ = lc.classify_failure(exc)
+    assert kind == "api_error"  # 不被 status 200 騙成 unknown／成功
+
+
+def test_classify_failure_sse_body_rate_limit_ignores_status_200():
+    exc = _FakeAPIStatusError(200, {"type": "error", "error": {"type": "rate_limit_error"}})
+    kind, _, _, _ = lc.classify_failure(exc)
+    assert kind == "rate_limit"
+
+
 # --- classify_failure：例外分類 ----------------------------------------
 
 
