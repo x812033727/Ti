@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -145,8 +146,13 @@ def _backoff_delay(retry_after: float | None, attempt: int) -> float:
     """退避秒數：優先採 retry-after，否則指數退避；皆夾在 cap 內。"""
     cap = config.EXPERT_RATE_LIMIT_BACKOFF_CAP
     if retry_after and retry_after > 0:
+        # 伺服器指定的等待秒數本就是最佳等待點，不加 jitter（不論旗標開關）。
         return min(retry_after, cap)
-    return min(config.EXPERT_RATE_LIMIT_BACKOFF * (2**attempt), cap)
+    ceiling = min(config.EXPERT_RATE_LIMIT_BACKOFF * (2**attempt), cap)
+    if config.EXPERT_RATE_LIMIT_BACKOFF_JITTER:
+        # Full Jitter：random.uniform(0, min(cap, base*2^attempt))，打散並發重試避免 thundering herd。
+        return random.uniform(0, ceiling)
+    return ceiling
 
 
 async def _sleep(seconds: float) -> None:
