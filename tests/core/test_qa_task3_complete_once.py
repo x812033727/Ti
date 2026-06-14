@@ -128,6 +128,42 @@ async def test_no_second_retry_layer_single_delegation(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 4b) 不靜默吞噬：例外降級回 "" 時必記 warning（含 traceback），供生產診斷
+#     （高工指出空字串與真實空回應上層無法區分，log 是唯一補救）
+# ---------------------------------------------------------------------------
+async def test_degradation_logs_warning(monkeypatch, tmp_path, caplog):
+    import logging
+
+    _ready(monkeypatch)
+
+    async def boom(_u, _b):
+        raise RuntimeError("api down")
+
+    fake = _FakeExpert(boom)
+    _inject(monkeypatch, fake)
+    with caplog.at_level(logging.WARNING, logger="studio.providers"):
+        out = await providers.complete_once("s", "u", session_id="sess-42", cwd=tmp_path)
+    assert out == ""
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warns, "降級回空字串時必須記 warning，不可靜默吞噬"
+    rec = warns[-1]
+    assert rec.exc_info is not None, "warning 須帶 exc_info（traceback）供診斷"
+    assert "sess-42" in rec.getMessage(), "warning 須含 session 以利定位"
+
+
+async def test_guard_does_not_log_warning(monkeypatch, tmp_path, caplog):
+    """正常前置短路（離線）是預期路徑，不應誤記 warning 製造雜訊。"""
+    import logging
+
+    _ready(monkeypatch)
+    monkeypatch.setattr(config, "OFFLINE_MODE", True)
+    with caplog.at_level(logging.WARNING, logger="studio.providers"):
+        out = await providers.complete_once("s", "u", session_id="x", cwd=tmp_path)
+    assert out == ""
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+# ---------------------------------------------------------------------------
 # 5) 結構斷言：complete_once 本體不得「實際呼叫」第二套退避入口
 #    （架構決策：退避職責只在 speak() 內。用 AST 數 Call 節點，避開 docstring 誤判）
 # ---------------------------------------------------------------------------
