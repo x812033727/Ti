@@ -467,17 +467,6 @@ class StudioSession:
             return False
         return is_stalled(history, config.STALL_ROUNDS)
 
-    def _no_file_progress(self, ctx: LaneContext, no_change_streak: int) -> bool:
-        """連續 no_change_streak 輪「零檔案變更」即視為無進展（與 _stalled 互補）。
-
-        _stalled 靠「文字高度相似」抓重述,但抓不到「每輪換句話說、卻完全沒動到檔案」的幻覺
-        寫檔（工程師聲稱實作、實際零變更,且每輪描述不同→文字不相似）。這條改以「連續多輪
-        無任何 commit 變動」為訊號,把這類零進度的燒輪提早收斂。無 cwd／關 git／STALL_ROUNDS<=1
-        一律回 False（與 _stalled 同款保護,且不誤殺 cwd=None 的單元測試）。"""
-        if not ctx.cwd or not config.ENABLE_GIT or config.STALL_ROUNDS <= 1:
-            return False
-        return no_change_streak >= config.STALL_ROUNDS
-
     # --- 看板 ----------------------------------------------------------
     async def _board(self) -> None:
         """依各任務的 status 分欄，發看板更新事件。"""
@@ -1567,7 +1556,6 @@ class StudioSession:
         rounds = max_rounds if max_rounds is not None else config.TASK_MAX_ROUNDS
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
         prev_commit = ctx.last_commit
-        no_change_streak = 0  # 連續零檔案變更輪數（抓「每輪換句話說卻沒動檔」的幻覺寫檔）
         for rnd in range(1, rounds + 1):
             if self._stop:
                 return False
@@ -1639,12 +1627,7 @@ class StudioSession:
             impl_history.append(impl_text)
             committed_change = ctx.last_commit != prev_commit
             prev_commit = ctx.last_commit
-            no_change_streak = 0 if committed_change else no_change_streak + 1
-            # 兩種無進展都提早收斂:① _stalled＝每輪重述（文字高相似）且無變動;② _no_file_progress＝
-            # 連續多輪零檔案變更（每輪換句話說但根本沒動檔／幻覺寫檔,文字不相似、_stalled 抓不到）。
-            if self._stalled(ctx, impl_history, committed_change) or self._no_file_progress(
-                ctx, no_change_streak
-            ):
+            if self._stalled(ctx, impl_history, committed_change):
                 await bc(
                     events.phase_change(
                         self.session_id,
@@ -1655,7 +1638,7 @@ class StudioSession:
                 self._note(
                     ctx,
                     f"## 停滯收斂 任務 #{task['id']}：{task['title']}"
-                    f"（連續 {config.STALL_ROUNDS} 輪無實質進展／無檔案變更，提早收斂）",
+                    f"（連續 {config.STALL_ROUNDS} 輪只重述，提早收斂）",
                 )
                 return False
 
