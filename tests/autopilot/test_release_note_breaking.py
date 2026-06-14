@@ -133,8 +133,8 @@ def states_present(text: str) -> bool:
 def has_future_enforce_timeline(text: str) -> bool:
     """是否出現『下版才 enforce／警告期後才生效』等與 strict 已成預設矛盾的未來時序。"""
     return bool(
-        re.search(r"下版.{0,6}(才|再).{0,6}enforce", text)
-        or re.search(r"警告期(後|結束)", text)
+        re.search(r"警告期(後|結束)", text)
+        # 涵蓋「下版才 enforce／下一版再生效／下版才強制」等未來時序敘述。
         or re.search(r"下(一)?版.{0,8}(才|再).{0,8}(生效|強制|enforce)", text)
     )
 
@@ -199,12 +199,11 @@ def test_warn_escape_hatch_present(changelog):
     assert has_warn_escape_hatch(changelog), "驗收 #4：未明示非 root 設 warn/off 過渡逃生"
 
 
-def test_points_to_readme_section(changelog):
+def test_points_to_readme_section(changelog, readme):
     """驗收 #5：CHANGELOG 指向 README「state 安全寫入」小節（raw text 一致）。"""
     assert README_ANCHOR_TEXT in changelog, (
         f"驗收 #5：CHANGELOG 未指向遷移指引位置（缺 {README_ANCHOR_TEXT!r}）"
     )
-    readme = README.read_text(encoding="utf-8")
     assert README_ANCHOR_TEXT in readme, (
         f"驗收 #5：README 不含被指向的小節字串 {README_ANCHOR_TEXT!r}（死鏈）"
     )
@@ -314,7 +313,12 @@ def test_failsafe_consistent_across_docs(readme, env_example):
 
 
 def test_no_future_enforce_timeline_across_docs(changelog, readme, env_example):
-    """三份文件皆不得出現『下版才 enforce／警告期後』等與 strict 已成預設矛盾的未來時序。"""
+    """三份文件皆不得出現『下版才 enforce／警告期後』等與 strict 已成預設矛盾的未來時序。
+
+    註（D2 掃描範圍差異）：本測掃全文，與 test_no_future_enforce_timeline 限縮 Breaking 節不同——
+    後者守『Breaking 條目內』語意，本測守『整份文件不得有矛盾路線圖』。
+    若未來 CHANGELOG 要加合法的「下版路線圖」段落，需改為節內限縮或加白名單。
+    """
     for name, text in (("CHANGELOG", changelog), ("README", readme), (".env.example", env_example)):
         assert not has_future_enforce_timeline(text), f"驗收 #7：{name} 出現未來時序矛盾"
 
@@ -329,6 +333,7 @@ def test_no_future_enforce_timeline_across_docs(changelog, readme, env_example):
 
 def test_black_sample_state_dropped_in_doc(env_example):
     """從文件副本抽掉某一態，三態一致檢測必須翻紅。"""
+    assert "warn" in env_example, "黑樣本前提失效：env_example 本無 warn，replace 為空操作"
     polluted = env_example.replace("warn", "XXXX")
     assert not states_present(polluted), "黑樣本失效：缺 warn 態仍判為三態齊全"
 
