@@ -316,3 +316,34 @@
 ## 任務#2/#3/#4 三組測試互不依賴，可並行撰寫；任務#5 排最後，執行 `.venv/bin/python -m pytest tests/core/test_providers.py -q` 確認全綠、無真實網路 I/O
 - 時間：2026-06-14 16:05
 
+## `RetryConfig` dataclass（`max_retries/base/cap/jitter` 四欄位）定義在 **`experts.py`**，不放 `llm_caller.py`
+- 時間：2026-06-14 18:28
+- 理由：`llm_caller.py` 的 `run_with_retries` 簽章不收 `RetryConfig`、自身從不消費此型別；放在使用者旁更內聚，未來跨模組共用再搬不遲
+- 否決方案：放 `llm_caller.py`——llm_caller 明文禁讀 config 以維持 provider 無關，若同時放工廠則自打臉；型別孤懸在未使用的模組也增加 import 跨度
+
+## `make_retry_config() -> RetryConfig` 工廠定義在 `experts.py`，call-time 讀取 `config.EXPERT_RATE_LIMIT_RETRIES/BACKOFF/BACKOFF_CAP/BACKOFF_JITTER`，不在 module load 時 cache
+- 時間：2026-06-14 18:28
+- 理由：lazy 讀取讓 `monkeypatch config.*` 與 `monkeypatch make_retry_config` 兩種測試手法都即時生效；`config.reload`（line 649–712）會重綁常數，cache 會讓 monkeypatch 失效
+
+## **`_backoff_delay` 模組頂層具名函式維持現狀不改**，仍直接讀 config 三常數
+- 時間：2026-06-14 18:28
+- 理由：`test_backoff_delay_prefers_retry_after_and_caps` 與 `test_backoff_delay_applies_config_jitter`（line 407–438）直接呼叫 `experts._backoff_delay()`；若改為內部呼叫工廠，spy `call_count` 會因每次 backoff 呼叫累加而無法斷言 `== 1`，A 法測試失效；若刪除則 `AttributeError`，兩條路都破壞現有測試
+- 否決方案：讓 `_backoff_delay` 內部呼叫 `make_retry_config()`——看似兩全實則讓 spy call_count 變成 1＋N，A 法測試無法寫成 `assert_called_once()`
+
+## `_speak_with_retries` 內呼叫 `cfg = make_retry_config()` **一次**，`max_retries = cfg.max_retries`；傳入 `run_with_retries` 的 `backoff=` 改為 `lambda ra, att: llm_caller.backoff_delay(ra, att, base=cfg.base, cap=cfg.cap, jitter=cfg.jitter)`，不再傳模組頂層 `_backoff_delay`
+- 時間：2026-06-14 18:28
+- 理由：工廠恰好呼叫一次 → spy `call_count == 1` 成立；backoff 參數從 cfg 取 → B 法 monkeypatch 工廠後行為隨之改變；`_backoff_delay` 留為獨立 utility，其測試零改動
+- 否決方案：保留 `backoff=_backoff_delay`——則 base/cap/jitter 仍繞過工廠直讀 config，B 法 wiring 測試無法證明 backoff 行為受工廠控制
+
+## `_on_rate_limit_exhausted` fallback 訊息字串的 `max_retries` 來源改為 `cfg.max_retries`（close-over 自 `_speak_with_retries` 頂層的 `cfg`），確保訊息與實際重試次數同源
+- 時間：2026-06-14 18:28
+
+## A 法 wiring 測試：`mocker.spy(experts, "make_retry_config")`，觸發 `exp.speak()` 後斷言 `spy.call_count == 1`；不需驗回傳值流入 `run_with_retries`——因工廠只呼叫一次且 lambda 由 cfg 組裝，路徑已由 B 法行為測試覆蓋
+- 時間：2026-06-14 18:28
+
+## B 法 wiring 測試：`monkeypatch.setattr(experts, "make_retry_config", lambda: RetryConfig(max_retries=1, base=0.0, cap=0.0, jitter=0.0))`，注入連續 429 失敗，斷言 fallback 在第 1 次耗盡觸發（反向對照：預設 `max_retries=3` 時需 3 次耗盡）
+- 時間：2026-06-14 18:28
+
+## 既有 `test_backoff_delay_*` 兩條測試**零改動**，繼續作為 `_backoff_delay` utility 的單元測試；既有 `test_experts_ratelimit.py` 其餘測試亦零改動——以 `pytest tests/test_llm_caller.py tests/test_experts_ratelimit.py -q` 全綠作為回歸驗收基線
+- 時間：2026-06-14 18:28
+
