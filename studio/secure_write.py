@@ -41,7 +41,13 @@ def secure_write_root(path, data, *, mode: int = 0o600, require_chown=None) -> N
     if require_chown is None:
         chown_mode = config.require_chown_mode()
     else:
-        chown_mode = str(require_chown)
+        # 呼叫端顯式覆蓋：正規化大小寫後驗證值域，非法值 fail-closed 直接 raise，
+        # 不得讓 "banana"/"True"/"Strict" 等靜默穿透成「半 warn 半跳過」的未定義行為。
+        chown_mode = str(require_chown).lower()
+        if chown_mode not in config.REQUIRE_CHOWN_MODES:
+            raise ValueError(
+                f"require_chown 必須為 {'/'.join(config.REQUIRE_CHOWN_MODES)}，收到 {require_chown!r}"
+            )
         logger.warning(
             "secure_write_root: require_chown 被呼叫端強制覆蓋為 %s，路徑 %s", chown_mode, path
         )
@@ -74,16 +80,29 @@ def secure_write_root(path, data, *, mode: int = 0o600, require_chown=None) -> N
                 # warn：已知可能非 root、顯式接受——記警告後放行，不再做 fstat（語意一致）。
                 logger.warning("secure_write_root: fchown 失敗（warn 放行）：%s 路徑 %s", e, target)
             else:
-                if chown_mode == "strict":
-                    st = os.fstat(fd)
-                    if st.st_uid != 0:
+                # fchown 成功：strict 與 warn 都做 fstat 查核（hardlink 偵測不可在 warn 歸零）。
+                # 差別僅在處置——strict raise 阻擋落地，warn 記 warning 後放行。
+                st = os.fstat(fd)
+                if st.st_uid != 0:
+                    if chown_mode == "strict":
                         raise SecureWriteError(
                             f"owner 非 root（uid={st.st_uid}），拒絕落地：{target}"
                         )
-                    if st.st_nlink != 1:
+                    logger.warning(
+                        "secure_write_root: owner 非 root（uid=%s，warn 放行）路徑 %s",
+                        st.st_uid,
+                        target,
+                    )
+                if st.st_nlink != 1:
+                    if chown_mode == "strict":
                         raise SecureWriteError(
                             f"nlink={st.st_nlink}≠1（疑似 hardlink 攻擊），拒絕落地：{target}"
                         )
+                    logger.warning(
+                        "secure_write_root: nlink=%s≠1（疑似 hardlink，warn 放行）路徑 %s",
+                        st.st_nlink,
+                        target,
+                    )
 
         os.close(fd)
         fd = None
