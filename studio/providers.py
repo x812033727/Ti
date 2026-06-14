@@ -203,6 +203,7 @@ async def _openai_chat(messages, tools_, model, provider=None):
     client = openai.AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
+        max_retries=0,  # 讓位給 run_with_retries，避免 SDK 內建重試與外層退避雙層疊乘
     )
     return await client.chat.completions.create(
         model=model, messages=messages, tools=tools_ or None
