@@ -45,12 +45,23 @@ CLAUDE_MODELS: tuple[str, ...] = (
 # 模型名稱可能是任意字串，故用 combo（可選可打）而非嚴格 select。
 OPENAI_MODELS: tuple[str, ...] = ("gpt-4o", "gpt-4o-mini")
 
+# MiniMax 模型建議值（2026-06 platform.minimax.io 現行清單）；同樣用 combo——訂閱方案
+# 可用的模型 ID 可能異動，使用者可自由輸入清單外的名稱。
+MINIMAX_MODELS: tuple[str, ...] = (
+    "MiniMax-M3",
+    "MiniMax-M2.7",
+    "MiniMax-M2.7-highspeed",
+    "MiniMax-M2.5",
+    "MiniMax-M2.1",
+    "MiniMax-M2",
+)
+
 FIELDS: tuple[Field, ...] = (
     Field(
         "TI_PROVIDER",
         "後端 Provider",
         kind="select",
-        options=("claude", "openai"),
+        options=("claude", "openai", "minimax"),
         default="claude",
         group="一般",
     ),
@@ -130,6 +141,40 @@ FIELDS: tuple[Field, ...] = (
         options=OPENAI_MODELS,
         placeholder="gpt-4o-mini",
         group="OpenAI",
+    ),
+    # --- MiniMax（OpenAI 相容；訂閱／API key）。Provider 選 minimax 時生效。 ---
+    Field(
+        "MINIMAX_API_KEY",
+        "MiniMax API Key",
+        kind="password",
+        secret=True,
+        placeholder="填入 MiniMax 訂閱／API key",
+        group="MiniMax",
+    ),
+    Field(
+        "MINIMAX_BASE_URL",
+        "MiniMax Base URL（OpenAI 相容端點）",
+        placeholder="https://api.minimax.io/v1",
+        default="https://api.minimax.io/v1",
+        group="MiniMax",
+    ),
+    Field(
+        "TI_MINIMAX_MODEL_LEAD",
+        "MiniMax 主力模型（PM／高級工程師）",
+        kind="combo",
+        options=MINIMAX_MODELS,
+        default="MiniMax-M3",
+        placeholder="MiniMax-M3",
+        group="MiniMax",
+    ),
+    Field(
+        "TI_MINIMAX_MODEL_FAST",
+        "MiniMax 快速模型（工程師／QA）",
+        kind="combo",
+        options=MINIMAX_MODELS,
+        default="MiniMax-M3",
+        placeholder="MiniMax-M3",
+        group="MiniMax",
     ),
     Field(
         "GITHUB_TOKEN",

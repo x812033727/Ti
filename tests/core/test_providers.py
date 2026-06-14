@@ -87,6 +87,49 @@ def test_make_expert_openai(monkeypatch, tmp_path):
     assert isinstance(ex, providers.OpenAIExpert)
 
 
+def test_openai_model_for_minimax(monkeypatch):
+    """PROVIDER=minimax 時走 MiniMax 模型槽（依 LEAD_ROLES 二分），不污染 openai 行為。"""
+    monkeypatch.setattr(config, "PROVIDER", "minimax")
+    monkeypatch.setattr(config, "MINIMAX_MODEL_LEAD", "MiniMax-M3")
+    monkeypatch.setattr(config, "MINIMAX_MODEL_FAST", "MiniMax-M2.7")
+    assert providers.openai_model_for(BY_KEY["pm"]) == "MiniMax-M3"  # pm ∈ LEAD_ROLES
+    assert providers.openai_model_for(BY_KEY["engineer"]) == "MiniMax-M2.7"
+
+
+def test_make_expert_minimax(monkeypatch, tmp_path):
+    """minimax 與 openai 共用 OpenAIExpert（function-calling 工具迴圈）。"""
+    monkeypatch.setattr(config, "PROVIDER", "minimax")
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    assert isinstance(ex, providers.OpenAIExpert)
+
+
+def test_openai_client_args_minimax(monkeypatch):
+    """PROVIDER=minimax 時用 MiniMax 的 key/base_url，與 OpenAI 憑證互不污染。"""
+    monkeypatch.setattr(config, "PROVIDER", "minimax")
+    monkeypatch.setattr(config, "MINIMAX_API_KEY", "mm-key")
+    monkeypatch.setattr(config, "MINIMAX_BASE_URL", "https://api.minimax.io/v1")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "should-not-be-used")
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://should-not-be-used")
+    assert providers._openai_client_args() == ("mm-key", "https://api.minimax.io/v1")
+
+
+def test_openai_client_args_openai(monkeypatch):
+    """PROVIDER=openai（及非 minimax 預設）走 OpenAI 憑證。"""
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "oa-key")
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://localhost:11434/v1")
+    assert providers._openai_client_args() == ("oa-key", "http://localhost:11434/v1")
+
+
+def test_provider_ready_minimax(monkeypatch):
+    """minimax 只認 API key（base_url 有預設端點）。"""
+    monkeypatch.setattr(config, "PROVIDER", "minimax")
+    monkeypatch.setattr(config, "MINIMAX_API_KEY", "")
+    assert config.provider_ready() is False
+    monkeypatch.setattr(config, "MINIMAX_API_KEY", "mm-key")
+    assert config.provider_ready() is True
+
+
 # --- complete_once OpenAI 路徑測試（任務 #2/#3/#4）---------------------------
 
 
