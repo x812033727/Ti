@@ -543,3 +543,43 @@
 - 理由：escape_hatch 測試五條文件斷言（含 `"Breaking change"`、`"warn"`、`"root"`、`"strict"`）均須通過；最小化改動不引入額外文件
 - 否決方案：另開獨立 SECURITY.md（文件散落、測試斷言對象固定是 README）
 
+## `NON_IDEMPOTENT_TOOLS = frozenset({"edit_file", "run_bash"})` 定義於 `tools.py` 頂層，加附註「由 providers 層去重邏輯讀取；新增工具時維護者須評估並更新此集合」
+- 時間：2026-06-15 03:00
+- 理由：tools.py 是工具規格的單一真實來源，分類應與規格同處；附註解決「誰負責更新」的認知問題
+- 否決方案：放 providers.py 內 — 會讓 tools 與其分類定義分離兩處，工具新增時更容易遺漏
+
+## 去重快取型別為 `dict[str, Any]`（非 `dict[str, str]`），初始化在 `__init__` 內（`self._dedup_cache: dict[str, Any] = {}`），並在 `speak()` 入口（snapshot 同層，約第 77 行）以 `self._dedup_cache = {}` 清空
+- 時間：2026-06-15 03:00
+- 理由：tools.execute 回傳值實際為 str，但型別標注從嚴；清空點在 speak 入口是唯一正確位置——放進 _attempt 內每次 retry 都清空等於功能報廢
+- 否決方案：僅在 speak() 入口初始化、不在 __init__ — 有人新增旁路呼叫路徑時會踩 AttributeError
+
+## key 推導公式 `f"{tool_name}:{hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()[:16]}"`，其中 `args` 明確指**已解析的 dict**（providers.py 第 93 行 parse 後的物件），不碰 `tc.function.arguments` 原字串
+- 時間：2026-06-15 03:00
+- 理由：`tc.function.arguments` 是 JSON 字串，序列化順序不穩定；`sort_keys=True` 必須作用在 dict 才有效，作用在字串則去重直接失效
+- 否決方案：對原字串直接 hash — sort_keys 無效，同 args 不同序列化順序產生假 miss，功能靜默壞掉
+
+## `[:16]` 截短加行內註解說明「per-speak tool call 數量極小（< 100），16 hex chars = 64 bits 碰撞機率 < 5×10⁻¹⁸，足夠」
+- 時間：2026-06-15 03:00
+- 理由：無解釋的魔法數字半年後會被懷疑是 bug，一行註解消滅維護成本
+
+## 快取寫入點在 `await tools.execute(...)` 成功返回後；失敗（拋例外或回傳錯誤字串）不寫入快取
+- 時間：2026-06-15 03:00
+- 理由：防假命中——失敗結果若被快取，下次重放跳過副作用但回傳舊錯誤，問題靜默遮蔽
+
+## providers.py 第 68–70 行 docstring 更新為「非冪等工具重放防護由 providers 層 per-speak `_dedup_cache` 處理，非 tools.execute 層」
+- 時間：2026-06-15 03:00
+- 理由：舊註解「須於 tools.execute 層自行防護」與本次實作相反，保留會誤導後人
+
+## Claude provider 路徑的 retry gap 以 `核心改動: Claude provider 路徑缺乏 per-speak 去重保護，retry 時寫入型工具仍可重跑` 記入 backlog，本次不動 Claude path
+- 時間：2026-06-15 03:00
+- 理由：口頭「已知限制」無追蹤機制，六個月後會消失；進 backlog 才有人負責
+- 否決方案：本次一併補 Claude path — 超出任務範圍，且 Claude path retry 機制需獨立確認，不能假設結構對稱
+
+## `run_bash` 一律歸 non-idempotent，不解析命令內容判斷冪等性
+- 時間：2026-06-15 03:00
+- 否決方案：靜態分析 bash 命令 — LLM 可輕易繞過任何規則，且 false negative（漏防）比 false positive 風險高出數個量級
+
+## `write_file` 歸冪等、不入去重；已知殘留風險（LLM 重放改內容）列為 #6 黑樣本測試化，不阻擋動工
+- 時間：2026-06-15 03:00
+- 理由：覆寫語意下同 args 重跑結果相同；納管後 args hash 不同時去重也攔不住，多一道邏輯卻無實際保護
+
