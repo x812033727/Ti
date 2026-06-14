@@ -21,10 +21,10 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -204,8 +204,12 @@ def test_no_future_enforce_timeline(changelog):
     """驗收 #7：時序語意——strict 已是預設，禁止『下版才 enforce』等未來承諾。"""
     bidx = breaking_header_idx(changelog)
     scope = changelog[bidx:] if bidx != -1 else changelog
-    assert not re.search(r"下版.{0,6}(才|再).{0,6}enforce", scope), "出現與 config.py 矛盾的未來時序"
-    assert not re.search(r"警告期(後|結束)", scope), "出現『警告期後才生效』未來時序，與 strict 已成預設矛盾"
+    assert not re.search(r"下版.{0,6}(才|再).{0,6}enforce", scope), (
+        "出現與 config.py 矛盾的未來時序"
+    )
+    assert not re.search(r"警告期(後|結束)", scope), (
+        "出現『警告期後才生效』未來時序，與 strict 已成預設矛盾"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +219,7 @@ def test_no_future_enforce_timeline(changelog):
 
 def test_black_sample_missing_breaking_block(changelog):
     """截掉 Breaking 標題後，檢測器必須翻紅（否則為假綠）。"""
-    polluted = re.sub(
-        r"(?im)^#{1,4}\s*.*breaking\s*change.*$", "## Notes", changelog
-    )
+    polluted = re.sub(r"(?im)^#{1,4}\s*.*breaking\s*change.*$", "## Notes", changelog)
     polluted = re.sub(r"⚠️\s*BREAKING", "NOTE", polluted)
     assert not has_breaking_block(polluted), "黑樣本失效：缺 Breaking 區塊仍被判為存在"
 
@@ -250,9 +252,7 @@ def test_black_sample_elements_out_of_order(changelog):
 
 def test_black_sample_missing_warn_escape_hatch(changelog):
     """移除逃生艙說明（warn/off 改回 strict），warn/off 檢測必須翻紅。"""
-    polluted = re.sub(
-        r"TI_REQUIRE_CHOWN\s*=\s*(warn|off)", "TI_REQUIRE_CHOWN=strict", changelog
-    )
+    polluted = re.sub(r"TI_REQUIRE_CHOWN\s*=\s*(warn|off)", "TI_REQUIRE_CHOWN=strict", changelog)
     polluted = re.sub(r"(?<!\w)(warn|off)(?!\w)", "strict", polluted)
     assert not has_warn_escape_hatch(polluted), "黑樣本失效：缺逃生艙說明仍判為存在"
 
