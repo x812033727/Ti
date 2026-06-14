@@ -91,6 +91,17 @@ class RetryConfig:
     cap: float
     jitter: float
 
+    def __post_init__(self) -> None:
+        # 防衛性驗證：base／cap ≤ 0 會讓 backoff_delay 算出 delay≤0，退化成無延遲的
+        # busy-retry（把 max_retries 次瞬間打完）；jitter 出界會讓退避時點分布失真。
+        # 環境變數誤設時在建構點即時 fail-fast，而非下游靜默失效。
+        if self.base <= 0:
+            raise ValueError(f"RetryConfig.base 必須 > 0，收到 {self.base}")
+        if self.cap <= 0:
+            raise ValueError(f"RetryConfig.cap 必須 > 0，收到 {self.cap}")
+        if not (0.0 <= self.jitter <= 1.0):
+            raise ValueError(f"RetryConfig.jitter 必須 ∈ [0, 1]，收到 {self.jitter}")
+
 
 def make_retry_config() -> RetryConfig:
     """工廠：呼叫時（非載入期）讀 config 對應常數，回傳 `RetryConfig` 實例。
@@ -406,7 +417,10 @@ class Expert:
         - 未知例外由骨幹原樣 re-raise，不掩蓋真錯。
         """
         r = self.role
-        max_retries = max(0, config.EXPERT_RATE_LIMIT_RETRIES)
+        # 退避配置統一由工廠取得（call-time 讀 config）；max_retries 與 backoff 皆由
+        # cfg 欄位驅動，experts 層不再直接散讀 config.EXPERT_RATE_LIMIT_*。
+        cfg = make_retry_config()
+        max_retries = cfg.max_retries
 
         async def _attempt() -> str:
             await self._client.query(prompt)
@@ -453,7 +467,9 @@ class Expert:
         text = await llm_caller.run_with_retries(
             _attempt,
             max_retries=max_retries,
-            backoff=_backoff_delay,
+            backoff=lambda retry_after, attempt: llm_caller.backoff_delay(
+                retry_after, attempt, base=cfg.base, cap=cfg.cap, jitter=cfg.jitter
+            ),
             sleep=_sleep,
             on_retry=_on_retry,
             on_rate_limit_exhausted=_on_rate_limit_exhausted,
