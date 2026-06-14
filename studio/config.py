@@ -63,6 +63,29 @@ def _role_models() -> dict[str, str]:
 
 ROLE_MODELS = _role_models()
 
+# 合法的 provider 名單；per-role 覆寫只接受其一，其餘（含 auto／空）＝不覆寫。
+PROVIDERS = ("claude", "openai", "minimax")
+
+
+def _role_providers() -> dict[str, str]:
+    """每個角色可單獨指定 provider（TI_PROVIDER_<角色KEY大寫>），達成 Claude／MiniMax 混用。
+
+    值為空、"auto" 或非法（不在 PROVIDERS 內）＝不覆寫，沿用全域 PROVIDER。
+    """
+    out: dict[str, str] = {}
+    for key in ROLE_KEYS:
+        val = os.getenv(f"TI_PROVIDER_{key.upper()}", "").strip().lower()
+        out[key] = val if val in PROVIDERS else ""
+    return out
+
+
+ROLE_PROVIDERS = _role_providers()
+
+
+def role_provider(key: str) -> str:
+    """角色的 per-role provider 覆寫（無覆寫回 ""）。"""
+    return ROLE_PROVIDERS.get(key, "")
+
 # OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
@@ -660,7 +683,7 @@ def reload() -> None:
     （huddle／critic／notes／lessons／reflexion／客觀閘門／self-refine／rlimits）——這些
     設定面板可改的項目；其餘（門禁、路徑、伺服器位址）維持啟動時的值。
     """
-    global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS
+    global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS, ROLE_PROVIDERS
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL_LEAD, MINIMAX_MODEL_FAST
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
@@ -701,6 +724,7 @@ def reload() -> None:
     MODEL_LEAD = os.getenv("TI_MODEL_LEAD", "claude-opus-4-8")
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
     ROLE_MODELS = _role_models()
+    ROLE_PROVIDERS = _role_providers()
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
     OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")

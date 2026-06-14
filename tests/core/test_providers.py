@@ -26,7 +26,8 @@ class FakeChat:
         self.i = 0
         self.seen = []
 
-    async def __call__(self, messages, tools, model):
+    async def __call__(self, messages, tools, model, **_kw):
+        # **_kw 容忍混用路徑經 _chat_for 帶入的 provider= 關鍵字（測試僅關心 messages/tools/model）。
         self.seen.append({"messages": list(messages), "tools": tools, "model": model})
         r = self.responses[self.i]
         self.i += 1
@@ -121,6 +122,39 @@ def test_openai_client_args_openai(monkeypatch):
     assert providers._openai_client_args() == ("oa-key", "http://localhost:11434/v1")
 
 
+def test_effective_provider_override(monkeypatch):
+    """per-role 覆寫優先於全域；無覆寫沿用全域。"""
+    monkeypatch.setattr(config, "PROVIDER", "claude")
+    monkeypatch.setattr(config, "ROLE_PROVIDERS", {"engineer": "claude", "pm": "minimax"})
+    assert providers.effective_provider(BY_KEY["pm"]) == "minimax"  # 覆寫
+    assert providers.effective_provider(BY_KEY["engineer"]) == "claude"  # 覆寫
+    assert providers.effective_provider(BY_KEY["qa"]) == "claude"  # 無覆寫→全域
+
+
+def test_make_expert_mixed_per_role(monkeypatch, tmp_path):
+    """混用：全域 claude，但把 pm 覆寫成 minimax → pm 走 OpenAIExpert、其餘走 Claude Expert。"""
+    monkeypatch.setattr(config, "PROVIDER", "claude")
+    monkeypatch.setattr(config, "ROLE_PROVIDERS", {"pm": "minimax"})
+    pm = providers.make_expert(BY_KEY["pm"], "t", tmp_path)
+    assert isinstance(pm, providers.OpenAIExpert)
+    # 非覆寫角色走 Claude 路徑（Expert，延後 import）。
+    from studio.experts import Expert
+
+    qa = providers.make_expert(BY_KEY["qa"], "t", tmp_path)
+    assert isinstance(qa, Expert)
+
+
+def test_make_expert_mixed_model_slot(monkeypatch):
+    """混用時模型槽依角色有效 provider 決定，不被全域帶歪。"""
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "ROLE_PROVIDERS", {"pm": "minimax"})
+    monkeypatch.setattr(config, "MINIMAX_MODEL_LEAD", "MiniMax-M3")
+    # pm ∈ LEAD_ROLES 且覆寫 minimax → MiniMax 主力模型
+    assert providers.openai_model_for(BY_KEY["pm"]) == "MiniMax-M3"
+    # engineer 無覆寫 → 全域 openai 快速模型
+    assert providers.openai_model_for(BY_KEY["engineer"]) == config.OPENAI_MODEL_FAST
+
+
 def test_provider_ready_minimax(monkeypatch):
     """minimax 只認 API key（base_url 有預設端點）。"""
     monkeypatch.setattr(config, "PROVIDER", "minimax")
@@ -206,7 +240,7 @@ async def test_complete_once_openai_exception_degrades(monkeypatch, tmp_path):
 
     called = {"n": 0}
 
-    async def exploding_chat(messages, tools_, model):
+    async def exploding_chat(messages, tools_, model, **_kw):
         called["n"] += 1
         raise RuntimeError("API 炸了")
 
@@ -226,7 +260,7 @@ async def test_complete_once_openai_chat_non_runtime_exception_also_degrades(mon
 
     called = {"n": 0}
 
-    async def exploding_chat(messages, tools_, model):
+    async def exploding_chat(messages, tools_, model, **_kw):
         called["n"] += 1
         raise ValueError("非預期型別")
 

@@ -59,7 +59,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 1.1 | 頁面載入與現值顯示 | 在已登入頁面點右上角「⚙️ 設定」按鈕 | 設定面板（彈窗）出現，顯示一份設定表單與「儲存」按鈕，右上角有「✕」關閉鈕 | | | |
 | 1.2 | 頁面載入與現值顯示 | 觀察面板剛開啟到表單出現的瞬間 | 表單載入時短暫出現「載入中…」字樣，隨後被實際欄位取代 | | | 載入很快時可能一閃即過，屬正常 |
-| 1.3 | 頁面載入與現值顯示 | 由上往下看面板裡的分組標題 | 依序出現分組標題：「一般」→「Claude」→「OpenAI」→「MiniMax」→「GitHub」→「並行」→「進階」 | | | |
+| 1.3 | 頁面載入與現值顯示 | 由上往下看面板裡的分組標題 | 依序出現分組標題：「一般」→「Claude」→「OpenAI」→「MiniMax」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」 | | | |
 | 1.4 | 頁面載入與現值顯示 | 看「一般」分組 | 出現「後端 Provider」下拉選單，且目前值（claude／openai／minimax）已被選取顯示 | | | |
 | 1.5 | 頁面載入與現值顯示 | 看一個非秘密的文字欄位（例如 Claude「主力模型」） | 欄位內直接顯示目前 `.env` 已設定的值（例如 claude-opus-4-8）；若未設定則顯示灰色提示範例 | | | |
 | 1.6 | 頁面載入與現值顯示 | 看一個**已設定**的秘密欄位（例如已填過的 Claude API Key） | 欄位內**不顯示任何明文或圓點密碼**，呈空白，灰色提示字為「已設定（留空＝不變更）」 | | | 高風險：不可外洩既有金鑰 |
@@ -107,6 +107,8 @@
 | 2.23 | 客觀驗收閘門／單輪自我精修／架構討論模式（select 固定選項） | 「客觀驗收閘門」選 0／1／strict，「單輪自我精修」選 0～3，「架構討論模式」選 legacy／round_robin／parallel，分別儲存 | 閘門可在 0、1、strict 間切換；自我精修可選 0～3；討論模式可在三選項間切換；皆儲存成功、重開顯示所選值 | | | 正常值＋邊界（固定選項集） |
 | 2.24 | 進階組非法選項（後端白名單） | 用 `POST /api/settings` 送非法值：`TI_CLARIFY`／`TI_HUDDLE`／`TI_CRITIC`／`TI_NOTES`／`TI_LESSONS`／`TI_REFLEXION`／`TI_RLIMITS`／`TI_KNOWLEDGE`／`TI_BLUEPRINT`／`TI_ADR`／`TI_RESEARCH_TOOLS`（即時研究）非 0/1、`TI_OBJECTIVE_GATE` 非 0/1/strict、`TI_SELF_REFINE_ITERS` 非 0～3、`TI_DISCUSS_MODE`（架構討論模式）非 legacy/round_robin/parallel，後重開面板 | 非法值一律被後端忽略，各進階開關（含需求澄清／閘門／自我精修／討論模式／資源上限／知識沉澱／產品藍圖／架構決策記錄／即時研究）維持原值 | | | 非法值：後端白名單擋下 |
 | 2.25 | 角色模型欄（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_MODEL_PM`／`TI_MODEL_ENGINEER`／`TI_MODEL_QA`／`TI_MODEL_SENIOR`／`TI_MODEL_RESEARCHER`／`TI_MODEL_ARCHITECT`／`TI_MODEL_SECURITY`／`TI_MODEL_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色模型維持原值（auto＝沿用主力/快速規則）；帶「（推薦）」尾綴的選項與「✨ 套用推薦模型」按鈕可一鍵填入推薦配置 | | | 非法值：後端白名單擋下 |
+| 2.26 | 每角色 provider 混用（select，8 欄，正常） | 在「混用（每角色 provider）」分組把某角色（如「工程師 provider」）選 claude、另一角色（如「專案經理 provider」）選 minimax，其餘留 auto，儲存 | 可逐角色選 auto／claude／openai／minimax 並儲存；重開顯示所選值（auto＝沿用上方全域 Provider，達成 Claude／MiniMax 混用） | | | 正常值＋邊界（固定選項集） |
+| 2.27 | 每角色 provider 混用（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_PROVIDER_PM`／`TI_PROVIDER_ENGINEER`／`TI_PROVIDER_QA`／`TI_PROVIDER_SENIOR`／`TI_PROVIDER_RESEARCHER`／`TI_PROVIDER_ARCHITECT`／`TI_PROVIDER_SECURITY`／`TI_PROVIDER_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色 provider 維持原值（auto＝沿用全域） | | | 非法值：後端白名單擋下 |
 
 ## ③ 儲存／取消／重新部署／改密碼
 

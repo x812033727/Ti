@@ -20,14 +20,23 @@ from .roles import Role, effective_tools
 logger = logging.getLogger(__name__)
 
 
+def effective_provider(role: Role) -> str:
+    """角色的有效 provider：per-role 覆寫（TI_PROVIDER_<KEY>）優先，否則全域 PROVIDER。
+
+    讓 Claude／MiniMax 可混用——例如把 tool-calling 吃重的工程師／QA 留 Claude、
+    討論型角色走 MiniMax。
+    """
+    return config.role_provider(role.key) or config.PROVIDER
+
+
 def openai_model_for(role: Role) -> str:
     """OpenAI 相容路徑（openai／minimax）的角色模型：依 LEAD_ROLES 二分。
 
-    minimax 走 MiniMax 自家模型槽，其餘（含預設）走 OpenAI 模型槽——故未顯式設定
-    PROVIDER 時行為與既有 openai 完全一致。
+    依角色的「有效 provider」決定模型槽：minimax 走 MiniMax 自家模型，其餘走 OpenAI 模型槽
+    ——故未顯式覆寫時行為與既有 openai 完全一致。
     """
     lead = role.key in config.LEAD_ROLES
-    if config.PROVIDER == "minimax":
+    if effective_provider(role) == "minimax":
         return config.MINIMAX_MODEL_LEAD if lead else config.MINIMAX_MODEL_FAST
     return config.OPENAI_MODEL_LEAD if lead else config.OPENAI_MODEL_FAST
 
@@ -164,21 +173,22 @@ def _assistant_dict(msg, tool_calls) -> dict:
     return d
 
 
-def _openai_client_args() -> tuple[str, str | None]:
+def _openai_client_args(provider: str | None = None) -> tuple[str, str | None]:
     """依 provider 選 chat-completions 客戶端的 (api_key, base_url)。
 
-    minimax 與 openai 共用同一相容客戶端，僅憑證/端點來源不同；抽成純函式以便在
-    未安裝 openai 套件的環境下也能單元測試憑證分流（不污染對方的金鑰）。
+    provider 省略時取全域 config.PROVIDER。minimax 與 openai 共用同一相容客戶端，僅憑證/
+    端點來源不同；抽成純函式以便在未安裝 openai 套件的環境下也能單元測試憑證分流
+    （不污染對方的金鑰）。
     """
-    if config.PROVIDER == "minimax":
+    if (provider or config.PROVIDER) == "minimax":
         return (config.MINIMAX_API_KEY or "sk-none", config.MINIMAX_BASE_URL or None)
     return (config.OPENAI_API_KEY or "sk-none", config.OPENAI_BASE_URL or None)
 
 
-async def _openai_chat(messages, tools_, model):
+async def _openai_chat(messages, tools_, model, provider=None):
     import openai
 
-    api_key, base_url = _openai_client_args()
+    api_key, base_url = _openai_client_args(provider)
     client = openai.AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
@@ -188,10 +198,25 @@ async def _openai_chat(messages, tools_, model):
     )
 
 
+def _chat_for(provider: str):
+    """產生綁定特定 provider 憑證的 chat 閉包（供混用時每位專家各用自己的 provider）。
+
+    仍經模組級 `_openai_chat`（測試以 monkeypatch 替換的接縫），只是固定帶入該 provider。
+    """
+
+    async def chat(messages, tools_, model):
+        return await _openai_chat(messages, tools_, model, provider=provider)
+
+    return chat
+
+
 def make_expert(role: Role, session_id: str, cwd: Path):
-    """依設定的 provider 建立一位專家。"""
-    if config.PROVIDER in ("openai", "minimax"):
-        return OpenAIExpert(role, session_id, cwd, chat=_openai_chat, model=openai_model_for(role))
+    """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax 混用）。"""
+    prov = effective_provider(role)
+    if prov in ("openai", "minimax"):
+        return OpenAIExpert(
+            role, session_id, cwd, chat=_chat_for(prov), model=openai_model_for(role)
+        )
     # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
     from .experts import Expert
 
