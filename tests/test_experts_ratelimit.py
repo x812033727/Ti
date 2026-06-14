@@ -296,3 +296,42 @@ def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
     assert experts._backoff_delay(None, 0) == 2.0  # 指數：2 × 2^0
     assert experts._backoff_delay(None, 2) == 8.0  # 2 × 2^2
     assert experts._backoff_delay(None, 5) == 10.0  # 夾 cap
+
+
+def test_backoff_delay_jitter_within_ceiling(monkeypatch):
+    """旗標開啟時，指數分支回傳值落在 [0, min(base*2^n, cap)]，永不為負/超過 cap。"""
+    import random as _random
+
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", True)
+    _random.seed(1234)  # 固定種子讓結果可重現
+    for attempt, ceiling in [(0, 2.0), (1, 4.0), (2, 8.0), (3, 10.0), (5, 10.0), (30, 10.0)]:
+        for _ in range(500):
+            v = experts._backoff_delay(None, attempt)
+            assert 0.0 <= v <= ceiling, (attempt, v, ceiling)
+
+
+def test_backoff_delay_jitter_uses_full_jitter_args(monkeypatch):
+    """旗標開啟時呼叫 random.uniform(0, ceiling)，ceiling 為 min(base*2^n, cap)。"""
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", True)
+    calls = []
+    monkeypatch.setattr(experts.random, "uniform", lambda lo, hi: calls.append((lo, hi)) or hi)
+    assert experts._backoff_delay(None, 2) == 8.0  # ceiling = 2 × 2^2
+    assert experts._backoff_delay(None, 5) == 10.0  # ceiling 夾 cap
+    assert calls == [(0, 8.0), (0, 10.0)]
+
+
+def test_backoff_delay_jitter_on_retry_after_not_jittered(monkeypatch):
+    """旗標開啟時，retry_after 分支仍回傳 min(retry_after, cap)，完全不抖。"""
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", True)
+    # 若誤抖動，uniform 被呼叫即拋錯
+    monkeypatch.setattr(
+        experts.random, "uniform", lambda *a: pytest.fail("retry_after 分支不該呼叫 jitter")
+    )
+    assert experts._backoff_delay(5.0, 0) == 5.0
+    assert experts._backoff_delay(99.0, 0) == 10.0  # 夾 cap，不抖
