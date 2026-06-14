@@ -36,3 +36,31 @@ dotenv.load_dotenv = lambda *args, **kwargs: False
 #    --unshare-net，在 GitHub runner 觸發 RTM_NEWADDR EPERM → 沙箱測試全紅）。
 for _k in [k for k in os.environ if k.startswith("TI_") and not k.startswith("TI_SANDBOX")]:
     os.environ.pop(_k, None)
+
+
+# --- 向後相容:starlette 0.41 移除了 TestClient 的 `client=` 參數 ---------------
+# 多個安全測試用 `TestClient(app, client=(ip, port))` 設定 ASGI scope 的 client peer，
+# 模擬 loopback / 公網來源以驗證 require_loopback 門禁(netutil.is_loopback)。starlette 0.41
+# 起 TestClient.__init__ 不再收 client(scope 寫死 ["testclient", 50000])——若 deploy 拉到
+# 新版 starlette,~20 個測試會在 setup 就 TypeError。此處還原相容:有 client= 時包一層 ASGI
+# app 覆寫 scope["client"],版本無關、純測試、不動生產相依。已有 client= 的舊版則不 patch。
+import inspect as _inspect  # noqa: E402
+import starlette.testclient as _sttc  # noqa: E402
+
+if "client" not in _inspect.signature(_sttc.TestClient.__init__).parameters:
+    _orig_tc_init = _sttc.TestClient.__init__
+
+    def _tc_init_with_client(self, app, *args, client=None, **kwargs):
+        if client is not None:
+            _real_app = app
+
+            async def _scope_client_app(scope, receive, send):
+                if scope.get("type") in ("http", "websocket"):
+                    scope = dict(scope)
+                    scope["client"] = list(client)
+                await _real_app(scope, receive, send)
+
+            app = _scope_client_app
+        _orig_tc_init(self, app, *args, **kwargs)
+
+    _sttc.TestClient.__init__ = _tc_init_with_client
