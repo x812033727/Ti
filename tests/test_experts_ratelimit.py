@@ -166,6 +166,8 @@ def _rl_config(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", 2)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 60.0)
+    # 顯式關閉 jitter：speak 層吃確定指數退避值的斷言不隨 #3 把 default 改 "1" 回歸
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
 
 
 @pytest.fixture
@@ -291,6 +293,8 @@ async def test_speak_unknown_exception_reraised(fake_sdk, monkeypatch, _rl_confi
 def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    # 顯式關閉 jitter：吃確定值的既有斷言不可隨 #3 把 default 改 "1" 而回歸
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
     assert experts._backoff_delay(5.0, 0) == 5.0  # 採 retry-after
     assert experts._backoff_delay(99.0, 0) == 10.0  # retry-after 也夾 cap
     assert experts._backoff_delay(None, 0) == 2.0  # 指數：2 × 2^0
