@@ -1238,6 +1238,76 @@
       "rejected": "",
       "session_id": "apdcab9d76f8",
       "created_at": 1781474927.1736557
+    },
+    {
+      "decision": "新節插入錨點固定為「`## 設定流程` 節結束後、`## 指定 GitHub repo` 之前」（L286 之後），不以區間描述",
+      "rationale": "工程師核查出 L296 存在第三節，原「之後…之前」描述有兩個落點；單一錨點讓執行零歧義",
+      "rejected": "描述為「設定流程後、雙軌路由前」——中間夾了 `指定 GitHub repo`，區間含糊",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932276
+    },
+    {
+      "decision": "流向圖改用單行內文 `` make_retry_config() → RetryConfig → run_with_retries ``，不使用 ASCII art",
+      "rationale": "ASCII art 在 merge conflict 時對齊易跑掉且無工具保護；單行可讀性等價，維護成本為零",
+      "rejected": "ASCII 三層流向圖——視覺化代價高於收益，且三層架構本身已夠簡單",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932295
+    },
+    {
+      "decision": "流向圖只畫「工廠 → config 物件 → 單一執行器」一條路徑，Claude / OpenAI 收斂點在 `run_with_retries`，不畫兩條分叉",
+      "rationale": "畫兩條獨立路徑與「禁第二層 retry」禁令自相矛盾；單路徑才能正確傳達「provider 層無自帶 retry」的語意",
+      "rejected": "",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932305
+    },
+    {
+      "decision": "jitter 語意只寫「jitter 為比例值（非秒數）」，不硬寫 `[0,1]` 具體範圍，改加「語意見 `llm_caller.py` 實作備註」指向源頭",
+      "rationale": "若實作改為 `[0, 0.5]` 文件即過時；指向源頭讓文件穩定，實作是唯一真相",
+      "rejected": "文件直寫 `[0,1]`——取捨表聲稱「公式改動不需同步文件」但同時寫死範圍，自相矛盾",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932317
+    },
+    {
+      "decision": "「禁第二層 retry」禁令後緊接一行偵測提示：「症狀為 log 出現指數級累積等待（單次 retry 延遲超過 `EXPERT_RATE_LIMIT_BACKOFF_CAP` 數倍），可 grep `retry attempt` 行的 delay 欄位確認」",
+      "rationale": "純文件禁令無執行力；加偵測提示讓維護者有具體查核點，半年後禁令仍有效",
+      "rejected": "僅寫禁令文字——高級工程師明確指出純文字禁令通常第一個被新人繞過",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932324
+    },
+    {
+      "decision": "節內三段結構維持「角色與資料流 → 新 provider 接入契約 → 語意備忘」順序不變",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932333
+    },
+    {
+      "decision": "新節標題與層級維持 `## LLM 韌性中介層（retry 子系統）`，H2 齊平其他架構節",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.093234
+    },
+    {
+      "decision": "模組職責表僅在 `experts.py`、`llm_caller.py`、`providers.py` 三列末補一句指回新節，不新增欄位、不重排",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932348
+    },
+    {
+      "decision": "`make_retry_config()` 工廠本次不搬移，以「架構伏筆：」前綴標注接入點預留，明確標示「非現行需求」",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932353
+    },
+    {
+      "decision": "Tenacity / backoff 套件評選不入文，僅加一句「設計與 exponential-backoff-with-jitter 慣例對齊」交代來源，不展開比較",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6823ce4e68",
+      "created_at": 1781477253.0932357
     }
   ]
 }
