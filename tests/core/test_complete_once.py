@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from studio import config, providers
 
 
@@ -64,3 +66,44 @@ async def test_never_raises_on_chat_error(monkeypatch, tmp_path):
 
     monkeypatch.setattr(providers, "_openai_chat", boom)
     assert await providers.complete_once("s", "u", session_id="x", cwd=tmp_path) == ""
+
+
+async def test_returns_empty_on_wait_for_timeout(monkeypatch, tmp_path):
+    """任務 #3 核心路徑：speak 卡住超過 timeout → asyncio.wait_for 拋 asyncio.TimeoutError，
+    兜底回 "" 且不外拋；finally 仍呼叫 stop() 清理資源。"""
+    monkeypatch.setattr(config, "OFFLINE_MODE", False)
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://localhost:9")  # provider_ready
+
+    stopped = {"n": 0}
+
+    class _SlowExpert:
+        async def speak(self, user, broadcast):
+            await asyncio.sleep(10)  # 必定超過 timeout=0.01
+            return "太慢不該回到這"
+
+        async def stop(self):
+            stopped["n"] += 1
+
+    monkeypatch.setattr(providers, "make_expert", lambda *a, **k: _SlowExpert())
+    out = await providers.complete_once("s", "u", session_id="x", cwd=tmp_path, timeout=0.01)
+    assert out == ""
+    assert stopped["n"] == 1  # 逾時路徑下 finally 仍清理
+
+
+async def test_returns_empty_on_speak_raising_timeout_error(monkeypatch, tmp_path):
+    """邊界：speak 直接拋 asyncio.TimeoutError（非 wait_for 觸發）也被 except 兜底回 ""。"""
+    monkeypatch.setattr(config, "OFFLINE_MODE", False)
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    monkeypatch.setattr(config, "OPENAI_BASE_URL", "http://localhost:9")  # provider_ready
+
+    class _Expert:
+        async def speak(self, user, broadcast):
+            raise asyncio.TimeoutError
+
+        async def stop(self):
+            pass
+
+    monkeypatch.setattr(providers, "make_expert", lambda *a, **k: _Expert())
+    out = await providers.complete_once("s", "u", session_id="x", cwd=tmp_path, timeout=1.0)
+    assert out == ""
