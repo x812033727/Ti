@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import difflib
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from . import backlog, config, deploy, history, runner
@@ -405,6 +406,30 @@ def _pending_awareness_context(titles: list[str] | None = None) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _oversubscribed_context(titles: list[str] | None = None, k: int | None = None) -> str:
+    """把「pending 已過多的子系統」整理成提示段（只回資料＋一句指引）。
+
+    複用 #3 的子系統抽取／計數邏輯（`_extract_subsystems`／`_count_subsystem_coverage`，定義於下方），
+    達到門檻（同子系統計數 >= k，預設 config.AUTOPILOT_SUBSYSTEM_MAX）的子系統才列出；沒有任何子系統
+    超標時回 ""（讓 prompt 不出現此段）。隨 pending 分佈動態變化，可單測斷言。
+
+    與進場 pre-filter 的硬擋門檻 `AUTOPILOT_SUBSYSTEM_MAX_PENDING` 分層互補：此處是 prompt 軟引導
+    （預設 2，早一步提醒 LLM 繞開），pre-filter 才在 `_MAX_PENDING`（預設 3）硬性拒收。
+    """
+    titles = _pending_titles() if titles is None else titles
+    k = config.AUTOPILOT_SUBSYSTEM_MAX if k is None else k
+    counts = _count_subsystem_coverage(titles)
+    over = sorted(
+        ((label, n) for label, n in counts.items() if n >= k),
+        key=lambda x: (-x[1], x[0]),
+    )
+    if not over:
+        return ""
+    lines = ["【下列子系統的排隊任務已過多，請避免再對它們提案，改去覆蓋其他模組】"]
+    lines += [f"- {label}（已有 {n} 筆）" for label, n in over]
+    return "\n".join(lines) + "\n\n"
+
+
 def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None = None) -> str:
     """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
 
@@ -414,6 +439,9 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
     """
     outcomes = _recent_outcomes_context() if outcomes is None else outcomes
     pending = _pending_awareness_context() if pending is None else pending
+    # 「已過多子系統」段隨 pending 子系統分佈動態產生：有子系統超標才出現，否則為 ""。
+    # 與 pending-awareness 同源（_pending_titles），確保 prompt 兩段覆蓋一致。
+    oversubscribed = _oversubscribed_context()
     # 措辭隨清單存否切換：有清單才講「上列」，避免空清單時硬指令 1 措辭懸空指向不存在的清單。
     rule_1 = (
         "1. 不得提出與上列任何已在排隊／進行中項目實質重疊者（同一主題換句話說也算重疊，一律避開）。\n"
@@ -423,6 +451,7 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
     return (
         outcomes
         + pending
+        + oversubscribed
         + (
             "你正在審視「Ti Studio」這個 AI 多專家自主開發工作室專案本身（原始碼就在你的工作目錄）。\n"
             "請用 Read/Grep 快速瀏覽程式碼與測試，找出最值得改善的 3~5 點（bug、缺測試、可讀性、"
@@ -437,34 +466,112 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
 def _normalize_for_dedup(s: str) -> str:
     """相似度比對前的正規化：壓平換行、strip、轉小寫、去首尾標點。
 
-    proposals 是完整句子、existing_titles 是標題，長度差會稀釋 SequenceMatcher.ratio()；
-    先 normalize 可緩解（仍是字元級比對，無法處理同義改寫）。獨立成 helper 方便日後替換策略。
+    供 `_tokenize_for_dedup` 前置使用；獨立成 helper 方便測試與日後替換策略。
     """
     s = s.replace("\n", " ").strip().lower()
     return s.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
 
 
+# 子系統關鍵詞 → 從標題抽「涉及的子系統」，供「同子系統 pending 過多即拒」的廣度防線（第二道）使用。
+# 邊界策略（動工前已實測釘住）：
+#   - 英文/latin 詞一律加 `\b` 邊界，避免 `ci`→`social`、`merge`→`emergence`、`decide` 等子詞誤命中。
+#   - CJK 詞（去重/評估）用「純子字串」而非 lookahead/`\b`：實測 `(?<!\w)去重(?!\w)` 與
+#     `(?<![^\s，。！？])去重(?![^\s，。！？])` 在連續中文標題（如「改善去重邏輯效能」「強化提案去重」）
+#     **完全不命中**——CJK 周邊無空白/標點邊界，邊界寫法反而漏抓真正想攔的子系統。去重/評估皆為具
+#     辨識度的多字詞，子字串誤命中風險極低，故對 CJK 不加邊界。匹配一律 re.IGNORECASE。
+# 同一標題可命中多個子系統（各記一次）；下方統一以正規名收斂單複數變體（experts↔expert…）。
+_SUBSYSTEM_PATTERNS: list[tuple[str, str]] = [
+    ("backlog", r"\bbacklog\b"),
+    ("discovery", r"\bdiscovery\b"),
+    ("autopilot", r"\bautopilot\b"),
+    ("experts", r"\bexperts?\b"),
+    ("providers", r"\bproviders?\b"),
+    ("runner", r"\brunner\b"),
+    ("orchestrator", r"\borchestrat\w*\b"),
+    ("secure_write", r"\bsecure[\s_-]?write\b"),
+    ("branch_protect", r"\bbranch[\s_-]?protect\w*\b"),
+    ("ci", r"\bci\b"),
+    ("merge", r"\bmerge\b"),
+    ("去重", r"去重"),
+    ("評估", r"評估"),
+]
+_SUBSYSTEM_COMPILED: list[tuple[str, re.Pattern[str]]] = [
+    (name, re.compile(pat, re.IGNORECASE)) for name, pat in _SUBSYSTEM_PATTERNS
+]
+
+
+def _extract_subsystems(title: str) -> set[str]:
+    """從單一標題抽出涉及的子系統正規名集合（無命中則空集合）。匹配固定套 re.IGNORECASE。"""
+    return {name for name, rx in _SUBSYSTEM_COMPILED if rx.search(title)}
+
+
+def _count_subsystem_coverage(titles: list[str]) -> Counter[str]:
+    """統計一批標題在各子系統的覆蓋筆數，回傳 collections.Counter[str]（支援 `[k] >= K` 比較）。
+
+    一個標題若同時命中多個子系統，對每個子系統各計一次（廣度判斷以「涉及」為準，非互斥分類）。
+    """
+    cov: Counter[str] = Counter()
+    for t in titles:
+        for s in _extract_subsystems(t):
+            cov[s] += 1
+    return cov
+
+
+# CJK 統一表意文字（含擴展 A）區段——逐字當作一個 token，不依賴外部分詞器（不引入 jieba）。
+_CJK_RE = re.compile(r"[㐀-䶿一-鿿]")
+# ASCII 英數連續片段（如 backlog、ci、retry）整段當作一個 token，大小寫已由 normalize 壓平。
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize_for_dedup(s: str) -> set[str]:
+    """把標題切成「詞集」：ASCII 英數片段整段成 token、CJK 逐字成 token，丟標點空白。
+
+    純 stdlib（re），不引入分詞依賴。CJK 逐字是刻意取捨：同義改寫常共享字根（如「補測試」/
+    「新增測試」共享「測試」），逐字交集比字元序列比對更穩；代價是字級分詞無法辨識「補↔新增」
+    這類無共享字的同義替換（見 known-limitation 測試）。
+    """
+    s = _normalize_for_dedup(s)
+    toks = set(_ASCII_TOKEN_RE.findall(s))
+    toks.update(_CJK_RE.findall(s))
+    return toks
+
+
+def _token_set_similarity(a: str, b: str) -> float:
+    """詞集 Jaccard 相似度：|A∩B| / |A∪B|，任一為空回 0.0。
+
+    取代舊的 `difflib.SequenceMatcher`（字元序列比對）。Jaccard 是集合運算、與語序無關，
+    因此能抓到舊策略漏掉的「語序調換」改寫（如「為 retry 機制加上重試上限」↔
+    「為重試機制加上 retry 上限」：SequenceMatcher≈0.625 漏網，Jaccard=1.0 攔下）。
+    """
+    ta, tb = _tokenize_for_dedup(a), _tokenize_for_dedup(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
 def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
-    """進場 pre-filter：丟掉與任一 existing 標題相似度超過 AUTOPILOT_DEDUP_RATIO 的提案。
+    """進場 pre-filter：兩道互補防線，皆只作用於本次提案進場，皆不回溯刪改 backlog、不動
+    `backlog._is_duplicate` 的字串等值去重契約。第一道相似度用 `_token_set_similarity`
+    （詞集 Jaccard，取代舊字元序列比對）以捕中文同義改寫與語序調換。
 
-    僅作用於本次 LLM 提案進場前，不回溯清洗 backlog、不刪除/合併任何既有任務，也不改動
-    `backlog._is_duplicate` 的完成去重契約（兩者互補：此處擋語意相近、那裡擋字串等值）。
-    比對範圍與 `_pending_awareness_context` 注入 prompt 的禁止清單對齊（pending + in_progress），
-    使「prompt 要求不重疊」與「pre-filter 實際擋截」覆蓋一致，避免措辭滑溜的重複漏網。
+    第一道（相似度）：丟掉與任一 existing 標題相似度 ≥ `AUTOPILOT_DEDUP_RATIO` 者（擋換句話說的重複）。
+    第二道（子系統覆蓋廣度）：以 regex 從標題抽「涉及子系統」，若某子系統在 existing 已達
+        `AUTOPILOT_SUBSYSTEM_MAX_PENDING`(K) 筆，該子系統的新提案一律拒——擋 LLM 不換標題卻反覆對同一
+        模組疊加（topic echo chamber）。已通過第一道的提案，其子系統計入 running count，避免同一批提案
+        一次塞爆同一子系統。
 
+    比對/計數範圍與 `_pending_awareness_context` 注入 prompt 的禁止清單對齊（pending + in_progress）。
     # O(n×m)，其中 n=proposals 數、m=existing 數；existing 預期 < 50 筆，若規模增長需重估。
     """
     if not existing_titles:
         return proposals
-    norm_existing = [_normalize_for_dedup(t) for t in existing_titles]
     kept: list[str] = []
     for p in proposals:
-        np_ = _normalize_for_dedup(p)
         hit = next(
             (
                 e
-                for e in norm_existing
-                if difflib.SequenceMatcher(None, np_, e).ratio() >= config.AUTOPILOT_DEDUP_RATIO
+                for e in existing_titles
+                if _token_set_similarity(p, e) >= config.AUTOPILOT_DEDUP_RATIO
             ),
             None,
         )
@@ -472,7 +579,20 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
             log.debug("pre-filter 丟棄與排隊任務高相似的提案：%r（近似 %r）", p, hit)
             continue
         kept.append(p)
-    return kept
+    # 第二道：子系統覆蓋廣度防線。coverage 以 existing 為基底，接受的提案逐筆累加進去。
+    coverage = _count_subsystem_coverage(existing_titles)
+    k = config.AUTOPILOT_SUBSYSTEM_MAX_PENDING
+    final: list[str] = []
+    for p in kept:
+        subs = _extract_subsystems(p)
+        crowded = sorted(s for s in subs if coverage[s] >= k)
+        if crowded:
+            log.debug("pre-filter 丟棄子系統已過多(≥%d)的提案：%r（子系統 %s）", k, p, crowded)
+            continue
+        for s in subs:
+            coverage[s] += 1
+        final.append(p)
+    return final
 
 
 async def _evaluate_self(clone: str) -> int:
@@ -486,7 +606,7 @@ async def _evaluate_self(clone: str) -> int:
     專家產出後再過兩道進場過濾，才交給 `backlog.add_many`：
       1. 丟掉與近期已完成標題完全相符者（`_recent_done_titles`），補 backlog 去重對 done 的缺口。
       2. 進場 pre-filter（`_filter_pending_duplicates`）：丟掉與 pending/in_progress 標題語意相近
-         （SequenceMatcher.ratio ≥ `AUTOPILOT_DEDUP_RATIO`）者，與 prompt 注入的禁止清單範圍對齊。
+         （詞集 Jaccard `_token_set_similarity` ≥ `AUTOPILOT_DEDUP_RATIO`）者，與 prompt 注入的禁止清單範圍對齊。
     兩道過濾僅作用於本次提案進場，皆不改動 `backlog._is_duplicate` 的字串等值去重契約，與其互補。
     """
     from .experts import Expert

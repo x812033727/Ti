@@ -684,3 +684,39 @@
 ## 全量驗收指令 `python3 -m pytest tests/autopilot/ tests/core/ -q`，基線 1058 passed；任何回歸（含 push_merge_flags、merge_outcomes、_wait_for_ci）皆視為阻斷，不允許「範圍外測試變紅」被忽略。
 - 時間：2026-06-15 05:28
 
+## _SUBSYSTEM_KEYWORDS 所有 pattern 一律加 \b word boundary，匹配時套 re.IGNORECASE
+- 時間：2026-06-15 06:08
+- 理由：`re.search(r'ci', "social")` 等會 false positive 打到無關英文詞，污染子系統計數器，導致合法提案被錯誤攔截——這是正確性 bug，非偏好問題。
+- 否決方案：不加 `\b` 直接用原始短字串（會打到 decide、emergence、social 等，不可接受）。
+
+## 中文 keyword（去重、評估）改用 negative lookahead/lookbehind 保護，不依賴 \b 的 Unicode 語義
+- 時間：2026-06-15 06:08
+- 理由：Python `re` 的 `\b` 對 Unicode CJK 字元與 ASCII 混排時邊界語義不穩定；`(?<![^\s，。！？])去重(?![^\s，。！？])` 或等效寫法比賭 `\b` 可靠。
+- 否決方案：直接用 `\b去重\b`（實測前不可信賴，已有前例踩坑）。
+
+## _SUBSYSTEM_KEYWORDS 初始清單改為帶邊界的 pattern 列表，如下
+- 時間：2026-06-15 06:08
+
+## _extract_subsystems 匹配時固定傳入 re.IGNORECASE，不由呼叫端決定
+- 時間：2026-06-15 06:08
+
+## _count_subsystem_coverage 回傳型別明確為 collections.Counter[str]，docstring 標明
+- 時間：2026-06-15 06:08
+- 理由：`Counter` 直接支援 `.most_common()`、`>= K` 比較，且型別明確；呼叫端不猜回傳結構。
+- 否決方案：回傳 `dict[str, int]`（可行但語意不如 Counter 清晰，且日後呼叫端可能重造輪子）。
+
+## 0.55 閾值的主力論述修正——PR 描述須明確說明「0.55 是邊緣補強，同子系統 K-filter 才是治隧道的主防線」
+- 時間：2026-06-15 06:08
+- 理由：工程師實測指出真實長標題 0.75 已能抓到，0.55 僅對極短同義標題有效；若 PR 把 0.55 包裝成主修，維護者日後調 threshold 時會誤判影響範圍。
+
+## 在 known-limitation 測試裡加一條「0.55 錯誤攔截」的反向哨兵，標記為 xfail 或明確 assert 被擋，CI 永遠看得到代價
+- 時間：2026-06-15 06:08
+- 否決方案：只測「該擋的」而不測「不該擋的」——鑑別力為零，等同假綠。
+
+## collection guard 的 TYPE_CHECKING 往上 10 行啟發式，加一個「guard 在第 12 行」反向樣本確認邊界行為，並在測試 docstring 明確標記「10 行是啟發值，非精確語義邊界」
+- 時間：2026-06-15 06:08
+- 理由：高級工程師指出若 guard 在 20 行外會漏攔；此反向樣本讓邊界可見、CI 可驗，而非文件死角。
+
+## 其餘既有決策維持不變——閾值單一常數 AUTOPILOT_DEDUP_RATIO、不引入 jieba、K 放 config、不回溯 backlog、模組邊界全在 autopilot.py
+- 時間：2026-06-15 06:08
+
