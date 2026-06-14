@@ -55,18 +55,20 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+    # 以官方 python 映像的「容器 job」執行：容器內預設使用者為 root。
+    # root-only state 寫入（studio/secure_write.py，TI_REQUIRE_CHOWN=strict 預設）的測試
+    # 會 chown 成 root 並斷言最終檔 st_uid==0；在預設非 root 的 GitHub runner 上 chown 必失敗、
+    # 這些測試無法通過（非 root 物理上造不出 root 擁有的檔）。故測試環境須對齊功能前提＝root。
+    # 全套件本地以 root 實跑為全綠（無任一測試依賴「非 root」），切 root 容器零回歸。
+    # 用完整 python 映像（非 -slim）以自帶 git，供 workspace git 測試使用。
+    container:
+      image: python:${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-
       - name: Install dependencies
         # 測試不需 claude-agent-sdk（orchestrator 延後 import），僅裝測試實際用到的依賴，
-        # 讓 CI 快速且不受 SDK 打包差異影響。
+        # 讓 CI 快速且不受 SDK 打包差異影響。容器自帶該版 python，免 actions/setup-python。
         run: |
           python -m pip install --upgrade pip
           # ruff：tests/scan/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
@@ -76,6 +78,8 @@ jobs:
         run: |
           git config --global user.email ci@ti.local
           git config --global user.name "CI"
+          # 容器 root 與 checkout 檔案擁有者一致，仍加 safe.directory 兜底「dubious ownership」。
+          git config --global --add safe.directory '*'
 
       - name: Run tests
         # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import。
