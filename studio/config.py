@@ -38,6 +38,56 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def env_bool(name: str, default: bool) -> bool:
+    """讀布林環境變數：大小寫不敏感、空字串/未設視為 default，falsy＝0/false/no/off。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    return raw.lower() not in ("0", "false", "no", "off")
+
+
+# --- root-only state 寫入的擁有者強制驗證模式（見 studio/secure_write.py）---------
+# strict（預設，fail-closed）/ warn（記錄後放行）/ off（顯式逃生開關，靜默放行）。
+# 不認得的值一律 fail-safe 取 strict，絕不靜默降級為 off。
+REQUIRE_CHOWN_MODES = ("strict", "warn", "off")
+_REQUIRE_CHOWN_TRUTHY = ("1", "true", "yes", "on")
+_REQUIRE_CHOWN_FALSY = ("0", "false", "no")
+
+
+def _parse_require_chown(raw: str | None) -> str:
+    v = (raw or "").strip().lower()
+    if not v:
+        return "strict"  # 未設定＝最嚴格（fail-closed 預設）
+    if v in REQUIRE_CHOWN_MODES:
+        return v
+    if v in _REQUIRE_CHOWN_TRUTHY:
+        return "strict"
+    if v in _REQUIRE_CHOWN_FALSY:
+        return "off"
+    return "strict"  # 設錯值 fail-safe 取 strict，不靜默放行
+
+
+def _warn_if_chown_weakened() -> None:
+    """config 載入時，對任何「顯式非 strict」記一條明顯 warning（取代逐次寫入洗版）。"""
+    if REQUIRE_CHOWN != "strict":
+        logger.warning(
+            "TI_REQUIRE_CHOWN=%s：已將 root-only state 寫入的擁有者強制驗證降級/放寬"
+            "（僅 strict 會 fail-closed），請只在非 root 部署的過渡期使用。",
+            REQUIRE_CHOWN,
+        )
+
+
+REQUIRE_CHOWN = _parse_require_chown(os.getenv("TI_REQUIRE_CHOWN"))
+
+
+def require_chown_mode() -> str:
+    """回傳目前有效的 require_chown 模式（strict/warn/off）。"""
+    return REQUIRE_CHOWN
+
+
+_warn_if_chown_weakened()
+
+
 # --- Provider / 模型 ----------------------------------------------------
 # 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）或 openai（含 OpenAI 相容/本地模型）。
 PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
@@ -654,8 +704,10 @@ def reload() -> None:
     global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
     global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
-    global ROLES_DIR
+    global ROLES_DIR, REQUIRE_CHOWN
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+    REQUIRE_CHOWN = _parse_require_chown(os.getenv("TI_REQUIRE_CHOWN"))
+    _warn_if_chown_weakened()
     ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))

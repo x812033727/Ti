@@ -300,6 +300,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_IMPROVE_MAX_FAILS` / `TI_IMPROVE_COOLDOWN` | 連續失敗幾輪即停 ／ 每輪之間喘息秒數 | 2 / 0 |
 | `TI_HISTORY_MAX_COUNT` / `TI_HISTORY_MAX_AGE` | 自動回收：最多保留幾個非 running session ／ 最後活動超過幾秒即回收（含 history 的 meta+events 與其 workspace 產出）；0=該規則停用 | 200 / 0 |
 | `TI_MAX_CONCURRENT_SESSIONS` | 同時進行的討論場次上限（每場會起多個專家子程序/LLM 連線）；超過時新的 `/ws` 連線被拒（送 error 後 close 1013）。0=不限 | 8 |
+| `TI_REQUIRE_CHOWN` | root-only state 寫入（history meta/events、backlog.json）的擁有者強制驗證模式：`strict`=驗證未過即 fail-closed（拒寫、不留半成品）／`warn`=記錄後放行／`off`=顯式逃生開關，靜默放行。不認得的值 fail-safe 取 `strict`。詳見下方「root-only 寫入保護」補充 | strict |
 
 #### Autopilot 安全旗標補充
 
@@ -315,6 +316,19 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 - **解析規則**：兩旗標只有 `0`、`false`、`False`、空值、未設定這五種會判為「關閉」，**其餘任何值一律視為開啟**。
   此比對是**字面完全相符、區分大小寫**（程式為 `not in ("0","false","False","")`，無 `.lower()`），
   所以 `FALSE`（全大寫）、`no`、`off`、`disable` 等都**不在關閉集合內，會被當成開啟**。要關閉請固定填 `0`。
+
+#### root-only 寫入保護（`TI_REQUIRE_CHOWN`）
+
+所有「只應由 root 持有」的 state 檔（history 的 meta/events 與 backlog.json）都經由單一收斂點
+`studio.secure_write.secure_write_root` 寫入：原子寫入＋反 symlink TOCTOU＋chown 後以 fd 複驗
+擁有者（uid==0、非 hardlink），不信任 chown 回傳值。
+
+- **Breaking change**：本旗標**預設為 `strict`**（fail-closed）。在**非 root 部署**下，原本能成功的
+  state 寫入會因 chown 失敗而被拒（raise），這是相對舊版的破壞性變更。
+- **遷移指引**：非 root 部署若尚無法滿足 root 擁有者要求，過渡期請顯式設 `TI_REQUIRE_CHOWN=warn`
+  （照寫但記 WARNING），確認影響後再評估。完全停用驗證請設逃生開關 `TI_REQUIRE_CHOWN=off`
+  （`off` 為靜默放行，安全保證被放寬，僅限明確知道風險時使用）。
+- 顯式設為任何非 `strict` 值時，config 載入會記一條明顯 WARNING 提醒安全保證被降級。
 
 ### 切換到 OpenAI / 本地模型
 

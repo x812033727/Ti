@@ -15,7 +15,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import config, memory, workspace
+from . import config, memory, secure_write, workspace
 
 log = logging.getLogger("ti.history")
 
@@ -36,7 +36,7 @@ def _meta_path(session_id: str) -> Path:
 def start_session(session_id: str, requirement: str) -> dict:
     """建立 session 的歷史檔與初始 meta（狀態 running）。"""
     config.HISTORY_ROOT.mkdir(parents=True, exist_ok=True)
-    _events_path(session_id).write_text("", encoding="utf-8")
+    secure_write.secure_write_root(_events_path(session_id), b"")
     meta = {
         "session_id": _safe_id(session_id),
         "requirement": requirement,
@@ -325,6 +325,5 @@ def enforce_retention(max_count: int | None = None, max_age_s: float | None = No
 
 
 def _write_meta(session_id: str, meta: dict) -> None:
-    _meta_path(session_id).write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    data = json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8")
+    secure_write.secure_write_root(_meta_path(session_id), data)
