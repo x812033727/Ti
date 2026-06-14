@@ -15,8 +15,11 @@ import shutil
 import time
 from pathlib import Path
 
-from . import config, memory, workspace
-from .secure_write import secure_write_root
+from . import config, memory, secure_write, workspace
+
+# 唯一 choke point：兩條後端路徑（history meta/events、backlog.json）皆經
+# secure_write.secure_write_root。module-level alias 兼顧可被測試 monkeypatch。
+secure_write_root = secure_write.secure_write_root
 
 log = logging.getLogger("ti.history")
 

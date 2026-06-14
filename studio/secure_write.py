@@ -76,7 +76,7 @@ def secure_write_root(path, data, *, mode: int = 0o600, require_chown=None) -> N
                 os.fchown(fd, 0, 0)
             except OSError as e:
                 if chown_mode == "strict":
-                    raise SecureWriteError(f"fchown(0,0) 失敗（非 root？）：{e}") from e
+                    raise SecureWriteError(f"fchown(0,0) 失敗（非 root？）：{target}：{e}") from e
                 # warn：已知可能非 root、顯式接受——記警告後放行，不再做 fstat（語意一致）。
                 logger.warning("secure_write_root: fchown 失敗（warn 放行）：%s 路徑 %s", e, target)
             else:
