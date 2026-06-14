@@ -563,6 +563,20 @@ AUTOPILOT_MERGE_ADMIN = os.getenv("TI_AUTOPILOT_MERGE_ADMIN", "0") not in (
     "False",
     "",
 )
+# PUBLISH_BYPASS_INFRA_CI：自動合併等 CI 時，若 CI「失敗」其實是基礎設施/帳務秒掛
+#   （所有失敗 check 在數秒內 conclusion=failure、零步驟執行，如 GitHub Actions 命中
+#   spending limit）而非程式碼問題，則繞過此「等 CI→紅就保留待人工」的自設閘直接合併。
+#   安全前提：合併目標分支未受保護（受保護時合併仍會被 GitHub 擋下、自然 fall back），
+#   且 autopilot 發佈前的 sandbox pytest+lint 已驗過碼。預設開啟；設 0 關閉、回到 CI 紅就待人工。
+PUBLISH_BYPASS_INFRA_CI = os.getenv("TI_PUBLISH_BYPASS_INFRA_CI", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+# 判定「秒掛」的單一 check 最長執行秒數門檻：所有失敗 check 皆短於此值才視為基礎設施問題
+#   （真實 lint/test 光 checkout＋setup 就遠超此值）。任一失敗 check 超門檻＝可能真失敗→不繞過。
+PUBLISH_INFRA_CI_MAX_SECONDS = _env_float("TI_PUBLISH_INFRA_CI_MAX_SECONDS", 25.0)
 # AUTOPILOT_PROTECTION_CHECK：第二道防線——squash-merge 前主動查合併目標（AUTOPILOT_BRANCH）
 #   的分支保護狀態，「無法確認（403 無權限／網路／逾時）」一律 fail-safe 中止。預設啟用；
 #   無 Administration:read 權限而每次卡在「無法確認」的環境，可設 TI_AUTOPILOT_PROTECTION_CHECK=0
