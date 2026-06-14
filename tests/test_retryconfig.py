@@ -140,8 +140,14 @@ def test_jitter_zero_is_deterministic_blackbox():
         )
         assert got == expect, (attempt, got, expect)
     # 429 路徑（retry_after 為主）：jitter=0 直接回 min(retry_after, cap)。
-    assert lc.backoff_delay(5.0, 0, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=_boom) == 5.0
-    assert lc.backoff_delay(99.0, 0, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=_boom) == 60.0
+    assert (
+        lc.backoff_delay(5.0, 0, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=_boom)
+        == 5.0
+    )
+    assert (
+        lc.backoff_delay(99.0, 0, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=_boom)
+        == 60.0
+    )
 
 
 @pytest.mark.parametrize("r", [0.0, 0.5, 1.0])
@@ -151,12 +157,16 @@ def test_jitter_positive_bounds_with_fixed_rand(r):
     nominal = min(cfg.base_delay * (2**1), cfg.cap)  # attempt=1 → 4.0
 
     # 指數退避（equal-jitter 向下散開）：落點 = nominal*(1 - jitter*rand) ∈ [nominal*(1-j), nominal]。
-    got = lc.backoff_delay(None, 1, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=lambda: r)
+    got = lc.backoff_delay(
+        None, 1, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=lambda: r
+    )
     assert got == pytest.approx(nominal * (1.0 - cfg.jitter * r))
     assert nominal * (1.0 - cfg.jitter) - 1e-9 <= got <= nominal + 1e-9
 
     # 429 路徑（jitter 僅向上、夾 cap）：落點 ∈ [min(ra,cap), min(min(ra,cap)*(1+j), cap)]。
     ra_nominal = min(10.0, cfg.cap)
-    got_ra = lc.backoff_delay(10.0, 0, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=lambda: r)
+    got_ra = lc.backoff_delay(
+        10.0, 0, base=cfg.base_delay, cap=cfg.cap, jitter=cfg.jitter, rand=lambda: r
+    )
     assert got_ra == pytest.approx(min(ra_nominal * (1.0 + cfg.jitter * r), cfg.cap))
     assert ra_nominal - 1e-9 <= got_ra <= min(ra_nominal * (1.0 + cfg.jitter), cfg.cap) + 1e-9
