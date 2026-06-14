@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -91,10 +92,13 @@ class RetryConfig:
     - `cap`：單次退避秒數上限（夾為不小於 base_delay）。
     - `jitter`：抖動比例 ∈ [0.0, 1.0]（0＝關閉，回傳確定值，與既有行為等價）。
 
-    建構時 `__post_init__` 先做型別轉換（非數值 → TypeError／ValueError），再依固定順序夾值：
+    建構時 `__post_init__` 先做型別轉換（非數值 → TypeError／ValueError），再做有限性守門
+    （`inf`／`nan` → ValueError，避免 `asyncio.sleep(inf)` 永久 hang 或 NaN 繞過邊界比較），
+    最後依固定順序夾值：
     ① `max_retries = max(0, max_retries)`；② `base_delay = max(1e-9, base_delay)`；
     ③ `cap = max(cap, base_delay)`（依賴 ② 的結果，順序不可對調）；
-    ④ `jitter ∉ [0.0, 1.0]` 直接 `raise ValueError`（超界＝呼叫端 bug，不靜默夾值）。
+    ④ `jitter ∉ [0.0, 1.0]` 直接 `raise ValueError`（超界＝呼叫端 bug，不靜默夾值；
+    用 `not (0 <= j <= 1)` 寫法令 `nan` 也被攔下——NaN 任何比較皆 False）。
     """
 
     max_retries: int = 3
@@ -108,12 +112,17 @@ class RetryConfig:
         self.base_delay = float(self.base_delay)
         self.cap = float(self.cap)
         self.jitter = float(self.jitter)
+        # 有限性守門：inf/nan 會讓退避靜默異常（sleep(inf) 永久 hang、nan 繞過邊界），一律報錯。
+        if not math.isfinite(self.base_delay):
+            raise ValueError(f"base_delay 必須為有限數，收到 {self.base_delay!r}")
+        if not math.isfinite(self.cap):
+            raise ValueError(f"cap 必須為有限數，收到 {self.cap!r}")
         # 夾值順序固定（見 docstring）：③ cap 依賴 ② 夾正後的 base_delay。
         self.max_retries = max(0, self.max_retries)
         self.base_delay = max(1e-9, self.base_delay)
         self.cap = max(self.cap, self.base_delay)
-        # jitter 超界＝呼叫端 bug，報錯而非靜默修正（統一 cfg／純量兩路徑語意）。
-        if self.jitter < 0.0 or self.jitter > 1.0:
+        # jitter 超界／NaN＝呼叫端 bug，報錯而非靜默修正（統一 cfg／純量兩路徑語意）。
+        if not (0.0 <= self.jitter <= 1.0):
             raise ValueError(f"jitter 必須落在 [0.0, 1.0]，收到 {self.jitter!r}")
 
 
