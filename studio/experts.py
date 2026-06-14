@@ -87,6 +87,7 @@ def _backoff_delay(retry_after: float | None, attempt: int) -> float:
         attempt,
         base=config.EXPERT_RATE_LIMIT_BACKOFF,
         cap=config.EXPERT_RATE_LIMIT_BACKOFF_CAP,
+        jitter=config.EXPERT_RATE_LIMIT_BACKOFF_JITTER,
     )
 
 
