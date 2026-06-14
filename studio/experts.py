@@ -397,7 +397,7 @@ class Expert:
         - 未知例外由骨幹原樣 re-raise，不掩蓋真錯。
         """
         r = self.role
-        max_retries = max(0, config.EXPERT_RATE_LIMIT_RETRIES)
+        cfg = make_retry_config()
 
         async def _attempt() -> str:
             await self._client.query(prompt)
@@ -422,9 +422,9 @@ class Expert:
             await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
 
         async def _on_rate_limit_exhausted(snippet: str, partial: str) -> str:
-            logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, max_retries)
+            logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, cfg.max_retries)
             return await self._fallback_note(
-                f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {max_retries} 次仍失敗，本輪中止。",
+                f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {cfg.max_retries} 次仍失敗，本輪中止。",
                 partial,
                 broadcast,
             )
@@ -443,9 +443,7 @@ class Expert:
         metrics = llm_caller.RetryMetrics()
         text = await llm_caller.run_with_retries(
             _attempt,
-            max_retries=max_retries,
-            backoff=_backoff_delay,
-            sleep=_sleep,
+            **cfg.as_kwargs(),
             on_retry=_on_retry,
             on_rate_limit_exhausted=_on_rate_limit_exhausted,
             on_api_error=_on_api_error,
