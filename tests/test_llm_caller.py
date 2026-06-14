@@ -89,6 +89,63 @@ def test_backoff_prefers_retry_after_and_caps():
     assert lc.backoff_delay(None, 5, base=2.0, cap=10.0) == 10.0  # 夾 cap
 
 
+def test_backoff_jitter_default_off_is_deterministic():
+    # jitter 預設 0：回傳確定值，與舊行為等價（保證既有測試零回歸）。
+    assert lc.backoff_delay(5.0, 0, base=2.0, cap=10.0, jitter=0.0) == 5.0
+    assert lc.backoff_delay(None, 1, base=2.0, cap=10.0, jitter=0.0) == 4.0
+
+
+# --- 429 路徑 jitter：以 retry-after 為主、僅向上、夾 cap ----------------
+
+
+def test_backoff_429_jitter_upper_lower_bounds():
+    # 429：nominal=min(retry_after,cap)=4；jitter=0.5 → 落點 ∈ [4, 4×1.5=6]。
+    lo = lc.backoff_delay(4.0, 0, base=2.0, cap=60.0, jitter=0.5, rand=lambda: 0.0)
+    hi = lc.backoff_delay(4.0, 0, base=2.0, cap=60.0, jitter=0.5, rand=lambda: 1.0)
+    assert lo == 4.0  # 永不早於伺服器 retry-after
+    assert hi == 6.0  # 上界 nominal×(1+jitter)
+
+
+def test_backoff_429_jitter_never_below_retry_after_and_capped():
+    # 多次隨機抽樣：429 退避恆 ≥ retry-after（夾 cap 後），且不超過 cap。
+    import random as _r
+
+    rng = _r.Random(1234)
+    for _ in range(200):
+        d = lc.backoff_delay(5.0, 0, base=2.0, cap=20.0, jitter=0.4, rand=rng.random)
+        assert 5.0 <= d <= min(5.0 * 1.4, 20.0)
+    # retry-after 超過 cap：nominal 先夾為 cap，向上 jitter 仍夾回 cap。
+    d = lc.backoff_delay(99.0, 0, base=2.0, cap=10.0, jitter=0.5, rand=lambda: 1.0)
+    assert d == 10.0
+
+
+# --- 529／無 retry-after 路徑 jitter：純指數、equal-jitter 向下散開 -------
+
+
+def test_backoff_529_exponential_jitter_bounds():
+    # 529：nominal=min(base×2^attempt, cap)=8；jitter=0.5 → 落點 ∈ [8×0.5=4, 8]。
+    full = lc.backoff_delay(None, 2, base=2.0, cap=60.0, jitter=0.5, rand=lambda: 0.0)
+    half = lc.backoff_delay(None, 2, base=2.0, cap=60.0, jitter=0.5, rand=lambda: 1.0)
+    assert full == 8.0  # rand=0 → 不扣減，等於 nominal（上界）
+    assert half == 4.0  # rand=1 → nominal×(1-jitter)（下界）
+
+
+def test_backoff_529_jitter_within_band_and_capped():
+    import random as _r
+
+    rng = _r.Random(99)
+    for attempt in range(6):
+        nominal = min(2.0 * (2**attempt), 30.0)
+        d = lc.backoff_delay(None, attempt, base=2.0, cap=30.0, jitter=0.5, rand=rng.random)
+        assert nominal * 0.5 <= d <= nominal  # 落在 equal-jitter 帶內、不超 cap
+
+
+def test_backoff_jitter_clamped_to_unit_range():
+    # jitter>1 自動夾為 1：429 上界=nominal×2、529 下界=0。
+    assert lc.backoff_delay(4.0, 0, base=2.0, cap=60.0, jitter=5.0, rand=lambda: 1.0) == 8.0
+    assert lc.backoff_delay(None, 1, base=2.0, cap=60.0, jitter=5.0, rand=lambda: 1.0) == 0.0
+
+
 # --- run_with_retries：骨幹控制流 --------------------------------------
 
 
