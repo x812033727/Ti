@@ -626,9 +626,10 @@ AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 
 # AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用 difflib.SequenceMatcher 對每個提案與目前
 #   pending/in_progress 標題算相似度，ratio 超過此閾值即視為實質重疊、丟棄（記 log.debug）。
-#   0.75 為初始估值；中文字元級比對在同義改寫（「修復」vs「修正」）效果有限，上線後大概率需微調，
-#   故開 env override 讓調閾值零成本、不需發版。僅作用於本次提案進場，不動 backlog 既有去重契約。
-AUTOPILOT_DEDUP_RATIO = float(os.getenv("TI_AUTOPILOT_DEDUP_RATIO", "0.75"))
+#   依驗收標準 #4「零新 env 變數」：閾值收斂為單一純模組常數、不開 env override。0.75 為初始估值
+#   （中文字元級比對對同義改寫效果有限），日後若需調整改此處一個值即可。僅作用於本次提案進場，
+#   不動 backlog 既有去重契約。
+AUTOPILOT_DEDUP_RATIO = 0.75
 
 
 # --- 專案（長期產品）與持續改良迴圈 ---------------------------------------
