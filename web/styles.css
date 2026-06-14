@@ -312,6 +312,22 @@ input:focus-visible, select:focus-visible { outline: none; }
 .deck-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .deck-row .project-select { max-width: 190px; font-size: 13px; padding-top: 9px; padding-bottom: 9px; }
 .deck-row .repo-input { flex: 1; min-width: 160px; font-size: 13px; padding: 9px 12px; }
+.deck-row .project-repo {
+  display: inline-flex; align-items: center;
+  height: 36px; padding: 0 12px;
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; cursor: pointer;
+  border-radius: var(--r-full);
+  border: 1px solid rgba(124, 134, 255, .35);
+  background: rgba(124, 134, 255, .1); color: var(--accent-2);
+  transition: filter var(--t-fast), background var(--t-fast);
+}
+.deck-row .project-repo:hover { filter: brightness(1.12); }
+.deck-row .project-repo.unset {
+  border-color: rgba(255, 255, 255, .14);
+  background: var(--surface-2); color: var(--muted);
+}
+
 .improve-toggle {
   display: flex; align-items: center; gap: 6px;
   white-space: nowrap;

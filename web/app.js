@@ -457,9 +457,70 @@ async function loadProjects() {
   } catch (e) { /* 忽略 */ }
 }
 
+// 啟動鈕文案隨「是否選了專案 + 是否持續改良」變化，讓「繼續專案」一目了然。
+function updateStartLabel(pending) {
+  const pid = $("#projectSelect").value;
+  const isProj = pid && pid !== "__new__";
+  const improve = $("#improveChk").checked && isProj;
+  if (improve) {
+    startBtn.textContent = "♻️ 繼續改良";
+    startBtn.title = "在此專案上繼續：消化改良待辦／自動找問題，持續改良直到你按停止" +
+      (pending ? `（待辦 ${pending} 項）` : "（需求可留空）");
+  } else if (isProj) {
+    startBtn.textContent = "▶️ 繼續專案";
+    startBtn.title = "用下方需求在此專案上再開一場討論（沿用專案程式碼與目標 repo）";
+  } else {
+    startBtn.textContent = "開始討論";
+    startBtn.title = "";
+  }
+}
+
+// 選擇專案後：收起「一次性 repo」欄、顯示專案的目標 repo、預設進入「繼續改良」，
+// 讓「繼續一個既有專案」有明確按鈕、且設定的 repo 直接出現在啟動列。
+async function onProjectChange() {
+  const pid = $("#projectSelect").value;
+  const repoInput = $("#repoUrl");
+  const repoTag = $("#projectRepo");
+  if (pid === "__new__") { createProjectFlow(); return; }
+  if (!pid) {
+    // 一次性討論：還原一次性 UI
+    repoInput.classList.remove("hidden");
+    repoTag.classList.add("hidden");
+    $("#improveChk").checked = false;
+    updateStartLabel();
+    return;
+  }
+  // 既有專案：一次性 repo 欄對專案無作用 → 收起，改顯示專案目標 repo；預設「繼續改良」
+  repoInput.classList.add("hidden");
+  $("#improveChk").checked = true;
+  repoTag.classList.remove("hidden");
+  repoTag.classList.remove("unset");
+  repoTag.textContent = "🎯 載入中…";
+  updateStartLabel();
+  try {
+    const d = await (await fetch(`/api/projects/${pid}`)).json();
+    const p = d.project || {};
+    const pending = (d.backlog || []).filter(
+      (t) => t.status === "pending" || t.status === "in_progress",
+    ).length;
+    if (p.publish_repo) {
+      repoTag.textContent = `🎯 ${p.publish_repo}`;
+    } else {
+      repoTag.textContent = "🎯 目標 repo 未設定（點此設定）";
+      repoTag.classList.add("unset");
+    }
+    repoTag.onclick = () => setProjectPublishRepo(pid, p.publish_repo || "");
+    updateStartLabel(pending);
+  } catch (e) {
+    repoTag.textContent = "🎯 無法載入專案 repo（點此設定）";
+    repoTag.classList.add("unset");
+    repoTag.onclick = () => setProjectPublishRepo(pid, "");
+  }
+}
+
 async function createProjectFlow() {
   const name = (prompt("專案名稱（例如：無人機地面站）") || "").trim();
-  if (!name) { $("#projectSelect").value = ""; return; }
+  if (!name) { $("#projectSelect").value = ""; onProjectChange(); return; }
   const vision = (prompt("一句話產品願景（選填，會持續提醒團隊方向）") || "").trim();
   try {
     const res = await fetch("/api/projects", {
@@ -472,6 +533,7 @@ async function createProjectFlow() {
     await loadProjects();
     $("#projectSelect").value = data.project.id;
     toast(`專案「${name}」已建立`, "ok");
+    onProjectChange(); // 顯示新專案的目標 repo 狀態（未設定→提示設定）
   } catch (e) { toast("建立專案失敗", "err"); }
 }
 
@@ -844,6 +906,18 @@ async function setProjectPublishRepo(pid, current) {
       toast(v.trim() ? `目標 repo 已設為 ${v.trim()}` : "已清除目標 repo");
     }
     await refreshProjectPanel();
+    // 若該專案正選在啟動列，同步更新啟動列上的目標 repo 標籤
+    if ($("#projectSelect").value === pid) {
+      const repoTag = $("#projectRepo");
+      if (v.trim()) {
+        repoTag.textContent = `🎯 ${v.trim()}`;
+        repoTag.classList.remove("unset");
+      } else {
+        repoTag.textContent = "🎯 目標 repo 未設定（點此設定）";
+        repoTag.classList.add("unset");
+      }
+      repoTag.onclick = () => setProjectPublishRepo(pid, v.trim());
+    }
   } catch (e) {
     toast("設定失敗：" + e.message, "err");
   }
@@ -1266,9 +1340,8 @@ $("#metricsRefresh").onclick = refreshMetrics;
 $("#projectBtn").onclick = openProjectPanel;
 $("#projectClose").onclick = closeProjectPanel;
 $("#projectRefresh").onclick = refreshProjectPanel;
-$("#projectSelect").addEventListener("change", (e) => {
-  if (e.target.value === "__new__") createProjectFlow();
-});
+$("#projectSelect").addEventListener("change", onProjectChange);
+$("#improveChk").addEventListener("change", () => updateStartLabel());
 reqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 interjectInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
 
