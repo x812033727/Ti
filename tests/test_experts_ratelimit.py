@@ -166,7 +166,7 @@ def _rl_config(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", 2)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 60.0)
-    # 退避確定值測試顯式關閉 jitter 隔離（#3 將 default 改 "1" 後仍穩定）。
+    # 顯式關閉 jitter：speak 層吃確定指數退避值的斷言不隨 #3 把 default 改 "1" 回歸
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
 
 
@@ -305,12 +305,28 @@ def test_jitter_default_enabled(monkeypatch):
 def test_backoff_delay_prefers_retry_after_and_caps(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    # 顯式關閉 jitter：吃確定值的既有斷言不可隨 #3 把 default 改 "1" 而回歸
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
     assert experts._backoff_delay(5.0, 0) == 5.0  # 採 retry-after
     assert experts._backoff_delay(99.0, 0) == 10.0  # retry-after 也夾 cap
     assert experts._backoff_delay(None, 0) == 2.0  # 指數：2 × 2^0
     assert experts._backoff_delay(None, 2) == 8.0  # 2 × 2^2
     assert experts._backoff_delay(None, 5) == 10.0  # 夾 cap
+
+
+def test_backoff_delay_jitter_off_equals_pure_exponential(monkeypatch):
+    """旗標顯式關閉時，指數分支回傳純指數值（與舊行為等價），且完全不呼叫 jitter。"""
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF", 2.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_CAP", 10.0)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", False)
+    # 旗標關閉時若誤呼叫 random.uniform，即視為回歸
+    monkeypatch.setattr(
+        experts.random, "uniform", lambda *a: pytest.fail("旗標關閉時不該呼叫 jitter")
+    )
+    assert experts._backoff_delay(None, 0) == 2.0  # 2 × 2^0
+    assert experts._backoff_delay(None, 2) == 8.0  # 2 × 2^2
+    assert experts._backoff_delay(None, 5) == 10.0  # 夾 cap
+    assert experts._backoff_delay(None, 30) == 10.0  # 大 attempt 仍夾 cap
 
 
 def test_backoff_delay_jitter_within_ceiling(monkeypatch):
