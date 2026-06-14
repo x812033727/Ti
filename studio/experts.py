@@ -52,10 +52,17 @@ class ExpertRateLimited(llm_caller.RateLimitSignal):
     """
 
 
-class ExpertAPIError(llm_caller.APIErrorSignal):
-    """experts 層的 API 錯誤訊號別名——非限流錯誤文字，視為該輪失敗走 fallback。
+class ExpertOverloaded(llm_caller.OverloadedSignal):
+    """experts 層的過載（529）訊號別名——交由 speak 層做有限次「純指數退避」重試。
 
-    與限流分屬兩條獨立失敗路徑：不重試，直接回傳不含核可關鍵詞的系統說明文字。
+    與 429（retry-after 退避）分屬不同退避策略；重試耗盡後與其它 API 錯誤共用 fallback。
+    """
+
+
+class ExpertAPIError(llm_caller.APIErrorSignal):
+    """experts 層的 API 錯誤訊號別名——非限流／非過載錯誤文字，視為該輪失敗走 fallback。
+
+    與限流／過載分屬獨立失敗路徑：不重試，直接回傳不含核可關鍵詞的系統說明文字。
     """
 
 
@@ -282,6 +289,8 @@ async def stream_to_events(
                             partial = "\n".join(collected)
                             if hit[0] == "rate_limit":
                                 raise ExpertRateLimited(hit[1], text[:300], partial)
+                            if hit[0] == "overloaded":
+                                raise ExpertOverloaded(str(hit[1]), text[:300], partial)
                             raise ExpertAPIError(str(hit[1]), text[:300], partial)
                         collected.append(text)
                         await broadcast(
@@ -368,7 +377,7 @@ class Expert:
 
         async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:
             logger.warning(
-                "專家 %s 撞限流（429，第 %d/%d 次重試），退避 %.1fs：%s",
+                "專家 %s 撞限流／過載（429／529，第 %d/%d 次重試），退避 %.1fs：%s",
                 r.key,
                 attempt + 1,
                 limit,

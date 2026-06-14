@@ -325,7 +325,9 @@ def test_metrics_and_observe_are_optional():
 
 
 def test_retry_metrics_to_dict_shape():
-    m = lc.RetryMetrics(retries=2, total_delay=3.0, last_delay=1.5, rate_limit_hits=2, outcome="success")
+    m = lc.RetryMetrics(
+        retries=2, total_delay=3.0, last_delay=1.5, rate_limit_hits=2, outcome="success"
+    )
     d = m.to_dict()
     assert d == {
         "retries": 2,
