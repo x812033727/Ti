@@ -406,6 +406,30 @@ def _pending_awareness_context(titles: list[str] | None = None) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _oversubscribed_context(titles: list[str] | None = None, k: int | None = None) -> str:
+    """把「pending 已過多的子系統」整理成提示段（只回資料＋一句指引）。
+
+    複用 #3 的子系統抽取／計數邏輯（`_extract_subsystems`／`_count_subsystem_coverage`，定義於下方），
+    達到門檻（同子系統計數 >= k，預設 config.AUTOPILOT_SUBSYSTEM_MAX）的子系統才列出；沒有任何子系統
+    超標時回 ""（讓 prompt 不出現此段）。隨 pending 分佈動態變化，可單測斷言。
+
+    與進場 pre-filter 的硬擋門檻 `AUTOPILOT_SUBSYSTEM_MAX_PENDING` 分層互補：此處是 prompt 軟引導
+    （預設 2，早一步提醒 LLM 繞開），pre-filter 才在 `_MAX_PENDING`（預設 3）硬性拒收。
+    """
+    titles = _pending_titles() if titles is None else titles
+    k = config.AUTOPILOT_SUBSYSTEM_MAX if k is None else k
+    counts = _count_subsystem_coverage(titles)
+    over = sorted(
+        ((label, n) for label, n in counts.items() if n >= k),
+        key=lambda x: (-x[1], x[0]),
+    )
+    if not over:
+        return ""
+    lines = ["【下列子系統的排隊任務已過多，請避免再對它們提案，改去覆蓋其他模組】"]
+    lines += [f"- {label}（已有 {n} 筆）" for label, n in over]
+    return "\n".join(lines) + "\n\n"
+
+
 def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None = None) -> str:
     """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
 
@@ -415,6 +439,9 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
     """
     outcomes = _recent_outcomes_context() if outcomes is None else outcomes
     pending = _pending_awareness_context() if pending is None else pending
+    # 「已過多子系統」段隨 pending 子系統分佈動態產生：有子系統超標才出現，否則為 ""。
+    # 與 pending-awareness 同源（_pending_titles），確保 prompt 兩段覆蓋一致。
+    oversubscribed = _oversubscribed_context()
     # 措辭隨清單存否切換：有清單才講「上列」，避免空清單時硬指令 1 措辭懸空指向不存在的清單。
     rule_1 = (
         "1. 不得提出與上列任何已在排隊／進行中項目實質重疊者（同一主題換句話說也算重疊，一律避開）。\n"
@@ -424,6 +451,7 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
     return (
         outcomes
         + pending
+        + oversubscribed
         + (
             "你正在審視「Ti Studio」這個 AI 多專家自主開發工作室專案本身（原始碼就在你的工作目錄）。\n"
             "請用 Read/Grep 快速瀏覽程式碼與測試，找出最值得改善的 3~5 點（bug、缺測試、可讀性、"

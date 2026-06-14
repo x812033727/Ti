@@ -645,6 +645,12 @@ AUTOPILOT_DEDUP_RATIO = 0.75
 #   （同一子系統最多排 3 筆，第 3 筆起的新提案被擋），日後調整改此處一個值即可。
 AUTOPILOT_SUBSYSTEM_MAX_PENDING = 3
 
+# AUTOPILOT_SUBSYSTEM_MAX：discovery prompt 的「已過多子系統」軟提示門檻。同一子系統（_extract_subsystems
+#   識別）在 pending/in_progress 達此筆數，prompt 就主動把它列出，提示 LLM 生成階段繞開、逼出主題廣度。
+#   與 _MAX_PENDING 互補分層：本常數是「軟引導」（prompt 早一步提醒，預設 2），_MAX_PENDING 是進場「硬擋」
+#   （pre-filter 拒收，預設 3）。單一純模組常數、無 env override，日後調整改此處一個值即可。
+AUTOPILOT_SUBSYSTEM_MAX = 2
+
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
 def env_bool(name: str, default: bool) -> bool:
