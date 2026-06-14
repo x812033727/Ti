@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from . import config, memory, workspace
+from .secure_write import secure_write_root
 
 log = logging.getLogger("ti.history")
 
@@ -36,7 +37,9 @@ def _meta_path(session_id: str) -> Path:
 def start_session(session_id: str, requirement: str) -> dict:
     """建立 session 的歷史檔與初始 meta（狀態 running）。"""
     config.HISTORY_ROOT.mkdir(parents=True, exist_ok=True)
-    _events_path(session_id).write_text("", encoding="utf-8")
+    # events.jsonl 以 secure_write_root 建立空檔（root owner），確保後續 append 接續在
+    # root-owned 檔案上、不破壞 strict 不變量。
+    secure_write_root(_events_path(session_id), b"")
     meta = {
         "session_id": _safe_id(session_id),
         "requirement": requirement,
@@ -53,6 +56,12 @@ def record_event(session_id: str, event: dict) -> None:
     path = _events_path(session_id)
     if not path.parent.exists():
         return
+    # 守門：events 檔須由 start_session 以 secure_write_root 先建立（root-owned）。若尚未
+    # 初始化就 append，open("a") 會靜默建出非 root-owned 檔，破壞 strict 不變量——讓問題早死。
+    if not path.exists():
+        raise RuntimeError("events.jsonl 尚未初始化，請先呼叫 start_session")
+    # append 不改 owner：對既有 root-owned 檔追加仍維持 root owner，不走 secure_write_root
+    # （後者為覆寫語意，用於 append 會清空整個 jsonl）。
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
@@ -325,6 +334,8 @@ def enforce_retention(max_count: int | None = None, max_age_s: float | None = No
 
 
 def _write_meta(session_id: str, meta: dict) -> None:
-    _meta_path(session_id).write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    # 走 secure_write_root：原子 + symlink 防護 + 依 TI_REQUIRE_CHOWN 驗證 root owner。
+    secure_write_root(
+        _meta_path(session_id),
+        json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"),
     )

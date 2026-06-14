@@ -37,6 +37,13 @@ dotenv.load_dotenv = lambda *args, **kwargs: False
 for _k in [k for k in os.environ if k.startswith("TI_") and not k.startswith("TI_SANDBOX")]:
     os.environ.pop(_k, None)
 
+# state 安全寫入（secure_write_root）預設 strict＝寫入後驗證 owner 為 root（uid 0）。測試
+# 環境（CI runner、本機）多以非 root 跑，strict 會讓 history/backlog 的每次寫入因 fchown
+# 失敗而 raise，打掛大量既有測試。測試非 root 部署環境，故在此一律設 off（純原子寫入、
+# 不驗 owner，行為等同安全機制導入前）；secure_write 專屬測試自行用 monkeypatch.setattr
+# (config, "REQUIRE_CHOWN", ...)／require_chown= 參數 override 以驗證 strict/warn/off 三態。
+os.environ["TI_REQUIRE_CHOWN"] = "off"
+
 
 # --- 向後相容:starlette 0.41 移除了 TestClient 的 `client=` 參數 ---------------
 # 多個安全測試用 `TestClient(app, client=(ip, port))` 設定 ASGI scope 的 client peer，

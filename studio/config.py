@@ -632,6 +632,57 @@ AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 AUTOPILOT_DEDUP_RATIO = 0.75
 
 
+# --- state 安全寫入（root-only chown 驗證）---------------------------------
+def env_bool(name: str, default: bool) -> bool:
+    """讀布林環境變數；未設／空字串／純空白退回 default。
+
+    沿用本檔既有布林慣例——「假值」集合為 ("0","false","False")，其餘非空值皆為真；
+    與 _env_float「空＝未設定」的容錯一致。提為 public 供 config 內外共用（單一真值來源）。
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip() not in ("0", "false", "False")
+
+
+# state 檔案（history meta/events、backlog.json）root-only 安全寫入的三態模式。
+REQUIRE_CHOWN_MODES = ("strict", "warn", "off")
+
+
+def _parse_require_chown() -> str:
+    """解析 TI_REQUIRE_CHOWN → strict / warn / off，預設與無法辨識值皆 fail-safe 取 strict。
+
+    - 未設／留空／"strict"：strict（安全側；預設路徑靜默，不記 warning）。
+    - "warn"：降級為「chown 失敗只警告、不阻擋」，記「降級」warning。
+    - "off" 或布林假值（0/false/False）：完全停用 owner 驗證，記「降級」warning。
+    - 其餘無法辨識值：fail-safe 取 strict，記「無法辨識」warning。
+    """
+    raw = (os.getenv("TI_REQUIRE_CHOWN") or "").strip().lower()
+    if not raw or raw == "strict":
+        return "strict"
+    if raw == "warn":
+        logger.warning("TI_REQUIRE_CHOWN 降級至 warn：state 寫入 chown 失敗時僅警告、不阻擋")
+        return "warn"
+    # off 同義：複用 env_bool 慣例判布林假值，避免另維護一份同義詞表（single source of truth）。
+    if raw == "off" or not env_bool("TI_REQUIRE_CHOWN", True):
+        logger.warning("TI_REQUIRE_CHOWN 降級至 off：完全停用 state 寫入的 root owner 驗證")
+        return "off"
+    logger.warning("TI_REQUIRE_CHOWN=%r 無法辨識，fail-safe 取 strict", raw)
+    return "strict"
+
+
+# 模組頂層常數：import 時一次解析；importlib.reload(config) 即可切值（不需 cache 失效）。
+REQUIRE_CHOWN = _parse_require_chown()
+
+
+def require_chown_mode() -> str:
+    """目前的 state 安全寫入模式（strict/warn/off）。回傳模組頂層 REQUIRE_CHOWN。
+
+    只回傳常數、不重讀 env：語意清晰、無副作用，可被測試 monkeypatch 成 lambda。
+    """
+    return REQUIRE_CHOWN
+
+
 # --- 專案（長期產品）與持續改良迴圈 ---------------------------------------
 # 專案是跨 session 的一級實體：固定 workspace（程式碼與 git 歷史跨場次累積）、
 # 專屬 backlog（改良任務佇列）。持續改良迴圈（improver）重複「取 backlog 任務 →

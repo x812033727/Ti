@@ -300,6 +300,17 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_IMPROVE_MAX_FAILS` / `TI_IMPROVE_COOLDOWN` | 連續失敗幾輪即停 ／ 每輪之間喘息秒數 | 2 / 0 |
 | `TI_HISTORY_MAX_COUNT` / `TI_HISTORY_MAX_AGE` | 自動回收：最多保留幾個非 running session ／ 最後活動超過幾秒即回收（含 history 的 meta+events 與其 workspace 產出）；0=該規則停用 | 200 / 0 |
 | `TI_MAX_CONCURRENT_SESSIONS` | 同時進行的討論場次上限（每場會起多個專家子程序/LLM 連線）；超過時新的 `/ws` 連線被拒（送 error 後 close 1013）。0=不限 | 8 |
+| `TI_REQUIRE_CHOWN` | state 檔案（history meta/events、backlog.json）的 **root-only 安全寫入模式**：`strict`（預設，安全側）寫入後驗證檔案 owner 為 `root`（uid 0）且 nlink=1，任一不符即整體失敗、不落地半截檔；`warn` 過渡期放行但記 warning；`off` 完全不驗。**Breaking change：預設 `strict`，非 root 環境請改設 `warn` 或 `off`**。詳見下方「[state 安全寫入（TI_REQUIRE_CHOWN）](#state-安全寫入ti_require_chown)」小節 | strict（安全側） |
+
+#### state 安全寫入（TI_REQUIRE_CHOWN）
+
+state 檔案以「同目錄 tmp + `O_EXCL|O_NOFOLLOW` 原子建檔 + `fchown(0,0)` + `fstat` 驗證 + `rename` 取代」寫入，防 symlink 攻擊與半截檔。三態語意：
+
+- **`strict`（預設，安全側）**：寫入後驗證檔案 owner 為 `root`（uid 0）且 nlink=1，否則 raise 並清掉 tmp、絕不留下目標檔。
+- **`warn`（過渡期建議值）**：`fchown` 失敗時只記一則 warning 即放行，方便非 root 環境先跑起來再逐步收斂。
+- **`off`**：完全不呼叫 `fchown`、靜默放行。
+
+> ⚠️ **Breaking change**：預設值為 `strict`，**只在以 `root` 執行的部署下會成功**。容器／本機以非 root 跑時請設 `TI_REQUIRE_CHOWN=warn`（過渡）或 `off`，否則寫入 state 會直接失敗。錯誤值（如打錯字）一律 fail-safe 回退為 `strict`。
 
 #### Autopilot 安全旗標補充
 

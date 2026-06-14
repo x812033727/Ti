@@ -480,3 +480,66 @@
 ## `_is_duplicate`（`backlog.py`）及 `add_many` 契約完全不動；pre-filter 僅作用於本次 LLM 提案進場前，不回溯清洗現有 backlog，不刪除/合併任何既有任務。
 - 時間：2026-06-14 23:01
 
+## `REQUIRE_CHOWN` 為 `config.py` 模組頂層常數，`import` 時一次解析完畢；`require_chown_mode()` 只回傳 `REQUIRE_CHOWN`，不重讀 env
+- 時間：2026-06-15 01:44
+- 理由：`importlib.reload(config)` 即可切值，不需 cache invalidation；`require_chown_mode` 被 monkeypatch 成 lambda 時語意清晰，無副作用
+- 否決方案：每次呼叫動態讀 env（`_reload_with` 斷言語意混亂，且 reload 後 REQUIRE_CHOWN 與 require_chown_mode() 可能不一致）
+
+## `_parse_require_chown()` 內部直接複用 `env_bool()` 判 strict/off，`warn` 單獨處理，不另維護一份同義詞表
+- 時間：2026-06-15 01:44
+- 理由：工程師提醒——兩份同義詞表（1/true/yes/on）若不同步必然漂移，single source of truth 更安全
+- 否決方案：`_parse_require_chown` 自己寫全套 if/elif（需維護兩份清單）
+
+## 降級（warn/off）在 `_parse_require_chown` 解析時記 `logger.warning("TI_REQUIRE_CHOWN 降級至 %s ...", mode)`；unknown 值記 `"無法辨識"`；預設 strict 不記 warning
+- 時間：2026-06-15 01:44
+- 理由：escape_hatch 測試 `test_default_strict_no_warning` 明確要求預設路徑靜默；降級訊息在 import time 觸發確保 systemd journal 可見
+- 否決方案：在 `require_chown_mode()` 呼叫時記（每次寫入都觸發，日誌爆炸）
+
+## `env_bool()` 為 public 函式，空字串與 `None` 皆回傳 `default`
+- 時間：2026-06-15 01:44
+- 理由：測試直接斷言 `config.env_bool("TI_X_BOOL", True)`；對齊既有 `_env_float` 容錯慣例（空字串 = 未設定）
+- 否決方案：private `_env_bool`（測試無法直接斷言）
+
+## tmp 命名格式 `path.parent / f".{path.name}.{os.getpid()}.{os.urandom(4).hex()}"`
+- 時間：2026-06-15 01:44
+- 理由：高工指出同進程多 thread/coroutine 同時對同一 path 呼叫時，純 pid 會碰撞；`os.urandom` 已在 `import os` 範圍內，不引入新依賴；`O_EXCL` 確保碰撞時 open 失敗而非靜默覆蓋
+- 否決方案：純 `os.getpid()`（同進程並發會碰撞）；threading.Lock 計數器（引入 threading 依賴，過度設計）；tempfile（前綴不可控，破壞 glob 清理斷言）
+
+## fd 生命週期——happy path 在 `os.rename` 前 `os.close(fd)`；except 內 close 與 unlink 各自獨立 `try/except OSError: pass` 包覆
+- 時間：2026-06-15 01:44
+- 理由：高工指出 `os.close(fd)` 本身可能拋例外；若 close 失敗未獨立保護，後面的 `os.unlink(tmp)` 不會執行，tmp 殘留；兩步驟各自吞 OSError 才能保證兩件事都盡力執行
+- 否決方案：單一 try 包住 close+unlink（close 失敗即跳出，unlink 不執行）
+
+## 三態流程固定順序：`off` → 跳過 fchown/fstat 直接 rename；`warn` → fchown 失敗記 warning 後 rename 放行（不做 fstat）；`strict` → fchown 失敗 cleanup+raise → fstat uid≠0 cleanup+raise（訊息含實際 uid）→ fstat nlink≠1 cleanup+raise（訊息含 "nlink"）→ rename
+- 時間：2026-06-15 01:44
+- 理由：warn 的語意是「已知可能非 root，顯式接受」，fchown 後再做 fstat 驗證反而語意矛盾
+- 否決方案：warn 也做 fstat（測試未要求，且「已知 chown 失敗下 fstat 仍驗」語意曖昧）
+
+## `require_chown` 參數非 `None` 時記 `logger.warning("secure_write_root: require_chown 被呼叫端強制覆蓋為 %s，路徑 %s", mode_str, path)`
+- 時間：2026-06-15 01:44
+- 理由：高工指出此參數是安全邊界的旁路，生產環境若被誤用完全無 trace；警告不阻擋行為但留下稽核軌跡
+- 否決方案：靜默覆蓋（security event 無 trace）；強制禁止此參數（測試需要直接傳入以 bypass config）
+
+## `start_session` 建立 `events.jsonl` 走 `secure_write_root(events_path, b"")`；`record_event` 開頭加 `if not path.exists(): raise RuntimeError("events.jsonl 尚未初始化，請先呼叫 start_session")`
+- 時間：2026-06-15 01:44
+- 理由：高工指出若 `record_event` 先於 `start_session` 被呼叫，`.open("a")` 會靜默建出非 root-owned 檔案，破壞整個 strict 不變量；guard 讓問題在測試期間早死，不留隱性安全破口
+- 否決方案：僅靠呼叫順序慣例（沒有任何防線，review 或測試順序錯誤即破功）；`assert path.exists()`（production 不跑 assert）
+
+## `record_event` 的 append 維持 `.open("a")`，不呼叫 `secure_write_root`
+- 時間：2026-06-15 01:44
+- 理由：append 不改 owner；`secure_write_root` 是覆寫語意（tmp+rename），用於 append 會把整個 jsonl 清空成新內容
+- 否決方案：每次 append 都走 secure_write_root（破壞 jsonl 多行語意）
+
+## `backlog._save()` 在 `_locked()` 範圍內刪除舊 `tmp.write_text + tmp.replace`，改為 `secure_write_root(_path(state_dir), json.dumps(data, ...).encode("utf-8"))`；`_is_duplicate / add_many` 契約不動
+- 時間：2026-06-15 01:44
+- 理由：flock 序列化層保護整個 read-modify-write 區塊；secure_write_root 的內部 tmp+rename 在 lock 保護下執行，無 TOCTOU
+
+## `config.py` 新增四個定義（`env_bool`、`REQUIRE_CHOWN_MODES`、`REQUIRE_CHOWN`、`require_chown_mode`）放在 autopilot 相關常數區段尾部，不動既有 `reload()` 邏輯
+- 時間：2026-06-15 01:44
+- 理由：頂層常數 reload 自動重解析；插入位置不影響任何現有 import 順序
+
+## `README.md` 加一行 `| TI_REQUIRE_CHOWN | strict | root-only 寫入模式（安全預設） |` 至環境變數表，並在 Breaking Changes 區塊補 warn 過渡說明與 root 字樣；`.env.example` 加一行 `# TI_REQUIRE_CHOWN=strict  # Breaking change: 預設 strict，過渡期可設 warn`
+- 時間：2026-06-15 01:44
+- 理由：escape_hatch 測試五條文件斷言（含 `"Breaking change"`、`"warn"`、`"root"`、`"strict"`）均須通過；最小化改動不引入額外文件
+- 否決方案：另開獨立 SECURITY.md（文件散落、測試斷言對象固定是 README）
+
