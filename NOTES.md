@@ -499,3 +499,11 @@ Now add the #4c assertions to the e2e test. Let me add a focused test that verif
 
 ## 任務 #5 完成：為 #1~#4 補測試並實跑黑白樣本回歸：含「全員無反對」「LLM 漏標前綴 fallback」兩條既有路徑，確認自我校驗指令、未錨定標記、JSON sidecar 三者皆無回歸
 
+
+## 任務 #5 完成：retry 工廠抽取回歸 — 驗收執行指令的環境假設坑
+
+實作與測試本身全程零回歸（75 passed / 0.11s，0.1 秒即離線完成＝FakeChat+jitter=0.0 注入生效，不可能有真連線）。「連 2 輪未通過」根因不在程式碼，而在**驗收執行指令的環境假設錯誤**，兩處：
+1. **直譯器寫死 `.venv/bin/python`**：此 lane 無 venv，命令照字面找不到直譯器即失敗→被誤判成回歸失敗。改用 `python3`。驗收指令應只規定**測試命令**，不綁執行器路徑（環境假設不該洩漏進設計文件）。
+2. **測試集漏列 `test_experts_ratelimit.py`**：本任務改動（#2 改 `experts._speak_with_retries`）與 wiring 測試（#3 B法、#4 A法）全在 `test_experts_ratelimit.py`，但原執行指令只列 `test_llm_caller*`，照字面跑**驗不到本任務成果**，還違反 `#5→#3/#4` 依賴。
+- 教訓：**驗收指令的測試集必須涵蓋本任務實際改動的檔**；wiring/單元測試放哪，驗收就要跑到哪。下結論前先核對「執行指令的涵蓋面 vs 任務改動面」是否一致，別讓綠燈來自沒跑到。
+- 修正後執行指令（已實測 75 passed）：`python3 -m pytest tests/test_llm_caller.py tests/test_llm_caller_observability.py tests/test_experts_ratelimit.py -q`
