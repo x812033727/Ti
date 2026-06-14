@@ -624,17 +624,18 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 #   0 = 停用（還原成無狀態評估）。
 AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 
-# AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用 difflib.SequenceMatcher 對每個提案與目前
-#   pending/in_progress 標題算相似度，ratio 超過此閾值即視為實質重疊、丟棄（記 log.debug）。
-#   閾值收斂為單一純模組常數、不開 env override；日後若需調整改此處一個值即可。
-#   為何是 0.55：這是「邊緣補強」而非主防線。實測長標題的同義改寫（如「修復 CI flaky」↔
-#   「修正 CI flaky」）ratio≈0.9，舊 0.75 已能抓到；下調到 0.55 只多撈回「極短同義標題」
-#   （如「補測試」↔「新增測試」ratio≈0.57）這類過去漏網者。治理「同主題反覆疊加」的隧道效應，
-#   主防線是子系統覆蓋計數器（另案），本閾值僅補字元級短標題的邊緣案例。
-#   誠實代價：0.55 對「同領域但語意相反」的提案（如「提高重試上限」↔「降低重試上限」ratio≈0.67）
-#   會誤殺，屬已知 false-positive（見 test_autopilot_prefilter 反向哨兵），調 threshold 時須一併權衡。
+# AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用詞集 Jaccard 相似度（autopilot._token_set_similarity，
+#   ASCII 片段整段 + CJK 逐字，純 stdlib 無新依賴）對每個提案與目前 pending/in_progress 標題算相似度，
+#   ≥ 此閾值即視為實質重疊、丟棄（記 log.debug）。閾值收斂為單一純模組常數、不開 env override，
+#   日後調整改此處一個值即可。
+#   0.75 為實測定值：詞集策略在同一 0.75 下已能多攔「語序調換」改寫（SequenceMatcher 在 0.75 漏網的
+#   案例 Jaccard 可達 1.0），且不誤殺「相反意圖但詞集高重疊」的合法不同任務（Jaccard≈0.556 < 0.75）。
+#   調低到 0.55 經實測：對應重複樣本無新增命中、反而會誤殺「同領域但語意相反」哨兵案例（如「提高重試
+#   上限」↔「降低重試上限」詞集高重疊），故不採——治理「同主題反覆疊加」隧道效應的主防線是子系統
+#   覆蓋計數器（另案），本閾值僅補進場語意去重。無共享字根的純同義替換（如「補」↔「新增」）詞集仍
+#   擋不住，誠實標為 known-limitation（見 test_autopilot_synonym_dedup.py / test_autopilot_prefilter.py）。
 #   僅作用於本次提案進場，不回溯刪改 backlog、不動 backlog 既有字串等值去重契約。
-AUTOPILOT_DEDUP_RATIO = 0.55
+AUTOPILOT_DEDUP_RATIO = 0.75
 
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------

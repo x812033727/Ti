@@ -1,10 +1,10 @@
-"""任務 #2 驗收測試：`_evaluate_self` 提案進場的 difflib 相似度 pre-filter。
+"""任務 #2 驗收測試：`_evaluate_self` 提案進場的詞集 Jaccard 相似度 pre-filter。
 
 純檔案 IO + monkeypatch，不打 LLM/網路。涵蓋：
 - pre-filter 對高重疊提案歸零、對黑樣本零誤殺；
 - 比對範圍涵蓋 pending + in_progress（與 prompt 禁止清單對齊）；
-- 閾值集中為單一模組常數（0.55，邊緣補強），可調整（測試以 monkeypatch 模擬）；
-- 降閾值多攔回「極短同義標題」，並以反向哨兵誠實標註其 false-positive 代價；
+- 閾值集中為單一模組常數（0.75，詞集 Jaccard 實測定值），可調整（測試以 monkeypatch 模擬）；
+- 詞集 Jaccard 攔下語序調換改寫，並以反向哨兵證明「詞集高重疊但意圖相反」不誤殺；
 - 端到端 `_evaluate_self`（mock Expert.speak）下高重疊提案實際進場數為 0；
 - `_is_duplicate` 字串等值契約未被改動、既有任務不被刪除。
 
@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import difflib
 import inspect
 
 import pytest
@@ -36,15 +35,17 @@ def state(tmp_path, monkeypatch):
 def test_threshold_is_single_module_constant():
     assert hasattr(config, "AUTOPILOT_DEDUP_RATIO")
     assert isinstance(config.AUTOPILOT_DEDUP_RATIO, float)
-    # 單一可調常數：0.55（邊緣補強，主防線是子系統覆蓋計數器，另案）。
-    assert config.AUTOPILOT_DEDUP_RATIO == pytest.approx(0.55)
+    # 單一可調常數：0.75（詞集 Jaccard 實測定值；治隧道主防線是子系統覆蓋計數器，另案）。
+    assert config.AUTOPILOT_DEDUP_RATIO == pytest.approx(0.75)
 
 
-def test_uses_stdlib_difflib_no_extra_dep():
-    # 用 stdlib difflib，無第三方相似度依賴（rapidfuzz 等）。
-    src = inspect.getsource(autopilot._filter_pending_duplicates)
-    assert "SequenceMatcher" in src
-    assert "rapidfuzz" not in src.lower() and "fuzzywuzzy" not in src.lower()
+def test_uses_stdlib_no_extra_dep():
+    # 詞集 Jaccard 純 stdlib（re），無第三方相似度/分詞依賴（rapidfuzz、jieba 等）。
+    src = inspect.getsource(autopilot._token_set_similarity)
+    src += inspect.getsource(autopilot._tokenize_for_dedup)
+    low = src.lower()
+    for dep in ("rapidfuzz", "fuzzywuzzy", "jieba", "sklearn", "numpy"):
+        assert dep not in low, f"不應依賴 {dep}"
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +57,8 @@ def test_high_overlap_filtered_to_zero(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
     existing = ["修復登入逾時的重試邏輯", "替 backlog 模組補上單元測試"]
     proposals = [
-        "修正登入逾時的重試邏輯",  # 同義詞替換，實測 ratio 0.909
-        "替 backlog 模組補上單測",  # 縮寫，實測 ratio 0.941
+        "修正登入逾時的重試邏輯",  # 同義詞替換，實測 Jaccard 0.833
+        "替 backlog 模組補上單測",  # 縮寫，實測 Jaccard 0.800
     ]
     kept = autopilot._filter_pending_duplicates(proposals, existing)
     assert kept == []
@@ -86,7 +87,8 @@ def test_empty_existing_returns_all_unchanged(monkeypatch):
 
 
 def test_threshold_is_adjustable(monkeypatch):
-    # 單一常數可調：放寬到 0.99 時，同義改寫（ratio 0.909）不再被擋；回到預設 0.55 則擋住。
+    # 單一常數可調（非 env override）：放寬到 0.99 時，同義改寫（Jaccard 0.833）不再被擋；
+    # 收緊到 0.55 仍擋住。證明閾值收斂為單一可調常數。
     existing = ["修復登入逾時的重試邏輯"]
     proposals = ["修正登入逾時的重試邏輯"]
     monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.99)
@@ -101,81 +103,42 @@ def test_threshold_is_adjustable(monkeypatch):
 
 
 def test_boundary_ratios_documented():
-    # 釘住「實測 ratio vs 現行單一常數」的關係，避免日後調 threshold 時無聲改變判別。
+    # 釘住詞集 Jaccard 在閾值兩側的行為（取代舊 SequenceMatcher 邊界測試）。
+    # 比較對象用現行單一常數，避免日後調 threshold 時無聲改變判別。
     thr = config.AUTOPILOT_DEDUP_RATIO
-
-    def norm(s):
-        return autopilot._normalize_for_dedup(s)
-
     cases = [
-        ("修復登入逾時的重試邏輯", "修正登入逾時的重試邏輯", 0.90, True),  # 同義詞 → 擋
-        ("替 backlog 模組補上單元測試", "替 backlog 模組補上單測", 0.90, True),  # 縮寫 → 擋
+        ("修復登入逾時的重試邏輯", "修正登入逾時的重試邏輯", 0.75, True),  # 同義詞 → 擋
+        ("替 backlog 模組補上單元測試", "替 backlog 模組補上單測", 0.75, True),  # 縮寫 → 擋
         ("修復登入逾時的重試邏輯", "重構前端首頁的載入動畫", 0.20, False),  # 黑樣本 → 放行
     ]
-    for a, b, lo, should_block in cases:
-        r = difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()
-        assert (r >= thr) == should_block, f"{a!r}<>{b!r} ratio={r:.3f} thr={thr}"
+    for a, b, bound, should_block in cases:
+        r = autopilot._token_set_similarity(a, b)
+        assert (r >= thr) == should_block, f"{a!r}<>{b!r} jaccard={r:.3f} thr={thr}"
         if should_block:
-            assert r >= lo
+            assert r >= bound
         else:
-            assert r <= lo
+            assert r <= bound
 
 
-# ---------------------------------------------------------------------------
-# 驗收 2：降閾值（0.75→0.55）相較舊策略「至少多攔住一個應視為重複的同義改寫」
-# ---------------------------------------------------------------------------
-
-
-def test_lower_threshold_catches_short_synonym(monkeypatch):
-    # 正向證據：極短同義標題「補測試」↔「新增測試」(實測 ratio≈0.571) 在舊 0.75 漏網、
-    # 新 0.55 攔住。這就是降閾值的增量價值（多撈回過去滑溜的短同義提案）。
-    existing = ["補測試"]
-    proposals = ["新增測試"]
-    r = difflib.SequenceMatcher(
-        None,
-        autopilot._normalize_for_dedup(proposals[0]),
-        autopilot._normalize_for_dedup(existing[0]),
-    ).ratio()
-    assert 0.55 <= r < 0.75, f"ratio={r:.3f} 須落在 0.55~0.75 之間才證明增量"
+def test_token_reorder_now_blocked(monkeypatch):
+    # 回歸改良：舊 SequenceMatcher 對語序調換敏感（ratio≈0.625 在 0.75 漏網），
+    # 新詞集 Jaccard 與語序無關（=1.0），同一 0.75 閾值下確實攔下。
     monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
-    assert autopilot._filter_pending_duplicates(proposals, existing) == proposals  # 舊閾值漏
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
-    assert autopilot._filter_pending_duplicates(proposals, existing) == []  # 新閾值攔
+    existing = ["為 retry 機制加上重試上限"]
+    proposals = ["為重試機制加上 retry 上限"]
+    assert autopilot._token_set_similarity(proposals[0], existing[0]) == pytest.approx(1.0)
+    assert autopilot._filter_pending_duplicates(proposals, existing) == []
 
 
-def test_reverse_sentinel_false_positive_cost(monkeypatch):
-    # 反向哨兵（誠實標註代價，非假綠）：0.55 下「提高重試上限」↔「降低重試上限」(ratio≈0.667)
-    # 語意相反卻被當重複擋掉——這是降閾值新引入的 false-positive，且在舊 0.75 下不會發生。
-    # 釘住此誤殺以確保 CI 永遠看得到代價，而非假裝硬擋無副作用。
+def test_reverse_sentinel_opposite_intent_not_blocked(monkeypatch):
+    # 反向哨兵（誠實判別力，非假綠）：詞集高重疊但語意相反的合法不同任務，0.75 下不得誤殺。
+    # 「提高重試上限」↔「降低重試上限」共享「重試/上限」但方向相反，Jaccard≈0.5 < 0.75 → 放行。
+    # 這正是 Jaccard 相較「降閾值硬擋」的優勢：靠詞集差異區分，而非賭 ratio 邊界。
+    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
     existing = ["提高重試上限"]
     proposals = ["降低重試上限"]  # 方向相反，理應視為不同任務
-    r = difflib.SequenceMatcher(
-        None,
-        autopilot._normalize_for_dedup(proposals[0]),
-        autopilot._normalize_for_dedup(existing[0]),
-    ).ratio()
-    assert 0.55 <= r < 0.75, f"ratio={r:.3f} 須落在 0.55~0.75 才是降閾值獨有的誤殺"
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.75)
-    assert autopilot._filter_pending_duplicates(proposals, existing) == proposals  # 舊閾值不誤殺
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
-    assert autopilot._filter_pending_duplicates(proposals, existing) == []  # 新閾值誤殺（已知代價）
-
-
-def test_known_limitation_pure_synonym_still_slips(monkeypatch):
-    # 已知限制（誠實，非假綠）：純同義替換且字元重疊低者，字元級比對連 0.55 都擋不住。
-    # 「撰寫部署腳本」↔「編寫發佈腳本」(撰/編、部署/發佈 全替換, ratio≈0.500) 仍漏網。
-    # 要擋這類需詞集/分詞（jieba），已由子題 2 裁定「不引入新依賴」——故記錄為缺口，
-    # 靠 prompt 負向指令與子系統計數器（另案）補位，非本層硬擋。
-    monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
-    existing = ["撰寫部署腳本"]
-    proposals = ["編寫發佈腳本"]
-    r = difflib.SequenceMatcher(
-        None,
-        autopilot._normalize_for_dedup(proposals[0]),
-        autopilot._normalize_for_dedup(existing[0]),
-    ).ratio()
-    assert r < 0.55  # 釘住：確實低於閾值（記錄缺口，非期望行為）
-    assert autopilot._filter_pending_duplicates(proposals, existing) == proposals  # 漏網
+    assert autopilot._token_set_similarity(proposals[0], existing[0]) < 0.75
+    assert autopilot._filter_pending_duplicates(proposals, existing) == proposals  # 未誤殺
 
 
 # ---------------------------------------------------------------------------
