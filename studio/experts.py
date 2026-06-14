@@ -256,6 +256,10 @@ def _build_client(role: Role, session_id: str, cwd: Path):
     抽成模組級函式以開出注入縫：測試可 monkeypatch 本函式回傳假 client，
     從而在未安裝 claude-agent-sdk、不連線的情況下驗證 Expert 生命週期。
     執行期內容與原 __init__ 完全相同。
+
+    # 重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，避免雙層疊乘。
+    # ClaudeAgentOptions 不暴露 max_retries 旋鈕（與 OpenAI SDK 不同），故無需顯式設 0；
+    # 切勿在此另加重試/退避邏輯，否則會與外層 run_with_retries 疊乘（參見 OpenAI 路徑 providers.py 的 max_retries=0）。
     """
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
 
