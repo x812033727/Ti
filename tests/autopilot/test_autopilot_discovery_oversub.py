@@ -50,10 +50,11 @@ def test_extract_subsystems_hits(title, expected):
     [
         "social media decide emergence",  # ci/merge 不該打到 social/decide/emergence
         "improve user experience overall",  # experts? 不該打到 experience
-        "這是去重複資料的任務",  # 去重 不該打到 去重複(remove-duplicate)
+        "為設定檔加上 schema 驗證",  # 無任何子系統關鍵詞 → 空集合
     ],
 )
 def test_extract_subsystems_no_false_positive(title):
+    # 抽取行為由 #3 owner（test_autopilot_subsystem_filter.py）定義；此處只 smoke 英文 \b 邊界。
     assert autopilot._extract_subsystems(title) == set()
 
 
@@ -147,5 +148,5 @@ def test_prompt_excludes_oversub_section_when_no_pending(monkeypatch):
 
 def test_extract_is_case_insensitive():
     assert autopilot._extract_subsystems("修 BACKLOG 的 Bug") == {"backlog"}
-    # 編譯期即帶 IGNORECASE flag，呼叫端無從關閉。
-    assert all(p.flags & re.IGNORECASE for _, p in autopilot._SUBSYSTEM_PATTERNS)
+    # 編譯期即帶 IGNORECASE flag，呼叫端無從關閉（#3 的編譯後 pattern 清單）。
+    assert all(p.flags & re.IGNORECASE for _, p in autopilot._SUBSYSTEM_COMPILED)

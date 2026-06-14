@@ -624,16 +624,31 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 #   0 = 停用（還原成無狀態評估）。
 AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
 
-# AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用 difflib.SequenceMatcher 對每個提案與目前
-#   pending/in_progress 標題算相似度，ratio 超過此閾值即視為實質重疊、丟棄（記 log.debug）。
-#   依驗收標準 #4「零新 env 變數」：閾值收斂為單一純模組常數、不開 env override。0.75 為初始估值
-#   （中文字元級比對對同義改寫效果有限），日後若需調整改此處一個值即可。僅作用於本次提案進場，
-#   不動 backlog 既有去重契約。
+# AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用詞集 Jaccard 相似度（autopilot._token_set_similarity，
+#   ASCII 片段整段 + CJK 逐字，純 stdlib 無新依賴）對每個提案與目前 pending/in_progress 標題算相似度，
+#   ≥ 此閾值即視為實質重疊、丟棄（記 log.debug）。閾值收斂為單一純模組常數、不開 env override，
+#   日後調整改此處一個值即可。
+#   0.75 為實測定值：詞集策略在同一 0.75 下已能多攔「語序調換」改寫（SequenceMatcher 在 0.75 漏網的
+#   案例 Jaccard 可達 1.0），且不誤殺「相反意圖但詞集高重疊」的合法不同任務（Jaccard≈0.556 < 0.75）。
+#   調低到 0.55 經實測：對應重複樣本無新增命中、反而會誤殺「同領域但語意相反」哨兵案例（如「提高重試
+#   上限」↔「降低重試上限」詞集高重疊），故不採——治理「同主題反覆疊加」隧道效應的主防線是子系統
+#   覆蓋計數器（另案），本閾值僅補進場語意去重。無共享字根的純同義替換（如「補」↔「新增」）詞集仍
+#   擋不住，誠實標為 known-limitation（見 test_autopilot_synonym_dedup.py / test_autopilot_prefilter.py）。
+#   僅作用於本次提案進場，不回溯刪改 backlog、不動 backlog 既有字串等值去重契約。
 AUTOPILOT_DEDUP_RATIO = 0.75
 
-# AUTOPILOT_SUBSYSTEM_MAX：自我評估 discovery 時，若同一子系統（以標題關鍵詞識別）的 pending/
-#   in_progress 任務數達此門檻，視為「已過多」——prompt 會主動把該子系統列出，提示 LLM 在生成階段
-#   就繞開，逼出主題廣度（避免回聲腔對同一模組反覆疊加）。單一純模組常數、無 env override。
+# AUTOPILOT_SUBSYSTEM_MAX_PENDING：自我評估「提案進場」的第二道（廣度）防線 K。從標題以 regex 抽出
+#   「涉及子系統」（_extract_subsystems），若某子系統在現有 pending/in_progress 已達 K 筆，該子系統的
+#   新提案一律拒——避免 LLM 不換標題卻反覆對同一模組（backlog、discovery…）疊加任務（topic echo
+#   chamber）。純模組常數、零 env、零新依賴。僅作用於本次提案進場：不回溯刪改 backlog、不動
+#   `backlog._is_duplicate` 的字串等值去重契約（與第一道 difflib 相似度防線互補）。3 為初始估值
+#   （同一子系統最多排 3 筆，第 3 筆起的新提案被擋），日後調整改此處一個值即可。
+AUTOPILOT_SUBSYSTEM_MAX_PENDING = 3
+
+# AUTOPILOT_SUBSYSTEM_MAX：discovery prompt 的「已過多子系統」軟提示門檻。同一子系統（_extract_subsystems
+#   識別）在 pending/in_progress 達此筆數，prompt 就主動把它列出，提示 LLM 生成階段繞開、逼出主題廣度。
+#   與 _MAX_PENDING 互補分層：本常數是「軟引導」（prompt 早一步提醒，預設 2），_MAX_PENDING 是進場「硬擋」
+#   （pre-filter 拒收，預設 3）。單一純模組常數、無 env override，日後調整改此處一個值即可。
 AUTOPILOT_SUBSYSTEM_MAX = 2
 
 
