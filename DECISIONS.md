@@ -432,3 +432,10 @@
 ## 零新外部依賴、零新 env 變數；`llm_caller.py` 模組邊界不讀 config（新欄位預設值來自模組級 `DEFAULT_*` 常量，非 config 模組）。
 - 時間：2026-06-14 21:50
 
+## 【task #5 定稿】`RetryConfig` 統一退避入口最終簽章與相容策略（以程式碼實況為準，校正早期討論草案）
+- 時間：2026-06-14 22:30
+- 最終簽章（`studio/llm_caller.py`）：`RetryConfig(max_retries: int, base=DEFAULT_BACKOFF_BASE=2.0, cap=DEFAULT_BACKOFF_CAP=60.0, jitter=DEFAULT_BACKOFF_JITTER=0.0, backoff: Callable|None=None, sleep=_default_sleep)`；`as_kwargs()` 維持 export `{max_retries, backoff, sleep}` 不變。
+- 相容策略：① 不傳 base/cap/jitter ⇒ 採 DEFAULT_*（jitter=0 確定值），自動生成退避等價舊 `backoff_delay` 預設，既有測試零改斷言即綠；② 顯式 `backoff` 注入優先（`__post_init__` 末尾 `if self.backoff is None` 才生成）；③ 非法值先 `warnings.warn(stacklevel=2)` 再 clamp，不拋例外不除零。
+- 消費端定稿校正：早期決策記「`make_retry_config` 不遷移」，**實況已收斂**為「base/cap/jitter 欄位（建構快照）＋ `backoff=_backoff_delay`（retry lazy-read）同源同一組 `EXPERT_RATE_LIMIT_*` 鍵」雙路並存（experts.py:122-128）——欄位值與實際退避行為常態一致，且保留 lazy-read 語意（QA `test_negative_control_distinguishes_lazy_from_snapshot` 鎖死禁建構快照）。文件定稿一律以程式碼實況為準。
+- 否決方案：`frozen=True`（可讀性損失 > 收益，改以 docstring 警語守 mutate 邊界，限制已登錄 KNOWN_LIMITATIONS）；jitter 預設改 0.25（破壞既有確定值測試斷言，向後相容優先，保留 0.0）。
+
