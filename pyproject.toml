@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "claude-agent-sdk>=0.1.0",
-    "fastapi>=0.110",
+    # fastapi 上限 <0.116 + 明確鎖 starlette <0.42：fastapi 0.116+ 會拉進 starlette 1.x
+    # （路由／TestClient 行為大改，曾讓 CI 全套 route 測試「找不到路由」），鎖到正式站實跑的
+    # 已知可用版本（fastapi 0.115.x／starlette 0.41.x），避免 unpinned 全新安裝漂移到
+    # starlette 1.x 而讓 CI 紅、甚至下次 autodeploy 重裝把正式站也弄壞。
+    "fastapi>=0.110,<0.116",
+    "starlette>=0.40,<0.42",
     # 鎖定 uvicorn>=0.31 以強化 ProxyHeaders 信任鏈、避免 X-Forwarded-For 取最左值偽造 client IP。
     # 下限提升至 0.31：CIDR 信任網段與 IPv6 支援在 0.31.0 才完整落地（K8s/Swarm 等 proxy IP
     # 會變動的環境需 CIDR），讓「需要 CIDR」在依賴宣告層被保證，避免有人降到 0.30.x 而功能默默失效。
@@ -18,7 +23,7 @@ dependencies = [
     # forwarded_allow_ips=config.forwarded_allow_ips()（預設 proxy 私網範圍、嚴禁 "*"）。
     "uvicorn[standard]>=0.31,<0.50",
     "python-dotenv>=1.0",
-    "httpx>=0.27",
+    "httpx>=0.27,<0.29",
     # role_store.py 直接 import：pydantic 鎖 v2（用了 ConfigDict/model_validate 等 v2-only API；
     # fastapi>=0.110 仍允許 v1，不宣告下限的話解析器選到 v1 會讓 server 頂層 import 直接炸）；
     # PyYAML 過去僅為 uvicorn[standard] 的轉依賴，直接 import 的套件必須直接宣告。
