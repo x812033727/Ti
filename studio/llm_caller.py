@@ -37,8 +37,33 @@ _STATUS_RE = re.compile(
 )
 # retry-after：header 或 JSON 欄位皆容忍（秒）。
 _RETRY_AFTER_RE = re.compile(r"retry[-_ ]?after[\"'\s:=]+(?P<sec>\d+(?:\.\d+)?)", re.I)
+
+# --- SSE 錯誤型別 → 規範 HTTP 狀態碼對照表（Issue #1258）-----------------------
+# Anthropic SDK 已知 Bug：串流中途收到 SSE `error` 事件（如 overloaded_error）時，
+# SDK 把原始 HTTP 200 response 交給 _make_status_error()，於是拋出 status_code=200，
+# 任何依賴 `status_code >= 500` 的 retry 邏輯都「靜默失效」（受害者含 pydantic-ai
+# FallbackModel）。對策：自建型別→狀態碼對照表，串流偵測一律以「錯誤型別」判定，
+# 不信任 SDK 拋出的 status_code，直到官方修掉 #1258。對照表即「該型別是否可退避重試」
+# 的單一事實來源（429→限流可退避；其餘→fallback），供分類器與 SSE 防線共用。
+_SSE_ERROR_TYPE_TO_STATUS: dict[str, int] = {
+    "rate_limit_error": 429,
+    "overloaded_error": 529,
+    "api_error": 500,
+    "authentication_error": 401,
+    "permission_error": 403,
+    "not_found_error": 404,
+    "request_too_large": 413,
+    "invalid_request_error": 400,
+    "billing_error": 403,
+    "timeout_error": 408,
+}
+# 視為「限流、可退避重試」的狀態碼（對照表唯一的可重試碼）。
+_RATE_LIMIT_STATUS = 429
 # 視為 API 錯誤（走 fallback）的狀態碼；其餘僅當有錯誤型別 token 才算。
-_API_ERROR_CODES = {"400", "401", "403", "404", "413", "500", "502", "503", "529"}
+# 由對照表的非限流碼自動帶入，再補上 SDK 直接吐出的 5xx/4xx 變體（502/503）。
+_API_ERROR_CODES = {
+    str(code) for code in _SSE_ERROR_TYPE_TO_STATUS.values() if code != _RATE_LIMIT_STATUS
+} | {"502", "503"}
 
 # 退避預設值（純量預設，不讀 config——呼叫端自行帶入專案設定，保持 provider 無關）。
 DEFAULT_BACKOFF_BASE = 2.0
@@ -78,39 +103,105 @@ def parse_retry_after(text: str) -> float | None:
     return float(m.group("sec")) if m else None
 
 
+def sse_error_status(error_type: str | None) -> int | None:
+    """SSE error 事件型別 → 規範 HTTP 狀態碼（Issue #1258：不信任 SDK status_code）。
+
+    這是串流防線判型的單一查表入口：`overloaded_error→529`、`rate_limit_error→429`…。
+    未知／空型別回傳 None（呼叫端可保守視為 api_error）。
+    """
+    if not error_type:
+        return None
+    return _SSE_ERROR_TYPE_TO_STATUS.get(error_type.strip())
+
+
+def is_rate_limit_type(error_type: str | None) -> bool:
+    """該 SSE 錯誤型別是否屬「限流、可退避重試」（依對照表，唯一可重試碼＝429）。"""
+    return sse_error_status(error_type) == _RATE_LIMIT_STATUS
+
+
 def classify_api_text(text: str) -> tuple[str, object] | None:
     """判斷一段文字是否為 API 錯誤封包。
 
     回傳 ("rate_limit", retry_after|None) ／ ("api_error", kind) ／ None。
-    rate_limit 條件：型別 token 為 rate_limit_error，或明確前綴後的狀態碼為 429。
+    判型一律「錯誤型別優先」：型別 token 經 `_SSE_ERROR_TYPE_TO_STATUS` 查表決定是否限流，
+    完全不信任文字裡夾帶的 SDK status_code（Issue #1258：SSE error 常被標成 200/亂碼）。
+    只有在「沒有任何錯誤型別 token」時，才退而採用明確前綴後的狀態碼判定。
     """
     if not text:
         return None
     m = _API_ERR_RE.search(text)
     kind = m.group("kind") if m else None
+    # 錯誤型別優先：查表決定限流／fallback，忽略 SDK 夾帶的 status_code。
+    if kind is not None:
+        if is_rate_limit_type(kind):
+            return ("rate_limit", parse_retry_after(text))
+        return ("api_error", kind)
+    # 無型別 token：才回退到狀態碼判定。
     sm = _STATUS_RE.search(text)
     code = sm.group("code") if sm else None
-    if kind == "rate_limit_error" or code == "429":
+    if code == str(_RATE_LIMIT_STATUS):
         return ("rate_limit", parse_retry_after(text))
-    if kind:
-        return ("api_error", kind)
     if code and code in _API_ERROR_CODES:
         return ("api_error", f"HTTP {code}")
+    return None
+
+
+def classify_sse_error(
+    error_type: str | None, message: str = "", *, partial_text: str = ""
+) -> Exception:
+    """把串流 SSE `error` 事件依「錯誤型別」歸類成對應訊號例外，完全忽略 SDK 的 status_code。
+
+    Issue #1258 的核心修法：SDK 把 SSE error 包成 status_code=200，依 status code 的 retry
+    全部靜默失效；本函式只看 error_type → `_SSE_ERROR_TYPE_TO_STATUS`：
+    - 429（rate_limit_error）→ `RateLimitSignal`（可退避重試，順帶解析 message 內的 retry-after）。
+    - 其餘已知型別（overloaded_error→529…）→ `APIErrorSignal`（走 fallback、不重試）。
+    - 未知／空型別 → 保守視為 `APIErrorSignal`，不誤判為可無限重試的限流。
+    回傳 Signal 例外實例（呼叫端 `raise` 即可），不在此處 raise 以利測試與組合。
+    """
+    snippet = (message or error_type or "sse_error")[:300]
+    if is_rate_limit_type(error_type):
+        return RateLimitSignal(parse_retry_after(message), snippet, partial_text)
+    kind = (error_type or "").strip() or "sse_error"
+    return APIErrorSignal(kind, snippet, partial_text)
+
+
+def _sse_error_type_from_exc(exc: Exception) -> str | None:
+    """從 SDK 例外的結構化 body 擷取 SSE 錯誤型別（Issue #1258：status_code 不可信）。
+
+    Anthropic SDK 把 SSE error 包成 `APIStatusError(status_code=200)`，但仍把原始錯誤
+    封包掛在 `.body`（形如 `{"type":"error","error":{"type":"overloaded_error",...}}`）。
+    這裡只讀 `.body` 的型別欄位，完全不看 `.status_code`，已知型別才回傳。
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        etype = err.get("type") if isinstance(err, dict) else body.get("type")
+        if etype in _SSE_ERROR_TYPE_TO_STATUS:
+            return etype
     return None
 
 
 def classify_failure(exc: Exception) -> tuple[str, float | None, str, str]:
     """把 stream/query 拋出的例外歸類為 rate_limit／api_error／unknown。
 
-    回傳 (kind, retry_after, snippet, partial_text)。涵蓋兩種 SDK 失敗形態：
+    回傳 (kind, retry_after, snippet, partial_text)。涵蓋三種 SDK 失敗形態：
     (a) 本層從錯誤文字主動拋出的 RateLimitSignal／APIErrorSignal（含其子類）；
-    (b) SDK 例外型 429（issue #812）——以 str(exc) 套同一錨定樣式辨識。
+    (b) SSE error 例外（Issue #1258）——SDK 標成 status 200 但 `.body` 帶真實型別，
+        以對照表判型、忽略 status_code；
+    (c) SDK 例外型 429（issue #812）——以 str(exc) 套同一錨定樣式辨識。
     unknown 不吞，由呼叫端 re-raise，不掩蓋真正的程式錯誤。
     """
     if isinstance(exc, RateLimitSignal):
         return ("rate_limit", exc.retry_after, exc.snippet, exc.partial_text)
     if isinstance(exc, APIErrorSignal):
         return ("api_error", None, exc.snippet, exc.partial_text)
+    # (b) 結構化 SSE error body：型別優先、忽略 SDK 的 status_code（200）。
+    etype = _sse_error_type_from_exc(exc)
+    if etype is not None:
+        snippet = str(exc)[:300] or etype
+        if is_rate_limit_type(etype):
+            return ("rate_limit", parse_retry_after(str(exc)), snippet, "")
+        return ("api_error", None, snippet, "")
     hit = classify_api_text(str(exc))
     if hit and hit[0] == "rate_limit":
         return ("rate_limit", hit[1], str(exc)[:300], "")
