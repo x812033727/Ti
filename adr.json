@@ -1861,6 +1861,62 @@
       "rejected": "",
       "session_id": "apf5498d95b9",
       "created_at": 1781499509.527012
+    },
+    {
+      "decision": "需求已在 HEAD 完整落地，不動工、不補 code——驗收訊號三路實跑均綠（ruff format/check 全過；pytest 實際 8 passed，parametrize 展開 args_drift 三 case；git diff HEAD 空）。",
+      "rationale": "工程師實跑確認 8 passed（設計草稿誤載 5），數字以實跑為準，驗收文件同步修正。",
+      "rejected": "「湊工作量補 code」——在 HEAD 已落地的狀態下新增程式只會製造不必要的 diff，提高後續維護成本。",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.5056274
+    },
+    {
+      "decision": "spy 接縫選 patch.object(wraps=real_fn)，配合 call_count + 真實 I/O 行數雙層斷言。",
+      "rationale": "wraps 保留真實行為，call_count 攔截執行次數；若只有 mock 層，wraps 實作有缺時副作用可能雙跑而 call_count 仍==1；雙層是必要冗餘，非過度設計。",
+      "rejected": "MagicMock 純替換——吞副作用，call_count==1 假綠，無法驗證真實 I/O。否決: pytest-idempotent——引入第三方依賴，違反現有「不引入新執行期依賴」原則。",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.5056305
+    },
+    {
+      "decision": "注毒（cache.put POISON）在 spy 安裝前執行，隔離 call_count 不污染。",
+      "rationale": "注毒若在 spy 後執行，put.call_count 會含注毒呼叫，須手動扣除，增加斷言脆性與誤判風險。",
+      "rejected": "",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.5056317
+    },
+    {
+      "decision": "冪等工具測試採「注毒 → 執行 → 結果≠毒值 AND put.call_count==0」三步驗證，缺任一斷言不算數。",
+      "rationale": "僅斷言結果正確不能排除「剛好快取命中返回真實值而非毒值」；僅斷言 call_count==0 不能排除「進了去重路徑但沒寫快取」；兩者互補才能閉合漏洞。",
+      "rejected": "",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.505634
+    },
+    {
+      "decision": "反向黑樣本以 parametrize 覆蓋三類 args 漂移（extra_space / extra_key / value_type_drift），斷言行數==2，docstring 明載「翻紅＝限制被解除，修掉須同步改測試」。",
+      "rationale": "比隱式註解能真正逼後人同步評估，若有人直接把斷言改成 ==3 讓 CI 綠，code review 可以介入，但至少文字約定是顯式的。",
+      "rejected": "隱式記錄限制（只留 comment）——後人不一定讀，且 CI 無法感知。",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.5056348
+    },
+    {
+      "decision": "三類測試分三檔，模組邊界對齊測試意圖（dedup/idempotent/args_drift），而非對齊生產模組。",
+      "rationale": "合一後新增 case 容易干擾鄰近意圖，分檔讓 pytest -k 篩選與 CI 分組更直觀。",
+      "rejected": "合一單檔——意圖混雜，六個月後難以判斷某條測試屬於哪個設計契約。",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.5056355
+    },
+    {
+      "decision": "測試只依賴 tools.execute_deduped / DedupCache 公開介面，不 mock 內部 dedup_key 推導（黑箱測試）。",
+      "rationale": "白箱測試耦合內部實作，dedup_key 演算法日後改版（如語意正規化）會無謂崩壞測試，維護成本高。",
+      "rejected": "",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.505637
+    },
+    {
+      "decision": "高級工程師提出的三項後續觀察點列為技術債，不阻擋本次驗收——①docstring 警告可升級為 CI linting rule；②行數斷言旁補 comment 說明「這個 2 是哪兩行」；③三檔重複 fixture 若增多可集中到 conftest.py。",
+      "rationale": "三點均屬長期可維護性改善，現況不構成正確性風險，強行納入本次範圍反而擴大 diff、違反「範圍克制」原則。",
+      "rejected": "",
+      "session_id": "apf254a6046f",
+      "created_at": 1781502009.5056376
     }
   ]
 }
