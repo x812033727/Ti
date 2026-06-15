@@ -1251,3 +1251,49 @@
 - 時間：2026-06-15 17:34
 - 理由：介面未對齊時 #4 驗收才發現問題，返工成本最高；先定介面是最便宜的協調點。
 
+## 新增 `.github/workflows/publish-release.yml`，trigger `on: push: tags: ['v*']`，job-level 設 `permissions: contents: write`；不與 `release-smoke.yml` 合併。
+- 時間：2026-06-15 18:22
+- 理由：建立職責 vs 驗證職責分離；`contents: write` 是 `gh release create` 最小權限需求。
+
+## publish job 分五個 step 依序執行：(1) Verify PAT、(2) Resolve version、(3) Assert tag matches version、(4) Render body、(5) Create release。
+- 時間：2026-06-15 18:22
+- 理由：把「PAT 未設」攔在最前面，避免前四步成功後才 403，錯誤訊息更直覺。
+
+## Step 1 為 PAT guard：`run: test -n "$GH_TOKEN" || (echo "::error::GH_PAT secret 未設或已過期" && exit 1)`，`env: GH_TOKEN: ${{ secrets.GH_PAT }}`。
+- 時間：2026-06-15 18:22
+- 理由：PAT 過期靜默炸掉 pipeline 是中風險；guard step 讓錯誤訊息直接指向根因，不是 403 猜測。
+- 否決方案：只在 README 備註到期日——文件在緊急時沒人看，guard 在 CI log 裡看得見。
+
+## Step 3 斷言 `github.ref_name == v{pyproject_version()}`，不符即 fail-fast，不建立 release。
+- 時間：2026-06-15 18:22
+- 理由：tag 與程式碼版本不同步是上線事故根因；最便宜的攔截點是 release 建立前。
+
+## 新增 `scripts/publish_release.py`（薄包裝，< 15 行），讀 `CHANGELOG.md` → 呼叫 `render_tag_notes(changelog_text, pyproject_version())` → 寫 `body.md`；workflow step 4 僅執行 `python scripts/publish_release.py`。
+- 時間：2026-06-15 18:22
+- 理由：inline Python in YAML 無法被 pytest 直接 import 測試，守護測試只能掃 YAML 結構，意義打折；抽成腳本後 task #4 可直接 import 並跑 dry-run，測試深度從「結構存在」升至「邏輯正確」。
+- 否決方案：`python -c "..."` 或 `run: | 多行 python`——邏輯不可測，且 shell quoting 仍有潛在風險。
+
+## `scripts/publish_release.py` 作為入口點時設 `set -euo pipefail`（或 Python 層 raise 即退），確保 render 失敗後 `body.md` 不殘留舊內容供 step 5 誤讀。
+- 時間：2026-06-15 18:22
+- 理由：step 4 失敗後 step 5 若仍執行會讀到舊版 body.md，file mode 本身不防這點；`set -euo pipefail` 是最小成本的冪等性保障。
+
+## Step 5 執行 `gh release create ${{ steps.version.outputs.tag }} -F body.md`，不帶 `--draft`，狀態直接為 published；`env: GH_TOKEN: ${{ secrets.GH_PAT }}`（PAT 身分建立，才能觸發下游 release:published 事件）。
+- 時間：2026-06-15 18:22
+- 理由：GITHUB_TOKEN 建立的 release 不觸發下游 workflow（GitHub 防遞迴機制）；PAT 是破解死結的最小侵入方案，smoke workflow 無需改動。
+- 否決方案：workflow_dispatch 接力——smoke 改讀 dispatch input 而非真實 release body，破壞「讀真實 body」的守護意義；GitHub App token——設置成本高，不符合當前規模。
+
+## `render_tag_notes` 呼叫傳入字串（`Path('CHANGELOG.md').read_text()`），不傳路徑；`scripts/publish_release.py` 負責讀檔，`studio.release_note` 函式簽名不動。
+- 時間：2026-06-15 18:22
+- 理由：工程師指出資料流圖的描述歧義，此處釘死介面邊界，避免實作時照抄 bug。
+
+## YAML 與 `scripts/publish_release.py` 內零 Breaking heading 字面值；所有 heading 參照透過 `studio.release_note.BREAKING_HEADING`（或 `extract_breaking_block`）匯入，task #4 grep 驗收維持 0 命中。
+- 時間：2026-06-15 18:22
+
+## task #4 守護測試分兩層：(a) YAML 解析層——斷言 `publish-release.yml` 存在 `-F body.md` step、`GH_TOKEN: ${{ secrets.GH_PAT }}`（非 GITHUB_TOKEN）；(b) 邏輯層——直接 import `scripts/publish_release.py` 的 render 邏輯並以 fixture CHANGELOG 跑 dry-run，斷言 output 非空且含 Breaking block；mutation 把 PAT 改回 GITHUB_TOKEN 必須讓 (a) 轉紅。
+- 時間：2026-06-15 18:22
+- 理由：高工指出純 YAML 掃描脆弱（結構重排假紅）；兩層互補——結構變動由 (a) 抓，邏輯迴歸由 (b) 抓。
+
+## PR 描述必須明確標注「AC#3 端對端驗收需 `GH_PAT` 先設入 repo secrets；secret 未設前 push tag 會在 step 5 以 403 失敗，屬預期行為而非 bug」，避免驗收工程師誤判。
+- 時間：2026-06-15 18:22
+- 理由：工程師提醒這是最容易被「誤標綠燈」的盲點，文件成本最低。
+
