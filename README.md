@@ -64,6 +64,8 @@
 （對齊 `pyproject.toml` 的 `requires-python`）。下列範例以 macOS / Linux 為主，
 完整路徑寫法 `.venv/bin/python3` 可**免 activate**直接使用（避免誤用系統 Python）；
 **Windows 對應為 `.venv\Scripts\python`**（啟動則為 `.venv\Scripts\activate`）。
+> **Windows `py` 啟動器退路**：若 `python3` 找不到（某些 Python Install Manager 預設安裝不把 `python3` 放 PATH），可改用 `py` 啟動器跑；想鎖 3.x 用 `py -3`，例：`.venv\Scripts\activate` 後用 `py -m studio.server` 啟動。
+> 這是 Python 官方在 Windows 推薦的 fallback 慣例，不影響 macOS / Linux 流程。
 
 **前置條件 checklist**（開工前先備齊，依「依賴／secrets／token」三類）：
 

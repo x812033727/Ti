@@ -19,6 +19,14 @@ cp .env.example .env                                     # 視需要填入金鑰
 > 跑測試與離線示範**不需** API 金鑰；只有真正要驅動 LLM 專家時才需要
 > `ANTHROPIC_API_KEY`（或 OpenAI 設定）。
 
+## Python interpreter convention
+
+> **慣例**：本專案文件命令統一 `python3` 作為裸直譯器命令（涵蓋文件 demo 範例與 shell script 範例）。venv 允許 `python`（mac/Linux `.venv/bin/python`、Windows `.venv\Scripts\python`，執行檔名），是慣例下合法寫法。套件名（`python-dotenv`）、Docker image tag（`python:3.12-slim`）、shebang 維持原樣。
+
+> **Windows `py` 啟動器退路**：若 `python3` 在 PATH 找不到，可改用 `py` 啟動器；想鎖 Python 3.x 用 `py -3`。這是 Python 官方在 Windows 推薦的 fallback。
+
+> **為何是 `python3` 而非 `python`**：macOS 12.3+ 已移除 `/usr/bin/python`、Debian/Ubuntu 系等主流 Linux 發行版預設不提供 `python` 別名；`python3` 在三大平台都是預設可用的 Python 3 進入點。venv 內 `python` 與 `python3` 同時指向 venv，是慣例下的合法寫法——本慣例挑選**對外部環境最不會踩雷**的形式。
+
 ## 日常開發
 
 ```bash
