@@ -14,6 +14,8 @@ venv/
 # QA / 驗證流程產生的暫存 venv 與 pre-commit 快取（本機 artifact，不進版控）
 .qa-venv/
 .qa_venv/
+# 工程師驗證用的隔離 ruff venv（0.14.4），本機 artifact，不進版控
+.venv-ruff/
 .pc-cache-qa/
 # test_qa_no_bare_pytest.py 的 grep-fallback 測試會即時建立此 binstub 目錄（symlink），
 # 屬執行期 artifact，不得進版控。
