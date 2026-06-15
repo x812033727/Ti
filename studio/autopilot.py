@@ -99,7 +99,9 @@ async def _gate_tests(clone: str) -> tuple[bool, str]:
         sandbox=True,
         label="pytest gate",
     )
-    return result.ok, result.output[-1500:]
+    # 標籤計入截尾預算（總長維持 ≤1500、尾段保留）：先留出前綴長度再截尾。
+    prefix = "[test] "
+    return result.ok, prefix + result.output[-(1500 - len(prefix)) :]
 
 
 async def _gate_lint(clone: str) -> tuple[bool, str]:
@@ -118,15 +120,15 @@ async def _gate_lint(clone: str) -> tuple[bool, str]:
     )
     if not probe.ok:
         log.warning("ruff 未安裝，略過 lint 閘門（請在部署環境 pip install ruff 以啟用）")
-        return True, "ruff 缺失，略過 lint 閘門"
+        return True, "[lint] ruff 缺失，略過 lint 閘門"
     for argv, name in (
         ([sys.executable, "-m", "ruff", "check", "."], "ruff check"),
         ([sys.executable, "-m", "ruff", "format", "--check", "."], "ruff format --check"),
     ):
         r = await runner.run_command_exec(clone, argv, timeout=120, sandbox=True, label=name)
         if not r.ok:
-            return False, f"{name} 未過：\n{r.output[-1200:]}"
-    return True, "ruff OK"
+            return False, f"[lint] {name} 未過：\n{r.output[-1200:]}"
+    return True, "[lint] ruff OK"
 
 
 async def _gate_collect_without_sdk(clone: str) -> tuple[bool, str]:
@@ -144,7 +146,7 @@ async def _gate_collect_without_sdk(clone: str) -> tuple[bool, str]:
     r = await runner.run_command_exec(
         clone, [sys.executable, "-c", code], timeout=180, sandbox=True, label="collect (no SDK)"
     )
-    return r.ok, r.output[-1200:]
+    return r.ok, f"[collect] {r.output[-1200:]}"
 
 
 async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
@@ -738,7 +740,7 @@ async def run_one_task(task: dict) -> None:
     # 閘門 1：lint（對齊 CI lint job）—— ruff check + format
     ok, out = await _gate_lint(clone)
     if not ok:
-        backlog.set_status(task["id"], "failed", note="lint 未通過")
+        backlog.set_status(task["id"], "failed", note="[lint] lint 未通過")
         backlog.add(f"修復 lint 失敗：{task['title']}", detail=out[-500:], source="discovered")
         log.info("任務 #%s lint 未過,標 failed 並補修復任務", task["id"])
         return
@@ -746,7 +748,7 @@ async def run_one_task(task: dict) -> None:
     # 閘門 2：無 SDK collection（對齊 CI test job 環境）
     ok, out = await _gate_collect_without_sdk(clone)
     if not ok:
-        backlog.set_status(task["id"], "failed", note="無 SDK collection 失敗")
+        backlog.set_status(task["id"], "failed", note="[collect] 無 SDK collection 失敗")
         backlog.add(
             f"修復缺 SDK collection：{task['title']}", detail=out[-500:], source="discovered"
         )
@@ -756,7 +758,7 @@ async def run_one_task(task: dict) -> None:
     # 閘門 3：完整測試必須全綠
     ok, out = await _gate_tests(clone)
     if not ok:
-        backlog.set_status(task["id"], "failed", note="測試未通過")
+        backlog.set_status(task["id"], "failed", note="[test] 測試未通過")
         backlog.add(f"修復測試失敗：{task['title']}", detail=out[-500:], source="discovered")
         log.info("任務 #%s 測試未過,標 failed 並補修復任務", task["id"])
         return
