@@ -7,4 +7,4 @@
 # 版本字串單一事實來源為 pyproject.toml（見 DECISIONS）。
 # 此處不再硬寫 __version__，下游需要時以 tomllib 讀取 pyproject.toml，避免兩處不一致。
 
-from . import secure_write
+from . import secure_write as secure_write  # re-export; 'as' 是 ruff F401 慣用消法，請勿移除
