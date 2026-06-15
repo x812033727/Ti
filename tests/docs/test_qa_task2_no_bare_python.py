@@ -43,21 +43,19 @@
 - 不直接 ``import`` rg 結果，改用 ``subprocess.run(['rg', ...])``，與 spec
   驗收指令字面對齊；rg 不在 PATH 時 ``pytest.skip``（守護測試不應阻斷
   無 rg 的環境，與既有 ``test_docs_pytest_command.py`` 風格一致）。
-- 路徑級豁免用 ``fnmatch.fnmatch`` 不用 ``Path.match``——後者對 ``**/X``
-  glob 配 ``./X`` 路徑會失效（Python 3.12 仍如此），會誤判 DECISIONS.md 等
-  根目錄檔未豁免，把 1 個豁免案例當違規翻紅。
+- 路徑級豁免用自製 ``_glob_to_regex``（把 ``**/X`` 翻成 regex），不用
+  ``fnmatch.fnmatch``（其 ``*`` 不跨 ``/``，會讓 ``**/DECISIONS.md`` 配不到
+  根目錄的 ``DECISIONS.md``），也不用 ``Path.match``（其對 ``**/X`` 配 ``./X``
+  路徑會失效，Python 3.12 仍如此）。
 """
 
 from __future__ import annotations
 
-import fnmatch
 import re
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
-
 from _repo import REPO_ROOT
 
 ROOT = REPO_ROOT
@@ -95,15 +93,15 @@ LINE_EXEMPT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # 註：fnmatch 風格（`*` 跨目錄），不用 Path 的 `**`。
 PATH_EXEMPT_GLOBS: list[tuple[str, str]] = [
     # 歷史決策/工作筆記類——記錄過去，偽造歷史比保留更具破壞性
-    ("*/DECISIONS.md", "historical-decisions"),
-    ("*/adr.json", "historical-decisions"),
-    ("*/NOTES.md", "work-notes"),
-    ("*/BASELINE_task*.md", "task-baseline-historical"),
-    ("*/CLOSURE_task*.md", "task-closure-historical"),
-    ("*/docs/issues/*.md", "bug-report-historical"),
+    ("**/DECISIONS.md", "historical-decisions"),
+    ("**/adr.json", "historical-decisions"),
+    ("**/NOTES.md", "work-notes"),
+    ("**/BASELINE_task*.md", "task-baseline-historical"),
+    ("**/CLOSURE_task*.md", "task-closure-historical"),
+    ("**/docs/issues/*.md", "bug-report-historical"),
     # 測試規格文件——描述 regex 該抓什麼的元文件，本身必含 python 範例
-    ("*/studio/docs/dev_command_dedup_inventory.md", "regex-spec-doc"),
-    ("*/studio/docs/subprocess_migration_inventory.md", "regex-spec-doc"),
+    ("**/studio/docs/dev_command_dedup_inventory.md", "regex-spec-doc"),
+    ("**/studio/docs/subprocess_migration_inventory.md", "regex-spec-doc"),
     # 本守護測試自身——是「描述 spec」的測試規格文件，必含 ``python``/``python3``
     # 範例、docstring、負樣 fixture；不可能自清。豁免理由 = regex-spec-doc。
     ("tests/docs/test_qa_task2_no_bare_python.py", "regex-spec-doc"),
@@ -117,6 +115,29 @@ PATH_EXEMPT_GLOBS: list[tuple[str, str]] = [
     ("tests/docs/test_docs_pytest_command.py", "legacy-guard-test-doc"),
     ("tests/docs/test_readme_consistency.py", "legacy-guard-test-doc"),
     ("tests/docs/test_readme_verify_cmd.py", "legacy-guard-test-doc"),
+    # 測試碼字串（fixture / 斷言輸入 / 概念註解）——非文件、非 demo 入口。
+    # 涵蓋 ``tests/**`` 所有子目錄：autopilot、core、docs、fixtures、scan、server、settings。
+    # 概念 canary 例：``tests/autopilot/test_qa_task3_autopilot_pytest_exec.py``
+    # 註解「用 sys.executable 而非裸 python」字面是「不要用裸 python」概念，
+    # 改 ``python3`` 反而變「不要用裸 python3」、語意錯。
+    ("tests/*", "test-fixture-data"),
+    # 腳本內 ``python`` 引用多為註解／錯誤訊息／wrapper 偵測（serve.sh 的
+    # ``command -v python`` fallback）——非 user-facing 指令，不該被守護測試抓。
+    ("scripts/*", "script-comment-or-detect"),
+    # ``studio/`` 內部邏輯與 docstring：fake_experts 的 fake content、runner 的
+    # ``f"python {entry}"`` 預設字串、server/autopilot 的入口 docstring——
+    # 屬「fake 專家產出」與「內部邏輯說明」，非文件 demo 指令。
+    ("studio/fake_experts.py", "studio-test-fixture-content"),
+    ("studio/runner.py", "studio-internal-default"),
+    ("studio/server.py", "studio-docstring"),
+    ("studio/autopilot.py", "studio-docstring"),
+    # root 層級的歷史決策/工作筆記（``*/X`` pattern 在 helper 配法 3 對根檔案
+    # 失效，故獨立列；同路徑的其他匹配由既有 ``*/X`` 條目處理）
+    ("DECISIONS.md", "historical-decisions"),
+    ("adr.json", "historical-decisions"),
+    ("NOTES.md", "work-notes"),
+    ("BASELINE_task*.md", "task-baseline-historical"),
+    ("CLOSURE_task*.md", "task-closure-historical"),
 ]
 
 
@@ -129,30 +150,45 @@ def _has_rg() -> bool:
     return shutil.which("rg") is not None
 
 
+def _glob_to_regex(glob: str) -> re.Pattern[str]:
+    """把 fnmatch 風格 glob 編譯成 regex（`*` 跨目錄匹配），錨點到字串首尾。
+
+    解決 ``fnmatch.fnmatch`` 在 Python 3.12 的兩個限制：
+      1. ``*`` 不跨 ``/``——本實作把 ``*`` 翻成 ``[^/]*``，並把 ``**`` 翻成 ``.*``（雙星跨目錄）
+      2. 路徑含 ``./`` 前綴時即使整體匹配也可能不命中——本實作 strip 後再配
+    命名慣例：本檔的 glob 用 ``**/X`` 表示「任何深度含 X 的路徑」，與 pathlib 一致。
+    """
+    # 先把 `**/` 換成 sentinel（避免下一輪把 `*` 展開時把 `**` 的 `*` 也獨立展開）
+    SENTINEL_DOUBLE_STAR = "\x00DOUBLE_STAR\x00"
+    glob = glob.replace("**/", SENTINEL_DOUBLE_STAR)
+    # 把 `*` 換成 `[^/]*`（單星不跨目錄）
+    out: list[str] = []
+    for ch in glob:
+        if ch == "*":
+            out.append(r"[^/]*")
+        elif ch == "?":
+            out.append(r"[^/]")
+        else:
+            out.append(re.escape(ch))
+    s = "".join(out)
+    # 把 sentinel 換成 `.*`（跨目錄）
+    s = s.replace(re.escape(SENTINEL_DOUBLE_STAR), ".*")
+    return re.compile(rf"^{s}$")
+
+
 def _path_is_path_exempt(rel_path: str) -> str | None:
     """檢查相對路徑是否落在 PATH_EXEMPT_GLOBS 任一 glob；回傳豁免理由或 None。
 
-    用 ``fnmatch.fnmatch`` 多角度配——後者對 ``**/X`` 風格 glob 配 ``./X`` 路徑
-    會失效（Python 3.12 行為）；fnmatch 的 ``*`` 不跨目錄。
+    用自製 glob→regex 翻譯（``_glob_to_regex``）不用 ``fnmatch.fnmatch``——
+    後者 ``*`` 不跨 ``/``，會讓 ``**/DECISIONS.md`` 配不到根目錄的 ``DECISIONS.md``。
 
-    對每個 glob 嘗試 3 種配法（任一命中即豁免）：
-      1. ``fnmatch(rel_path_stripped, glob)``
-      2. 對 ``*X`` 開頭的 glob，去掉首個 ``*`` 再配（讓 `*/X` 可配根目錄的 `X`）
-      3. 對帶前綴 ``./`` 的 rel_path，去掉前綴再配
+    對帶前綴 ``./`` 的 rel_path 先 strip，再逐個 glob 試配（regex 錨點首尾）。
     """
     p = rel_path
     if p.startswith("./"):
         p = p[2:]
     for glob, reason in PATH_EXEMPT_GLOBS:
-        # 配法 1：原樣
-        if fnmatch.fnmatch(p, glob):
-            return reason
-        # 配法 2：glob 以 `*` 開頭，去掉首個 `*` 再配根目錄檔
-        if glob.startswith("*") and fnmatch.fnmatch(p, glob[1:]):
-            return reason
-        # 配法 3：glob 內含 `*X`（中間非首），試 `**X` 風格（去中間的 `*`）——
-        # 給 `*/X` 一個能配 `X` 的機會
-        if "*" in glob[1:] and fnmatch.fnmatch(p, glob.replace("*/", "", 1)):
+        if _glob_to_regex(glob).match(p):
             return reason
     return None
 

@@ -17,7 +17,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 
 `server.py` 只負責「應用組裝」：建立 `FastAPI` app、掛載 `/static`、`include_router`
 （`routes` 與 `ws`）、提供 `/` 與 `/login` 頁面入口，以及 `main()` 啟動 uvicorn。
-入口 `studio.server:app` 與 `python -m studio.server` 維持不變。
+入口 `studio.server:app` 與 `python3 -m studio.server` 維持不變。
 
 ## 模組職責
 
