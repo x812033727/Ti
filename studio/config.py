@@ -651,6 +651,13 @@ AUTOPILOT_SUBSYSTEM_MAX_PENDING = 3
 #   （pre-filter 拒收，預設 3）。單一純模組常數、無 env override，日後調整改此處一個值即可。
 AUTOPILOT_SUBSYSTEM_MAX = 2
 
+# 不變式：軟提示門檻必須嚴格小於硬擋門檻，否則 prompt 還沒提醒就已被 pre-filter 硬拒，
+# 非對稱「軟引導早一步、硬擋兜底」的分層設計會靜默失效。任何人調高 SUBSYSTEM_MAX 而忘改
+# MAX_PENDING 會在 import config 時即時炸出，攔在最便宜的階段（成本一行、防護真實）。
+assert AUTOPILOT_SUBSYSTEM_MAX < AUTOPILOT_SUBSYSTEM_MAX_PENDING, (
+    "AUTOPILOT_SUBSYSTEM_MAX（軟提示門檻）必須 < AUTOPILOT_SUBSYSTEM_MAX_PENDING（進場硬擋門檻）"
+)
+
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
 def env_bool(name: str, default: bool) -> bool:

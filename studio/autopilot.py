@@ -353,11 +353,22 @@ def _recent_done_titles() -> set[str]:
     return backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
 
 
+def _sanitize_for_prompt(s: str, maxlen: int) -> str:
+    """嵌入 prompt 前的統一消毒：壓平換行（\\r/\\n）、去頭尾空白、限長。
+
+    單一真值來源——所有要拼進 discovery prompt 的 backlog 欄位（pending 標題、done/failed 標題、
+    失敗 note）都過這道，阻斷標題/備註含 `\\n任務: …` 穿透 join 邊界、偽造任務行被下輪 parse 執行
+    （prompt injection）。日後新增嵌入欄位沿用此 helper，避免漏網。
+    """
+    return (s or "").replace("\r", " ").replace("\n", " ").strip()[:maxlen]
+
+
 def _recent_outcomes_context() -> str:
     """把迴圈自身的近期成敗（done/失敗＋失敗原因）整理成可注入評估提示的文字。
 
     純讀 backlog、無 LLM/網路，方便單測。AUTOPILOT_EVAL_MEMORY=0 或無成敗紀錄時回 ""，
-    呼叫端據此維持原本的無狀態提示（零行為變更）。
+    呼叫端據此維持原本的無狀態提示（零行為變更）。標題／note 在拼接前一律過
+    `_sanitize_for_prompt`（與 `_pending_titles` 對稱），防 prompt injection。
     """
     limit = config.AUTOPILOT_EVAL_MEMORY
     if limit <= 0:
@@ -377,12 +388,13 @@ def _recent_outcomes_context() -> str:
     lines = ["【本工作室過往成績單（請據此提出全新、不重複的改善點）】"]
     if done:
         lines.append("✅ 近期已完成（請勿重複提出）：")
-        lines += [f"- {t['title'].strip()}" for t in done]
+        lines += [f"- {_sanitize_for_prompt(t.get('title', ''), 200)}" for t in done]
     if failed:
         lines.append("❌ 近期失敗（除非有明確不同的新做法，否則勿重蹈覆轍）：")
         for t in failed:
-            note = (t.get("note") or "").strip()
-            lines.append(f"- {t['title'].strip()}" + (f" — {note}" if note else ""))
+            note = _sanitize_for_prompt(t.get("note") or "", 300)
+            title = _sanitize_for_prompt(t.get("title", ""), 200)
+            lines.append(f"- {title}" + (f" — {note}" if note else ""))
     return "\n".join(lines) + "\n\n"
 
 
@@ -394,8 +406,8 @@ def _pending_titles() -> list[str]:
     前的明確防線（即使日後新增寫入 backlog 的路徑也不會讓多行標題穿透 prompt 結構）。
     """
     rows = [t for t in backlog.list_tasks() if t.get("status") in ("pending", "in_progress")]
-    # 拼接前消毒：壓平內嵌換行、限長，明確阻斷標題穿透 prompt 結構（即使未來新增寫入路徑）。
-    return [t["title"].strip().replace("\n", " ")[:200] for t in rows if t.get("title", "").strip()]
+    # 拼接前消毒：統一過 `_sanitize_for_prompt`（壓平換行、限長），阻斷標題穿透 prompt 結構。
+    return [clean for t in rows if (clean := _sanitize_for_prompt(t.get("title", ""), 200))]
 
 
 def _pending_awareness_context(titles: list[str] | None = None) -> str:
@@ -436,18 +448,28 @@ def _oversubscribed_context(titles: list[str] | None = None, k: int | None = Non
     return "\n".join(lines) + "\n\n"
 
 
-def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None = None) -> str:
+def _build_discovery_prompt(
+    *,
+    outcomes: str | None = None,
+    pending: str | None = None,
+    titles: list[str] | None = None,
+) -> str:
     """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
 
     結構：近期成敗回顧 + pending-awareness 清單 + 任務基底說明 + 兩條硬指令。
     兩條硬指令（禁止實質重疊、優先廣度覆蓋不同子系統）明確置於組裝層，為上層決策而非資料層職責。
     參數預設由 backlog 即時讀取；測試可注入字串以隔離 backlog 狀態。
+
+    `titles` 為 pending/in_progress 標題快照的單一注入點：`pending` 與 `oversubscribed`
+    兩段皆由它衍生（同源同快照），測試只需傳 `titles=` 即可隔離 backlog，無須 monkeypatch
+    全域 `_pending_titles`。顯式傳入 `pending` 仍可單獨覆蓋該段（保留既有注入契約）。
     """
+    titles = _pending_titles() if titles is None else titles
     outcomes = _recent_outcomes_context() if outcomes is None else outcomes
-    pending = _pending_awareness_context() if pending is None else pending
+    pending = _pending_awareness_context(titles) if pending is None else pending
     # 「已過多子系統」段隨 pending 子系統分佈動態產生：有子系統超標才出現，否則為 ""。
-    # 與 pending-awareness 同源（_pending_titles），確保 prompt 兩段覆蓋一致。
-    oversubscribed = _oversubscribed_context()
+    # 與 pending-awareness 同源（同一 titles 快照），確保 prompt 兩段覆蓋一致、且可注入隔離。
+    oversubscribed = _oversubscribed_context(titles)
     # 措辭隨清單存否切換：有清單才講「上列」，避免空清單時硬指令 1 措辭懸空指向不存在的清單。
     rule_1 = (
         "1. 不得提出與上列任何已在排隊／進行中項目實質重疊者（同一主題換句話說也算重疊，一律避開）。\n"
@@ -681,7 +703,10 @@ async def _evaluate_self(clone: str) -> int:
     async def _noop(_ev):
         return None
 
-    prompt = _build_discovery_prompt()
+    # 取一次 pending/in_progress 快照，prompt 注入與進場 pre-filter 共用同一份，
+    # 杜絕 LLM 延遲期間 backlog 變動造成兩端快照分裂（prompt 引導與 filter 比對不一致）。
+    titles = _pending_titles()
+    prompt = _build_discovery_prompt(titles=titles)
     try:
         text = await ex.speak(prompt, _noop)
     finally:
@@ -691,8 +716,8 @@ async def _evaluate_self(clone: str) -> int:
     done_titles = _recent_done_titles()
     tasks = [t for t in parse_tasks(text) if t.strip() not in done_titles]
     # 進場 pre-filter：丟掉與目前 pending/in_progress 高相似（語意相近）的提案，與 prompt 注入的
-    # 禁止清單對齊。不動 backlog._is_duplicate 的字串等值去重契約，兩者互補。
-    tasks = _filter_pending_duplicates(tasks, _pending_titles())
+    # 禁止清單對齊（同一 titles 快照）。不動 backlog._is_duplicate 的字串等值去重契約，兩者互補。
+    tasks = _filter_pending_duplicates(tasks, titles)
     n = backlog.add_many(tasks, source="eval")
     log.info("自我評估產出 %d 個新任務", n)
     return n
