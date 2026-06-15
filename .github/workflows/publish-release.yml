@@ -6,6 +6,11 @@ name: Publish release
 # （GitHub 防遞迴機制），release-smoke.yml 的 `on: release: published` 將永不觸發，
 # 形同未啟用。解法＝改以 PAT（secrets.GH_PAT）身分建立 release，PAT 產生的
 # release:published 事件即可正常觸發下游 release-smoke，無需改動 smoke workflow。
+#
+# GH_PAT 最小權限（資安要求）：請用 Fine-grained PAT，僅授予「本 repo」的
+# `Contents: Read and write`（建立 release 所需的唯一 scope）。
+# classic PAT 請僅勾 `repo`（已是最小可用集）。切勿使用 admin:org、repo:all
+# 等過大 scope——PAT 一旦洩漏，爆炸半徑與授予 scope 等大。
 on:
   push:
     tags:
@@ -27,14 +32,15 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # Step 1 — PAT guard：把「GH_PAT 未設或已過期」攔在最前面。
-      # PAT 缺失若不攔，前四步會成功、到 Create release 才撞 403，錯誤訊息變成難猜的權限問題；
-      # 在此先 fail，CI log 直接指向根因。
+      # Step 1 — PAT guard：把「GH_PAT 未設」攔在最前面。
+      # 注意：`test -n` 只能偵測「未設（空字串）」，無法驗證 PAT 是否過期/被撤銷——
+      # 過期 PAT 仍會通過此 guard，到 Create release 才以 403 失敗。此 guard 的價值
+      # 在於把最常見的「忘了設 secret」攔在第一步，CI log 直接指向根因，而非到 Step 5 才撞權限問題。
       - name: Verify PAT
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          test -n "$GH_TOKEN" || { echo "::error::GH_PAT secret 未設或已過期；GITHUB_TOKEN 建立的 release 不會觸發下游 release-smoke，必須以 PAT 建立"; exit 1; }
+          test -n "$GH_TOKEN" || { echo "::error::GH_PAT secret 未設；GITHUB_TOKEN 建立的 release 不會觸發下游 release-smoke，必須以 PAT 建立"; exit 1; }
 
       # Step 2 — 版本字串以 pyproject.toml 為單一事實來源，不在 YAML 硬寫版本號。
       - name: Resolve version (SSOT = pyproject.toml)
@@ -62,7 +68,12 @@ jobs:
       # Step 5 — 以 PAT 建立 published release（不帶 --draft，狀態直接為 published 才能被
       # release-smoke 的 release:published 接住）。body 經 -F body.md 注入，不經 shell 字串拼裝。
       # GH_TOKEN=secrets.GH_PAT 是解除觸發死結的關鍵：PAT 身分建立的 release 才會觸發下游。
+      #
+      # 資安（防 GitHub Actions script injection）：tag 透過 env TAG 傳入、在 run 內以 "$TAG"
+      # 引用，不在 run 字串內直接展開 `${{ ... }}`。後者會在 shell 執行「前」展開，雙引號擋不住
+      # 注入；若版本字串含 `;`、`$(...)`、換行（惡意 PR／供應鏈），可在持有 PAT 的 runner 執行任意指令。
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: gh release create "${{ steps.version.outputs.tag }}" -F body.md
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" -F body.md

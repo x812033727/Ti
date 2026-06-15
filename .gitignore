@@ -75,3 +75,6 @@ ENV/
 .gitmodules
 .ripgreprc
 .mcp.json
+
+# release pipeline 本地執行 scripts/publish_release.py 的產物
+/body.md
