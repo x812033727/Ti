@@ -982,3 +982,43 @@
 ## `test_as_kwargs_packs_three_keys` 的 `body[:600]` magic number 列為低優先技術債備忘，不阻擋本次關閉；後續可改為動態計算函式體長度上限。
 - 時間：2026-06-15 10:19
 
+## 空 diff 交付基準 = `cc46ccb`（E741+I001 修復）已合入 `main`，程式碼 `.py` diff 為空、本任務無源碼變更；`task-4` 分支唯一差異為本 ADR 文件自身，確認非假綠。
+- 時間：2026-06-15 10:34
+- 理由：工程師要求「能追 commit」；`cc46ccb` 在 `main` branch 可查，任何人執行 `git log main --oneline | grep cc46ccb` 可重現此結論。
+- 否決方案：僅憑「diff 為空」聲稱關閉但無 commit 錨點——彼時假綠無從分辨。
+
+## E741 處置 = 改名 `l → line`，禁止 `# noqa: E741`。
+- 時間：2026-06-15 10:34
+- 理由：改名零成本且語意更清晰；`noqa` 是壓警告符號，屬引入技術債，只保留給 stub 等無控制權場景。
+- 否決方案：`# noqa: E741` 在有控制權的自有檔案上使用。
+
+## Import 排序 = `ruff check --fix` 自動修，禁手動排序。
+- 時間：2026-06-15 10:34
+- 理由：手排易漏、製造無意義 review 噪音；工具排序是事實標準，已修結果可被 `ruff check .` 幂等驗證。
+- 否決方案：手動調整 import 順序（人工判斷與 ruff 規則不一定等價）。
+
+## CHANGELOG 語氣 = 即刻生效逃生艙式（`TI_REQUIRE_CHOWN=warn`），禁 deprecation 過渡警告語氣。
+- 時間：2026-06-15 10:34
+- 理由：`strict` 已是當下預設，非未來計劃；「過渡期將在 X.Y 移除」語氣屬誤導，讓用戶誤判仍有緩衝。
+- 否決方案：「下個 major 版本移除」deprecation 語氣——與已成立事實不符。
+
+## 四要素規範正本住在 `test_release_note_breaking.py` 的模組 docstring，不另立 CONTRIBUTING.md 副本。
+- 時間：2026-06-15 10:34
+- 理由：測試已含六點說明（行為變動／原因／before-after／生效版本／反向黑樣本／README 互指），定義與斷言共存，後人看測試就能理解規範；雙寫副本必然分歧。高工「憑什麼知道要寫哪四樣」的問題，答案是「看這個測試的 docstring」。
+- 否決方案：在 CONTRIBUTING.md 另寫一份四要素說明（兩份真相來源，長期維護必漂移）。
+
+## 測試斷言模式 = 讀真實 CHANGELOG.md 解析關鍵字順序，禁止在測試裡硬編 CHANGELOG 副本。
+- 時間：2026-06-15 10:34
+- 理由：測試已採 `CHANGELOG = ROOT / "CHANGELOG.md"` 讀檔，四要素以 `index` 比相對順序而非逐字比對；改字不紅、調換順序才紅——這正是工程師要求的「真護欄」，已就位。
+- 否決方案：測試裡硬編一份預期字串副本（CHANGELOG 改動後測試永遠不紅，等同假護欄）。
+
+## CHANGELOG 的 release pipeline 曝光（tag notes / email banner）列為跟進待辦，不阻擋本次交付。
+- 時間：2026-06-15 10:34
+- 理由：高工指出「逃生艙不曝光等同不存在」屬正當風險；但 release pipeline 配置超出本次任務邊界，強行納入會擴大範圍且引入 CI/CD 依賴。觸發條件：下次 `0.2.0` tag 打出前由 DevOps 確認 tag notes 包含 CHANGELOG 頂層 Breaking Changes 區塊。
+- 否決方案：以「文件已寫」替代「pipeline 曝光確認」——靜默升級用戶不讀 CHANGELOG，逃生艙形同虛設。
+
+## 「守護測試與 CHANGELOG 不得獨立異動」維護紀律，以 PR checklist 顯式條目承載，由 reviewer 強制勾選，跟進待辦補入 `CONTRIBUTING.md`。
+- 時間：2026-06-15 10:34
+- 理由：工程師已點名此為人治約束，遲早會漏；但技術上測試讀檔已消除最大漏洞（hardcoded 副本）。剩餘風險是「有人加新格式要求但忘改測試」，這只能靠 checklist 而非純技術手段覆蓋。
+- 否決方案：靠「大家記得同步」但無明確觸發機制——已被工程師點名為不可持續做法。
+
