@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from _repo import REPO_ROOT
 
 _ROOT = REPO_ROOT
@@ -167,4 +169,32 @@ def test_readme_py_fallback_specific_phrase():
         "加一句具體示範，例如：\n"
         "  > Windows 若 `python3` 找不到，可改用 `py` 啟動器"
         "（想鎖 3.x 用 `py -3`）。"
+    )
+
+
+# ============================================================================
+# (D) 負樣本（防假綠）：制度化「regex 類守護測試須含 ≥1 個負樣斷言」
+# ============================================================================
+# 依 CONTRIBUTING「Python interpreter convention」節之規範：tests/docs 中
+# regex 類守護測試須含 ≥1 個負樣斷言，否則視為假綠。本節用 3 個典型偽綠
+# （套件名、env var 子字串、pyproject 子字串）守住 `_has_*` 函式的字邊界
+# 與前後瞻邏輯——這些輸入理應不被誤判為「文件化 Python 慣例」。
+
+
+@pytest.mark.parametrize(
+    "neg_text,why",
+    [
+        ("請安裝 python3-pip 套件以獲得 pip 支援。", "套件名子字串偽綠"),
+        ("TI_IMPROVE_MAX_CYCLES 找不到新改善點", "env var 子字串『找不到』偽綠"),
+        ("請參考 pyproject.toml 的設定", "pyproject 子字串偽綠"),
+    ],
+)
+def test_negative_samples_must_not_trigger_convention_matchers(neg_text, why):
+    """負樣本：套件名／env var／pyproject 等子字串不該誤觸慣例判斷。"""
+    py_hint = _has_windows_py_launcher_hint(neg_text)
+    venv = _has_venv_python_explicit(neg_text)
+    shell = _has_shell_python3_explicit_convention(neg_text)
+    assert not (py_hint or venv or shell), (
+        f"負樣本『{why}』誤觸：py_hint={py_hint} venv={venv} shell={shell}\n"
+        f"  輸入: {neg_text!r}"
     )

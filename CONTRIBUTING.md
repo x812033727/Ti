@@ -27,6 +27,8 @@ cp .env.example .env                                     # 視需要填入金鑰
 
 > **為何是 `python3` 而非 `python`**：macOS 12.3+ 已移除 `/usr/bin/python`、Debian/Ubuntu 系等主流 Linux 發行版預設不提供 `python` 別名；`python3` 在三大平台都是預設可用的 Python 3 進入點。venv 內 `python` 與 `python3` 同時指向 venv，是慣例下的合法寫法——本慣例挑選**對外部環境最不會踩雷**的形式。
 
+> **守護測試規範**：`tests/docs` 中任何 regex 類守護測試須含 ≥1 個負樣斷言（典型偽綠：套件名子字串、env var 子字串、pyproject 子字串），否則視為假綠——「全部通過」自欺的常見來源。守護測試若用模組層裝飾器（`@pytest.mark.parametrize`、`@pytest.fixture` 等）須顯式 `import pytest`；函式層 pytest 函式（`pytest.fail()`、`pytest.approx()`）才由 pytest 自動注入。
+
 ## 日常開發
 
 ```bash
