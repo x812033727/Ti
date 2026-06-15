@@ -127,7 +127,9 @@ async def _gate_lint(clone: str) -> tuple[bool, str]:
     ):
         r = await runner.run_command_exec(clone, argv, timeout=120, sandbox=True, label=name)
         if not r.ok:
-            return False, f"[lint] {name} 未過：\n{r.output[-1200:]}"
+            # 標籤計入截尾預算（與 _gate_tests/_gate_collect 一致，總長維持 ≤1200）。
+            prefix = f"[lint] {name} 未過：\n"
+            return False, prefix + r.output[-(1200 - len(prefix)) :]
     return True, "[lint] ruff OK"
 
 
@@ -146,7 +148,9 @@ async def _gate_collect_without_sdk(clone: str) -> tuple[bool, str]:
     r = await runner.run_command_exec(
         clone, [sys.executable, "-c", code], timeout=180, sandbox=True, label="collect (no SDK)"
     )
-    return r.ok, f"[collect] {r.output[-1200:]}"
+    # 標籤計入截尾預算（與 _gate_tests/_gate_lint 一致，總長維持 ≤1200）。
+    prefix = "[collect] "
+    return r.ok, prefix + r.output[-(1200 - len(prefix)) :]
 
 
 async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
@@ -740,7 +744,7 @@ async def run_one_task(task: dict) -> None:
     # 閘門 1：lint（對齊 CI lint job）—— ruff check + format
     ok, out = await _gate_lint(clone)
     if not ok:
-        backlog.set_status(task["id"], "failed", note="[lint] lint 未通過")
+        backlog.set_status(task["id"], "failed", note="[lint] 閘門未通過")
         backlog.add(f"修復 lint 失敗：{task['title']}", detail=out[-500:], source="discovered")
         log.info("任務 #%s lint 未過,標 failed 並補修復任務", task["id"])
         return
