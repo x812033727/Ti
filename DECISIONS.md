@@ -1211,3 +1211,43 @@
 - 理由：高級工程師指出僅口頭記錄的待辦會消失；依 CLAUDE.md 架構鐵則，核心框架改動以 `核心改動:` 標記路由，讓 autopilot 接手追蹤，不依賴本次討論存活。
 - 否決方案：「本次順手查三端版本即可」——查完若不落 backlog 仍會消失；且三端同步屬工具鏈維護，是核心 repo 範疇，不應混入本 PR。
 
+## 新建 studio/release_smoke.py，公開純函式 check_body(body: str) -> None 與 CLI __main__；check_body 只 raise ValueError(reason)，__main__ 負責 catch + stderr + sys.exit(1)。
+- 時間：2026-06-15 17:34
+- 理由：副作用邊界分離——check_body 可在測試中直接 pytest.raises(ValueError) 而不需 mock sys.exit；CLI 行為不變，非 CLI 呼叫者（未來的 programmatic 整合）亦可安全呼叫。
+- 否決方案：check_body 直接呼叫 sys.exit(1)——單元測試須 pytest.raises(SystemExit)，且函式對非 CLI 呼叫者完全不可復用。
+
+## check_body 判定條件用 if not extract_breaking_block(body)（即 None 視為失敗）；依 release_note.py L92–93 `return body or None` 的已知合約，空字串不可能回傳，is not None 與 not result 等價，選 not result 作防禦性寫法並加行內注釋標明 contract 依賴。
+- 時間：2026-06-15 17:34
+- 理由：高工指出的空字串風險真實存在於「contract 不明」時，加注釋讓未來讀者不必重查 SSOT 即可理解。
+
+## release body 以環境變數 BODY 傳入 release_smoke.py（workflow 中 env: BODY: ${{ steps.body.outputs.body }}），__main__ 優先讀 os.environ.get("BODY")，fallback sys.stdin.read()。
+- 時間：2026-06-15 17:34
+- 理由：echo "$BODY" 在多行、含反斜線、-e/-n 開頭時會吞字或誤判旗標；env 傳遞不經 shell 字串解析，最穩。fallback stdin 保留本地管線測試與手動驗收能力（兩種呼叫方式都能用）。
+- 否決方案：echo "$BODY" | python——體積大的 release body 含特殊字元時靜默截斷，smoke 拿到殘缺 body 仍可能通過，鑑別力失效。
+
+## 觸發時機選 on: release: types: [published]，不加 retry guard。
+- 時間：2026-06-15 17:34
+- 理由：release 物件在 published 事件時已就緒，零 race condition；retry guard 增加 YAML 複雜度且掩蓋更深問題。
+- 否決方案：push: tags + retry loop——需額外 30 秒 guard，且若 release 從未建立會 retry 到上限才失敗，診斷模糊。
+
+## smoke 判定層只做「非空頂層 Breaking Changes 區塊存在」，不套 outlet_carries_block() 的四要素檢查。
+- 時間：2026-06-15 17:34
+- 理由：AC#2 契約是「有非空區塊即通過」，四要素是 pre-tag validator 職責；smoke 過嚴會讓 release 因 CHANGELOG 措辭問題被擋，而非發布流程錯誤。
+- 否決方案：複用 outlet_carries_block()——四要素語意偵測對 post-publish smoke 過嚴，且把 pre-tag 與 post-publish 兩層職責混入同一函式。
+
+## 版本字串以 pyproject_version()（studio.release_note 已有）為 SSOT，workflow 以獨立 step 取得並輸出至 GITHUB_OUTPUT，版本號可見於 Actions log，供 debug 確認。
+- 時間：2026-06-15 17:34
+- 否決方案：在 workflow YAML 硬寫版本號或另寫 tomllib 解析——多一份解析邏輯就多一個漂移點。
+
+## YAML 與 release_smoke.py 均不出現任何 Breaking Changes heading 字面值；SSOT 路徑唯一為 extract_breaking_block（其內引用 BREAKING_HEADING）；Task #4 驗收以 grep .github/workflows/ studio/release_smoke.py 確認 0 命中。
+- 時間：2026-06-15 17:34
+- 否決方案：workflow 中用 --jq '.body | test("## ⚠️ Breaking Changes")'——jq 中硬寫 heading 字面值打破 SSOT，emoji 漂移時 smoke pass 而 pre-tag fail，靜默分歧。
+
+## smoke 失敗診斷輸出為 print(body[:500] or "<empty>", file=sys.stderr)；空 body 時明確印 <empty> 而非空白，避免「看起來沒執行」的誤判。
+- 時間：2026-06-15 17:34
+- 理由：空 body 是有效的失敗場景（release body 未填），需讓 CI log 可讀。
+
+## 動工前工程師與 workflow 撰寫者先敲定 body 傳遞介面（env BODY + stdin fallback），再各自並行實作 #1、#2、#3；Task #4 在 #2 完成後以 grep 驗收。
+- 時間：2026-06-15 17:34
+- 理由：介面未對齊時 #4 驗收才發現問題，返工成本最高；先定介面是最便宜的協調點。
+
