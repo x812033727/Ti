@@ -1,0 +1,135 @@
+.github/workflows/ci.yml:27:        run: python -m pip install --upgrade pip "ruff==0.14.4"
+.github/workflows/ci.yml:73:          python -m pip install --upgrade pip
+.github/workflows/ci.yml:89:        run: python -m pytest --collect-only -q
+.github/workflows/ci.yml:92:        # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import。
+.github/workflows/ci.yml:99:        run: python -m pytest -q --cov=studio --cov-report=term-missing
+.github/workflows/ci.yml:178:        # 實際用到的依賴。用 python -m pytest 讓 repo 根在 sys.path，studio 可被 import。
+.github/workflows/ci.yml:180:          python -m pip install --upgrade pip
+.github/workflows/ci.yml:207:          collect=$(python -m pytest $FILES --collect-only -q -p no:cacheprovider -k "$SEL" 2>&1) || true
+.github/workflows/ci.yml:218:          out=$(python -m pytest $FILES -q -rsp -p no:cacheprovider -k "$SEL" 2>&1) || true
+.github/workflows/publish-release.yml:52:          ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
+.github/workflows/publish-release.yml:75:        run: python scripts/publish_release.py
+.github/workflows/release-smoke.yml:32:          ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
+.github/workflows/release-smoke.yml:60:        run: python -m studio.release_smoke
+ARCHITECTURE.md:20:入口 `studio.server:app` 與 `python -m studio.server` 維持不變。
+BASELINE_task1.md:61:| CI `test` job | 僅單一 `Run tests` step（`python -m pytest -q --cov=studio ...`），**collect 與 run 混在同一 step** ✗ | **#2 缺口** |
+CHANGELOG.md:26:  python -m studio ...
+CHANGELOG.md:36:  python -m studio ...
+CLOSURE_task4.md:22:`.github/workflows/ci.yml` line 90 跑的是 `python -m pytest -q --cov=studio`（**全量、無路徑限制**），#4 測試在 CI 一定被執行。本次對齊修的是「任務文件/demo 指令」這一規格產物與交付物的脫節，使人工驗收途徑也跑得到交付物，與 CI 雙保險。
+DECISIONS.md:904:## 驗收指令組由兩條擴充為三條，順序為：① `ruff check studio/ tests/`（exit 0）→ ② `python -c "from studio import secure_write; print(secure_write)"`（runtime import 無例外）→ ③ `python3 -m pytest --collect-only -q tests/`（exit 0, 0 collection error）。
+DECISIONS.md:1033:## CI test job 新增獨立 step，name 為 `"Collect tests"`，指令 `python -m pytest --collect-only -q`，env `TI_SANDBOX: "0"`，不帶 `--cov` 任何參數，不加 `continue-on-error`。
+DECISIONS.md:1157:## 驗收訊號 #3 重新定義 — 改為在專案 venv 下執行 python -c "from studio import secure_write; print(secure_write.__file__)"，確認模組路徑指向 studio/secure_write.py；此訊號驗的是「匯出路由正確」，不是格式，須明確標注執行路徑（cd 至 repo root）。
+DECISIONS.md:1271:## 新增 `scripts/publish_release.py`（薄包裝，< 15 行），讀 `CHANGELOG.md` → 呼叫 `render_tag_notes(changelog_text, pyproject_version())` → 寫 `body.md`；workflow step 4 僅執行 `python scripts/publish_release.py`。
+DECISIONS.md:1274:- 否決方案：`python -c "..."` 或 `run: | 多行 python`——邏輯不可測，且 shell quoting 仍有潛在風險。
+DECISIONS.md:1383:## **單一 PR 一次到位**；若 `README.md` 改法（大量段落）與其他檔案（單行 `python script.py`）差異過大，拆兩個 commit 同一 PR，便於 reviewer 分階段看。
+NOTES.md:34:1. **驗證環境只有 `python3`，沒有 `python`**（`command -v python` 查無）。我們宣告的 `執行指令: python -m studio.server` 一執行就 command not found → Demo 網址輪詢必失敗 → 連續紅。
+NOTES.md:56:設計決策: 執行入口宣告改為 `python3 -m studio.server`，Demo 網址不變（http://localhost:8000/login）；驗收標準內所有 `python -m pytest` 同步改 `python3 -m pytest`
+NOTES.md:434:- 計畫的執行指令是 `python -m pytest ...`，但本環境 **沒有 `python`，只有 `python3`**（`python: command not found`）。
+NOTES.md:435:- 若驗收 harness 照字面跑 `python -m pytest`，會直接 command-not-found 而判「未通過」——連續 2 輪都卡在這，**不是程式碼問題，是指令字面失配**。這正好呼應 CLAUDE.md 鐵則：先懷疑自己的命令，別怪環境。
+NOTES.md:447:設計決策: 卡點根因判定為「驗收 harness 字面執行 `python -m pytest`，本環境無 `python` binary 致 command-not-found」，非 #1 實作缺陷——程式碼已達標、測試全綠，依 CLAUDE.md「先懷疑命令、別怪環境」鐵則收斂
+NOTES.md:449:設計決策: 計畫 `執行指令` 一律從 `python -m pytest` 改為 `python3 -m pytest tests/ -k conclusion -v`，作為本任務唯一驗收命令，後續所有 conclusion 任務同步沿用 `python3`
+NOTES.md:536:**零回歸／零新增**：零新外部依賴（無 tenacity）、零新 env 變數（沿用 `TI_RATELIMIT_*`／`EXPERT_RATE_LIMIT_*`）。驗收指令 `python -m pytest tests/ -k "retry or backoff or wiring or make_retry_config" -q` 先前已 132 passed、全套件 2193 passed 0 failed。
+README.md:107:.venv\Scripts\python -c "import studio; print('ok')"  # Windows
+README.md:122:.venv/bin/python3 -m studio.server                           # 5. 啟動（Windows：.venv\Scripts\python -m studio.server）
+README.md:143:# Windows：.venv\Scripts\python -m studio.server
+README.md:251:移動、每輪自動 git commit，最後 **Demo 真的執行 `python main.py add 3 4` 算出 `7.0`**。
+adr.json:1544:      "decision": "驗收指令組由兩條擴充為三條，順序為：① `ruff check studio/ tests/`（exit 0）→ ② `python -c \"from studio import secure_write; print(secure_write)\"`（runtime import 無例外）→ ③ `python3 -m pytest --collect-only -q tests/`（exit 0, 0 collection error）。",
+adr.json:1747:      "decision": "CI test job 新增獨立 step，name 為 `\"Collect tests\"`，指令 `python -m pytest --collect-only -q`，env `TI_SANDBOX: \"0\"`，不帶 `--cov` 任何參數，不加 `continue-on-error`。",
+adr.json:1957:      "decision": "驗收訊號 #3 重新定義 — 改為在專案 venv 下執行 python -c \"from studio import secure_write; print(secure_write.__file__)\"，確認模組路徑指向 studio/secure_write.py；此訊號驗的是「匯出路由正確」，不是格式，須明確標注執行路徑（cd 至 repo root）。",
+adr.json:2139:      "decision": "新增 `scripts/publish_release.py`（薄包裝，< 15 行），讀 `CHANGELOG.md` → 呼叫 `render_tag_notes(changelog_text, pyproject_version())` → 寫 `body.md`；workflow step 4 僅執行 `python scripts/publish_release.py`。",
+adr.json:2141:      "rejected": "`python -c \"...\"` 或 `run: | 多行 python`——邏輯不可測，且 shell quoting 仍有潛在風險。",
+adr.json:2314:      "decision": "**單一 PR 一次到位**；若 `README.md` 改法（大量段落）與其他檔案（單行 `python script.py`）差異過大，拆兩個 commit 同一 PR，便於 reviewer 分階段看。",
+docs/issues/0002-qa-server-fixture-missing-teardown.md:18:- **單獨跑** `python -m pytest tests/test_qa_task1_server_boot.py` → **7 passed（全綠）**。
+docs/issues/0002-qa-server-fixture-missing-teardown.md:19:- **完整套件** `python -m pytest tests/` → **8 failed**，且失敗**全部集中在 `test_qa_task1_server_boot.py`**：
+docs/issues/0002-qa-server-fixture-missing-teardown.md:124:3. `python -m pytest tests/` 完整套件可乾淨綠燈（除既有的沙箱硬限制測試，如 bwrap/PID 隔離，需另記為已知跳過）。
+scripts/publish_release.py:28:# 本檔在 scripts/ 下，repo 根為上一層。直接 `python scripts/publish_release.py`
+scripts/redeploy.sh:9:exec python -m studio.server
+scripts/scan_bare_pytest.sh:6:#       友善訊息指引改用 `python -m pytest`。與 scan_shell_usage.sh 同家族。
+scripts/scan_bare_pytest.sh:23:#        「請用 python -m pytest，不要 pytest tests/」）會被整行放掉而漏報。
+scripts/scan_bare_pytest.sh:73:      echo "${file}:${lineno}: 偵測到裸 pytest 指令，請改用 python -m pytest（例：python -m pytest tests/）" >&2
+scripts/serve.sh:3:# 背景：驗證環境可能只有 python3 而無 python（或反之）；宣告裸 `python -m studio.server`
+studio/autopilot.py:1:"""Autopilot —— Ti Studio 的自主自我改善迴圈（獨立程序：`python -m studio.autopilot`）。
+studio/docs/dev_command_dedup_inventory.md:32:| 同檔 `::test_contributing_pytest_prefix` | `\.venv/bin/python -m pytest -q` **≥2 處**；且無 `(?<![\w./-])python -m pytest` | CONTRIBUTING 須保留 ≥2 處（現 L28、L106 共 2 處）；勿引入裸 `python -m pytest` |
+studio/docs/dev_command_dedup_inventory.md:33:| 同檔 `::test_contributing_venv_python3` | 須含 `python3 -m venv .venv`；無 `(?<![\w3])python -m venv` | 保留 L12，勿改成 `python -m venv` |
+studio/docs/dev_command_dedup_inventory.md:34:| 同檔 `::test_all_pytest_run_commands_prefixed` | README+CONTRIBUTING 皆無裸 `python -m pytest` / 行首 `pytest` | 全檔約束，非僅測試段 |
+studio/docs/subprocess_migration_inventory.md:27:| 3 | `autopilot.py::_gate_tests` | `python -m pytest -q`（**已遷移 exec**） | **a** | 固定字串，無 shell 語法 | ✅ 已遷移：argv `[sys.executable,"-m","pytest","-q"]` 走 `run_command_exec`，`label="pytest gate"`；保留 `timeout=600, sandbox=True`。⚠️ 用 `sys.executable` 而非裸 `"python"`：多數環境（含本 CI）PATH 僅有 `python3`，裸 `python` 在 exec/sandbox 下會 `execvp: No such file` ——sys.executable 落實設計「避免 PATH 問題」意圖（已 sandbox 實跑驗證） |
+studio/fake_experts.py:43:"""命令列介面：python main.py <add|sub|mul|div> <a> <b>"""
+studio/fake_experts.py:55:        print("用法: python main.py <add|sub|mul|div> <a> <b>")
+studio/fake_experts.py:74:python main.py add 3 4   # -> 7.0
+studio/fake_experts.py:75:python main.py div 1 0   # -> 除數不可為 0
+studio/fake_experts.py:114:python -m pytest -q   # 兩模組測試全過
+studio/fake_experts.py:238:            "執行指令: python -m pytest -q"
+studio/fake_experts.py:255:        "執行指令: python main.py add 3 4"
+studio/roles.py:67:        "（例如 `執行指令: python main.py`）。\n"
+studio/runner.py:35:# 解析「以 python 開頭」的指令用：把直譯器 token 換成實際可用的執行檔。
+studio/runner.py:374:    return f"python {entry}" if entry else None
+studio/server.py:4:保留 `studio.server:app` 與 `python -m studio.server` 入口不變。
+studio/usage_report.py:10:    python -m studio.usage_report [--since YYYY-MM-DD] [--json]
+tests/autopilot/test_qa_task3_autopilot_pytest_exec.py:1:"""QA 驗收：任務 #3「autopilot.py 的 `python -m pytest -q` 遷移為 run_command_exec」。
+tests/autopilot/test_qa_task3_autopilot_pytest_exec.py:74:    # 用 sys.executable（當前直譯器）而非裸 "python"，避免 PATH 無 python 的解析失敗。
+tests/autopilot/test_qa_task3_autopilot_pytest_exec.py:131:# --- 設計決策：sandbox 下實跑，驗證 bwrap 能解析 python -----------------
+tests/autopilot/test_qa_task3_autopilot_pytest_exec.py:139:    assert r.ok, f"sandbox 內 python 無法執行：exit={r.exit_code} out={r.output!r}"
+tests/autopilot/test_qa_task4_autopilot_gate_exec.py:78:    # 用 sys.executable（當前直譯器）而非裸 "python"，避免 PATH 無 python 的解析失敗。
+tests/autopilot/test_qa_task4_ci_collect_step_guard.py:4:  - "Collect tests"：`python -m pytest --collect-only -q`，先只收集不執行；
+tests/autopilot/test_qa_task4_ci_collect_step_guard.py:6:  - "Run tests"：完整 `python -m pytest`，置於 collect 步驟之後。
+tests/autopilot/test_qa_task4_ci_collect_step_guard.py:118:        {"name": "Run tests", "run": "python -m pytest -q --cov=studio"},
+tests/autopilot/test_qa_task4_publish_workflow_guard.py:6:  2. body 來源為 render_tag_notes：存在 `python scripts/publish_release.py` 的 render step。
+tests/autopilot/test_release_smoke.py:228:# 端到端：以子行程實跑 `python -m studio.release_smoke`，驗 CLI 真實退出碼
+tests/core/test_agenda_orchestration.py:106:    "執行指令: python main.py"
+tests/core/test_agenda_orchestration.py:155:    experts = _experts(["任務: 實作 BMI\n執行指令: python main.py", "決議: 完成", "OK"])
+tests/core/test_agenda_persistence.py:53:    "執行指令: python main.py"
+tests/core/test_discussion_groups.py:77:    "執行指令: python main.py"
+tests/core/test_http_demo.py:21:        runner.parse_demo_url("執行指令: python app.py\nDemo 網址: http://localhost:8123/")
+tests/core/test_http_demo.py:144:                "任務: 做網站\n執行指令: python app.py\nDemo 網址: http://localhost:8123/",
+tests/core/test_http_demo.py:149:        "engineer": StubExpert(BY_KEY["engineer"], ["做好了\n執行指令: python app.py"]),
+tests/core/test_http_demo.py:185:            ["做好了\n執行指令: python app.py\nDemo 網址: http://127.0.0.1:9000/health"],
+tests/core/test_orchestrator.py:175:    text = "任務: 建立 CLI\n任務: 加入分類\n驗收標準: 能跑\n執行指令: python main.py"
+tests/core/test_orchestrator_selfimprove.py:128:    s._run_command = "python overall.py"  # PM 的整體執行指令（fallback 來源）
+tests/core/test_orchestrator_selfimprove.py:146:    s._run_command = "python overall.py"
+tests/core/test_orchestrator_selfimprove.py:163:    s._run_command = "python overall.py"
+tests/core/test_run_helpers_killpg.py:24:    # sh 背景起「2 秒後建檔」的 python 孫程序並 wait；timeout=1 觸發收尾。
+tests/core/test_runner.py:13:    assert runner.parse_run_command("總結…\n執行指令: python main.py") == "python main.py"
+tests/core/test_runner.py:14:    assert runner.parse_run_command("執行指令：`python bmi.py`") == "python bmi.py"
+tests/core/test_runner.py:39:    assert runner.resolve_demo_command(tmp_path, "python x.py") == "python x.py"
+tests/core/test_runner.py:41:    assert runner.resolve_demo_command(tmp_path, None) == "python main.py"
+tests/core/test_runner.py:44:# --- 直譯器可攜性（python / python3）-----------------------------------
+tests/core/test_runner.py:48:    # python 在 PATH 時，指令原封不動。
+tests/core/test_runner.py:50:    assert runner._executable_command("python main.py add 3 4") == "python main.py add 3 4"
+tests/core/test_runner.py:54:    # python 不在 PATH 時，開頭 token 換成 sys.executable，其餘參數保留。
+tests/core/test_runner.py:57:    out = runner._executable_command("python main.py add 3 4")
+tests/core/test_runner.py:95:    指令讓 /bin/sh 背景起一個「3 秒後建檔」的 python 孫程序並 wait；timeout=1 觸發收尾。
+tests/core/test_runner.py:124:    # 不經 shell，用 python 直接設定 exit code
+tests/core/test_tools_dedup_key_task2.py:96:    args = {"command": "python increment.py"}
+tests/docs/test_docs_pytest_command.py:36:    # 不應再有以 python 開頭的 pytest 執行指令
+tests/docs/test_docs_pytest_command.py:40:        if re.search(r"(?<![\w./-])python -m pytest", ln)
+tests/docs/test_docs_pytest_command.py:42:    assert not bad, f"CONTRIBUTING 仍有 'python -m pytest'（未補 .venv 前綴）: {bad}"
+tests/docs/test_docs_pytest_command.py:49:    bad = re.search(r"(?<![\w3])python -m venv", text)
+tests/docs/test_docs_pytest_command.py:50:    assert not bad, "CONTRIBUTING 仍有 'python -m venv'（應改 python3）"
+tests/docs/test_docs_pytest_command.py:59:            if re.search(r"(?<![\w./-])python -m pytest", ln):
+tests/docs/test_qa_task2_contributing_canonical.py:54:# 標準 2-c：全部 pytest 執行指令統一前綴，≥2 處，且無裸 python -m pytest
+tests/docs/test_qa_task2_contributing_canonical.py:62:        if re.search(r"(?<![\w./-])python -m pytest", ln)
+tests/docs/test_qa_task2_contributing_canonical.py:64:    assert not bad, f"仍有未補 .venv 前綴的 python -m pytest: {bad}"
+tests/docs/test_qa_task2_contributing_canonical.py:71:    assert not re.search(r"(?<![\w3])python -m venv", t), "不應有 python -m venv（應 python3）"
+tests/docs/test_qa_task2_contributing_canonical.py:133:    assert r.returncode == 0, f"`python -m {mod}` 無法執行: {r.stderr or r.stdout}"
+tests/docs/test_qa_task3_precommit_step.py:4:- `pre-commit install`（或 `python -m pre_commit install`）出現在首次設定流程中。
+tests/docs/test_qa_task3_precommit_step.py:62:# ---- 該步以 .venv 內 python 執行（與流程其他步一致，非系統環境）----
+tests/docs/test_qa_task3_readme_test_section.py:55:# 標準 4-a：README 全檔無 pytest 執行指令（行首裸 pytest 或 python -m pytest）
+tests/docs/test_readme_consistency.py:31:    """啟動指令一律 .venv 完整路徑，不得有裸 `python -m studio.server`。
+tests/docs/test_readme_consistency.py:32:    （允許 Windows 的 .venv\\Scripts\\python 與 mac/Linux 的 .venv/bin/python3）"""
+tests/docs/test_readme_consistency.py:34:    assert not bad, f"殘留裸 python 啟動指令: {bad}"
+tests/docs/test_readme_consistency.py:86:    assert r".venv\Scripts\python -m studio.server" in README
+tests/docs/test_readme_verify_cmd.py:15:VERIFY_WIN = ".venv\\Scripts\\python -c \"import studio; print('ok')\""
+tests/docs/test_readme_verify_cmd.py:51:    # 不可出現 `python -c "import studio` 這種裸寫法當驗證指令
+tests/docs/test_readme_verify_cmd.py:53:    assert not bare, f"驗證指令出現裸 python 寫法: {bare}"
+tests/sandbox/test_qa_task1_subprocess_inventory.py:243:        '"python -m pytest -q"' in autopilot_src  # 待遷移：shell 字串
+tests/sandbox/test_qa_task1_subprocess_inventory.py:245:        in autopilot_src  # 已遷移：exec argv（python / sys.executable 皆可）
+tests/scan/test_qa_no_bare_pytest.py:5:  #2 含裸 `pytest tests/` 的檔案 → exit≠0 + 可讀錯誤訊息（指引 python -m pytest）
+tests/scan/test_qa_no_bare_pytest.py:61:    "python -m pytest tests/",
+tests/scan/test_qa_no_bare_pytest.py:89:    assert "python -m pytest" in r.stderr, f"缺少友善指引訊息: {r.stderr!r}"
+tests/server/smoke_agenda_real_server.py:1:"""任務 #5 QA 冒煙：真實啟動 `python -m studio.server`（非 TestClient），fake experts 走
+tests/server/test_qa_task1_server_boot.py:1:"""任務 #1 驗證：環境就緒並啟動服務（python -m studio.server，:8000 可開啟）。
+tests/server/test_qa_task1_server_boot.py:4:做法：真實以子程序啟動 `python -m studio.server`（非僅 TestClient），
+tests/server/test_scorecard.py:38:    _ev("run_result", passed=False, detail="自測 `python main.py`：未通過"),
+tests/server/test_smoke_agenda_real_server.py:4:`python -m studio.server`（真 uvicorn＋TCP），再以子行程執行 QA 的
+tests/test_offline_parallel.py:26:    # 學習機制 pin 關（預設已開）：自測指令（python -m pytest）是否可跑依賴 host 環境。
+deploy/ti-autopilot.service:18:ExecStart=/opt/ti/.venv/bin/python -m studio.autopilot
