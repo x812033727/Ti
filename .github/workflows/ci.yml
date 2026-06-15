@@ -79,6 +79,15 @@ jobs:
           git config --global user.email ci@ti.local
           git config --global user.name "CI"
 
+      # 獨立收集步驟：先只做 collection 不執行測試。collection error（如 import 失敗、
+      # 語法錯誤）會讓本步以 exit 2 失敗，且因非 continue-on-error，GitHub Actions
+      # 預設 fail-fast 不會進入下方 "Run tests"——錯誤明確指向「collect」而非「test run」，
+      # 不與測試失敗（exit 1）糊在同一 step。不帶 --cov：collect 階段無意義且製造噪音。
+      - name: Collect tests
+        env:
+          TI_SANDBOX: "0"
+        run: python -m pytest --collect-only -q
+
       - name: Run tests
         # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import。
         # CI runner 無法執行 bubblewrap（Ubuntu 24.04 限制 unprivileged user/net
