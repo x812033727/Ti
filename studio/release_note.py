@@ -41,8 +41,9 @@ emoji（⚠️, U+26A0 U+FE0F）是契約的一部分，不可省略——抽取
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 #: heading 字串的唯一事實來源。測試與渲染皆引用此常數，禁止硬寫字面量。
 #: 改動此字串＝改動發佈契約，務必同步 CHANGELOG.md 與相依測試。
@@ -71,7 +72,7 @@ def extract_breaking_block(text: str) -> str | None:
         return None
 
     # text[m.end():] 形如 "\n<行1>\n<行2>...";splitlines()[0] 為 heading 行尾的空段，跳過。
-    rest_lines = text[m.end():].splitlines()[1:]
+    rest_lines = text[m.end() :].splitlines()[1:]
 
     body_lines: list[str] = []
     in_fence = False
@@ -115,9 +116,9 @@ class MissingBreakingBlock(ValueError):
 def _render(changelog_text: str, version: str, *, heading: str, footer: str) -> str:
     """共用渲染骨架。兩參數的格式化約定不同，呼叫端勿混淆：
 
-      - ``heading``：**含 ``{version}`` 佔位符的模板字串**，本函式以 ``.format(version=...)``
-        求值。傳入已求值的 f-string 是 no-op；含其他未知 key 會 ``KeyError``。
-      - ``footer``：**由呼叫端預先格式化好的最終字串**，本函式不再 ``.format()``。
+    - ``heading``：**含 ``{version}`` 佔位符的模板字串**，本函式以 ``.format(version=...)``
+      求值。傳入已求值的 f-string 是 no-op；含其他未知 key 會 ``KeyError``。
+    - ``footer``：**由呼叫端預先格式化好的最終字串**，本函式不再 ``.format()``。
     """
     block = extract_breaking_block(changelog_text)
     if block is None:
