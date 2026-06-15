@@ -12,11 +12,11 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fail=0
 
 # 1) lint
-ruff check . >/dev/null 2>&1; echo "[lint exit=$?]"
+ruff check . >/dev/null 2>&1; RC=$?; echo "[lint exit=$RC]"; [ "$RC" -eq 0 ] || fail=1
 
 # 2) collect
-python3 -m pytest --collect-only -q -o addopts="" >"$TMP/col.log" 2>&1
-echo "[collect exit=$?] $(tail -n1 "$TMP/col.log")"
+python3 -m pytest --collect-only -q -o addopts="" >"$TMP/col.log" 2>&1; RC=$?
+echo "[collect exit=$RC] $(tail -n1 "$TMP/col.log")"; [ "$RC" -eq 0 ] || fail=1
 
 # 3) doc-only 不變式（commit 無關的真相，避免 test_no_py_changed 因「撤回尚未提交」的時序假紅）
 nd=$(git diff origin/main --name-only -- '*.py' 2>/dev/null | wc -l | tr -d ' ')
