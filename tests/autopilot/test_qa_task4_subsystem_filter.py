@@ -83,9 +83,7 @@ def test_filter_does_not_touch_backlog_state(state, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_SUBSYSTEM_MAX_PENDING", 1)
     backlog.add("重構 backlog 載入")
     before = [t["id"] for t in backlog.list_tasks()]
-    autopilot._filter_pending_duplicates(
-        ["backlog 再加一個", "discovery 全新"], ["重構 backlog 載入"]
-    )
+    autopilot._filter_pending_duplicates(["backlog 再加一個", "discovery 全新"], ["重構 backlog 載入"])
     after = [t["id"] for t in backlog.list_tasks()]
     assert before == after
 

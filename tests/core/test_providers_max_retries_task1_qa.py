@@ -39,15 +39,15 @@ def _make_fake_openai_module():
         )
 
     class FakeAsyncOpenAI:
-        def __init__(
-            self, *, api_key=None, base_url=None, max_retries=_SDK_DEFAULT_MAX_RETRIES, **kw
-        ):
+        def __init__(self, *, api_key=None, base_url=None, max_retries=_SDK_DEFAULT_MAX_RETRIES, **kw):
             # max_retries 預設＝SDK 預設 2：providers 不傳就落回 2（反向鑑別力來源）
             self.api_key = api_key
             self.base_url = base_url
             self.max_retries = max_retries
             captured.clear()
-            captured.update(api_key=api_key, base_url=base_url, max_retries=max_retries, extra=kw)
+            captured.update(
+                api_key=api_key, base_url=base_url, max_retries=max_retries, extra=kw
+            )
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
 
     module = SimpleNamespace(AsyncOpenAI=FakeAsyncOpenAI)

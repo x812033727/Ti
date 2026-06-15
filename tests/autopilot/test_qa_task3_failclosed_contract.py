@@ -113,7 +113,9 @@ def test_warn_does_not_raise_on_chown_fail(tmp_path, monkeypatch):
 
 def test_off_does_not_raise_on_chown_fail(tmp_path, monkeypatch):
     # off 不應呼叫 fchown，故即使 mock 會丟錯也不觸發
-    monkeypatch.setattr(os, "fchown", lambda *a: (_ for _ in ()).throw(PermissionError("EPERM")))
+    monkeypatch.setattr(
+        os, "fchown", lambda *a: (_ for _ in ()).throw(PermissionError("EPERM"))
+    )
     target = tmp_path / "s"
     secure_write_root(target, b"x", require_chown="off")
     assert target.exists()

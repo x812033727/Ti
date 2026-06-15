@@ -73,7 +73,6 @@ def test_web_fetch_not_deduped(tmp_path, monkeypatch):
 
     以 ``monkeypatch.setattr(tools, '_research_fetch', ...)`` 餵假回應免真連線（同 task5 模式）。
     """
-
     async def fake_fetch(url):
         return f"[HTTP 200] {url}\nreal-body"
 

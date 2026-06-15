@@ -82,16 +82,12 @@ def test_either_path_failure_is_total(isolated_state, monkeypatch, which):
     """參數化證明：無論哪一條路徑，非 root 一律 raise（整體失敗），行為一致。"""
     _fchown_fails(monkeypatch)
     if which == "history":
-
         def op():
             history.start_session("s", "r")
-
         artifact = config.HISTORY_ROOT / "s.meta.json"
     else:
-
         def op():
             backlog.add("t")
-
         artifact = config.AUTOPILOT_STATE_DIR / "backlog.json"
     with pytest.raises(SecureWriteError):
         op()
