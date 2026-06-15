@@ -811,3 +811,43 @@
 - 範圍守線：本任務僅決策＋升版，**不碰 chown 程式邏輯**（`config.py` 已 strict 預設、warn/off 三態、錯值 fail-safe，均維持原狀）。
 - 架構伏筆：semantic-release / git tag 自動擷取 `BREAKING CHANGE:` footer 留待未來；本次 CHANGELOG 為人工維護。
 
+## `studio/__init__.py` F401 採 redundant-alias：`from . import secure_write as secure_write`，同行加 inline comment `# re-export; 'as' 是 ruff F401 慣用消法，請勿移除`
+- 時間：2026-06-15 08:07
+- 理由：comment 跟著 code 走，PR description 不會；防止新人善意刪掉成本最低
+- 否決方案：加 `__all__` ——若原本無 `__all__`，`from studio import *` 語意改變，潛在 breaking，可逆性不足
+
+## E731 兩處 lambda 手動改為 if/else 內 `def op()`，不使用 `--unsafe-fixes`
+- 時間：2026-06-15 08:07
+- 理由：手動改強迫確認語意等價並留審計痕跡；本案 lambda 無參無 closure，語意已確認等價
+- 否決方案：`--unsafe-fixes` 自動修——無審計痕跡，萬一有 closure 邊界 case 靜默改壞
+
+## I001（import 排序）與 tests/ 未用 import（F401）用 `ruff check --fix` 處理，但必須分檔指定，禁止對整個 `studio/ tests/` 全域跑 `--fix`
+- 時間：2026-06-15 08:07
+- 理由：全域 `--fix` 會把邊界外的 safe fix 一起改掉，scope creep 無法防控
+- 否決方案：`ruff check --fix studio/ tests/` 一鍵跑——改動面不可控
+
+## E731 所在檔（`tests/autopilot/test_qa_task4_dualpath_parity.py`）必須從 `--fix` 的掃描範圍中排除，確認不與手改並行衝突後，#1~#4 才可並行執行；若無法排除則 #2 串行先行
+- 時間：2026-06-15 08:07
+- 理由：`--fix` 批次與手改 lambda 撞同一檔會產生 conflict，並行假設須先驗證
+
+## E741 變數重命名，以 `line` 作為首選錨點；若語意不符（非行內容）工程師可自裁，但須在 PR 說明改名原因
+- 時間：2026-06-15 08:07
+- 理由：給錨點降低 review 來回摩擦，不硬規定保留彈性
+- 否決方案：完全「工程師自裁」不給錨點——多處 `l` 出現時容易命名不一致引發 review 往返
+
+## 驗收前必須確認 `pyproject.toml` 的 `select` 包含 E、F、I 系列（即 E731、E741、I001 均在規則集內），再跑 `ruff check`；若規則未啟用，通過不代表有跑
+- 時間：2026-06-15 08:07
+- 理由：ruff 通過但規則沒啟用等於假綠，需先排除
+
+## 驗收指令三步驟依序執行：① `ruff check studio/ tests/`（exit 0）→ ② `python3 -m pytest tests/ --collect-only -q`（≥472 筆無 error）→ ③ `git diff --stat` 人眼核對改動檔清單未越界
+- 時間：2026-06-15 08:07
+- 理由：collect-only 只證 import 不爆；`git diff --stat` 才能防 scope creep
+
+## 改動邊界硬鎖「消 lint」——任何超出此邊界的改動（重構邏輯、清無關 code smell、補測試）一律拒絕進本 PR，PR description 須明文說明此限制
+- 時間：2026-06-15 08:07
+- 否決方案：順手清鄰近 code smell——lint 修正 PR 最常見的 scope creep 入口，一律擋掉
+
+## 禁止用 `# noqa` 作為本次任何違規的解法；本次所有 8 個違規均有等價合規寫法
+- 時間：2026-06-15 08:07
+- 否決方案：部分加 `# noqa` 快速過關——把 lint 債藏起來傳給下一個人
+
