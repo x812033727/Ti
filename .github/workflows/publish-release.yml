@@ -1,0 +1,68 @@
+name: Publish release
+
+# 觸發：push tag v*。本 workflow 建立 GitHub release（published 狀態）。
+#
+# 觸發死結（任務 #3 核心）：以 GITHUB_TOKEN 建立的 release 不會啟動下游 workflow
+# （GitHub 防遞迴機制），release-smoke.yml 的 `on: release: published` 將永不觸發，
+# 形同未啟用。解法＝改以 PAT（secrets.GH_PAT）身分建立 release，PAT 產生的
+# release:published 事件即可正常觸發下游 release-smoke，無需改動 smoke workflow。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # gh release create 的最小權限需求
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # 防卡死燒額度（同 ci.yml / release-smoke.yml 註記）
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Step 1 — PAT guard：把「GH_PAT 未設或已過期」攔在最前面。
+      # PAT 缺失若不攔，前四步會成功、到 Create release 才撞 403，錯誤訊息變成難猜的權限問題；
+      # 在此先 fail，CI log 直接指向根因。
+      - name: Verify PAT
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          test -n "$GH_TOKEN" || { echo "::error::GH_PAT secret 未設或已過期；GITHUB_TOKEN 建立的 release 不會觸發下游 release-smoke，必須以 PAT 建立"; exit 1; }
+
+      # Step 2 — 版本字串以 pyproject.toml 為單一事實來源，不在 YAML 硬寫版本號。
+      - name: Resolve version (SSOT = pyproject.toml)
+        id: version
+        run: |
+          ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+          echo "resolved version: $ver"
+
+      # Step 3 — 斷言 push 的 tag 與程式碼版本一致；不符即 fail-fast，不建立 release。
+      # tag 與版本不同步是上線事故根因，最便宜的攔截點在 release 建立前。
+      - name: Assert tag matches version
+        env:
+          EXPECTED: v${{ steps.version.outputs.version }}
+          ACTUAL: ${{ github.ref_name }}
+        run: |
+          test "$ACTUAL" = "$EXPECTED" || { echo "::error::push 的 tag '$ACTUAL' 與 pyproject 版本 '$EXPECTED' 不符，拒絕建立 release"; exit 1; }
+
+      # Step 4 — 渲染 release body 至 body.md。body 來源＝studio.release_note.render_tag_notes
+      # （讀真實 CHANGELOG.md + pyproject_version()），不在 YAML 重寫任何 heading 字面值。
+      - name: Render release body
+        run: python scripts/publish_release.py
+
+      # Step 5 — 以 PAT 建立 published release（不帶 --draft，狀態直接為 published 才能被
+      # release-smoke 的 release:published 接住）。body 經 -F body.md 注入，不經 shell 字串拼裝。
+      # GH_TOKEN=secrets.GH_PAT 是解除觸發死結的關鍵：PAT 身分建立的 release 才會觸發下游。
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: gh release create "${{ steps.version.outputs.tag }}" -F body.md
