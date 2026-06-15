@@ -54,8 +54,8 @@ def _has_windows_py_launcher_hint(text: str) -> bool:
     # 同語意單元：「py」後 80 字內有 fallback 訊號（涵蓋「`py` 啟動器」/「`py -3`」/
     # 「改用 `py`」/「`py` 找不到」等句型；順序不限以涵蓋「找不到時改用 `py`」）。
     pair_pat = re.compile(
-        r"`?py`?[\w.、。\s-]{0,80}(" + fallback_signals + r")"
-        r"|(" + fallback_signals + r")[\w.、。\s-`]{0,80}`?py`?",
+        r"`?py`?[^\n]{0,80}(" + fallback_signals + r")"
+        r"|(" + fallback_signals + r")[^\n`]{0,80}`?py`?",
     )
     return bool(pair_pat.search(text))
 
@@ -72,7 +72,7 @@ def _has_venv_python_explicit(text: str) -> bool:
     if "venv" not in text:
         return False
     pat = re.compile(
-        r"venv[\w.、。\s\-/\\]{0,60}(允許|使用|用|走|沿用|可).{0,30}`?python`?",
+        r"venv[^\n]{0,60}(允許|使用|用|走|沿用|可)[^\n]{0,30}`?python`?",
     )
     return bool(pat.search(text))
 
@@ -87,11 +87,11 @@ def _has_shell_python3_explicit_convention(text: str) -> bool:
       且三者在 100 字內構成同一語意單元。
     """
     pat = re.compile(
-        r"(shell|範例|文件|demo|指令|命令)[\w.、。\s\-]{0,40}"
-        r"(統一|慣例|收斂|canonical|convention)[\w.、。\s\-`]{0,40}`?python3`?"
+        r"(shell|範例|文件|demo|指令|命令)[^\n]{0,40}"
+        r"(統一|慣例|收斂|canonical|convention)[^\n`]{0,40}`?python3`?"
         r"|"
-        r"(統一|慣例|收斂|canonical|convention)[\w.、。\s\-]{0,40}"
-        r"(shell|範例|文件|demo|指令|命令)[\w.、。\s\-`]{0,40}`?python3`?",
+        r"(統一|慣例|收斂|canonical|convention)[^\n]{0,40}"
+        r"(shell|範例|文件|demo|指令|命令)[^\n`]{0,40}`?python3`?",
     )
     return bool(pat.search(text))
 
