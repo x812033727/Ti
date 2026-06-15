@@ -82,13 +82,17 @@ def check_trigger_chain(publish_text: str, smoke_text: str) -> list[str]:
     else:
         run = create["run"]
         if "--draft" in run:
-            problems.append("gh release create 帶 --draft，狀態非 published，無法被 release:published 接住")
+            problems.append(
+                "gh release create 帶 --draft，狀態非 published，無法被 release:published 接住"
+            )
         # --- 段 3（觸發死結核心）：以 PAT 身分建立，非 GITHUB_TOKEN/github.token ---
         token = (create.get("env") or {}).get("GH_TOKEN", "")
         if "secrets.GH_PAT" not in token:
             problems.append(f"Create release 的 GH_TOKEN 非 PAT（實際: {token!r}）——觸發死結未解")
         if "github.token" in token.lower() or "github_token" in token.lower():
-            problems.append(f"Create release 用 GITHUB_TOKEN，建立的 release 不觸發下游（實際: {token!r}）")
+            problems.append(
+                f"Create release 用 GITHUB_TOKEN，建立的 release 不觸發下游（實際: {token!r}）"
+            )
 
     # --- 段 2：body 來源為 render_tag_notes（經 -F body.md 注入、不 shell 拼裝）---
     render = _find_step_by_run_substr(pub, "publish_release.py")
@@ -148,7 +152,9 @@ def test_create_release_published_not_draft(publish_text):
     """AC#1：release 狀態為 published（不帶 --draft），才能被 release:published 接住。"""
     pub = yaml.safe_load(publish_text)
     create = _find_step_by_run_substr(pub, "gh release create")
-    assert create is not None and "--draft" not in create["run"], "AC#1：release 帶 --draft 或缺建立 step"
+    assert create is not None and "--draft" not in create["run"], (
+        "AC#1：release 帶 --draft 或缺建立 step"
+    )
 
 
 def test_smoke_triggered_by_release_published(smoke_text):
@@ -178,7 +184,9 @@ def test_mutation_remove_create_step_turns_red(publish_text, smoke_text):
     mutated = publish_text.replace("gh release create", "echo skip-create")
     assert mutated != publish_text, "mutation 無效：未替換到建立指令"
     problems = check_trigger_chain(mutated, smoke_text)
-    assert any("建立 step" in p for p in problems), f"假綠：移除建立 step 後未翻紅，problems={problems}"
+    assert any("建立 step" in p for p in problems), (
+        f"假綠：移除建立 step 後未翻紅，problems={problems}"
+    )
 
 
 def test_mutation_add_draft_turns_red(publish_text, smoke_text):
@@ -219,6 +227,12 @@ def test_no_breaking_heading_literal_in_yaml_and_script(publish_text, smoke_text
     from studio.release_note import BREAKING_HEADING
 
     script_text = (ROOT / "scripts" / "publish_release.py").read_text(encoding="utf-8")
-    for name, text in (("publish.yml", publish_text), ("smoke.yml", smoke_text), ("publish_release.py", script_text)):
-        assert BREAKING_HEADING not in text, f"AC#2：{name} 出現 heading 字面值 {BREAKING_HEADING!r}"
+    for name, text in (
+        ("publish.yml", publish_text),
+        ("smoke.yml", smoke_text),
+        ("publish_release.py", script_text),
+    ):
+        assert BREAKING_HEADING not in text, (
+            f"AC#2：{name} 出現 heading 字面值 {BREAKING_HEADING!r}"
+        )
         assert "## Breaking" not in text, f"AC#2：{name} 出現 `## Breaking` 字面值"
