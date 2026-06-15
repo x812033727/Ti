@@ -8,17 +8,19 @@
 本檔用 ``@pytest.mark.parametrize`` 把三類 LLM 行為漂移釘成明文黑樣本，每個 case 斷言
 副作用發生 **2 次**：
 
-  Case1 差一空格   "echo A >> f.txt"  → "echo A  >> f.txt"
-  Case2 多一鍵     {"command": ...}   → {"command": ..., "_meta": "v"}
-  Case3 value 差異 "echo C >> f.txt"  → "echo c >> f.txt"（大小寫）
+  Case1 差一空格   "echo A >> f.txt"          → "echo A  >> f.txt"
+  Case2 多一鍵     {"command": ...}           → {"command": ..., "_meta": "v"}
+  Case3 value 型別 {"command": ..., "_meta": 1} → {..., "_meta": "1"}（int → str）
 
 【鑑別力契約】若有人「修好」此限制（例如改用語意正規化 key、忽略多餘鍵），這些黑樣本會
 從「2 行」變「1 行」而**翻紅**——刻意以此鎖死團隊對現行限制的共識，修掉須同步改測試。
 
-【Case3 為何用大小寫而非 int/str 型別漂移】設計上 ``int`` vs ``str`` 在 ``sort_keys`` 層
-digest 必異（同理會漏命中），但現行工具規格 ``command`` 全為 string、傳整數會讓 runner
-執行失敗、取不到兩個「成功副作用」反而降低鑑別力；故以「同鍵、value 內容不同（大小寫）」
-作為 value content drift 的代理，驗的是「副作用多跑（at-least-once）」而非 hash 本身。
+【Case3 為何把型別漂移打在輔助鍵 ``_meta`` 而非 ``command``】``command`` 規格為 string，
+傳整數 command 會讓 runner 執行失敗、取不到兩個「成功副作用」。但任務要求覆蓋的是
+「value 型別不同」這個 LLM 行為（例如同一參數回 ``1`` vs ``"1"``）——只要把型別漂移放在
+**不影響執行的輔助鍵** ``_meta`` 上，``command`` 兩邊保持一致照常 append，``int 1`` 與
+``str "1"`` 在 ``json.dumps`` 後序列化必異（``1`` vs ``"1"``）→ digest 變 → 漏命中。
+如此忠實覆蓋「value 型別不同」，同時保留 2 次副作用的鑑別力。
 
 注意：本檔僅新增測試，不觸碰任何生產碼。
 """
@@ -62,9 +64,9 @@ _DRIFT_CASES = [
         id="extra_key",
     ),
     pytest.param(
-        {"command": "echo C >> f.txt"},
-        {"command": "echo c >> f.txt"},  # value 內容不同（大小寫）
-        id="value_drift",
+        {"command": "echo C >> f.txt", "_meta": 1},  # 輔助鍵型別 int
+        {"command": "echo C >> f.txt", "_meta": "1"},  # 重放時同鍵變 str（型別漂移）
+        id="value_type_drift",
     ),
 ]
 
