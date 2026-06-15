@@ -1022,3 +1022,46 @@
 - 理由：工程師已點名此為人治約束，遲早會漏；但技術上測試讀檔已消除最大漏洞（hardcoded 副本）。剩餘風險是「有人加新格式要求但忘改測試」，這只能靠 checklist 而非純技術手段覆蓋。
 - 否決方案：靠「大家記得同步」但無明確觸發機制——已被工程師點名為不可持續做法。
 
+## `_gate_lint` 三個 return 點全數加 `[lint]` 前綴——`"[lint] ruff 缺失，略過 lint 閘門"`、`f"[lint] {name} 未過：..."`、`"[lint] ruff OK"`。
+- 時間：2026-06-15 10:59
+- 理由：失敗訊息比成功訊息更需要標籤；只改 "ruff OK" 一條會讓最關鍵的失敗路徑反而漏標，前綴意義喪失一半。
+- 否決方案：只改成功 return——失敗路徑無標籤，與「一眼辨層」目標矛盾。
+
+## `_gate_collect_without_sdk` 與 `_gate_tests` 各自單一 return，加 `"[collect] "` / `"[test] "` 前綴於 output str 頭部即可；bool 邏輯不動。
+- 時間：2026-06-15 10:59
+
+## CI test job 新增獨立 step，name 為 `"Collect tests"`，指令 `python -m pytest --collect-only -q`，env `TI_SANDBOX: "0"`，不帶 `--cov` 任何參數，不加 `continue-on-error`。
+- 時間：2026-06-15 10:59
+- 理由：`--cov` 在 collect 階段無意義且製造噪音；`continue-on-error` 會吃掉 exit 2，破壞 fail-fast 目的。
+- 否決方案：在 collect step 沿用 `--cov=studio` 旗標——徒增噪音且不影響收集結果。
+
+## 新 "Collect tests" step 置於現有 "Run tests" step 正前方；GitHub Actions 預設行為（非 `continue-on-error`）保證 collect exit 2 時 "Run tests" 不會執行。
+- 時間：2026-06-15 10:59
+
+## 守護測試以 `yaml.safe_load` 解析 ci.yml 後，鎖定 `jobs['test']['steps']` 清單，不全檔掃 `--collect-only`。
+- 時間：2026-06-15 10:59
+- 理由：sandbox-test job 的 L193 已含 `--collect-only`；全檔掃會被 sandbox job 假綠通過，條件 (a) 形同虛設。
+- 否決方案：全檔掃「任意 step 含 --collect-only」——沙箱 job 會假綠，守護失效。
+
+## 守護測試定位 step 以 **step name 字串搜尋**取 index，斷言 `collect_idx < run_idx`；禁止硬寫 index 常數。
+- 時間：2026-06-15 10:59
+- 理由：日後若在兩者間插入其他 step，硬常數會假綠；字串比對不受插入影響。
+- 否決方案：`steps[N]` 硬常數——結構變動後靜默假綠，與守護目的相反。
+
+## 交付順序明確為「#1（CI yaml）可先合併；#3（守護測試）須待 #1 合入後才能驗紅/綠」；#2（autopilot 標籤）無依賴可隨時交。
+- 時間：2026-06-15 10:59
+- 理由：「三 diff 可並行」是開發並行，不是驗收並行；QA 的守護測試需要真實 yaml 結構才能驗綠，誤解順序會造成假通過。
+
+## 守護測試同時斷言 collect step 與 run step 都不帶 `continue-on-error: true`；任一帶上即測試紅。
+- 時間：2026-06-15 10:59
+- 理由：`continue-on-error` 會靜默吸收 exit 2，使獨立步驟的失敗中斷能力形同虛設。
+
+## 零新增執行期依賴——禁止引入 `pytest-pylint`、`pytest-custom-exit-code` 或任何把 lint 嵌入 pytest 的插件；守護測試用標準庫 `yaml`（`pyyaml` 若已在 dev-deps 中則可用，否則換 `json`/手動解析）。
+- 時間：2026-06-15 10:59
+
+## sandbox-test job 不動，此次變更範圍僅限 `test` job。
+- 時間：2026-06-15 10:59
+
+## 設計文件留存一條演進路徑——「若未來 orchestrator 需機器解析閘門層級（如自動決策），改 return `dict` 並加 `level` 欄位取代前綴字串」；目前純文字前綴已足需求，此路徑屬有意識取捨非疏漏。
+- 時間：2026-06-15 10:59
+
