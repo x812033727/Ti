@@ -448,18 +448,28 @@ def _oversubscribed_context(titles: list[str] | None = None, k: int | None = Non
     return "\n".join(lines) + "\n\n"
 
 
-def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None = None) -> str:
+def _build_discovery_prompt(
+    *,
+    outcomes: str | None = None,
+    pending: str | None = None,
+    titles: list[str] | None = None,
+) -> str:
     """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
 
     結構：近期成敗回顧 + pending-awareness 清單 + 任務基底說明 + 兩條硬指令。
     兩條硬指令（禁止實質重疊、優先廣度覆蓋不同子系統）明確置於組裝層，為上層決策而非資料層職責。
     參數預設由 backlog 即時讀取；測試可注入字串以隔離 backlog 狀態。
+
+    `titles` 為 pending/in_progress 標題快照的單一注入點：`pending` 與 `oversubscribed`
+    兩段皆由它衍生（同源同快照），測試只需傳 `titles=` 即可隔離 backlog，無須 monkeypatch
+    全域 `_pending_titles`。顯式傳入 `pending` 仍可單獨覆蓋該段（保留既有注入契約）。
     """
+    titles = _pending_titles() if titles is None else titles
     outcomes = _recent_outcomes_context() if outcomes is None else outcomes
-    pending = _pending_awareness_context() if pending is None else pending
+    pending = _pending_awareness_context(titles) if pending is None else pending
     # 「已過多子系統」段隨 pending 子系統分佈動態產生：有子系統超標才出現，否則為 ""。
-    # 與 pending-awareness 同源（_pending_titles），確保 prompt 兩段覆蓋一致。
-    oversubscribed = _oversubscribed_context()
+    # 與 pending-awareness 同源（同一 titles 快照），確保 prompt 兩段覆蓋一致、且可注入隔離。
+    oversubscribed = _oversubscribed_context(titles)
     # 措辭隨清單存否切換：有清單才講「上列」，避免空清單時硬指令 1 措辭懸空指向不存在的清單。
     rule_1 = (
         "1. 不得提出與上列任何已在排隊／進行中項目實質重疊者（同一主題換句話說也算重疊，一律避開）。\n"
@@ -693,7 +703,10 @@ async def _evaluate_self(clone: str) -> int:
     async def _noop(_ev):
         return None
 
-    prompt = _build_discovery_prompt()
+    # 取一次 pending/in_progress 快照，prompt 注入與進場 pre-filter 共用同一份，
+    # 杜絕 LLM 延遲期間 backlog 變動造成兩端快照分裂（prompt 引導與 filter 比對不一致）。
+    titles = _pending_titles()
+    prompt = _build_discovery_prompt(titles=titles)
     try:
         text = await ex.speak(prompt, _noop)
     finally:
@@ -703,8 +716,8 @@ async def _evaluate_self(clone: str) -> int:
     done_titles = _recent_done_titles()
     tasks = [t for t in parse_tasks(text) if t.strip() not in done_titles]
     # 進場 pre-filter：丟掉與目前 pending/in_progress 高相似（語意相近）的提案，與 prompt 注入的
-    # 禁止清單對齊。不動 backlog._is_duplicate 的字串等值去重契約，兩者互補。
-    tasks = _filter_pending_duplicates(tasks, _pending_titles())
+    # 禁止清單對齊（同一 titles 快照）。不動 backlog._is_duplicate 的字串等值去重契約，兩者互補。
+    tasks = _filter_pending_duplicates(tasks, titles)
     n = backlog.add_many(tasks, source="eval")
     log.info("自我評估產出 %d 個新任務", n)
     return n
