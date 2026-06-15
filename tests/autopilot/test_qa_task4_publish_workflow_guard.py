@@ -155,9 +155,7 @@ def test_mutation_pat_to_github_token_would_turn_red(workflow):
     # mutation：改回 GITHUB_TOKEN。
     mutated = "${{ github.token }}"
     assert "secrets.GH_PAT" not in mutated, "mutation 為空操作"
-    assert "github.token" in mutated.lower(), (
-        "mutation 後守護未能識別 GITHUB_TOKEN，假綠風險"
-    )
+    assert "github.token" in mutated.lower(), "mutation 後守護未能識別 GITHUB_TOKEN，假綠風險"
 
 
 def test_mutation_drop_file_mode_would_turn_red(workflow):

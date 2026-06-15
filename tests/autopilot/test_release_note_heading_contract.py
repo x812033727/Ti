@@ -65,9 +65,7 @@ def test_black_sample_heading_renamed_to_breaking():
     assert _heading_line_present(text, BREAKING_HEADING), (
         "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
     )
-    polluted = re.sub(
-        r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking", text
-    )
+    polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking", text)
     assert not _heading_line_present(polluted, BREAKING_HEADING), (
         "黑樣本失效：heading 改名為 `## Breaking` 後仍被判為存在"
     )
@@ -80,9 +78,7 @@ def test_black_sample_emoji_stripped():
     assert _heading_line_present(text, BREAKING_HEADING), (
         "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
     )
-    polluted = re.sub(
-        r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking Changes", text
-    )
+    polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking Changes", text)
     assert not _heading_line_present(polluted, BREAKING_HEADING), (
         "黑樣本失效：拿掉 emoji 後仍被判為存在"
     )

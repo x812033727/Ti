@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[2]
-_SCRIPT = _ROOT / "scripts" / "publish_release.py"
-
 # 以 SSOT 常數構造 fixture，避免在測試裡再寫一份 heading 字面值。
 from studio.release_note import BREAKING_HEADING, MissingBreakingBlock, pyproject_version
+
+_ROOT = Path(__file__).resolve().parents[2]
+_SCRIPT = _ROOT / "scripts" / "publish_release.py"
 
 
 def _load_publish_release():
@@ -55,11 +55,14 @@ _CHANGELOG_NO_BLOCK = "# Changelog\n\n## 0.9.9 - 2026-01-01\n\n- 只有一般變
 # render_release_body：正常路徑 + SSOT
 # ---------------------------------------------------------------------------
 
+
 def test_render_reads_real_changelog_and_pyproject_version():
     """不帶參數時：讀真實 CHANGELOG.md + pyproject_version()，body 非空且含 Breaking 區塊。"""
     body = pr.render_release_body()
     assert body.strip(), "body 不該為空"
-    assert BREAKING_HEADING in body, "body 必須含逐字 Breaking heading（來自 render_tag_notes 注入）"
+    assert BREAKING_HEADING in body, (
+        "body 必須含逐字 Breaking heading（來自 render_tag_notes 注入）"
+    )
     # 版本來自 SSOT，必須出現在 body（render_tag_notes 的 heading / footer 都帶 version）。
     assert pyproject_version() in body, "body 必須含 pyproject SSOT 版本字串"
 
@@ -87,6 +90,7 @@ def test_render_version_omitted_uses_ssot(tmp_path, monkeypatch):
 # render_release_body：失敗路徑（缺 Breaking 區塊）
 # ---------------------------------------------------------------------------
 
+
 def test_render_missing_block_raises(tmp_path):
     """缺 Breaking 區塊：render_tag_notes 拋 MissingBreakingBlock（不靜默產半截 body）。"""
     cl = tmp_path / "CHANGELOG.md"
@@ -104,6 +108,7 @@ def test_render_missing_changelog_file_raises(tmp_path):
 # ---------------------------------------------------------------------------
 # write_github_output：比照既有 BODY 慣例
 # ---------------------------------------------------------------------------
+
 
 def test_github_output_format_matches_body_convention(tmp_path):
     """格式須為 `name<<DELIM\\n{value}\\n{DELIM}\\n`，且下游能 round-trip 還原原值。"""
@@ -143,6 +148,7 @@ def test_github_output_appends_not_overwrites(tmp_path):
 # main()：body.md 落檔 + GITHUB_OUTPUT + 冪等性
 # ---------------------------------------------------------------------------
 
+
 def test_main_writes_bodymd_and_github_output(tmp_path, monkeypatch):
     """main()：寫 body.md（內容==render 結果）並寫 GITHUB_OUTPUT 的 body 鍵。"""
     monkeypatch.setattr(pr, "_ROOT", tmp_path)
@@ -158,8 +164,9 @@ def test_main_writes_bodymd_and_github_output(tmp_path, monkeypatch):
     assert BREAKING_HEADING in body
 
     # GITHUB_OUTPUT 的 body 值 round-trip 必須等於 body.md 內容（兩出口同源、零拼裝）。
-    m = re.match(r"body<<(?P<d>\S+)\n(?P<v>.*)\n(?P=d)\n\Z",
-                 gh_out.read_text(encoding="utf-8"), re.DOTALL)
+    m = re.match(
+        r"body<<(?P<d>\S+)\n(?P<v>.*)\n(?P=d)\n\Z", gh_out.read_text(encoding="utf-8"), re.DOTALL
+    )
     assert m and m.group("v") == body, "GITHUB_OUTPUT body 必須與 body.md 同源同值"
 
 
@@ -194,18 +201,22 @@ def test_main_failure_does_not_write_github_output(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_OUTPUT", str(gh_out))
     with pytest.raises(MissingBreakingBlock):
         pr.main()
-    assert not gh_out.exists() or "body<<" not in gh_out.read_text(), \
+    assert not gh_out.exists() or "body<<" not in gh_out.read_text(), (
         "render 失敗時不應寫出 body 至 GITHUB_OUTPUT"
+    )
 
 
 # ---------------------------------------------------------------------------
 # 零 heading 字面值 + 反向 mutation（防孤立假綠）
 # ---------------------------------------------------------------------------
 
+
 def test_script_has_zero_breaking_heading_literal():
     """腳本原始碼 grep 不出 Breaking heading 字面值（0 命中）；heading 一律由 SSOT 注入。"""
     src = _SCRIPT.read_text(encoding="utf-8")
-    assert BREAKING_HEADING not in src, "scripts/publish_release.py 不得硬寫 Breaking heading 字面值"
+    assert BREAKING_HEADING not in src, (
+        "scripts/publish_release.py 不得硬寫 Breaking heading 字面值"
+    )
     # 連 emoji 也不該單獨出現（避免拆字繞過）。
     assert "⚠️ Breaking Changes" not in src
 
@@ -213,5 +224,6 @@ def test_script_has_zero_breaking_heading_literal():
 def test_grep_mutation_is_meaningful():
     """反向證明上面的 grep 有判別力：同字串確實存在於 SSOT 模組（否則 grep 永遠 0 命中＝假綠）。"""
     ssot_src = (_ROOT / "studio" / "release_note.py").read_text(encoding="utf-8")
-    assert BREAKING_HEADING in ssot_src, \
+    assert BREAKING_HEADING in ssot_src, (
         "SSOT 模組應含 heading 字面值——若這裡都找不到，代表 grep 失效，零命中無意義"
+    )
