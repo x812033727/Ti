@@ -115,5 +115,7 @@ def test_known_limitation_synonym_substitution_slips(existing, proposal, desc):
     這是 stdlib（不引入 jieba/詞向量）的已知天花板，非期望行為。釘住「確實 < 閾值」+「確實漏網」，
     使代價在 CI 永遠可見；補位靠 prompt 負向指令與 #3 子系統覆蓋 pre-filter，非本層硬擋。
     """
-    assert _new_jaccard(proposal, existing) < THRESHOLD, f"{desc}：若已能攔則應移出 known-limitation"
+    assert _new_jaccard(proposal, existing) < THRESHOLD, (
+        f"{desc}：若已能攔則應移出 known-limitation"
+    )
     assert autopilot._filter_pending_duplicates([proposal], [existing]) == [proposal]
