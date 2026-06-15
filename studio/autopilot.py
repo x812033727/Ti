@@ -485,7 +485,7 @@ _SYNONYM_CANONICAL: dict[str, dict[str, str]] = {
         "優化": "improve",
     },
     "ascii": {
-        "deduplication": "dedup",
+        # 註：不收 "deduplication"——Pass 1（字串級）已先把它消化成 dedup，token 永不殘留此鍵。
         "dedupe": "dedup",
         "fixes": "fix",
         "fixing": "fix",
@@ -510,7 +510,7 @@ def _normalize_for_dedup(s: str) -> str:
 
     供 `_tokenize_for_dedup` 前置使用；獨立成 helper 方便測試與日後替換策略。
 
-    Pass 1（CJK 多字詞 → ASCII canonical）：在逐字切 token 前，先把 `_SYNONYM_CJK_TO_CANONICAL`
+    Pass 1（CJK 多字詞 → ASCII canonical）：在逐字切 token 前，先把 `_SYNONYM_CANONICAL["cjk"]`
     的 CJK 同義詞（去重→dedup、修復/修正→fix…）展開成空白包夾的 ASCII canonical，使「無共享字的
     同義改寫」（如「修復去重」↔「修正 dedup 邏輯」）在詞集層面對齊、被第一道相似度攔下。
     替換前後補空白避免與相鄰 CJK 黏連成單一 token。
