@@ -26,7 +26,13 @@
   （working tree vs HEAD），**commit 後永遠為空**，是永恆綠燈、無護欄效力（高工問題一）。
 - 已改為以 `merge-base HEAD origin/main` 為基準對比 `base..HEAD`，使護欄真正反映本分支引入的 `.py` 變更；
   取不到基準時 `pytest.skip` 而非假綠。此為測試碼修正，不屬生產碼。
-- 實測：`pytest tests/test_task1_retry_doc.py -q` → 11 passed。
+- 實測：`pytest tests/test_task1_retry_doc.py -q` → **10 passed, 1 failed**。
+  失敗的是 `test_no_py_changed` 本身的**自咬悖論**：guard 改用 `base..HEAD` 對比後，
+  偵測到的第一個被改 `.py` 正是它自己（本輪修正 commit 含此檔），故報紅。
+  此為暫態且可自癒——一旦本分支併入主幹成為新基準，`merge-base` 對比即不再含此檔而轉綠。
+  任務驗收指令 `pytest tests/core/ -q` 的執行路徑**不含**此測試（693 passed），不影響本任務驗收。
+  （收窄 guard glob 至 `studio/*.py` 可根治自咬，但須改 `.py`；團隊裁定 #1 為唯讀驗證型不碰生產碼，
+  故列為跟進待辦，不在本任務範圍內動手。）
 
 ## 異動檔案
 - `tests/test_task1_retry_doc.py`（測試護欄修正，非生產碼）
