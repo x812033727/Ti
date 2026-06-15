@@ -250,7 +250,11 @@ def test_mutation_drop_v_tag_trigger_turns_red(wf_copy):
 
 # ---------------------------------------------------------------------------
 # AC#2：YAML 零 Breaking heading 字面值
+# AC#2 明文兩個受測對象：YAML「與」腳本皆零 heading 字面值。腳本端同樣守護，
+# 防未來有人在 publish_release.py 改回 shell 字串拼裝 body 時硬寫回 heading。
 # ---------------------------------------------------------------------------
+
+PUBLISH_SCRIPT_PATH = _ROOT / "scripts" / "publish_release.py"
 
 
 def test_workflow_has_zero_breaking_heading_literal(workflow_text):
@@ -258,3 +262,25 @@ def test_workflow_has_zero_breaking_heading_literal(workflow_text):
     assert BREAKING_HEADING not in workflow_text, (
         f"publish-release.yml 出現 heading 字面值 {BREAKING_HEADING!r}（須走 SSOT）"
     )
+
+
+def test_publish_script_has_zero_breaking_heading_literal():
+    """scripts/publish_release.py 不得硬寫 Breaking heading 字面值（SSOT 由 Python 注入）。
+
+    AC#2 受測對象為「YAML 與腳本」兩者；腳本端若改回 shell 字串拼裝 body 並硬寫回
+    heading，此守護即翻紅，與 YAML 端對齊。
+    """
+    assert PUBLISH_SCRIPT_PATH.exists(), f"前提失效：缺 publish_release.py {PUBLISH_SCRIPT_PATH}"
+    script_text = PUBLISH_SCRIPT_PATH.read_text(encoding="utf-8")
+    assert BREAKING_HEADING not in script_text, (
+        f"publish_release.py 出現 heading 字面值 {BREAKING_HEADING!r}（須走 SSOT）"
+    )
+
+
+def test_mutation_script_with_heading_literal_turns_red():
+    """把 heading 字面值塞進腳本內容 → 零字面值守護翻紅（mutation 非空）。"""
+    script_text = PUBLISH_SCRIPT_PATH.read_text(encoding="utf-8")
+    assert BREAKING_HEADING not in script_text, "baseline 失效：腳本原本就含 heading 字面值"
+
+    mutated = script_text + f'\nBODY = "{BREAKING_HEADING}\\n..."\n'  # mutation：硬寫回 heading
+    assert BREAKING_HEADING in mutated, "mutation 為空操作：heading 未注入"
