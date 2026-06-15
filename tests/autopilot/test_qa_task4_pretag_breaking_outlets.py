@@ -26,55 +26,20 @@ from pathlib import Path
 import pytest
 
 # import 即契約：函式/常數改名或模組搬路徑 → import 爆炸，CI 強制鎖死。
-from studio.release_note import (
-    BREAKING_HEADING,
-    MissingBreakingBlock,
-    pyproject_version,
-    render_email_banner,
-    render_tag_notes,
+from studio.release_note import BREAKING_HEADING, pyproject_version
+
+# 四要素偵測規則與兩出口清單抽到共用模組（單一事實來源），與 task-3 共用同一份——
+# 避免兩檔各自定義 FOUR_ELEMENTS 靜默漂移，互相的鑑別力標準才不分歧。
+from tests.autopilot._release_check import (
+    FOUR_ELEMENTS,
+    OUTLETS,
+    has_heading,
+    missing_elements,
+    outlet_carries_block,
+    render_or_none,
 )
 
 CHANGELOG_PATH = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
-
-# 兩出口 (名稱, renderer)；所有「兩出口皆須」斷言對此迭代，杜絕漏測其一。
-OUTLETS = (
-    ("tag_notes", render_tag_notes),
-    ("email_banner", render_email_banner),
-)
-
-# 四要素偵測錨點：每項須圈號錨＋語意關鍵字皆命中才算帶到，
-# 確保黑樣本抽掉圈號或抽掉語意內容任一者都能翻紅。
-FOUR_ELEMENTS = (
-    ("行為變動", r"①\s*行為變動", r"strict[^\n]{0,30}預設|已改為[^\n]{0,20}strict"),
-    ("原因", r"②\s*原因", r"symlink|root-?only|root\s*-?\s*only"),
-    ("before/after", r"③\s*before\s*/\s*after", r"之前.{0,40}之後|before\s*/\s*after"),
-    ("生效版本", r"④\s*生效版本", r"自\s*`?\d+\.\d+\.\d+`?\s*起|生效版本"),
-)
-
-
-def _has_heading(body: str) -> bool:
-    return re.search(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", body) is not None
-
-
-def _missing_elements(body: str) -> list[str]:
-    missing = []
-    for name, anchor, semantic in FOUR_ELEMENTS:
-        if not (re.search(anchor, body) and re.search(semantic, body, re.IGNORECASE)):
-            missing.append(name)
-    return missing
-
-
-def _outlet_carries_block(body: str) -> bool:
-    """單一出口是否完整帶出 Breaking 區塊：heading＋四要素全到（正向與黑樣本同一把尺）。"""
-    return _has_heading(body) and not _missing_elements(body)
-
-
-def _render_or_none(renderer, text: str, version: str) -> str | None:
-    """渲染；缺區塊拋例外時回 None，讓黑樣本能同時涵蓋『拋例外』與『內容殘缺』兩種翻紅。"""
-    try:
-        return renderer(text, version)
-    except MissingBreakingBlock:
-        return None
 
 
 @pytest.fixture(scope="module")
@@ -97,8 +62,8 @@ def version() -> str:
 def test_pretag_outlet_carries_block(outlet_name, renderer, changelog, version):
     """pre-tag 閘門：對真實 CHANGELOG 渲染，出口須含 heading＋四要素全到。"""
     body = renderer(changelog, version)
-    assert _has_heading(body), f"AC#3：{outlet_name} 缺 heading {BREAKING_HEADING!r}"
-    missing = _missing_elements(body)
+    assert has_heading(body), f"AC#3：{outlet_name} 缺 heading {BREAKING_HEADING!r}"
+    missing = missing_elements(body)
     assert not missing, f"AC#3：{outlet_name} 缺四要素 {missing}"
 
 
@@ -120,7 +85,7 @@ def test_black_sample_missing_block_pairs_red(outlet_name, renderer, changelog, 
     """抽掉 Breaking heading → 出口翻紅；先自證 baseline 本來是綠的（排除孤立假綠）。"""
     # 正向基線：原始 CHANGELOG 此出口本來完整帶出區塊。
     baseline = renderer(changelog, version)
-    assert _outlet_carries_block(baseline), (
+    assert outlet_carries_block(baseline), (
         f"基線失效：{outlet_name} 對原始 CHANGELOG 本應帶出完整區塊，黑樣本無從證偽"
     )
     # mutation：把契約 heading 抽掉。
@@ -129,8 +94,8 @@ def test_black_sample_missing_block_pairs_red(outlet_name, renderer, changelog, 
     )
     assert polluted != changelog, "mutation 為空操作：heading 未被改動，黑樣本無效"
 
-    body = _render_or_none(renderer, polluted, version)
-    assert body is None or not _outlet_carries_block(body), (
+    body = render_or_none(renderer, polluted, version)
+    assert body is None or not outlet_carries_block(body), (
         f"黑樣本失效：{outlet_name} 缺區塊仍被判為完整帶出（假綠）"
     )
 
@@ -148,7 +113,7 @@ def test_black_sample_missing_each_element_pairs_red(
 
     # baseline：原始出口本來帶到此要素。
     baseline = renderer(changelog, version)
-    assert name not in _missing_elements(baseline), (
+    assert name not in missing_elements(baseline), (
         f"基線失效：{outlet_name} 原始 body 本應帶到要素「{name}」"
     )
 
@@ -157,23 +122,7 @@ def test_black_sample_missing_each_element_pairs_red(
     polluted = re.sub(semantic, "x", polluted, flags=re.IGNORECASE)
     assert polluted != changelog, f"mutation 為空操作：要素「{name}」未被改動，黑樣本無效"
 
-    body = _render_or_none(renderer, polluted, version)
-    assert body is None or name in _missing_elements(body), (
+    body = render_or_none(renderer, polluted, version)
+    assert body is None or name in missing_elements(body), (
         f"黑樣本失效：{outlet_name} 移除要素「{name}」後仍被判為帶到（假綠）"
     )
-
-
-# ---------------------------------------------------------------------------
-# AC #6：本測試本身不依賴 gh release / SMTP / 網路——0.2.0 tag 前離線可跑
-# ---------------------------------------------------------------------------
-
-
-def test_pretag_validation_runs_offline(changelog, version):
-    """整條 pre-tag 閘門只走記憶體字串渲染，無任何網路/子行程/外部 tag 依賴。
-
-    破壞性思考：tag 尚未打出時 `gh release view` 會 404；本閘門刻意只比對
-    記憶體渲染結果，確保能在 tag 之前、無網環境下作為 CI gate 跑。
-    """
-    for _name, renderer in OUTLETS:
-        body = renderer(changelog, version)
-        assert _outlet_carries_block(body)

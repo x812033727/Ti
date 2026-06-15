@@ -38,54 +38,20 @@ from studio.release_note import (
     render_tag_notes,
 )
 
+# 四要素偵測規則與兩出口清單、檢測器抽到共用模組（單一事實來源）——
+# task-3／task-4 共用同一份，避免兩檔各自定義 FOUR_ELEMENTS 靜默漂移。
+from tests.autopilot._release_check import (
+    FOUR_ELEMENTS,
+    OUTLETS,
+    has_heading as _has_heading,
+    missing_elements as _missing_elements,
+    outlet_carries_block as _outlet_carries_block,
+    render_or_none as _render_or_none,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = ROOT / "CHANGELOG.md"
 MODULE_SRC = ROOT / "studio" / "release_note.py"
-
-# 兩出口的 (名稱, renderer)；所有「兩出口皆須」的斷言都對這份清單迭代，
-# 避免漏測其中一個出口（AC #3 明確要求兩個出口都帶到內容）。
-OUTLETS = (
-    ("tag_notes", render_tag_notes),
-    ("email_banner", render_email_banner),
-)
-
-# 四要素的偵測錨點。貼合 AC #3 字面「①行為變動 ②原因 ③before/after ④生效版本」，
-# 以 CHANGELOG 明確標註的圈號 marker 為主錨；輔以語意關鍵字交叉確認（圈號在但
-# 語意被抽換時亦能翻紅）。每個 tuple = (要素名, 圈號錨 regex, 語意關鍵字 regex)。
-FOUR_ELEMENTS = (
-    ("行為變動", r"①\s*行為變動", r"strict[^\n]{0,30}預設|已改為[^\n]{0,20}strict"),
-    ("原因", r"②\s*原因", r"symlink|root-?only|root\s*-?\s*only"),
-    ("before/after", r"③\s*before\s*/\s*after", r"之前.{0,40}之後|before\s*/\s*after"),
-    ("生效版本", r"④\s*生效版本", r"自\s*`?\d+\.\d+\.\d+`?\s*起|生效版本"),
-)
-
-
-# ---------------------------------------------------------------------------
-# 共用檢測器（正向與黑樣本同一把尺）
-# ---------------------------------------------------------------------------
-
-
-def _has_heading(body: str) -> bool:
-    """出口 body 是否含逐行獨立的 Breaking Changes heading（引用同一常數）。"""
-    return re.search(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", body) is not None
-
-
-def _missing_elements(body: str) -> list[str]:
-    """回傳出口 body 缺漏的要素名清單；四要素齊備時回空 list。
-
-    每個要素須**圈號錨與語意關鍵字皆命中**——任一缺即視為該要素未帶到，
-    確保黑樣本抽掉圈號或抽掉語意內容任一者都能翻紅。
-    """
-    missing = []
-    for name, anchor, semantic in FOUR_ELEMENTS:
-        if not (re.search(anchor, body) and re.search(semantic, body, re.IGNORECASE)):
-            missing.append(name)
-    return missing
-
-
-def _outlet_carries_block(body: str) -> bool:
-    """單一出口是否完整帶出 Breaking 區塊：heading＋四要素全到。"""
-    return _has_heading(body) and not _missing_elements(body)
 
 
 @pytest.fixture(scope="module")
@@ -201,14 +167,6 @@ def test_dry_run_dump_raises_on_missing_block(version):
 # ---------------------------------------------------------------------------
 # AC #5：反向黑樣本——缺區塊／缺任一要素，兩出口驗證必翻紅（真鑑別力）
 # ---------------------------------------------------------------------------
-
-
-def _render_or_none(renderer, text, version):
-    """渲染；缺區塊時回 None（讓黑樣本能區分『拋例外』與『內容缺』兩種翻紅）。"""
-    try:
-        return renderer(text, version)
-    except MissingBreakingBlock:
-        return None
 
 
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
