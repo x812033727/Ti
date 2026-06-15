@@ -64,28 +64,47 @@ def test_derive_token_usage_aggregates_by_group():
         {
             "type": "token_usage",
             "payload": {
-                "speaker": "engineer", "provider": "minimax", "model": "MiniMax-M3",
-                "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "cost_usd": None,
+                "speaker": "engineer",
+                "provider": "minimax",
+                "model": "MiniMax-M3",
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+                "cost_usd": None,
             },
         },
         {
             "type": "token_usage",
             "payload": {
-                "speaker": "pm", "provider": "claude", "model": "claude-opus-4-8",
-                "prompt_tokens": 200, "completion_tokens": 50, "total_tokens": 250, "cost_usd": 0.5,
+                "speaker": "pm",
+                "provider": "claude",
+                "model": "claude-opus-4-8",
+                "prompt_tokens": 200,
+                "completion_tokens": 50,
+                "total_tokens": 250,
+                "cost_usd": 0.5,
             },
         },
         {
             "type": "token_usage",
             "payload": {
-                "speaker": "engineer", "provider": "minimax", "model": "MiniMax-M3",
-                "prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14, "cost_usd": None,
+                "speaker": "engineer",
+                "provider": "minimax",
+                "model": "MiniMax-M3",
+                "prompt_tokens": 10,
+                "completion_tokens": 4,
+                "total_tokens": 14,
+                "cost_usd": None,
             },
         },
     ]
     tu = history._derive_token_usage(evs)
     assert tu["total"] == {
-        "prompt": 310, "completion": 74, "total": 384, "cost_usd": 0.5, "calls": 3
+        "prompt": 310,
+        "completion": 74,
+        "total": 384,
+        "cost_usd": 0.5,
+        "calls": 3,
     }
     assert tu["by_provider"]["minimax"]["total"] == 134
     assert tu["by_provider"]["minimax"]["calls"] == 2
@@ -141,8 +160,10 @@ async def test_stream_to_events_emits_token_usage(fake_sdk):
         fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("結論")]),
         fake_sdk.ResultMessage(
             usage={
-                "input_tokens": 1000, "output_tokens": 200,
-                "cache_read_input_tokens": 800, "cache_creation_input_tokens": 50,
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "cache_read_input_tokens": 800,
+                "cache_creation_input_tokens": 50,
             },
             total_cost_usd=0.012,
         ),
@@ -193,11 +214,17 @@ class _SeqChat:
 
 @pytest.mark.asyncio
 async def test_speak_sums_usage_over_tool_loop_emits_once(tmp_path):
-    chat = _SeqChat([
-        _resp(tool_calls=[_tc("1", "read_file", '{"path": "a.py"}')], usage=_usage(100, 0, 100)),
-        _resp(content="完成", usage=_usage(30, 20, 50)),
-    ])
-    expert = providers.OpenAIExpert(BY_KEY["engineer"], "t", tmp_path, chat=chat, model="MiniMax-M3")
+    chat = _SeqChat(
+        [
+            _resp(
+                tool_calls=[_tc("1", "read_file", '{"path": "a.py"}')], usage=_usage(100, 0, 100)
+            ),
+            _resp(content="完成", usage=_usage(30, 20, 50)),
+        ]
+    )
+    expert = providers.OpenAIExpert(
+        BY_KEY["engineer"], "t", tmp_path, chat=chat, model="MiniMax-M3"
+    )
     bucket, broadcast = collect()
     await expert.speak("做事", broadcast)
 
@@ -224,13 +251,15 @@ async def test_speak_retry_does_not_double_count(tmp_path, monkeypatch):
     monkeypatch.setattr(experts, "_sleep", lambda *_a, **_k: _noop())
     monkeypatch.setattr(experts.config, "EXPERT_RATE_LIMIT_RETRIES", 2)
     rl = experts.llm_caller.RateLimitSignal(0.0, "429", "")
-    chat = _SeqChat([
-        # attempt 1：先累加 7，再撞限流 → 整個 _attempt 重放
-        _resp(tool_calls=[_tc("1", "read_file", '{"path": "a"}')], usage=_usage(7, 0, 7)),
-        rl,
-        # attempt 2（重放）：直接成功，usage=10
-        _resp(content="OK", usage=_usage(10, 0, 10)),
-    ])
+    chat = _SeqChat(
+        [
+            # attempt 1：先累加 7，再撞限流 → 整個 _attempt 重放
+            _resp(tool_calls=[_tc("1", "read_file", '{"path": "a"}')], usage=_usage(7, 0, 7)),
+            rl,
+            # attempt 2（重放）：直接成功，usage=10
+            _resp(content="OK", usage=_usage(10, 0, 10)),
+        ]
+    )
     expert = providers.OpenAIExpert(BY_KEY["engineer"], "t", tmp_path, chat=chat, model="m")
     bucket, broadcast = collect()
     out = await expert.speak("做", broadcast)
@@ -250,25 +279,86 @@ async def _noop():
 
 def test_usage_report_aggregate_and_minimax_estimate(monkeypatch):
     metas = [
-        {"session_id": "a", "started_at": 1000, "token_usage": {
-            "total": {"prompt": 1_000_000, "completion": 500_000, "total": 1_500_000,
-                      "cost_usd": 0.0, "calls": 1},
-            "by_provider": {"minimax": {"prompt": 1_000_000, "completion": 500_000,
-                                        "total": 1_500_000, "cost_usd": 0.0, "calls": 1}},
-            "by_model": {"MiniMax-M3": {"prompt": 1_000_000, "completion": 500_000,
-                                        "total": 1_500_000, "cost_usd": 0.0, "calls": 1}},
-            "by_role": {"engineer": {"prompt": 1_000_000, "completion": 500_000,
-                                     "total": 1_500_000, "cost_usd": 0.0, "calls": 1}},
-        }},
-        {"session_id": "b", "started_at": 2000, "token_usage": {
-            "total": {"prompt": 100, "completion": 50, "total": 150, "cost_usd": 0.9, "calls": 1},
-            "by_provider": {"claude": {"prompt": 100, "completion": 50, "total": 150,
-                                       "cost_usd": 0.9, "calls": 1}},
-            "by_model": {"claude-opus-4-8": {"prompt": 100, "completion": 50, "total": 150,
-                                             "cost_usd": 0.9, "calls": 1}},
-            "by_role": {"pm": {"prompt": 100, "completion": 50, "total": 150,
-                               "cost_usd": 0.9, "calls": 1}},
-        }},
+        {
+            "session_id": "a",
+            "started_at": 1000,
+            "token_usage": {
+                "total": {
+                    "prompt": 1_000_000,
+                    "completion": 500_000,
+                    "total": 1_500_000,
+                    "cost_usd": 0.0,
+                    "calls": 1,
+                },
+                "by_provider": {
+                    "minimax": {
+                        "prompt": 1_000_000,
+                        "completion": 500_000,
+                        "total": 1_500_000,
+                        "cost_usd": 0.0,
+                        "calls": 1,
+                    }
+                },
+                "by_model": {
+                    "MiniMax-M3": {
+                        "prompt": 1_000_000,
+                        "completion": 500_000,
+                        "total": 1_500_000,
+                        "cost_usd": 0.0,
+                        "calls": 1,
+                    }
+                },
+                "by_role": {
+                    "engineer": {
+                        "prompt": 1_000_000,
+                        "completion": 500_000,
+                        "total": 1_500_000,
+                        "cost_usd": 0.0,
+                        "calls": 1,
+                    }
+                },
+            },
+        },
+        {
+            "session_id": "b",
+            "started_at": 2000,
+            "token_usage": {
+                "total": {
+                    "prompt": 100,
+                    "completion": 50,
+                    "total": 150,
+                    "cost_usd": 0.9,
+                    "calls": 1,
+                },
+                "by_provider": {
+                    "claude": {
+                        "prompt": 100,
+                        "completion": 50,
+                        "total": 150,
+                        "cost_usd": 0.9,
+                        "calls": 1,
+                    }
+                },
+                "by_model": {
+                    "claude-opus-4-8": {
+                        "prompt": 100,
+                        "completion": 50,
+                        "total": 150,
+                        "cost_usd": 0.9,
+                        "calls": 1,
+                    }
+                },
+                "by_role": {
+                    "pm": {
+                        "prompt": 100,
+                        "completion": 50,
+                        "total": 150,
+                        "cost_usd": 0.9,
+                        "calls": 1,
+                    }
+                },
+            },
+        },
     ]
     monkeypatch.setattr(usage_report.history, "list_sessions", lambda: metas)
     agg = usage_report.aggregate()

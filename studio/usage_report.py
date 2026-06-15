@@ -116,8 +116,7 @@ def render(agg: dict) -> str:
     out.append("=== Ti Token 用量彙總 ===")
     out.append(f"涵蓋 session 數：{agg['sessions']}")
     out.append(
-        f"總計：calls={t['calls']} in={t['prompt']:,} out={t['completion']:,} "
-        f"total={t['total']:,}"
+        f"總計：calls={t['calls']} in={t['prompt']:,} out={t['completion']:,} total={t['total']:,}"
     )
     claude_cost = t.get("cost_usd") or 0.0
     out.append(
