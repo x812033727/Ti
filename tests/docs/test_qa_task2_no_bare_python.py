@@ -43,10 +43,14 @@
 - 不直接 ``import`` rg 結果，改用 ``subprocess.run(['rg', ...])``，與 spec
   驗收指令字面對齊；rg 不在 PATH 時 ``pytest.skip``（守護測試不應阻斷
   無 rg 的環境，與既有 ``test_docs_pytest_command.py`` 風格一致）。
+- 路徑級豁免用 ``fnmatch.fnmatch`` 不用 ``Path.match``——後者對 ``**/X``
+  glob 配 ``./X`` 路徑會失效（Python 3.12 仍如此），會誤判 DECISIONS.md 等
+  根目錄檔未豁免，把 1 個豁免案例當違規翻紅。
 """
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import shutil
 import subprocess
@@ -88,17 +92,18 @@ LINE_EXEMPT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 # 路徑級豁免：這些檔案/glob 整檔豁免（記錄過去 / 元文件 / manifest）。
 # 命中理由在 CONST 旁註解，維護時看註解就懂。
+# 註：fnmatch 風格（`*` 跨目錄），不用 Path 的 `**`。
 PATH_EXEMPT_GLOBS: list[tuple[str, str]] = [
     # 歷史決策/工作筆記類——記錄過去，偽造歷史比保留更具破壞性
-    ("**/DECISIONS.md", "historical-decisions"),
-    ("**/adr.json", "historical-decisions"),
-    ("**/NOTES.md", "work-notes"),
-    ("**/BASELINE_task*.md", "task-baseline-historical"),
-    ("**/CLOSURE_task*.md", "task-closure-historical"),
-    ("**/docs/issues/*.md", "bug-report-historical"),
+    ("*/DECISIONS.md", "historical-decisions"),
+    ("*/adr.json", "historical-decisions"),
+    ("*/NOTES.md", "work-notes"),
+    ("*/BASELINE_task*.md", "task-baseline-historical"),
+    ("*/CLOSURE_task*.md", "task-closure-historical"),
+    ("*/docs/issues/*.md", "bug-report-historical"),
     # 測試規格文件——描述 regex 該抓什麼的元文件，本身必含 python 範例
-    ("**/studio/docs/dev_command_dedup_inventory.md", "regex-spec-doc"),
-    ("**/studio/docs/subprocess_migration_inventory.md", "regex-spec-doc"),
+    ("*/studio/docs/dev_command_dedup_inventory.md", "regex-spec-doc"),
+    ("*/studio/docs/subprocess_migration_inventory.md", "regex-spec-doc"),
     # 本守護測試自身——是「描述 spec」的測試規格文件，必含 ``python``/``python3``
     # 範例、docstring、負樣 fixture；不可能自清。豁免理由 = regex-spec-doc。
     ("tests/docs/test_qa_task2_no_bare_python.py", "regex-spec-doc"),
@@ -125,10 +130,29 @@ def _has_rg() -> bool:
 
 
 def _path_is_path_exempt(rel_path: str) -> str | None:
-    """檢查相對路徑是否落在 PATH_EXEMPT_GLOBS 任一 glob；回傳豁免理由或 None。"""
-    p = Path(rel_path)
+    """檢查相對路徑是否落在 PATH_EXEMPT_GLOBS 任一 glob；回傳豁免理由或 None。
+
+    用 ``fnmatch.fnmatch`` 多角度配——後者對 ``**/X`` 風格 glob 配 ``./X`` 路徑
+    會失效（Python 3.12 行為）；fnmatch 的 ``*`` 不跨目錄。
+
+    對每個 glob 嘗試 3 種配法（任一命中即豁免）：
+      1. ``fnmatch(rel_path_stripped, glob)``
+      2. 對 ``*X`` 開頭的 glob，去掉首個 ``*`` 再配（讓 `*/X` 可配根目錄的 `X`）
+      3. 對帶前綴 ``./`` 的 rel_path，去掉前綴再配
+    """
+    p = rel_path
+    if p.startswith("./"):
+        p = p[2:]
     for glob, reason in PATH_EXEMPT_GLOBS:
-        if p.match(glob):
+        # 配法 1：原樣
+        if fnmatch.fnmatch(p, glob):
+            return reason
+        # 配法 2：glob 以 `*` 開頭，去掉首個 `*` 再配根目錄檔
+        if glob.startswith("*") and fnmatch.fnmatch(p, glob[1:]):
+            return reason
+        # 配法 3：glob 內含 `*X`（中間非首），試 `**X` 風格（去中間的 `*`）——
+        # 給 `*/X` 一個能配 `X` 的機會
+        if "*" in glob[1:] and fnmatch.fnmatch(p, glob.replace("*/", "", 1)):
             return reason
     return None
 
