@@ -10,6 +10,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # --- 測試隔離（hermetic）：對齊乾淨 CI，隔絕執行環境殘留 ------------------------
@@ -72,3 +74,19 @@ if "client" not in _inspect.signature(_sttc.TestClient.__init__).parameters:
         _orig_tc_init(self, app, *args, **kwargs)
 
     _sttc.TestClient.__init__ = _tc_init_with_client
+
+
+# --- 防 REQUIRE_CHOWN 跨測試洩漏（importlib.reload(config) 的副作用）-------------
+# 多支測試以 setenv(TI_REQUIRE_CHOWN, ...) + importlib.reload(config) 驗三態解析，但
+# monkeypatch 只還原 env、不還原已被 reload 重算的「模組級全域」config.REQUIRE_CHOWN。
+# 任何把它留在 strict/warn 的測試，會讓後續寫 state（backlog/history）的測試在非 root
+# 的 CI runner 上因 fchown(0,0) 失敗而 SecureWriteError（本機以 root 跑則 fchown 成功、
+# 測不出來，純屬執行順序相依的假綠）。此 autouse fixture 在每個測試結束後把模組級全域
+# 拉回 conftest 設定的 hermetic 基準 "off"，堵死洩漏，不影響測試內當下的 reload 斷言。
+@pytest.fixture(autouse=True)
+def _reset_require_chown_after_test():
+    yield
+    from studio import config as _config
+
+    if _config.REQUIRE_CHOWN != "off":
+        _config.REQUIRE_CHOWN = "off"
