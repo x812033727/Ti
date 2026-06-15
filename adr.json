@@ -1448,6 +1448,83 @@
       "rejected": "部分加 `# noqa` 快速過關——把 lint 債藏起來傳給下一個人",
       "session_id": "ap6fcf65af64",
       "created_at": 1781482055.447537
+    },
+    {
+      "decision": "三個任務合入**一個**新測試檔 `tests/core/test_tools_dedup_task6.py`，以 A/B/C section 分隔，不拆三個獨立檔",
+      "rationale": "task5 單檔三 section 已有先例；三個任務共用 `_run` / `_no_sandbox` 各寫一次而非三次，減少 ~2/3 樣板，維護成本下降；「可並行實作」指開發不互相阻塞，並非強制物理分檔",
+      "rejected": "三個獨立檔（工程師初提）——功能等價，但 fixture 三倍複製是確定的維護債，得不償失",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288424
+    },
+    {
+      "decision": "`_run` helper 在新檔中複製一次（`def _run(coro): asyncio.run(coro)`），不引入 conftest；於 PR description 明記「此為已知技術債，task3/task5/task6 各自持有一份，日後一次性遷移 conftest」",
+      "rationale": "",
+      "rejected": "立即移入 conftest（高工輕量建議）——改動邊界硬鎖「只加測試」，conftest 屬共用基礎設施，此 PR 修改會超出 scope",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288452
+    },
+    {
+      "decision": "`_no_sandbox` fixture 複製入新檔，docstring 說明「args drift 的斷言是副作用行數 == 2，要求 run_bash 真正落地，故必須關 sandbox」",
+      "rationale": "高工確認 args drift 選「行數 == 2」比「斷言 key 不同」意圖更直接，但這個選擇同時要求 sandbox 關閉才能讓 append 真正發生",
+      "rejected": "",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.128847
+    },
+    {
+      "decision": "**#1 命門硬鎖**：兩次 attempt 之間必須呼叫 `cache.new_attempt()`；test docstring 標注「若省略此呼叫，`_seen[base]` 不重置，attempt2 取到 `#1` ≠ `#0` → cache miss → `execute` 再跑一次 → `call_count==2` → spy 斷言直接紅」",
+      "rationale": "工程師點出的命門，設計文字提到 new_attempt 但未說清楚後果；實作者若只照抄 task3 模式、少一行呼叫，兩個斷言會各自紅掉但原因不明顯，提前標注可省 debug 時間",
+      "rejected": "",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.128848
+    },
+    {
+      "decision": "**#1 spy 作用域**：`with patch(\"studio.tools.execute\", wraps=tools.execute) as mock_execute:` context manager **包住 attempt1 + attempt2 整個序列**，並在 context 外補斷言 `mock_execute.call_count == 1` AND 檔案行數 == 1",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288493
+    },
+    {
+      "decision": "**#2 patch.object 啟動時序**：`with patch.object(cache, \"put\", wraps=cache.put) as mock_put:` 必須在 `cache.new_attempt()` 呼叫**之前**啟動；若反序，`wraps=cache.put` 求值時方法已被替換，出現 mock 包 mock 行為",
+      "rationale": "高工明確點出此時序風險，put 是 bound method，patch.object 在啟動時捕捉原始 reference，時序錯誤靜默不報錯但 wraps 語意破壞",
+      "rejected": "",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288505
+    },
+    {
+      "decision": "**#2 涵蓋三個冪等工具**：`write_file` / `read_file` / `web_fetch` 各一條測試，每條斷言 `mock_put.call_count == 0`；`web_fetch` 另 `monkeypatch.setattr(tools, \"_research_fetch\", fake_fetch)` 免真連線（同 task5 模式）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288722
+    },
+    {
+      "decision": "**#3 parametrize 三案**（確認定稿）：",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288729
+    },
+    {
+      "decision": "Case3 docstring 標注：「int vs str type drift 在 `json.dumps(sort_keys=True)` 層同理（digest 必異），但現有工具規格全 string、整數 command 會讓 runner 失敗，無法取得 2 個成功副作用，故以大小寫差異作 value content drift proxy；此測試驗的是『副作用多跑（at-least-once）』而非 hash 本身」",
+      "rationale": "",
+      "rejected": "直接傳整數 command 測 int/str type drift——執行必失敗，取不到兩個副作用計數，鑑別力反而更低",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288743
+    },
+    {
+      "decision": "新檔 docstring 或 PR description 標注「`patch(wraps=...)` 自動偵測 coroutine function 為 `AsyncMock` 需 Python ≥ 3.8；若跑更早版本須手動指定 `new_callable=AsyncMock`」",
+      "rationale": "",
+      "rejected": "加 `new_callable=AsyncMock` 防禦性寫死——不必要，現行 CI 環境已 3.8+，加了反而讓讀者誤以為自動偵測不可信",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288755
+    },
+    {
+      "decision": "驗收三步驟順序不可顛倒：① `ruff check studio/ tests/`（exit 0）→ ② `python3 -m pytest tests/core/ -q`（≥ 既有 15 + 新增數量，無 error）→ ③ `git diff --stat` 人眼核對只出現 `tests/core/test_tools_dedup_task6.py` 一個新檔，不得有生產碼異動",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apc943c58c6f",
+      "created_at": 1781483884.1288762
     }
   ]
 }
