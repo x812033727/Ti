@@ -1,0 +1,60 @@
+name: Release smoke
+
+# 觸發時機（架構決策）：on release:published——release 物件在此事件已就緒，
+# 零 race condition，無需 retry guard。push:tags 會在 release 尚未建立時觸發
+# 而得 "release not found" 假紅，故否決。
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read  # gh release view 只需讀取權
+
+jobs:
+  release-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # 防卡死燒額度（同 ci.yml 註記）
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # 版本字串以 studio.release_note.pyproject_version 為單一事實來源（讀 pyproject.toml），
+      # 不在 YAML 硬寫版本號。輸出至 GITHUB_OUTPUT 讓版本可見於 Actions log，供 debug 確認。
+      # release_note 僅依賴 stdlib（tomllib/re），無需 pip install。
+      - name: Resolve version (SSOT = pyproject.toml)
+        id: ver
+        run: |
+          ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "resolved version: $ver"
+
+      # 以 gh release view 取「實際 release body」（非 pre-tag 渲染），tag 為 v<ver>。
+      # 多行 body 用隨機分隔符寫入 GITHUB_OUTPUT（GitHub 官方建議寫法），避免 body 內容
+      # 含固定分隔字串造成截斷／注入。openssl 為 ubuntu runner 內建。
+      - name: Fetch actual release body
+        id: body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          body=$(gh release view "$TAG" --json body --jq '.body')
+          delim="BODY_EOF_$(openssl rand -hex 16)"
+          {
+            echo "body<<$delim"
+            printf '%s\n' "$body"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+      # body 經 env BODY 傳入 release_smoke（架構決策）：不經 shell 字串解析，避免
+      # 多行／反斜線／-e 開頭被吞字；release_smoke 失敗時 stderr 印 body 前 500 字。
+      # 缺非空頂層 Breaking Changes 區塊 → 非零退出 → 此 step 失敗 → workflow fail。
+      - name: Run release smoke check
+        env:
+          BODY: ${{ steps.body.outputs.body }}
+        run: python -m studio.release_smoke
