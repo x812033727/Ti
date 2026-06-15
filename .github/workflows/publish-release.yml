@@ -1,6 +1,7 @@
 name: Publish release
 
-# 觸發：push tag v*。本 workflow 建立 GitHub release（published 狀態）。
+# 觸發時機：push v* tag 時建立 GitHub release（published 狀態）。與 release-smoke.yml
+# 分離——本 workflow 負責「建立」職責，smoke 負責「驗證」職責，不合併（架構決策）。
 #
 # 觸發死結（任務 #3 核心）：以 GITHUB_TOKEN 建立的 release 不會啟動下游 workflow
 # （GitHub 防遞迴機制），release-smoke.yml 的 `on: release: published` 將永不觸發，
@@ -42,26 +43,34 @@ jobs:
         run: |
           test -n "$GH_TOKEN" || { echo "::error::GH_PAT secret 未設；GITHUB_TOKEN 建立的 release 不會觸發下游 release-smoke，必須以 PAT 建立"; exit 1; }
 
-      # Step 2 — 版本字串以 pyproject.toml 為單一事實來源，不在 YAML 硬寫版本號。
+      # Step 2 — 版本字串以 studio.release_note.pyproject_version 為單一事實來源（讀
+      # pyproject.toml），不在 YAML 硬寫版本號。輸出 version 與 tag 供後續 step 取用。
       - name: Resolve version (SSOT = pyproject.toml)
         id: version
         run: |
+          set -euo pipefail
           ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           echo "tag=v$ver" >> "$GITHUB_OUTPUT"
           echo "resolved version: $ver"
 
       # Step 3 — 斷言 push 的 tag 與程式碼版本一致；不符即 fail-fast，不建立 release。
-      # tag 與版本不同步是上線事故根因，最便宜的攔截點在 release 建立前。
+      # tag 與 pyproject 版本不同步是上線事故根因，最便宜的攔截點在 release 建立前（架構決策）。
       - name: Assert tag matches version
         env:
-          EXPECTED: v${{ steps.version.outputs.version }}
           ACTUAL: ${{ github.ref_name }}
+          EXPECTED: ${{ steps.version.outputs.tag }}
         run: |
-          test "$ACTUAL" = "$EXPECTED" || { echo "::error::push 的 tag '$ACTUAL' 與 pyproject 版本 '$EXPECTED' 不符，拒絕建立 release"; exit 1; }
+          set -euo pipefail
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::push 的 tag '$ACTUAL' 與 pyproject 版本 '$EXPECTED' 不符，拒絕建立 release"
+            exit 1
+          fi
 
-      # Step 4 — 渲染 release body 至 body.md。body 來源＝studio.release_note.render_tag_notes
-      # （讀真實 CHANGELOG.md + pyproject_version()），不在 YAML 重寫任何 heading 字面值。
+      # Step 4 — 渲染 release body 至 body.md。邏輯抽於 scripts/publish_release.py（可被
+      # pytest 直接 import 測試）：讀 CHANGELOG.md → render_tag_notes(text, pyproject_version())
+      # → 寫 body.md，不在 YAML 重寫任何 heading 字面值。render 失敗（缺 Breaking 區塊）即
+      # Python 層 raise 非零退出，且已先 unlink 舊 body.md，step 5 不會誤讀殘留舊內容（架構決策）。
       - name: Render release body
         run: python scripts/publish_release.py
 

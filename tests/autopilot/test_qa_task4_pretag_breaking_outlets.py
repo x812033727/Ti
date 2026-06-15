@@ -89,9 +89,7 @@ def test_black_sample_missing_block_pairs_red(outlet_name, renderer, changelog, 
         f"基線失效：{outlet_name} 對原始 CHANGELOG 本應帶出完整區塊，黑樣本無從證偽"
     )
     # mutation：把契約 heading 抽掉。
-    polluted = re.sub(
-        r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Notes", changelog
-    )
+    polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Notes", changelog)
     assert polluted != changelog, "mutation 為空操作：heading 未被改動，黑樣本無效"
 
     body = render_or_none(renderer, polluted, version)

@@ -194,9 +194,7 @@ def test_extract_breaking_block_fence_with_inner_hash_not_truncated():
     """第 2 輪反思盲區 regression：區塊內 code fence 含未縮排 `## ` 行時，
     不得被誤判為 section 邊界而靜默截斷——fence 內所有內容須完整保留。"""
     text = (
-        "# Changelog\n"
-        + BREAKING_HEADING
-        + "\n"
+        "# Changelog\n" + BREAKING_HEADING + "\n"
         "- ① 行為變動：X\n"
         "\n"
         "```markdown\n"

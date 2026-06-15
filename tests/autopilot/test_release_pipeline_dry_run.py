@@ -34,8 +34,6 @@ from studio.release_note import (
     MissingBreakingBlock,
     dry_run_dump,
     pyproject_version,
-    render_email_banner,
-    render_tag_notes,
 )
 
 # 四要素偵測規則與兩出口清單、檢測器抽到共用模組（單一事實來源）——
@@ -127,7 +125,7 @@ def test_dry_run_default_version_uses_pyproject(changelog, version):
 
 def test_dry_run_dump_writes_files_for_grep(changelog, version, tmp_path):
     """dry_run 把兩出口落成檔案，檔內可被 grep 到 heading（CI artifact 路徑）。"""
-    out = dry_run_dump(changelog, version, out_dir=tmp_path)
+    dry_run_dump(changelog, version, out_dir=tmp_path)
     tag_file = tmp_path / "tag_notes.md"
     email_file = tmp_path / "email_banner.txt"
     assert tag_file.exists() and email_file.exists(), "AC#3：dry_run 未落出兩出口檔"
@@ -172,9 +170,7 @@ def test_dry_run_dump_raises_on_missing_block(version):
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
 def test_black_sample_missing_block_fails_both_outlets(outlet_name, renderer, changelog, version):
     """把整個 Breaking heading 抽掉 → 出口要嘛拋例外、要嘛不帶區塊，總之翻紅。"""
-    polluted = re.sub(
-        r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Notes", changelog
-    )
+    polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Notes", changelog)
     body = _render_or_none(renderer, polluted, version)
     assert body is None or not _outlet_carries_block(body), (
         f"黑樣本失效：{outlet_name} 缺區塊仍被判為帶出完整區塊（假綠）"
@@ -210,9 +206,7 @@ def test_black_sample_heading_renamed_fails_outlets(changelog, version):
 
     模擬有人把契約 heading 改掉導致 pipeline 抽不到正確錨點。
     """
-    polluted = re.sub(
-        r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking", changelog
-    )
+    polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking", changelog)
     for name, renderer in OUTLETS:
         body = _render_or_none(renderer, polluted, version)
         # 改名後 extractor 抓不到契約 heading → render 拋例外（body=None）。
@@ -230,9 +224,7 @@ def test_black_sample_heading_renamed_fails_outlets(changelog, version):
 def changelog_bc_at_eof() -> str:
     """Breaking Changes 為 CHANGELOG 最後一個 section（後無任何 `## `）。"""
     return (
-        "# Changelog\n\n"
-        + BREAKING_HEADING
-        + "\n\n"
+        "# Changelog\n\n" + BREAKING_HEADING + "\n\n"
         "- **① 行為變動**：已改為 `strict` 預設。\n"
         "- **② 原因**：防止 symlink 攻擊，僅 root-only 可寫。\n"
         "- **③ before / after 遷移範例**：之前未設定即放行；之後須顯式設 warn。\n"
@@ -262,10 +254,7 @@ def test_module_has_no_network_or_subprocess_imports():
     """
     src = MODULE_SRC.read_text(encoding="utf-8")
     # 只看實際的 import 行，避免 docstring 裡「不打 gh／不連 SMTP」字樣誤命中。
-    import_lines = [
-        ln for ln in src.splitlines()
-        if re.match(r"\s*(import|from)\s+", ln)
-    ]
+    import_lines = [ln for ln in src.splitlines() if re.match(r"\s*(import|from)\s+", ln)]
     forbidden = ("smtplib", "subprocess", "socket", "requests", "urllib", "http.client")
     hits = [ln.strip() for ln in import_lines if any(f in ln for f in forbidden)]
     assert not hits, f"AC#6：render 模組引入了網路/子行程依賴，破壞離線性：{hits}"
