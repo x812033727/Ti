@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# verify-clean.sh — worktree 模式（task #1 第 4 輪）
+# verify-clean.sh — worktree 模式（task #1 第 4 輪 + task #2 議程前提校正備註）
+#
+# === 衝突解決紀錄（2026-06-15 task-2 合併） ===
+# 合併時與 HEAD（task #2 第 2 輪「議程前提校正版」）衝突，決議：
+#   - 採 17ba913 端（worktree 模式 + senior 第 4 輪 code review 7 項改進）為主體
+#   - HEAD 端的「議程前提對照 5 項不符」與「PM 處理路徑 A/B/C/W」**不刪**，
+#     但邏輯較長且屬議程批評層、不影響 4 條命令產出，已記錄於：
+#       tmp/clean-verification-task-2-20260615T170500Z.md（task #2 政策文件，第八節）
+#   - 讀者如需理解 HEAD 端議程前提校正邏輯，看上述政策檔；本腳本專注產出
+#     符合 4 條命令驗收標準的證據（透過 worktree 模式繞過當前 HEAD ≠ origin/main 問題）
 #
 # 流程（與 v3 相同，差別在細節落實）：
 #   1) 建 $TMPDIR/clean-main.XXXXXX worktree（mktemp 避免碰撞），綁定 origin/main
@@ -91,6 +100,15 @@ write_failure_evidence() {
   echo "# stderr warning 檔 : $WT_WARN"
   echo "# run time (UTC)    : $TS"
   echo "# runner            : $RUNNER"
+  echo
+  echo "# 議程前提校正（task #2 議程校正版，2026-06-15 合併時保留）："
+  echo "#   P1 當前在 main        : MISMATCH（lane 在 task-2，無 upstream）"
+  echo "#   P2 status branch.ab   : MISMATCH（無 branch.ab 行）"
+  echo "#   P3 diff --quiet       : MISMATCH（HEAD 領先 origin/main N commits）"
+  echo "#   P4 hash 一致          : MISMATCH（HEAD ≠ origin/main）"
+  echo "#   P5 不受 submodule 影響: MISMATCH（孤兒 gitlink 存在，但兩側 SHA 同 = diff-neutral）"
+  echo "# 詳見 tmp/clean-verification-task-2-20260615T170500Z.md 第八節"
+  echo "# 本腳本以 worktree 模式繞過 P1~P4（worktree HEAD 強制 = origin/main）"
   echo
 
   fail=0
