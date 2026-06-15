@@ -218,6 +218,70 @@ def test_mutation_remove_render_step_turns_red(publish_text, smoke_text):
 
 
 # ---------------------------------------------------------------------------
+# 任務 #3：PAT guard step 攔「GH_PAT secret 未設」
+#   觸發死結的根因之一是「忘了設 GH_PAT」——guard 把它攔在第一步，CI log 直指根因，
+#   而非到 Create release 才以 403 撞權限。guard 特徵：env.GH_TOKEN 來自 secrets.GH_PAT、
+#   run 內以 `test -n "$GH_TOKEN"` 偵測空字串並非零退出，且本身不是建立 step。
+# ---------------------------------------------------------------------------
+
+
+def _find_pat_guard_step(doc: dict) -> dict | None:
+    """找「PAT 未設」guard step：用 test -n 檢查 GH_TOKEN 且非建立 release 的 step。"""
+    for step in _steps_of(doc):
+        run = step.get("run") or ""
+        if "gh release create" in run:
+            continue  # 建立 step 不算 guard
+        if 'test -n "$GH_TOKEN"' in run:
+            return step
+    return None
+
+
+def check_pat_guard(publish_text: str) -> list[str]:
+    """檢查 PAT guard：存在、攔空、非零退出、env 來源為 secrets.GH_PAT。空＝完整。"""
+    problems: list[str] = []
+    pub = yaml.safe_load(publish_text)
+    guard = _find_pat_guard_step(pub)
+    if guard is None:
+        problems.append('缺 PAT guard step（無 `test -n "$GH_TOKEN"` 攔截）')
+        return problems
+    run = guard.get("run") or ""
+    if "exit 1" not in run:
+        problems.append("PAT guard 偵測到未設卻未非零退出（缺 exit 1，無法 fail-fast）")
+    token = (guard.get("env") or {}).get("GH_TOKEN", "")
+    if "secrets.GH_PAT" not in token:
+        problems.append(f"PAT guard 檢查的不是 GH_PAT secret（實際: {token!r}）")
+    return problems
+
+
+def test_pat_guard_intact_on_real_yaml(publish_text):
+    """任務 #3：真實 yaml 的 PAT guard 完整——存在、攔空、非零退出、查的是 GH_PAT。"""
+    problems = check_pat_guard(publish_text)
+    assert problems == [], "PAT guard 有破口：\n  - " + "\n  - ".join(problems)
+
+
+def test_mutation_remove_pat_guard_turns_red(publish_text):
+    """移除 guard 的偵測邏輯（test -n 改掉）→ 檢查必須翻紅。"""
+    mutated = publish_text.replace('test -n "$GH_TOKEN"', "true")
+    assert mutated != publish_text, "mutation 無效：未替換到 guard 偵測（孤立假綠風險）"
+    problems = check_pat_guard(mutated)
+    assert any("guard" in p for p in problems), (
+        f"假綠：移除 guard 後未翻紅，problems={problems}"
+    )
+
+
+def test_mutation_guard_drops_exit_turns_red(publish_text):
+    """guard 偵測到未設卻不 exit（移除 exit 1）→ 形同空轉 → 檢查必須翻紅。"""
+    guard = _find_pat_guard_step(yaml.safe_load(publish_text))
+    assert guard is not None, "前提失效：找不到 guard step"
+    mutated = publish_text.replace(guard["run"], guard["run"].replace("exit 1", "true"))
+    assert mutated != publish_text, "mutation 無效：未替換到 exit 1"
+    problems = check_pat_guard(mutated)
+    assert any("非零退出" in p for p in problems), (
+        f"假綠：guard 去掉 exit 1 後未翻紅，problems={problems}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # AC#2：YAML 與腳本內零 Breaking heading 字面值（0 命中）
 # ---------------------------------------------------------------------------
 
