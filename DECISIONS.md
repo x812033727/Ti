@@ -914,3 +914,36 @@
 ## 關閉說明文字中，防回歸機制段落只寫一句：「唯一防線 = `from . import secure_write as secure_write` 觸發 ruff F401，且 ruff 在 CI」，刪除 collect 即驗與 inline comment 的保護力描述。
 - 時間：2026-06-15 09:00
 
+## 同義詞正規化拆成兩道 pass，不用單一扁平 dict + str.replace。
+- 時間：2026-06-15 09:19
+- 理由：ASCII 字串替換無邊界保護，`add`/`fix` 會命中 `address`/`prefix`/`fixture`，是設計表裡就收的詞，必須修正。
+- 否決方案：單一 `_SYNONYM_CANONICAL` + `s.replace(syn, f" {can} ")` 全串掃——會靜默汙染 ASCII 子字串，不可用。
+
+## Pass 1（字串級，CJK 多字詞 → ASCII canonical）放在 `_normalize_for_dedup`，常數命名 `_SYNONYM_CJK_TO_CANONICAL`，替換前按 key 長度降冪排序（長詞優先）。
+- 時間：2026-06-15 09:19
+- 理由：CJK 詞（去重、修復等）在逐字切 token 前需提前展開為 ASCII，否則切後 token 是單字，Jaccard 無法對比；長詞優先避免 deduplication→dedup 被短者先截斷。
+
+## Pass 2（token 級，ASCII → ASCII canonical）在 `_tokenize_for_dedup` 切完後，對每個 token 做 `dict.get(tok, tok)`，常數命名 `_SYNONYM_ASCII_TO_CANONICAL`（如 fix/add/improve 的同義 ASCII 詞）。
+- 時間：2026-06-15 09:19
+- 理由：token 已是完整切割片段，`dict.get` 精確匹配，零子字串風險，不需 padding 也不需邊界正則。
+- 否決方案：token 層用 str.replace——在 token 已是完整字串時 str.replace 與 dict.get 等效，但 dict.get 語意更清晰。
+
+## 不在 Pass 1 對 CJK 加邊界保護（正則 `\b` 對 CJK 無效，且同義詞限 ≥2 字已足夠隔離）。在 `_SYNONYM_CJK_TO_CANONICAL` 上方加 docstring 警告：「字串級無邊界保護；同義詞請選 ≥2 字且辨識度高的詞，避免同義前綴（如不得加單字 `改`）。」
+- 時間：2026-06-15 09:19
+
+## 測試檔落在 `tests/autopilot/test_dedup_synonym_task7.py`，不放 `tests/core/`。
+- 時間：2026-06-15 09:19
+- 理由：高工確認現有同義詞測試已在 `tests/autopilot/`，`tests/core/` 是 infra 層；混放違反目錄語意，掃描路徑也要一致。
+- 否決方案：`tests/core/test_dedup_synonym_task7.py`——目錄錯位，不採。
+
+## 測試 ③「字串等值契約」的 docstring 必須同時標注雙重行為：`backlog._is_duplicate("修正去重邏輯", "修復去重邏輯")` → False（維持等值合約）；同一對輸入進 `_filter_pending_duplicates` → 攔截（同義展開後 Jaccard ≈ 1.0）。兩個斷言寫在同一 test 函式內，防止讀者誤判「③ 回傳 False = 系統無防護」。
+- 時間：2026-06-15 09:19
+- 理由：高工指出這是兩個對立事實共存；只測其一會製造誤解。
+
+## 測試補第五類（子字串汙染反例）：含 `add`/`fix` 子串的英文標題（`address prefix`、`fixture toolkit`），Pass 1+2 正規化後 token 不可含 `add` 或 `fix` canonical；此為黑樣本，用以驗證 ASCII 子字串汙染不再發生。
+- 時間：2026-06-15 09:19
+- 理由：工程師指出這條測試才能抓出 naive replace 的 bug；不加就驗不出設計修正有效。
+
+## 異動檔案邊界最終確認：studio/autopilot.py（+兩常數 + _normalize_for_dedup Pass 1 + _tokenize_for_dedup Pass 2 共約 10 行）、tests/autopilot/test_dedup_synonym_task7.py（新增）。不動 config.py、backlog.py、任何既有測試檔案。
+- 時間：2026-06-15 09:19
+

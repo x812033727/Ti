@@ -463,13 +463,67 @@ def _build_discovery_prompt(*, outcomes: str | None = None, pending: str | None 
     )
 
 
+# 同義詞 canonical 正規化：**單一常數表**，分兩道 pass 的子映射（架構定案：分層替換，不用扁平
+# str.replace——`fix`/`add` 會誤命中 `prefix`/`address`，是設計表裡就收的詞，必須以分層精確匹配避開）。
+#   - `"cjk"`（Pass 1，字串級，CJK 多字詞 → ASCII canonical）：
+#       字串級替換「無邊界保護」（ASCII `\b` 對 CJK 無效），故 key 一律選 **≥2 字、辨識度高** 的 CJK 詞，
+#       單字（如「改」）絕對不收——避免命中同義前綴造成誤殺。替換時按 key 長度降冪（長詞優先）。
+#   - `"ascii"`（Pass 2，token 級，ASCII token → ASCII canonical）：
+#       在切完 token 後逐 token 做精確 `dict.get`，token 已是完整片段，零子字串風險。
+# 邊界：僅收斂「已知會重複出現」的少數主題；**不窮舉同義、不引 embedding**。known-limitation：
+#   無共享字且不在此表的同義改寫（如某些「補↔新增」變體）仍可能從第一道漏網，由第二道廣度防線兜底。
+_SYNONYM_CANONICAL: dict[str, dict[str, str]] = {
+    "cjk": {
+        "去重": "dedup",
+        "deduplication": "dedup",
+        "修復": "fix",
+        "修正": "fix",
+        "新增": "add",
+        "補上": "add",
+        "改良": "improve",
+        "改善": "improve",
+        "優化": "improve",
+    },
+    "ascii": {
+        # 註：不收 "deduplication"——Pass 1（字串級）已先把它消化成 dedup，token 永不殘留此鍵。
+        "dedupe": "dedup",
+        "fixes": "fix",
+        "fixing": "fix",
+        "adds": "add",
+        "adding": "add",
+        "improves": "improve",
+        "improving": "improve",
+        "improvement": "improve",
+        "optimize": "improve",
+        "optimise": "improve",
+    },
+}
+
+# Pass 1 替換順序：長詞優先（降冪），避免短同義詞先截斷長詞。模組載入時固定一次。
+_SYNONYM_CJK_ORDERED: list[tuple[str, str]] = sorted(
+    _SYNONYM_CANONICAL["cjk"].items(), key=lambda kv: len(kv[0]), reverse=True
+)
+
+
 def _normalize_for_dedup(s: str) -> str:
-    """相似度比對前的正規化：壓平換行、strip、轉小寫、去首尾標點。
+    """相似度比對前的正規化：壓平換行、strip、轉小寫、去首尾標點，並做同義詞 Pass 1 展開。
 
     供 `_tokenize_for_dedup` 前置使用；獨立成 helper 方便測試與日後替換策略。
+
+    Pass 1（CJK 多字詞 → ASCII canonical）：在逐字切 token 前，先把 `_SYNONYM_CANONICAL["cjk"]`
+    的 CJK 同義詞（去重→dedup、修復/修正→fix…）展開成空白包夾的 ASCII canonical，使「無共享字的
+    同義改寫」（如「修復去重」↔「修正 dedup 邏輯」）在詞集層面對齊、被第一道相似度攔下。
+    替換前後補空白避免與相鄰 CJK 黏連成單一 token。
+
+    known-limitation：此表為 **小型、不窮舉** 的 canonical 正規化，僅收斂已知重複主題；
+    未收錄的同義改寫仍可能漏網，刻意 **不引入 embedding／語意向量**，由第二道子系統廣度防線兜底。
     """
     s = s.replace("\n", " ").strip().lower()
-    return s.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
+    s = s.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
+    for syn, canon in _SYNONYM_CJK_ORDERED:
+        if syn in s:
+            s = s.replace(syn, f" {canon} ")
+    return s
 
 
 # 子系統關鍵詞 → 從標題抽「涉及的子系統」，供「同子系統 pending 過多即拒」的廣度防線（第二道）使用。
@@ -531,7 +585,10 @@ def _tokenize_for_dedup(s: str) -> set[str]:
     這類無共享字的同義替換（見 known-limitation 測試）。
     """
     s = _normalize_for_dedup(s)
-    toks = set(_ASCII_TOKEN_RE.findall(s))
+    # Pass 2：ASCII token 精確映射到 canonical（dict.get 精確匹配，零子字串汙染）。
+    ascii_map = _SYNONYM_CANONICAL["ascii"]
+    ascii_toks = {ascii_map.get(t, t) for t in _ASCII_TOKEN_RE.findall(s)}
+    toks = ascii_toks
     toks.update(_CJK_RE.findall(s))
     return toks
 
