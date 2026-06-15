@@ -37,12 +37,15 @@ def check_body(body: str) -> None:
     if not block:
         raise ValueError(
             "release body 缺非空頂層 Breaking Changes 區塊"
-            f"（heading 須逐字為 release_note.BREAKING_HEADING）"
+            "（heading 須逐字為 release_note.BREAKING_HEADING）"
         )
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     """CLI 入口：body 優先讀環境變數 ``BODY``，fallback stdin。
+
+    無命令列參數：body 只經 env／stdin 進入（依架構決策刻意不接 argv，避免
+    shell 字串解析），故不需 argparse。
 
     依架構決策，env 傳遞不經 shell 字串解析，避免多行／反斜線／-e 開頭被吞字；
     fallback stdin 保留本地管線測試與手動驗收能力。
