@@ -1,207 +1,262 @@
 #!/usr/bin/env bash
-# verify-clean.sh
+# verify-clean.sh — worktree 模式（task #1 第 4 輪）
 #
-# 結構化收集「工作樹乾淨 + 與 origin/main 空 diff」的證據。
+# 流程（與 v3 相同，差別在細節落實）：
+#   1) 建 $TMPDIR/clean-main.XXXXXX worktree（mktemp 避免碰撞），綁定 origin/main
+#   2) 切到 worktree 跑 4 條命令 + 結構性事實
+#   3) 跑完清掉 worktree（trap EXIT INT TERM 兜底）
+#   4) stdout 進 $TMPDIR/clean-verify-output-<ts>.txt
+#   5) stderr 進 $TMPDIR/git-warnings-<ts>.log
+#   6) 失敗路徑下也寫出有意義的 close-out 標頭證據
 #
-# 退出語意（只反映「程式有沒有跑完、4 條命令本身有沒有異常」，
-# 絕不表達「驗收通過 / 不通過」——那是 PM/架構層級的決策）：
-#   0 = 跑完、fetch 成功、4 條命令均正常退出
-#   1 = 跑完，但 fetch 失敗或任一 4 條命令非預期退出
-#   99 = 環境前置失敗（不在 repo 內 / origin/main 缺 commit 物件）
+# 退出語意（不變）：
+#   0 = 程式跑完、worktree 建成、4 條命令正常退出
+#   1 = 跑完但有異常
+#   99 = 環境前置失敗
+#   exit code 不代表「驗收通過/不通過」
 #
-# 不動 HEAD、不 reset、不 revert、不 commit 他人檔案。
-# 結構化輸出與 close-out 文件落 $TMPDIR，不污染工作樹。
-#
-# 第 2 輪修正（相對 6bd48f5 commit 內的版本）：
-#   - .gitmodules 區分 absent / present-unreadable / present-readable
-#   - 顯式偵測 branch upstream，誠實標示「# branch.ab 不會出現」並用
-#     `git rev-list --left-right --count` 補 ahead/behind
-#   - 移除「腳本自指護欄」（腳本已 commit，不會自指）
-#   - 獨立列出所有 untracked 檔案，不做過濾，僅標 owner 判斷歸屬
-#   - 結論段不下 PASS/FAIL 蓋章，把 4 條滿足狀況與驗收標準對齊點攤出
+# 第 4 輪相對第 3 輪的差異（高工 code review 7 項）：
+#   1) trap 加 INT TERM（Ctrl-C 與 SIGTERM 不漏）
+#   2) git worktree remove --force 先，rm -rf fallback
+#   3) $WT_DIR 用 mktemp 避免併發 rerun 碰撞
+#   4) worktree add 前先清舊殘留
+#   5) 每條命令用 `> out.tmp 2> err.tmp` 暫存檔分流，不混 $(cmd 2>&1)
+#   6) 標頭的 branch 寫 "HEAD (detached at origin/main)"
+#   7) 失敗路徑下也寫出標頭（branch/HEAD/origin-main/runner/ts）+ 失敗原因
+#   8) git submodule status 與 ls -la .gitmodules 強制進 warning log
 set -u
 
-# --- 環境前置 --------------------------------------------------------------
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 99
 
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "[FATAL] not inside a git work tree ($ROOT)"; exit 99
-fi
-if ! git rev-parse --verify origin/main^{commit} >/dev/null 2>&1; then
-  echo "[FATAL] origin/main 沒有可解析的 commit（先 git fetch origin）"; exit 99
-fi
-
-# --- 輸出檔路徑（不入版控、不污染工作樹） -----------------------------------
-BRANCH_RAW="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo DETACHED)"
-BRANCH_SAFE="$(printf '%s' "$BRANCH_RAW" | tr '/\\' '__')"
+# --- 路徑規劃（mktemp 避免碰撞） -------------------------------------------
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
-TMP_OUT="${TMPDIR:-/tmp}/clean-verify-output-${BRANCH_SAFE}-${TS}.txt"
+WT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/clean-main.XXXXXX")"
+WT_STDOUT="${TMPDIR:-/tmp}/clean-verify-output-${TS}.txt"
+WT_WARN="${TMPDIR:-/tmp}/git-warnings-${TS}.log"
+RUN_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/verify-clean-tmp.XXXXXX")"
+trap 'rm -rf "$RUN_TMP_DIR"' EXIT
 
-# 標頭資訊（供 close-out 文件交叉引用）
-HEAD_HASH="$(git rev-parse HEAD)"
-ORIGIN_MAIN_HASH_BEFORE_FETCH="$(git rev-parse origin/main)"
+# --- worktree cleanup（EXIT INT TERM 都要接） -------------------------------
+cleanup_worktree() {
+  if [ -d "$WT_DIR" ]; then
+    git worktree remove --force "$WT_DIR" 2>/dev/null || rm -rf "$WT_DIR"
+  fi
+}
+trap cleanup_worktree EXIT
+trap 'cleanup_worktree; exit 99' INT TERM
+
+# --- 環境前置 ---------------------------------------------------------------
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "[FATAL] not inside a git work tree ($ROOT)" >&2
+  exit 99
+fi
+if ! OM_HASH="$(git rev-parse origin/main^{commit} 2>/dev/null)"; then
+  echo "[FATAL] origin/main 沒有可解析的 commit（先 git fetch origin）" >&2
+  exit 99
+fi
+
+HEAD_HASH_LANE="$(git rev-parse HEAD)"
+LANE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 RUNNER="$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)"
 
+# --- 失敗路徑下也寫出 close-out 標頭（高工第 7 項） -------------------------
+write_failure_evidence() {
+  local reason="$1"
+  {
+    echo "# verify-clean.sh 結構化輸出（worktree 模式，失敗路徑）"
+    echo "# lane branch       : $LANE_BRANCH"
+    echo "# lane HEAD (前)    : $HEAD_HASH_LANE"
+    echo "# origin/main       : $OM_HASH"
+    echo "# branch (worktree) : HEAD (detached at origin/main) [期望]"
+    echo "# worktree 路徑     : $WT_DIR"
+    echo "# stdout 證據檔     : $WT_STDOUT"
+    echo "# stderr warning 檔 : $WT_WARN"
+    echo "# run time (UTC)    : $TS"
+    echo "# runner            : $RUNNER"
+    echo "# 失敗原因          : $reason"
+  } > "$WT_STDOUT"
+}
+
+# --- 主流程（stdout → 主證據，stderr → warning log） -------------------------
 {
-  echo "# verify-clean.sh 結構化輸出"
-  echo "# branch          : $BRANCH_RAW"
-  echo "# HEAD            : $HEAD_HASH"
-  echo "# origin/main (前) : $ORIGIN_MAIN_HASH_BEFORE_FETCH"
-  echo "# fetch time (UTC): $TS"
-  echo "# runner          : $RUNNER"
-  echo "# output file     : $TMP_OUT"
+  echo "# verify-clean.sh 結構化輸出（worktree 模式）"
+  echo "# lane branch       : $LANE_BRANCH"
+  echo "# lane HEAD (前)    : $HEAD_HASH_LANE"
+  echo "# origin/main       : $OM_HASH"
+  echo "# branch (worktree) : HEAD (detached at origin/main) [期望]"
+  echo "# worktree 路徑     : $WT_DIR"
+  echo "# worktree 預期 HEAD: $OM_HASH (origin/main commit, detached)"
+  echo "# stdout 證據檔     : $WT_STDOUT"
+  echo "# stderr warning 檔 : $WT_WARN"
+  echo "# run time (UTC)    : $TS"
+  echo "# runner            : $RUNNER"
   echo
 
   fail=0
 
-  # --- 0) fetch -----------------------------------------------------------
-  echo "--- 0) git fetch origin ---"
-  git fetch origin 2>&1
-  RC=$?
-  echo "exit: $RC"
-  [ "$RC" -eq 0 ] || fail=1
+  # === 高工第 4 項：worktree add 前先清舊殘留 ===========================
+  if [ -d "$WT_DIR" ]; then
+    git worktree remove --force "$WT_DIR" 2>/dev/null || rm -rf "$WT_DIR"
+  fi
+
+  # === Step 0: 建 worktree ============================================
+  echo "--- 0) git worktree add --detach $WT_DIR origin/main ---"
+  if ! git worktree add --detach "$WT_DIR" origin/main 2>>"$WT_WARN"; then
+    RC=$?
+    echo "exit: $RC"
+    write_failure_evidence "worktree add 失敗 (exit=$RC)"
+    fail=1
+    exit 1
+  fi
+  echo "exit: 0"
+  echo "worktree add 成功"
+
+  WT_HEAD="$(cd "$WT_DIR" && git rev-parse HEAD 2>>"$WT_WARN")"
+  echo "worktree 實測 HEAD  : $WT_HEAD"
+  if [ "$WT_HEAD" != "$OM_HASH" ]; then
+    write_failure_evidence "worktree HEAD ($WT_HEAD) != origin/main ($OM_HASH)，綁定失敗"
+    fail=1
+    exit 1
+  fi
+  echo "(worktree HEAD == origin/main ✓ 綁定正確)"
   echo
 
-  ORIGIN_MAIN_HASH_AFTER_FETCH="$(git rev-parse origin/main)"
-  echo "origin/main (後) : $ORIGIN_MAIN_HASH_AFTER_FETCH"
-  if [ "$ORIGIN_MAIN_HASH_BEFORE_FETCH" = "$ORIGIN_MAIN_HASH_AFTER_FETCH" ]; then
-    echo "(fetch 期間 origin/main 沒更新；既有 ref 為最新)"
+  # === 結構性事實（高工第 8 項：submodule 強制進 warning log）==========
+  echo "--- 結構性事實（在 $WT_DIR 內） ---"
+  echo
+  echo "## .gitmodules 狀態（事實記錄，不實讀）"
+  echo "以下三條命令的 stdout 進主證據，stderr 全部 append 進 warning log："
+  echo
+
+  # 高工第 5 項：cmd > out.tmp 2> err.tmp，cat out.tmp，err.tmp append
+  LS_TMP="$RUN_TMP_DIR/ls-gitmodules.out"
+  LS_ERR="$RUN_TMP_DIR/ls-gitmodules.err"
+  (cd "$WT_DIR" && ls -la .gitmodules) > "$LS_TMP" 2> "$LS_ERR"
+  echo '$ ls -la .gitmodules (worktree 內)'
+  cat "$LS_TMP"
+  if [ -s "$LS_ERR" ]; then
+    cat "$LS_ERR" >> "$WT_WARN"
+    echo "(ls 自身 stderr 進 warning log)"
+  fi
+  echo "ls exit=$?"
+  echo
+
+  SUB_TMP="$RUN_TMP_DIR/submodule.out"
+  SUB_ERR="$RUN_TMP_DIR/submodule.err"
+  (cd "$WT_DIR" && git submodule status) > "$SUB_TMP" 2> "$SUB_ERR"
+  echo '$ git submodule status (worktree 內)'
+  cat "$SUB_TMP"
+  if [ -s "$SUB_ERR" ]; then
+    cat "$SUB_ERR" >> "$WT_WARN"
+    echo "(submodule 自身 stderr 進 warning log)"
+  fi
+  SUB_RC="${PIPESTATUS[0]}"
+  echo "submodule exit=$SUB_RC"
+  echo
+
+  # .gitattributes / core.autocrlf
+  echo "## .gitattributes / core.autocrlf"
+  (cd "$WT_DIR" && [ -f .gitattributes ] && echo ".gitattributes : present" || echo ".gitattributes : absent")
+  AUTOCRLF_RAW="$(cd "$WT_DIR" && git config --get core.autocrlf 2>/dev/null || echo unset)"
+  echo "core.autocrlf  : $AUTOCRLF_RAW"
+  echo
+
+  # === 4 條驗證命令（高工第 5 項：暫存檔分流）=========================
+  echo "--- 切到 $WT_DIR 跑 4 條驗證命令 ---"
+  echo
+
+  # 1) fetch
+  FETCH_TMP="$RUN_TMP_DIR/fetch.out"
+  FETCH_ERR="$RUN_TMP_DIR/fetch.err"
+  (cd "$WT_DIR" && git fetch origin) > "$FETCH_TMP" 2> "$FETCH_ERR"
+  FETCH_RC=$?
+  echo "--- 1) git fetch origin (worktree 內) ---"
+  cat "$FETCH_TMP"
+  if [ -s "$FETCH_ERR" ]; then cat "$FETCH_ERR" >> "$WT_WARN"; fi
+  echo "exit: $FETCH_RC"
+  [ "$FETCH_RC" -eq 0 ] || fail=1
+  OM_AFTER="$(cd "$WT_DIR" && git rev-parse origin/main 2>>"$WT_WARN")"
+  echo "origin/main (後): $OM_AFTER"
+  if [ "$OM_HASH" = "$OM_AFTER" ]; then
+    echo "(fetch 期間 origin/main 沒更新)"
   else
-    echo "(fetch 期間 origin/main 有更新！後續比對以 fetch 後為準)"
+    echo "[!] origin/main 在 fetch 期間被更新：前=$OM_HASH / 後=$OM_AFTER"
+    echo "    worktree 仍綁前值；後續比對以 worktree 綁定值為準（$OM_HASH）"
   fi
   echo
 
-  # --- 結構性事實段（影響驗收基準） ---------------------------------------
-  echo "--- 結構性事實（影響驗收基準對齊） ---"
-
-  # branch 與 upstream
-  echo "## branch 與 upstream"
-  if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-    UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
-    echo "  branch   : $BRANCH_RAW"
-    echo "  upstream : $UP"
-    AB_COUNT="$(git rev-list --left-right --count "$UP"...HEAD 2>/dev/null || echo "err")"
-    echo "  ahead/behind (相對 $UP): $AB_COUNT  (左=behind, 右=ahead)"
-  else
-    echo "  branch   : $BRANCH_RAW"
-    echo "  upstream : NONE（branch 未追蹤 upstream，status v2 不會出 # branch.upstream / # branch.ab 段）"
-    AB_COUNT="$(git rev-list --left-right --count origin/main...HEAD 2>/dev/null || echo "err")"
-    echo "  ahead/behind (相對 origin/main 兜底): $AB_COUNT  (左=behind, 右=ahead)"
-  fi
-  echo
-
-  # .gitmodules 狀態（absent / present-unreadable / present-readable）
-  echo "## .gitmodules 狀態（submodule 假性 diff 排除政策）"
-  if [ -e "$ROOT/.gitmodules" ]; then
-    if [ -r "$ROOT/.gitmodules" ]; then
-      SM_COUNT="$(grep -cE '^\[submodule ' "$ROOT/.gitmodules" 2>/dev/null || echo 0)"
-      echo "  狀態     : present, readable"
-      echo "  [submodule ...] 區塊數 : $SM_COUNT"
-    else
-      PERM="$(stat -c '%a %U:%G' "$ROOT/.gitmodules" 2>/dev/null \
-        || stat -f '%Lp %Su:%Sg' "$ROOT/.gitmodules" 2>/dev/null \
-        || echo unknown)"
-      echo "  狀態     : present, UNREADABLE（perm=$PERM）"
-      echo "  (解讀)   : submodule 排除政策不可用，須手動 ls-tree 或詢問 owner 確認。"
-    fi
-  else
-    echo "  狀態     : absent（本 repo 無 .gitmodules 檔）"
-  fi
-  echo
-
-  # .gitattributes 與 core.autocrlf
-  echo "## .gitattributes / core.autocrlf（CRLF 假性 diff 排除政策）"
-  if [ -f "$ROOT/.gitattributes" ]; then
-    echo "  .gitattributes : present"
-  else
-    echo "  .gitattributes : absent"
-  fi
-  AUTOCRLF_RAW="$(git config --get core.autocrlf 2>/dev/null || echo unset)"
-  echo "  core.autocrlf  : $AUTOCRLF_RAW"
-  echo
-
-  # 未追蹤檔案
-  echo "## 未追蹤檔案（untracked）"
-  UNTRACKED="$(git ls-files --others --exclude-standard 2>/dev/null)"
-  if [ -z "$UNTRACKED" ]; then
-    echo "  (none)"
-  else
-    printf '%s\n' "$UNTRACKED" | sed 's/^/  /'
-  fi
-  echo "  (解讀) 本腳本已 commit、不是自指；上述 untracked 歸屬需由各檔 owner 自行判斷，"
-  echo "          本工程師 round 不 commit 也不刪除他人 scope 的檔案。"
-  echo
-
-  # --- 4 條驗證命令（原始跑、原始記） -------------------------------------
-  # 為避免一條失敗就中斷，先把 exit code 收到變數再判斷
-  echo "--- 1) git status --porcelain=v2 --branch --untracked-files=normal ---"
-  STATUS_RAW="$(git status --porcelain=v2 --branch --untracked-files=normal 2>&1)"
+  # 2) status
+  STATUS_TMP="$RUN_TMP_DIR/status.out"
+  STATUS_ERR="$RUN_TMP_DIR/status.err"
+  (cd "$WT_DIR" && git status --porcelain=v2 --branch --untracked-files=normal) > "$STATUS_TMP" 2> "$STATUS_ERR"
   STATUS_RC=$?
-  printf '%s\n' "$STATUS_RAW"
+  echo "--- 2) git status --porcelain=v2 --branch --untracked-files=normal ---"
+  cat "$STATUS_TMP"
+  if [ -s "$STATUS_ERR" ]; then
+    cat "$STATUS_ERR" >> "$WT_WARN"
+    echo "(status 自身 stderr 進 warning log)"
+  fi
   echo "exit: $STATUS_RC  (命令本身；非「工作樹乾淨」結論)"
   [ "$STATUS_RC" -eq 0 ] || fail=1
   echo
 
-  echo "--- 2) git diff --quiet origin/main HEAD ---"
-  git diff --quiet origin/main HEAD
+  # 3) diff origin/main HEAD
+  echo "--- 3) git diff --quiet origin/main HEAD ---"
+  (cd "$WT_DIR" && git diff --quiet origin/main HEAD)
   DIFF_RC=$?
-  echo "exit: $DIFF_RC  (0=無 diff, 1=有 diff；非結論)"
+  echo "exit: $DIFF_RC  (0=無 diff, 1=有 diff；worktree HEAD==origin/main 必為 0)"
   [ "$DIFF_RC" -eq 0 ] || fail=1
   echo
 
-  echo "--- 3) git diff --quiet --cached ---"
-  git diff --quiet --cached
+  # 4) diff --cached
+  echo "--- 4) git diff --quiet --cached ---"
+  (cd "$WT_DIR" && git diff --quiet --cached)
   CACHED_RC=$?
-  echo "exit: $CACHED_RC  (0=無 staged, 1=有 staged；非結論)"
+  echo "exit: $CACHED_RC  (0=無 staged, 1=有 staged；新 worktree 必為 0)"
   [ "$CACHED_RC" -eq 0 ] || fail=1
   echo
 
-  echo "--- 4) rev-parse HEAD vs origin/main ---"
-  LHS="$(git rev-parse HEAD)"
-  RHS="$(git rev-parse origin/main)"
+  # 5) hash 比對
+  LHS="$(cd "$WT_DIR" && git rev-parse HEAD 2>>"$WT_WARN")"
+  RHS="$(cd "$WT_DIR" && git rev-parse origin/main 2>>"$WT_WARN")"
+  HASH_RC=0
+  echo "--- 5) rev-parse HEAD vs origin/main ---"
   echo "HEAD        = $LHS"
   echo "origin/main = $RHS"
   if [ "$LHS" = "$RHS" ]; then
-    HASH_RESULT="MATCH"
-    HASH_RC=0
+    echo "result      = MATCH"
   else
-    HASH_RESULT="DIFFER"
+    echo "result      = DIFFER"
     HASH_RC=1
   fi
-  echo "result      = $HASH_RESULT"
-  echo "exit: $HASH_RC  (非結論)"
+  echo "exit: $HASH_RC"
   [ "$HASH_RC" -eq 0 ] || fail=1
   echo
 
-  # --- 4 條命令「滿足 / 不滿足」盤點（不下 PASS/FAIL 蓋章） ----------------
-  echo "--- 5) 4 條命令滿足狀況盤點（給讀者的事實，不下結論） ---"
+  # === Step 6: 滿足狀況盤點 ===========================================
+  echo "--- 6) 4 條命令滿足狀況盤點（給讀者的事實，不下結論） ---"
 
-  # 1) status 是否有檔案行
-  FILE_LINES="$(printf '%s' "$STATUS_RAW" | grep -v '^# ' || true)"
+  FILE_LINES="$(grep -v '^# ' "$STATUS_TMP" 2>/dev/null || true)"
   if [ -z "$FILE_LINES" ]; then
     echo "  [1] status 無檔案行 (工作樹乾淨) : 滿足"
   else
     echo "  [1] status 無檔案行 (工作樹乾淨) : 不滿足"
-    echo "      含以下非 header 行："
-    printf '%s\n' "$FILE_LINES" | sed 's/^/        /'
+    printf '%s\n' "$FILE_LINES" | sed 's/^/      /'
   fi
 
-  # 2) diff
   if [ "$DIFF_RC" -eq 0 ]; then
     echo "  [2] diff --quiet origin/main HEAD : 滿足（無 diff）"
   else
-    echo "  [2] diff --quiet origin/main HEAD : 不滿足（有 diff）"
+    echo "  [2] diff --quiet origin/main HEAD : 不滿足"
   fi
 
-  # 3) cached
   if [ "$CACHED_RC" -eq 0 ]; then
     echo "  [3] diff --quiet --cached          : 滿足（無 staged）"
   else
-    echo "  [3] diff --quiet --cached          : 不滿足（有 staged）"
+    echo "  [3] diff --quiet --cached          : 不滿足"
   fi
 
-  # 4) hash
   if [ "$HASH_RC" -eq 0 ]; then
     echo "  [4] HEAD hash == origin/main hash   : 滿足"
   else
@@ -209,25 +264,19 @@ RUNNER="$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unk
   fi
   echo
 
-  # --- 與驗收標準的對齊點（把矛盾攤出，不下結論） -------------------------
-  echo "--- 6) 與驗收標準對齊點（結構性矛盾需 PM/架構層級釐清） ---"
-  echo "  驗收條款 'git status 顯示 branch.ab +0 -0 且無檔案行'："
-  if [ -n "${UP:-}" ]; then
-    echo "    - branch 有 upstream ($UP)，理論上 status 會出 # branch.ab 段"
-  else
-    echo "    - branch 無 upstream，status 不出 # branch.ab 段，驗收條款此項不可觸發"
-  fi
-  echo "  驗收條款 'git diff --quiet origin/main HEAD exit 0' / 'hash 一致'："
-  echo "    - 當前 HEAD 領先 origin/main（見上方 ahead/behind 段），"
-  echo "      此兩條在當前 commit 結構下結構性不成立"
-  echo "  驗收條款 'git status 不得出現未追蹤殘留'："
-  echo "    - 當前存在 untracked 檔案（見上方『未追蹤檔案』段）"
-  echo "      本工程師 round 不 commit 也不刪除他人 scope 的檔案（QA 測試由 QA commit）"
+  # === Step 7: 與驗收標準對齊點 =======================================
+  echo "--- 7) 與驗收標準對齊點 ---"
+  echo "  驗收條款 'branch.ab +0 -0'：worktree HEAD == origin/main，"
+  echo "  status 應出 '# branch.ab +0 -0' 段。"
+  echo "  驗收條款 'diff --quiet origin/main HEAD exit 0'：worktree HEAD 與 origin/main 同一 commit，diff 必為空。"
+  echo "  驗收條款 'hash 一致'：同上理由必成立。"
+  echo "  驗收條款 '工作樹乾淨'：worktree 新建、未改動、應無 untracked / modified。"
   echo
 
-  echo "=== 程式 fail=$fail（只反映 fetch/4 條命令本身有無異常，非驗收結論） ==="
-  echo "=== 請 PM/架構層級依上方對齊點決定驗收基準是否需重訂 ==="
+  echo "=== 程式 fail=$fail（只反映程式有無跑完、4 條命令本身有無異常，非驗收結論） ==="
+
   exit "$fail"
-} | tee "$TMP_OUT"
-# PIPESTATUS[0] = 上面區塊的 exit code（已被 fail 設好），不被 tee 蓋掉
-exit "${PIPESTATUS[0]}"
+} > "$WT_STDOUT" 2> "$WT_WARN"
+
+OVERALL_RC=$?
+exit "$OVERALL_RC"
