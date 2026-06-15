@@ -947,3 +947,38 @@
 ## 異動檔案邊界最終確認：studio/autopilot.py（+兩常數 + _normalize_for_dedup Pass 1 + _tokenize_for_dedup Pass 2 共約 10 行）、tests/autopilot/test_dedup_synonym_task7.py（新增）。不動 config.py、backlog.py、任何既有測試檔案。
 - 時間：2026-06-15 09:19
 
+## 本任務定性為「驗證關閉」，交付形式為空 diff + 守護測試全綠（11 passed），不產生任何 .py / .md 變更。
+- 時間：2026-06-15 10:19
+- 理由：lint 與 ARCHITECTURE 兩半在當前 HEAD 皆已滿足，重做正確交付屬返工。
+
+## 不新增 `retry_config` 別名；正式符號固定為 `make_retry_config()`，需求快照中的舊字樣不反映為 API 表面。
+- 時間：2026-06-15 10:19
+- 理由：YAGNI——API 表面保持最小，舊快照字樣不值得引入額外入口。
+- 否決方案：新增 alias `retry_config = make_retry_config` ——製造兩個名字，未來清理成本高於零收益。
+
+## 未來若需統一符號，做法為直接改名 `make_retry_config` + 同步改測試錨點，禁止先加 alias 再留著。
+- 時間：2026-06-15 10:19
+- 理由：不留別名正是此刻的可逆性投資；改名比消除別名便宜。
+- 否決方案：alias 過渡期——在符號分歧上疊一層，只是把清理日期往後推。
+
+## 禁止 provider 層自帶第二層 retry（OpenAI 端維持 max_retries=0）；新 provider 接入必須依 ARCHITECTURE.md L318–325 三步契約走。
+- 時間：2026-06-15 10:19
+- 理由：兩層退避疊加導致指數爆炸，且 log 偵測症狀已標注，後人查得到。
+- 否決方案：讓各 provider 自管 retry——退避語意碎片化，難以統一調參。
+
+## `make_retry_config()` 目前住在 `experts.py`（業務層）卻被 `providers.py`（基礎設施層）反向 import，此依賴方向反轉列為具名技術債，以 backlog 工單追蹤，不靠 ARCHITECTURE.md「伏筆」二字承載。
+- 時間：2026-06-15 10:19
+- 理由：文字伏筆沒有觸發機制，容易在後續迭代中消失；工單有狀態、有觸發條件才可追蹤。
+- 否決方案：繼續只靠 ARCHITECTURE.md 備注——高工指出「伏筆」無觸發器，風險在第三個 provider 接入前被遺忘。
+
+## 上述 backlog 工單的觸發條件為「第三個 provider 接入時」；屆時將 `make_retry_config()` 遷移至 `llm_caller.py`（provider 無關的 retry 骨幹），消除反向依賴。
+- 時間：2026-06-15 10:19
+- 理由：遷移時機與動因明確，不提前搬動避免無謂改動；`llm_caller.py` 本就是 provider 無關層，是正確的落點。
+
+## 守護測試 `test_task1_retry_doc.py` 是 ARCHITECTURE.md 的活文件護欄，後續任何文件或符號改動必須同步維護測試，兩端不得獨立異動。
+- 時間：2026-06-15 10:19
+- 理由：行號錨若文件重排會脆（工程師已指出），但此屬維護紀律而非設計缺陷，不阻擋本次關閉。
+
+## `test_as_kwargs_packs_three_keys` 的 `body[:600]` magic number 列為低優先技術債備忘，不阻擋本次關閉；後續可改為動態計算函式體長度上限。
+- 時間：2026-06-15 10:19
+
