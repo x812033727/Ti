@@ -185,9 +185,58 @@ def test_extract_breaking_block_empty_returns_none():
 
 
 def test_extract_breaking_block_at_eof():
-    """EOF 邊界：Breaking 為最後一個 section（後無 `## `）仍能抽出（\\Z 覆蓋）。"""
+    """EOF 邊界：Breaking 為最後一個 section（後無 `## `）仍能抽出（EOF 覆蓋）。"""
     text = "# Changelog\n" + BREAKING_HEADING + "\n- only at eof\n"
     assert extract_breaking_block(text) == "- only at eof"
+
+
+def test_extract_breaking_block_fence_with_inner_hash_not_truncated():
+    """第 2 輪反思盲區 regression：區塊內 code fence 含未縮排 `## ` 行時，
+    不得被誤判為 section 邊界而靜默截斷——fence 內所有內容須完整保留。"""
+    text = (
+        "# Changelog\n"
+        + BREAKING_HEADING
+        + "\n"
+        "- ① 行為變動：X\n"
+        "\n"
+        "```markdown\n"
+        "## 這是 fence 內的 markdown 範例標題，不是 section 邊界\n"
+        "## another inner heading\n"
+        "```\n"
+        "\n"
+        "- ④ 生效版本：自 0.2.0 起\n"
+        "\n"
+        "## [0.2.0]\n"
+        "### Changed\n"
+        "- 真正的下一節，這裡才是邊界\n"
+    )
+    block = extract_breaking_block(text)
+    assert block is not None
+    # fence 內的兩行 `## ` 必須完整保留（未被當邊界截斷）。
+    assert "fence 內的 markdown 範例標題" in block
+    assert "## another inner heading" in block
+    # fence 之後、版本節之前的尾段內容也須在（證明掃描越過 fence 內 `## ` 繼續收集）。
+    assert "④ 生效版本" in block
+    # 真正的頂層 `## [0.2.0]` 之後內容不得洩漏進來。
+    assert "真正的下一節" not in block
+    assert "## [0.2.0]" not in block
+
+
+def test_extract_breaking_block_tilde_fence_inner_hash_not_truncated():
+    """~~~ 形式的 fence 亦須被感知（不只 backtick）。"""
+    text = (
+        BREAKING_HEADING + "\n"
+        "~~~\n"
+        "## inner hash under tilde fence\n"
+        "~~~\n"
+        "- tail content\n"
+        "## [0.2.0]\n- next\n"
+    )
+    block = extract_breaking_block(text)
+    assert block is not None
+    assert "## inner hash under tilde fence" in block
+    assert "tail content" in block
+    assert "next" not in block
 
 
 # ---------------------------------------------------------------------------
