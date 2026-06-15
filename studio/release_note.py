@@ -100,3 +100,74 @@ def pyproject_version(pyproject_path: Path | None = None) -> str:
     path = pyproject_path or _PYPROJECT
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     return data["project"]["version"]
+
+
+class MissingBreakingBlock(ValueError):
+    """CHANGELOG 缺（或為空）頂層 Breaking Changes 區塊，兩出口無法產出。
+
+    這是「呼叫端決定『此次發布必須有 breaking 區塊』」的失敗訊號——extractor 本身
+    回 None 不算錯，但渲染兩發布出口時若缺區塊即屬發布流程錯誤（依架構決策，責任在呼叫端）。
+    """
+
+
+# tag notes / email banner 兩出口共用的渲染骨架。兩者皆**逐字注入**同一個抽出區塊，
+# 確保四要素（①行為變動 ②原因 ③before/after ④生效版本）在兩出口都不被截斷／改寫。
+def _render(changelog_text: str, version: str, *, heading: str, footer: str) -> str:
+    block = extract_breaking_block(changelog_text)
+    if block is None:
+        raise MissingBreakingBlock(
+            "CHANGELOG 缺 Breaking Changes 區塊或內容為空，無法產出 release 出口"
+        )
+    return f"{heading.format(version=version)}\n\n{BREAKING_HEADING}\n\n{block}\n\n{footer}"
+
+
+def render_tag_notes(changelog_text: str, version: str) -> str:
+    """渲染 git tag / GitHub release 的 notes body（markdown）。
+
+    注入頂層 Breaking Changes 區塊，version 由呼叫端傳入（來源為 `pyproject_version`，
+    不在此硬寫）。缺區塊時拋 `MissingBreakingBlock`。
+    """
+    return _render(
+        changelog_text,
+        version,
+        heading="# Release {version}",
+        footer=f"_完整變更記錄見 CHANGELOG.md（v{version}）。_",
+    )
+
+
+def render_email_banner(changelog_text: str, version: str) -> str:
+    """渲染發布通知 email 的 banner body（純文字）。
+
+    與 tag notes 共用同一抽出區塊，確保兩出口內容一致、四要素皆不遺失。
+    缺區塊時拋 `MissingBreakingBlock`。
+    """
+    return _render(
+        changelog_text,
+        version,
+        heading="📣 Ti Studio {version} 發布通知 — 含破壞性變更，請先閱讀",
+        footer=f"— 本郵件由 release pipeline 自動產出（v{version}）。",
+    )
+
+
+def dry_run_dump(
+    changelog_text: str,
+    version: str | None = None,
+    out_dir: Path | str | None = None,
+) -> dict[str, str]:
+    """dry-run：渲染兩出口並回傳 {'tag_notes': ..., 'email_banner': ...}。
+
+    供 pre-tag 驗證離線比對用——不打 gh release API、不連 SMTP。
+    version 省略時讀 `pyproject_version`（單一事實來源）。
+    若給 out_dir，另把兩 body dump 成 `tag_notes.md` / `email_banner.txt` 供 CI artifact。
+    """
+    ver = version or pyproject_version()
+    outputs = {
+        "tag_notes": render_tag_notes(changelog_text, ver),
+        "email_banner": render_email_banner(changelog_text, ver),
+    }
+    if out_dir is not None:
+        d = Path(out_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "tag_notes.md").write_text(outputs["tag_notes"], encoding="utf-8")
+        (d / "email_banner.txt").write_text(outputs["email_banner"], encoding="utf-8")
+    return outputs
