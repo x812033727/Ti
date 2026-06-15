@@ -1430,3 +1430,54 @@
 - 理由：守護測試的 `*.md` glob 會擋下未來漂移，但既有檔案內的漂移需本次 PR 順手處理。
 - 否決方案：只掃 Quickstart 段、其他章節交給未來 PR（漂移累積、後續清更痛）。
 
+## 技術選型採 bash shell，與既有 `scripts/baseline_selftest.sh` 同款「`set -u` + 逐條 `$?` 捕獲 + 聚合 `fail` + `exit $fail`」模式，對齊 in-repo precedent
+- 時間：2026-06-16 00:07
+
+## 4 條驗證命令固定為 `git status --porcelain=v2 --branch --untracked-files=normal` / `git diff --quiet origin/main HEAD` / `git diff --quiet --cached` / `[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]`，前置 `git fetch origin` 與 `git rev-parse --is-inside-work-tree` / `git rev-parse --verify origin/main^{commit}` 防呆不計入 4 條但同樣需記 exit code
+- 時間：2026-06-16 00:07
+
+## 腳本不啟用 `set -e`，4 條 + fetch 全部跑完才結束，確保一條 fail 也能拿到其他條的證據（驗證場景 fail-fast 為反模式）
+- 時間：2026-06-16 00:07
+- 理由：與既有 `baseline_selftest.sh` 風格一致；CI / release gate 需要完整證據鏈而非早死
+- 否決方案：`set -euo pipefail`（`redeploy.sh` 風格）——那是 fail-fast 部署場景，不適用於「我要看到所有證據」
+
+## 總體 exit code 採「全乾淨 = 0；fetch 失敗 OR 任何 4 條非預期 = 1」手動累計，不靠 `set -e` 達成；fetch 失敗時 close-out 標頭顯眼標示「fetch 失敗，比對結果作廢」
+- 時間：2026-06-16 00:07
+- 理由：fetch 失敗代表 `origin/main` 是過時 ref，後續 diff / hash 全部不可信；這比 diff 結果本身嚴重
+- 否決方案：Engineer 原版「只記 fetch exit code、不影響整體 exit」——會讓 release gate 看到綠燈卻拿到過時 ref 的證據，是更危險的假綠
+
+## branch name 進入 filename 前用 `tr '/\\' '__'` 處理；timestamp 鎖定 `date -u +%Y%m%dT%H%M%SZ`（去冒號，跨檔案系統安全）
+- 時間：2026-06-16 00:07
+- 理由：Engineer 與 Senior 都抓到，前者點路徑注入、後者點 Windows NTFS `:` 非法字元；合併處理
+- 否決方案：ISO 8601 帶 `:` 的可讀格式（`%Y-%m-%dT%H:%M:%SZ`）——人類可讀性 vs 跨平台檔名安全，後者勝
+
+## 結構化輸出檔路徑為 `$TMPDIR/clean-verify-output-<sanitized-branch>-<ts>.txt`，close-out 文件路徑為 `$TMPDIR/clean-verification-<sanitized-branch>-<ts>.md`，兩者皆不入版控、不污染工作樹
+- 時間：2026-06-16 00:07
+- 理由：Engineer 指出的「腳本自己會產 untracked 違反驗收」風險，必須涵蓋輸出檔而不只是 close-out 文件
+- 否決方案：輸出檔放 `scripts/.verify-cache/` 之類 repo 內隱藏目錄——會留 gitignored 殘留且未來難清
+
+## 假性 diff 排除政策採「腳本實讀 `.gitmodules` 內容 + 讀取 `core.autocrlf` 與 `.gitattributes` 狀態」三項偵測，不加任何 `--ignore-submodules=dirty` / `--ignore-cr-at-eol` 等修補 flag
+- 時間：2026-06-16 00:07
+- 理由：Senior 指出工作目錄存在 `.gitmodules`（空檔），我前一輪「正面證據：本 repo 無 submodule」是隱含假設錯誤，必須改為實測
+- 否決方案：假設「空 `.gitmodules` ≡ 無 submodule」——空檔不代表無 submodule 設定，仍需解析內容判斷 `[submodule "..."]` 區塊數
+
+## 假性 diff「本 repo 為何不受影響」段落的撰寫 ownership 指派給 engineer（最熟 repo 設定），由 PM 整合進 close-out 文件
+- 時間：2026-06-16 00:07
+- 理由：Senior 提出 ownership 模糊會變成 PM 複製貼上；明確指派 = 可追責
+- 否決方案：落在 PM——PM 對 git 內部設定熟悉度不如 engineer，容易寫成通用 boilerplate
+
+## 腳本輸出格式採「命令列 / 原始輸出 / `exit: N`」三行一組，stdout 與輸出檔同內容；close-out 模板於第 2、3 節（兩條 `--quiet` diff）加註「靜默 exit 0 = 無 diff；exit 1 = 有 diff，輸出至 stderr」契約說明
+- 時間：2026-06-16 00:07
+- 理由：Senior 點出 PM 未看過 git 行為會誤判「缺資料」；模板契約是給讀者的最小護欄
+- 否決方案：在腳本端把 `--quiet` 換成有輸出版本——會與 `git diff` 預設 exit 行為（差異時 exit 1）脫鉤，違背命令原意
+
+## 腳本開頭自行 `git rev-parse HEAD` 取得當前 commit hash 寫入 close-out 標頭，不靠 PM 手填
+- 時間：2026-06-16 00:07
+- 理由：Engineer 可選強化——避免人為抄錯；零成本
+- 否決方案：PM 手填——沒有「可自動化就不手填」以外的選擇
+
+## 翻案前一輪「放棄 release gate 自動化可能性」立場，改為「腳本結構預先設計成可被未來 CI 解析（命令列+輸出+exit 三行組是穩定契約），但不寫任何 CI wrapper、不加 `--json` 等輸出選項」
+- 時間：2026-06-16 00:07
+- 理由：Engineer 點出零成本保留可擴展性——三行組輸出已具備 machine-readable 結構，未來 CI 只加 wrapper 不重寫腳本；本任務不做 CI 整合但也不鎖死
+- 否決方案：維持原案「不做任何 CI 友善設計」——會讓未來 release gate 必須重寫解析層，是不必要的鎖死
+
