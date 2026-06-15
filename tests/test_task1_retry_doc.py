@@ -131,8 +131,22 @@ def test_module_table_links_back():
 
 # ── 驗收標準：純文件變更，無 .py 被改動 ──
 def test_no_py_changed():
+    """護欄：本分支相對主幹基準不得改動 .py。
+
+    注意：裸 `git diff`（working tree vs HEAD）在 commit 後永遠為空，是假綠燈護欄。
+    這裡改用 `merge-base HEAD origin/main` 為基準對比 commit 後的實際變更，
+    讓護欄真正反映「本分支引入了哪些 .py 變更」。
+    """
+    import pytest
+
+    base = subprocess.run(
+        ["git", "merge-base", "HEAD", "origin/main"],
+        cwd=ROOT, capture_output=True, text=True,
+    ).stdout.strip()
+    if not base:
+        pytest.skip("取不到 origin/main 基準，略過 .py 變更護欄（避免假綠）")
     out = subprocess.run(
-        ["git", "diff", "--name-only", "--", "*.py"],
+        ["git", "diff", "--name-only", base, "HEAD", "--", "*.py"],
         cwd=ROOT, capture_output=True, text=True,
     )
     changed = [line for line in out.stdout.splitlines() if line.strip()]
