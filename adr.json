@@ -1525,6 +1525,41 @@
       "rejected": "",
       "session_id": "apc943c58c6f",
       "created_at": 1781483884.1288762
+    },
+    {
+      "decision": "任務定性維持「驗收關閉、零 diff」——不產出任何生產碼異動。",
+      "rationale": "工程師實跑已證偽「HEAD 未修復」這個前提；ruff exit 0 + 2555 tests collected exit 0 + git diff 空，三項齊全。",
+      "rejected": "",
+      "session_id": "apf68745bd02",
+      "created_at": 1781485210.9092176
+    },
+    {
+      "decision": "防回歸唯一機制為 `from . import secure_write as secure_write` 的 redundant alias 語法觸發 ruff F401，且 ruff 必須在 CI pipeline 中執行；inline comment 不計入防護機制。",
+      "rationale": "工程師與高工一致指出 comment 不是硬約束、import 清理工具不讀註解；`X as X` 是 ruff 的豁免名單訊號而非 fix 對象，這才是機制。",
+      "rejected": "「collect 即驗」列為防線——collect 只跑 pytest，ruff 是另一條指令，兩者路徑不同；collect 綠不等於 ruff 綠，不可混稱「防護」。",
+      "session_id": "apf68745bd02",
+      "created_at": 1781485210.9092207
+    },
+    {
+      "decision": "驗收指令組由兩條擴充為三條，順序為：① `ruff check studio/ tests/`（exit 0）→ ② `python -c \"from studio import secure_write; print(secure_write)\"`（runtime import 無例外）→ ③ `python3 -m pytest --collect-only -q tests/`（exit 0, 0 collection error）。",
+      "rationale": "高工指出 collect 看不到 circular import 或 lazy load 導致的 runtime 炸點；第②條成本幾乎為零，覆蓋 collect 的盲點。",
+      "rejected": "只跑兩條指令——驗收範圍不完整，collect 過不等於 runtime import 正常。",
+      "session_id": "apf68745bd02",
+      "created_at": 1781485210.9092221
+    },
+    {
+      "decision": "關閉前必須執行 `git log --oneline studio/__init__.py` 確認有修復 commit 且日期早於研究員調研清單；若無此 commit 記錄，「真因為清單過期」假設不成立，需重新診斷。",
+      "rationale": "高工點出「HEAD 已修復」是推論而非工具輸出，需用 git log 實證才能閉環；若假設錯誤，整個零 diff 結論就崩。",
+      "rejected": "僅憑 ruff 綠就直接關閉——繞過了對假設前提的最小驗證，風險不對稱。",
+      "session_id": "apf68745bd02",
+      "created_at": 1781485210.9092228
+    },
+    {
+      "decision": "關閉說明文字中，防回歸機制段落只寫一句：「唯一防線 = `from . import secure_write as secure_write` 觸發 ruff F401，且 ruff 在 CI」，刪除 collect 即驗與 inline comment 的保護力描述。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apf68745bd02",
+      "created_at": 1781485210.909224
     }
   ]
 }
