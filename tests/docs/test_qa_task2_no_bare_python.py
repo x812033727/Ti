@@ -116,11 +116,17 @@ PATH_EXEMPT_GLOBS: list[tuple[str, str]] = [
     ("tests/docs/test_readme_consistency.py", "legacy-guard-test-doc"),
     ("tests/docs/test_readme_verify_cmd.py", "legacy-guard-test-doc"),
     # 測試碼字串（fixture / 斷言輸入 / 概念註解）——非文件、非 demo 入口。
-    # 涵蓋 ``tests/**`` 所有子目錄：autopilot、core、docs、fixtures、scan、server、settings。
+    # 涵蓋 ``tests/`` 下所有子目錄與任意深度（autopilot、core、docs、fixtures、scan、server、settings）。
+    # 引擎語意（見 ``_glob_to_regex``）：``**/`` 換成 ``.*``、單 ``*`` 換成 ``[^/]*``、bare ``**``
+    # 不被特殊處理（會被當兩個 ``*``）。因此單一 pattern 無法同時配到
+    # ``tests/conftest.py``（一層）與 ``tests/core/X.py``（深層），需兩條 catch-all：
+    #   - ``**/tests/*`` 配 ``tests/<單層檔>``
+    #   - ``**/tests/**/*`` 配 ``tests/<子>/<檔>`` 與更深的 ``tests/<子>/<子>/<檔>``
     # 概念 canary 例：``tests/autopilot/test_qa_task3_autopilot_pytest_exec.py``
     # 註解「用 sys.executable 而非裸 python」字面是「不要用裸 python」概念，
     # 改 ``python3`` 反而變「不要用裸 python3」、語意錯。
-    ("tests/*", "test-fixture-data"),
+    ("**/tests/*", "test-fixture-data"),
+    ("**/tests/**/*", "test-fixture-data"),
     # 腳本內 ``python`` 引用多為註解／錯誤訊息／wrapper 偵測（serve.sh 的
     # ``command -v python`` fallback）——非 user-facing 指令，不該被守護測試抓。
     ("scripts/*", "script-comment-or-detect"),
@@ -213,13 +219,20 @@ def _run_spec_rg() -> list[tuple[str, int, str]]:
         [
             "rg",
             "-n",
-            "--glob", "!*.lock",
-            "--glob", "!.git/**",
-            "--glob", "!.venv/**",
-            "--glob", "!.qa-venv/**",
-            "--glob", "!.qa_venv/**",
-            "--glob", "!.pc-cache-qa/**",
-            "--glob", "!**/__pycache__/**",
+            "--glob",
+            "!*.lock",
+            "--glob",
+            "!.git/**",
+            "--glob",
+            "!.venv/**",
+            "--glob",
+            "!.qa-venv/**",
+            "--glob",
+            "!.qa_venv/**",
+            "--glob",
+            "!.pc-cache-qa/**",
+            "--glob",
+            "!**/__pycache__/**",
             SPEC_BARE_PYTHON_PATTERN,
             ".",
         ],
@@ -334,7 +347,9 @@ def test_venv_python_still_runnable():
             "  python3 -m venv .venv && .venv/bin/python --version"
         )
     r = subprocess.run([str(py), "--version"], capture_output=True, text=True)
-    assert r.returncode == 0, f".venv/bin/python --version 失敗: rc={r.returncode} stderr={r.stderr!r}"
+    assert r.returncode == 0, (
+        f".venv/bin/python --version 失敗: rc={r.returncode} stderr={r.stderr!r}"
+    )
     assert re.match(r"^Python 3\.\d+\.\d+", r.stdout.strip()), (
         f".venv/bin/python --version 輸出非預期: {r.stdout!r}（預期 'Python 3.x.y'）"
     )
@@ -461,8 +476,7 @@ def test_exemption_rules_have_negative_samples(neg_text, why):
     path_reason = _path_is_path_exempt("README.md")  # 隨便挑一個非豁免路徑
     line_reason = _line_is_exempt(neg_text)
     assert path_reason is None and line_reason is None, (
-        f"負樣本『{why}』被誤豁免：path={path_reason} line={line_reason}\n"
-        f"  輸入: {neg_text!r}"
+        f"負樣本『{why}』被誤豁免：path={path_reason} line={line_reason}\n  輸入: {neg_text!r}"
     )
 
 
@@ -484,3 +498,61 @@ def test_self_loads_without_side_effects():
     assert hasattr(self_mod, "test_readme_first_step_uses_python3")
     assert hasattr(self_mod, "test_no_collateral_damage")
     assert hasattr(self_mod, "test_exemption_rules_have_negative_samples")
+
+
+# ============================================================================
+# (G) PATH_EXEMPT_GLOBS pattern self-test：pattern 寫錯即守護測試紅
+# ============================================================================
+#
+# 為什麼需要：先前 ``tests/*`` 寫成單層不跨目錄（自製 ``_glob_to_regex`` 的 ``*`` 換成
+# ``[^/]*``，不跨 ``/``），導致 ``tests/core/X.py`` 等深層檔沒豁免而守護測試紅。
+# 此 self-test 把 pattern 與 engine 綁在一起——pattern 改錯或 engine 改壞，馬上紅。
+# 若未來有人把 pattern 改回 ``tests/*``、或刪掉其中一條 catch-all，會被這條擋下。
+
+
+def _all_exempt_globs() -> list[str]:
+    return [g for g, _ in PATH_EXEMPT_GLOBS]
+
+
+def test_exempt_patterns_cover_all_test_subdirs():
+    """驗 ``tests/`` 直屬與深層至少各有一條 catch-all，且都能命中實際檔案。"""
+    globs = _all_exempt_globs()
+    # 至少要有一條 ``**/tests/*``（直屬）與一條 ``**/tests/**/*``（深層）
+    assert any("**/tests/*" == g for g in globs), (
+        f"缺 ``**/tests/*`` 直屬 catch-all（會漏 tests/conftest.py 等）；"
+        f"現有: {[g for g in globs if 'tests' in g]}"
+    )
+    assert any("**/tests/**/*" == g for g in globs), (
+        f"缺 ``**/tests/**/*`` 深層 catch-all（會漏 tests/core/、tests/server/ 等）；"
+        f"現有: {[g for g in globs if 'tests' in g]}"
+    )
+    # 實抽檔案驗證 pattern 真的能命中
+    must_hit = [
+        "tests/conftest.py",  # 直屬
+        "tests/_repo.py",  # 直屬
+        "tests/core/test_runner.py",  # 深層
+        "tests/autopilot/test_release_smoke.py",  # 深層
+        "tests/docs/test_qa_task2_no_bare_python.py",  # 深層 + 有自己 rationale
+    ]
+    for path in must_hit:
+        assert _path_is_path_exempt(path) is not None, (
+            f"{path} 未被任何 PATH_EXEMPT_GLOBS 命中——"
+            f"豁免清單漏收或 pattern 寫錯，請檢查 ``**/tests/*`` 與 ``**/tests/**/*`` 兩條 catch-all。"
+        )
+
+
+def test_exempt_patterns_cover_root_historicals():
+    """驗 root 層級歷史檔（``*/X`` pattern 對根檔失效）有獨立條目。"""
+    globs = _all_exempt_globs()
+    must_have = [
+        "DECISIONS.md",
+        "adr.json",
+        "NOTES.md",
+    ]
+    for g in must_have:
+        assert g in globs, f"root 層級歷史檔 ``{g}`` 漏列——``*/X`` pattern 對根檔失效，需獨立列。"
+    # 並且實抽命中
+    for path in ["./DECISIONS.md", "./adr.json", "./NOTES.md"]:
+        assert _path_is_path_exempt(path) is not None, (
+            f"{path} 未命中任何豁免——``*/X`` pattern 配不到根檔，請確認有獨立無前綴條目。"
+        )
