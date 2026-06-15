@@ -82,6 +82,7 @@ jobs:
       # 引用，不在 run 字串內直接展開 `${{ ... }}`。後者會在 shell 執行「前」展開，雙引號擋不住
       # 注入；若版本字串含 `;`、`$(...)`、換行（惡意 PR／供應鏈），可在持有 PAT 的 runner 執行任意指令。
       - name: Create release
+        id: create-release  # 守護測試以 step id 定位（非 run 字串內容），改名/重排即假紅有鑑別力
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           TAG: ${{ steps.version.outputs.tag }}

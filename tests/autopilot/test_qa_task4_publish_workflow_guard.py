@@ -68,9 +68,15 @@ def _run_lines(steps: list[dict]) -> list[str]:
     return [s["run"] for s in steps if isinstance(s.get("run"), str)]
 
 
+# 建立 step 的定位契約＝`id: create-release`（架構決策：否決以 run 字串內容定位）。
+# 理由：content-matching 在 step 重排或 run 字串改名時靜默斷鏈（guard 仍綠但已失效）；
+# id 語意明確，改名即假紅，有鑑別力。
+CREATE_RELEASE_ID = "create-release"
+
+
 def _create_release_step(steps: list[dict]) -> dict | None:
     for s in steps:
-        if isinstance(s.get("run"), str) and "gh release create" in s["run"]:
+        if s.get("id") == CREATE_RELEASE_ID:
             return s
     return None
 
@@ -138,6 +144,13 @@ def trigger_has_v_tag(wf: dict) -> bool:
 def test_trigger_is_push_tag_v(workflow):
     """AC#1 觸發鏈：on push tags 含 `v*`。"""
     assert trigger_has_v_tag(workflow), "push tags 未含 v*"
+
+
+def test_create_step_is_located_by_id(workflow):
+    """建立 step 以 `id: create-release` 為定位契約（非 run 字串內容）。"""
+    step = _create_release_step(_publish_steps(workflow))
+    assert step is not None, f"缺 `id: {CREATE_RELEASE_ID}` 的建立 step（定位契約失效）"
+    assert "gh release create" in step.get("run", ""), "id 命中的 step 非 gh release create"
 
 
 def test_create_release_step_uses_file_mode(workflow):
@@ -226,6 +239,23 @@ def test_mutation_remove_render_step_turns_red(wf_copy):
     ]
 
     assert not has_render_step(wf_copy), "mutation 後 render-step 守護仍綠＝假綠"
+
+
+def test_mutation_drop_step_id_turns_red(wf_copy):
+    """移除建立 step 的 `id` → 定位失效，依賴它的 file-mode/PAT 守護全部翻紅。
+
+    這證明守護「真的」靠 id 定位：拔掉 id（即使 run 字串原封不動）即斷鏈，
+    與架構決策「否決 content-matching、改 id 定位」一致。
+    """
+    assert create_uses_file_mode(wf_copy), "baseline 失效：原始非 file mode"
+    assert create_uses_pat(wf_copy), "baseline 失效：原始非 PAT"
+
+    step = _create_release_step(_publish_steps(wf_copy))
+    del step["id"]  # mutation：拔掉定位契約（run 內容不動）
+
+    assert _create_release_step(_publish_steps(wf_copy)) is None, "mutation 後仍以內容矇到 step＝假綠"
+    assert not create_uses_file_mode(wf_copy), "mutation 後 file-mode 守護仍綠＝假綠"
+    assert not create_uses_pat(wf_copy), "mutation 後 PAT 守護仍綠＝假綠"
 
 
 def test_mutation_add_draft_flag_turns_red(wf_copy):
