@@ -82,15 +82,24 @@ class OpenAIExpert:
         user_msg = {"role": "user", "content": prompt}
         # 每次 speak 重建去重快取：scope=單次 speak，跨 speak 不共用（防前一輪結果洩漏）。
         self._dedup_cache = tools.DedupCache()
+        # token 用量累加器：每個 attempt 開頭歸零（_attempt 會被 run_with_retries 重放，
+        # 只計最終成功那次），成功回傳後 emit 一筆 token_usage。
+        usage_acc = {"prompt": 0, "completion": 0, "total": 0}
 
         async def _attempt() -> str:
             self._messages[:] = snapshot + [user_msg]
+            usage_acc.update(prompt=0, completion=0, total=0)
             # 每個 attempt 重置 attempt-內出現序號（保留跨 attempt 的結果快取），確保
             # retry 重放整輪迴圈時同位置的非冪等呼叫對齊回首次 key、命中不重執行副作用。
             self._dedup_cache.new_attempt()
             collected: list[str] = []
             for _ in range(config.OPENAI_MAX_STEPS):
                 resp = await self._chat(self._messages, self._tools, self._model)
+                u = getattr(resp, "usage", None)
+                if u is not None:
+                    usage_acc["prompt"] += getattr(u, "prompt_tokens", 0) or 0
+                    usage_acc["completion"] += getattr(u, "completion_tokens", 0) or 0
+                    usage_acc["total"] += getattr(u, "total_tokens", 0) or 0
                 msg = resp.choices[0].message
                 tool_calls = getattr(msg, "tool_calls", None) or []
                 self._messages.append(_assistant_dict(msg, tool_calls))
@@ -162,6 +171,20 @@ class OpenAIExpert:
             )
             if metrics.retries or metrics.outcome not in ("success", ""):
                 logger.info("OpenAI 專家 %s 發言收斂：%s", r.key, metrics.to_dict())
+            if usage_acc["total"] or usage_acc["prompt"] or usage_acc["completion"]:
+                # token 用量純記錄，廣播失敗絕不可拖垮發言主路徑。
+                with contextlib.suppress(Exception):
+                    await broadcast(
+                        events.token_usage(
+                            self.session_id,
+                            r.key,
+                            effective_provider(r),
+                            self._model,
+                            usage_acc["prompt"],
+                            usage_acc["completion"],
+                            usage_acc["total"],
+                        )
+                    )
             return text
         finally:
             await broadcast(events.expert_status(self.session_id, r.key, "idle"))
