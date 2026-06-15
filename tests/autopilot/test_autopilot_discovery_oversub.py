@@ -114,11 +114,9 @@ def test_oversub_context_k_is_single_config_constant(monkeypatch):
 def test_prompt_includes_oversub_section_when_over_quota(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_SUBSYSTEM_MAX", 2)
     titles = ["替 backlog 補測試", "重構 backlog 索引", "為 backlog 加快取"]
-    pending = autopilot._pending_awareness_context(titles)
-    # 注入相同 titles 來源，讓 _oversubscribed_context 走 backlog 真實讀取以外的路徑：
-    # _build_discovery_prompt 內部以 _pending_titles() 取資料，故這裡 monkeypatch 之。
-    monkeypatch.setattr(autopilot, "_pending_titles", lambda: titles)
-    prompt = autopilot._build_discovery_prompt(outcomes="", pending=pending)
+    # 單一注入點：傳 titles= 即同時驅動 pending-awareness 與 oversubscribed 兩段（同源同快照），
+    # 無須 monkeypatch 全域 _pending_titles。
+    prompt = autopilot._build_discovery_prompt(outcomes="", titles=titles)
     assert _OVER_HEADER in prompt
     assert "backlog（已有 3 筆）" in prompt
 
@@ -126,9 +124,7 @@ def test_prompt_includes_oversub_section_when_over_quota(monkeypatch):
 def test_prompt_excludes_oversub_section_when_balanced(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_SUBSYSTEM_MAX", 2)
     titles = ["替 backlog 補測試", "修 CI", "重構 orchestrator"]  # 各 1 筆，無人超標
-    pending = autopilot._pending_awareness_context(titles)
-    monkeypatch.setattr(autopilot, "_pending_titles", lambda: titles)
-    prompt = autopilot._build_discovery_prompt(outcomes="", pending=pending)
+    prompt = autopilot._build_discovery_prompt(outcomes="", titles=titles)
     assert _OVER_HEADER not in prompt
     # 健全性：pending-awareness 清單仍在，確認是「過多段」被略過而非整段空白。
     assert "已在排隊" in prompt
@@ -136,8 +132,7 @@ def test_prompt_excludes_oversub_section_when_balanced(monkeypatch):
 
 def test_prompt_excludes_oversub_section_when_no_pending(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_SUBSYSTEM_MAX", 2)
-    monkeypatch.setattr(autopilot, "_pending_titles", lambda: [])
-    prompt = autopilot._build_discovery_prompt(outcomes="", pending="")
+    prompt = autopilot._build_discovery_prompt(outcomes="", titles=[])
     assert _OVER_HEADER not in prompt
 
 
