@@ -4,6 +4,7 @@
 能自己寫程式、互相討論、自我改進、自我檢討，並透過網頁即時呈現協作過程。
 """
 
-__version__ = "0.1.0"
+# 版本字串單一事實來源為 pyproject.toml（見 DECISIONS）。
+# 此處不再硬寫 __version__，下游需要時以 tomllib 讀取 pyproject.toml，避免兩處不一致。
 
 from . import secure_write

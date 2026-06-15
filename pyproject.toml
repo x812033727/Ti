@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ti-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI 專家討論工作室 — 多智能體自主軟體開發 studio (Claude Agent SDK)"
 readme = "README.md"
 # 部署實跑 3.12;3.11/3.12 為支援目標。3.10 的 asyncio.wait_for 取消/逾時語意與 3.11+

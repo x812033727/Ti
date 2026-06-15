@@ -759,3 +759,55 @@
 ## Tenacity / backoff 套件評選不入文，僅加一句「設計與 exponential-backoff-with-jitter 慣例對齊」交代來源，不展開比較
 - 時間：2026-06-15 06:47
 
+## 反向黑樣本測試使用 in-memory 字串操作——讀 CHANGELOG.md 內容後用 Python str 截掉 Breaking 區塊，對截斷後的字串跑斷言；不動真實檔案、不依賴 tmp_path 寫回磁碟
+- 時間：2026-06-15 07:18
+- 理由：in-memory 最輕量，不產生任何磁碟副作用；測試 crash 也不會殘留；同時避免工程師用 tmp_path 時因路徑指向錯誤而假綠
+- 否決方案：改動真實 CHANGELOG.md 後還原（crash 就殘留）；寫入 tmp_path 再讀（多一層 I/O，失敗模式更多）
+
+## 版本讀取方式指定 tomllib.load()（Python 3.11+ 標準庫，3.12 環境內建，無額外依賴）；pyproject.toml 路徑用 Path(__file__).parents[N] 推 repo root，不用 cwd；N 值在實作前先用 Explore 確認測試檔深度
+- 時間：2026-06-15 07:18
+- 理由：importlib.metadata.version() 需套件已安裝，CI 裸 checkout 沒裝就爆；tomllib 只需檔案存在即可，與安裝狀態無關
+- 否決方案：importlib.metadata（CI 安裝前提不受控）；regex parse（脆，版本格式一改即壞）
+
+## README 錨點互指納入測試範疇，但只斷言「README 檔案內含 state 安全寫入 這個字串」，不追 HTML anchor hash；CHANGELOG 內的指向文字必須與此字串一致
+- 時間：2026-06-15 07:18
+- 理由：完整 anchor 是 GitHub Markdown 自動生成，測試無法直接驗；測 raw text 已能防止小節被悄悄改名後連結語意斷開；且 test_qa_task5 已有 README 字樣掃描，新測試只需互指一致性即可，不重複
+- 否決方案：完全不測（靜默死鏈，高工明確指出不可接受）；測 HTML anchor（#state-安全寫入 這類 hash，跨平台渲染不一致）
+
+## 動工第一步執行 grep -rn "0.1.0" tests/，若既有測試硬寫版本字串則先修正再升版；此步驟必須在 pyproject.toml 改版之前完成
+- 時間：2026-06-15 07:18
+- 理由：工程師已提醒，既有測試寫死舊版本字串會造成升版後連帶紅燈，需先排雷
+
+## 版本字串升 0.2.0，pyproject.toml 為單一事實來源；CHANGELOG.md 與測試皆從 pyproject.toml 讀取，不在兩處硬寫版本字串
+- 時間：2026-06-15 07:18
+
+## CHANGELOG.md 落點 repo 根目錄，Keep a Changelog 格式，## ⚠️ Breaking Changes 作為 0.2.0 節最頂端子區塊，位置先於 ### Changed / ### Added
+- 時間：2026-06-15 07:18
+
+## Breaking 條目時序語意鎖定「宣告已發生」——用現在完成式（「已改為 strict 預設，自 0.2.0 起生效」），禁止出現「下版才 enforce」「警告期後」等未來時序
+- 時間：2026-06-15 07:18
+- 否決方案：研究員兩階段過渡模板（與 config.py 第 695 行 strict 已成立矛盾）
+
+## warn 描述為「使用者側逃生艙」——「若非 root 環境，顯式設 TI_REQUIRE_CHOWN=warn 可延後遷移」，不承諾任何我們自己的緩衝期
+- 時間：2026-06-15 07:18
+
+## 錯值 fail-safe 行為（無法辨識值 → strict + warning）必須在 Breaking 條目內明示一行，防使用者誤以為打錯字會靜默降級
+- 時間：2026-06-15 07:18
+
+## 四要素順序固定（①行為變動 ②原因 ③before/after 遷移 ④生效版本），測試用 index 比相對位置而非整段字串比對，保留鑑別力且不過度僵化
+- 時間：2026-06-15 07:18
+- 理由：工程師已指出逐字比對會脆；index 比法維護成本低、改字不紅、但調換順序會紅
+
+## 本次不引入 semantic-release / git tag 自動化；在 CHANGELOG 或 DECISIONS 加「架構伏筆：」標注留接入點，非現行需求
+- 時間：2026-06-15 07:18
+
+## [任務 #1 落地] release note 檔案路徑 = 根目錄 `CHANGELOG.md`（Keep a Changelog）、本次版本字串 = `0.2.0`，pyproject.toml 已升版
+- 時間：2026-06-15 07:19
+- 角色：工程師
+- 落地內容：
+  1. 已執行排雷 `grep -rn "0.1.0" tests/` → **無命中**，既有測試未硬寫舊版本字串，升版無連帶紅燈風險。
+  2. `pyproject.toml` `version` 由 `0.1.0` → `0.2.0`，作為版本單一事實來源；後續 CHANGELOG.md 與測試一律從此處讀取（tomllib），不在他處硬寫版本字串。
+  3. release note 落點確認為 repo 根目錄 `CHANGELOG.md`（先前無任何 CHANGELOG/RELEASE 檔，本次新建為 #2 任務範圍）。
+- 範圍守線：本任務僅決策＋升版，**不碰 chown 程式邏輯**（`config.py` 已 strict 預設、warn/off 三態、錯值 fail-safe，均維持原狀）。
+- 架構伏筆：semantic-release / git tag 自動擷取 `BREAKING CHANGE:` footer 留待未來；本次 CHANGELOG 為人工維護。
+
