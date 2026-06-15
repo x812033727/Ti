@@ -87,9 +87,7 @@ def test_warn_mode_also_warns_at_load(monkeypatch, caplog):
 
 # --- off 在寫入層：放行、不 raise（即使 chown 會失敗）------------------
 def test_off_write_passes_even_if_chown_fails(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        os, "fchown", lambda *a: (_ for _ in ()).throw(PermissionError("EPERM"))
-    )
+    monkeypatch.setattr(os, "fchown", lambda *a: (_ for _ in ()).throw(PermissionError("EPERM")))
     target = tmp_path / "state"
     # off 不應 raise，且應寫出檔案（逃生開關＝放行）
     secure_write_root(target, b"data", require_chown="off")
