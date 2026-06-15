@@ -113,6 +113,12 @@ class MissingBreakingBlock(ValueError):
 # tag notes / email banner 兩出口共用的渲染骨架。兩者皆**逐字注入**同一個抽出區塊，
 # 確保四要素（①行為變動 ②原因 ③before/after ④生效版本）在兩出口都不被截斷／改寫。
 def _render(changelog_text: str, version: str, *, heading: str, footer: str) -> str:
+    """共用渲染骨架。兩參數的格式化約定不同，呼叫端勿混淆：
+
+      - ``heading``：**含 ``{version}`` 佔位符的模板字串**，本函式以 ``.format(version=...)``
+        求值。傳入已求值的 f-string 是 no-op；含其他未知 key 會 ``KeyError``。
+      - ``footer``：**由呼叫端預先格式化好的最終字串**，本函式不再 ``.format()``。
+    """
     block = extract_breaking_block(changelog_text)
     if block is None:
         raise MissingBreakingBlock(
@@ -136,7 +142,11 @@ def render_tag_notes(changelog_text: str, version: str) -> str:
 
 
 def render_email_banner(changelog_text: str, version: str) -> str:
-    """渲染發布通知 email 的 banner body（純文字）。
+    """渲染發布通知 email 的 banner body（**Markdown 格式文字**）。
+
+    注意：body 內含逐字注入的 ``BREAKING_HEADING``（``## ⚠️ Breaking Changes``）等
+    Markdown 標記，**並非 plain text**。消費端若要純文字 email，須自行將 Markdown
+    render／strip（如去除前置 ``##``）後再送 SMTP；HTML email 則先過 Markdown→HTML。
 
     與 tag notes 共用同一抽出區塊，確保兩出口內容一致、四要素皆不遺失。
     缺區塊時拋 `MissingBreakingBlock`。
