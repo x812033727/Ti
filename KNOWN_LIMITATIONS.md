@@ -2,7 +2,7 @@
 
 本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:
 
-- [ ] 盤點全 repo `python` 命中並分類為「必改（demo 執行的裸命令、文件範例）／不動（套件名、image tag、shebang、venv 內 `.venv/bin/python`、Windows `.venv\Scripts\python`）」，產出白名單清單
-- [ ] 將必改清單中執行指令與文件裡的裸 `python`（如 `python main.py`、`python -m ...`）改為 `python3`
-- [ ] 在 README/CONTRIBUTING 補一行 Windows 退路說明（`python3` 找不到時用 `py`），並文件化「venv 內允許 `python`、shell 範例統一 `python3`」慣例
-- [ ] 全量重跑 `tests/docs` 與相關守護測試，確認文件一致性測試與既有測試皆綠
+- [ ] 執行 `git fetch origin` 並蒐集四條驗證命令的原始輸出與 exit code（status --porcelain=v2 --branch、diff --quiet origin/main HEAD、diff --quiet --cached、rev-parse HEAD vs origin/main）
+- [ ] 確認並記錄假性 diff 排除政策（submodule、CRLF/eol、staged/untracked），說明本 repo 為何不受影響
+- [ ] 撰寫驗證關閉說明文件，含標頭（branch/HEAD/origin-main/fetch 時間/執行者）、四條命令原始輸出、exit code，明確標示「空 diff」結論
+- [ ] 由 PM/QA 對照關閉說明與實跑結果覆核，確認證據鏈完整且工作目錄無新殘留
