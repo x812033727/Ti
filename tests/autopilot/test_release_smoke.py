@@ -65,6 +65,7 @@ _EMPTY_BLOCK_BODY = f"""# Release 0.2.0
 # 正樣本：含非空頂層 Breaking Changes 區塊 → check_body 不 raise（AC#2）
 # ===========================================================================
 
+
 def test_nonempty_block_passes():
     """快樂路徑：含非空區塊時 check_body 正常返回 None。"""
     assert check_body(_NONEMPTY_BLOCK_BODY) is None
@@ -85,6 +86,7 @@ def test_mutation_guard_positive_sample_block_is_actually_nonempty():
 # ===========================================================================
 # 反向黑樣本：缺 / 空區塊 → raise ValueError（AC#2、#4 真鑑別力）
 # ===========================================================================
+
 
 def test_missing_block_raises():
     """缺整個 Breaking Changes 區塊 → 必 raise。"""
@@ -125,6 +127,7 @@ def test_mutation_removes_block_flips_red():
 # fence 感知：區塊內 code fence 裡的偽 `## ` 不應被當邊界截斷成假綠
 # ===========================================================================
 
+
 def test_fenced_pseudo_heading_inside_block_still_nonempty():
     """區塊內 fence 裡含 `## ` 註解時，區塊不被截斷、仍判為非空 → 通過。"""
     body = f"""# Release 0.2.0
@@ -149,6 +152,7 @@ echo hi
 # ===========================================================================
 # CLI / main()：env BODY 與 stdin 兩路徑、exit code、stderr body 片段（AC#5）
 # ===========================================================================
+
 
 def test_main_env_body_pass(monkeypatch):
     """main 讀 env BODY，含非空區塊 → 回 0。"""
@@ -202,6 +206,7 @@ def test_main_empty_body_prints_empty_marker(monkeypatch, capsys):
 # SSOT 重用 / 無重複 heading 字面值（AC#3）— 對 smoke 模組原始碼做靜態斷言
 # ===========================================================================
 
+
 def test_smoke_module_imports_ssot():
     """smoke 模組必須 import SSOT extractor，而非自寫判定。"""
     src = (ROOT / "studio" / "release_smoke.py").read_text(encoding="utf-8")
@@ -223,6 +228,7 @@ def test_smoke_module_has_no_heading_literal():
 # 端到端：以子行程實跑 `python -m studio.release_smoke`，驗 CLI 真實退出碼
 # ===========================================================================
 
+
 def test_cli_subprocess_pass_and_fail():
     """端到端：實際以子行程跑 CLI，確認 env BODY 路徑的退出碼正確。
 
@@ -233,14 +239,18 @@ def test_cli_subprocess_pass_and_fail():
     ok = subprocess.run(
         [sys.executable, "-m", "studio.release_smoke"],
         env={**base_env, "BODY": _NONEMPTY_BLOCK_BODY},
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     assert ok.returncode == 0, f"正樣本應退出 0，stderr={ok.stderr}"
 
     bad = subprocess.run(
         [sys.executable, "-m", "studio.release_smoke"],
         env={**base_env, "BODY": _MISSING_BLOCK_BODY},
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     assert bad.returncode == 1, "黑樣本應非零退出"
     assert "雜項修補" in bad.stderr, "CLI 失敗應印 body 片段"

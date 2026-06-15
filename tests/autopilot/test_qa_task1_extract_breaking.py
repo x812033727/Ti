@@ -80,12 +80,7 @@ def test_extract_at_eof_no_trailing_h2():
 
 def test_extract_block_followed_by_h2_is_bounded():
     """區塊後緊接 `## `：只抽 Breaking 內文，不含後續節。"""
-    text = (
-        f"{BREAKING_HEADING}\n"
-        "- keep me\n\n"
-        "## [0.2.0]\n"
-        "- DROP me\n"
-    )
+    text = f"{BREAKING_HEADING}\n- keep me\n\n## [0.2.0]\n- DROP me\n"
     block = extract_breaking_block(text)
     assert "keep me" in block, "#1：邊界內內容遺失"
     assert "DROP me" not in block, "#1：邊界外內容被誤抽"
@@ -120,17 +115,13 @@ def test_heading_only_whitespace_body_returns_none():
 def test_wrong_heading_variant_not_matched():
     """heading 契約鎖死：`## Breaking`（缺 ⚠️）不應被當成 Breaking 區塊。"""
     text = "## Breaking\n- ① 行為變動：x\n\n## [0.2.0]\n- y\n"
-    assert extract_breaking_block(text) is None, (
-        "#4：非契約 heading 變體竟被匹配——契約未鎖死"
-    )
+    assert extract_breaking_block(text) is None, "#4：非契約 heading 變體竟被匹配——契約未鎖死"
 
 
 def test_return_type_is_str_or_none(changelog_text):
     block = extract_breaking_block(changelog_text)
     assert isinstance(block, str), "#1：有區塊時回傳型別須為 str"
-    assert extract_breaking_block("") is None or isinstance(
-        extract_breaking_block(""), str
-    )
+    assert extract_breaking_block("") is None or isinstance(extract_breaking_block(""), str)
 
 
 # ---------------------------------------------------------------------------
@@ -164,12 +155,8 @@ def test_pyproject_version_is_020():
 def test_pyproject_version_reads_from_given_path(tmp_path):
     """傳入不同 pyproject 路徑回傳對應版本——證明真的在讀檔，非硬寫 0.2.0。"""
     fake = tmp_path / "pyproject.toml"
-    fake.write_text(
-        '[project]\nname = "x"\nversion = "9.9.9"\n', encoding="utf-8"
-    )
-    assert pyproject_version(fake) == "9.9.9", (
-        "#2：版本疑似硬寫——換 pyproject 仍回 0.2.0"
-    )
+    fake.write_text('[project]\nname = "x"\nversion = "9.9.9"\n', encoding="utf-8")
+    assert pyproject_version(fake) == "9.9.9", "#2：版本疑似硬寫——換 pyproject 仍回 0.2.0"
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +167,7 @@ def test_pyproject_version_reads_from_given_path(tmp_path):
 def test_black_sample_remove_block_makes_extract_none(changelog_text):
     """移除 heading 後 extractor 必回 None（若仍回內容＝假綠）。"""
     polluted = changelog_text.replace(BREAKING_HEADING, "## Removed Section")
-    assert extract_breaking_block(polluted) is None, (
-        "#5 黑樣本失效：移除契約 heading 後仍抽出區塊"
-    )
+    assert extract_breaking_block(polluted) is None, "#5 黑樣本失效：移除契約 heading 後仍抽出區塊"
 
 
 def test_black_sample_remove_element_fails_four_element_check(changelog_text):
@@ -197,6 +182,4 @@ def test_black_sample_version_not_hardwired(tmp_path):
     """若 pyproject_version 硬寫 0.2.0，此黑樣本會翻紅抓出。"""
     fake = tmp_path / "pyproject.toml"
     fake.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
-    assert pyproject_version(fake) != "0.2.0", (
-        "#5 黑樣本失效：版本硬寫，換檔仍回 0.2.0"
-    )
+    assert pyproject_version(fake) != "0.2.0", "#5 黑樣本失效：版本硬寫，換檔仍回 0.2.0"

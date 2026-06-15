@@ -38,6 +38,10 @@ workspaces/
 # Session history archive
 history/
 
+# publish-release.yml 由 scripts/publish_release.py 產出的 release body 檔，
+# 屬執行期 artifact（內含逐字注入的 Breaking heading），不進版控、不參與掃描。
+/body.md
+
 # 專案（長期產品）執行期狀態：meta + 專屬改良 backlog（TI_PROJECTS_ROOT，預設 PROJECT_ROOT/projects）
 projects/
 
