@@ -87,10 +87,12 @@ def test_empty_existing_returns_all_unchanged(monkeypatch):
 
 
 def test_threshold_is_adjustable(monkeypatch):
-    # 單一常數可調（非 env override）：放寬到 0.99 時，同義改寫（Jaccard 0.833）不再被擋；
+    # 單一常數可調（非 env override）：放寬到 0.99 時，僅差一字的改寫（Jaccard 0.833）不再被擋；
     # 收緊到 0.55 仍擋住。證明閾值收斂為單一可調常數。
-    existing = ["修復登入逾時的重試邏輯"]
-    proposals = ["修正登入逾時的重試邏輯"]
+    # 註：示範對刻意挑「調整/調校」這類差一字、**非同義表收錄** 的詞——原本的「修復/修正」自 task#3
+    # 起會被同義 canonical 正規化為相同 token（Jaccard→1.0），ratio=0.99 也會擋下，無法示範閾值可調。
+    existing = ["調整登入逾時的重試邏輯"]
+    proposals = ["調校登入逾時的重試邏輯"]
     monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.99)
     assert autopilot._filter_pending_duplicates(proposals, existing) == proposals
     monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
