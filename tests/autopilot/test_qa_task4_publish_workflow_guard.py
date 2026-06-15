@@ -253,7 +253,9 @@ def test_mutation_drop_step_id_turns_red(wf_copy):
     step = _create_release_step(_publish_steps(wf_copy))
     del step["id"]  # mutation：拔掉定位契約（run 內容不動）
 
-    assert _create_release_step(_publish_steps(wf_copy)) is None, "mutation 後仍以內容矇到 step＝假綠"
+    assert _create_release_step(_publish_steps(wf_copy)) is None, (
+        "mutation 後仍以內容矇到 step＝假綠"
+    )
     assert not create_uses_file_mode(wf_copy), "mutation 後 file-mode 守護仍綠＝假綠"
     assert not create_uses_pat(wf_copy), "mutation 後 PAT 守護仍綠＝假綠"
 

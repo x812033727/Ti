@@ -264,9 +264,7 @@ def test_mutation_remove_pat_guard_turns_red(publish_text):
     mutated = publish_text.replace('test -n "$GH_TOKEN"', "true")
     assert mutated != publish_text, "mutation 無效：未替換到 guard 偵測（孤立假綠風險）"
     problems = check_pat_guard(mutated)
-    assert any("guard" in p for p in problems), (
-        f"假綠：移除 guard 後未翻紅，problems={problems}"
-    )
+    assert any("guard" in p for p in problems), f"假綠：移除 guard 後未翻紅，problems={problems}"
 
 
 def test_mutation_guard_drops_exit_turns_red(publish_text):

@@ -82,6 +82,7 @@ def finish_session(session_id: str) -> dict | None:
     if parallel:
         meta["parallel"] = parallel  # 供 /api/metrics 聚合並行可觀測性
     meta["scorecard"] = _derive_scorecard(events, meta)  # 供 /api/metrics 聚合成果記分卡
+    meta["token_usage"] = _derive_token_usage(events)  # 供 usage_report 跨場聚合 token 用量
     _write_meta(session_id, meta)
     # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
     # 自己回收掉）；回收失敗絕不影響本次收尾。
@@ -171,6 +172,49 @@ def _derive_scorecard(events: list[dict], meta: dict) -> dict:
     if meta.get("finished_at") and meta.get("started_at"):
         sc["duration_s"] = round(meta["finished_at"] - meta["started_at"], 1)
     return sc
+
+
+def _derive_token_usage(events: list[dict]) -> dict:
+    """從事件流聚合本場 LLM token 用量：總計 + by-provider／model／role 分組。
+
+    每則 token_usage 事件＝一次 speak 的彙整用量（OpenAI/MiniMax 端累加工具迴圈各輪、
+    Claude 端取 ResultMessage.usage）。新 type，被既有 _derive_status/_derive_scorecard
+    忽略，不影響任何完成判定。cost_usd 僅 Claude SDK 直接提供（估算，訂閱實扣以官方為準）；
+    MiniMax 端為 None，由 usage_report 依價目表估算。
+    """
+
+    def _blank() -> dict:
+        return {"prompt": 0, "completion": 0, "total": 0, "cost_usd": 0.0, "calls": 0}
+
+    total = _blank()
+    by_provider: dict[str, dict] = {}
+    by_model: dict[str, dict] = {}
+    by_role: dict[str, dict] = {}
+    for ev in events:
+        if ev.get("type") != "token_usage":
+            continue
+        p = ev.get("payload") or {}
+        prov = p.get("provider") or "?"
+        model = p.get("model") or "?"
+        role = p.get("speaker") or "?"
+        cost = p.get("cost_usd") or 0.0
+        for bucket in (
+            total,
+            by_provider.setdefault(prov, _blank()),
+            by_model.setdefault(model, _blank()),
+            by_role.setdefault(role, _blank()),
+        ):
+            bucket["prompt"] += p.get("prompt_tokens", 0) or 0
+            bucket["completion"] += p.get("completion_tokens", 0) or 0
+            bucket["total"] += p.get("total_tokens", 0) or 0
+            bucket["cost_usd"] += cost
+            bucket["calls"] += 1
+    return {
+        "total": total,
+        "by_provider": by_provider,
+        "by_model": by_model,
+        "by_role": by_role,
+    }
 
 
 def _derive_parallel(events: list[dict]) -> dict:
