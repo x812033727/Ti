@@ -1,0 +1,73 @@
+name: Publish release
+
+# 觸發時機（架構決策）：push v* tag 時建立 release。與 release-smoke.yml 分離——
+# 本 workflow 負責「建立」職責，smoke 負責「驗證」職責，不合併。
+on:
+  push:
+    tags:
+      - "v*"
+
+# gh release create 的最小權限需求（架構決策）。
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # 防卡死燒額度（同 ci.yml 註記）
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Step 1：PAT guard。把「GH_PAT 未設或已過期」攔在最前面，錯誤訊息直指根因，
+      # 而非讓後續步驟成功後在建立 release 時才得 403 猜謎（架構決策）。
+      # 為何必須 PAT：GITHUB_TOKEN 建立的 release 不觸發下游 workflow（GitHub 防遞迴），
+      # release-smoke 將永不啟動；改用 PAT 身分建立才能觸發 release:published。
+      - name: Verify PAT
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: test -n "$GH_TOKEN" || (echo "::error::GH_PAT secret 未設或已過期" && exit 1)
+
+      # Step 2：版本字串以 studio.release_note.pyproject_version 為單一事實來源（讀
+      # pyproject.toml），不在 YAML 硬寫版本號。輸出 version 與 tag 供後續 step 取用。
+      - name: Resolve version (SSOT = pyproject.toml)
+        id: version
+        run: |
+          set -euo pipefail
+          ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+          echo "resolved version: $ver"
+
+      # Step 3：斷言 push 的 tag 與程式碼版本一致，不符即 fail-fast、不建立 release。
+      # tag 與 pyproject 版本不同步是上線事故根因，最便宜的攔截點是建立 release 前（架構決策）。
+      - name: Assert tag matches version
+        env:
+          REF_TAG: ${{ github.ref_name }}
+          EXPECTED_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::push 的 tag $REF_TAG 與 pyproject 版本 $EXPECTED_TAG 不符，拒絕建立 release"
+            exit 1
+          fi
+
+      # Step 4：渲染 release body。邏輯抽於 scripts/publish_release.py（可被 pytest
+      # 直接 import 測試），讀 CHANGELOG.md → render_tag_notes(text, pyproject_version())
+      # → 寫 body.md。render 失敗（缺 Breaking 區塊）即 Python 層 raise 非零退出，
+      # 且已先 unlink 舊 body.md，step 5 不會誤讀殘留舊內容（架構決策）。
+      - name: Render body
+        run: python scripts/publish_release.py
+
+      # Step 5：以 PAT 身分建立 published release（不帶 --draft），才能觸發下游
+      # release:published 事件啟動 release-smoke。body 走 -F body.md 檔案（file mode），
+      # 不經 shell 字串拼裝，避免多行／反斜線／- 開頭被吞字（架構決策）。
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: gh release create "${{ steps.version.outputs.tag }}" -F body.md
