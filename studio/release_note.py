@@ -1,12 +1,29 @@
 """Release note 抽取器：從 CHANGELOG.md 抽出頂層 Breaking Changes 區塊。
 
 本模組為 release pipeline 兩出口（tag notes body／email banner body）的上游資料源。
-`BREAKING_HEADING` 常數是 heading 字串的**唯一事實來源**——測試 `import` 此常數即構成
-CI 強制機制：常數改名或模組搬路徑會讓 import 爆炸，比 prose 文件更可靠地鎖死契約。
-
 版本字串以 `pyproject.toml` 為單一事實來源，本模組不硬寫任何版本號。
 
-設計契約（依架構決策）：
+Heading 字串契約（唯一事實來源）
+================================
+頂層 Breaking Changes 區塊的 heading **必須**逐字為 ``BREAKING_HEADING`` 所定義
+的字串（``## ⚠️ Breaking Changes``）。pipeline 以此 heading 為錨點抽出區塊並注入
+tag notes / email banner 兩個發佈出口。
+
+為什麼鎖死成常數而非散落各處的字面值：
+- 任何抽取／比對端一律 ``from studio.release_note import BREAKING_HEADING``，
+  不得在他處再寫一份 ``"## ⚠️ Breaking Changes"`` 字面值。**唯一允許的例外**是
+  ``test_release_note_heading_contract.py`` 裡的 golden value——沒有一份獨立字面值
+  就無法驗證常數本身不漂移；該處已注釋標明此為例外。
+- 若有人把 CHANGELOG 的 heading 改成 ``## Breaking`` 或拿掉 emoji，比對會立刻
+  漏抓——測試 ``tests/autopilot/test_release_note_heading_contract.py`` 引用本常數
+  逐字斷言 CHANGELOG 仍含此 heading，故任何漂移會在 CI 翻紅。
+- 「測試 import 這個常數」本身就是 CI 強制機制：常數改名或模組搬路徑，import 爆炸，
+  比 prose 文件（會靜默過時）更可靠，因此不另立 CONTRIBUTING.md 條目。
+
+emoji（⚠️, U+26A0 U+FE0F）是契約的一部分，不可省略——抽取端會 ``re.escape``
+本常數，故 emoji 與任何特殊字元都被當字面值處理。
+
+抽取器設計契約（依架構決策）：
   - `extract_breaking_block` 為純查詢函式：找到什麼回什麼，回 None 代表「無此區塊或內容為空」。
     判斷「是否必須存在」是呼叫端（pre-tag validator）的責任，不在 extractor 內拋例外——
     避免把「本次 release 無 breaking changes（合法）」與「格式錯誤」混為一談。
@@ -28,6 +45,7 @@ import tomllib
 from pathlib import Path
 
 #: heading 字串的唯一事實來源。測試與渲染皆引用此常數，禁止硬寫字面量。
+#: 改動此字串＝改動發佈契約，務必同步 CHANGELOG.md 與相依測試。
 BREAKING_HEADING = "## ⚠️ Breaking Changes"
 
 # 精準匹配「整行即 BREAKING_HEADING」（行尾允許尾隨空白），用 MULTILINE 逐行生效。
