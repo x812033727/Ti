@@ -1,7 +1,7 @@
 # 提交前自動跑 lint 與格式化。安裝：pip install -e ".[dev]" && pre-commit install
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.4
+    rev: v0.14.4  # 與 pyproject [dev] 的 ruff==0.14.4 同步，避免本地/CI/pre-commit 三端版本分歧
     hooks:
       - id: ruff
         args: [--fix]
