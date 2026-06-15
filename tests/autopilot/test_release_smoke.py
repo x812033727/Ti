@@ -213,8 +213,10 @@ def test_smoke_module_has_no_heading_literal():
     """AC#3：smoke 模組不得出現 heading 字面值（含 emoji 版），一律 import 常數。"""
     src = (ROOT / "studio" / "release_smoke.py").read_text(encoding="utf-8")
     assert BREAKING_HEADING not in src, "smoke 模組不得硬寫 heading 字面值"
-    # 連去 emoji 的弱化字面值也不該出現（防漂移）。
-    assert "## Breaking Changes" not in src
+    # 連去 emoji 的弱化字面值也不該出現（防漂移）。弱化版由常數衍生，
+    # 本測試檔遂達成零 heading 字面值，AC#4 grep 範圍可安全涵蓋本檔。
+    weakened_heading = BREAKING_HEADING.replace("⚠️ ", "")
+    assert weakened_heading not in src
 
 
 # ===========================================================================
