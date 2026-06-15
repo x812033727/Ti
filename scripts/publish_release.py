@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 # 本檔在 scripts/ 下，repo 根為上一層。直接 `python scripts/publish_release.py`
-# 執行時，把 repo 根加進 sys.path 才能 import studio 套件。
+# 執行時，把 repo 根加進 sys.path 才能 import studio 套件（cwd 不在 sys.path）。
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))

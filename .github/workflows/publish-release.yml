@@ -1,20 +1,29 @@
 name: Publish release
 
-# 觸發時機（架構決策）：push v* tag 時建立 release。與 release-smoke.yml 分離——
-# 本 workflow 負責「建立」職責，smoke 負責「驗證」職責，不合併。
+# 觸發時機：push v* tag 時建立 GitHub release（published 狀態）。與 release-smoke.yml
+# 分離——本 workflow 負責「建立」職責，smoke 負責「驗證」職責，不合併（架構決策）。
+#
+# 觸發死結（任務 #3 核心）：以 GITHUB_TOKEN 建立的 release 不會啟動下游 workflow
+# （GitHub 防遞迴機制），release-smoke.yml 的 `on: release: published` 將永不觸發，
+# 形同未啟用。解法＝改以 PAT（secrets.GH_PAT）身分建立 release，PAT 產生的
+# release:published 事件即可正常觸發下游 release-smoke，無需改動 smoke workflow。
+#
+# GH_PAT 最小權限（資安要求）：請用 Fine-grained PAT，僅授予「本 repo」的
+# `Contents: Read and write`（建立 release 所需的唯一 scope）。
+# classic PAT 請僅勾 `repo`（已是最小可用集）。切勿使用 admin:org、repo:all
+# 等過大 scope——PAT 一旦洩漏，爆炸半徑與授予 scope 等大。
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
 
-# gh release create 的最小權限需求（架構決策）。
 permissions:
-  contents: write
+  contents: write  # gh release create 的最小權限需求
 
 jobs:
   publish-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # 防卡死燒額度（同 ci.yml 註記）
+    timeout-minutes: 10  # 防卡死燒額度（同 ci.yml / release-smoke.yml 註記）
     steps:
       - uses: actions/checkout@v4
 
@@ -24,16 +33,17 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # Step 1：PAT guard。把「GH_PAT 未設或已過期」攔在最前面，錯誤訊息直指根因，
-      # 而非讓後續步驟成功後在建立 release 時才得 403 猜謎（架構決策）。
-      # 為何必須 PAT：GITHUB_TOKEN 建立的 release 不觸發下游 workflow（GitHub 防遞迴），
-      # release-smoke 將永不啟動；改用 PAT 身分建立才能觸發 release:published。
+      # Step 1 — PAT guard：把「GH_PAT 未設」攔在最前面。
+      # 注意：`test -n` 只能偵測「未設（空字串）」，無法驗證 PAT 是否過期/被撤銷——
+      # 過期 PAT 仍會通過此 guard，到 Create release 才以 403 失敗。此 guard 的價值
+      # 在於把最常見的「忘了設 secret」攔在第一步，CI log 直接指向根因，而非到 Step 5 才撞權限問題。
       - name: Verify PAT
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: test -n "$GH_TOKEN" || (echo "::error::GH_PAT secret 未設或已過期" && exit 1)
+        run: |
+          test -n "$GH_TOKEN" || { echo "::error::GH_PAT secret 未設；GITHUB_TOKEN 建立的 release 不會觸發下游 release-smoke，必須以 PAT 建立"; exit 1; }
 
-      # Step 2：版本字串以 studio.release_note.pyproject_version 為單一事實來源（讀
+      # Step 2 — 版本字串以 studio.release_note.pyproject_version 為單一事實來源（讀
       # pyproject.toml），不在 YAML 硬寫版本號。輸出 version 與 tag 供後續 step 取用。
       - name: Resolve version (SSOT = pyproject.toml)
         id: version
@@ -44,30 +54,35 @@ jobs:
           echo "tag=v$ver" >> "$GITHUB_OUTPUT"
           echo "resolved version: $ver"
 
-      # Step 3：斷言 push 的 tag 與程式碼版本一致，不符即 fail-fast、不建立 release。
-      # tag 與 pyproject 版本不同步是上線事故根因，最便宜的攔截點是建立 release 前（架構決策）。
+      # Step 3 — 斷言 push 的 tag 與程式碼版本一致；不符即 fail-fast，不建立 release。
+      # tag 與 pyproject 版本不同步是上線事故根因，最便宜的攔截點在 release 建立前（架構決策）。
       - name: Assert tag matches version
         env:
-          REF_TAG: ${{ github.ref_name }}
-          EXPECTED_TAG: ${{ steps.version.outputs.tag }}
+          ACTUAL: ${{ github.ref_name }}
+          EXPECTED: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ "$REF_TAG" != "$EXPECTED_TAG" ]; then
-            echo "::error::push 的 tag $REF_TAG 與 pyproject 版本 $EXPECTED_TAG 不符，拒絕建立 release"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::push 的 tag '$ACTUAL' 與 pyproject 版本 '$EXPECTED' 不符，拒絕建立 release"
             exit 1
           fi
 
-      # Step 4：渲染 release body。邏輯抽於 scripts/publish_release.py（可被 pytest
-      # 直接 import 測試），讀 CHANGELOG.md → render_tag_notes(text, pyproject_version())
-      # → 寫 body.md。render 失敗（缺 Breaking 區塊）即 Python 層 raise 非零退出，
-      # 且已先 unlink 舊 body.md，step 5 不會誤讀殘留舊內容（架構決策）。
-      - name: Render body
+      # Step 4 — 渲染 release body 至 body.md。邏輯抽於 scripts/publish_release.py（可被
+      # pytest 直接 import 測試）：讀 CHANGELOG.md → render_tag_notes(text, pyproject_version())
+      # → 寫 body.md，不在 YAML 重寫任何 heading 字面值。render 失敗（缺 Breaking 區塊）即
+      # Python 層 raise 非零退出，且已先 unlink 舊 body.md，step 5 不會誤讀殘留舊內容（架構決策）。
+      - name: Render release body
         run: python scripts/publish_release.py
 
-      # Step 5：以 PAT 身分建立 published release（不帶 --draft），才能觸發下游
-      # release:published 事件啟動 release-smoke。body 走 -F body.md 檔案（file mode），
-      # 不經 shell 字串拼裝，避免多行／反斜線／- 開頭被吞字（架構決策）。
+      # Step 5 — 以 PAT 建立 published release（不帶 --draft，狀態直接為 published 才能被
+      # release-smoke 的 release:published 接住）。body 經 -F body.md 注入，不經 shell 字串拼裝。
+      # GH_TOKEN=secrets.GH_PAT 是解除觸發死結的關鍵：PAT 身分建立的 release 才會觸發下游。
+      #
+      # 資安（防 GitHub Actions script injection）：tag 透過 env TAG 傳入、在 run 內以 "$TAG"
+      # 引用，不在 run 字串內直接展開 `${{ ... }}`。後者會在 shell 執行「前」展開，雙引號擋不住
+      # 注入；若版本字串含 `;`、`$(...)`、換行（惡意 PR／供應鏈），可在持有 PAT 的 runner 執行任意指令。
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: gh release create "${{ steps.version.outputs.tag }}" -F body.md
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" -F body.md
