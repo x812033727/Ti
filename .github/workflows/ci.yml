@@ -24,7 +24,7 @@ jobs:
       - name: Install ruff
         # 釘版：與本地可驗證版本一致，消除「CI 用最新 ruff」造成的 format 規則飄移
         # （飄移會讓既有檔在新版被判 would-reformat → lint 與 test_ruff_format_check 雙掛）。
-        run: python -m pip install --upgrade pip "ruff==0.14.4"
+        run: python3 -m pip install --upgrade pip "ruff==0.14.4"
 
       - name: Ruff lint
         run: ruff check .
