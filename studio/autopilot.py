@@ -353,11 +353,22 @@ def _recent_done_titles() -> set[str]:
     return backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
 
 
+def _sanitize_for_prompt(s: str, maxlen: int) -> str:
+    """嵌入 prompt 前的統一消毒：壓平換行（\\r/\\n）、去頭尾空白、限長。
+
+    單一真值來源——所有要拼進 discovery prompt 的 backlog 欄位（pending 標題、done/failed 標題、
+    失敗 note）都過這道，阻斷標題/備註含 `\\n任務: …` 穿透 join 邊界、偽造任務行被下輪 parse 執行
+    （prompt injection）。日後新增嵌入欄位沿用此 helper，避免漏網。
+    """
+    return (s or "").replace("\r", " ").replace("\n", " ").strip()[:maxlen]
+
+
 def _recent_outcomes_context() -> str:
     """把迴圈自身的近期成敗（done/失敗＋失敗原因）整理成可注入評估提示的文字。
 
     純讀 backlog、無 LLM/網路，方便單測。AUTOPILOT_EVAL_MEMORY=0 或無成敗紀錄時回 ""，
-    呼叫端據此維持原本的無狀態提示（零行為變更）。
+    呼叫端據此維持原本的無狀態提示（零行為變更）。標題／note 在拼接前一律過
+    `_sanitize_for_prompt`（與 `_pending_titles` 對稱），防 prompt injection。
     """
     limit = config.AUTOPILOT_EVAL_MEMORY
     if limit <= 0:
@@ -377,12 +388,13 @@ def _recent_outcomes_context() -> str:
     lines = ["【本工作室過往成績單（請據此提出全新、不重複的改善點）】"]
     if done:
         lines.append("✅ 近期已完成（請勿重複提出）：")
-        lines += [f"- {t['title'].strip()}" for t in done]
+        lines += [f"- {_sanitize_for_prompt(t.get('title', ''), 200)}" for t in done]
     if failed:
         lines.append("❌ 近期失敗（除非有明確不同的新做法，否則勿重蹈覆轍）：")
         for t in failed:
-            note = (t.get("note") or "").strip()
-            lines.append(f"- {t['title'].strip()}" + (f" — {note}" if note else ""))
+            note = _sanitize_for_prompt(t.get("note") or "", 300)
+            title = _sanitize_for_prompt(t.get("title", ""), 200)
+            lines.append(f"- {title}" + (f" — {note}" if note else ""))
     return "\n".join(lines) + "\n\n"
 
 
@@ -394,8 +406,8 @@ def _pending_titles() -> list[str]:
     前的明確防線（即使日後新增寫入 backlog 的路徑也不會讓多行標題穿透 prompt 結構）。
     """
     rows = [t for t in backlog.list_tasks() if t.get("status") in ("pending", "in_progress")]
-    # 拼接前消毒：壓平內嵌換行、限長，明確阻斷標題穿透 prompt 結構（即使未來新增寫入路徑）。
-    return [t["title"].strip().replace("\n", " ")[:200] for t in rows if t.get("title", "").strip()]
+    # 拼接前消毒：統一過 `_sanitize_for_prompt`（壓平換行、限長），阻斷標題穿透 prompt 結構。
+    return [clean for t in rows if (clean := _sanitize_for_prompt(t.get("title", ""), 200))]
 
 
 def _pending_awareness_context(titles: list[str] | None = None) -> str:
