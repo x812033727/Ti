@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = ROOT / "CHANGELOG.md"
 
 # 期望的字面契約值（emoji 為契約一部分，不可省略）。
+# 例外說明：release_note.py docstring 規定「不得在他處再寫一份字面值」，此 golden
+# value 是**唯一允許的例外**——沒有一份獨立字面值就無法驗證 BREAKING_HEADING 常數
+# 本身不漂移（常數與斷言值都被一起改錯時須有外部基準擋住）。除此處外不得再複製。
 EXPECTED_HEADING = "## ⚠️ Breaking Changes"
 
 
@@ -47,7 +50,7 @@ def test_changelog_contains_contract_heading():
     text = CHANGELOG.read_text(encoding="utf-8")
     assert _heading_line_present(text, BREAKING_HEADING), (
         f"CHANGELOG.md 缺頂層 heading 行 {BREAKING_HEADING!r}"
-        "（有人可能改成 `## Breaking` 或拿掉 emoji，致抽取/比對漏抓）"
+        f"（有人可能改成 `## Breaking` 或拿掉 emoji，致抽取/比對漏抓）"
     )
 
 
@@ -57,6 +60,11 @@ def test_changelog_contains_contract_heading():
 def test_black_sample_heading_renamed_to_breaking():
     """把 heading 改成 `## Breaking` 後，逐行比對必須翻紅。"""
     text = CHANGELOG.read_text(encoding="utf-8")
+    # 前置斷言：確保替換確實命中。否則 CHANGELOG 已漂移時 re.sub 無作用，
+    # polluted == text，下方 assert not 仍無條件通過＝孤立執行假綠。
+    assert _heading_line_present(text, BREAKING_HEADING), (
+        "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
+    )
     polluted = re.sub(
         r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking", text
     )
@@ -68,6 +76,10 @@ def test_black_sample_heading_renamed_to_breaking():
 def test_black_sample_emoji_stripped():
     """拿掉 emoji（改成 `## Breaking Changes`）後，逐行比對必須翻紅。"""
     text = CHANGELOG.read_text(encoding="utf-8")
+    # 前置斷言：同上，防止 CHANGELOG 已漂移時黑樣本孤立執行假綠。
+    assert _heading_line_present(text, BREAKING_HEADING), (
+        "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
+    )
     polluted = re.sub(
         r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking Changes", text
     )
