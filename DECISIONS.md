@@ -1297,3 +1297,41 @@
 - 時間：2026-06-15 18:22
 - 理由：工程師提醒這是最容易被「誤標綠燈」的盲點，文件成本最低。
 
+## **domain API 為 `render_tag_notes(changelog_text: str, version: str) -> str`**，定義於 `studio/release_note.py`，接收字串，不接觸 I/O，可被 pytest 直接 import 測試。
+- 時間：2026-06-15 19:50
+- 理由：純函式最易被任意 fixture 覆寫，測試不需要真實檔案系統。
+- 否決方案：讓 domain 層接受路徑——I/O 副作用混入 domain，測試需要 fixture 檔案，可測性下降。
+
+## **adapter API 為 `render_release_body(changelog_path=None, version=None) -> str`**，定義於 `scripts/publish_release.py`，負責讀檔並呼叫 `render_tag_notes`；邏輯層守護測試 import 此函式做 dry-run，SSOT 常數測試 import `BREAKING_HEADING`——兩層不混用。
+- 時間：2026-06-15 19:50
+- 理由：釘住「哪層測試 import 哪個符號」，消除高工指出的命名歧義，避免未來因混用而出現 `AttributeError`。
+
+## **publish-release.yml 的 create release step 必須加 `id: create-release`**；守護測試 `_create_release_step()` 以 `step["id"] == "create-release"` 定位，不用 index 或 name 字串。
+- 時間：2026-06-15 19:50
+- 理由：高工指出 content-matching 在 step 重排或 run 字串改名時靜默斷鏈（guard 仍綠但已失效）；id 定位語意明確，改名即假紅，有鑑別力。
+- 否決方案：以 `"gh release create" in step["run"]` 定位——若 step 加 `if:` 條件或 run 字串重構，guard 仍能過，失去守護意義。
+
+## **body 注入用 `-F body.md`（gh CLI 的 `--notes-file` 縮寫），不用 `--notes "$BODY"`**，且此字串必須出現在 create-release step 的 `run:` 中並被守護測試 `create_uses_file_mode()` 斷言。
+- 時間：2026-06-15 19:50
+- 理由：工程師確認多行 changelog 經 shell 變數注入會踩跳脫地獄；`-F` 讓 gh CLI 直接讀檔，完全繞開 shell 解析。
+
+## **邏輯層守護測試的 fixture CHANGELOG 必須以 `f"...{BREAKING_HEADING}..."` 動態組出**，不得硬寫 `## ⚠️ Breaking Changes` 字面值。
+- 時間：2026-06-15 19:50
+- 理由：工程師指出常數一旦改字，硬寫 fixture 靜默過期，乾跑變成在測試一份永遠成功的舊格式。
+- 否決方案：fixture 硬寫字面值——BREAKING_HEADING 修改時 fixture 不跟進，dry-run 仍綠但實際 render 會失敗。
+
+## **`main()` 內 `unlink(missing_ok=True)` 緊接 `render_release_body()` 兩行相鄰，中間無任何 early return 或寫檔**；語意為 pre-clean（非原子 rollback）——process 若被 kill 於 unlink 之後，`body.md` 缺失，step 5 fail-fast，靠 CI 重跑恢復；設計不保證原子性。
+- 時間：2026-06-15 19:50
+- 理由：工程師確認現有順序正確；高工要求語意說清。「不保證原子性」比沉默更誠實，日後偶發假紅時有心理準備。
+
+## **release-smoke 斷言：body 非空 AND 含 `BREAKING_HEADING`**（從 `studio.release_note` import 常數比對，不硬寫字面值）；僅驗「release 存在」不構成 smoke，必須驗 body 結構。
+- 時間：2026-06-15 19:50
+- 理由：高工指出現有設計只說「讀 body 做 smoke」，無具體斷言；smoke 形同空轉。
+
+## **觸發時序措辭統一為「`release:published` 觸發時 release 物件已就緒，無需主動輪詢」**，不寫「零 race condition」。
+- 時間：2026-06-15 19:50
+- 理由：高工指出 GitHub API 最終一致性在極端情況有短暫視窗；「已就緒無需輪詢」是正確承諾，「零 race condition」過強。
+
+## 承繼既有決策——**PAT 解鎖觸發死結、tag 經 `env TAG` 防 injection、`release:published` 不改 `workflow_run`、step 3 fail-fast tag 斷言、PR 描述明文標注 GH_PAT 前置**——以上高工與工程師均無異議，維持原案不變。
+- 時間：2026-06-15 19:50
+
