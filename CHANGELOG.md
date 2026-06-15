@@ -23,7 +23,7 @@
 
   ```bash
   # 不設定，state 寫入不驗 owner，非 root 也能落地
-  python -m studio ...
+  python3 -m studio ...
   ```
 
   之後（`0.2.0`，`strict` 已成預設；非 root 須顯式選擇逃生艙）：
@@ -33,7 +33,7 @@
   export TI_REQUIRE_CHOWN=warn
   # 或完全停用 owner 驗證
   export TI_REQUIRE_CHOWN=off
-  python -m studio ...
+  python3 -m studio ...
   ```
 
 - **④ 生效版本**：自 `0.2.0` 起生效（即本版，非未來版本；`strict` 已是當前預設行為）。

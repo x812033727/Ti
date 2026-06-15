@@ -6,4 +6,4 @@ cd "$(dirname "$0")/.."
 echo "[redeploy] pulling latest main..."
 git pull --ff-only
 echo "[redeploy] restarting studio.server..."
-exec python -m studio.server
+exec python3 -m studio.server

@@ -7,7 +7,7 @@
   - MiniMax／OpenAI：依下方價目表（model → USD/Mtok）估算；未配置單價者只報 token。
 
 用法：
-    python -m studio.usage_report [--since YYYY-MM-DD] [--json]
+    python3 -m studio.usage_report [--since YYYY-MM-DD] [--json]
 """
 
 from __future__ import annotations

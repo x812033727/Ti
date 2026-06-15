@@ -24,7 +24,7 @@ jobs:
       - name: Install ruff
         # 釘版：與本地可驗證版本一致，消除「CI 用最新 ruff」造成的 format 規則飄移
         # （飄移會讓既有檔在新版被判 would-reformat → lint 與 test_ruff_format_check 雙掛）。
-        run: python -m pip install --upgrade pip "ruff==0.14.4"
+        run: python3 -m pip install --upgrade pip "ruff==0.14.4"
 
       - name: Ruff lint
         run: ruff check .
@@ -70,7 +70,7 @@ jobs:
         # 測試不需 claude-agent-sdk（orchestrator 延後 import），僅裝測試實際用到的依賴，
         # 讓 CI 快速且不受 SDK 打包差異影響。
         run: |
-          python -m pip install --upgrade pip
+          python3 -m pip install --upgrade pip
           # ruff：tests/scan/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
           pip install "fastapi>=0.110,<0.116" "starlette>=0.40,<0.42" "uvicorn[standard]>=0.31,<0.50" "httpx>=0.27,<0.29" python-dotenv pytest pytest-asyncio pytest-cov "ruff==0.14.4"
 
@@ -86,17 +86,17 @@ jobs:
       - name: Collect tests
         env:
           TI_SANDBOX: "0"
-        run: python -m pytest --collect-only -q
+        run: python3 -m pytest --collect-only -q
 
       - name: Run tests
-        # 用 python -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import。
+        # 用 python3 -m pytest，確保 repo 根目錄在 sys.path 上，studio 套件可被 import。
         # CI runner 無法執行 bubblewrap（Ubuntu 24.04 限制 unprivileged user/net
         # namespace，--unshare-net 會 "loopback: RTM_NEWADDR Operation not permitted"），
         # 故用官方逃生口 TI_SANDBOX=0 關閉沙箱。沙箱只是執行外層包裝，run_command 的
         # 行為與測試覆蓋不變；正式環境預設 TI_SANDBOX=1 仍開啟。
         env:
           TI_SANDBOX: "0"
-        run: python -m pytest -q --cov=studio --cov-report=term-missing
+        run: python3 -m pytest -q --cov=studio --cov-report=term-missing
 
   # 獨立沙箱實跑 job：在 runner 上裝 bubblewrap + 載入 AppArmor userns profile，
   # 讓 tests/ 中以 config._sandbox_available()（純檢查 bwrap 是否存在）為 skip 條件
@@ -175,9 +175,9 @@ jobs:
 
       - name: Install Python deps
         # 與 test job 一致：不裝 claude-agent-sdk（autopilot 延後 import），僅裝測試
-        # 實際用到的依賴。用 python -m pytest 讓 repo 根在 sys.path，studio 可被 import。
+        # 實際用到的依賴。用 python3 -m pytest 讓 repo 根在 sys.path，studio 可被 import。
         run: |
-          python -m pip install --upgrade pip
+          python3 -m pip install --upgrade pip
           # ruff：tests/scan/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
           pip install "fastapi>=0.110,<0.116" "starlette>=0.40,<0.42" "uvicorn[standard]>=0.31,<0.50" "httpx>=0.27,<0.29" python-dotenv pytest pytest-asyncio pytest-cov "ruff==0.14.4"
 
@@ -204,7 +204,7 @@ jobs:
           # 直接數選中的 node-id 行（每行一條，含參數化），不解析摘要——
           # 摘要是 "8/62 tests collected (54 deselected)"，其中 62 是去重前總數，
           # 8 才是 -k 實際選中數；數 "^檔名::" 行最穩且不受摘要格式變動影響。
-          collect=$(python -m pytest $FILES --collect-only -q -p no:cacheprovider -k "$SEL" 2>&1) || true
+          collect=$(python3 -m pytest $FILES --collect-only -q -p no:cacheprovider -k "$SEL" 2>&1) || true
           EXPECTED=$(echo "$collect" | grep -cE "^[A-Za-z0-9_./-]+::")
           if ! echo "${EXPECTED:-}" | grep -qE "^[1-9][0-9]*$"; then
             echo "::error::collect-only 未取得有效選中數（collection error 或 -k 全數漏選）。"
@@ -215,7 +215,7 @@ jobs:
 
           # 步驟 B：實跑。GitHub Actions 預設 shell 為 bash -eo pipefail；測試非 0 時
           # $(...) 會中止賦值，加 || true 讓下方斷言成為權威閘門並印出清楚訊息。
-          out=$(python -m pytest $FILES -q -rsp -p no:cacheprovider -k "$SEL" 2>&1) || true
+          out=$(python3 -m pytest $FILES -q -rsp -p no:cacheprovider -k "$SEL" 2>&1) || true
           echo "$out"
 
           # collection error 的 summary 是 "X error(s)"——不含 failed，舊版三道 grep 會放行

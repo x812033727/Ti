@@ -40,7 +40,7 @@ def div(a, b):
 '''
 
 _MAIN_PY = '''\
-"""命令列介面：python main.py <add|sub|mul|div> <a> <b>"""
+"""命令列介面：python3 main.py <add|sub|mul|div> <a> <b>"""
 
 import sys
 
@@ -52,7 +52,7 @@ OPS = {"add": add, "sub": sub, "mul": mul, "div": div}
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) != 3 or argv[0] not in OPS:
-        print("用法: python main.py <add|sub|mul|div> <a> <b>")
+        print("用法: python3 main.py <add|sub|mul|div> <a> <b>")
         return 1
     op, a, b = argv[0], float(argv[1]), float(argv[2])
     print(OPS[op](a, b))
@@ -71,8 +71,8 @@ _README_MD = """\
 ## 用法
 
 ```bash
-python main.py add 3 4   # -> 7.0
-python main.py div 1 0   # -> 除數不可為 0
+python3 main.py add 3 4   # -> 7.0
+python3 main.py div 1 0   # -> 除數不可為 0
 ```
 """
 

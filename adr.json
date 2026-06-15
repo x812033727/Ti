@@ -2246,6 +2246,139 @@
       "rejected": "",
       "session_id": "ap49cda3d85a",
       "created_at": 1781524224.1595807
+    },
+    {
+      "decision": "**裸直譯器命令邊界（精修版）**：以「**前一個字元非 `[\\w/.-]` 且後接 `\\s` 或 `-m` 邊界**」為統一判準（regex 與文字描述對齊），覆蓋 shell 行首呼叫、行內 `xargs python` / `$(which python)` / `command -v python` 等所有「被 shell 直譯器呼叫」情境。",
+      "rationale": "統一 regex 與文字判準，消除 reviewer/實作者兩套標準；`[^\\w/.-]` 比 `[\\s\\`$]` 多擋 `xargs`/`$()`/`command -v` 漏網情境。",
+      "rejected": "原始寫法「行內以空白/反引號/`$` 起首」——會漏 `xargs python` 等案例。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122865
+    },
+    {
+      "decision": "**豁免採雙軌制**：整檔白名單（`Dockerfile`、`*.lock`、純 manifest 標頭）＋行內語法豁免（套件 manifest 的 `^[a-zA-Z_-][\\w.-]*\\s*=\\s*`、Docker image tag 行 `FROM\\s+\\S*python\\S*`、venv 執行檔路徑 `.venv/bin/python` / `.venv\\Scripts\\python`、shebang 行 `^#!.*\\bpython\\b`）。",
+      "rationale": "純檔案白名單會把 `pyproject.toml` 整檔豁免，等於放棄對它的守護；純行內黑名單日後加新檔案會靜默漏抓。雙軌讓檔案級豁免可審核、套件語法不會被誤抓。",
+      "rejected": "純檔案白名單（丟失 `pyproject.toml` 守護）；純行內黑名單（不可審核、新檔案易漏）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122893
+    },
+    {
+      "decision": "**執行期零變動，但 pre-flight 先驗**：`scripts/publish_release.py` 與 release 流程、gh CLI 旗標、既有守護測試符號**全部不動**；但動工前先 `rg -n 'subprocess|sys.executable' scripts/` 與 `rg -n '\\bpython\\b' scripts/publish_release.py` 跑一次，確認命中僅為 shebang/註解/字串，無執行期呼叫。",
+      "rationale": "動工前先有 ground truth，避免「決策寫零變動但實作發現有 subprocess 呼叫」被迫破例。",
+      "rejected": "直接動工事後補救（一旦撞到 `subprocess.run(['python', ...])` 要回頭改設計，PR 噪音更大）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122905
+    },
+    {
+      "decision": "**守護測試擴充 `no_bare_python_command` 斷言**，歸入 `tests/docs` 既有模組；斷言內顯式宣告雙軌豁免規則，命中清單（rg 輸出）為空才 PASS。",
+      "rationale": "與既有「`-F` 必須在 create-release step run 內」、「`create-release` step id」同級守護，失敗模式具體；命中清單可一眼審核。",
+      "rejected": "另開 `tests/check_no_bare_python.py`（與既有 `tests/docs` 風格分裂）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122912
+    },
+    {
+      "decision": "**CONTRIBUTING.md 新增「Python interpreter convention」一節**，慣例主因寫實務理由（`python3` 在三大平台都是預設可用的 3.x 進入點），PEP 394 改為附帶參考（標 deprecated）。",
+      "rationale": "PEP 394 於 2024-05 已標 deprecated，文件若寫「PEP 規定」會過期；實務理由更耐維護。",
+      "rejected": "引用 PEP 394 作為主因（會過期）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.712292
+    },
+    {
+      "decision": "**README Quickstart 採「主指令單一 + 雙句退路」**：主範例 `python3 app.py` 一行；其下加兩句「Windows 若 `python3` 找不到，可改用 `py`」「`py` 啟動器預設跑最新版，想鎖 3.x 用 `py -3`」。",
+      "rationale": "退路不只給 `py`，要順手講清 `py` vs `py -3` 行為差，避免使用者踩雷。",
+      "rejected": "雙範例並列（認知負擔，且暗示兩者等價）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122927
+    },
+    {
+      "decision": "**不重建既有 `.venv`、smoke 採 fresh venv + 前置檢查**：用 `command -v python3 || { echo \"FATAL: python3 not on PATH\"; exit 1; }` 確認 `python3` 可用後，跑 `python3 -m venv .fresh-venv && .fresh-venv/bin/python --version` 證明 venv 內 `python` 仍可運作。",
+      "rationale": "`.fresh-venv/bin/python` 預設依賴 `python3` 在 PATH；前置檢查避免「連 `python3` 都沒有」時假綠。",
+      "rejected": "直接 `.fresh-venv/bin/python --version`（環境無 `python3` 時假綠）；動既有 `.venv`（擴大變更半徑）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122931
+    },
+    {
+      "decision": "**驗收三層、任一失敗即退回**：(1) 字串層 `rg -n '(^|[^\\w/.-])python(\\s|-m\\b)' --glob '!*.lock'` 在豁免清單外零命中；(2) 測試層 `python3 -m pytest tests/docs -q` 全綠；(3) 執行層依文件指令實跑 demo 第一步，無 `command not found`。",
+      "rationale": "三層分別守「字串漂移」「守護測試整合」「end-to-end 真實可用」；任一失效都能定位具體失敗模式。",
+      "rejected": "只跑「rg + pytest」省去實跑（驗不到 shell 環境差異）；三層之上再加第四層（如 lint）——無需求、徒增維護。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122936
+    },
+    {
+      "decision": "**CHANGELOG 與 PR 描述留一筆**：「文件慣例改用 `python3` 為裸直譯器命令；豁免清單見 CONTRIBUTING 慣例節」，註明 PR 編號與 `tests/docs::test_no_bare_python_command` 守護測試位置。",
+      "rationale": "慣例轉換半年後看 git log 看不出為什麼改，CHANGELOG 留筆比 PR 描述更耐翻。",
+      "rejected": "只在 PR 描述寫、CHANGELOG 不提（PR 描述易被埋沒）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.712294
+    },
+    {
+      "decision": "**單一 PR 一次到位**；若 `README.md` 改法（大量段落）與其他檔案（單行 `python script.py`）差異過大，拆兩個 commit 同一 PR，便於 reviewer 分階段看。",
+      "rationale": "邊界清楚、豁免顯式，分批只增加 review 噪音；同一 PR 內拆 commit 兼顧審核便利。",
+      "rejected": "拆多個 PR（增加 review 噪音、無實質價值）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122946
+    },
+    {
+      "decision": "**手動掃一次 README 其他章節**（Development、Troubleshooting、FAQ 等），確認所有 shell 範例都收斂到 `python3`，不留「同份文件兩套慣例」。",
+      "rationale": "守護測試的 `*.md` glob 會擋下未來漂移，但既有檔案內的漂移需本次 PR 順手處理。",
+      "rejected": "只掃 Quickstart 段、其他章節交給未來 PR（漂移累積、後續清更痛）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.712295
+    },
+    {
+      "decision": "**裸直譯器命令邊界**：以「**前一個字元非 `[\\w/.-]` 且後接 `\\s` 或 `-m` 邊界**」為統一判準，覆蓋 shell 行首呼叫、行內 `xargs python` / `$(which python)` / `command -v python` 等所有「被 shell 直譯器呼叫」情境。",
+      "rationale": "regex 與文字描述必須對齊到同一句；`[^\\w/.-]` 比 `[\\s\\`$]` 多擋 `xargs`/`$()`/`command -v` 漏網情境。",
+      "rejected": "原始寫法「行內以空白/反引號/`$` 起首」——文字與 regex 兩套標準，且漏 `xargs python` 等案例。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122958
+    },
+    {
+      "decision": "**執行期零變動，但動工前先驗**：`scripts/publish_release.py` 與 release 流程、gh CLI 旗標、既有守護測試符號**全部不動**；動工前先 `rg -n 'subprocess|sys.executable' scripts/` 與 `rg -n '\\bpython\\b' scripts/publish_release.py` 跑一次，確認命中僅為 shebang/註解/字串，無執行期呼叫。",
+      "rationale": "先有 ground truth 再動檔，避免撞到 `subprocess.run(['python', ...])` 後被迫破例回頭改設計。",
+      "rejected": "直接動工事後補救（PR 噪音更大）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122967
+    },
+    {
+      "decision": "**守護測試擴充 `tests/docs::test_no_bare_python_command`**，斷言內顯式宣告雙軌豁免規則，rg 命中清單為空才 PASS。",
+      "rationale": "與既有「`-F` 在 create-release step run 內」、「`create-release` step id」同級守護，失敗模式具體可定位。",
+      "rejected": "另開 `tests/check_no_bare_python.py`（與既有 `tests/docs` 風格分裂）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122972
+    },
+    {
+      "decision": "**CONTRIBUTING.md 新增「Python interpreter convention」一節**，慣例主因寫實務理由（`python3` 在三大平台都是預設可用的 3.x 進入點），PEP 394 改為附帶參考並標 deprecated。",
+      "rationale": "PEP 394 於 2024-05 已標 deprecated，文件若寫「PEP 規定」會過期；實務理由更耐維護。",
+      "rejected": "引用 PEP 394 作為主因（會過期）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.712298
+    },
+    {
+      "decision": "**README Quickstart 採「主指令單一 + 雙句退路」**：主範例 `python3 app.py` 一行可複製；其下加兩句「Windows 若 `python3` 找不到，可改用 `py`」「`py` 啟動器預設跑最新版，想鎖 3.x 用 `py -3`」。",
+      "rationale": "退路不只給 `py`，要順手講清 `py` vs `py -3` 行為差。",
+      "rejected": "雙範例並列（認知負擔，且暗示兩者等價）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122989
+    },
+    {
+      "decision": "**不重建既有 `.venv`、smoke 採 fresh venv + 前置檢查**：先 `command -v python3 || { echo \"FATAL: python3 not on PATH\"; exit 1; }` 確認 `python3` 可用，再 `python3 -m venv .fresh-venv && .fresh-venv/bin/python --version` 證明 venv 內 `python` 仍可運作。",
+      "rationale": "`.fresh-venv/bin/python` 預設依賴 `python3` 在 PATH；前置檢查避免「連 `python3` 都沒有」時假綠。",
+      "rejected": "直接跑 venv 驗證（環境無 `python3` 時假綠）；動既有 `.venv`（擴大變更半徑）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7122993
+    },
+    {
+      "decision": "**單一 PR 一次到位**；若 `README.md` 改法與其他檔案差異過大，拆兩個 commit 同一 PR，便於 reviewer 分階段看。",
+      "rationale": "邊界清楚、豁免顯式，分批只增加 review 噪音；同一 PR 內拆 commit 兼顧審核便利。",
+      "rejected": "拆多個 PR（增加 review 噪音、無實質價值）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.7123005
+    },
+    {
+      "decision": "**手動掃一次 README 其他章節**（Development、Troubleshooting、FAQ 等），確認所有 shell 範例都收斂到 `python3`，不留「同份文件兩套慣例」漂移。",
+      "rationale": "守護測試的 `*.md` glob 會擋下未來漂移，但既有檔案內的漂移需本次 PR 順手處理。",
+      "rejected": "只掃 Quickstart 段、其他章節交給未來 PR（漂移累積、後續清更痛）。",
+      "session_id": "apb94e2fca02",
+      "created_at": 1781529596.712301
     }
   ]
 }
