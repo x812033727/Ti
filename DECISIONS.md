@@ -982,7 +982,7 @@
 ## `test_as_kwargs_packs_three_keys` 的 `body[:600]` magic number 列為低優先技術債備忘，不阻擋本次關閉；後續可改為動態計算函式體長度上限。
 - 時間：2026-06-15 10:19
 
-## 空 diff 交付基準 = `cc46ccb`（E741+I001 修復）已合入 `main`，當前 HEAD 為其 +35 commits，`git diff origin/main` 為空，確認非假綠。
+## 空 diff 交付基準 = `cc46ccb`（E741+I001 修復）已合入 `main`，程式碼 `.py` diff 為空、本任務無源碼變更；`task-4` 分支唯一差異為本 ADR 文件自身，確認非假綠。
 - 時間：2026-06-15 10:34
 - 理由：工程師要求「能追 commit」；`cc46ccb` 在 `main` branch 可查，任何人執行 `git log main --oneline | grep cc46ccb` 可重現此結論。
 - 否決方案：僅憑「diff 為空」聲稱關閉但無 commit 錨點——彼時假綠無從分辨。

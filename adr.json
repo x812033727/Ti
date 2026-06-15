@@ -1674,7 +1674,7 @@
       "created_at": 1781489976.9555016
     },
     {
-      "decision": "空 diff 交付基準 = `cc46ccb`（E741+I001 修復）已合入 `main`，當前 HEAD 為其 +35 commits，`git diff origin/main` 為空，確認非假綠。",
+      "decision": "空 diff 交付基準 = `cc46ccb`（E741+I001 修復）已合入 `main`，程式碼 `.py` diff 為空、本任務無源碼變更；`task-4` 分支唯一差異為本 ADR 文件自身，確認非假綠。",
       "rationale": "工程師要求「能追 commit」；`cc46ccb` 在 `main` branch 可查，任何人執行 `git log main --oneline | grep cc46ccb` 可重現此結論。",
       "rejected": "僅憑「diff 為空」聲稱關閉但無 commit 錨點——彼時假綠無從分辨。",
       "session_id": "ap0b96479ba9",
