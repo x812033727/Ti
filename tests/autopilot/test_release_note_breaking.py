@@ -24,13 +24,20 @@ import re
 from pathlib import Path
 
 import pytest
-import tomllib
+
+# 直接 import 模組的純函式與唯一事實來源常數：
+#   - 此 import 本身即構成 CI 強制契約（常數改名／模組搬路徑→import 爆炸）。
+#   - pyproject_version 統一用模組版本，不在測試內另寫平行副本（避免靜默分歧）。
+from studio.release_note import (
+    BREAKING_HEADING,
+    extract_breaking_block,
+    pyproject_version,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
 ENV_EXAMPLE = ROOT / ".env.example"
-PYPROJECT = ROOT / "pyproject.toml"
 
 # README 互指目標小節的 raw text（不追 anchor hash，見架構決策）。
 README_ANCHOR_TEXT = "state 安全寫入"
@@ -42,11 +49,6 @@ CHOWN_STATES = ("strict", "warn", "off")
 # ---------------------------------------------------------------------------
 # 純函式契約檢測器（供正向測試與反向黑樣本共用，確保兩端用同一把尺）
 # ---------------------------------------------------------------------------
-
-
-def pyproject_version() -> str:
-    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    return data["project"]["version"]
 
 
 def _find_idx(text: str, *patterns: str) -> int:
@@ -155,6 +157,86 @@ def changelog() -> str:
         f"release note 檔不存在：{CHANGELOG}（驗收 #1 未達成，任務 #2/#3 尚未產出 CHANGELOG.md）"
     )
     return CHANGELOG.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# 任務 #1：extractor 純函式直接 unit test（高工必修——直接呼叫被測函式本體，
+#   不經過測試檔自寫的寬鬆 breaking_header_idx，確保主函式爛掉測試會紅）
+# ---------------------------------------------------------------------------
+
+
+def test_extract_breaking_block_real_changelog(changelog):
+    """有區塊：抽出非空內容，且邊界止於下一個頂層 `## `（不洩漏到版本節）。"""
+    block = extract_breaking_block(changelog)
+    assert block is not None, "真實 CHANGELOG 應抽出 Breaking Changes 區塊"
+    assert "TI_REQUIRE_CHOWN" in block
+    assert "## [" not in block, "區塊邊界須止於下一個頂層 `## `，不得吃進版本節"
+
+
+def test_extract_breaking_block_missing_returns_none():
+    """缺區塊：明確回 None，非靜默空字串。"""
+    assert extract_breaking_block("# Changelog\n## [0.1.0]\n- x") is None
+
+
+def test_extract_breaking_block_empty_returns_none():
+    """空區塊（heading 在、底下無內容）：統一回 None。"""
+    text = BREAKING_HEADING + "\n\n   \n## [0.2.0]\n- y"
+    assert extract_breaking_block(text) is None
+
+
+def test_extract_breaking_block_at_eof():
+    """EOF 邊界：Breaking 為最後一個 section（後無 `## `）仍能抽出（EOF 覆蓋）。"""
+    text = "# Changelog\n" + BREAKING_HEADING + "\n- only at eof\n"
+    assert extract_breaking_block(text) == "- only at eof"
+
+
+def test_extract_breaking_block_fence_with_inner_hash_not_truncated():
+    """第 2 輪反思盲區 regression：區塊內 code fence 含未縮排 `## ` 行時，
+    不得被誤判為 section 邊界而靜默截斷——fence 內所有內容須完整保留。"""
+    text = (
+        "# Changelog\n"
+        + BREAKING_HEADING
+        + "\n"
+        "- ① 行為變動：X\n"
+        "\n"
+        "```markdown\n"
+        "## 這是 fence 內的 markdown 範例標題，不是 section 邊界\n"
+        "## another inner heading\n"
+        "```\n"
+        "\n"
+        "- ④ 生效版本：自 0.2.0 起\n"
+        "\n"
+        "## [0.2.0]\n"
+        "### Changed\n"
+        "- 真正的下一節，這裡才是邊界\n"
+    )
+    block = extract_breaking_block(text)
+    assert block is not None
+    # fence 內的兩行 `## ` 必須完整保留（未被當邊界截斷）。
+    assert "fence 內的 markdown 範例標題" in block
+    assert "## another inner heading" in block
+    # fence 之後、版本節之前的尾段內容也須在（證明掃描越過 fence 內 `## ` 繼續收集）。
+    assert "④ 生效版本" in block
+    # 真正的頂層 `## [0.2.0]` 之後內容不得洩漏進來。
+    assert "真正的下一節" not in block
+    assert "## [0.2.0]" not in block
+
+
+def test_extract_breaking_block_tilde_fence_inner_hash_not_truncated():
+    """~~~ 形式的 fence 亦須被感知（不只 backtick）。"""
+    text = (
+        BREAKING_HEADING + "\n"
+        "~~~\n"
+        "## inner hash under tilde fence\n"
+        "~~~\n"
+        "- tail content\n"
+        "## [0.2.0]\n- next\n"
+    )
+    block = extract_breaking_block(text)
+    assert block is not None
+    assert "## inner hash under tilde fence" in block
+    assert "tail content" in block
+    assert "next" not in block
 
 
 # ---------------------------------------------------------------------------
