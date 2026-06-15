@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from studio import config, events, experts, providers
+from studio import config, experts, providers
 from studio.roles import BY_KEY
 
 

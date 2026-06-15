@@ -3,8 +3,8 @@
 純文件任務，逐項對驗收標準；並交叉反查文中錨點與現碼一致。
 執行：pytest tests/test_task1_retry_doc.py -v
 """
-import re
 import pathlib
+import re
 import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -135,5 +135,5 @@ def test_no_py_changed():
         ["git", "diff", "--name-only", "--", "*.py"],
         cwd=ROOT, capture_output=True, text=True,
     )
-    changed = [l for l in out.stdout.splitlines() if l.strip()]
+    changed = [line for line in out.stdout.splitlines() if line.strip()]
     assert not changed, f"不應有 .py 被改動，卻動了：{changed}"
