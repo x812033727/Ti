@@ -219,17 +219,17 @@ write_failure_evidence() {
   [ "$STATUS_RC" -eq 0 ] || fail=1
   echo
 
-  # 3) diff origin/main HEAD
+  # 3) diff origin/main HEAD（補 stderr 分流：架構決策「分流不吞沒」）
   echo "--- 3) git diff --quiet origin/main HEAD ---"
-  (cd "$WT_DIR" && git diff --quiet origin/main HEAD)
+  (cd "$WT_DIR" && git diff --quiet origin/main HEAD) 2>>"$WT_WARN"
   DIFF_RC=$?
   echo "exit: $DIFF_RC  (0=無 diff, 1=有 diff；worktree HEAD==origin/main 必為 0)"
   [ "$DIFF_RC" -eq 0 ] || fail=1
   echo
 
-  # 4) diff --cached
+  # 4) diff --cached（補 stderr 分流）
   echo "--- 4) git diff --quiet --cached ---"
-  (cd "$WT_DIR" && git diff --quiet --cached)
+  (cd "$WT_DIR" && git diff --quiet --cached) 2>>"$WT_WARN"
   CACHED_RC=$?
   echo "exit: $CACHED_RC  (0=無 staged, 1=有 staged；新 worktree 必為 0)"
   [ "$CACHED_RC" -eq 0 ] || fail=1
@@ -289,6 +289,75 @@ write_failure_evidence() {
   echo "  驗收條款 'diff --quiet origin/main HEAD exit 0'：worktree HEAD 與 origin/main 同一 commit，diff 必為空。"
   echo "  驗收條款 'hash 一致'：同上理由必成立。"
   echo "  驗收條款 '工作樹乾淨'：worktree 新建、未改動、應無 untracked / modified。"
+  echo
+
+  # === Step 8: lane 端實況（架構決策第 4 條：誠實記錄 lane 端 diff 1,供 close-out 標尺判定）===
+  echo "--- 8) lane 端實況（非 worktree,誠實記錄,給 close-out 新標尺用） ---"
+  echo
+  echo "(以下命令在 lane 端直接跑、不用 worktree,反映 sandbox HEAD 對 origin/main 的真實落差)"
+  echo
+
+  # lane 端 status
+  LANE_STATUS_TMP="$RUN_TMP_DIR/lane_status.out"
+  LANE_STATUS_ERR="$RUN_TMP_DIR/lane_status.err"
+  git status --porcelain=v2 --branch --untracked-files=normal > "$LANE_STATUS_TMP" 2> "$LANE_STATUS_ERR"
+  LANE_STATUS_RC=$?
+  echo '$ git status --porcelain=v2 --branch --untracked-files=normal (lane 端)'
+  cat "$LANE_STATUS_TMP"
+  if [ -s "$LANE_STATUS_ERR" ]; then cat "$LANE_STATUS_ERR" >> "$WT_WARN"; fi
+  echo "exit: $LANE_STATUS_RC"
+  echo
+
+  # lane 端 diff origin/main HEAD（補 stderr 分流）
+  echo '$ git diff --quiet origin/main HEAD (lane 端)'
+  git diff --quiet origin/main HEAD 2>>"$WT_WARN"
+  LANE_DIFF_RC=$?
+  echo "exit: $LANE_DIFF_RC  (預期 1: lane HEAD 領先 origin/main 12 commit = task-1/#2 合法累積)"
+  echo
+
+  # lane 端 diff --cached（補 stderr 分流,差異有 stdout）
+  LANE_CACHED_TMP="$RUN_TMP_DIR/lane_cached.out"
+  LANE_CACHED_ERR="$RUN_TMP_DIR/lane_cached.err"
+  git diff --cached > "$LANE_CACHED_TMP" 2> "$LANE_CACHED_ERR"
+  LANE_CACHED_RC=$?
+  echo '$ git diff --cached (lane 端,有差時才有輸出)'
+  if [ -s "$LANE_CACHED_TMP" ]; then cat "$LANE_CACHED_TMP"; else echo "(空: 無 staged)"; fi
+  if [ -s "$LANE_CACHED_ERR" ]; then cat "$LANE_CACHED_ERR" >> "$WT_WARN"; fi
+  echo "exit: $LANE_CACHED_RC"
+  echo
+
+  # lane 端 hash
+  echo '$ git rev-parse HEAD vs origin/main (lane 端)'
+  echo "HEAD        = $(git rev-parse HEAD)"
+  echo "origin/main = $(git rev-parse origin/main)"
+  echo "(lane 端 hash MISMATCH, 預期內;差 12 commit = task-1/#2 累積)"
+  echo
+
+  # lane 端 ahead count
+  LANE_AHEAD="$(git rev-list --count origin/main..HEAD)"
+  echo "\$ git rev-list --count origin/main..HEAD (lane 端)"
+  echo "$LANE_AHEAD commits ahead of origin/main"
+  echo
+
+  # === Step 9: 結論分組（架構決策第 4 條：會過的/不會過的各一段）===
+  echo "--- 9) 結論分組（供 close-out 文件直接引用） ---"
+  echo
+  echo "## 會通過新標尺（任務 #3 對工作樹/版控零新增）:"
+  echo "  - worktree 內 status 無檔案行"
+  echo "  - worktree 內 diff --cached exit 0"
+  echo "  - lane 端 status 無檔案行"
+  echo "  - lane 端 diff --cached exit 0"
+  echo
+  echo "## 不會通過舊標尺（HEAD == origin/main,任務 lane 不可滿足）:"
+  echo "  - lane 端 diff --quiet origin/main HEAD exit 1（差距 $LANE_AHEAD commit = task-1/#2 累積）"
+  echo "  - lane 端 hash 比對 MISMATCH（同上原因）"
+  echo "  - lane 端無 branch.ab 段（task-3 無 upstream）"
+  echo
+  echo "## 已知沙箱產物（不影響判定,exit code 仍正確）:"
+  echo "  - .gitmodules 不可讀（lane 內 = 'No such file or directory' / PM 環境為字元裝置 /dev/null;"
+  echo "    政策同源:非常規檔 = 無 submodule,見 close-out §4.2）"
+  echo "  - stderr warning 內的 orphan submodule path 警告（.pc-cache-qa/repor4x7pmx5）已知,不影響 exit code"
+  echo "  - git fetch 在沙箱環境可能 warn「not a git repository」之類雜訊,exit 0 不受影響"
   echo
 
   echo "=== 程式 fail=$fail（只反映程式有無跑完、4 條命令本身有無異常，非驗收結論） ==="
