@@ -39,6 +39,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
+    # 精確鎖定：linter/formatter 跨版本格式判定會分歧，須與 CI 及 .pre-commit-config.yaml
+    # 的 rev 同版。釘 0.14.4（非當前最新）以對齊 CI workflow 既有的 `pip install ruff==0.14.4`，
+    # 升版時三端須一併更新並重跑 ruff format --check。
     "ruff==0.14.4",
     "pre-commit>=3.7",
 ]
