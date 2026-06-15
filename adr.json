@@ -1805,6 +1805,62 @@
       "rejected": "",
       "session_id": "ap9ec5a10a77",
       "created_at": 1781492399.082112
+    },
+    {
+      "decision": "版本基準定為 `0.14.4`，三端（本地 venv / CI / pre-commit）對齊此版本。",
+      "rationale": "本地 `.venv/bin/ruff` 實測為 `0.14.4`；CI workflow 已在三處明確 `pip install \"ruff==0.14.4\"`，並有 comment 說明釘版意圖——基準已存在，缺口僅 pre-commit。",
+      "rejected": "`0.15.12`——工程師實測的是系統 ruff 而非 venv ruff，數據來源不同環境，不採信為基準。",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270016
+    },
+    {
+      "decision": "將 `.pre-commit-config.yaml` 的 `rev: v0.6.9` 改為 `rev: v0.14.4`，消除唯一缺口。",
+      "rationale": "pre-commit 是三端中唯一跑舊版（0.6.9）的環節；其餘兩端已對齊，改一個 rev 即關閉分歧。",
+      "rejected": "降本地與 CI 到 0.6.9——需 reformat 9 檔並改動 CI 三處已鎖的 pin，侵入範圍大且方向逆行。",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270047
+    },
+    {
+      "decision": "將 `pyproject.toml` 的 `ruff>=0.6` 改為 `ruff==0.14.4`（精確鎖），與 CI 既有 pin 一致。",
+      "rationale": "CI 已精確 pin，pyproject 維持寬鬆上界是唯一可導致本地再次漂移的入口；對齊即消除漂移根因。",
+      "rejected": "`ruff>=0.14.4,<0.15`——minor-bounded 仍允許 patch 漂移，過去正是「無上界」造成現況，不值得引入殘餘風險。",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.527006
+    },
+    {
+      "decision": "變更範圍嚴格限定 `.pre-commit-config.yaml` 與 `pyproject.toml` 兩檔，驗收時 `git diff --name-only` 必須僅此兩行，禁止 source/test 檔進入 diff。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270073
+    },
+    {
+      "decision": "驗收信號三路獨立跑——① `ruff check .`（lint rules）、② `ruff format --check .`（格式）、③ `pytest --collect-only -q`（收集 2590）——不合併指令。",
+      "rationale": "高級工程師正確指出 format-only 不覆蓋 lint；跨版本可能新增預設 lint rule，需獨立驗收。",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270088
+    },
+    {
+      "decision": "驗收前須實跑 `pre-commit run ruff-format --all-files` 確認 0 檔被改寫，不以推理替代實跑。",
+      "rationale": "「版本升後 9 檔自動合格」是假設，高級工程師要求實跑佐證；本批交付前必須補這個訊號，否則假設未被驗證。",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270102
+    },
+    {
+      "decision": "CI 安裝來源不需額外修改，已核可。",
+      "rationale": "CI workflow 三處均為 `pip install \"ruff==0.14.4\"`，高級工程師的疑慮在現況下已不成立；不引入額外改動。",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270114
+    },
+    {
+      "decision": "不引入任何新執行期依賴，uv lock 統一鎖檔列為有意識保留的未來演進路徑，現階段不動。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.527012
     }
   ]
 }
