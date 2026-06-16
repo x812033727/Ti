@@ -248,3 +248,73 @@ async def test_prefix_is_at_string_head_not_buried(monkeypatch, label, getter, e
     assert out.startswith(label), f"{getter} 前綴未落在開頭：{out!r}"
     # 黑樣本：純文字 output 不應自帶方括號標籤，確認 startswith 命中的是實作加的前綴
     assert "[" not in output
+
+
+# ---------------------------------------------------------------------------
+# 4) 反向鎖定：fix task 標題不得帶 [tag] 前綴（雙頻道合約：標題走自然語言頻道）
+# ---------------------------------------------------------------------------
+
+
+_FIX_TITLE_LITERAL_FRAGMENTS = (
+    "修復 lint 失敗：",
+    "修復缺 SDK collection：",
+    "修復測試失敗：",
+)
+
+
+def _fix_task_title_literals() -> list[str]:
+    """從 `run_one_task` 源碼 AST 抽出三個閘門失敗分支的 `backlog.add(...)` 第一個
+    positional 字串參數（即 title 字面值）。
+
+    AST 而非 regex：可正確處理多行 f-string（如 `修復缺 SDK collection` 那條跨行呼叫），
+    不被縮排/換行誤導。三個目標位置在 run_one_task 內依序對應 lint/collect/test 失敗。
+    """
+    src = inspect.getsource(autopilot.run_one_task)
+    tree = ast.parse(src)
+    titles: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (
+            isinstance(func, ast.Attribute)
+            and func.attr == "add"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "backlog"
+        ):
+            continue
+        if not node.args:
+            continue
+        first = node.args[0]
+        # 形式 1：純字串字面值（`"修復導致重佈失敗的 regression"`）
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            titles.append(first.value)
+            continue
+        # 形式 2：f-string（`f"修復 lint 失敗：{task['title']}"`）→ JoinedStr，取最前一個
+        # 純字串片段（f-string 開頭固定是 literal，後接 FormattedValue 為變數插值）。
+        if isinstance(first, ast.JoinedStr):
+            for v in first.values:
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    titles.append(v.value)
+                    break
+    return titles
+
+
+def test_fix_task_title_has_no_bracket_prefix():
+    """反向鎖定：雙頻道合約下，fix task 標題不應帶 `[tag]` 前綴。
+
+    機器層級由 note/detail 的 `[tag]` 承擔；標題走自然語言頻道（保留「修復」「失敗」
+    人眼可讀語意）。三處 `backlog.add(f"修復 X 失敗：...")` 必須不含任何方括號——
+    任何未來手賤把 `[lint]`/`[collect]`/`[test]` 補進標題的 PR 必須被此測試擋下。
+    """
+    titles = _fix_task_title_literals()
+    # 確認抽到三個目標（避免 AST 結構變動讓本測試靜默失效）
+    assert len(titles) >= 3, f"AST 抽出的 fix task 標題不足三個：{titles}"
+    for fragment in _FIX_TITLE_LITERAL_FRAGMENTS:
+        assert fragment in titles, f"AST 漏抓標題片段 {fragment!r}，當前抓到 {titles}"
+    # 反向鎖定本體：三個目標標題字面值皆不含方括號
+    for t in titles:
+        if any(t.startswith(frag) for frag in _FIX_TITLE_LITERAL_FRAGMENTS):
+            assert "[" not in t and "]" not in t, (
+                f"fix task 標題違約帶方括號前綴，違背雙頻道合約：{t!r}"
+            )
