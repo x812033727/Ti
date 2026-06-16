@@ -12,6 +12,11 @@
    閘門失敗分支的 `backlog.set_status(..., note=...)` 與 `backlog.add(detail=...)`，斷言
    note 帶層級標籤、detail 取自帶標籤的 gate 輸出（out[-500:]）。
 3. 反向黑樣本——證明斷言有真判別力：標籤抽掉即紅（assert 前綴落在字串開頭、非任意位置）。
+
+閘門順序假設：`_gate_failure_branches()[:3]` 依賴 `run_one_task` 源碼陳列順序
+（lint → collect → test）。新增第 4 個閘門時請同步補對應的 note 前綴測試與
+`test_backlog_add_detail_from_labeled_gate_output` 切片斷言；本測試僅抓 loud failure
+（斷言錯位即 fail），不抓 silent 順序錯位，請勿「看起來綠」就 merge。
 """
 
 from __future__ import annotations
