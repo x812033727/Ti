@@ -576,6 +576,11 @@ AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
+# 整場 autopilot session 的硬上限（秒）：session.run() 無外層逾時，若討論在「回合之間」
+# 卡死（例：某專家轉 idle 後沒有人接下一棒），per-turn 的 TURN_IDLE/TURN_HARD 守不到，
+# 主迴圈會永久阻塞、後續 pending 全部餓死。超過此值即 cancel（觸發 run() 的 finally 收掉
+# 所有專家子程序），任務判 failed，迴圈繼續。預設 90 分。
+AUTOPILOT_SESSION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_SESSION_TIMEOUT", "5400"))
 # 部署 idle 守衛的 stale 門檻（秒）：status 卡在 running 但最後活動超過此值的討論視為死掉、
 # 不再算「進行中」，避免崩潰沒收尾的 session 永久擋住 autodeploy / autopilot 重佈。預設 30 分。
 DEPLOY_STALE_AFTER = int(os.getenv("TI_DEPLOY_STALE_AFTER", "1800"))
