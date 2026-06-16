@@ -804,6 +804,7 @@ async def run_one_task(task: dict) -> None:
     ok, out = await _gate_lint(clone)
     if not ok:
         backlog.set_status(task["id"], "failed", note="[lint] 閘門未通過")
+        # 標題頻道：自然語言（見模組 docstring 雙頻道合約）
         backlog.add(f"修復 lint 失敗：{task['title']}", detail=out[-500:], source="discovered")
         log.info("任務 #%s lint 未過,標 failed 並補修復任務", task["id"])
         return
@@ -812,6 +813,7 @@ async def run_one_task(task: dict) -> None:
     ok, out = await _gate_collect_without_sdk(clone)
     if not ok:
         backlog.set_status(task["id"], "failed", note="[collect] 無 SDK collection 失敗")
+        # 標題頻道：自然語言（見模組 docstring 雙頻道合約）
         backlog.add(
             f"修復缺 SDK collection：{task['title']}", detail=out[-500:], source="discovered"
         )
@@ -822,6 +824,7 @@ async def run_one_task(task: dict) -> None:
     ok, out = await _gate_tests(clone)
     if not ok:
         backlog.set_status(task["id"], "failed", note="[test] 測試未通過")
+        # 標題頻道：自然語言（見模組 docstring 雙頻道合約）
         backlog.add(f"修復測試失敗：{task['title']}", detail=out[-500:], source="discovered")
         log.info("任務 #%s 測試未過,標 failed 並補修復任務", task["id"])
         return
