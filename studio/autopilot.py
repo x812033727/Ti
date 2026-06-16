@@ -120,7 +120,7 @@ async def _gate_lint(clone: str) -> tuple[bool, str]:
     )
     if not probe.ok:
         log.warning("ruff 未安裝，略過 lint 閘門（請在部署環境 pip install ruff 以啟用）")
-        return True, "ruff 缺失，略過 lint 閘門"
+        return True, "[lint] ruff 缺失，略過 lint 閘門"
     for argv, name in (
         ([sys.executable, "-m", "ruff", "check", "."], "ruff check"),
         ([sys.executable, "-m", "ruff", "format", "--check", "."], "ruff format --check"),
@@ -128,9 +128,9 @@ async def _gate_lint(clone: str) -> tuple[bool, str]:
         r = await runner.run_command_exec(clone, argv, timeout=120, sandbox=True, label=name)
         if not r.ok:
             # 標籤計入截尾預算（與 _gate_tests/_gate_collect 一致，總長維持 ≤1200）。
-            prefix = f"{name} 未過：\n"  # [black-sample]
+            prefix = f"[lint] {name} 未過：\n"
             return False, prefix + r.output[-(1200 - len(prefix)) :]
-    return True, "ruff OK"
+    return True, "[lint] ruff OK"
 
 
 async def _gate_collect_without_sdk(clone: str) -> tuple[bool, str]:
