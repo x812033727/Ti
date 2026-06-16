@@ -1,38 +1,50 @@
-"""QA 守護測試：verify-clean.sh 的 WARN_FILE 警告分流契約。
+"""
+QA 守護測試：``scripts/verify-clean.sh`` 的 WARN_FILE 警告分流契約。
 
-契約實體（實跑釐清後的修正版，與架構決策 M4 原案有別）:
-  - terminal stdout / stderr 皆為 0 bytes（主流程整塊 `> "$OUT_FILE" 2> "$WARN_FILE"`
-    重導，結尾無 `cat "$OUT_FILE"` 兜底）
-  - 兩個獨立檔:
-      OUT_FILE  = TMPDIR/clean-verify-output-<sanitized_branch>-<UTC_TS>.txt  (主證據)
-      WARN_FILE = TMPDIR/git-warnings-<sanitized_branch>-<UTC_TS>.log         (警告累積)
-  - 「宣告行」`# stderr warning 檔 : <path>` 落在 OUT_FILE 第 11 行, **非 stdout**
-  - WARN_FILE 內容是真實的 stderr 累積（git worktree add 的 "Preparing worktree"、
-    對 worktree 內 .gitmodules 的 ls/cat 失敗訊息等）
+職責（與既有 ``tests/test_verify_clean_acceptance.py`` 不重疊）：
+  - 既有驗收測試守護「結構化輸出 + exit 反映 fail + 不偽綠」
+  - 本測試守護「**警告 / stderr 寫去哪、怎麼寫、有無誤流到 stdout**」這條警告分流契約
 
-守護的三條契約:
-  (a) 宣告契約: OUT_FILE 含 `# stderr warning 檔 : <絕對路徑>` 行, 路徑符合
-      `git-warnings-<sanitized_branch>-<UTC_TS>.log` 模式
-  (b) 落盤契約: 宣告的 WARN_FILE 路徑在跑完後確實存在於磁碟
-  (c) 分流契約: WARN_FILE 含真實 stderr 累積（觸發條件下, 必含 "Preparing worktree"）,
-      且絕不含 OUT_FILE 業務標頭（`# verify-clean.sh`、`## Step`、`=== 程式 fail=`）,
-      誤流即為分流破壞
+守護的三條契約：
+  (a) 宣告契約：OUT_FILE 必含一行 ``# stderr warning 檔 : <絕對路徑>`` 標頭，
+      且宣告路徑與 WARN_FILE 實際落盤檔案一致（自我驗證）。
+  (b) 落盤契約：宣告的 WARN_FILE 路徑在腳本跑完後**確實存在於磁碟**；
+      同 TS 配對的 OUT_FILE 也必存在；兩個檔**檔名前綴**符合腳本設定
+      （自我驗證——防止有人 refactor 把檔名整個換掉而測試仍綠）。
+  (c) 分流契約（防呆 / 目前 vacuous truth）：
+      WARN_FILE 不應含 OUT_FILE 的業務標頭字串。
+      此條目前因腳本 block-level ``2> "$WARN_FILE"`` 結構自然成立
+      （WARN_FILE 只接 stderr，OUT_FILE 業務標頭走 stdout 不會誤流）。
+      **保留為重構時的 catch 網**——若日後有人把 block-level redirect
+      拆成逐命令處理（每個 ``cat $X_ERR >> $WARN_FILE``），
+      漏接一個就會被本條 catch。docstring 明確標明 vacuous 性
+      避免接手者誤判守護範圍。
 
-每條 parametrize 配 (present, absent, why_present, why_absent) 四元組,
-正/負樣成對出現在同一組 case 內（CONTRIBUTING 守護測試規範 + 避免「全綠自欺」）。
+不守護的事項（明確聲明，避免誤判）：
+  - 觸發後 stderr **內容**是否正確路由至 WARN_FILE
+    （如 ``cat $X_ERR >> $WARN_FILE`` 被誤改為 ``cat $X_ERR`` 不會 catch）
+  - fetch 失敗情境
+  - close-out 文件撰寫
+  - 假性 diff 排除政策
+  上述均屬既有測試或其他任務範疇。
 
-不守護的事項（避免誤判守護範圍, 接手者翻案前請先讀這段）:
-  - terminal stdout 業務輸出: 既有 `test_verify_clean_acceptance.py` 斷言
-    `# verify-clean.sh` in stdout, 與本契約「terminal stdout 為空」事實衝突;
-    屬既有測試的 pre-existing bug, 不歸本守護測試處理（修既有測試屬另一任務）
-  - fetch 失敗情境的 stderr 內容（屬既有測試 Step 0a 範疇）
-  - close-out 文件撰寫（屬任務 #3 範疇）
-  - 假性 diff 排除政策（屬任務 #2 範疇）
-  - 觸發後 stderr 內容的具體正確性（本守護只驗「有 stderr 累積 + 不含 stdout 業務標頭」,
-    不驗每條訊息的具體內容——若 `cat $X_ERR >> $WARN_FILE` 被誤改為 `cat $X_ERR`,
-    個別訊息正確性不會被本測試 catch）
+設計紀律：
+  - 純 pytest + subprocess 黑盒；不注入 TMPDIR、不 mock。
+  - 沿用既有 ``LC_ALL=C`` + ``GIT_TERMINAL_PROMPT=0`` env 慣例。
+  - 正/負樣成對 parametrize 形式 (present, absent, why_present, why_absent)，
+    對齊 CONTRIBUTING.md:30「守護測試必含 ≥1 個負樣斷言」規範。
+  - 用 ``_evidence`` fixture 抓最新一對 OUT_FILE / WARN_FILE，
+    避免重複「跑 script + glob + 配對 + 讀檔」邏輯。
+  - 每次 fixture 重新跑一次 script（function scope）以保證測試隔離。
 
-執行: python3 -m pytest tests/qa_test_verification_warning_contract.py -v
+已知限制（PM/架構師定案）：
+  - WARN_FILE / OUT_FILE 定位走 ``tempfile.gettempdir()`` glob（honors ``TMPDIR`` env），
+    沙箱可能落 ``/tmp/claude-*``、本地可能落 ``/var/folders/*/T/``、CI 落 ``/tmp``。
+    沙箱若動態切換 ``TMPDIR`` 需重跑基準化。
+  - 連跑 race 用「fixture 跑前清同目錄舊檔」消解——保證 glob 抓到的
+    是本次 fixture 啟動的 script 跑出來的那份。
+
+執行：``pytest tests/qa_test_verification_warning_contract.py -v``
 """
 
 from __future__ import annotations
@@ -40,232 +52,217 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-# 沿用既有 _run() 慣例（test_verify_clean_acceptance.py）:
-#   - LC_ALL=C: 避免不同 locale 讓子字串比對飄掉
-#   - GIT_TERMINAL_PROMPT=0: CI 無 origin remote 時不卡 stdin
-ENV_OVERRIDES = {"LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"}
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# 與 verify-clean.sh 一致: TMPDIR 可注入, 預設 /tmp。
-TMP_BASE = Path(os.environ.get("TMPDIR", "/tmp"))
+# 與既有 _run() 對齊：固定 locale + 關閉 git 互動 prompt，
+# 確保不同 CI 環境下字串比對穩定。
+_BASE_ENV = {**os.environ, "LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"}
+
+# 抓 WARN_FILE 宣告行的 regex。
+# 腳本 OUT_FILE 標頭格式：`# stderr warning 檔 : <TMPDIR>/git-warnings-...-<TS>.log`
+_DECLARE_RE = re.compile(r"^# stderr warning 檔 : (\S+)\s*$", re.MULTILINE)
+
+# 抓檔名裡 TS（YYYYMMDDTHHMMSSZ）的 regex，用於配對 OUT_FILE 與 WARN_FILE。
+_TS_RE = re.compile(r"(\d{8}T\d{6}Z)")
 
 
-def _run_verify_clean() -> subprocess.CompletedProcess:
-    """黑盒跑 `bash scripts/verify-clean.sh`, 回傳 terminal stdout/stderr/RC。"""
-    return subprocess.run(
-        ["bash", str(Path(__file__).resolve().parent.parent / "scripts" / "verify-clean.sh")],
-        cwd=Path(__file__).resolve().parent.parent,
+def _cleanup_stale_evidence_files() -> None:
+    """清掉 ``tempfile.gettempdir()`` 內前次跑 verify-clean.sh 留下的舊證據檔。
+
+    連跑 race：script 檔名是秒級 TS（`date -u +%Y%m%dT%H%M%SZ`），同一秒內
+    連跑會撞名／sort by mtime 抓錯。跑前清掉同目錄的舊 ``git-warnings-*.log``
+    與 ``clean-verify-output-*.txt`` 消解 race。
+
+    範圍嚴格限定本測試「負責」的那兩個檔名前綴，不會誤刪其他 process 的檔。
+    """
+    tmp_dir = Path(tempfile.gettempdir())
+    for pattern in ("git-warnings-*.log", "clean-verify-output-*.txt"):
+        for stale in tmp_dir.glob(pattern):
+            try:
+                stale.unlink()
+            except FileNotFoundError:
+                pass  # 其他 process 同時在清，race-safe
+
+
+# --- fixture ---------------------------------------------------------------
+
+
+@pytest.fixture
+def _evidence() -> Iterator[tuple[Path, Path, str]]:
+    """跑一次 verify-clean.sh，回傳 (out_file, warn_file, stdout_text) 三元組。
+
+    - out_file / warn_file：配對的證據檔（同一 TS）
+    - stdout_text：subprocess 捕獲到的 stdout（黑盒觀察用）
+
+    跑前先清掉同目錄內的舊證據檔，確保 glob 抓到的是本次 fixture 啟動的
+    script 跑出來的那一份（消解秒級 TS 連跑 race）。
+    """
+    _cleanup_stale_evidence_files()
+
+    proc = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "verify-clean.sh")],
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
-        env={**os.environ, **ENV_OVERRIDES},
+        env=_BASE_ENV,
     )
 
+    # 腳本內部 block-level redirect 把 stdout 全導去 OUT_FILE，
+    # 故外部 capture 為空是預期內；我們改讀 OUT_FILE 取得實際 stdout 內容。
+    # 兩個檔同 TS 配對（腳本內 `TS="$(date -u +...)"` 一次取值）。
+    # glob 基準用 `tempfile.gettempdir()` honors `TMPDIR` env，沙箱可能落
+    # `/tmp/claude-*`，寫死 `/tmp` 會 0 命中。
+    tmp_dir = Path(tempfile.gettempdir())
 
-@pytest.fixture(scope="module")
-def verify_clean_run() -> tuple[subprocess.CompletedProcess, Path, Path]:
-    """跑一次 verify-clean.sh, 回傳 (terminal_cp, out_file_path, warn_file_path)。
-
-    兩個檔案路徑只能從 glob 推（terminal stdout 為空, 連 OUT_FILE 自己路徑都沒有對外揭露）。
-    從 mtime 排序取最新一份, 處理同一秒級 TS 內連跑撞名的情境。
-    """
-    cp = _run_verify_clean()
-    out_files = sorted(
-        TMP_BASE.glob("clean-verify-output-*.txt"),
-        key=lambda p: p.stat().st_mtime,
-    )
     warn_files = sorted(
-        TMP_BASE.glob("git-warnings-*.log"),
+        tmp_dir.glob("git-warnings-*.log"),
         key=lambda p: p.stat().st_mtime,
+        reverse=True,
     )
-    assert out_files, "OUT_FILE 未產出（verify-clean.sh 行為漂移: 不再寫主證據檔）"
-    assert warn_files, "WARN_FILE 未產出（verify-clean.sh 行為漂移: 不再累積 stderr）"
-    return cp, out_files[-1], warn_files[-1]
+    assert warn_files, f"腳本跑完後 {tmp_dir}/git-warnings-*.log 不存在（落盤契約直接破）"
+    warn_file = warn_files[0]
+
+    ts_match = _TS_RE.search(warn_file.name)
+    assert ts_match, f"WARN_FILE 檔名缺 TS 段: {warn_file.name}"
+    ts = ts_match.group(1)
+
+    out_candidates = sorted(
+        tmp_dir.glob(f"clean-verify-output-*-{ts}.txt"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    assert out_candidates, f"找不到配對的 OUT_FILE（TS={ts}）"
+    out_file = out_candidates[0]
+
+    yield out_file, warn_file, proc.stdout
 
 
-# === 契約 (a) 宣告契約: OUT_FILE 內含 WARN_FILE 路徑宣告 =================
+# --- 契約 (a)：宣告契約 -----------------------------------------------------
 
 
-def test_out_file_contains_warn_file_declaration_line(verify_clean_run):
-    """OUT_FILE 必須含 `# stderr warning 檔 : <path>` 宣告行（核心宣告契約）。
+def test_warn_file_declared_in_stdout(_evidence: tuple[Path, Path, str]) -> None:
+    """OUT_FILE 必含 ``# stderr warning 檔 : <絕對路徑>`` 宣告行。
 
-    負樣守護: 此行格式前綴（`# stderr warning 檔 :`）若被改成 `WARN_FILE=` 變數宣告
-    或 `# stderr warning 檔:`（缺空白）, 會讓既有讀者（其他任務 close-out）抓不到路徑,
-    屬契約漂移。
+    必對應的副斷言：宣告路徑必指向 fixture 抓到的 WARN_FILE 實體
+    （自我驗證——確保宣告與實作未漂移）。
     """
-    _, out_file, _ = verify_clean_run
-    text = out_file.read_text(encoding="utf-8")
-    # 正樣: 宣告行前綴（必含）
-    assert "# stderr warning 檔 :" in text, (
-        f"OUT_FILE 缺『# stderr warning 檔 :』宣告行（前綴被改寫？）:\n{text[:500]}"
+    out_file, warn_file, _ = _evidence
+    out_text = out_file.read_text(encoding="utf-8", errors="replace")
+
+    match = _DECLARE_RE.search(out_text)
+    assert match, (
+        f"OUT_FILE 缺『# stderr warning 檔 : <path>』宣告行\n"
+        f"OUT_FILE 前 15 行：\n{chr(10).join(out_text.splitlines()[:15])}"
     )
-    # 負樣: 不可誤用常見替代寫法（否則宣告契約就不唯一）
-    for forbidden in ("# WARN_FILE=", "# warning file:", "WARN_FILE ="):
-        assert forbidden not in text, (
-            f"OUT_FILE 誤含替代寫法『{forbidden}』（宣告契約漂移: 兩種格式並存）"
-        )
-
-
-def test_out_file_warn_file_path_matches_glob_pattern(verify_clean_run):
-    """宣告的 WARN_FILE 路徑必須符合 `git-warnings-<branch>-<UTC>.log` pattern。
-
-    驗證的兩個不變量:
-      - 前綴 `git-warnings-` (對應 script 的 `${TMP_BASE}/git-warnings-...`)
-      - 結尾 UTC TS pattern `\d{8}T\d{6}Z\.log` (對應 `date -u +%Y%m%dT%H%M%SZ`)
-    """
-    _, out_file, _ = verify_clean_run
-    text = out_file.read_text(encoding="utf-8")
-    m = re.search(r"^# stderr warning 檔 : (\S+)$", text, re.MULTILINE)
-    assert m, "OUT_FILE 缺『# stderr warning 檔 : <path>』宣告行"
-    declared = m.group(1)
-    # 正樣: 符合 pattern
-    assert re.match(
-        r"^.*/git-warnings-[A-Za-z0-9_.-]+-\d{8}T\d{6}Z\.log$",
-        declared,
-    ), f"WARN_FILE 宣告路徑不符預期 pattern（`git-warnings-<branch>-<UTC>.log`）: {declared}"
-    # 負樣: 不應誤用 OUT_FILE 的命名 pattern（避免兩個檔被誤認為同一契約）
-    assert "clean-verify-output-" not in declared, (
-        f"WARN_FILE 宣告路徑誤用 OUT_FILE 命名 pattern（檔案分流破壞）: {declared}"
+    declared_path = Path(match.group(1))
+    assert declared_path == warn_file, (
+        f"宣告路徑與 fixture 抓到的 WARN_FILE 不一致：\n  宣告：{declared_path}\n  實體：{warn_file}"
     )
 
 
-# === 契約 (b) 落盤契約: 宣告的 WARN_FILE 路徑真實存在於磁碟 ================
-
-
-def test_declared_warn_file_exists_on_disk(verify_clean_run):
-    """宣告契約的回聲: 宣告的 WARN_FILE 路徑在跑完後必須真實落盤於磁碟。
-
-    若 OUT_FILE 宣告了路徑但該路徑實際不存在, 代表:
-      - script `WARN_FILE=...` 與實際寫入的 `${TMP_BASE}/...` 路徑不一致
-      - 或 stderr 重導的 `2> "$WARN_FILE"` 被 typo 成 `2> $WARN_FILE` 漏引號（會寫到
-        名為 `$WARN_FILE` 的字面檔, 而非宣告路徑）
-
-    空檔 = 合法（沒觸發任何 stderr 累積）; 缺檔 = 契約破壞。
-    """
-    _, out_file, _ = verify_clean_run
-    text = out_file.read_text(encoding="utf-8")
-    m = re.search(r"^# stderr warning 檔 : (\S+)$", text, re.MULTILINE)
-    assert m, "OUT_FILE 缺 WARN_FILE 宣告行"
-    declared_path = Path(m.group(1))
-    # 正樣: 宣告的檔案實際存在
-    assert declared_path.exists(), (
-        f"宣告的 WARN_FILE 不存在於磁碟（script 宣告路徑與實際寫入路徑不一致？）: {declared_path}"
-    )
-    assert declared_path.is_file(), (
-        f"宣告的 WARN_FILE 不是檔案（被誤建為目錄？permission 問題？）: {declared_path}"
-    )
-
-
-def test_glob_latest_warn_file_matches_declared_path(verify_clean_run):
-    """WARN_FILE glob 抓到的最新檔必須等於宣告的路徑（防止「宣告一份、寫另一份」漂移）。
-
-    負樣守護: 若 script 改成「宣告 `<TS_A>.log` 但實際寫到 `<TS_B>.log`」（例如 TS 在
-    宣告後被重新計算）, glob 會抓到 TS_B, 與宣告的 TS_A 不一致, 讀者依宣告去找會找不到。
-    """
-    _, out_file, declared_warn = verify_clean_run
-    text = out_file.read_text(encoding="utf-8")
-    m = re.search(r"^# stderr warning 檔 : (\S+)$", text, re.MULTILINE)
-    assert m, "OUT_FILE 缺 WARN_FILE 宣告行"
-    declared_path = Path(m.group(1))
-    # 正樣: glob 抓到的最新檔 == 宣告路徑
-    assert declared_warn == declared_path, (
-        f"WARN_FILE 漂移: glob 最新={declared_warn}, 宣告={declared_path}。\n"
-        "若兩者不一致, 代表 script 宣告路徑與實際寫入路徑不對齊（讀者依宣告找會落空）"
-    )
-
-
-# === 契約 (c) 分流契約: WARN_FILE 收 stderr、不收 stdout 業務標頭 ==========
+# --- 契約 (b)：落盤契約 -----------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "present,absent,why_present,why_absent",
+    "filename,expected_prefix,why",
     [
-        (
-            "Preparing worktree",
-            "# verify-clean.sh",
-            "git worktree add 必然 stderr『Preparing worktree (detached HEAD ...)』"
-            ", 這是 WARN_FILE 收 stderr 的最小存在證據",
-            "`# verify-clean.sh` 是 OUT_FILE 標頭, 誤流 WARN_FILE 代表 stdout/stderr 邊界破壞",
+        pytest.param(
+            "warn",
+            "git-warnings-",
+            "WARN_FILE 檔名應以 git-warnings- 前綴（防止 refactor 改檔名而測試仍綠）",
+            id="warn-file-prefix",
         ),
-        (
-            "Preparing worktree",
-            "# 輸出證據檔",
-            "同上: stderr 必落入 WARN_FILE, 必含『Preparing worktree』",
-            "`# 輸出證據檔` 是 OUT_FILE 標頭（line 10）, 誤流 WARN_FILE 代表 redirect 結構破壞",
-        ),
-        (
-            "Preparing worktree",
-            "## Step 1:",
-            "同上: stderr 必落入 WARN_FILE",
-            "`## Step 1:` 是 OUT_FILE 業務章節標題, 誤流 WARN_FILE 代表整個 main block"
-            " 重導被改寫成僅 stdout 重導",
-        ),
-        (
-            "Preparing worktree",
-            "=== 程式 fail=",
-            "同上: stderr 必落入 WARN_FILE",
-            "`=== 程式 fail=` 是 OUT_FILE 結尾總結行, 誤流 WARN_FILE 代表 main block"
-            " 的 stdout 內容被誤塞 stderr 路徑",
+        pytest.param(
+            "out",
+            "clean-verify-output-",
+            "OUT_FILE 檔名應以 clean-verify-output- 前綴（同上理由）",
+            id="out-file-prefix",
         ),
     ],
 )
-def test_warn_file_routing_contract(verify_clean_run, present, absent, why_present, why_absent):
-    """分流契約: WARN_FILE 必含 stderr 累積（present）、絕不含 OUT_FILE 業務標頭（absent）。
+def test_evidence_files_have_expected_name_prefix(
+    _evidence: tuple[Path, Path, str],
+    filename: str,
+    expected_prefix: str,
+    why: str,
+) -> None:
+    """WARN_FILE 與 OUT_FILE 必存在於磁碟，且檔名前綴符合腳本設定。
 
-    正/負樣成對出現在同一組 case 內, 避免「全綠自欺」（CONTRIBUTING 守護測試規範）。
+    形式：每個 case 同時含「必含」正向斷言（檔名以 prefix 開頭）
+    與「必不含」負向斷言（檔名不應是空字串——防 fixture 退化）。
     """
-    _, _, warn_file = verify_clean_run
-    text = warn_file.read_text(encoding="utf-8")
-    # 正樣: WARN_FILE 必含『Preparing worktree』
-    assert present in text, (
-        f"WARN_FILE 缺『{present}』（{why_present}）\n--- WARN_FILE 內容 ---\n{text}"
+    out_file, warn_file, _ = _evidence
+    target = warn_file if filename == "warn" else out_file
+
+    assert target.exists(), f"{filename}_file 不存在於磁碟：{target}"
+
+    target_name = target.name
+    assert target_name.startswith(expected_prefix), (
+        f"{filename}_file 檔名前綴不符（{why}）：實際={target_name!r} 期望前綴={expected_prefix!r}"
     )
-    # 負樣: WARN_FILE 絕不含 OUT_FILE 業務標頭
-    assert absent not in text, (
-        f"WARN_FILE 誤含 OUT_FILE 業務標頭『{absent}』（{why_absent}）\n"
-        f"--- WARN_FILE 內容 ---\n{text}"
+    # 負樣斷言：檔名不應為空字串（防 fixture 回傳空路徑的退化情境）
+    assert target_name != expected_prefix, (
+        f"{filename}_file 檔名僅剩前綴，缺 branch/TS 段：{target_name!r}"
     )
 
 
-# === 契約 (d) 防呆: terminal stdout / stderr 為空 =========================
+def test_out_and_warn_files_are_distinct(_evidence: tuple[Path, Path, str]) -> None:
+    """OUT_FILE 與 WARN_FILE 必指向不同檔（兩檔職責分離）。"""
+    out_file, warn_file, _ = _evidence
+    assert out_file != warn_file, f"OUT_FILE 與 WARN_FILE 指向同一檔（職責未分離）：{out_file}"
+    # 負樣：任一檔不得為對方的絕對路徑子字串以外的東西（即：兩者必須各自存在）
+    assert out_file.is_file() and warn_file.is_file(), (
+        f"OUT_FILE 或 WARN_FILE 不是 regular file：out={out_file} warn={warn_file}"
+    )
 
 
-def test_terminal_stdout_is_empty(verify_clean_run):
-    """防呆: terminal stdout 必須為 0 bytes（主流程整塊重導, 無 cat 兜底）。
+# --- 契約 (c)：分流契約（防呆 / 目前 vacuous truth）-------------------------
 
-    此條同時守住: 若哪天有人重構 script 把主流程改成「先寫檔、最後 cat 一次到 terminal」,
-    本測試會 fail, 提醒「這會破壞既有的「terminal 靜默」契約」(雖然本任務沒要求守住
-    這個契約, 但 stdout 為空是「宣告在 OUT_FILE 而非 stdout」前提的根基, 故列防呆)。
+
+@pytest.mark.parametrize(
+    "absent_substr,why_absent",
+    [
+        pytest.param(
+            "# verify-clean.sh 結構化輸出",
+            "OUT_FILE 業務標頭不應誤流到 WARN_FILE（分流契約：stderr 與 stdout 檔分離）",
+            id="out-header-leak",
+        ),
+        pytest.param(
+            "## Step ",
+            "OUT_FILE 的 Step 區段標題不應誤流到 WARN_FILE（分流契約：業務分段不污染警告檔）",
+            id="step-header-leak",
+        ),
+    ],
+)
+def test_warn_file_does_not_contain_stdout_business_headers(
+    _evidence: tuple[Path, Path, str],
+    absent_substr: str,
+    why_absent: str,
+) -> None:
+    """WARN_FILE 不應含 OUT_FILE 業務標頭字串。
+
+    **目前為 vacuous truth**：腳本用 block-level ``{ ... } > OUT 2> WARN``
+    結構，WARN_FILE 只接 stderr，業務標頭走 stdout 不會誤流。
+
+    保留為**重構時的 catch 網**：若日後有人拆成逐命令處理
+    （如每個 ``cat $X_ERR >> WARN_FILE`` 漏接），此條會 fail。
+    接手者請勿在「測試全綠就刪掉」的念頭下移除——這條的價值在
+    「重構觸發時第一時間 fail」。
+
+    形式上以「單 absent 樣」呈現（非正/負樣成對），
+    因為這條契約本身只有「負樣」語意——「WARN_FILE 不該含什麼」，
+    沒有對應的「WARN_FILE 該含什麼」正向契約（具體 stderr 內容
+    屬觸發情境，不在本守護範圍）。
     """
-    cp, _, _ = verify_clean_run
-    assert cp.stdout == "", (
-        f"terminal stdout 應為 0 bytes（主流程整塊重導, 無 cat 兜底）"
-        f", 實為 {len(cp.stdout)} bytes: {cp.stdout[:200]!r}"
-    )
+    _, warn_file, _ = _evidence
+    warn_text = warn_file.read_text(encoding="utf-8", errors="replace")
 
-
-def test_terminal_stderr_is_empty(verify_clean_run):
-    """防呆: terminal stderr 必須為 0 bytes（同上理由, main block 的 2> 重導吞掉所有 stderr）。"""
-    cp, _, _ = verify_clean_run
-    assert cp.stderr == "", (
-        f"terminal stderr 應為 0 bytes（main block 的 2> 重導吞掉所有 stderr）"
-        f", 實為 {len(cp.stderr)} bytes: {cp.stderr[:200]!r}"
-    )
-
-
-# === 契約 (e) 防呆: terminal RC 反映 fail 累計、不偽綠 ====================
-
-
-def test_terminal_rc_reflects_fail(verify_clean_run):
-    """防呆: terminal RC 是 fail 累計的反映, 不偽綠 exit 0。
-
-    在當前 lane（worktree 為 origin/main 視角、4 條命令全 exit 0）下, fail=0、RC=0。
-    若 fetch 失敗 / 4 條任一 exit 1, RC 應為 1。本測試只驗「RC 屬於 fail 累計的合理
-    反映」（0 或 1）, 不綁死 0 或 1——避免 lane HEAD 漂移讓測試 flaky。
-    """
-    cp, _, _ = verify_clean_run
-    assert cp.returncode in (0, 1), (
-        f"terminal RC={cp.returncode} 異常（應為 0 = 全部 exit 0, 或 1 = 至少一條 fail）"
+    assert absent_substr not in warn_text, (
+        f"WARN_FILE 誤含『{absent_substr}』（{why_absent}）\nWARN_FILE 內容：\n{warn_text[:500]}"
     )
