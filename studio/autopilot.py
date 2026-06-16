@@ -7,6 +7,23 @@
 
 獨立於 ti.service 跑,所以重佈（restart ti.service）不會打斷自己；狀態存在 backlog 檔,
 崩潰/重啟可續跑。
+
+三閘門回報／backlog 標記的「雙頻道合約」：
+  機器頻道（`[tag]` 方括號前綴）鎖在：
+    - 三閘門函式回傳值（`_gate_lint` / `_gate_collect_without_sdk` / `_gate_tests`）
+    - 對應 `backlog.set_status(..., note=...)` 的 note 開頭
+    - 對應 `backlog.add(..., detail=out[-500:])` 的 detail（detail 源頭是帶前綴的 `out`）
+  人類頻道（自然語言「修復 lint 失敗 / 修復缺 SDK collection / 修復測試失敗」）
+  鎖在 `backlog.add(..., title=...)` 標題欄位。
+
+  兩頻道刻意不強制同語法：機器頻道服務 grep / log 解析 / AST / 自動化（必帶前綴以
+  程式化過濾）；人類頻道服務人眼 / backlog UI / 決策（保留「修復」「失敗」自然語意）。
+  翻案觸發條件（任一發生時才把機器前綴補進標題）：
+    1. backlog UI 只秀標題不秀 note／detail
+    2. 有 LLM 依 regex 評估任務層級
+    3. 出現「跨工具 grep 標題找閘門層級」的一致性需求
+  當前 0 行業務邏輯改動：標題已含自然語言層級（人眼可辨），機器端三入口已覆蓋。
+  守護測試 `tests/autopilot/test_qa_task3b_gate_level_labels.py` 鎖此合約。
 """
 
 from __future__ import annotations
