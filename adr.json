@@ -2456,6 +2456,90 @@
       "rejected": "維持原案「不做任何 CI 友善設計」——會讓未來 release gate 必須重寫解析層，是不必要的鎖死",
       "session_id": "ap9e89f72ec7",
       "created_at": 1781539676.4722574
+    },
+    {
+      "decision": "採雙頻道合約——機器頻道（`[tag]` 括號前綴）鎖在 gate 回傳、`set_status(note=)`、`add(detail=out[-500:])`；人類頻道（自然語言「修復 lint 失敗／修復缺 SDK collection／修復測試失敗」）鎖在 `add(title=)`。兩頻道刻意不強制同語法。",
+      "rationale": "機器頻道服務 grep / log 解析 / AST / 自動化；人類頻道服務人眼 / backlog UI / 決策。兩者受眾不同，語法解耦避免把機器語法灌進人眼欄位。",
+      "rejected": "單頻道（所有欄位統一 `[tag]`）——成本低但人眼欄位訊息密度下降（失去「修復」「失敗」語意），且當前 3 處標題已用自然語言，統一等於 churn。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888376
+    },
+    {
+      "decision": "不在 `add(title=)` 標題補 `[tag]` 前綴，本任務 0 行業務邏輯改動。",
+      "rationale": "標題已含自然語言層級（人眼可辨）；機器端三個入口（return / note / detail）已覆蓋完整；翻案成本 = 3 個 f-string + 1 條新測試，可逆性極高。現在補屬鍍金。",
+      "rejected": "移除標題內自然語言層級字（只留 `f\"修復：{task['title']}\"`）——更糟，連人眼都失去層級。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888419
+    },
+    {
+      "decision": "新增 1 條反向鎖定測試 `test_fix_task_title_has_no_bracket_prefix`，驗證三處 `backlog.add(f\"修復 X 失敗：...\")` 標題字串不含 `[` 或 `]`。",
+      "rationale": "docstring 約定會漂；反向測試把「標題不應有括號前綴」轉成 CI 可執行的契約，未來誰手賤加前綴會直接紅。成本 < 15 行、零風險，與既有 14 條同檔。",
+      "rejected": "只靠 test docstring 約定（工程師原提議）——docstring 是人讀文件，不會跑；6 個月後新人直接改標題 PR 過了，契約實質失效。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888457
+    },
+    {
+      "decision": "在三處 `backlog.add(f\"修復 X 失敗：...\")` 上方各加 1 行 inline 註解 `# 標題頻道：自然語言（見模組 docstring 雙頻道合約）`。",
+      "rationale": "讀 `autopilot.py` 先看到程式碼才看測試；三處 inline 註解是半年後接手者最直接看到的合約提醒。成本 3 行。",
+      "rejected": "不加 inline 註解——依賴讀者先看模組 docstring 再看程式碼，實務上不會發生。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888469
+    },
+    {
+      "decision": "將雙頻道合約文字**同步**寫進 `studio/autopilot.py` 模組 docstring，明列：閘門清單（lint/collect/test）、機器頻道位置（return/note/detail）使用 `[tag]`、人類頻道位置（fix task title）使用自然語言「修復 X 失敗：...」、翻案觸發條件（backlog UI 只秀標題、LLM regex 評估層級、grep 一致性需求）。",
+      "rationale": "模組 docstring 是讀代碼第一站，比 test docstring 觸及率高；決策理由落字在源碼旁，git log 找得到。成本 1 段（5–8 行）。",
+      "rejected": "僅寫在 test docstring——測試 docstring 是測試開發者看的，模組 docstring 才是所有人看的；前者覆蓋面太窄。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.388848
+    },
+    {
+      "decision": "在 test docstring 補一句「閘門順序 = 源碼陳列順序；新增閘門時請同步補對應測試」；同步承認此為 loud failure（非 silent）——重排閘門時 `_gate_failure_branches()[:3]` 會讓斷言錯位而 fail，不會沉默通過。",
+      "rationale": "顯性化隱性假設，下個接手者加第 4 個閘門時不會漏測試；並校正風險性質（loud failure 而非 silent corruption）以匹配實際行為。",
+      "rejected": "在本任務修補 AST helper 用 `out = await _gate_X(clone)` 精確配對——成本約 10–15 行、需重驗 14 條合約、scope 飄移；當前 loud failure 已能攔下重排，沒事修等於製造風險。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888497
+    },
+    {
+      "decision": "AST 順序耦合（`_gate_failure_branches()[:3]` 依賴源碼陳列順序）flag 為已知脆弱性、不在本任務修補、列為後續待辦。",
+      "rationale": "當前 14 條測試全綠、源碼順序是事實、沒人會調 gate 順序；動 AST helper 等於重驗合約，scope 飄移。",
+      "rejected": "本任務順手修——會擴大本 PR 的 diff 範圍、需重跑守護測試，違反「本任務 0 行業務邏輯改動」原則。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888652
+    },
+    {
+      "decision": "不在當前實作 helper `_gate_label(name: str) -> str`；保留為「若日後翻案補前綴」時的配套進場項。",
+      "rationale": "三處字串重複目前是事實的，helper 化屬提早一般化（YAGNI）；日後若要加第 4 個閘門、或標題翻案補前綴需集中管理時，再 helper 化。",
+      "rejected": "當下 helper 化——3 處字串飄移風險目前靠 inline 註解 + 模組 docstring + 反向測試三道鎖已足，helper 化屬 over-engineering。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.388866
+    },
+    {
+      "decision": "不在 `add(title=)` 標題補 `[tag]` 前綴；本任務 0 行業務邏輯改動。",
+      "rationale": "標題已含自然語言層級（人眼可辨）；機器端三個入口（return / note / detail）已覆蓋完整；翻案成本 = 3 個 f-string + 1 條新測試，可逆性極高。現在補屬鍍金。",
+      "rejected": "標題補前綴（`f\"[lint] 修復 lint 失敗：...\"`）——強化 grep 一致性但人眼欄位訊息密度下降，且需擴充現有 14 條測試覆蓋標題路徑。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888674
+    },
+    {
+      "decision": "將雙頻道合約文字同步寫進 `studio/autopilot.py` 模組 docstring，明列：閘門清單（lint/collect/test）、機器頻道位置（return/note/detail）使用 `[tag]`、人類頻道位置（fix task title）使用自然語言「修復 X 失敗：...」、翻案觸發條件（backlog UI 只秀標題、LLM regex 評估層級、grep 一致性需求）。",
+      "rationale": "模組 docstring 是讀代碼第一站，觸及率高於 test docstring；決策理由落字在源碼旁，git log 找得到。成本 1 段（5–8 行）。",
+      "rejected": "僅寫在 test docstring——測試 docstring 服務測試開發者，模組 docstring 服務所有人；前者覆蓋面太窄，回應高級工程師 #2 補強。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888683
+    },
+    {
+      "decision": "在 test docstring 補一句「閘門順序 = 源碼陳列順序；新增閘門時請同步補對應測試」；同步重述此為 loud failure（非 silent）——重排閘門時 `_gate_failure_branches()[:3]` 會讓斷言錯位而 fail，不會沉默通過。",
+      "rationale": "顯性化隱性假設；下個接手者加第 4 個閘門時不會漏測試；校正風險性質匹配實際行為。成本 1 行。",
+      "rejected": "在本任務修補 AST helper 用 `out = await _gate_X(clone)` 精確配對——成本約 10–15 行、需重驗 14 條合約、scope 飄移；當前 loud failure 已能攔下重排，沒事修等於製造風險。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888693
+    },
+    {
+      "decision": "不在當前實作 helper `_gate_label(name: str) -> str`；保留為「若日後翻案補前綴」或「加第 4 個閘門」時的配套進場項。",
+      "rationale": "三處字串重複目前靠 inline 註解 + 模組 docstring + 反向測試三道鎖已足；helper 化屬提早一般化（YAGNI）。日後翻案或擴充時再進場，避免現在 churn。",
+      "rejected": "當下 helper 化——目前無新閘門、無翻案需求，純粹為了「未來可能需要」而抽象，是過度設計。",
+      "session_id": "ap36daa41366",
+      "created_at": 1781581590.3888705
     }
   ]
 }
