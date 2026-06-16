@@ -1541,3 +1541,48 @@
 - 理由：三處字串重複目前靠 inline 註解 + 模組 docstring + 反向測試三道鎖已足；helper 化屬提早一般化（YAGNI）。日後翻案或擴充時再進場，避免現在 churn。
 - 否決方案：當下 helper 化——目前無新閘門、無翻案需求，純粹為了「未來可能需要」而抽象，是過度設計。
 
+## 技術選型維持**純 pytest + subprocess 黑盒**，沿用既有 `LC_ALL=C` + `GIT_TERMINAL_PROMPT=0` env 慣例，不引入新 fixture、不注入 TMPDIR、不 mock 環境。
+- 時間：2026-06-17 04:46
+- 理由：黑盒 = 改 script 行為時測試照樣反映真實契約；注入 TMPDIR 會從「契約斷言」漂成「mock 斷言」，scope 飄移。
+- 否決方案：pytest plugin / fixture-based 隔離 / mock subprocess —— 過度工程，與既有 `_run()` 風格斷裂。
+
+## WARN_FILE 路徑定位改為**「從 stdout 標頭宣告抓路徑」**，不用 `Path(TMPDIR).glob(...)` + mtime 比對。具體：`re.search(r"^# stderr warning 檔 : (\S+)", stdout, re.MULTILINE)` 抓 group(1) 即為 WARN_FILE 絕對路徑。
+- 時間：2026-06-17 04:46
+- 理由：(1) stdout 標頭的 `# stderr warning 檔 :` 行就是「宣告契約」的內容物——抓路徑是**順便複用**契約斷言的副產品，零重複邏輯；(2) 不重算 sanitized branch（`tr '/\\' '__'`）就不必在測試內重實作 bash 轉換；(3) 同檔不會抓錯（每次跑 stdout 指向自己的檔）；(4) 自動消解 mtime race（M4 修正）。
+- 否決方案：`Path(TMPDIR).glob("git-warnings-*.log")` + mtime 最新 —— 在 CI 平行跑 / 連跑時會選錯，且要重算 sanitized branch。
+
+## 模組邊界收斂為**兩條真契約 + 一條防呆**：(a) **宣告契約**——stdout 標頭含 `# stderr warning 檔 : <絕對路徑>` 行且路徑符合 `git-warnings-<sanitized_branch>-<UTC_TS>.log` 模式；(b) **落盤契約**——該宣告路徑在跑完後**確實存在於磁碟**（不一定非空，空檔 = 沒觸發 stderr 是合法結果）；(c) **分流契約（防呆）**——WARN_FILE 不含 stdout 業務標頭（如 `# verify-clean.sh 結構化輸出`），**docstring 明確標示此條目前為 vacuous truth（block-level `2> "$WARN_FILE"` 結構自然結果），重構成逐命令分流時會變真契約**。
+- 時間：2026-06-17 04:46
+- 理由：真契約 vs 結構自然結果的區分——M3 修正的落實。把測試精力集中在 a/b 兩條可被 script 重構 catch 的契約，c 條作為未來重構時的保險。
+- 否決方案：把 c 條當真契約寫（會誤導接手者以為已守護 script 邏輯）;完全砍掉 c 條（失去未來重構時的 catch 網）。
+
+## 守護測試品質紀律升級為**「正/負樣成對出現在同一組 parametrize case 內」**，形式採 `(present, absent, why_present, why_absent)` 四元組。每個 case 同時斷言 `present in source` 與 `absent not in source`，每個斷言附 `why_X` 註解。
+- 時間：2026-06-17 04:46
+- 理由：CONTRIBUTING.md:30 規範 + `tests/docs/test_qa_protection_docs.py:48-66` 慣例 + M2 修正。形式對齊既有 review 友善度，避免「額外加一條負樣」的誤讀。
+- 否決方案：每組 parametrize 額外加一條負樣斷言（形式上不對齊，會被 review 退件）。
+
+## 同步擴充 `tests/test_verify_clean_acceptance.py::test_no_untracked_residuals_in_worktree` 的 `ignored_untracked` 集合，加入 `tests/qa_test_verification_warning_contract.py`。
+- 時間：2026-06-17 04:46
+- 理由：**M1 blocker**——既有測試第 138-141 行的白名單只含自身 + 腳本，新測試檔在「建檔後、未 commit 前」的中間態會被 flag 為「未預期 untracked 殘留」。**翻案既有架構決策 5**（從「不擴充」改為「擴充 1 個元素」），理由：新測試與既有 2 條同性質（QA 工具造成的可預期污染），對稱處理是合約對齊的最小改動；且這是**白名單維護**而非**業務邏輯改動**，不違反「不動既有測試的業務邏輯」原則。
+- 否決方案：改執行順序為「commit 完才跑既有測試」（違反 dev 慣例）;創檔時立刻 commit（違反單一變更的 close-out 慣例）;砍掉 c 條防呆讓白名單問題不存在（防呆價值獨立於 M1）。
+
+## commit 粒度採**單一 commit、耦合意圖**，包含 2 個檔案變更：(1) 新檔 `tests/qa_test_verification_warning_contract.py`；(2) `tests/test_verify_clean_acceptance.py` 白名單 +1 元素。**不算 scope 飄移**——這 2 個變更屬同一意圖（「新增 WARN_FILE 警告契約守護測試 + 既有測試合約對齊」），拆 commit 必有中間態 fail。commit message: `test(contract): 新增 verify-clean WARN_FILE 警告分流契約守護 + 既有測試合約對齊 (ignored_untracked +1)`，附加 `Refs: scripts/verify-clean.sh 仍維持 untracked（既有白名單已收容，非本任務 scope）`。
+- 時間：2026-06-17 04:46
+- 理由：工程師「Refs 標示」建議採納，避免半年後翻案者誤以為是遺漏。
+- 否決方案：拆 2 個 commit（中間態會讓既有測試 fail）;合併 scripts/verify-clean.sh 入庫（scope 外，違反單一變更）。
+
+## 不引入 `_gate_label()` / `_run_verify_clean()` / `compute_sanitized_branch()` 等 helper——三處字串重複（`bash scripts/verify-clean.sh` 呼叫 1 次 / `re.search` 路徑抓取 1 次 / `assert 檔案存在` 1 次）目前只在本檔出現，helper 化屬提早一般化。日後若加第 4 條子契約、或驗收測試家族擴充到 3 檔以上時再 helper 化（YAGNI）。
+- 時間：2026-06-17 04:46
+- 理由：既有架構決策 7 沿用。
+- 否決方案：立即 helper 化（與 YAGNI 衝突）;共用既有 `_run()`（既有 `_run` 是 git 指令導向，`bash scripts/verify-clean.sh` 是 script 呼叫，介面語意不同）。
+
+## 測試 docstring 明確標明**職責邊界與不守護事項**：「本測試守護 WARN_FILE 的宣告 / 落盤 / 分流三條契約。**不守護**：(i) 觸發後 stderr 內容是否正確路由至 WARN_FILE（若 `cat $X_ERR >> $WARN_FILE` 被誤改為 `cat $X_ERR`，本測試不會 catch）；(ii) fetch 失敗情境；(iii) close-out 文件撰寫；(iv) 假性 diff 排除政策。這些屬既有測試 / 其他任務範疇。」
+- 時間：2026-06-17 04:46
+- 理由：高工提醒「接手者誤以為已守護」風險——明確聲明不守護事項，避免半年後誤判守護範圍。
+- 否決方案：在測試本體加多條「觸發後內容路由」斷言（要 mock 環境，太脆）;完全不寫 docstring（違反既有證據導向風格）。
+
+## 本機驗收順序（沿用 CONTRIBUTING dev 慣例 + 工程師保險斷言）：`ruff check tests/qa_test_verification_warning_contract.py tests/test_verify_clean_acceptance.py` → `ruff format --check` → `pytest -v tests/qa_test_verification_warning_contract.py`（單檔先綠）→ `pytest -v tests/qa_test_verification_warning_contract.py tests/test_verify_clean_acceptance.py`（合跑不迴歸）→ `git diff --cached --stat`（確認 staged 只有 2 檔）→ `git status --porcelain`（手動確認無新 `??`）→ commit → `git status --porcelain`（commit 後確認無 `??` 殘留，迴歸保險——不寫進測試本體）→ 整體 `pytest -q` 防迴歸。**任一步紅則不 commit**。
+- 時間：2026-06-17 04:46
+- 理由：工程師「commit 後 git status 保險斷言」採納為驗收步驟（不放進測試本體，避免污染職責）+ 高工 `git diff --cached --stat` 採納。
+- 否決方案：先 commit 再驗收（要 revert 成本）;把 git status 保險寫進測試本體（污染守護職責）。
+
