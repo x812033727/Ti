@@ -745,7 +745,24 @@ async def run_one_task(task: dict) -> None:
         cwd=Path(clone),
         repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
     )
-    result = await session.run(requirement)
+    try:
+        result = await asyncio.wait_for(
+            session.run(requirement), timeout=config.AUTOPILOT_SESSION_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        # session 在回合之間卡死（per-turn 守衛守不到）：cancel 已觸發 run() 的 finally
+        # 收掉所有專家子程序，這裡只需收尾並判 failed，讓主迴圈取下一個 pending。
+        log.warning(
+            "任務 #%s session %s 超過 %ds 未完成，判定卡死、強制收尾",
+            task["id"], sid, config.AUTOPILOT_SESSION_TIMEOUT,
+        )
+        with contextlib.suppress(Exception):
+            history.finish_session(sid)
+        backlog.set_status(
+            task["id"], "failed",
+            note=f"[timeout] session 逾時 {config.AUTOPILOT_SESSION_TIMEOUT}s 卡死",
+        )
+        return
     history.finish_session(sid)
 
     # 回饋：討論發現的後續任務寫回 backlog（優先含 priority/type 的結構化版本）
