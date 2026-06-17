@@ -379,6 +379,9 @@ function handleEvent(ev) {
     case "ci_result":
       addCI(p);
       break;
+    case "token_usage":
+      // 統計事件由後端 history/meta 聚合，前端即時串流不用顯示。
+      break;
     case "done":
       // 持續改良模式：迴圈內每輪討論的 done 只是「一輪結束」，迴圈總結（帶 improve）才收尾。
       if (improveMode && !p.improve) {
