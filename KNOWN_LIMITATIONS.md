@@ -2,4 +2,4 @@
 
 本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:
 
-- [ ] 定位「警示塊政策選項」在 agenda_plan payload／history jsonl 的確切欄位（附範例值）；若查無此資料，停止並回報為 blocker，不自行擴張成新注入管線
+- [ ] 盤點 INVENTORY_task1.md／README.md／ci.yml 等的追蹤與提交狀態，將「已提交的不相關檔」明列為範圍外待辦交回 PM
