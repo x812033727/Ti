@@ -93,11 +93,7 @@ async def health_check(
     use_isactive = shutil.which("systemctl") is not None  # 無 systemd → fail-open
     for _ in range(attempts):
         if use_isactive:
-            _rc, isactive_out = await _run(["systemctl", "is-active", service], timeout=5)
-            state = isactive_out.strip()
-            if state not in ("active", "activating"):
-                # failed / inactive / unknown / stdout 空（查詢失敗）→ 早退
-                return False, (f"服務啟動後即退出（is-active={state or 'unknown'}），未回應 {url}")
+            # 早退判定暫時移除（鎖死驗證用）
         rc, out = await _run(
             ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", url],
             timeout=10,
