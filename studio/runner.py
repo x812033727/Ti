@@ -367,11 +367,11 @@ def parse_run_command(text: str) -> str | None:
 
 
 def resolve_demo_command(cwd: Path | str, declared: str | None) -> str | None:
-    """決定 Demo 要跑什麼：優先用宣告的執行指令，否則偵測入口跑 python。"""
+    """決定 Demo 要跑什麼：優先用宣告的執行指令，否則偵測入口跑 python3。"""
     if declared:
         return declared
     entry = detect_entrypoint(cwd)
-    return f"python {entry}" if entry else None
+    return f"python3 {entry}" if entry else None
 
 
 def parse_demo_url(text: str) -> str | None:

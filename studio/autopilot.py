@@ -7,23 +7,6 @@
 
 獨立於 ti.service 跑,所以重佈（restart ti.service）不會打斷自己；狀態存在 backlog 檔,
 崩潰/重啟可續跑。
-
-三閘門回報／backlog 標記的「雙頻道合約」：
-  機器頻道（`[tag]` 方括號前綴）鎖在：
-    - 三閘門函式回傳值（`_gate_lint` / `_gate_collect_without_sdk` / `_gate_tests`）
-    - 對應 `backlog.set_status(..., note=...)` 的 note 開頭
-    - 對應 `backlog.add(..., detail=out[-500:])` 的 detail（detail 源頭是帶前綴的 `out`）
-  人類頻道（自然語言「修復 lint 失敗 / 修復缺 SDK collection / 修復測試失敗」）
-  鎖在 `backlog.add(..., title=...)` 標題欄位。
-
-  兩頻道刻意不強制同語法：機器頻道服務 grep / log 解析 / AST / 自動化（必帶前綴以
-  程式化過濾）；人類頻道服務人眼 / backlog UI / 決策（保留「修復」「失敗」自然語意）。
-  翻案觸發條件（任一發生時才把機器前綴補進標題）：
-    1. backlog UI 只秀標題不秀 note／detail
-    2. 有 LLM 依 regex 評估任務層級
-    3. 出現「跨工具 grep 標題找閘門層級」的一致性需求
-  當前 0 行業務邏輯改動：標題已含自然語言層級（人眼可辨），機器端三入口已覆蓋。
-  守護測試 `tests/autopilot/test_qa_task3b_gate_level_labels.py` 鎖此合約。
 """
 
 from __future__ import annotations
@@ -762,24 +745,7 @@ async def run_one_task(task: dict) -> None:
         cwd=Path(clone),
         repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
     )
-    try:
-        result = await asyncio.wait_for(
-            session.run(requirement), timeout=config.AUTOPILOT_SESSION_TIMEOUT
-        )
-    except asyncio.TimeoutError:
-        # session 在回合之間卡死（per-turn 守衛守不到）：cancel 已觸發 run() 的 finally
-        # 收掉所有專家子程序，這裡只需收尾並判 failed，讓主迴圈取下一個 pending。
-        log.warning(
-            "任務 #%s session %s 超過 %ds 未完成，判定卡死、強制收尾",
-            task["id"], sid, config.AUTOPILOT_SESSION_TIMEOUT,
-        )
-        with contextlib.suppress(Exception):
-            history.finish_session(sid)
-        backlog.set_status(
-            task["id"], "failed",
-            note=f"[timeout] session 逾時 {config.AUTOPILOT_SESSION_TIMEOUT}s 卡死",
-        )
-        return
+    result = await session.run(requirement)
     history.finish_session(sid)
 
     # 回饋：討論發現的後續任務寫回 backlog（優先含 priority/type 的結構化版本）
@@ -804,7 +770,6 @@ async def run_one_task(task: dict) -> None:
     ok, out = await _gate_lint(clone)
     if not ok:
         backlog.set_status(task["id"], "failed", note="[lint] 閘門未通過")
-        # 標題頻道：自然語言（見模組 docstring 雙頻道合約）
         backlog.add(f"修復 lint 失敗：{task['title']}", detail=out[-500:], source="discovered")
         log.info("任務 #%s lint 未過,標 failed 並補修復任務", task["id"])
         return
@@ -813,7 +778,6 @@ async def run_one_task(task: dict) -> None:
     ok, out = await _gate_collect_without_sdk(clone)
     if not ok:
         backlog.set_status(task["id"], "failed", note="[collect] 無 SDK collection 失敗")
-        # 標題頻道：自然語言（見模組 docstring 雙頻道合約）
         backlog.add(
             f"修復缺 SDK collection：{task['title']}", detail=out[-500:], source="discovered"
         )
@@ -824,7 +788,6 @@ async def run_one_task(task: dict) -> None:
     ok, out = await _gate_tests(clone)
     if not ok:
         backlog.set_status(task["id"], "failed", note="[test] 測試未通過")
-        # 標題頻道：自然語言（見模組 docstring 雙頻道合約）
         backlog.add(f"修復測試失敗：{task['title']}", detail=out[-500:], source="discovered")
         log.info("任務 #%s 測試未過,標 failed 並補修復任務", task["id"])
         return
