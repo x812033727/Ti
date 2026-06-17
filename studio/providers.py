@@ -210,9 +210,15 @@ class CodexExpert:
         with contextlib.suppress(Exception):
             await proc.stdin.wait_closed()
 
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        last_activity = started_at
+
         async def _stdout() -> None:
+            nonlocal last_activity
             assert proc is not None and proc.stdout is not None
             async for raw in proc.stdout:
+                last_activity = loop.time()
                 line = raw.decode("utf-8", "replace").strip()
                 if not line:
                     continue
@@ -241,17 +247,56 @@ class CodexExpert:
 
         stdout_task = asyncio.create_task(_stdout())
         stderr_task = asyncio.create_task(_stderr())
+        timeout_reason = ""
         try:
-            timeout = config.TURN_HARD_TIMEOUT or None
-            await asyncio.wait_for(proc.wait(), timeout=timeout)
+            while True:
+                if proc.returncode is not None:
+                    break
+                now = loop.time()
+                deadlines: list[tuple[str, float]] = []
+                if config.TURN_HARD_TIMEOUT:
+                    deadlines.append(("總時長", started_at + float(config.TURN_HARD_TIMEOUT) - now))
+                if config.TURN_IDLE_TIMEOUT:
+                    deadlines.append(
+                        ("閒置", last_activity + float(config.TURN_IDLE_TIMEOUT) - now)
+                    )
+                if not deadlines:
+                    await proc.wait()
+                    break
+                deadline_reason, wait_s = min(deadlines, key=lambda item: item[1])
+                if wait_s <= 0:
+                    timeout_reason = deadline_reason
+                    raise TimeoutError
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=wait_s)
+                    break
+                except TimeoutError:
+                    now = loop.time()
+                    hard_expired = bool(
+                        config.TURN_HARD_TIMEOUT
+                        and now - started_at >= float(config.TURN_HARD_TIMEOUT)
+                    )
+                    idle_expired = bool(
+                        config.TURN_IDLE_TIMEOUT
+                        and now - last_activity >= float(config.TURN_IDLE_TIMEOUT)
+                    )
+                    if hard_expired:
+                        timeout_reason = "總時長"
+                        raise
+                    if idle_expired:
+                        timeout_reason = "閒置"
+                        raise
         except TimeoutError:
             self._terminate(proc)
             await proc.wait()
             with contextlib.suppress(Exception):
                 await stdout_task
             stderr_tail = await stderr_task
+            limit = (
+                config.TURN_IDLE_TIMEOUT if timeout_reason == "閒置" else config.TURN_HARD_TIMEOUT
+            )
             return await self._system_note(
-                f"【系統】Codex CLI 發言逾時中止（總時長上限 {config.TURN_HARD_TIMEOUT:g} 秒）。",
+                f"【系統】Codex CLI 發言逾時中止（{timeout_reason or '總時長'}上限 {float(limit):g} 秒）。",
                 broadcast,
             )
         stdout_error: Exception | None = None
