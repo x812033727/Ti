@@ -5,9 +5,12 @@
 
 ## 環境建置
 
-需要 Python 3.10+。本文件指令以 Linux/macOS 為準；Windows 請將 `.venv/bin/python` 改為 `.venv\Scripts\python`。
+需要 Python 3.11+。本文件指令以 Linux/macOS 為準；Windows 請將 `.venv/bin/python` 改為 `.venv\Scripts\python`。
+Windows 若 `python3` 找不到，可改用 `py` 啟動器（想鎖 3.x 用 `py -3`）。
 
 建 venv 階段尚無 `.venv`，只能用系統 Python，故用 `python3`；建好後一律走 venv 內直譯器 `.venv/bin/python`。
+本專案 shell 範例（文件 demo、shell script 範例）統一使用 `python3`；venv 內執行檔路徑
+（`.venv/bin/python` / `.venv\Scripts\python`）與套件名、image tag 維持原樣。
 
 ```bash
 python3 -m venv .venv                                   # 建 venv（此階段尚無 .venv，故用系統 python3）

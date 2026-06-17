@@ -67,11 +67,15 @@ def main() -> int:
         corrections=corrections,
         edges=edges,
     )
-    ev_dict = ev.to_dict() if hasattr(ev, "to_dict") else {
-        "type": ev.type.value,
-        "session_id": ev.session_id,
-        "payload": ev.payload,
-    }
+    ev_dict = (
+        ev.to_dict()
+        if hasattr(ev, "to_dict")
+        else {
+            "type": ev.type.value,
+            "session_id": ev.session_id,
+            "payload": ev.payload,
+        }
+    )
     history.record_event(sid, ev_dict)
 
     # 讀回 jsonl、印出 payload 結構。
@@ -85,14 +89,11 @@ def main() -> int:
 
     # 核心定位：criteria 在 agenda 子題內、型別、範例值
     print("\n[CRITERIA 欄位定位]")
-    print(f"  - payload 結構: payload['agenda'][i] 為子題 dict")
+    print("  - payload 結構: payload['agenda'][i] 為子題 dict")
     print(f"  - 子題 keys: {sorted(payload['agenda'][0].keys())}")
     for i, item in enumerate(payload["agenda"]):
         crit = item.get("criteria")
-        print(
-            f"  - agenda[{i}]['criteria']: type={type(crit).__name__}, "
-            f"value={crit!r}"
-        )
+        print(f"  - agenda[{i}]['criteria']: type={type(crit).__name__}, value={crit!r}")
 
     # 驗證 criteria 不在 top-level payload、且 tasks/assignments 不含 criteria
     print("\n[CRITERIA 不在以下位置]")
@@ -118,8 +119,12 @@ def main() -> int:
     print("\n[結論]")
     print("  - 欄位: payload['agenda'][i]['criteria']")
     print("  - 型別: str")
-    print("  - 範例值: 'pytest 全綠 + 邊界值覆蓋（除以零、溢位）' / 'curl 全流程 2xx | README 範例可重現'")
-    print("  - 前端現況: app.js:325-339 漏讀 a.criteria → criteria 進 history 不見於畫面（症狀確認）")
+    print(
+        "  - 範例值: 'pytest 全綠 + 邊界值覆蓋（除以零、溢位）' / 'curl 全流程 2xx | README 範例可重現'"
+    )
+    print(
+        "  - 前端現況: app.js:325-339 漏讀 a.criteria → criteria 進 history 不見於畫面（症狀確認）"
+    )
     return 0
 
 

@@ -63,7 +63,6 @@ from studio.flow import parse_agenda
 from studio.orchestrator import StudioSession
 from studio.roles import BY_KEY, Role
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 E2E_PATH = REPO_ROOT / "tests" / "test_offline_agenda_e2e.py"
 # 與既有 tests/core/test_agenda_persistence.py:34 同款 PM 拆解 fixture（資料層／介面層）。
@@ -195,9 +194,11 @@ async def test_real_orchestrator_run_locates_criteria_and_yields_real_example_va
     print()
     print("=" * 72)
     print("[任務 #1 結論] 政策選項對應 payload 欄位名：")
-    print(f"    payload['agenda'][i]['criteria']")
+    print("    payload['agenda'][i]['criteria']")
     print("[任務 #1 結論] 真實範例值（從真實 orchestrator 跑出）：")
-    for i, (title, crit) in enumerate(zip([a["title"] for a in p["agenda"]], real_examples)):
+    for i, (title, crit) in enumerate(
+        zip([a["title"] for a in p["agenda"]], real_examples, strict=False)
+    ):
         print(f"    agenda[{i}] title={title!r}  criteria={crit!r}")
     print(f"    session_id 範例: {sid}")
     print(f"    jsonl 路徑: {tmp_path / (sid + '.jsonl')}")
@@ -246,9 +247,7 @@ def test_parse_agenda_schema_includes_criteria_even_when_pm_omits_third_segment(
 
 
 @pytest.mark.asyncio
-async def test_criteria_boundary_not_in_other_payload_segments(
-    tmp_path, monkeypatch
-):
+async def test_criteria_boundary_not_in_other_payload_segments(tmp_path, monkeypatch):
     """criteria 欄位位置邊界。
 
     論證：criteria 只在 agenda 子題內，**不在** top-level payload、tasks、
@@ -349,16 +348,14 @@ def test_existing_e2e_does_not_assert_criteria_content():
     text = E2E_PATH.read_text(encoding="utf-8")
 
     # 對 criteria 內容的明確斷言（字串比對、in list 等）
-    has_criteria_content_assertion = bool(
-        re.search(r'\.criteria\s*([!=]=\s*["\']|in\s*\[)', text)
-    )
+    has_criteria_content_assertion = bool(re.search(r'\.criteria\s*([!=]=\s*["\']|in\s*\[)', text))
     # 對 criteria 鍵存在的斷言（隱性覆蓋：payload 重播比對）
     has_criteria_key_mention = "criteria" in text
 
     # 對 assignee / title / corrections 的明確斷言（對照組：證明既有 e2e 有守護其他欄位）
     has_title_assertion = bool(re.search(r'\.title\s*[!=]=\s*["\']', text))
     has_assignee_assertion = bool(re.search(r'\.assignee\s*[!=]=\s*["\']', text))
-    has_corrections_assertion = bool(re.search(r'corrections\s*[!=]=\s*\[', text))
+    has_corrections_assertion = bool(re.search(r"corrections\s*[!=]=\s*\[", text))
 
     report = {
         "criteria_內容明確斷言": has_criteria_content_assertion,
@@ -367,7 +364,9 @@ def test_existing_e2e_does_not_assert_criteria_content():
         "assignee_內容明確斷言（對照組）": has_assignee_assertion,
         "corrections_內容明確斷言（對照組）": has_corrections_assertion,
     }
-    print(f"\n[meta] 既有 e2e 對 criteria 覆蓋報告：\n{json.dumps(report, ensure_ascii=False, indent=2)}")
+    print(
+        f"\n[meta] 既有 e2e 對 criteria 覆蓋報告：\n{json.dumps(report, ensure_ascii=False, indent=2)}"
+    )
 
     # 此測試只記錄事實、不修補；無論如何都綠
     assert isinstance(has_criteria_content_assertion, bool)
@@ -389,7 +388,7 @@ def test_one_line_locator_conclusion_printable(capsys):
     """
     print()
     print("# 任務 #1 結論（blocker gate 通過）")
-    print(f"# 政策選項對應 payload 欄位名：payload['agenda'][i]['criteria']")
+    print("# 政策選項對應 payload 欄位名：payload['agenda'][i]['criteria']")
     print(f"# 真實範例值（orchestrator 跑 PM_PLAN_LOCATOR 得到）：{list(EXPECTED_CRITERIA)}")
 
     captured = capsys.readouterr().out

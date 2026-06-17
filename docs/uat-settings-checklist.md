@@ -16,7 +16,7 @@
 2. 開啟瀏覽器，進入 <http://localhost:8000>。
 3. 完成登入（如系統要求帳號／密碼）。
 4. 點右上角 **⚙️ 設定** 按鈕，開啟設定面板。
-5. 確認面板內欄位依分組顯示：**一般 / Claude / OpenAI / GitHub / 並行 / 進階**，下方另有 **重新部署** 與 **變更密碼** 區。
+5. 確認面板內欄位依分組顯示：**一般 / Claude / OpenAI / MiniMax / Codex / 混用（每角色 provider） / GitHub / 並行 / 進階**，下方另有 **重新部署** 與 **變更密碼** 區。
 
 > 備註：設定會寫入伺服器的 `.env`，儲存後下次討論即生效。秘密欄位（API Key／Token）只顯示「是否已設定」，不會顯示明文。
 
@@ -59,8 +59,8 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 1.1 | 頁面載入與現值顯示 | 在已登入頁面點右上角「⚙️ 設定」按鈕 | 設定面板（彈窗）出現，顯示一份設定表單與「儲存」按鈕，右上角有「✕」關閉鈕 | | | |
 | 1.2 | 頁面載入與現值顯示 | 觀察面板剛開啟到表單出現的瞬間 | 表單載入時短暫出現「載入中…」字樣，隨後被實際欄位取代 | | | 載入很快時可能一閃即過，屬正常 |
-| 1.3 | 頁面載入與現值顯示 | 由上往下看面板裡的分組標題 | 依序出現分組標題：「一般」→「Claude」→「OpenAI」→「MiniMax」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」 | | | |
-| 1.4 | 頁面載入與現值顯示 | 看「一般」分組 | 出現「後端 Provider」下拉選單，且目前值（claude／openai／minimax）已被選取顯示 | | | |
+| 1.3 | 頁面載入與現值顯示 | 由上往下看面板裡的分組標題 | 依序出現分組標題：「一般」→「Claude」→「OpenAI」→「MiniMax」→「Codex」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」 | | | |
+| 1.4 | 頁面載入與現值顯示 | 看「一般」分組 | 出現「後端 Provider」下拉選單，且目前值（claude／openai／minimax／codex）已被選取顯示 | | | |
 | 1.5 | 頁面載入與現值顯示 | 看一個非秘密的文字欄位（例如 Claude「主力模型」） | 欄位內直接顯示目前 `.env` 已設定的值（例如 claude-opus-4-8）；若未設定則顯示灰色提示範例 | | | |
 | 1.6 | 頁面載入與現值顯示 | 看一個**已設定**的秘密欄位（例如已填過的 Claude API Key） | 欄位內**不顯示任何明文或圓點密碼**，呈空白，灰色提示字為「已設定（留空＝不變更）」 | | | 高風險：不可外洩既有金鑰 |
 | 1.7 | 頁面載入與現值顯示 | 看一個**尚未設定**的秘密欄位（例如未填過的 GitHub Token） | 欄位呈空白，灰色提示字為該欄範例（例如 ghp_...），**不會**出現「已設定」字樣 | | | 用來區分「已設定 vs 未設定」 |
@@ -73,8 +73,8 @@
 
 > 測試規則（依風險展開，避免清單膨脹）：
 > - **高風險欄**（Provider／秘密金鑰／並行支線數）全套展開正常／空／邊界／非法四象限。
-> - **Claude 模型欄**為 select（官方模型 ID 白名單）；**OpenAI 模型欄**為 combo（可從建議清單選、也可自由輸入本地模型名）。
-> - **低風險純文字／combo 欄**（OpenAI 模型名稱、Base URL、發佈 repo）收斂為「正常／空／超長」三條，並以代表欄位示範、其餘同規則。
+> - **Claude 模型欄**為 select（官方模型 ID 白名單）；**OpenAI／MiniMax／Codex 模型欄**為 combo（可從建議清單選、也可自由輸入模型名）。
+> - **低風險純文字／combo 欄**（OpenAI／MiniMax／Codex 模型名稱、Base URL、發佈 repo）收斂為「正常／空／超長」三條，並以代表欄位示範、其餘同規則。
 > - 本頁文字欄位**沒有**前端即時格式驗證（不會跳紅字），輸入合法與否多在「儲存後是否生效」才看得出來；驗收以「能輸入、能儲存、版面不變形」為主，預期行為如各列所述。
 > - select 在畫面上只能選到合法選項；「非法選項」需用瀏覽器開發者工具竄改 option 或直接呼叫 `POST /api/settings` 模擬，預期後端擋下。
 
@@ -83,8 +83,9 @@
 | 2.1 | 後端 Provider（select，高風險） | 展開「後端 Provider」下拉，選 claude | 可選取 claude，下拉顯示 claude | | | 正常值 |
 | 2.2 | 後端 Provider（select，高風險） | 展開「後端 Provider」下拉，選 openai | 可選取 openai，下拉顯示 openai | | | 正常值 |
 | 2.2a | 後端 Provider（select，高風險） | 展開「後端 Provider」下拉，選 minimax | 可選取 minimax，下拉顯示 minimax（生效後改走 MiniMax 群組的金鑰／模型） | | | 正常值 |
-| 2.3 | 後端 Provider（select，高風險） | 下拉只有 claude／openai／minimax 三個選項，確認無空白選項可選 | 下拉內僅 claude、openai、minimax，無空值可選（select 本身不會是空的） | | | 空值象限：UI 不允許空 |
-| 2.4 | 後端 Provider（select，高風險） | 用開發者工具把 option 改成 `bogus`（或直接 `POST /api/settings` 送 `TI_PROVIDER=bogus`）後儲存，再重開面板 | 非法值被後端忽略不寫入，Provider 仍維持原本合法值（claude／openai／minimax） | | | 非法值：後端白名單擋下 |
+| 2.2b | 後端 Provider（select，高風險） | 展開「後端 Provider」下拉，選 codex | 可選取 codex，下拉顯示 codex（生效後改走伺服器上的 Codex CLI 登入／模型設定） | | | 正常值 |
+| 2.3 | 後端 Provider（select，高風險） | 下拉只有 claude／openai／minimax／codex 四個選項，確認無空白選項可選 | 下拉內僅 claude、openai、minimax、codex，無空值可選（select 本身不會是空的） | | | 空值象限：UI 不允許空 |
+| 2.4 | 後端 Provider（select，高風險） | 用開發者工具把 option 改成 `bogus`（或直接 `POST /api/settings` 送 `TI_PROVIDER=bogus`）後儲存，再重開面板 | 非法值被後端忽略不寫入，Provider 仍維持原本合法值（claude／openai／minimax／codex） | | | 非法值：後端白名單擋下 |
 | 2.5 | Claude API Key（password／秘密，高風險） | 在 Claude API Key 欄輸入一組正常金鑰（如 sk-ant-xxxx）後儲存 | 顯示「已儲存」提示；重開面板該欄為空白、提示「已設定（留空＝不變更）」，不顯示明文 | | | 正常值＋不外洩 |
 | 2.6 | Claude API Key（password／秘密，高風險） | 在**已設定**的 Claude API Key 欄留空，直接儲存 | 既有金鑰不被清空（留空＝不變更）；重開仍顯示「已設定」 | | | 空值象限（高風險，與④呼應） |
 | 2.7 | Claude API Key（password／秘密，高風險） | 在 Claude API Key 欄貼上一段超長字串（例如 2000 字元）後儲存 | 欄位與面板版面不變形（不出現水平捲軸或溢出破版）；可儲存，重開顯示「已設定」 | | | 邊界：超長輸入 |
@@ -103,11 +104,13 @@
 | 2.20 | OpenAI 模型欄（combo，低風險） | 將「OpenAI 主力模型」清空儲存；再貼超長字串（如 2000 字元）儲存 | 可清空（非秘密欄留空＝清空該設定）；超長輸入版面不變形、可儲存 | | | 空值＋超長輸入 |
 | 2.21 | Base URL／發佈 repo（文字，低風險） | 對「OpenAI Base URL」「發佈目標 repo」各做正常值、清空、超長三項 | 三項皆可輸入／清空／儲存，版面不變形；本頁不驗 URL 或 owner/repo 格式 | | | 低風險文字欄收斂規則 |
 | 2.21a | MiniMax 模型欄（combo）／Base URL（文字，低風險） | 「MiniMax 主力模型」從建議清單選 MiniMax-M3 儲存，再手動輸入清單外名稱儲存；「MiniMax Base URL」做正常值／清空／超長 | combo 兩種方式皆可存、不限建議清單；Base URL 可輸入／清空／儲存且版面不變形（清空後回預設端點） | | | combo＋低風險文字欄；快速模型同規則 |
+| 2.21b | Codex 模型欄（combo） | 「Codex 主力模型」從建議清單選 gpt-5.5 儲存，再手動輸入清單外名稱儲存；「Codex 快速模型」同規則 | combo 兩種方式皆可存、不限建議清單；清空代表沿用 Codex CLI 自身預設模型，版面不變形 | | | combo：建議清單＋自由輸入 |
+| 2.21c | Codex Sandbox 欄（select） | 「Codex Sandbox 模式」選 auto／read-only／workspace-write／danger-full-access，「Codex 完全停用沙盒／核准」選 0／1；另用 `POST /api/settings` 送非法值：`TI_CODEX_SANDBOX=bogus`、`TI_CODEX_BYPASS_SANDBOX=2` 後重開面板 | 合法選項可儲存；非法值被後端忽略，`TI_CODEX_SANDBOX` 與 `TI_CODEX_BYPASS_SANDBOX` 維持原本合法值 | | | 正常值＋非法值：後端白名單擋下 |
 | 2.22 | 進階流程開關（select 0/1，低風險） | 對「需求澄清／卡關討論／異議檢查／共用筆記／跨場次教訓／反思記憶／子進程資源上限／知識沉澱／產品藍圖／架構決策記錄／實作中即時研究」任一下拉，於 0 與 1 間切換並儲存 | 可切換並儲存成功；重開顯示所選值（下次討論生效） | | | 0/1 正常值 |
 | 2.23 | 客觀驗收閘門／單輪自我精修／架構討論模式（select 固定選項） | 「客觀驗收閘門」選 0／1／strict，「單輪自我精修」選 0～3，「架構討論模式」選 legacy／round_robin／parallel，分別儲存 | 閘門可在 0、1、strict 間切換；自我精修可選 0～3；討論模式可在三選項間切換；皆儲存成功、重開顯示所選值 | | | 正常值＋邊界（固定選項集） |
 | 2.24 | 進階組非法選項（後端白名單） | 用 `POST /api/settings` 送非法值：`TI_CLARIFY`／`TI_HUDDLE`／`TI_CRITIC`／`TI_NOTES`／`TI_LESSONS`／`TI_REFLEXION`／`TI_RLIMITS`／`TI_KNOWLEDGE`／`TI_BLUEPRINT`／`TI_ADR`／`TI_RESEARCH_TOOLS`（即時研究）非 0/1、`TI_OBJECTIVE_GATE` 非 0/1/strict、`TI_SELF_REFINE_ITERS` 非 0～3、`TI_DISCUSS_MODE`（架構討論模式）非 legacy/round_robin/parallel，後重開面板 | 非法值一律被後端忽略，各進階開關（含需求澄清／閘門／自我精修／討論模式／資源上限／知識沉澱／產品藍圖／架構決策記錄／即時研究）維持原值 | | | 非法值：後端白名單擋下 |
 | 2.25 | 角色模型欄（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_MODEL_PM`／`TI_MODEL_ENGINEER`／`TI_MODEL_QA`／`TI_MODEL_SENIOR`／`TI_MODEL_RESEARCHER`／`TI_MODEL_ARCHITECT`／`TI_MODEL_SECURITY`／`TI_MODEL_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色模型維持原值（auto＝沿用主力/快速規則）；帶「（推薦）」尾綴的選項與「✨ 套用推薦模型」按鈕可一鍵填入推薦配置 | | | 非法值：後端白名單擋下 |
-| 2.26 | 每角色 provider 混用（select，8 欄，正常） | 在「混用（每角色 provider）」分組把某角色（如「工程師 provider」）選 claude、另一角色（如「專案經理 provider」）選 minimax，其餘留 auto，儲存 | 可逐角色選 auto／claude／openai／minimax 並儲存；重開顯示所選值（auto＝沿用上方全域 Provider，達成 Claude／MiniMax 混用） | | | 正常值＋邊界（固定選項集） |
+| 2.26 | 每角色 provider 混用（select，8 欄，正常） | 在「混用（每角色 provider）」分組把某角色（如「工程師 provider」）選 codex、另一角色（如「專案經理 provider」）選 minimax，其餘留 auto，儲存 | 可逐角色選 auto／claude／openai／minimax／codex 並儲存；重開顯示所選值（auto＝沿用上方全域 Provider，達成 Claude／MiniMax／Codex 混用） | | | 正常值＋邊界（固定選項集） |
 | 2.27 | 每角色 provider 混用（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_PROVIDER_PM`／`TI_PROVIDER_ENGINEER`／`TI_PROVIDER_QA`／`TI_PROVIDER_SENIOR`／`TI_PROVIDER_RESEARCHER`／`TI_PROVIDER_ARCHITECT`／`TI_PROVIDER_SECURITY`／`TI_PROVIDER_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色 provider 維持原值（auto＝沿用全域） | | | 非法值：後端白名單擋下 |
 
 ## ③ 儲存／取消／重新部署／改密碼

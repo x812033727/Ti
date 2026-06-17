@@ -82,6 +82,7 @@ def finish_session(session_id: str) -> dict | None:
     if parallel:
         meta["parallel"] = parallel  # 供 /api/metrics 聚合並行可觀測性
     meta["scorecard"] = _derive_scorecard(events, meta)  # 供 /api/metrics 聚合成果記分卡
+    meta["token_usage"] = _derive_token_usage(events)  # 供 /api/usage 聚合 provider/model 成本
     _write_meta(session_id, meta)
     # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
     # 自己回收掉）；回收失敗絕不影響本次收尾。
@@ -171,6 +172,64 @@ def _derive_scorecard(events: list[dict], meta: dict) -> dict:
     if meta.get("finished_at") and meta.get("started_at"):
         sc["duration_s"] = round(meta["finished_at"] - meta["started_at"], 1)
     return sc
+
+
+def _blank_token_usage() -> dict:
+    return {"prompt": 0, "completion": 0, "total": 0, "cost_usd": 0.0, "calls": 0}
+
+
+def _int_token(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _add_token_usage(dst: dict, prompt: int, completion: int, total: int, cost_usd) -> None:
+    dst["prompt"] += prompt
+    dst["completion"] += completion
+    dst["total"] += total
+    if cost_usd is not None:
+        try:
+            dst["cost_usd"] += float(cost_usd)
+        except (TypeError, ValueError):
+            pass
+    dst["calls"] += 1
+
+
+def _derive_token_usage(events: list[dict]) -> dict:
+    """從 token_usage 事件彙總 provider/model/role 維度的用量。
+
+    cost_usd 只有 provider SDK 回報時才加總；None 代表未知成本，不影響 token 計數。
+    """
+    total = _blank_token_usage()
+    by_provider: dict[str, dict] = {}
+    by_model: dict[str, dict] = {}
+    by_role: dict[str, dict] = {}
+    for ev in events:
+        if ev.get("type") != "token_usage":
+            continue
+        p = ev.get("payload") or {}
+        prompt = _int_token(p.get("prompt_tokens"))
+        completion = _int_token(p.get("completion_tokens"))
+        event_total = _int_token(p.get("total_tokens")) or prompt + completion
+        cost_usd = p.get("cost_usd")
+        provider = str(p.get("provider") or "unknown")
+        model = str(p.get("model") or "unknown")
+        role = str(p.get("speaker") or "unknown")
+        for bucket in (
+            total,
+            by_provider.setdefault(provider, _blank_token_usage()),
+            by_model.setdefault(model, _blank_token_usage()),
+            by_role.setdefault(role, _blank_token_usage()),
+        ):
+            _add_token_usage(bucket, prompt, completion, event_total, cost_usd)
+    return {
+        "total": total,
+        "by_provider": by_provider,
+        "by_model": by_model,
+        "by_role": by_role,
+    }
 
 
 def _derive_parallel(events: list[dict]) -> dict:

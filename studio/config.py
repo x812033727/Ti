@@ -39,8 +39,8 @@ def _env_float(name: str, default: float) -> float:
 
 
 # --- Provider / 模型 ----------------------------------------------------
-# 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）、openai（含 OpenAI 相容/本地模型），
-# 或 minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面，與 openai 共用 function-calling 工具迴圈）。
+# 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）、openai（含 OpenAI 相容/本地模型）、
+# minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面），或 codex（Codex CLI 非互動模式）。
 PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
 
 # Claude 模型 ID。PM / 高級工程師需要較強的推理；工程師 / 驗證工程師偏重速度。
@@ -64,7 +64,7 @@ def _role_models() -> dict[str, str]:
 ROLE_MODELS = _role_models()
 
 # 合法的 provider 名單；per-role 覆寫只接受其一，其餘（含 auto／空）＝不覆寫。
-PROVIDERS = ("claude", "openai", "minimax")
+PROVIDERS = ("claude", "openai", "minimax", "codex")
 
 
 def _role_providers() -> dict[str, str]:
@@ -100,6 +100,34 @@ MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
 MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
 MINIMAX_MODEL_LEAD = os.getenv("TI_MINIMAX_MODEL_LEAD", "MiniMax-M3")
 MINIMAX_MODEL_FAST = os.getenv("TI_MINIMAX_MODEL_FAST", "MiniMax-M3")
+
+# Codex CLI（`codex exec`）設定。模型留空＝沿用 Codex CLI 自身設定；CODEX_API_KEY 僅由
+# codex exec 支援，亦可沿用已登入的 CODEX_HOME/auth.json。
+CODEX_BIN = os.getenv("TI_CODEX_BIN", "codex")
+CODEX_HOME = os.getenv("CODEX_HOME", "")
+CODEX_API_KEY = os.getenv("CODEX_API_KEY", "")
+CODEX_MODEL_LEAD = os.getenv("TI_CODEX_MODEL_LEAD", "")
+CODEX_MODEL_FAST = os.getenv("TI_CODEX_MODEL_FAST", "")
+CODEX_SANDBOX_MODES = ("auto", "read-only", "workspace-write", "danger-full-access")
+
+
+def _codex_sandbox() -> str:
+    """Codex CLI sandbox 模式；auto 代表依角色工具白名單自動選 read-only/workspace-write。"""
+    raw = (os.getenv("TI_CODEX_SANDBOX", "auto") or "auto").strip().lower()
+    if raw not in CODEX_SANDBOX_MODES:
+        logger.warning("TI_CODEX_SANDBOX=%r 不在白名單 %s，改用 auto", raw, CODEX_SANDBOX_MODES)
+        return "auto"
+    return raw
+
+
+CODEX_SANDBOX = _codex_sandbox()
+# 真正停用 Codex CLI sandbox/approval 的高風險逃生口；預設關閉。
+CODEX_BYPASS_SANDBOX = os.getenv("TI_CODEX_BYPASS_SANDBOX", "0") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 
 # --- 流程 ---------------------------------------------------------------
 # 每個任務「實作→驗證→審查」的最大改進輪數，避免無止盡迴圈。
@@ -751,8 +779,26 @@ def claude_cli_logged_in() -> bool:
     return (Path.home() / ".claude" / ".credentials.json").exists()
 
 
+def codex_cli_available() -> bool:
+    """Codex CLI 是否可執行。TI_CODEX_BIN 可填絕對路徑或 PATH 內的命令名。"""
+    return shutil.which(CODEX_BIN) is not None
+
+
+def codex_cli_logged_in() -> bool:
+    """Codex CLI 是否具備非互動執行憑證。
+
+    codex exec 可用單次環境變數 CODEX_API_KEY，或沿用 CODEX_HOME/auth.json 的既有登入。
+    """
+    if CODEX_API_KEY:
+        return True
+    home = Path(CODEX_HOME).expanduser() if CODEX_HOME else Path.home() / ".codex"
+    return (home / "auth.json").exists()
+
+
 def provider_ready() -> bool:
     """目前選定的 provider 是否具備可執行的憑證/設定。"""
+    if PROVIDER == "codex":
+        return codex_cli_available() and codex_cli_logged_in()
     if PROVIDER == "minimax":
         # MiniMax base_url 有預設端點，故只認 API key 是否填妥。
         return bool(MINIMAX_API_KEY)
@@ -772,6 +818,8 @@ def reload() -> None:
     global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS, ROLE_PROVIDERS
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL_LEAD, MINIMAX_MODEL_FAST
+    global CODEX_BIN, CODEX_HOME, CODEX_API_KEY, CODEX_MODEL_LEAD, CODEX_MODEL_FAST
+    global CODEX_SANDBOX, CODEX_BYPASS_SANDBOX
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
@@ -820,6 +868,18 @@ def reload() -> None:
     MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
     MINIMAX_MODEL_LEAD = os.getenv("TI_MINIMAX_MODEL_LEAD", "MiniMax-M3")
     MINIMAX_MODEL_FAST = os.getenv("TI_MINIMAX_MODEL_FAST", "MiniMax-M3")
+    CODEX_BIN = os.getenv("TI_CODEX_BIN", "codex")
+    CODEX_HOME = os.getenv("CODEX_HOME", "")
+    CODEX_API_KEY = os.getenv("CODEX_API_KEY", "")
+    CODEX_MODEL_LEAD = os.getenv("TI_CODEX_MODEL_LEAD", "")
+    CODEX_MODEL_FAST = os.getenv("TI_CODEX_MODEL_FAST", "")
+    CODEX_SANDBOX = _codex_sandbox()
+    CODEX_BYPASS_SANDBOX = os.getenv("TI_CODEX_BYPASS_SANDBOX", "0") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
     GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
     PUBLISH_REPO = os.getenv("TI_PUBLISH_REPO", "")
     PUBLISH_BASE = os.getenv("TI_PUBLISH_BASE", "main")

@@ -367,9 +367,10 @@ write_failure_evidence() {
   echo
 
   echo "=== 程式 fail=$fail（反映 fetch + 4 條命令 + worktree 綁定, 非驗收結論） ==="
-
-  exit "$fail"
 } > "$OUT_FILE" 2> "$WARN_FILE"
 
-OVERALL_RC=$?
+OVERALL_RC="${fail:-$?}"
+if [ -f "$OUT_FILE" ]; then
+  cat "$OUT_FILE"
+fi
 exit "$OVERALL_RC"

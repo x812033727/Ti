@@ -28,6 +28,7 @@ class EventType(str, Enum):
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
+    TOKEN_USAGE = "token_usage"  # LLM 呼叫 token / cost 用量
     DONE = "done"  # 專案完成
     ERROR = "error"  # 錯誤
 
@@ -86,6 +87,36 @@ def tool_use(session_id: str, speaker_key: str, tool: str, summary: str) -> Stud
         EventType.TOOL_USE,
         session_id,
         {"speaker": speaker_key, "tool": tool, "summary": summary},
+    )
+
+
+def token_usage(
+    session_id: str,
+    speaker_key: str,
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    *,
+    cost_usd: float | None = None,
+    cache_read: int = 0,
+    cache_write: int = 0,
+) -> StudioEvent:
+    return StudioEvent(
+        EventType.TOKEN_USAGE,
+        session_id,
+        {
+            "speaker": speaker_key,
+            "provider": provider,
+            "model": model,
+            "prompt_tokens": int(prompt_tokens or 0),
+            "completion_tokens": int(completion_tokens or 0),
+            "total_tokens": int(total_tokens or 0),
+            "cost_usd": cost_usd,
+            "cache_read": int(cache_read or 0),
+            "cache_write": int(cache_write or 0),
+        },
     )
 
 

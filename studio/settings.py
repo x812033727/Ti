@@ -56,12 +56,16 @@ MINIMAX_MODELS: tuple[str, ...] = (
     "MiniMax-M2",
 )
 
+# Codex CLI 建議模型（Codex manual, 2026-06）。同樣使用 combo：Codex 可指向其他
+# OpenAI/API 相容 provider，模型 ID 不應被 UI 寫死。
+CODEX_MODELS: tuple[str, ...] = ("gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark")
+
 FIELDS: tuple[Field, ...] = (
     Field(
         "TI_PROVIDER",
         "後端 Provider",
         kind="select",
-        options=("claude", "openai", "minimax"),
+        options=("claude", "openai", "minimax", "codex"),
         default="claude",
         group="一般",
     ),
@@ -176,14 +180,47 @@ FIELDS: tuple[Field, ...] = (
         placeholder="MiniMax-M3",
         group="MiniMax",
     ),
-    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax 混用，
-    # 例如把 tool-calling 吃重的工程師／QA 留 claude、討論型角色走 minimax。
+    # --- Codex CLI（本機 codex exec；Provider 選 codex 或 per-role 指到 codex 時生效） ---
+    Field(
+        "TI_CODEX_MODEL_LEAD",
+        "Codex 主力模型（PM／高級工程師）",
+        kind="combo",
+        options=CODEX_MODELS,
+        placeholder="留空＝Codex CLI 預設（通常 gpt-5.5）",
+        group="Codex",
+    ),
+    Field(
+        "TI_CODEX_MODEL_FAST",
+        "Codex 快速模型（工程師／QA）",
+        kind="combo",
+        options=CODEX_MODELS,
+        placeholder="留空＝Codex CLI 預設；常用 gpt-5.4-mini",
+        group="Codex",
+    ),
+    Field(
+        "TI_CODEX_SANDBOX",
+        "Codex Sandbox 模式",
+        kind="select",
+        options=config.CODEX_SANDBOX_MODES,
+        default="auto",
+        group="Codex",
+    ),
+    Field(
+        "TI_CODEX_BYPASS_SANDBOX",
+        "Codex 完全停用沙盒／核准（1 開／0 關）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="Codex",
+    ),
+    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Codex 混用，
+    # 例如把 tool-calling 吃重的工程師／QA 走 codex、討論型角色走 minimax。
     *(
         Field(
             f"TI_PROVIDER_{key.upper()}",
             f"{zh} provider（auto＝沿用全域）",
             kind="select",
-            options=("auto", "claude", "openai", "minimax"),
+            options=("auto", "claude", "openai", "minimax", "codex"),
             default="auto",
             group="混用（每角色 provider）",
         )

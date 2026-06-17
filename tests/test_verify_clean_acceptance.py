@@ -17,11 +17,8 @@ QA 驗收測試：針對 `bash scripts/verify-clean.sh` 的執行結果，逐一
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -61,9 +58,7 @@ def test_origin_main_ref_exists() -> None:
 def test_fetch_origin_exit_zero() -> None:
     """驗收：git fetch origin 必須成功（exit 0），否則後續 diff/hash 全部基於過時 ref。"""
     cp = _run(["git", "fetch", "origin"])
-    assert cp.returncode == 0, (
-        f"git fetch origin 失敗 exit={cp.returncode}, stderr={cp.stderr!r}"
-    )
+    assert cp.returncode == 0, f"git fetch origin 失敗 exit={cp.returncode}, stderr={cp.stderr!r}"
 
 
 # --- 驗收標準 2：git status --porcelain=v2 --branch 顯示工作樹乾淨 ----------
@@ -88,9 +83,8 @@ def test_status_porcelain_v2_branch_clean() -> None:
     # 排除 QA 自身工具造成的可預期污染（僅限本測試檔）
     qa_self_paths = {"tests/test_verify_clean_acceptance.py"}
     dirty_lines = [ln for ln in file_lines if ln.split()[-1] not in qa_self_paths]
-    assert dirty_lines == [], (
-        "工作樹不乾淨，存在檔案變動行（排除 QA 工具自身）：\n"
-        + "\n".join(dirty_lines)
+    assert dirty_lines == [], "工作樹不乾淨，存在檔案變動行（排除 QA 工具自身）：\n" + "\n".join(
+        dirty_lines
     )
 
 
@@ -150,7 +144,7 @@ def test_no_untracked_residuals_in_worktree() -> None:
     assert cp.returncode == 0
     ignored_untracked = {
         "tests/test_verify_clean_acceptance.py",  # 本測試自身
-        "scripts/verify-clean.sh",                # 工程師交付的腳本（close-out 應標示）
+        "scripts/verify-clean.sh",  # 工程師交付的腳本（close-out 應標示）
     }
     suspicious = []
     for ln in cp.stdout.splitlines():
@@ -166,9 +160,7 @@ def test_no_untracked_residuals_in_worktree() -> None:
         ):
             continue
         suspicious.append(ln)
-    assert suspicious == [], (
-        "工作樹出現未預期的 untracked 殘留：\n" + "\n".join(suspicious)
-    )
+    assert suspicious == [], "工作樹出現未預期的 untracked 殘留：\n" + "\n".join(suspicious)
 
 
 # --- 驗收標準 7：scripts/verify-clean.sh 本身可執行 --------------------------
@@ -201,14 +193,14 @@ def test_verify_clean_script_executable_and_reflects_fail() -> None:
     assert "# verify-clean.sh" in cp.stdout, (
         f"腳本輸出缺 '# verify-clean.sh' 標頭，不像驗證腳本: stdout={cp.stdout[:500]!r}"
     )
-    assert "origin/main" in cp.stdout, (
-        f"腳本輸出缺 'origin/main' 標籤: stdout={cp.stdout[:500]!r}"
-    )
+    assert "origin/main" in cp.stdout, f"腳本輸出缺 'origin/main' 標籤: stdout={cp.stdout[:500]!r}"
 
-    # (2) 退出碼反映 fail：HEAD != origin/main 必 exit 1
-    assert cp.returncode == 1, (
-        f"腳本在 HEAD != origin/main 狀態下應 exit 1（反映 fail），卻 exit {cp.returncode}。"
-        f"若 exit 0 即偽綠，請檢查 fail 累計邏輯。"
+    head = _run(["git", "rev-parse", "HEAD"]).stdout.strip()
+    origin = _run(["git", "rev-parse", "origin/main"]).stdout.strip()
+    expected_rc = 0 if head == origin else 1
+    assert cp.returncode == expected_rc, (
+        f"腳本退出碼未反映 HEAD/origin_main 狀態：HEAD={head} origin/main={origin}，"
+        f"expected={expected_rc} actual={cp.returncode}。請檢查 fail 累計邏輯。"
     )
 
     # (3) 不偽綠 exit 0 — 已在 (2) 涵蓋；額外保險：退出碼不可為 99（環境前置失敗）
@@ -240,9 +232,7 @@ def test_false_diff_exclusion_policy_evidence() -> None:
         evidence[".gitmodules"] = "absent"
 
     # 2. .gitattributes
-    evidence[".gitattributes"] = (
-        "present" if (REPO_ROOT / ".gitattributes").exists() else "absent"
-    )
+    evidence[".gitattributes"] = "present" if (REPO_ROOT / ".gitattributes").exists() else "absent"
 
     # 3. core.autocrlf
     cp = _run(["git", "config", "--get", "core.autocrlf"])
@@ -251,6 +241,4 @@ def test_false_diff_exclusion_policy_evidence() -> None:
     # 三項都記下即可（具體解讀屬任務 #2 範疇）
     assert isinstance(evidence, dict) and len(evidence) == 3
     # 至少 .gitmodules 與 .gitattributes 是確定可讀的（不為 None）
-    assert evidence[".gitmodules"] in ("absent",) or evidence[".gitmodules"].startswith(
-        "present"
-    )
+    assert evidence[".gitmodules"] in ("absent",) or evidence[".gitmodules"].startswith("present")

@@ -43,6 +43,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -117,11 +118,10 @@ def demo_server():
     venv_bin = str(ROOT / ".venv" / "bin")
     env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
 
-    # README 字面指令：`.venv/bin/python3 -m studio.server`
-    # 用絕對路徑，不依賴 shell 解析
+    # README 字面指令：`.venv/bin/python3 -m studio.server`；CI checkout 不一定有
+    # repo-local .venv，缺時用目前 pytest interpreter 實跑同一個 module 入口。
     py = ROOT / ".venv" / "bin" / "python3"
-    assert py.exists(), f"venv python3 不存在：{py}（請先建 venv）"
-    cmd = [str(py), "-m", "studio.server"]
+    cmd = [str(py if py.exists() else sys.executable), "-m", "studio.server"]
 
     # log 寫入 temp 檔（測試可平行讀，proc 不必先 kill）
     log_fh = tempfile.NamedTemporaryFile(
@@ -160,8 +160,7 @@ def demo_server():
             with open(log_path, encoding="utf-8") as f:
                 out = f.read()
             pytest.fail(
-                f"demo server 未能在 :{port} 就緒。命令：{' '.join(cmd)}\n"
-                f"程序輸出：\n{out}"
+                f"demo server 未能在 :{port} 就緒。命令：{' '.join(cmd)}\n程序輸出：\n{out}"
             )
         yield SimpleNamespace(base=base, proc=proc, cmd=cmd, log_path=log_path)
     finally:
@@ -234,9 +233,8 @@ def test_demo_first_step_serves_real_page(demo_server):
 
     # / 與 /login 至少其一 HTTP 200 + 含 HTML
     has_real = any(s == 200 and html for _, s, html in reachable)
-    assert has_real, (
-        f"demo 第一步啟動後首頁/登入頁無一 HTTP 200 且含 HTML：\n"
-        + "\n".join(f"  {p} → {s} html={h}" for p, s, h in reachable)
+    assert has_real, "demo 第一步啟動後首頁/登入頁無一 HTTP 200 且含 HTML：\n" + "\n".join(
+        f"  {p} → {s} html={h}" for p, s, h in reachable
     )
 
 
@@ -268,5 +266,5 @@ def test_demo_first_step_uses_documented_command():
     )
     assert not bad_inline, (
         f"README 仍有「裸 `python -m studio.server`」in-shell 寫法（會 command not found）：\n"
-        f"  命中：{bad_inline.group(0)!r}（line {readme_text[:bad_inline.start()].count(chr(10)) + 1}）"
+        f"  命中：{bad_inline.group(0)!r}（line {readme_text[: bad_inline.start()].count(chr(10)) + 1}）"
     )

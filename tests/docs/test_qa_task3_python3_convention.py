@@ -19,7 +19,6 @@ from __future__ import annotations
 import re
 
 import pytest
-
 from _repo import REPO_ROOT
 
 _ROOT = REPO_ROOT
@@ -195,6 +194,5 @@ def test_negative_samples_must_not_trigger_convention_matchers(neg_text, why):
     venv = _has_venv_python_explicit(neg_text)
     shell = _has_shell_python3_explicit_convention(neg_text)
     assert not (py_hint or venv or shell), (
-        f"負樣本『{why}』誤觸：py_hint={py_hint} venv={venv} shell={shell}\n"
-        f"  輸入: {neg_text!r}"
+        f"負樣本『{why}』誤觸：py_hint={py_hint} venv={venv} shell={shell}\n  輸入: {neg_text!r}"
     )

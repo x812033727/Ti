@@ -64,6 +64,9 @@
 （對齊 `pyproject.toml` 的 `requires-python`）。下列範例以 macOS / Linux 為主，
 完整路徑寫法 `.venv/bin/python3` 可**免 activate**直接使用（避免誤用系統 Python）；
 **Windows 對應為 `.venv\Scripts\python`**（啟動則為 `.venv\Scripts\activate`）。
+Windows 若 `python3` 找不到，可改用 `py` 啟動器（想鎖 3.x 用 `py -3`）。
+本專案 shell 範例（文件 demo、shell script 範例）統一使用 `python3`；venv 內執行檔路徑
+（`.venv/bin/python` / `.venv\Scripts\python`）與套件名、image tag 維持原樣。
 
 **前置條件 checklist**（開工前先備齊，依「依賴／secrets／token」三類）：
 
@@ -180,9 +183,11 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 
 不想改環境變數也可以直接在網頁上設定：按右上角「⚙️ 設定」，即可填入
 
-- 後端 provider（claude / openai）
+- 後端 provider（claude / openai / minimax / codex）
 - Claude API key、Claude 主力 / 快速模型
 - OpenAI API key、Base URL（可指向本地模型）、OpenAI 模型
+- MiniMax API key、Base URL、MiniMax 模型
+- Codex 模型覆寫與 sandbox 模式（登入狀態沿用伺服器上的 Codex CLI）
 - GitHub token、發佈目標 repo
 - 任務並行（開關 / 每波支線數上限）
 - **進階流程**開關：需求澄清、卡關討論 huddle、異議檢查 critic、共用筆記、跨場次教訓、反思記憶、客觀驗收閘門、單輪自我精修、子進程資源上限
@@ -288,9 +293,12 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_PUBLISH_CI_TIMEOUT` / `TI_PUBLISH_CI_INTERVAL` | 自動合併前等待 CI 的最長秒數 / 輪詢間隔 | 600 / 10 |
 | `TI_PUBLISH_MERGE_RETRIES` | 對 stale／`Base branch was modified`（409）的重試次數 | 3 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
-| `TI_PROVIDER` | 後端 provider：`claude` 或 `openai` | claude |
+| `TI_PROVIDER` | 後端 provider：`claude`、`openai`、`minimax` 或 `codex` | claude |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 金鑰 / 相容端點（可指向本地模型） | 未設定 |
 | `TI_OPENAI_MODEL_LEAD` / `TI_OPENAI_MODEL_FAST` | OpenAI 主力 / 快速模型 | gpt-4o / gpt-4o-mini |
+| `CODEX_API_KEY` / `CODEX_HOME` / `TI_CODEX_BIN` | Codex CLI provider：可用單次 API key、既有 `CODEX_HOME/auth.json` 登入，或指定 codex 執行檔 | 既有登入 / 空 / codex |
+| `TI_CODEX_MODEL_LEAD` / `TI_CODEX_MODEL_FAST` | Codex CLI 模型覆寫；留空代表沿用 Codex CLI 自身設定 | 空 |
+| `TI_CODEX_SANDBOX` / `TI_CODEX_BYPASS_SANDBOX` | Codex CLI sandbox：`auto` 依角色選 `read-only`/`workspace-write`；可設 `danger-full-access`。`BYPASS=1` 會傳 `--dangerously-bypass-approvals-and-sandbox`，完全停用 Codex 沙盒/核准 | auto / 0 |
 | `TI_AUTOPILOT_FORCE_PUSH` | Autopilot 推送策略：預設非強制（`git push`），遠端已存在同名分支時中止；設 `1` 才略過中止並改用 `--force-with-lease --force-if-includes` 覆寫殘留分支（絕不用裸 `-f`） | 0（安全側） |
 | `TI_AUTOPILOT_MERGE_ADMIN` | Autopilot 合併策略：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效；目標 branch 有保護規則且需維持自動合併時設 `1` | 0（安全側） |
 | `TI_AUTOPILOT_PROTECTION_CHECK` | 第二道防線：squash-merge 前主動查「合併目標分支（`TI_AUTOPILOT_BRANCH`，預設 `main`）」的保護狀態。優先打 Rulesets 端點（classic token 即可讀、**多半不需 `Administration:read`**），舊 branch protection 端點為輔。三態 fail-safe——受保護/無保護皆放行，唯「無法確認」（403 無權／網路／逾時）一律**中止**並回含「無法確認保護狀態」字樣的訊息，絕不誤判為無保護而放行。讀舊 protection 端點才需 `Administration:read`；無此權限而持續卡「無法確認」的環境，設 `0` 整段跳過（明確逃生口） | 1（啟用） |
@@ -335,6 +343,37 @@ TI_PROVIDER=openai OPENAI_API_KEY=sk-xxx .venv/bin/python3 -m studio.server
 # 本地模型（OpenAI 相容，如 Ollama）：
 TI_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 TI_OPENAI_MODEL_LEAD=llama3.1 .venv/bin/python3 -m studio.server
 ```
+
+### 切換到 Codex CLI
+
+Codex provider 會呼叫本機 `codex exec --json --ephemeral`，沿用伺服器上的 Codex CLI 登入狀態。
+先確認 CLI 可用且已登入：
+
+```bash
+codex doctor --summary
+TI_PROVIDER=codex .venv/bin/python3 -m studio.server
+```
+
+也可以只把特定角色交給 Codex，例如讓工程師用 Codex 實作、PM 維持 Claude 或 MiniMax：
+
+```bash
+TI_PROVIDER=claude TI_PROVIDER_ENGINEER=codex TI_PROVIDER_QA=codex .venv/bin/python3 -m studio.server
+```
+
+Codex sandbox 預設為 `auto`：可寫角色用 `workspace-write`，規劃/審查角色用 `read-only`。
+需要放寬時可設：
+
+```bash
+TI_CODEX_SANDBOX=danger-full-access
+```
+
+若要完全停用 Codex CLI 的 sandbox 與核准流程，設：
+
+```bash
+TI_CODEX_BYPASS_SANDBOX=1
+```
+
+`BYPASS` 等同傳入 Codex CLI 的 `--dangerously-bypass-approvals-and-sandbox`，只建議在你已用外層容器/VM/權限邊界隔離好的部署中使用。
 
 ## 測試
 

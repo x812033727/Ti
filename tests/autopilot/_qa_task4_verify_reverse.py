@@ -9,8 +9,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from studio import autopilot, runner
 from studio.runner import RunOutput
 

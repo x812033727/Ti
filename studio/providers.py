@@ -1,7 +1,7 @@
 """LLM provider 抽象與工廠。
 
 預設 Claude（走 Agent SDK，自帶工具）。也支援 OpenAI 相容介面（含本地模型，如 Ollama /
-LM Studio 透過 OPENAI_BASE_URL），用 tools.py 的 function-calling 工具迴圈讓模型也能「自己 coding」。
+LM Studio 透過 OPENAI_BASE_URL）、MiniMax，以及 Codex CLI 非互動模式，讓模型也能「自己 coding」。
 
 所有 backend 都符合 orchestrator 的 ExpertLike 介面：`speak(prompt, broadcast) -> str` 與 `stop()`。
 """
@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+import os
+import signal
 from pathlib import Path
 
 from . import config, events, llm_caller, tools
@@ -41,18 +44,304 @@ def openai_model_for(role: Role) -> str:
     return config.OPENAI_MODEL_LEAD if lead else config.OPENAI_MODEL_FAST
 
 
+def codex_model_for(role: Role) -> str:
+    """Codex CLI 模型覆寫；空字串代表沿用 Codex CLI 自身設定。"""
+    return config.CODEX_MODEL_LEAD if role.key in config.LEAD_ROLES else config.CODEX_MODEL_FAST
+
+
+_CODEX_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _clip(text: str, limit: int) -> str:
+    """限制內嵌到 prompt / UI 的字串長度，避免一次 Codex 發言把下一輪 prompt 撐爆。"""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]"
+
+
+def _codex_sandbox_for(role: Role) -> str:
+    """依角色工具白名單挑 Codex sandbox；無寫檔工具的角色用 read-only。"""
+    if config.CODEX_SANDBOX != "auto":
+        return config.CODEX_SANDBOX
+    allowed = set(effective_tools(role))
+    return "workspace-write" if allowed & _CODEX_WRITE_TOOLS else "read-only"
+
+
+def _codex_argv(role: Role, cwd: Path) -> list[str]:
+    """建立 codex exec argv；測試可直接檢查，不經 shell。"""
+    argv = [
+        config.CODEX_BIN,
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--cd",
+        str(cwd),
+    ]
+    if config.CODEX_BYPASS_SANDBOX:
+        argv.append("--dangerously-bypass-approvals-and-sandbox")
+    else:
+        argv += ["--sandbox", _codex_sandbox_for(role), "-c", 'approval_policy="never"']
+    argv += ["--color", "never"]
+    model = codex_model_for(role)
+    if model:
+        argv += ["--model", model]
+    argv.append("-")
+    return argv
+
+
+def _codex_env() -> dict[str, str]:
+    """Codex 子程序環境；CODEX_HOME 留空時沿用父程序預設。"""
+    env = os.environ.copy()
+    if config.CODEX_HOME:
+        env["CODEX_HOME"] = config.CODEX_HOME
+    return env
+
+
+def _usage_get(obj, key: str, default=0):
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _usage_int(obj, *keys: str) -> int:
+    for key in keys:
+        try:
+            value = int(_usage_get(obj, key, 0) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value:
+            return value
+    return 0
+
+
+def _codex_item_tool_summary(item: dict) -> tuple[str, str] | None:
+    """把 Codex JSONL item 映射為 Studio 的工具事件摘要。"""
+    kind = str(item.get("type") or "")
+    if kind == "command_execution":
+        command = str(item.get("command") or "").strip()
+        return ("Bash", "執行: " + _clip(command.splitlines()[0] if command else "", 120))
+    if kind in ("file_change", "file_operation"):
+        path = str(item.get("path") or item.get("file") or "").strip()
+        action = str(item.get("action") or kind)
+        return ("Edit", _clip(f"{action}: {path}" if path else action, 120))
+    if kind in ("mcp_tool_call", "tool_call"):
+        name = str(item.get("name") or item.get("tool") or "tool")
+        return (name, _clip(name, 120))
+    if kind == "web_search":
+        query = str(item.get("query") or "").strip()
+        return ("WebSearch", _clip(query, 120))
+    return None
+
+
+class CodexExpert:
+    """以 `codex exec` 非互動模式驅動的專家。
+
+    Codex CLI 自己負責工具執行與檔案修改；本類只負責把角色 prompt 餵進 CLI、把 JSONL 事件轉成
+    Ti Studio 事件，並維持短期文字歷史，讓同一位專家的下一次 speak() 有基本脈絡。
+    """
+
+    def __init__(self, role: Role, session_id: str, cwd: Path):
+        self.role = role
+        self.session_id = session_id
+        self.cwd = cwd
+        self._history: list[tuple[str, str]] = []
+
+    async def speak(self, prompt: str, broadcast) -> str:
+        r = self.role
+        await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
+        try:
+            text = await self._run_codex(prompt, broadcast)
+            if text:
+                self._history.append((_clip(prompt, 1200), _clip(text, 2400)))
+                self._history = self._history[-4:]
+            return text
+        finally:
+            await broadcast(events.expert_status(self.session_id, r.key, "idle"))
+
+    async def stop(self) -> None:
+        pass
+
+    def _prompt(self, prompt: str) -> str:
+        parts = [
+            self.role.system_prompt,
+            "",
+            "你現在由 Codex CLI 非互動模式執行。",
+            f"工作目錄：{self.cwd}",
+            f"本角色允許工具語意：{', '.join(effective_tools(self.role)) or '無'}",
+            "請只在工作目錄內行動；需要修改檔案或執行命令時，使用 Codex 可用工具完成。",
+            "執行搜尋或讀檔命令時請收斂輸出，例如使用精準路徑、`rg -n <pattern> <path>`、"
+            "`sed -n` 或 `head`；避免 `rg .`、大量 `cat`、全 repo 無限制輸出。",
+        ]
+        if self._history:
+            parts.append("\n最近對話脈絡（僅供延續，不代表新指令）：")
+            for i, (old_prompt, old_text) in enumerate(self._history, start=1):
+                parts.append(f"[{i}] 使用者/流程要求：\n{old_prompt}\n[{i}] 你的回覆：\n{old_text}")
+        parts.append("\n本輪要求：")
+        parts.append(prompt)
+        return "\n".join(parts)
+
+    async def _run_codex(self, prompt: str, broadcast) -> str:
+        argv = _codex_argv(self.role, self.cwd)
+        final_messages: list[str] = []
+        errors: list[str] = []
+        stderr_tail = ""
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(self.cwd),
+                env=_codex_env(),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            return await self._system_note(
+                "【系統】找不到 Codex CLI，請確認 TI_CODEX_BIN 或 PATH。", broadcast
+            )
+
+        assert proc.stdin is not None
+        proc.stdin.write(self._prompt(prompt).encode("utf-8"))
+        await proc.stdin.drain()
+        proc.stdin.close()
+        with contextlib.suppress(Exception):
+            await proc.stdin.wait_closed()
+
+        async def _stdout() -> None:
+            assert proc is not None and proc.stdout is not None
+            async for raw in proc.stdout:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    errors.append(_clip(line, 500))
+                    continue
+                text = await self._handle_codex_event(data, broadcast)
+                if text:
+                    final_messages.append(text)
+                if data.get("type") in ("error", "turn.failed"):
+                    errors.append(_clip(json.dumps(data, ensure_ascii=False), 1000))
+
+        async def _stderr() -> str:
+            assert proc is not None and proc.stderr is not None
+            buf = bytearray()
+            while True:
+                chunk = await proc.stderr.read(1024)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                if len(buf) > 8000:
+                    del buf[:-8000]
+            return buf.decode("utf-8", "replace")
+
+        stdout_task = asyncio.create_task(_stdout())
+        stderr_task = asyncio.create_task(_stderr())
+        try:
+            timeout = config.TURN_HARD_TIMEOUT or None
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except TimeoutError:
+            self._terminate(proc)
+            await proc.wait()
+            with contextlib.suppress(Exception):
+                await stdout_task
+            stderr_tail = await stderr_task
+            return await self._system_note(
+                f"【系統】Codex CLI 發言逾時中止（總時長上限 {config.TURN_HARD_TIMEOUT:g} 秒）。",
+                broadcast,
+            )
+        stdout_error: Exception | None = None
+        try:
+            await stdout_task
+        except Exception as exc:  # noqa: BLE001 — Codex JSONL/事件轉送失敗要降級成模型訊息
+            stdout_error = exc
+            errors.append(f"{type(exc).__name__}: {exc}")
+        stderr_tail = await stderr_task
+
+        text = "\n".join(m for m in final_messages if m).strip()
+        if text:
+            return text
+        if stdout_error is not None:
+            return await self._system_note(
+                "【系統】Codex CLI 事件解析失敗，已中止本輪發言避免整場討論崩潰。\n"
+                + _clip(f"{type(stdout_error).__name__}: {stdout_error}", 1200),
+                broadcast,
+            )
+        if proc.returncode:
+            detail = _clip(stderr_tail or "\n".join(errors), 2000)
+            note = f"【系統】Codex CLI 執行失敗（exit {proc.returncode}）。"
+            if detail:
+                note += f"\n{detail}"
+            return await self._system_note(note, broadcast)
+        if errors:
+            return await self._system_note(
+                "【系統】Codex CLI 未產生可用回覆。\n" + "\n".join(errors[-3:]),
+                broadcast,
+            )
+        return ""
+
+    async def _handle_codex_event(self, data: dict, broadcast) -> str:
+        typ = data.get("type")
+        item = data.get("item") if isinstance(data.get("item"), dict) else {}
+        if typ == "item.started":
+            summary = _codex_item_tool_summary(item)
+            if summary is not None:
+                await broadcast(events.expert_status(self.session_id, self.role.key, "working"))
+                await broadcast(events.tool_use(self.session_id, self.role.key, *summary))
+            return ""
+        if typ == "item.completed" and item.get("type") == "agent_message":
+            text = str(item.get("text") or "").strip()
+            if text:
+                await broadcast(
+                    events.expert_message(
+                        self.session_id,
+                        self.role.key,
+                        self.role.name,
+                        self.role.avatar,
+                        text,
+                    )
+                )
+            return text
+        return ""
+
+    async def _system_note(self, note: str, broadcast) -> str:
+        await broadcast(
+            events.expert_message(
+                self.session_id, self.role.key, self.role.name, self.role.avatar, note
+            )
+        )
+        return note
+
+    def _terminate(self, proc) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGTERM)
+
+
 class OpenAIExpert:
     """以 OpenAI 相容 chat completions + function-calling 工具迴圈驅動的專家。
 
     chat 是注入的 async callable(messages, tools, model) -> response，方便測試替換。
     """
 
-    def __init__(self, role: Role, session_id: str, cwd: Path, chat, model: str):
+    def __init__(
+        self,
+        role: Role,
+        session_id: str,
+        cwd: Path,
+        chat,
+        model: str,
+        provider: str = "openai",
+    ):
         self.role = role
         self.session_id = session_id
         self.cwd = cwd
         self._chat = chat
         self._model = model
+        self._provider = provider
         self._tools = tools.specs_for(effective_tools(role))
         self._messages: list[dict] = [{"role": "system", "content": role.system_prompt}]
         # per-speak 去重快取：speak() 入口會換上新實例（防跨 speak 結果洩漏）。此處先建一份，
@@ -89,8 +378,20 @@ class OpenAIExpert:
             # retry 重放整輪迴圈時同位置的非冪等呼叫對齊回首次 key、命中不重執行副作用。
             self._dedup_cache.new_attempt()
             collected: list[str] = []
+            usage = {"prompt": 0, "completion": 0, "total": 0, "calls": 0}
             for _ in range(config.OPENAI_MAX_STEPS):
                 resp = await self._chat(self._messages, self._tools, self._model)
+                resp_usage = getattr(resp, "usage", None)
+                if resp_usage is not None:
+                    prompt_tokens = _usage_int(resp_usage, "prompt_tokens", "input_tokens")
+                    completion_tokens = _usage_int(resp_usage, "completion_tokens", "output_tokens")
+                    total_tokens = _usage_int(resp_usage, "total_tokens") or (
+                        prompt_tokens + completion_tokens
+                    )
+                    usage["prompt"] += prompt_tokens
+                    usage["completion"] += completion_tokens
+                    usage["total"] += total_tokens
+                    usage["calls"] += 1
                 msg = resp.choices[0].message
                 tool_calls = getattr(msg, "tool_calls", None) or []
                 self._messages.append(_assistant_dict(msg, tool_calls))
@@ -121,6 +422,18 @@ class OpenAIExpert:
                     )
                 break
 
+            if usage["calls"]:
+                await broadcast(
+                    events.token_usage(
+                        self.session_id,
+                        r.key,
+                        self._provider,
+                        self._model,
+                        usage["prompt"],
+                        usage["completion"],
+                        usage["total"],
+                    )
+                )
             return "\n".join(collected)
 
         async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:
@@ -225,9 +538,16 @@ def _chat_for(provider: str):
 def make_expert(role: Role, session_id: str, cwd: Path):
     """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax 混用）。"""
     prov = effective_provider(role)
+    if prov == "codex":
+        return CodexExpert(role, session_id, cwd)
     if prov in ("openai", "minimax"):
         return OpenAIExpert(
-            role, session_id, cwd, chat=_chat_for(prov), model=openai_model_for(role)
+            role,
+            session_id,
+            cwd,
+            chat=_chat_for(prov),
+            model=openai_model_for(role),
+            provider=prov,
         )
     # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
     from .experts import Expert

@@ -44,6 +44,37 @@ def test_update_writes_and_reloads(sandbox):
     assert "TI_PROVIDER" in env_text and "openai" in env_text
 
 
+def test_update_accepts_codex_provider(sandbox):
+    settings.update({"TI_PROVIDER": "codex", "TI_PROVIDER_ENGINEER": "codex"})
+    assert config.PROVIDER == "codex"
+    assert config.ROLE_PROVIDERS["engineer"] == "codex"
+
+
+def test_update_accepts_codex_model_fields(sandbox):
+    settings.update(
+        {
+            "TI_CODEX_MODEL_LEAD": "gpt-5.5",
+            "TI_CODEX_MODEL_FAST": "gpt-5.4-mini",
+        }
+    )
+    assert config.CODEX_MODEL_LEAD == "gpt-5.5"
+    assert config.CODEX_MODEL_FAST == "gpt-5.4-mini"
+
+
+def test_update_accepts_codex_sandbox_fields(sandbox):
+    settings.update({"TI_CODEX_SANDBOX": "danger-full-access", "TI_CODEX_BYPASS_SANDBOX": "1"})
+    assert config.CODEX_SANDBOX == "danger-full-access"
+    assert config.CODEX_BYPASS_SANDBOX is True
+
+
+def test_codex_sandbox_env_reloads(sandbox, monkeypatch):
+    monkeypatch.setenv("TI_CODEX_SANDBOX", "danger-full-access")
+    monkeypatch.setenv("TI_CODEX_BYPASS_SANDBOX", "1")
+    config.reload()
+    assert config.CODEX_SANDBOX == "danger-full-access"
+    assert config.CODEX_BYPASS_SANDBOX is True
+
+
 def test_update_rejects_unknown_key(sandbox):
     settings.update({"EVIL_KEY": "x"})
     assert "EVIL_KEY" not in os.environ

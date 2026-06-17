@@ -51,8 +51,6 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_JS_PATH = REPO_ROOT / "web" / "app.js"
 E2E_PATH = REPO_ROOT / "tests" / "test_offline_agenda_e2e.py"
@@ -116,15 +114,15 @@ def test_static_agenda_plan_case_contains_criteria_read_and_line_concat():
 
     case_block = _extract_agenda_plan_case(app_js)
     assert case_block, (
-        f"找不到 case \"agenda_plan\": 的配對大括號區塊（檔案結構可能改寫，"
-        f"需人工修補本測試的 case 提取邏輯）"
+        '找不到 case "agenda_plan": 的配對大括號區塊（檔案結構可能改寫，'
+        "需人工修補本測試的 case 提取邏輯）"
     )
 
     cleaned = _strip_js_comments(case_block)
 
     # (1) a.criteria 在 case 區塊內被讀取
     assert "a.criteria" in cleaned, (
-        f"case \"agenda_plan\": 區塊內未讀取 a.criteria：\n{case_block}\n"
+        f'case "agenda_plan": 區塊內未讀取 a.criteria：\n{case_block}\n'
         f"翻案條件：criteria 渲染整段漏寫 → 修補面 fail"
     )
 
@@ -132,9 +130,7 @@ def test_static_agenda_plan_case_contains_criteria_read_and_line_concat():
     #    排除模式：「if (a.criteria)」守衛行不算拼接；必須是 line += 後接字串
     has_line_concat_with_criteria = bool(
         re.search(r"line\s*\+=\s*[`'\"].*criteria.*[`'\"]", cleaned, re.DOTALL)
-    ) or bool(
-        re.search(r"line\s*\+=\s*.*\$\{a\.criteria\}", cleaned, re.DOTALL)
-    )
+    ) or bool(re.search(r"line\s*\+=\s*.*\$\{a\.criteria\}", cleaned, re.DOTALL))
     assert has_line_concat_with_criteria, (
         f"case \"agenda_plan\": 區塊內 'a.criteria' 有讀取但未串到 line 賦值"
         f"（只寫了 if 守衛忘了接字串）。完整區塊：\n{case_block}"
@@ -159,14 +155,14 @@ def test_static_agenda_plan_case_does_not_contain_tasks_or_edges():
     assert APP_JS_PATH.exists()
     app_js = APP_JS_PATH.read_text(encoding="utf-8")
     case_block = _extract_agenda_plan_case(app_js)
-    assert case_block, "找不到 case \"agenda_plan\": 的配對大括號區塊"
+    assert case_block, '找不到 case "agenda_plan": 的配對大括號區塊'
 
     cleaned = _strip_js_comments(case_block)
 
     # 用 word boundary 確保是讀取變數 a.tasks / a.edges，不是其他字串
     for forbidden in ("a.tasks", "a.edges"):
         assert forbidden not in cleaned, (
-            f"case \"agenda_plan\": 區塊內出現 {forbidden!r}——"
+            f'case "agenda_plan": 區塊內出現 {forbidden!r}——'
             f"architect 決策 11 範圍守門明列「不渲染 tasks / edges」。"
             f"若要啟用此渲染，須先翻案決策 11 並新增排版 / CSS 設計。\n"
             f"完整區塊：\n{case_block}"
@@ -245,19 +241,13 @@ def test_existing_e2e_does_not_assert_rendered_criteria_text_in_dom():
 
     # 既有 e2e 是否對 DOM 文字做「criteria 內容」明確斷言？
     has_dom_criteria_assertion = bool(
-        re.search(r'(textContent|innerText|innerHTML).*criteria', text, re.IGNORECASE)
-    ) or bool(
-        re.search(r'criteria.*(textContent|innerText|innerHTML)', text, re.IGNORECASE)
-    )
+        re.search(r"(textContent|innerText|innerHTML).*criteria", text, re.IGNORECASE)
+    ) or bool(re.search(r"criteria.*(textContent|innerText|innerHTML)", text, re.IGNORECASE))
     # 既有 e2e 是否模擬前端 replay（load_events 後呼叫某個 render 函式）？
-    simulates_replay = bool(
-        re.search(r"(handleEvent|render\(|addSystem\()", text)
-    )
+    simulates_replay = bool(re.search(r"(handleEvent|render\(|addSystem\()", text))
 
     # 既有 e2e 是否對 payload 結構做明確斷言（對照組：證明既有守護是結構層）
-    has_payload_struct_assertion = bool(
-        re.search(r"agenda_plan|payload\[.agenda.\]", text)
-    )
+    has_payload_struct_assertion = bool(re.search(r"agenda_plan|payload\[.agenda.\]", text))
 
     report = {
         "既有 e2e 對 DOM 內 criteria 文字的明確斷言": has_dom_criteria_assertion,

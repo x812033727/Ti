@@ -250,6 +250,51 @@ def _summarize_tool(name: str, tool_input: dict) -> str:
     return name
 
 
+def _usage_get(obj, key: str, default=0):
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _usage_int(obj, key: str) -> int:
+    try:
+        return int(_usage_get(obj, key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _emit_claude_token_usage(
+    msg,
+    session_id: str,
+    role: Role,
+    broadcast: Broadcast,
+) -> None:
+    usage = getattr(msg, "usage", None)
+    if usage is None:
+        return
+    prompt = _usage_int(usage, "input_tokens")
+    completion = _usage_int(usage, "output_tokens")
+    total = prompt + completion
+    if total <= 0:
+        return
+    await broadcast(
+        events.token_usage(
+            session_id,
+            role.key,
+            "claude",
+            _model_for(role),
+            prompt,
+            completion,
+            total,
+            cost_usd=getattr(msg, "total_cost_usd", None),
+            cache_read=_usage_int(usage, "cache_read_input_tokens"),
+            cache_write=_usage_int(usage, "cache_creation_input_tokens"),
+        )
+    )
+
+
 def _build_client(role: Role, session_id: str, cwd: Path):
     """建立該專家的 ClaudeSDKClient。
 
@@ -360,6 +405,7 @@ async def stream_to_events(
                         )
                     )
         elif isinstance(msg, ResultMessage):
+            await _emit_claude_token_usage(msg, session_id, role, broadcast)
             break
     return "\n".join(collected)
 

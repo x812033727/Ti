@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
+import shutil
 
 from . import config, runner
 
@@ -66,9 +67,21 @@ async def current_head(repo_dir: str) -> str:
 async def health_check(
     url: str | None = None, attempts: int = 12, delay: int = 3
 ) -> tuple[bool, str]:
-    """部署後健康檢查：服務回 200，且主機沙箱依賴齊全（避免改動弱化安全）。"""
+    """部署後健康檢查：沿用 run_http_demo 的早夭偵測，先看 systemctl is-active。
+
+    有 systemd 時以 is-active 的 failed/inactive/unknown 早退；activating 仍繼續輪詢 HTTP。
+    服務回 200 後再確認主機沙箱依賴齊全（避免改動弱化安全）。
+    """
     url = url or config.AUTOPILOT_HEALTH_URL
+    has_systemctl = shutil.which("systemctl") is not None
     for _ in range(attempts):
+        if has_systemctl:
+            rc, state_out = await _run(
+                ["systemctl", "is-active", config.AUTOPILOT_SERVICE], timeout=10
+            )
+            state = (state_out.strip().splitlines() or ["unknown"])[0] or "unknown"
+            if state in {"failed", "inactive", "unknown"} or (rc != 0 and state == "unknown"):
+                return False, f"服務已退出（is-active={state}），停止等待 HTTP 健康檢查"
         rc, out = await _run(
             ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", url],
             timeout=10,

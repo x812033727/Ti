@@ -104,6 +104,107 @@ def test_make_expert_minimax(monkeypatch, tmp_path):
     assert isinstance(ex, providers.OpenAIExpert)
 
 
+def test_codex_argv_uses_exec_json_and_role_sandbox(monkeypatch, tmp_path):
+    """codex provider 以 argv 呼叫非互動 JSONL；可寫角色才給 workspace-write。"""
+    monkeypatch.setattr(config, "CODEX_BIN", "codex")
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "")
+    monkeypatch.setattr(config, "CODEX_SANDBOX", "auto")
+    monkeypatch.setattr(config, "CODEX_BYPASS_SANDBOX", False)
+    engineer = providers._codex_argv(BY_KEY["engineer"], tmp_path)
+    pm = providers._codex_argv(BY_KEY["pm"], tmp_path)
+
+    assert engineer[:3] == ["codex", "exec", "--json"]
+    assert "--ephemeral" in engineer
+    assert engineer[-1] == "-"
+    assert engineer[engineer.index("-c") + 1] == 'approval_policy="never"'
+    assert engineer[engineer.index("--cd") + 1] == str(tmp_path)
+    assert engineer[engineer.index("--sandbox") + 1] == "workspace-write"
+    assert pm[pm.index("--sandbox") + 1] == "read-only"
+
+
+def test_codex_argv_allows_danger_full_access(monkeypatch, tmp_path):
+    """TI_CODEX_SANDBOX 可明確覆寫成 Codex CLI 的 danger-full-access。"""
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "")
+    monkeypatch.setattr(config, "CODEX_SANDBOX", "danger-full-access")
+    monkeypatch.setattr(config, "CODEX_BYPASS_SANDBOX", False)
+
+    argv = providers._codex_argv(BY_KEY["pm"], tmp_path)
+
+    assert argv[argv.index("--sandbox") + 1] == "danger-full-access"
+    assert argv[argv.index("-c") + 1] == 'approval_policy="never"'
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+
+
+def test_codex_argv_can_bypass_sandbox(monkeypatch, tmp_path):
+    """TI_CODEX_BYPASS_SANDBOX=1 時使用 Codex CLI 的完整 bypass 旗標。"""
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "")
+    monkeypatch.setattr(config, "CODEX_SANDBOX", "auto")
+    monkeypatch.setattr(config, "CODEX_BYPASS_SANDBOX", True)
+
+    argv = providers._codex_argv(BY_KEY["engineer"], tmp_path)
+
+    assert "--dangerously-bypass-approvals-and-sandbox" in argv
+    assert "--sandbox" not in argv
+    assert "-c" not in argv
+
+
+def test_codex_argv_adds_model_but_not_unsupported_search_flag(monkeypatch, tmp_path):
+    """Codex 模型有設定才覆寫；不傳目前 codex exec 不支援的 --search。"""
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "gpt-test-fast")
+    monkeypatch.setattr(config, "CODEX_SANDBOX", "auto")
+    monkeypatch.setattr(config, "CODEX_BYPASS_SANDBOX", False)
+    argv = providers._codex_argv(BY_KEY["researcher"], tmp_path)
+    assert argv[argv.index("--model") + 1] == "gpt-test-fast"
+    assert "--search" not in argv
+
+
+def test_make_expert_codex(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "PROVIDER", "codex")
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    assert isinstance(ex, providers.CodexExpert)
+
+
+def test_provider_ready_codex(monkeypatch, tmp_path):
+    """codex provider 需要 CLI 可執行，且有 CODEX_API_KEY 或 CODEX_HOME/auth.json。"""
+    monkeypatch.setattr(config, "PROVIDER", "codex")
+    monkeypatch.setattr(config, "CODEX_BIN", "codex")
+    monkeypatch.setattr(config, "CODEX_API_KEY", "")
+    monkeypatch.setattr(config, "CODEX_HOME", str(tmp_path))
+    monkeypatch.setattr(config.shutil, "which", lambda name: "/usr/bin/codex")
+
+    assert config.provider_ready() is False
+    (tmp_path / "auth.json").write_text("{}", encoding="utf-8")
+    assert config.provider_ready() is True
+    monkeypatch.setattr(config.shutil, "which", lambda name: None)
+    assert config.provider_ready() is False
+    monkeypatch.setattr(config, "CODEX_API_KEY", "ck-test")
+    monkeypatch.setattr(config.shutil, "which", lambda name: "/usr/bin/codex")
+    assert config.provider_ready() is True
+
+
+@pytest.mark.asyncio
+async def test_codex_event_mapping(tmp_path):
+    """Codex JSONL item 轉成現有工具/訊息事件，不需真的啟動 codex。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+
+    await expert._handle_codex_event(
+        {
+            "type": "item.started",
+            "item": {"type": "command_execution", "command": "python3 -m pytest -q\n"},
+        },
+        broadcast,
+    )
+    text = await expert._handle_codex_event(
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "完成"}},
+        broadcast,
+    )
+
+    assert text == "完成"
+    assert any(e.type == events.EventType.TOOL_USE for e in bucket)
+    assert any(e.type == events.EventType.EXPERT_MESSAGE for e in bucket)
+
+
 def test_openai_client_args_minimax(monkeypatch):
     """PROVIDER=minimax 時用 MiniMax 的 key/base_url，與 OpenAI 憑證互不污染。"""
     monkeypatch.setattr(config, "PROVIDER", "minimax")
