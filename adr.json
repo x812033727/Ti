@@ -2603,6 +2603,83 @@
       "rejected": "先 commit 再驗收（要 revert 成本）;把 git status 保險寫進測試本體（污染守護職責）。",
       "session_id": "apeedf64ddad",
       "created_at": 1781642792.221968
+    },
+    {
+      "decision": "**技術選型：純前端 vanilla JS 改動，`web/app.js` 無 build step。** 後端 payload / orchestrator / `studio/events.py` 不動。",
+      "rationale": "問題在 `web/app.js:325-339` 渲染處漏讀 `criteria`；後端已送對的欄位（payload docstring 載明），修補面收斂在前端是 scope 最小。",
+      "rejected": "(α) 改 orchestrator 注入「policy option」新欄位——scope 飄移，且猜測語意源頭；(β) 改 payload schema——破既有合約、影響 history 重播。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846833
+    },
+    {
+      "decision": "**「警示塊政策選項」推定為 `agenda` 子題的 `criteria` 欄位。** 翻案條件：**(a)** 工程師 #1 證實 orchestrator 實際未填 criteria；**(b)** PM 確認「政策選項」是另一個語意實體（PM 才是語意源頭，非工程師推定）。",
+      "rationale": "(a) 既有 `agenda_plan` docstring 明列「含每子題 title/description/criteria/assignee」；(b) 語意上「成功準則」=「政策選項／判斷準則」最貼近 PM 描述；(c) 症狀對齊：進 history 不見於畫面。",
+      "rejected": "(a) `tasks` / `edges`——任務依賴語意、非政策語意；(b) `corrections`——已渲染（app.js:333-335）。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846857
+    },
+    {
+      "decision": "**渲染形式採「拼到子題行尾 + 【準則】標籤」**——沿用既有模板追加 `if (a.criteria) line += '｜【準則】${a.criteria}';`，`｜` 與既有 description separator 一致、`【】` 與既有 `conclusion` case（app.js:357）標籤風格一致。",
+      "rationale": "與既有 `title / description / assignee` 內聯拼裝同構，零 CSS、零結構破壞、可逆性最高。",
+      "rejected": "(a) 多行縮排獨立區塊——視覺重但需新 CSS、破既有 DOM 結構；(b) 改用模板引擎——scope 飄移到前端基礎設施；(c) 在 `addSystem` 內另外呼叫 `addMessage`/自訂 renderer——多型別開銷、不符既有慣例。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.184687
+    },
+    {
+      "decision": "**`criteria` 為空 / 缺欄位 / 空字串時靜默省略**——`if (a.criteria)` 守衛。沿用既有 `if (a.description)` / `if (a.assignee)` 慣例。",
+      "rationale": "既有契約「缺漏即不顯示」一致；避免「【準則】（無）」噪音。",
+      "rejected": "(a) 顯式「【準則】（無）」——視覺噪音、破壞既有渲染契約；(b) 區分空字串 vs undefined 用 `?? ''`——過度細緻、現實中 orchestrator 不會塞空字串佔位。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.184688
+    },
+    {
+      "decision": "**守護鏈三層**：(i) **新增源碼靜態掃描測試**（鎖定 agenda_plan case 區塊，見決策 6）；(ii) **既有 `test_offline_agenda_e2e` 守 payload 結構**（不覆蓋 criteria 渲染內容、僅守 agenda/assignments/corrections/tasks schema 正確）；(iii) **人眼 demo**（由工程師交付前自測）。",
+      "rationale": "本任務為「前端渲染修補」，測試守護是「半年後接手者還能信任這條路徑」的安全網。**自我認知修正**：既有 e2e **不**模擬前端 replay、**不**檢查 DOM 文字——設計原以為的 e2e 覆蓋在 criteria 渲染層面是缺口，本測試 + 人眼 demo 才是當前實際覆蓋。**commit message 與測試 docstring 明示此缺口**。",
+      "rejected": "(a) 升級到 jsdom——需 npm 依賴 + package.json，scope 飄移到前端基礎設施層；(b) 升級到 node 直譯 `app.js`——`app.js` 依賴 `document.querySelector` 等瀏覽器 API，mock DOM 成本等同 jsdom。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846895
+    },
+    {
+      "decision": "**守護測試形式：鎖定 `case \"agenda_plan\":` 區塊的靜態正則掃描**。用 regex 抓出 `case \"agenda_plan\":` 到下一個 `case \"` 為止的 case 區塊字串，在該區塊內斷言。**正樣**：`a.criteria` 與 `${a.criteria}` / `line += ... criteria` 模式同時出現（擋掉「守衛寫了但忘記串到 `line`」）；**負樣**：`a.tasks` 與 `a.edges` 不應在該區塊內出現（守住「不渲染 tasks/edges」範圍守門，避免 scope 飄移）。",
+      "rationale": "工程師 push back 採納——裸 grep `a.criteria` 判別力太弱，鎖定 case 區塊是 (β-lite) 強化版：純 python regex、零新基礎設施、真有判別力（擋掉「if 寫了但沒接字串」）。負樣改用 `a.tasks` / `a.edges` 取代虛構的 `policy_option` 拼字——有實質範圍守門意義，不是假想敵。",
+      "rejected": "(a) 裸 grep `a.criteria`——判別力弱、可被 `if (a.criteria) line += ''` 騙過；(b) jsdom / node 直譯——scope 飄移；(c) 負樣用 `policy_option` 拼字——虛構、orchestrator 從未用、永遠綠等於沒守。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846907
+    },
+    {
+      "decision": "**不抽 helper、不重構既有 `agenda_plan` case 結構**——與既有 `title/description/assignee` 內聯拼裝同構。",
+      "rationale": "沿用既有架構決策 7（YAGNI）；未來若 case 整段要拆函數再一起抽，本次局部改動不越界。",
+      "rejected": "(a) 抽 `_renderAgendaItem()` helper——提早一般化，本檔只一處使用；(b) 改模板字串模板引擎——scope 飄移。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846917
+    },
+    {
+      "decision": "**commit 粒度：3 檔變更單一 commit，耦合意圖**——(1) `web/app.js` modify（`agenda_plan` case 加 criteria 渲染）；(2) 新檔 `tests/qa_test_render_agenda_criteria.py`；(3) `tests/test_verify_clean_acceptance.py` 的 `ignored_untracked` set +1 元素（加入 `tests/qa_test_render_agenda_criteria.py`）。**翻案既有架構決策 5**（從「不擴充」改為「擴充 1 個元素」），理由：與前一個任務的翻案對稱處理——新測試在「建檔後、未 commit 前」的中間態會以 `??` 出現、被 `test_no_untracked_residuals_in_worktree` flag 為「未預期 untracked 殘留」；屬「QA 工具造成的可預期污染」白名單維護、非業務邏輯改動，對稱處理是合約對齊的最小改動。commit message: `feat(web): agenda_plan 渲染補上 criteria 成功準則（前端可見、history 已有）` + `Refs: 新增守護測試在 commit 前為 untracked，ignored_untracked 對稱處理；既有 e2e 不覆蓋 criteria 渲染，執行時守護缺口由人眼 demo 補上`。",
+      "rationale": "",
+      "rejected": "(a) 拆 2 個 commit——拆 commit 必有中間態 fail（`ignored_untracked` 未擴充時新測試檔被 flag），單一 commit 才能保持工作樹始終綠；(b) 用驗收順序流程紀律取代白名單——半年後接手者照著跑會踩雷、白名單維護成本極低；(c) 不擴充白名單、要求工程師 commit 後才跑 `test_verify_clean_acceptance.py`——脆弱、易迴歸。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846938
+    },
+    {
+      "decision": "**測試 docstring 明列不守護事項 + 翻案條件**。「**守護**：`web/app.js` 的 `agenda_plan` case 區塊內 `a.criteria` 確實讀取並串到 `line` 賦值，且 `a.tasks` / `a.edges` 未進入該區塊（範圍守門）。**不守護**：(i) orchestrator 是否實際填入 criteria（屬後端範疇，本任務不動）；(ii) DOM 在瀏覽器實際呈現（屬 e2e 範疇，由人眼 demo 與既有 `test_offline_agenda_e2e` payload 結構檢查補上，但**既有 e2e 不模擬前端 replay**）；(iii) criteria 為空字串時的省略行為（沿用既有 `if (a.description)` 守衛慣例，由 code review 守護）；(iv) 既有 title/description/assignee/corrections 不迴歸（既有 `test_offline_agenda_e2e` 守護）。**翻案條件**：(a) orchestrator 證實未填 criteria；(b) PM 確認「政策選項」是另一個語意實體。」",
+      "rationale": "避免半年後接手者誤判守護範圍；明示執行時守護缺口是誠實的設計自我認知。",
+      "rejected": "(a) 只列「守護事項」、不列「不守護事項」——誤導接手者以為覆蓋完整；(b) 在 docstring 寫 jsdom 升級路徑——scope 飄移暗示，不應綁死本任務。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846952
+    },
+    {
+      "decision": "**本機驗收順序**：`ruff check tests/qa_test_render_agenda_criteria.py tests/test_verify_clean_acceptance.py`（`web/app.js` 非 python 跳過 ruff）→ `ruff format --check` → `pytest -v tests/qa_test_render_agenda_criteria.py`（單檔先綠）→ `pytest -v tests/test_offline_agenda_e2e.py`（既有 e2e 不迴歸）→ `python3 -m pytest -v tests/test_offline_agenda_e2e.py tests/ -k \"agenda\"`（任務指定集合）→ `git diff --cached --stat`（確認 staged 為 3 檔）→ `git status --porcelain`（手動確認無新 `??`）→ commit → `git status --porcelain`（commit 後無 `??`）→ `pytest -q`（含 `test_verify_clean_acceptance.py` 確認白名單生效）→ 整體 `pytest -q` 防迴歸。**任一步紅則不 commit**。",
+      "rationale": "步驟排序對應「白名單議題已被決策 8 吸納」的狀態——`test_verify_clean_acceptance.py` 在 commit 後跑才驗證白名單生效。",
+      "rejected": "(a) 把「commit 後跑 `test_verify_clean_acceptance.py`」寫進測試本體——污染職責、由 git status 手動確認 + 流程紀律已覆蓋。",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.184697
+    },
+    {
+      "decision": "**範圍守門（明確不做）**：(a) 不改 orchestrator / 後端 / payload 結構；(b) 不渲染 `tasks` / `edges`（任務依賴圖層級，需新 CSS 與新排版，scope 飄移；由負樣斷言守住）；(c) 不重構既有 `agenda_plan` case 結構；(d) 不動 `corrections` 既有渲染；(e) 不建新注入管線、不改 history jsonl 結構、不引入 jsdom / node 測試基礎設施。",
+      "rationale": "PM 已明示「最小且可收斂」+「人眼可見」即驗收；擴張會破壞決策可逆性、把單次修補變成前端基礎設施工程。",
+      "rejected": "",
+      "session_id": "ap7c6078f65f",
+      "created_at": 1781694363.1846979
     }
   ]
 }
