@@ -327,6 +327,7 @@ function handleEvent(ev) {
         let line = `${i + 1}. ${a.title || ""}`;
         if (a.description) line += `｜${a.description}`;
         if (a.assignee) line += `（主責: ${a.assignee}）`;
+        if (a.criteria) line += `｜【準則】${a.criteria}`;
         addSystem(line);
       });
       (p.corrections || []).forEach((c) => {
