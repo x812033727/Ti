@@ -69,8 +69,9 @@ async def health_check(
 ) -> tuple[bool, str]:
     """部署後健康檢查：服務回 200，且主機沙箱依賴齊全（避免改動弱化安全）。
 
-    早夭偵測：沿用 `runner.run_http_demo` 的「server 進程退出即停等」原則，落到 systemctl
-    服務上——每輪 curl 之前先以 `systemctl is-active <AUTOPILOT_SERVICE>` 查服務存活，
+    早夭偵測：本設計沿用 run_http_demo（定義於 `runner.run_http_demo`）的「server 進程
+    退出即停等」原則，落到 systemctl 服務上——每輪 curl 之前先以
+    `systemctl is-active <AUTOPILOT_SERVICE>` 查服務存活，
     服務已被 systemd 標記為 `failed` / `inactive` / `unknown`（或 stdout 空）即提前回
     `(False, …)`，不耗滿 `attempts × delay`（預設 ≈36s）。`active` / `activating` 視為
     服務仍在線、不早退（`activating` 是 systemd 啟動流程中正常狀態，不該被誤判為死）。
@@ -92,15 +93,11 @@ async def health_check(
     use_isactive = shutil.which("systemctl") is not None  # 無 systemd → fail-open
     for _ in range(attempts):
         if use_isactive:
-            _rc, isactive_out = await _run(
-                ["systemctl", "is-active", service], timeout=5
-            )
+            _rc, isactive_out = await _run(["systemctl", "is-active", service], timeout=5)
             state = isactive_out.strip()
             if state not in ("active", "activating"):
                 # failed / inactive / unknown / stdout 空（查詢失敗）→ 早退
-                return False, (
-                    f"服務啟動後即退出（is-active={state or 'unknown'}），未回應 {url}"
-                )
+                return False, (f"服務啟動後即退出（is-active={state or 'unknown'}），未回應 {url}")
         rc, out = await _run(
             ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", url],
             timeout=10,

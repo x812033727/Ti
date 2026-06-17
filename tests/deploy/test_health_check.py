@@ -22,10 +22,7 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from studio import deploy
-
 
 # --- helpers ------------------------------------------------------------
 
@@ -80,7 +77,11 @@ async def test_isactive_failed_triggers_early_exit(monkeypatch):
 
 async def test_isactive_inactive_and_unknown_also_early_exit(monkeypatch):
     """inactive / unknown 與 stdout 空（查詢失敗）同樣走早退——確認分流非特例處理。"""
-    for state, ret in (("inactive", (3, "inactive\n")), ("unknown", (4, "unknown\n")), ("", (4, ""))):
+    for state, ret in (
+        ("inactive", (3, "inactive\n")),
+        ("unknown", (4, "unknown\n")),
+        ("", (4, "")),
+    ):
         _enable_systemctl(monkeypatch)
 
         async def fake_run(cmd, cwd=None, timeout=600, _ret=ret):

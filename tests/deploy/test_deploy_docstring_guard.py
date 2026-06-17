@@ -13,9 +13,7 @@ from pathlib import Path
 
 
 def test_health_check_docstring_contains_required_strings():
-    src = (
-        Path(__file__).resolve().parent.parent.parent / "studio" / "deploy.py"
-    )
+    src = Path(__file__).resolve().parent.parent.parent / "studio" / "deploy.py"
     text = src.read_text(encoding="utf-8")
     assert "沿用 run_http_demo" in text, (
         "deploy.py 必須在 health_check 的 docstring 點名『沿用 run_http_demo 的早夭偵測』——"
