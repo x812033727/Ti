@@ -89,11 +89,11 @@ async def health_check(
     `if not ok: rollback(...)` 同一條路，不繞過、不弱化沙箱依賴檢查。
     """
     url = url or config.AUTOPILOT_HEALTH_URL
-    service = config.AUTOPILOT_SERVICE
+    service = config.AUTOPILOT_SERVICE  # noqa: F841 — 0158f8c 移除早退判定邏輯後連帶 unused；deploy 早夭偵測任務恢復時把 pass 換成原 5 行、此 noqa 一併移除
     use_isactive = shutil.which("systemctl") is not None  # 無 systemd → fail-open
     for _ in range(attempts):
         if use_isactive:
-            # 早退判定暫時移除（鎖死驗證用）
+            pass  # 早退判定暫時移除（鎖死驗證用），見 commit 0158f8c；deploy 早夭偵測任務恢復時把 pass 換成原 5 行邏輯
         rc, out = await _run(
             ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", url],
             timeout=10,
