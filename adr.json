@@ -2316,6 +2316,251 @@
       "rejected": "",
       "session_id": "apf9cde330c0",
       "created_at": 1781525960.0670156
+    },
+    {
+      "decision": "產物頂端第一行即放「本任務實為驗證型 no-op，無任何寫入操作」結論句，三段證據為佐證而非主體——PM 第一眼掌握任務性質。",
+      "rationale": "避免 PM 讀完整份報告才發現是空包，縮短決策路徑。",
+      "rejected": "原本「三段證據平鋪、由 PM 自己推導結論」的順序——推導成本不該丟給 PM。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624551
+    },
+    {
+      "decision": "C 段（渲染行指認）grep pattern 綁死為兩組關鍵字——`criteria` 與 `render`，兩組都需有命中才算「渲染邏輯存在」；命中後輸出含行號與前後 2 行 context，不得只貼行號。",
+      "rationale": "防止「grep 什麼隨便找」的黑箱風險；高工指認為最大設計洞。",
+      "rejected": "執行端自由發揮 pattern（工程師原本「先 cat 再定 pattern」雖方向對，但未綁死判定邏輯，仍有操作空間）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.862457
+    },
+    {
+      "decision": "B 段（app.js == HEAD）採 `git diff --stat HEAD -- web/app.js` 先看一行彙整，零差即收工；如需深查再加 `git diff HEAD -- web/app.js`。",
+      "rationale": "高工建議；零差時完整 diff 為空但有 noise，stat 先看更省時。",
+      "rejected": "直接跑完整 `git diff HEAD`（零差時多餘輸出）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624582
+    },
+    {
+      "decision": "範圍外清單必須跑 `git log --oneline -n 5` + `git show --stat <sha>` 撈出實際「不相關 commit」與其檔名/SHA，不接受「@ 4572a49」之類的舉例式標註。",
+      "rationale": "PM 拿到清單要判斷是否 revert，必須是實資料不是猜測。",
+      "rejected": "沿用研究快照的範例 SHA。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624592
+    },
+    {
+      "decision": "範圍外清單另增一條「流程守則給 PM」——下次需求 doc 須附 `git rev-parse HEAD` 與 `git status --short` 自驗，避免舊快照重演。",
+      "rationale": "高工指出此為流程債，趁現在順手記。",
+      "rejected": "留待下個 task 處理（會重演同樣卡點）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624597
+    },
+    {
+      "decision": "沿用：任務性質 = 驗證型 no-op，全程 read-only（禁 `git restore` / `git reset` / `git rm` / `git checkout` 寫入子命令）。",
+      "rationale": "既有紀律「可逆性優先」「本環境過關 ≠ 使用者環境過關」延伸。",
+      "rejected": "硬做清理（會引入破壞性操作，違反可逆性）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624606
+    },
+    {
+      "decision": "沿用：技術選型 = 純 git CLI + grep，無 wrapper、無腳本框架。",
+      "rationale": "為 no-op 任務增加工具面是過度設計。",
+      "rejected": "包成 `verify.sh` 腳本（一次性驗收物不需入庫）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624618
+    },
+    {
+      "decision": "沿用：介面格式 = 單一 markdown 區塊，依 A/B/C 三段、每段附「執行指令 + 預期輸出 + 實測輸出」三欄；明註「一次性驗收物、不為後續自動化保留介面」。",
+      "rationale": "高工次要建議；防止下次被誤當 API 接 CI。",
+      "rejected": "產 JSON / 結構化檔（為 no-op 投資未來介面是 YAGNI）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.862463
+    },
+    {
+      "decision": "沿用：範圍邊界 = 只處理 staged/working tree 層級；已 commit 進 origin/main 的 INVENTORY_task1.md 等明確排除。",
+      "rationale": "「清 staged」無法解決「已落庫」，強做會越界到 revert/removal 議題。",
+      "rejected": "併入本任務一併移除已 commit 檔（範圍爆炸，PM 未授權）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624635
+    },
+    {
+      "decision": "沿用：驗收逐項精確、任一失敗即停回報 PM；驗收標準綁死 PM 提出的四項（status 空、app.js diff 空、渲染行可指認、範圍外清單交付）。",
+      "rationale": "既有「逐檔精確」紀律的對偶；不允許「A 失敗 B/C 過就先交」。",
+      "rejected": "部分通過即出貨（會埋未爆彈）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624642
+    },
+    {
+      "decision": "沿用：模組切分 = A 工作樹乾淨 / B app.js == HEAD / C 渲染邏輯存在，三段各自可單獨重跑。",
+      "rationale": "便於 PM/QA 抽查任一段；對應三個不同的失敗模式。",
+      "rejected": "三段合成單一複合指令（失敗時不知哪一段炸）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624654
+    },
+    {
+      "decision": "產物頂端置「本任務實為驗證型 no-op，無寫入」結論句，三段證據為佐證；PM 第一眼掌握性質。",
+      "rationale": "避免讀完整份才發現是空包。",
+      "rejected": "三段平鋪、由 PM 自推結論（推導成本不該丟給 PM）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624663
+    },
+    {
+      "decision": "C 段 grep pattern 綁死為 `criteria` + `render` 兩組關鍵字，皆需命中；命中後輸出含行號與前後 2 行 context。",
+      "rationale": "高工指為最大設計洞；防「grep 隨便找」黑箱。",
+      "rejected": "執行端自由發揮 pattern（工程師原案未綁死判定邏輯）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624668
+    },
+    {
+      "decision": "B 段採 `git diff --stat HEAD -- web/app.js` 先看彙整，零差即收。",
+      "rationale": "高工建議；零差時完整 diff 為空但有 noise。",
+      "rejected": "直接跑 `git diff HEAD` 完整輸出。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624675
+    },
+    {
+      "decision": "範圍外清單須由 `git log --oneline -n 5` + `git show --stat <sha>` 撈實 commit 與檔名/SHA，不接受舉例式標註。",
+      "rationale": "PM 要據此判斷是否 revert，必須是實資料。",
+      "rejected": "沿用研究快照的範例 SHA。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624682
+    },
+    {
+      "decision": "範圍外清單增「流程守則」——下次需求 doc 附 `git rev-parse HEAD` + `git status --short` 自驗。",
+      "rationale": "高工指出為流程債，趁現在記。",
+      "rejected": "留待下個 task（會重演同樣卡點）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624694
+    },
+    {
+      "decision": "介面格式明註「一次性驗收物、不為後續自動化保留介面」。",
+      "rationale": "高工次要建議；防被誤當 API 接 CI。",
+      "rejected": "產結構化檔預留未來介面（YAGNI）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624706
+    },
+    {
+      "decision": "沿用：任務 = 驗證型 no-op，全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 寫入子命令；技術選型 = 純 git CLI + grep，無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」；範圍 = 只處理 staged/working tree，已 commit 不相關檔排除；驗收 = 逐項精確、任一失敗即停，綁死 PM 四項標準；三段模組各自可單獨重跑。",
+      "rationale": "既有紀律延伸；不再展開取捨避免冗述。",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624723
+    },
+    {
+      "decision": "任務性質 = 驗證型 no-op；技術選型 = 純 git CLI + grep，無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」；範圍 = 只處理 staged/working tree，已 commit 不相關檔排除；驗收 = 逐項精確、任一失敗即停，綁死 PM 四項；模組 = A/B/C 三段各自可單獨重跑；不變性 = 全程 read-only、禁 `restore`/`reset`/`rm`/`checkout` 寫入子命令。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624737
+    },
+    {
+      "decision": "沿用：任務性質 = 驗證型 no-op。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624747
+    },
+    {
+      "decision": "沿用：技術選型 = 純 git CLI + grep，無 wrapper。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624752
+    },
+    {
+      "decision": "沿用：介面 = 單一 markdown 區塊，三段「指令/預期/實測」分欄。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624756
+    },
+    {
+      "decision": "沿用：範圍 = 只處理 staged/working tree 層級，已 commit 進 origin/main 的不相關檔排除。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.86248
+    },
+    {
+      "decision": "沿用：驗收 = 逐項精確、任一失敗即停回報 PM，綁死 PM 四項標準。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624809
+    },
+    {
+      "decision": "沿用：模組 = A 工作樹乾淨 / B app.js == HEAD / C 渲染邏輯存在，三段各自可單獨重跑。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624818
+    },
+    {
+      "decision": "沿用：不變性 = 全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 寫入子命令。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624828
+    },
+    {
+      "decision": "產物頂端置「本任務實為驗證型 no-op，無任何寫入操作」結論句，三段證據為佐證；PM 第一眼掌握任務性質。",
+      "rationale": "避免讀完整份才發現是空包，縮短決策路徑。",
+      "rejected": "三段平鋪、由 PM 自推結論（推導成本不該丟給 PM）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624837
+    },
+    {
+      "decision": "C 段 grep pattern 綁死為 `criteria` + `render` 兩組關鍵字，皆需命中；命中後輸出含行號與前後 2 行 context，不得只貼行號。",
+      "rationale": "高工指為最大設計洞；防「grep 隨便找」黑箱化為「為了過而過」。",
+      "rejected": "執行端自由發揮 pattern（工程師原案「先 cat 再定」未綁死判定邏輯）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624845
+    },
+    {
+      "decision": "B 段採 `git diff --stat HEAD -- web/app.js` 先看彙整，零差即收；非零差再跑完整 diff。",
+      "rationale": "高工建議；零差時完整 diff 雖空但有 noise，stat 先看更省時。",
+      "rejected": "直接跑完整 `git diff HEAD -- web/app.js`（零差時多餘輸出）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.862485
+    },
+    {
+      "decision": "範圍外清單須由 `git log --oneline -n 5` + `git show --stat <sha>` 撈出實際「不相關 commit」與其檔名/SHA，不接受舉例式標註。",
+      "rationale": "PM 須據此判斷是否 revert，必須是實資料不是猜測。",
+      "rejected": "沿用研究快照的範例 SHA（如「@ 4572a49」）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624864
+    },
+    {
+      "decision": "範圍外清單增一條「流程守則給 PM」——下次需求 doc 須附 `git rev-parse HEAD` 與 `git status --short` 自驗，避免舊快照重演。",
+      "rationale": "高工指出此為流程債，趁現在順手記下；不修下個 task 會重演同樣卡點。",
+      "rejected": "留待下個 task 再處理。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624873
+    },
+    {
+      "decision": "沿用既有設計——任務性質 = 驗證型 no-op；技術選型 = 純 git CLI + grep、無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」；範圍 = 只處理 staged/working tree、已 commit 不相關檔排除；驗收 = 逐項精確、任一失敗即停，綁死 PM 四項標準；模組 = A/B/C 三段各自可單獨重跑；不變性 = 全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 寫入子命令。",
+      "rationale": "既有紀律延伸，PM 已核可方向；不再展開取捨避免冗述。",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624885
+    },
+    {
+      "decision": "C 段 grep pattern 綁死為 `criteria` + `render` 兩組關鍵字，皆需命中才算「渲染邏輯存在」；命中後輸出含行號與前後 2 行 context，不得只貼行號。",
+      "rationale": "高工指為最大設計洞；防「grep 隨便找」黑箱化為「為了過而過」捷徑。",
+      "rejected": "執行端自由發揮 pattern（工程師原案「先 cat 再定」未綁死判定邏輯，仍有操作空間）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624902
+    },
+    {
+      "decision": "B 段採 `git diff --stat HEAD -- web/app.js` 先看一行彙整，零差即收；非零差再跑完整 `git diff`。",
+      "rationale": "高工建議；零差時完整 diff 雖空但有 noise，stat 先看更省時。",
+      "rejected": "直接跑完整 `git diff HEAD -- web/app.js`（零差時多餘輸出）。",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624911
+    },
+    {
+      "decision": "沿用既有設計——任務性質 = 驗證型 no-op；技術選型 = 純 git CLI + grep、無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」分欄；範圍 = 只處理 staged/working tree 層級、已 commit 進 origin/main 的不相關檔排除；驗收 = 逐項精確、任一失敗即停回報 PM，綁死 PM 四項標準；模組 = A 工作樹乾淨 / B app.js == HEAD / C 渲染邏輯存在，三段各自可單獨重跑；不變性 = 全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 任何寫入子命令。",
+      "rationale": "既有紀律延伸，PM/工程師/高工三方已核可方向；不再展開取捨避免冗述。",
+      "rejected": "",
+      "session_id": "ap867ab655c0",
+      "created_at": 1781698221.8624938
     }
   ]
 }

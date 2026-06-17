@@ -536,3 +536,20 @@ class RetryConfig:
 **零回歸／零新增**：零新外部依賴（無 tenacity）、零新 env 變數（沿用 `TI_RATELIMIT_*`／`EXPERT_RATE_LIMIT_*`）。驗收指令 `python -m pytest tests/ -k "retry or backoff or wiring or make_retry_config" -q` 先前已 132 passed、全套件 2193 passed 0 failed。
 
 **經驗**：DECISIONS.md 早期決策曾記「make_retry_config 不遷移」，但實況已收斂為「欄位＋lazy backoff 同源並存」——**文件定稿須以程式碼實況為準，不抄早期討論草案**，這正是 #5 把「最終簽章」獨立成節的目的。
+
+## 任務 #4 第 3 輪拆法紀錄：C 段幽靈字串 + HEAD 自我作廢
+
+工程師認錯：C 段把 `criteria` 寫進判定，沒接住研究員「全 repo 無此字串」訊息，自造結構性死結。PM 拆法核可，定案如下。
+
+設計決策: C 段判定從「`criteria` + `render` 兩組關鍵字皆命中」改為「在 `web/app.js` 指認至少一處實際存在的渲染邏輯（`renderBoard` / `agenda_plan` case / `render*` 任一即可），附行號與前後 2 行 context」。
+理由: `criteria` 是過期快照的幽靈字串，HEAD 不存在；用 repo 內實際存在的 `render*` 取代，判定才有 ground truth。`criteria` 在 `web/app.js` 確實零命中（全 repo 內 `criteria` 僅在 `tests/core/test_agenda*.py` 作為資料欄位存在，與前端渲染邏輯無關）。
+否決: 沿用 `criteria` 鎖定（任務結構性無法通過，再跑幾輪都一樣卡）。
+
+設計決策: 報告內 HEAD 描述改用相對語意（`HEAD 與 origin/main 無分歧` / `HEAD 是 origin/main 的祖先` / `HEAD 領先 origin/main`），不寫絕對 SHA。
+理由: 報告本身會被 commit，每次寫死絕對值必自我作廢；相對語意對後續 commit 具不變性。
+否決: 寫死絕對 SHA（典型遞迴陷阱，PM 已點出）。
+
+設計決策: 沿用其餘——範圍外清單 E 段照收不動；任務性質仍為驗證型 no-op、全程 read-only、禁 `restore` / `reset` / `rm` / `checkout` 寫入子命令；介面 = 單一 markdown 區塊、A/B/C/範圍外四段、一次性驗收物不為自動化保留。
+理由: PM 已逐項核可，無新取捨。
+
+工程師照此改 C 段判定與報告內 HEAD 寫法兩處，其餘不動，task #4 即可收。
