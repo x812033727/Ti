@@ -29,7 +29,7 @@ jobs:
       - name: Resolve version (SSOT = pyproject.toml)
         id: ver
         run: |
-          ver=$(python3 -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
+          ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           echo "resolved version: $ver"
 
@@ -57,4 +57,4 @@ jobs:
       - name: Run release smoke check
         env:
           BODY: ${{ steps.body.outputs.body }}
-        run: python3 -m studio.release_smoke
+        run: python -m studio.release_smoke

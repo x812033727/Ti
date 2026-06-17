@@ -8,7 +8,6 @@ SDK 串流回來的訊息轉成 StudioEvent，透過注入的 broadcast callback
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -361,27 +360,6 @@ async def stream_to_events(
                         )
                     )
         elif isinstance(msg, ResultMessage):
-            # token 用量純記錄，廣播失敗絕不可拖垮發言主路徑。
-            u = getattr(msg, "usage", None) or {}
-            cost = getattr(msg, "total_cost_usd", None)
-            pt = u.get("input_tokens", 0) or 0
-            ct = u.get("output_tokens", 0) or 0
-            if pt or ct or cost:
-                with contextlib.suppress(Exception):
-                    await broadcast(
-                        events.token_usage(
-                            session_id,
-                            role.key,
-                            "claude",
-                            getattr(role, "model", "") or config.MODEL_LEAD,
-                            pt,
-                            ct,
-                            pt + ct,
-                            cost_usd=cost,
-                            cache_read=u.get("cache_read_input_tokens", 0) or 0,
-                            cache_write=u.get("cache_creation_input_tokens", 0) or 0,
-                        )
-                    )
             break
     return "\n".join(collected)
 

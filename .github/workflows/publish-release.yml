@@ -49,7 +49,7 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          ver=$(python3 -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
+          ver=$(python -c 'from studio.release_note import pyproject_version; print(pyproject_version())')
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           echo "tag=v$ver" >> "$GITHUB_OUTPUT"
           echo "resolved version: $ver"
@@ -72,7 +72,7 @@ jobs:
       # → 寫 body.md，不在 YAML 重寫任何 heading 字面值。render 失敗（缺 Breaking 區塊）即
       # Python 層 raise 非零退出，且已先 unlink 舊 body.md，step 5 不會誤讀殘留舊內容（架構決策）。
       - name: Render release body
-        run: python3 scripts/publish_release.py
+        run: python scripts/publish_release.py
 
       # Step 5 — 以 PAT 建立 published release（不帶 --draft，狀態直接為 published 才能被
       # release-smoke 的 release:published 接住）。body 經 -F body.md 注入，不經 shell 字串拼裝。

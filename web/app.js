@@ -293,9 +293,6 @@ function handleEvent(ev) {
       addTool(p);
       refreshFiles();
       break;
-    case "token_usage":
-      // 純記帳事件：token 用量已落 history/meta（供 usage_report 統計），前端目前不渲染。
-      break;
     case "board_update":
       renderBoard(p.columns || {});
       break;
@@ -330,7 +327,6 @@ function handleEvent(ev) {
         let line = `${i + 1}. ${a.title || ""}`;
         if (a.description) line += `｜${a.description}`;
         if (a.assignee) line += `（主責: ${a.assignee}）`;
-        if (a.criteria) line += `｜【準則】${a.criteria}`;
         addSystem(line);
       });
       (p.corrections || []).forEach((c) => {

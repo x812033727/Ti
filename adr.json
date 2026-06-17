@@ -2248,438 +2248,74 @@
       "created_at": 1781524224.1595807
     },
     {
-      "decision": "**裸直譯器命令邊界（精修版）**：以「**前一個字元非 `[\\w/.-]` 且後接 `\\s` 或 `-m` 邊界**」為統一判準（regex 與文字描述對齊），覆蓋 shell 行首呼叫、行內 `xargs python` / `$(which python)` / `command -v python` 等所有「被 shell 直譯器呼叫」情境。",
-      "rationale": "統一 regex 與文字判準，消除 reviewer/實作者兩套標準；`[^\\w/.-]` 比 `[\\s\\`$]` 多擋 `xargs`/`$()`/`command -v` 漏網情境。",
-      "rejected": "原始寫法「行內以空白/反引號/`$` 起首」——會漏 `xargs python` 等案例。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122865
+      "decision": "demo command-not-found 真因定位在 OS shell 層，改文件是命中真因，不動 runner `_executable_command` 內部邏輯。",
+      "rationale": "runner 介入前 shell 已報錯，映射層從未執行；改執行層屬誤治。",
+      "rejected": "",
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.067007
     },
     {
-      "decision": "**豁免採雙軌制**：整檔白名單（`Dockerfile`、`*.lock`、純 manifest 標頭）＋行內語法豁免（套件 manifest 的 `^[a-zA-Z_-][\\w.-]*\\s*=\\s*`、Docker image tag 行 `FROM\\s+\\S*python\\S*`、venv 執行檔路徑 `.venv/bin/python` / `.venv\\Scripts\\python`、shebang 行 `^#!.*\\bpython\\b`）。",
-      "rationale": "純檔案白名單會把 `pyproject.toml` 整檔豁免，等於放棄對它的守護；純行內黑名單日後加新檔案會靜默漏抓。雙軌讓檔案級豁免可審核、套件語法不會被誤抓。",
-      "rejected": "純檔案白名單（丟失 `pyproject.toml` 守護）；純行內黑名單（不可審核、新檔案易漏）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122893
+      "decision": "改動範圍鎖定四份使用者面文件（README.md、CHANGELOG.md、ARCHITECTURE.md、CONTRIBUTING.md），但 CHANGELOG.md 內描述舊版行為的歷史記錄段落列為禁動區。",
+      "rationale": "歷史段落改了反而製造不實紀錄；高工指出此邊界需明確。",
+      "rejected": "全文件無差別替換——CHANGELOG 歷史段語意不同，不應與「指令宣告」同等對待。",
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.0670094
     },
     {
-      "decision": "**執行期零變動，但 pre-flight 先驗**：`scripts/publish_release.py` 與 release 流程、gh CLI 旗標、既有守護測試符號**全部不動**；但動工前先 `rg -n 'subprocess|sys.executable' scripts/` 與 `rg -n '\\bpython\\b' scripts/publish_release.py` 跑一次，確認命中僅為 shebang/註解/字串，無執行期呼叫。",
-      "rationale": "動工前先有 ground truth，避免「決策寫零變動但實作發現有 subprocess 呼叫」被迫破例。",
-      "rejected": "直接動工事後補救（一旦撞到 `subprocess.run(['python', ...])` 要回頭改設計，PR 噪音更大）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122905
+      "decision": "CI workflow（`.github/workflows/*.yml`）預設不動；動工前須確認無 Makefile/just recipe 抄文件 sample command，若有，該 recipe 納入改動範圍。",
+      "rationale": "CI 跑 setup-python 不是 demo 路徑；但若 CI 直接執行文件指令，不動會留不一致，高工指出需核實。",
+      "rejected": "",
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.0670106
     },
     {
-      "decision": "**守護測試擴充 `no_bare_python_command` 斷言**，歸入 `tests/docs` 既有模組；斷言內顯式宣告雙軌豁免規則，命中清單（rg 輸出）為空才 PASS。",
-      "rationale": "與既有「`-F` 必須在 create-release step run 內」、「`create-release` step id」同級守護，失敗模式具體；命中清單可一眼審核。",
-      "rejected": "另開 `tests/check_no_bare_python.py`（與既有 `tests/docs` 風格分裂）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122912
-    },
-    {
-      "decision": "**CONTRIBUTING.md 新增「Python interpreter convention」一節**，慣例主因寫實務理由（`python3` 在三大平台都是預設可用的 3.x 進入點），PEP 394 改為附帶參考（標 deprecated）。",
-      "rationale": "PEP 394 於 2024-05 已標 deprecated，文件若寫「PEP 規定」會過期；實務理由更耐維護。",
-      "rejected": "引用 PEP 394 作為主因（會過期）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.712292
-    },
-    {
-      "decision": "**README Quickstart 採「主指令單一 + 雙句退路」**：主範例 `python3 app.py` 一行；其下加兩句「Windows 若 `python3` 找不到，可改用 `py`」「`py` 啟動器預設跑最新版，想鎖 3.x 用 `py -3`」。",
-      "rationale": "退路不只給 `py`，要順手講清 `py` vs `py -3` 行為差，避免使用者踩雷。",
-      "rejected": "雙範例並列（認知負擔，且暗示兩者等價）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122927
-    },
-    {
-      "decision": "**不重建既有 `.venv`、smoke 採 fresh venv + 前置檢查**：用 `command -v python3 || { echo \"FATAL: python3 not on PATH\"; exit 1; }` 確認 `python3` 可用後，跑 `python3 -m venv .fresh-venv && .fresh-venv/bin/python --version` 證明 venv 內 `python` 仍可運作。",
-      "rationale": "`.fresh-venv/bin/python` 預設依賴 `python3` 在 PATH；前置檢查避免「連 `python3` 都沒有」時假綠。",
-      "rejected": "直接 `.fresh-venv/bin/python --version`（環境無 `python3` 時假綠）；動既有 `.venv`（擴大變更半徑）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122931
-    },
-    {
-      "decision": "**驗收三層、任一失敗即退回**：(1) 字串層 `rg -n '(^|[^\\w/.-])python(\\s|-m\\b)' --glob '!*.lock'` 在豁免清單外零命中；(2) 測試層 `python3 -m pytest tests/docs -q` 全綠；(3) 執行層依文件指令實跑 demo 第一步，無 `command not found`。",
-      "rationale": "三層分別守「字串漂移」「守護測試整合」「end-to-end 真實可用」；任一失效都能定位具體失敗模式。",
-      "rejected": "只跑「rg + pytest」省去實跑（驗不到 shell 環境差異）；三層之上再加第四層（如 lint）——無需求、徒增維護。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122936
-    },
-    {
-      "decision": "**CHANGELOG 與 PR 描述留一筆**：「文件慣例改用 `python3` 為裸直譯器命令；豁免清單見 CONTRIBUTING 慣例節」，註明 PR 編號與 `tests/docs::test_no_bare_python_command` 守護測試位置。",
-      "rationale": "慣例轉換半年後看 git log 看不出為什麼改，CHANGELOG 留筆比 PR 描述更耐翻。",
-      "rejected": "只在 PR 描述寫、CHANGELOG 不提（PR 描述易被埋沒）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.712294
-    },
-    {
-      "decision": "**單一 PR 一次到位**；若 `README.md` 改法（大量段落）與其他檔案（單行 `python script.py`）差異過大，拆兩個 commit 同一 PR，便於 reviewer 分階段看。",
-      "rationale": "邊界清楚、豁免顯式，分批只增加 review 噪音；同一 PR 內拆 commit 兼顧審核便利。",
-      "rejected": "拆多個 PR（增加 review 噪音、無實質價值）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122946
-    },
-    {
-      "decision": "**手動掃一次 README 其他章節**（Development、Troubleshooting、FAQ 等），確認所有 shell 範例都收斂到 `python3`，不留「同份文件兩套慣例」。",
-      "rationale": "守護測試的 `*.md` glob 會擋下未來漂移，但既有檔案內的漂移需本次 PR 順手處理。",
-      "rejected": "只掃 Quickstart 段、其他章節交給未來 PR（漂移累積、後續清更痛）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.712295
-    },
-    {
-      "decision": "**裸直譯器命令邊界**：以「**前一個字元非 `[\\w/.-]` 且後接 `\\s` 或 `-m` 邊界**」為統一判準，覆蓋 shell 行首呼叫、行內 `xargs python` / `$(which python)` / `command -v python` 等所有「被 shell 直譯器呼叫」情境。",
-      "rationale": "regex 與文字描述必須對齊到同一句；`[^\\w/.-]` 比 `[\\s\\`$]` 多擋 `xargs`/`$()`/`command -v` 漏網情境。",
-      "rejected": "原始寫法「行內以空白/反引號/`$` 起首」——文字與 regex 兩套標準，且漏 `xargs python` 等案例。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122958
-    },
-    {
-      "decision": "**執行期零變動，但動工前先驗**：`scripts/publish_release.py` 與 release 流程、gh CLI 旗標、既有守護測試符號**全部不動**；動工前先 `rg -n 'subprocess|sys.executable' scripts/` 與 `rg -n '\\bpython\\b' scripts/publish_release.py` 跑一次，確認命中僅為 shebang/註解/字串，無執行期呼叫。",
-      "rationale": "先有 ground truth 再動檔，避免撞到 `subprocess.run(['python', ...])` 後被迫破例回頭改設計。",
-      "rejected": "直接動工事後補救（PR 噪音更大）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122967
-    },
-    {
-      "decision": "**守護測試擴充 `tests/docs::test_no_bare_python_command`**，斷言內顯式宣告雙軌豁免規則，rg 命中清單為空才 PASS。",
-      "rationale": "與既有「`-F` 在 create-release step run 內」、「`create-release` step id」同級守護，失敗模式具體可定位。",
-      "rejected": "另開 `tests/check_no_bare_python.py`（與既有 `tests/docs` 風格分裂）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122972
-    },
-    {
-      "decision": "**CONTRIBUTING.md 新增「Python interpreter convention」一節**，慣例主因寫實務理由（`python3` 在三大平台都是預設可用的 3.x 進入點），PEP 394 改為附帶參考並標 deprecated。",
-      "rationale": "PEP 394 於 2024-05 已標 deprecated，文件若寫「PEP 規定」會過期；實務理由更耐維護。",
-      "rejected": "引用 PEP 394 作為主因（會過期）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.712298
-    },
-    {
-      "decision": "**README Quickstart 採「主指令單一 + 雙句退路」**：主範例 `python3 app.py` 一行可複製；其下加兩句「Windows 若 `python3` 找不到，可改用 `py`」「`py` 啟動器預設跑最新版，想鎖 3.x 用 `py -3`」。",
-      "rationale": "退路不只給 `py`，要順手講清 `py` vs `py -3` 行為差。",
-      "rejected": "雙範例並列（認知負擔，且暗示兩者等價）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122989
-    },
-    {
-      "decision": "**不重建既有 `.venv`、smoke 採 fresh venv + 前置檢查**：先 `command -v python3 || { echo \"FATAL: python3 not on PATH\"; exit 1; }` 確認 `python3` 可用，再 `python3 -m venv .fresh-venv && .fresh-venv/bin/python --version` 證明 venv 內 `python` 仍可運作。",
-      "rationale": "`.fresh-venv/bin/python` 預設依賴 `python3` 在 PATH；前置檢查避免「連 `python3` 都沒有」時假綠。",
-      "rejected": "直接跑 venv 驗證（環境無 `python3` 時假綠）；動既有 `.venv`（擴大變更半徑）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7122993
-    },
-    {
-      "decision": "**單一 PR 一次到位**；若 `README.md` 改法與其他檔案差異過大，拆兩個 commit 同一 PR，便於 reviewer 分階段看。",
-      "rationale": "邊界清楚、豁免顯式，分批只增加 review 噪音；同一 PR 內拆 commit 兼顧審核便利。",
-      "rejected": "拆多個 PR（增加 review 噪音、無實質價值）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.7123005
-    },
-    {
-      "decision": "**手動掃一次 README 其他章節**（Development、Troubleshooting、FAQ 等），確認所有 shell 範例都收斂到 `python3`，不留「同份文件兩套慣例」漂移。",
-      "rationale": "守護測試的 `*.md` glob 會擋下未來漂移，但既有檔案內的漂移需本次 PR 順手處理。",
-      "rejected": "只掃 Quickstart 段、其他章節交給未來 PR（漂移累積、後續清更痛）。",
-      "session_id": "apb94e2fca02",
-      "created_at": 1781529596.712301
-    },
-    {
-      "decision": "技術選型採 bash shell，與既有 `scripts/baseline_selftest.sh` 同款「`set -u` + 逐條 `$?` 捕獲 + 聚合 `fail` + `exit $fail`」模式，對齊 in-repo precedent",
+      "decision": "替換策略採逐檔精確 Edit，不用批次 sed/perl。",
       "rationale": "",
       "rejected": "",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722447
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.0670114
     },
     {
-      "decision": "4 條驗證命令固定為 `git status --porcelain=v2 --branch --untracked-files=normal` / `git diff --quiet origin/main HEAD` / `git diff --quiet --cached` / `[ \"$(git rev-parse HEAD)\" = \"$(git rev-parse origin/main)\" ]`，前置 `git fetch origin` 與 `git rev-parse --is-inside-work-tree` / `git rev-parse --verify origin/main^{commit}` 防呆不計入 4 條但同樣需記 exit code",
+      "decision": "第 1 步 grep 命中清單固化為表格（檔案、行號、原文、預定改動/keep 標記），存檔後給 PM approve；改完跑同一條 grep，兩份輸出比對，作為禁動區核驗依據。",
+      "rationale": "高工指出格式未定義是流程卡點；工程師指出兩份輸出比對優於人腦記憶。",
+      "rejected": "",
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.067012
+    },
+    {
+      "decision": "執行驗收指令採 `python3 -c \"import studio.server\"`（即退、不阻塞），整體驗收沿用 `python3 -m pytest tests/docs tests/core/test_runner.py -q`。勘誤：原 `python3 -c \"import studio; python3 -m studio.server --help\"` 在 -c 字串內巢狀 python3 -m 屬非法 Python 語法（SyntaxError），且 server 未實作 --help 會 timeout，已更正。",
+      "rationale": "工程師指出全啟動會卡住 CI；驗收語意只需確認「指令字串找得到 python3 並能解析入口」，import 錯/依賴缺失為另一問題域，不混判。",
+      "rejected": "`python3 -m studio.server`（無限制）——會阻塞執行流程；`python3 -c \"import studio; python3 -m studio.server --help\"`——巢狀指令非法語法 + server 無 --help 會 timeout。",
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.0670133
+    },
+    {
+      "decision": "驗收「非 command not found」的目標環境定義為「未安裝 python symlink 的 bare macOS Monterey+ 或 Ubuntu 22.04+」，不以 dev 本機為準。",
+      "rationale": "高工指出「本環境過關」不等於使用者環境過關，最小環境需明文定義。",
+      "rejected": "以 dev 本機為驗收環境——python symlink 可能由 pyenv 提供，非 bare 狀態，不能代表使用者。",
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.067014
+    },
+    {
+      "decision": "guard 測試正則（`tests/docs/*` 等）若驗「不含裸 python 指令」，其排除條件必須同步涵蓋禁動區字串（`python-dotenv`、```python 圍欄、`python3`），避免文件改完後 guard 反紅。",
+      "rationale": "工程師指出此邊界容易漏，guard 正則本身若不排除禁動區，文件改正確但測試報錯，製造假紅。",
+      "rejected": "",
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.0670147
+    },
+    {
+      "decision": "guard 測試與文件改動必須同 batch、同 commit，不允許中間狀態。",
       "rationale": "",
       "rejected": "",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722486
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.067015
     },
     {
-      "decision": "腳本不啟用 `set -e`，4 條 + fetch 全部跑完才結束，確保一條 fail 也能拿到其他條的證據（驗證場景 fail-fast 為反模式）",
-      "rationale": "與既有 `baseline_selftest.sh` 風格一致；CI / release gate 需要完整證據鏈而非早死",
-      "rejected": "`set -euo pipefail`（`redeploy.sh` 風格）——那是 fail-fast 部署場景，不適用於「我要看到所有證據」",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722495
-    },
-    {
-      "decision": "總體 exit code 採「全乾淨 = 0；fetch 失敗 OR 任何 4 條非預期 = 1」手動累計，不靠 `set -e` 達成；fetch 失敗時 close-out 標頭顯眼標示「fetch 失敗，比對結果作廢」",
-      "rationale": "fetch 失敗代表 `origin/main` 是過時 ref，後續 diff / hash 全部不可信；這比 diff 結果本身嚴重",
-      "rejected": "Engineer 原版「只記 fetch exit code、不影響整體 exit」——會讓 release gate 看到綠燈卻拿到過時 ref 的證據，是更危險的假綠",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722505
-    },
-    {
-      "decision": "branch name 進入 filename 前用 `tr '/\\\\' '__'` 處理；timestamp 鎖定 `date -u +%Y%m%dT%H%M%SZ`（去冒號，跨檔案系統安全）",
-      "rationale": "Engineer 與 Senior 都抓到，前者點路徑注入、後者點 Windows NTFS `:` 非法字元；合併處理",
-      "rejected": "ISO 8601 帶 `:` 的可讀格式（`%Y-%m-%dT%H:%M:%SZ`）——人類可讀性 vs 跨平台檔名安全，後者勝",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722512
-    },
-    {
-      "decision": "結構化輸出檔路徑為 `$TMPDIR/clean-verify-output-<sanitized-branch>-<ts>.txt`，close-out 文件路徑為 `$TMPDIR/clean-verification-<sanitized-branch>-<ts>.md`，兩者皆不入版控、不污染工作樹",
-      "rationale": "Engineer 指出的「腳本自己會產 untracked 違反驗收」風險，必須涵蓋輸出檔而不只是 close-out 文件",
-      "rejected": "輸出檔放 `scripts/.verify-cache/` 之類 repo 內隱藏目錄——會留 gitignored 殘留且未來難清",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722533
-    },
-    {
-      "decision": "假性 diff 排除政策採「腳本實讀 `.gitmodules` 內容 + 讀取 `core.autocrlf` 與 `.gitattributes` 狀態」三項偵測，不加任何 `--ignore-submodules=dirty` / `--ignore-cr-at-eol` 等修補 flag",
-      "rationale": "Senior 指出工作目錄存在 `.gitmodules`（空檔），我前一輪「正面證據：本 repo 無 submodule」是隱含假設錯誤，必須改為實測",
-      "rejected": "假設「空 `.gitmodules` ≡ 無 submodule」——空檔不代表無 submodule 設定，仍需解析內容判斷 `[submodule \"...\"]` 區塊數",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.472254
-    },
-    {
-      "decision": "假性 diff「本 repo 為何不受影響」段落的撰寫 ownership 指派給 engineer（最熟 repo 設定），由 PM 整合進 close-out 文件",
-      "rationale": "Senior 提出 ownership 模糊會變成 PM 複製貼上；明確指派 = 可追責",
-      "rejected": "落在 PM——PM 對 git 內部設定熟悉度不如 engineer，容易寫成通用 boilerplate",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.472255
-    },
-    {
-      "decision": "腳本輸出格式採「命令列 / 原始輸出 / `exit: N`」三行一組，stdout 與輸出檔同內容；close-out 模板於第 2、3 節（兩條 `--quiet` diff）加註「靜默 exit 0 = 無 diff；exit 1 = 有 diff，輸出至 stderr」契約說明",
-      "rationale": "Senior 點出 PM 未看過 git 行為會誤判「缺資料」；模板契約是給讀者的最小護欄",
-      "rejected": "在腳本端把 `--quiet` 換成有輸出版本——會與 `git diff` 預設 exit 行為（差異時 exit 1）脫鉤，違背命令原意",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722557
-    },
-    {
-      "decision": "腳本開頭自行 `git rev-parse HEAD` 取得當前 commit hash 寫入 close-out 標頭，不靠 PM 手填",
-      "rationale": "Engineer 可選強化——避免人為抄錯；零成本",
-      "rejected": "PM 手填——沒有「可自動化就不手填」以外的選擇",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722567
-    },
-    {
-      "decision": "翻案前一輪「放棄 release gate 自動化可能性」立場，改為「腳本結構預先設計成可被未來 CI 解析（命令列+輸出+exit 三行組是穩定契約），但不寫任何 CI wrapper、不加 `--json` 等輸出選項」",
-      "rationale": "Engineer 點出零成本保留可擴展性——三行組輸出已具備 machine-readable 結構，未來 CI 只加 wrapper 不重寫腳本；本任務不做 CI 整合但也不鎖死",
-      "rejected": "維持原案「不做任何 CI 友善設計」——會讓未來 release gate 必須重寫解析層，是不必要的鎖死",
-      "session_id": "ap9e89f72ec7",
-      "created_at": 1781539676.4722574
-    },
-    {
-      "decision": "採雙頻道合約——機器頻道（`[tag]` 括號前綴）鎖在 gate 回傳、`set_status(note=)`、`add(detail=out[-500:])`；人類頻道（自然語言「修復 lint 失敗／修復缺 SDK collection／修復測試失敗」）鎖在 `add(title=)`。兩頻道刻意不強制同語法。",
-      "rationale": "機器頻道服務 grep / log 解析 / AST / 自動化；人類頻道服務人眼 / backlog UI / 決策。兩者受眾不同，語法解耦避免把機器語法灌進人眼欄位。",
-      "rejected": "單頻道（所有欄位統一 `[tag]`）——成本低但人眼欄位訊息密度下降（失去「修復」「失敗」語意），且當前 3 處標題已用自然語言，統一等於 churn。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888376
-    },
-    {
-      "decision": "不在 `add(title=)` 標題補 `[tag]` 前綴，本任務 0 行業務邏輯改動。",
-      "rationale": "標題已含自然語言層級（人眼可辨）；機器端三個入口（return / note / detail）已覆蓋完整；翻案成本 = 3 個 f-string + 1 條新測試，可逆性極高。現在補屬鍍金。",
-      "rejected": "移除標題內自然語言層級字（只留 `f\"修復：{task['title']}\"`）——更糟，連人眼都失去層級。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888419
-    },
-    {
-      "decision": "新增 1 條反向鎖定測試 `test_fix_task_title_has_no_bracket_prefix`，驗證三處 `backlog.add(f\"修復 X 失敗：...\")` 標題字串不含 `[` 或 `]`。",
-      "rationale": "docstring 約定會漂；反向測試把「標題不應有括號前綴」轉成 CI 可執行的契約，未來誰手賤加前綴會直接紅。成本 < 15 行、零風險，與既有 14 條同檔。",
-      "rejected": "只靠 test docstring 約定（工程師原提議）——docstring 是人讀文件，不會跑；6 個月後新人直接改標題 PR 過了，契約實質失效。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888457
-    },
-    {
-      "decision": "在三處 `backlog.add(f\"修復 X 失敗：...\")` 上方各加 1 行 inline 註解 `# 標題頻道：自然語言（見模組 docstring 雙頻道合約）`。",
-      "rationale": "讀 `autopilot.py` 先看到程式碼才看測試；三處 inline 註解是半年後接手者最直接看到的合約提醒。成本 3 行。",
-      "rejected": "不加 inline 註解——依賴讀者先看模組 docstring 再看程式碼，實務上不會發生。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888469
-    },
-    {
-      "decision": "將雙頻道合約文字**同步**寫進 `studio/autopilot.py` 模組 docstring，明列：閘門清單（lint/collect/test）、機器頻道位置（return/note/detail）使用 `[tag]`、人類頻道位置（fix task title）使用自然語言「修復 X 失敗：...」、翻案觸發條件（backlog UI 只秀標題、LLM regex 評估層級、grep 一致性需求）。",
-      "rationale": "模組 docstring 是讀代碼第一站，比 test docstring 觸及率高；決策理由落字在源碼旁，git log 找得到。成本 1 段（5–8 行）。",
-      "rejected": "僅寫在 test docstring——測試 docstring 是測試開發者看的，模組 docstring 才是所有人看的；前者覆蓋面太窄。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.388848
-    },
-    {
-      "decision": "在 test docstring 補一句「閘門順序 = 源碼陳列順序；新增閘門時請同步補對應測試」；同步承認此為 loud failure（非 silent）——重排閘門時 `_gate_failure_branches()[:3]` 會讓斷言錯位而 fail，不會沉默通過。",
-      "rationale": "顯性化隱性假設，下個接手者加第 4 個閘門時不會漏測試；並校正風險性質（loud failure 而非 silent corruption）以匹配實際行為。",
-      "rejected": "在本任務修補 AST helper 用 `out = await _gate_X(clone)` 精確配對——成本約 10–15 行、需重驗 14 條合約、scope 飄移；當前 loud failure 已能攔下重排，沒事修等於製造風險。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888497
-    },
-    {
-      "decision": "AST 順序耦合（`_gate_failure_branches()[:3]` 依賴源碼陳列順序）flag 為已知脆弱性、不在本任務修補、列為後續待辦。",
-      "rationale": "當前 14 條測試全綠、源碼順序是事實、沒人會調 gate 順序；動 AST helper 等於重驗合約，scope 飄移。",
-      "rejected": "本任務順手修——會擴大本 PR 的 diff 範圍、需重跑守護測試，違反「本任務 0 行業務邏輯改動」原則。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888652
-    },
-    {
-      "decision": "不在當前實作 helper `_gate_label(name: str) -> str`；保留為「若日後翻案補前綴」時的配套進場項。",
-      "rationale": "三處字串重複目前是事實的，helper 化屬提早一般化（YAGNI）；日後若要加第 4 個閘門、或標題翻案補前綴需集中管理時，再 helper 化。",
-      "rejected": "當下 helper 化——3 處字串飄移風險目前靠 inline 註解 + 模組 docstring + 反向測試三道鎖已足，helper 化屬 over-engineering。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.388866
-    },
-    {
-      "decision": "不在 `add(title=)` 標題補 `[tag]` 前綴；本任務 0 行業務邏輯改動。",
-      "rationale": "標題已含自然語言層級（人眼可辨）；機器端三個入口（return / note / detail）已覆蓋完整；翻案成本 = 3 個 f-string + 1 條新測試，可逆性極高。現在補屬鍍金。",
-      "rejected": "標題補前綴（`f\"[lint] 修復 lint 失敗：...\"`）——強化 grep 一致性但人眼欄位訊息密度下降，且需擴充現有 14 條測試覆蓋標題路徑。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888674
-    },
-    {
-      "decision": "將雙頻道合約文字同步寫進 `studio/autopilot.py` 模組 docstring，明列：閘門清單（lint/collect/test）、機器頻道位置（return/note/detail）使用 `[tag]`、人類頻道位置（fix task title）使用自然語言「修復 X 失敗：...」、翻案觸發條件（backlog UI 只秀標題、LLM regex 評估層級、grep 一致性需求）。",
-      "rationale": "模組 docstring 是讀代碼第一站，觸及率高於 test docstring；決策理由落字在源碼旁，git log 找得到。成本 1 段（5–8 行）。",
-      "rejected": "僅寫在 test docstring——測試 docstring 服務測試開發者，模組 docstring 服務所有人；前者覆蓋面太窄，回應高級工程師 #2 補強。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888683
-    },
-    {
-      "decision": "在 test docstring 補一句「閘門順序 = 源碼陳列順序；新增閘門時請同步補對應測試」；同步重述此為 loud failure（非 silent）——重排閘門時 `_gate_failure_branches()[:3]` 會讓斷言錯位而 fail，不會沉默通過。",
-      "rationale": "顯性化隱性假設；下個接手者加第 4 個閘門時不會漏測試；校正風險性質匹配實際行為。成本 1 行。",
-      "rejected": "在本任務修補 AST helper 用 `out = await _gate_X(clone)` 精確配對——成本約 10–15 行、需重驗 14 條合約、scope 飄移；當前 loud failure 已能攔下重排，沒事修等於製造風險。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888693
-    },
-    {
-      "decision": "不在當前實作 helper `_gate_label(name: str) -> str`；保留為「若日後翻案補前綴」或「加第 4 個閘門」時的配套進場項。",
-      "rationale": "三處字串重複目前靠 inline 註解 + 模組 docstring + 反向測試三道鎖已足；helper 化屬提早一般化（YAGNI）。日後翻案或擴充時再進場，避免現在 churn。",
-      "rejected": "當下 helper 化——目前無新閘門、無翻案需求，純粹為了「未來可能需要」而抽象，是過度設計。",
-      "session_id": "ap36daa41366",
-      "created_at": 1781581590.3888705
-    },
-    {
-      "decision": "技術選型維持**純 pytest + subprocess 黑盒**，沿用既有 `LC_ALL=C` + `GIT_TERMINAL_PROMPT=0` env 慣例，不引入新 fixture、不注入 TMPDIR、不 mock 環境。",
-      "rationale": "黑盒 = 改 script 行為時測試照樣反映真實契約；注入 TMPDIR 會從「契約斷言」漂成「mock 斷言」，scope 飄移。",
-      "rejected": "pytest plugin / fixture-based 隔離 / mock subprocess —— 過度工程，與既有 `_run()` 風格斷裂。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219565
-    },
-    {
-      "decision": "WARN_FILE 路徑定位改為**「從 stdout 標頭宣告抓路徑」**，不用 `Path(TMPDIR).glob(...)` + mtime 比對。具體：`re.search(r\"^# stderr warning 檔 : (\\S+)\", stdout, re.MULTILINE)` 抓 group(1) 即為 WARN_FILE 絕對路徑。",
-      "rationale": "(1) stdout 標頭的 `# stderr warning 檔 :` 行就是「宣告契約」的內容物——抓路徑是**順便複用**契約斷言的副產品，零重複邏輯；(2) 不重算 sanitized branch（`tr '/\\\\' '__'`）就不必在測試內重實作 bash 轉換；(3) 同檔不會抓錯（每次跑 stdout 指向自己的檔）；(4) 自動消解 mtime race（M4 修正）。",
-      "rejected": "`Path(TMPDIR).glob(\"git-warnings-*.log\")` + mtime 最新 —— 在 CI 平行跑 / 連跑時會選錯，且要重算 sanitized branch。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219605
-    },
-    {
-      "decision": "模組邊界收斂為**兩條真契約 + 一條防呆**：(a) **宣告契約**——stdout 標頭含 `# stderr warning 檔 : <絕對路徑>` 行且路徑符合 `git-warnings-<sanitized_branch>-<UTC_TS>.log` 模式；(b) **落盤契約**——該宣告路徑在跑完後**確實存在於磁碟**（不一定非空，空檔 = 沒觸發 stderr 是合法結果）；(c) **分流契約（防呆）**——WARN_FILE 不含 stdout 業務標頭（如 `# verify-clean.sh 結構化輸出`），**docstring 明確標示此條目前為 vacuous truth（block-level `2> \"$WARN_FILE\"` 結構自然結果），重構成逐命令分流時會變真契約**。",
-      "rationale": "真契約 vs 結構自然結果的區分——M3 修正的落實。把測試精力集中在 a/b 兩條可被 script 重構 catch 的契約，c 條作為未來重構時的保險。",
-      "rejected": "把 c 條當真契約寫（會誤導接手者以為已守護 script 邏輯）;完全砍掉 c 條（失去未來重構時的 catch 網）。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219617
-    },
-    {
-      "decision": "守護測試品質紀律升級為**「正/負樣成對出現在同一組 parametrize case 內」**，形式採 `(present, absent, why_present, why_absent)` 四元組。每個 case 同時斷言 `present in source` 與 `absent not in source`，每個斷言附 `why_X` 註解。",
-      "rationale": "CONTRIBUTING.md:30 規範 + `tests/docs/test_qa_protection_docs.py:48-66` 慣例 + M2 修正。形式對齊既有 review 友善度，避免「額外加一條負樣」的誤讀。",
-      "rejected": "每組 parametrize 額外加一條負樣斷言（形式上不對齊，會被 review 退件）。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219625
-    },
-    {
-      "decision": "同步擴充 `tests/test_verify_clean_acceptance.py::test_no_untracked_residuals_in_worktree` 的 `ignored_untracked` 集合，加入 `tests/qa_test_verification_warning_contract.py`。",
-      "rationale": "**M1 blocker**——既有測試第 138-141 行的白名單只含自身 + 腳本，新測試檔在「建檔後、未 commit 前」的中間態會被 flag 為「未預期 untracked 殘留」。**翻案既有架構決策 5**（從「不擴充」改為「擴充 1 個元素」），理由：新測試與既有 2 條同性質（QA 工具造成的可預期污染），對稱處理是合約對齊的最小改動；且這是**白名單維護**而非**業務邏輯改動**，不違反「不動既有測試的業務邏輯」原則。",
-      "rejected": "改執行順序為「commit 完才跑既有測試」（違反 dev 慣例）;創檔時立刻 commit（違反單一變更的 close-out 慣例）;砍掉 c 條防呆讓白名單問題不存在（防呆價值獨立於 M1）。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219632
-    },
-    {
-      "decision": "commit 粒度採**單一 commit、耦合意圖**，包含 2 個檔案變更：(1) 新檔 `tests/qa_test_verification_warning_contract.py`；(2) `tests/test_verify_clean_acceptance.py` 白名單 +1 元素。**不算 scope 飄移**——這 2 個變更屬同一意圖（「新增 WARN_FILE 警告契約守護測試 + 既有測試合約對齊」），拆 commit 必有中間態 fail。commit message: `test(contract): 新增 verify-clean WARN_FILE 警告分流契約守護 + 既有測試合約對齊 (ignored_untracked +1)`，附加 `Refs: scripts/verify-clean.sh 仍維持 untracked（既有白名單已收容，非本任務 scope）`。",
-      "rationale": "工程師「Refs 標示」建議採納，避免半年後翻案者誤以為是遺漏。",
-      "rejected": "拆 2 個 commit（中間態會讓既有測試 fail）;合併 scripts/verify-clean.sh 入庫（scope 外，違反單一變更）。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219641
-    },
-    {
-      "decision": "不引入 `_gate_label()` / `_run_verify_clean()` / `compute_sanitized_branch()` 等 helper——三處字串重複（`bash scripts/verify-clean.sh` 呼叫 1 次 / `re.search` 路徑抓取 1 次 / `assert 檔案存在` 1 次）目前只在本檔出現，helper 化屬提早一般化。日後若加第 4 條子契約、或驗收測試家族擴充到 3 檔以上時再 helper 化（YAGNI）。",
-      "rationale": "既有架構決策 7 沿用。",
-      "rejected": "立即 helper 化（與 YAGNI 衝突）;共用既有 `_run()`（既有 `_run` 是 git 指令導向，`bash scripts/verify-clean.sh` 是 script 呼叫，介面語意不同）。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219653
-    },
-    {
-      "decision": "測試 docstring 明確標明**職責邊界與不守護事項**：「本測試守護 WARN_FILE 的宣告 / 落盤 / 分流三條契約。**不守護**：(i) 觸發後 stderr 內容是否正確路由至 WARN_FILE（若 `cat $X_ERR >> $WARN_FILE` 被誤改為 `cat $X_ERR`，本測試不會 catch）；(ii) fetch 失敗情境；(iii) close-out 文件撰寫；(iv) 假性 diff 排除政策。這些屬既有測試 / 其他任務範疇。」",
-      "rationale": "高工提醒「接手者誤以為已守護」風險——明確聲明不守護事項，避免半年後誤判守護範圍。",
-      "rejected": "在測試本體加多條「觸發後內容路由」斷言（要 mock 環境，太脆）;完全不寫 docstring（違反既有證據導向風格）。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.2219667
-    },
-    {
-      "decision": "本機驗收順序（沿用 CONTRIBUTING dev 慣例 + 工程師保險斷言）：`ruff check tests/qa_test_verification_warning_contract.py tests/test_verify_clean_acceptance.py` → `ruff format --check` → `pytest -v tests/qa_test_verification_warning_contract.py`（單檔先綠）→ `pytest -v tests/qa_test_verification_warning_contract.py tests/test_verify_clean_acceptance.py`（合跑不迴歸）→ `git diff --cached --stat`（確認 staged 只有 2 檔）→ `git status --porcelain`（手動確認無新 `??`）→ commit → `git status --porcelain`（commit 後確認無 `??` 殘留，迴歸保險——不寫進測試本體）→ 整體 `pytest -q` 防迴歸。**任一步紅則不 commit**。",
-      "rationale": "工程師「commit 後 git status 保險斷言」採納為驗收步驟（不放進測試本體，避免污染職責）+ 高工 `git diff --cached --stat` 採納。",
-      "rejected": "先 commit 再驗收（要 revert 成本）;把 git status 保險寫進測試本體（污染守護職責）。",
-      "session_id": "apeedf64ddad",
-      "created_at": 1781642792.221968
-    },
-    {
-      "decision": "**技術選型：純前端 vanilla JS 改動，`web/app.js` 無 build step。** 後端 payload / orchestrator / `studio/events.py` 不動。",
-      "rationale": "問題在 `web/app.js:325-339` 渲染處漏讀 `criteria`；後端已送對的欄位（payload docstring 載明），修補面收斂在前端是 scope 最小。",
-      "rejected": "(α) 改 orchestrator 注入「policy option」新欄位——scope 飄移，且猜測語意源頭；(β) 改 payload schema——破既有合約、影響 history 重播。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846833
-    },
-    {
-      "decision": "**「警示塊政策選項」推定為 `agenda` 子題的 `criteria` 欄位。** 翻案條件：**(a)** 工程師 #1 證實 orchestrator 實際未填 criteria；**(b)** PM 確認「政策選項」是另一個語意實體（PM 才是語意源頭，非工程師推定）。",
-      "rationale": "(a) 既有 `agenda_plan` docstring 明列「含每子題 title/description/criteria/assignee」；(b) 語意上「成功準則」=「政策選項／判斷準則」最貼近 PM 描述；(c) 症狀對齊：進 history 不見於畫面。",
-      "rejected": "(a) `tasks` / `edges`——任務依賴語意、非政策語意；(b) `corrections`——已渲染（app.js:333-335）。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846857
-    },
-    {
-      "decision": "**渲染形式採「拼到子題行尾 + 【準則】標籤」**——沿用既有模板追加 `if (a.criteria) line += '｜【準則】${a.criteria}';`，`｜` 與既有 description separator 一致、`【】` 與既有 `conclusion` case（app.js:357）標籤風格一致。",
-      "rationale": "與既有 `title / description / assignee` 內聯拼裝同構，零 CSS、零結構破壞、可逆性最高。",
-      "rejected": "(a) 多行縮排獨立區塊——視覺重但需新 CSS、破既有 DOM 結構；(b) 改用模板引擎——scope 飄移到前端基礎設施；(c) 在 `addSystem` 內另外呼叫 `addMessage`/自訂 renderer——多型別開銷、不符既有慣例。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.184687
-    },
-    {
-      "decision": "**`criteria` 為空 / 缺欄位 / 空字串時靜默省略**——`if (a.criteria)` 守衛。沿用既有 `if (a.description)` / `if (a.assignee)` 慣例。",
-      "rationale": "既有契約「缺漏即不顯示」一致；避免「【準則】（無）」噪音。",
-      "rejected": "(a) 顯式「【準則】（無）」——視覺噪音、破壞既有渲染契約；(b) 區分空字串 vs undefined 用 `?? ''`——過度細緻、現實中 orchestrator 不會塞空字串佔位。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.184688
-    },
-    {
-      "decision": "**守護鏈三層**：(i) **新增源碼靜態掃描測試**（鎖定 agenda_plan case 區塊，見決策 6）；(ii) **既有 `test_offline_agenda_e2e` 守 payload 結構**（不覆蓋 criteria 渲染內容、僅守 agenda/assignments/corrections/tasks schema 正確）；(iii) **人眼 demo**（由工程師交付前自測）。",
-      "rationale": "本任務為「前端渲染修補」，測試守護是「半年後接手者還能信任這條路徑」的安全網。**自我認知修正**：既有 e2e **不**模擬前端 replay、**不**檢查 DOM 文字——設計原以為的 e2e 覆蓋在 criteria 渲染層面是缺口，本測試 + 人眼 demo 才是當前實際覆蓋。**commit message 與測試 docstring 明示此缺口**。",
-      "rejected": "(a) 升級到 jsdom——需 npm 依賴 + package.json，scope 飄移到前端基礎設施層；(b) 升級到 node 直譯 `app.js`——`app.js` 依賴 `document.querySelector` 等瀏覽器 API，mock DOM 成本等同 jsdom。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846895
-    },
-    {
-      "decision": "**守護測試形式：鎖定 `case \"agenda_plan\":` 區塊的靜態正則掃描**。用 regex 抓出 `case \"agenda_plan\":` 到下一個 `case \"` 為止的 case 區塊字串，在該區塊內斷言。**正樣**：`a.criteria` 與 `${a.criteria}` / `line += ... criteria` 模式同時出現（擋掉「守衛寫了但忘記串到 `line`」）；**負樣**：`a.tasks` 與 `a.edges` 不應在該區塊內出現（守住「不渲染 tasks/edges」範圍守門，避免 scope 飄移）。",
-      "rationale": "工程師 push back 採納——裸 grep `a.criteria` 判別力太弱，鎖定 case 區塊是 (β-lite) 強化版：純 python regex、零新基礎設施、真有判別力（擋掉「if 寫了但沒接字串」）。負樣改用 `a.tasks` / `a.edges` 取代虛構的 `policy_option` 拼字——有實質範圍守門意義，不是假想敵。",
-      "rejected": "(a) 裸 grep `a.criteria`——判別力弱、可被 `if (a.criteria) line += ''` 騙過；(b) jsdom / node 直譯——scope 飄移；(c) 負樣用 `policy_option` 拼字——虛構、orchestrator 從未用、永遠綠等於沒守。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846907
-    },
-    {
-      "decision": "**不抽 helper、不重構既有 `agenda_plan` case 結構**——與既有 `title/description/assignee` 內聯拼裝同構。",
-      "rationale": "沿用既有架構決策 7（YAGNI）；未來若 case 整段要拆函數再一起抽，本次局部改動不越界。",
-      "rejected": "(a) 抽 `_renderAgendaItem()` helper——提早一般化，本檔只一處使用；(b) 改模板字串模板引擎——scope 飄移。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846917
-    },
-    {
-      "decision": "**commit 粒度：3 檔變更單一 commit，耦合意圖**——(1) `web/app.js` modify（`agenda_plan` case 加 criteria 渲染）；(2) 新檔 `tests/qa_test_render_agenda_criteria.py`；(3) `tests/test_verify_clean_acceptance.py` 的 `ignored_untracked` set +1 元素（加入 `tests/qa_test_render_agenda_criteria.py`）。**翻案既有架構決策 5**（從「不擴充」改為「擴充 1 個元素」），理由：與前一個任務的翻案對稱處理——新測試在「建檔後、未 commit 前」的中間態會以 `??` 出現、被 `test_no_untracked_residuals_in_worktree` flag 為「未預期 untracked 殘留」；屬「QA 工具造成的可預期污染」白名單維護、非業務邏輯改動，對稱處理是合約對齊的最小改動。commit message: `feat(web): agenda_plan 渲染補上 criteria 成功準則（前端可見、history 已有）` + `Refs: 新增守護測試在 commit 前為 untracked，ignored_untracked 對稱處理；既有 e2e 不覆蓋 criteria 渲染，執行時守護缺口由人眼 demo 補上`。",
+      "decision": "shebang 不納入本次範圍（現有腳本均為 `env bash`，無 python shebang）。",
       "rationale": "",
-      "rejected": "(a) 拆 2 個 commit——拆 commit 必有中間態 fail（`ignored_untracked` 未擴充時新測試檔被 flag），單一 commit 才能保持工作樹始終綠；(b) 用驗收順序流程紀律取代白名單——半年後接手者照著跑會踩雷、白名單維護成本極低；(c) 不擴充白名單、要求工程師 commit 後才跑 `test_verify_clean_acceptance.py`——脆弱、易迴歸。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846938
-    },
-    {
-      "decision": "**測試 docstring 明列不守護事項 + 翻案條件**。「**守護**：`web/app.js` 的 `agenda_plan` case 區塊內 `a.criteria` 確實讀取並串到 `line` 賦值，且 `a.tasks` / `a.edges` 未進入該區塊（範圍守門）。**不守護**：(i) orchestrator 是否實際填入 criteria（屬後端範疇，本任務不動）；(ii) DOM 在瀏覽器實際呈現（屬 e2e 範疇，由人眼 demo 與既有 `test_offline_agenda_e2e` payload 結構檢查補上，但**既有 e2e 不模擬前端 replay**）；(iii) criteria 為空字串時的省略行為（沿用既有 `if (a.description)` 守衛慣例，由 code review 守護）；(iv) 既有 title/description/assignee/corrections 不迴歸（既有 `test_offline_agenda_e2e` 守護）。**翻案條件**：(a) orchestrator 證實未填 criteria；(b) PM 確認「政策選項」是另一個語意實體。」",
-      "rationale": "避免半年後接手者誤判守護範圍；明示執行時守護缺口是誠實的設計自我認知。",
-      "rejected": "(a) 只列「守護事項」、不列「不守護事項」——誤導接手者以為覆蓋完整；(b) 在 docstring 寫 jsdom 升級路徑——scope 飄移暗示，不應綁死本任務。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846952
-    },
-    {
-      "decision": "**本機驗收順序**：`ruff check tests/qa_test_render_agenda_criteria.py tests/test_verify_clean_acceptance.py`（`web/app.js` 非 python 跳過 ruff）→ `ruff format --check` → `pytest -v tests/qa_test_render_agenda_criteria.py`（單檔先綠）→ `pytest -v tests/test_offline_agenda_e2e.py`（既有 e2e 不迴歸）→ `python3 -m pytest -v tests/test_offline_agenda_e2e.py tests/ -k \"agenda\"`（任務指定集合）→ `git diff --cached --stat`（確認 staged 為 3 檔）→ `git status --porcelain`（手動確認無新 `??`）→ commit → `git status --porcelain`（commit 後無 `??`）→ `pytest -q`（含 `test_verify_clean_acceptance.py` 確認白名單生效）→ 整體 `pytest -q` 防迴歸。**任一步紅則不 commit**。",
-      "rationale": "步驟排序對應「白名單議題已被決策 8 吸納」的狀態——`test_verify_clean_acceptance.py` 在 commit 後跑才驗證白名單生效。",
-      "rejected": "(a) 把「commit 後跑 `test_verify_clean_acceptance.py`」寫進測試本體——污染職責、由 git status 手動確認 + 流程紀律已覆蓋。",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.184697
-    },
-    {
-      "decision": "**範圍守門（明確不做）**：(a) 不改 orchestrator / 後端 / payload 結構；(b) 不渲染 `tasks` / `edges`（任務依賴圖層級，需新 CSS 與新排版，scope 飄移；由負樣斷言守住）；(c) 不重構既有 `agenda_plan` case 結構；(d) 不動 `corrections` 既有渲染；(e) 不建新注入管線、不改 history jsonl 結構、不引入 jsdom / node 測試基礎設施。",
-      "rationale": "PM 已明示「最小且可收斂」+「人眼可見」即驗收；擴張會破壞決策可逆性、把單次修補變成前端基礎設施工程。",
       "rejected": "",
-      "session_id": "ap7c6078f65f",
-      "created_at": 1781694363.1846979
+      "session_id": "apf9cde330c0",
+      "created_at": 1781525960.0670156
     }
   ]
 }

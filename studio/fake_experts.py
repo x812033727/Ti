@@ -40,7 +40,7 @@ def div(a, b):
 '''
 
 _MAIN_PY = '''\
-"""命令列介面：python3 main.py <add|sub|mul|div> <a> <b>"""
+"""命令列介面：python main.py <add|sub|mul|div> <a> <b>"""
 
 import sys
 
@@ -52,7 +52,7 @@ OPS = {"add": add, "sub": sub, "mul": mul, "div": div}
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) != 3 or argv[0] not in OPS:
-        print("用法: python3 main.py <add|sub|mul|div> <a> <b>")
+        print("用法: python main.py <add|sub|mul|div> <a> <b>")
         return 1
     op, a, b = argv[0], float(argv[1]), float(argv[2])
     print(OPS[op](a, b))
@@ -71,8 +71,8 @@ _README_MD = """\
 ## 用法
 
 ```bash
-python3 main.py add 3 4   # -> 7.0
-python3 main.py div 1 0   # -> 除數不可為 0
+python main.py add 3 4   # -> 7.0
+python main.py div 1 0   # -> 除數不可為 0
 ```
 """
 
@@ -235,7 +235,7 @@ def _pm_decompose_script(requirement: str) -> str:
             "依賴: #3 -> #1\n"
             "依賴: #3 -> #2\n"
             "驗收標準: add/sub 模組正確且各有測試；整合說明列出兩模組\n"
-            "執行指令: python -m pytest -q"
+            "執行指令: python3 -m pytest -q"
         )
     # 循序示範同時宣告議程子題＋主責（任務 #3 的疊加格式），讓離線冒煙能走完
     # 「需求→議程拆解→分派→逐子題討論→彙整」全流程。第二子題刻意指派本場缺席的
@@ -252,7 +252,7 @@ def _pm_decompose_script(requirement: str) -> str:
         "任務: 建立命令列介面 main.py\n"
         "任務: 補上 README 使用說明\n"
         "驗收標準: calculator 四則運算正確、除以 0 報錯；main.py 可由命令列執行\n"
-        "執行指令: python main.py add 3 4"
+        "執行指令: python3 main.py add 3 4"
     )
 
 

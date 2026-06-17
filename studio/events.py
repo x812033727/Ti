@@ -14,7 +14,6 @@ class EventType(str, Enum):
     EXPERT_MESSAGE = "expert_message"  # 某位專家發言（可為串流片段）
     EXPERT_STATUS = "expert_status"  # 專家狀態燈（idle/thinking/working）
     TOOL_USE = "tool_use"  # 專家使用工具（寫檔/執行指令…）
-    TOKEN_USAGE = "token_usage"  # 一次發言的 LLM token 用量（供 meta 聚合與跨場統計）
     BOARD_UPDATE = "board_update"  # 看板整體更新
     TASK_STATUS = "task_status"  # 單一任務狀態變更
     RUN_RESULT = "run_result"  # 測試/執行結果（PASS/FAIL）
@@ -87,38 +86,6 @@ def tool_use(session_id: str, speaker_key: str, tool: str, summary: str) -> Stud
         EventType.TOOL_USE,
         session_id,
         {"speaker": speaker_key, "tool": tool, "summary": summary},
-    )
-
-
-def token_usage(
-    session_id: str,
-    speaker_key: str,
-    provider: str,
-    model: str,
-    prompt_tokens: int,
-    completion_tokens: int,
-    total_tokens: int,
-    *,
-    cost_usd: float | None = None,
-    cache_read: int = 0,
-    cache_write: int = 0,
-) -> StudioEvent:
-    """一次發言的 token 用量。經 broadcast→record_event 入 history jsonl，
-    供 finish_session 聚合進 meta 與 usage_report 跨場彙總。"""
-    return StudioEvent(
-        EventType.TOKEN_USAGE,
-        session_id,
-        {
-            "speaker": speaker_key,
-            "provider": provider,
-            "model": model,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "cost_usd": cost_usd,
-            "cache_read": cache_read,
-            "cache_write": cache_write,
-        },
     )
 
 

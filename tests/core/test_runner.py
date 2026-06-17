@@ -38,7 +38,7 @@ def test_detect_entrypoint_none_when_ambiguous(tmp_path):
 def test_resolve_demo_command(tmp_path):
     assert runner.resolve_demo_command(tmp_path, "python x.py") == "python x.py"
     (tmp_path / "main.py").write_text("")
-    assert runner.resolve_demo_command(tmp_path, None) == "python main.py"
+    assert runner.resolve_demo_command(tmp_path, None) == "python3 main.py"
 
 
 # --- 直譯器可攜性（python / python3）-----------------------------------

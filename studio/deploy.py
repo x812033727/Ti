@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
-import shutil
 
 from . import config, runner
 
@@ -67,33 +66,9 @@ async def current_head(repo_dir: str) -> str:
 async def health_check(
     url: str | None = None, attempts: int = 12, delay: int = 3
 ) -> tuple[bool, str]:
-    """部署後健康檢查：服務回 200，且主機沙箱依賴齊全（避免改動弱化安全）。
-
-    早夭偵測：本設計沿用 run_http_demo（定義於 `runner.run_http_demo`）的「server 進程
-    退出即停等」原則，落到 systemctl 服務上——每輪 curl 之前先以
-    `systemctl is-active <AUTOPILOT_SERVICE>` 查服務存活，
-    服務已被 systemd 標記為 `failed` / `inactive` / `unknown`（或 stdout 空）即提前回
-    `(False, …)`，不耗滿 `attempts × delay`（預設 ≈36s）。`active` / `activating` 視為
-    服務仍在線、不早退（`activating` 是 systemd 啟動流程中正常狀態，不該被誤判為死）。
-    以 stdout 解析狀態而非 returncode，避免兩條早退路徑分叉；查詢本身失敗（rc≠0 且
-    stdout 空）也走早退（fail-closed：真值不可得＝視為死）。
-
-    環境探測：入口以 `shutil.which("systemctl")` 偵測，無 systemd 的環境（如容器內、採
-    docker compose / supervisord 託管的部署）走 fail-open 略過早夭判定、跑原 attempts
-    邏輯——避免把非 systemd 託管的健康服務誤判早退。service 拼錯（`is-active=unknown`）
-    仍走早退分流，覆蓋由 `is-active` 本身的回傳負責。
-
-    早退訊息契約：`f"服務啟動後即退出（is-active={state}），未回應 {url}"`——含「退出」
-    二字呼應 `run_http_demo` 早退訊息 `服務啟動後即退出（exit=…）`、含 url 助 rollback
-    端到端可觀測；早退回 `(False, …)` 在 `redeploy()` / `rollback()` 走既有
-    `if not ok: rollback(...)` 同一條路，不繞過、不弱化沙箱依賴檢查。
-    """
+    """部署後健康檢查：服務回 200，且主機沙箱依賴齊全（避免改動弱化安全）。"""
     url = url or config.AUTOPILOT_HEALTH_URL
-    service = config.AUTOPILOT_SERVICE  # noqa: F841 — 0158f8c 移除早退判定邏輯後連帶 unused；deploy 早夭偵測任務恢復時把 pass 換成原 5 行、此 noqa 一併移除
-    use_isactive = shutil.which("systemctl") is not None  # 無 systemd → fail-open
     for _ in range(attempts):
-        if use_isactive:
-            pass  # 早退判定暫時移除（鎖死驗證用），見 commit 0158f8c；deploy 早夭偵測任務恢復時把 pass 換成原 5 行邏輯
         rc, out = await _run(
             ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", url],
             timeout=10,
