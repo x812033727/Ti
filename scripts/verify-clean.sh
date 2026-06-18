@@ -53,8 +53,14 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "[FATAL] not inside a git work tree ($ROOT)" >&2
   exit 99
 fi
-if ! OM_HASH="$(git rev-parse origin/main^{commit} 2>/dev/null)"; then
-  echo "[FATAL] origin/main 沒有可解析的 commit（先 git fetch origin）" >&2
+resolve_origin_main() {
+  git rev-parse origin/main^{commit} 2>/dev/null && return 0
+  git fetch origin +refs/heads/main:refs/remotes/origin/main >/dev/null 2>>"$WARN_FILE" || return 1
+  git rev-parse origin/main^{commit} 2>/dev/null
+}
+
+if ! OM_HASH="$(resolve_origin_main)"; then
+  echo "[FATAL] origin/main 沒有可解析的 commit（先 git fetch origin main）" >&2
   exit 99
 fi
 HEAD_HASH_LANE="$(git rev-parse HEAD)"
