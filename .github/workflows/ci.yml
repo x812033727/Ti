@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -97,6 +100,33 @@ jobs:
         env:
           TI_SANDBOX: "0"
         run: python -m pytest -q --cov=studio --cov-report=term-missing
+
+  deploy-test:
+    name: deploy-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        # 與 test job 維持同一組最小測試依賴；deploy gate 只切測試範圍，不引入新套件。
+        run: |
+          python -m pip install --upgrade pip
+          # ruff：tests/scan/test_scan_shell_usage_*.py 會實際呼叫 ruff 驗證 S602/S604/S605 命中。
+          pip install "fastapi>=0.110,<0.116" "starlette>=0.40,<0.42" "uvicorn[standard]>=0.31,<0.50" "httpx>=0.27,<0.29" python-dotenv pytest pytest-asyncio pytest-cov "ruff==0.14.4"
+
+      - name: Run deploy tests
+        env:
+          TI_SANDBOX: "0"
+        run: python -m pytest tests/deploy -q
 
   # 獨立沙箱實跑 job：在 runner 上裝 bubblewrap + 載入 AppArmor userns profile，
   # 讓 tests/ 中以 config._sandbox_available()（純檢查 bwrap 是否存在）為 skip 條件

@@ -1556,3 +1556,44 @@
 - 時間：2026-06-18 23:07
 - 理由：讓未來替換 hook 或升級 Ruff 可逆。
 
+## 新增獨立 CI job `deploy-test`，既有 `lint`、`test`、`sandbox-test` 不改。
+- 時間：2026-06-19 03:02
+- 理由：明確形成 deploy merge gate。
+- 否決方案：不併入矩陣、不用 path filter。
+
+## `deploy-test` job id/name 固定不改名，作為 GitHub required check 介面。
+- 時間：2026-06-19 03:02
+- 理由：保護規則依賴 check 名稱，穩定性優先。
+
+## README 記錄 required check 為 `deploy-test`，但實際 ruleset 設定時需以 GitHub Actions 顯示名稱確認一次。
+- 時間：2026-06-19 03:02
+- 理由：README 只是文件，真正擋 merge 仍靠 branch protection/ruleset。
+
+## branch protection/ruleset 必須手動或以 IaC 同步加入 `deploy-test` required check。
+- 時間：2026-06-19 03:02
+- 理由：CI 檔新增 job 不等於自動啟用 merge gate。
+
+## `deploy-test` 使用 Python `3.12`、`TI_SANDBOX=0`、`timeout-minutes: 10`。
+- 時間：2026-06-19 03:02
+- 理由：對齊部署實跑環境與既有 CI 沙箱策略。
+
+## 依賴安裝沿用現有 `test` job 的最小 pip 依賴集合。
+- 時間：2026-06-19 03:02
+- 否決方案：不新增 marker、xdist、專用 wrapper 或額外套件。
+
+## 測試指令固定為 `python -m pytest tests/deploy -q`。
+- 時間：2026-06-19 03:02
+- 理由：保留 pytest 原生失敗語意，包含 tests 被清空時 exit code 5 直接紅燈。
+
+## 不設 `continue-on-error`，不設 workflow/job path filter。
+- 時間：2026-06-19 03:02
+- 理由：required check 要穩定出現且不可假綠。
+
+## 接受 deploy 測試被矩陣全測與 `deploy-test` 重複跑一次。
+- 時間：2026-06-19 03:02
+- 理由：放棄省 CI 分鐘，換取清楚、可要求的 merge gate。
+
+## 實作範圍只限 `.github/workflows/ci.yml` 與 `README.md`。
+- 時間：2026-06-19 03:02
+- 否決方案：不改業務程式碼、不改 `tests/deploy/` 測試內容。
+

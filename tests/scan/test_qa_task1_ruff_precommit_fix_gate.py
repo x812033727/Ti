@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
-import uuid
+import sys
 from pathlib import Path
 
 import pytest
@@ -99,41 +100,42 @@ def _git(args: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Compl
     return _run(["git", *args], cwd=cwd, env=env)
 
 
-def _make_workspace(request: pytest.FixtureRequest) -> Path:
-    base = REPO / ".pc-cache-qa" / "task1-workspaces"
-    work = base / uuid.uuid4().hex
-    work.mkdir(parents=True)
-
-    def cleanup() -> None:
-        shutil.rmtree(work, ignore_errors=True)
-
-    request.addfinalizer(cleanup)
-    return work
+def _precommit_bin() -> str | None:
+    candidates = [
+        REPO / ".venv" / "bin" / "pre-commit",
+        Path(sys.executable).with_name("pre-commit"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which("pre-commit")
 
 
 @pytest.mark.realgit
-def test_real_commit_fails_once_when_ruff_hook_autofixes_then_passes(request):
+def test_real_commit_fails_once_when_ruff_hook_autofixes_then_passes(tmp_path):
+    """驗證 pre-commit commit gate；不驗證遠端 hook repo 下載流程。"""
     if shutil.which("git") is None:
         pytest.skip("環境無 git")
-    precommit_bin = REPO / ".venv" / "bin" / "pre-commit"
-    if not precommit_bin.exists():
-        pytest.skip("環境無 .venv/bin/pre-commit")
+    precommit_bin = _precommit_bin()
+    if precommit_bin is None:
+        pytest.skip("環境無 pre-commit")
 
-    work = _make_workspace(request)
-    repo = work / "repo"
+    repo = tmp_path / "repo"
     repo.mkdir()
     probe = repo / "qa_ruff_probe.py"
     probe.write_text("import os\n\nprint('ok')\n", encoding="utf-8")
 
-    ruff_repo = _ruff_precommit_repo()
     config = {
         "repos": [
             {
-                "repo": ruff_repo["repo"],
-                "rev": ruff_repo["rev"],
+                "repo": "local",
                 "hooks": [
                     {
                         "id": "ruff",
+                        "name": "ruff",
+                        "entry": f"{shlex.quote(sys.executable)} -m ruff check",
+                        "language": "system",
+                        "types": ["python"],
                         "args": _ruff_hook().get("args", []),
                     }
                 ],
@@ -145,12 +147,12 @@ def test_real_commit_fails_once_when_ruff_hook_autofixes_then_passes(request):
     )
 
     env = dict(os.environ)
-    env["PRE_COMMIT_HOME"] = str(REPO / ".pc-cache-qa" / "pre-commit-home")
+    env["PRE_COMMIT_HOME"] = str(tmp_path / "pre-commit-home")
     env["GIT_AUTHOR_NAME"] = env["GIT_COMMITTER_NAME"] = "QA"
     env["GIT_AUTHOR_EMAIL"] = env["GIT_COMMITTER_EMAIL"] = "qa@test.local"
 
     assert _git(["init", "-q"], cwd=repo, env=env).returncode == 0
-    install = _run([str(precommit_bin), "install"], cwd=repo, env=env)
+    install = _run([precommit_bin, "install"], cwd=repo, env=env)
     assert install.returncode == 0, install.stdout + install.stderr
     assert _git(["add", "-A"], cwd=repo, env=env).returncode == 0
 
@@ -168,3 +170,31 @@ def test_real_commit_fails_once_when_ruff_hook_autofixes_then_passes(request):
 
     assert second.returncode == 0, f"重新 stage 後 commit 應通過：\n{second_out}"
     assert "ruff" in second_out and "Passed" in second_out
+
+
+def test_task5_acceptance_has_no_probe_or_pc_cache_residue():
+    for command in (
+        ["git", "ls-files", ".pc-cache-qa", "qa_ruff_probe.py"],
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            ".pc-cache-qa",
+            "qa_ruff_probe.py",
+        ],
+    ):
+        result = subprocess.run(
+            command,
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "", (
+            "驗收後不可留下 tracked/untracked probe/cache residue："
+            f"{command!r} -> {result.stdout!r}"
+        )
