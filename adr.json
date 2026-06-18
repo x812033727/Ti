@@ -2813,6 +2813,83 @@
       "rejected": "",
       "session_id": "apf8e2650944",
       "created_at": 1781819865.9181912
+    },
+    {
+      "decision": "在 `studio/adr.py` 新增私有 `_MAX_STORE = 500` 作為 `adr.json` 持久化上限。",
+      "rationale": "對齊 `lessons.py` 模式，並切開儲存容量與 prompt 注入筆數。",
+      "rejected": "不使用 `config.ADR_MAX` 控制落盤容量。",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5714972
+    },
+    {
+      "decision": "`adr.record()` 在鎖內完成讀取、既有保留資料去重、追加、裁切、`tmp.replace` 落盤。",
+      "rationale": "讓落盤狀態本身有上限，避免讀取時補救造成不一致。",
+      "rejected": "不引入新儲存層或外部檔案鎖依賴。",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5714998
+    },
+    {
+      "decision": "裁切策略為 `entries[-_MAX_STORE:]`，保留最新 500 筆且維持舊到新順序。",
+      "rationale": "行為簡單、可預測，符合目前 JSON 索引用途。",
+      "rejected": "",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.571501
+    },
+    {
+      "decision": "去重範圍只保證目前 `adr.json` 內保留的 500 筆。",
+      "rationale": "接受機讀索引有限容量後的有限去重。",
+      "rejected": "不為了全歷史去重反掃 `DECISIONS.md` 或建立額外索引。",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.571502
+    },
+    {
+      "decision": "重提仍在保留範圍內的舊 ADR 時，不刷新其位置；同批新增後若被裁掉即消失於 `adr.json`。",
+      "rationale": "維持既有「完全去重、不刷新」語意，避免暗中改變排序模型。",
+      "rejected": "",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.571503
+    },
+    {
+      "decision": "已被裁掉的很舊 ADR 未來若重提，可重新進入 `adr.json`，且 `DECISIONS.md` 會再次 append。",
+      "rationale": "這是容量治理的明確代價，換取實作簡單與依賴方向乾淨。",
+      "rejected": "",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5715039
+    },
+    {
+      "decision": "不裁切 `DECISIONS.md`。",
+      "rationale": "它是人讀審計歷史，保留完整追溯價值。",
+      "rejected": "不讓 UI 或 prompt 直接掃整份 `DECISIONS.md`。",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5715046
+    },
+    {
+      "decision": "`context()` 繼續只用呼叫端 `limit` / `config.ADR_MAX` 控制注入筆數。",
+      "rationale": "`context` 是讀取展示策略，不承擔持久化容量治理。",
+      "rejected": "",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5715053
+    },
+    {
+      "decision": "`record()` 的 `session_id`、`created_at`、回傳 `len(added)` 等 API 語意不變。",
+      "rationale": "本輪只處理儲存容量，不擴大行為面。",
+      "rejected": "",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5715065
+    },
+    {
+      "decision": "測試放在 `tests/core/test_adr.py`，用 `monkeypatch` 將 `_MAX_STORE` 降為 3，覆蓋最新保留、`context()` 不含裁掉資料、`DECISIONS.md` 保留完整 append。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5715075
+    },
+    {
+      "decision": "補測重提最舊既有 ADR 並同批新增時，不刷新位置且可能被裁掉的行為。",
+      "rationale": "釘住刻意取捨，避免未來重構誤改語意。",
+      "rejected": "",
+      "session_id": "ap2886da28d2",
+      "created_at": 1781821530.5715082
     }
   ]
 }
