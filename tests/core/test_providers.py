@@ -79,14 +79,21 @@ class FakeCodexProcess:
         self.stdout = FakePipe()
         self.stderr = FakePipe()
         self._done = asyncio.Event()
+        self.killed = False
+        self.wait_calls = 0
 
     async def wait(self):
+        self.wait_calls += 1
         await self._done.wait()
         return self.returncode
 
     def finish(self, returncode=0):
         self.returncode = returncode
         self._done.set()
+
+    def kill(self):
+        self.killed = True
+        self.finish(-9)
 
 
 def test_openai_model_for():
@@ -217,8 +224,10 @@ async def test_codex_run_saves_current_proc_after_spawn(monkeypatch, tmp_path):
     bucket, broadcast = collect()
     proc = FakeCodexProcess()
     created = asyncio.Event()
+    spawn_kwargs = {}
 
-    async def fake_create_subprocess_exec(*_args, **_kwargs):
+    async def fake_create_subprocess_exec(*_args, **kwargs):
+        spawn_kwargs.update(kwargs)
         created.set()
         return proc
 
@@ -231,16 +240,18 @@ async def test_codex_run_saves_current_proc_after_spawn(monkeypatch, tmp_path):
         await asyncio.wait_for(created.wait(), timeout=1)
         await asyncio.sleep(0)
         assert getattr(expert, "_proc", None) is proc
+        assert spawn_kwargs["start_new_session"] is True
     finally:
         proc.finish()
         await asyncio.wait_for(task, timeout=1)
 
+    assert expert._proc is None
     assert bucket == []
 
 
 @pytest.mark.asyncio
 async def test_codex_stop_calls_terminate_for_running_proc(monkeypatch, tmp_path):
-    """stop() 對執行中的 proc 必須委派給 _terminate()。"""
+    """stop() 對執行中的 proc 必須委派給 _terminate()，並等待 proc 回收。"""
     expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
     proc = FakeCodexProcess()
     expert._proc = proc
@@ -255,6 +266,8 @@ async def test_codex_stop_calls_terminate_for_running_proc(monkeypatch, tmp_path
     await expert.stop()
 
     assert calls == [proc]
+    assert proc.wait_calls == 1
+    assert expert._proc is None
 
 
 @pytest.mark.asyncio
@@ -263,18 +276,142 @@ async def test_codex_stop_is_idempotent(monkeypatch, tmp_path):
     expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
     proc = FakeCodexProcess()
     expert._proc = proc
+    terminated = asyncio.Event()
     calls = []
 
     def fake_terminate(seen):
         calls.append(seen)
-        seen.finish(-15)
+        terminated.set()
 
     monkeypatch.setattr(expert, "_terminate", fake_terminate)
 
-    await expert.stop()
+    first_stop = asyncio.create_task(expert.stop())
+    await asyncio.wait_for(terminated.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert calls == [proc]
+    assert not first_stop.done()
+    assert expert._proc is proc
+
+    proc.finish(-15)
+    await asyncio.wait_for(first_stop, timeout=1)
     await expert.stop()
 
     assert calls == [proc]
+    assert proc.wait_calls == 1
+    assert expert._proc is None
+
+
+@pytest.mark.asyncio
+async def test_codex_stop_ignores_missing_or_finished_proc(monkeypatch, tmp_path):
+    """沒有 proc 或 proc 已結束時，stop() 不應送終止訊號。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    calls = []
+
+    monkeypatch.setattr(expert, "_terminate", lambda seen: calls.append(seen))
+
+    await expert.stop()
+    proc = FakeCodexProcess()
+    proc.finish(0)
+    expert._proc = proc
+    await expert.stop()
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_codex_run_finally_does_not_clear_newer_proc(monkeypatch, tmp_path):
+    """舊輪 _run_codex 收尾時，不可誤清下一輪已保存的新 proc。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+    old_proc = FakeCodexProcess()
+    newer_proc = FakeCodexProcess()
+    created = asyncio.Event()
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        created.set()
+        return old_proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    task = asyncio.create_task(expert._run_codex("請回覆", broadcast))
+    try:
+        await asyncio.wait_for(created.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert expert._proc is old_proc
+        expert._proc = newer_proc
+    finally:
+        old_proc.finish()
+        await asyncio.wait_for(task, timeout=1)
+
+    assert expert._proc is newer_proc
+    assert bucket == []
+
+
+@pytest.mark.asyncio
+async def test_codex_run_cancel_terminates_and_reaps_proc(monkeypatch, tmp_path):
+    """_run_codex() 被取消時，不能只清參照，必須終止並等待目前 proc。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    created = asyncio.Event()
+    terminated = asyncio.Event()
+    calls = []
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        created.set()
+        return proc
+
+    def fake_terminate(seen):
+        calls.append(seen)
+        terminated.set()
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(expert, "_terminate", fake_terminate)
+
+    task = asyncio.create_task(expert._run_codex("請回覆", broadcast))
+    await asyncio.wait_for(created.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert expert._proc is proc
+
+    task.cancel()
+    await asyncio.wait_for(terminated.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert calls == [proc]
+    assert not task.done()
+    assert expert._proc is proc
+
+    proc.finish(-15)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1)
+
+    assert proc.wait_calls >= 1
+    assert expert._proc is None
+    assert bucket == []
+
+
+def test_codex_terminate_prefers_process_group(monkeypatch, tmp_path):
+    """_terminate() 優先殺 process group，避免只殺直屬 child。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    proc = FakeCodexProcess()
+    calls = []
+
+    monkeypatch.setattr(providers.os, "getpgid", lambda pid: 67890)
+    monkeypatch.setattr(
+        providers.os,
+        "killpg",
+        lambda pgid, sig: calls.append((pgid, sig)),
+    )
+
+    expert._terminate(proc)
+
+    assert calls == [(67890, providers.signal.SIGKILL)]
+    assert proc.killed is False
 
 
 def test_provider_ready_codex(monkeypatch, tmp_path):

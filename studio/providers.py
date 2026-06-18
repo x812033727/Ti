@@ -163,10 +163,15 @@ class CodexExpert:
 
     async def stop(self) -> None:
         proc = self._proc
-        if proc is None or proc.returncode is not None:
+        if proc is None:
+            return
+        if proc.returncode is not None:
+            if self._proc is proc:
+                self._proc = None
             return
         self._terminate(proc)
-        if self._proc is proc:
+        reaped = await self._wait_for_proc(proc)
+        if reaped and self._proc is proc:
             self._proc = None
 
     def _prompt(self, prompt: str) -> str:
@@ -194,6 +199,8 @@ class CodexExpert:
         errors: list[str] = []
         stderr_tail = ""
         proc = None
+        stdout_task = None
+        stderr_task = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -340,8 +347,18 @@ class CodexExpert:
                     broadcast,
                 )
             return ""
+        except asyncio.CancelledError:
+            if proc is not None and proc.returncode is None:
+                self._terminate(proc)
+                await self._wait_for_proc(proc)
+            for task in (stdout_task, stderr_task):
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
+            raise
         finally:
-            if self._proc is proc:
+            if self._proc is proc and (proc is None or proc.returncode is not None):
                 self._proc = None
 
     async def _handle_codex_event(self, data: dict, broadcast) -> str:
@@ -375,6 +392,15 @@ class CodexExpert:
             )
         )
         return note
+
+    async def _wait_for_proc(self, proc, timeout: float = 10.0) -> bool:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+            return True
+        except ProcessLookupError:
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     def _terminate(self, proc) -> None:
         pid = getattr(proc, "pid", None)
