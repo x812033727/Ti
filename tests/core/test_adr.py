@@ -116,6 +116,25 @@ def test_record_caps_json_store_but_keeps_decisions_history(cwd, monkeypatch):
     assert "## ADR 0" in md and "## ADR 5" in md
 
 
+def test_context_uses_capped_store_not_adr_max_for_storage(cwd, monkeypatch):
+    monkeypatch.setattr(adr, "_MAX_STORE", 3)
+    monkeypatch.setattr(config, "ADR_MAX", 1)
+
+    assert adr.record(cwd, [{"decision": f"ADR {i}"} for i in range(6)]) == 6
+
+    assert [e["decision"] for e in adr.all_entries(cwd)] == ["ADR 3", "ADR 4", "ADR 5"]
+
+    ctx = adr.context(cwd, limit=10)
+    assert "ADR 0" not in ctx
+    assert "ADR 1" not in ctx
+    assert "ADR 2" not in ctx
+    assert "ADR 3" in ctx and "ADR 4" in ctx and "ADR 5" in ctx
+
+    default_ctx = adr.context(cwd)
+    assert "ADR 5" in default_ctx
+    assert "ADR 3" not in default_ctx and "ADR 4" not in default_ctx
+
+
 def test_record_none_cwd_and_empty(cwd):
     assert adr.record(None, [{"decision": "x"}]) == 0
     assert adr.record(cwd, []) == 0
