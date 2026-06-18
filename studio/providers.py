@@ -13,10 +13,9 @@ import contextlib
 import json
 import logging
 import os
-import signal
 from pathlib import Path
 
-from . import config, events, llm_caller, tools
+from . import config, events, llm_caller, runner, tools
 from .experts import _make_retry_observer as make_retry_observer, make_retry_config
 from .roles import Role, effective_tools
 
@@ -405,15 +404,7 @@ class CodexExpert:
             return False
 
     def _terminate(self, proc) -> None:
-        pid = getattr(proc, "pid", None)
-        if pid is not None and hasattr(os, "killpg") and hasattr(os, "getpgid"):
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-                return
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
+        runner.kill_process_group(proc)
 
 
 class OpenAIExpert:

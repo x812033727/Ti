@@ -466,17 +466,35 @@ def test_codex_terminate_prefers_process_group(monkeypatch, tmp_path):
     proc = FakeCodexProcess()
     calls = []
 
-    monkeypatch.setattr(providers.os, "getpgid", lambda pid: 67890)
+    monkeypatch.setattr(providers.runner.os, "getpgid", lambda pid: 67890)
     monkeypatch.setattr(
-        providers.os,
+        providers.runner.os,
         "killpg",
         lambda pgid, sig: calls.append((pgid, sig)),
     )
 
     expert._terminate(proc)
 
-    assert calls == [(67890, providers.signal.SIGKILL)]
+    assert calls == [(67890, providers.runner.signal.SIGKILL)]
     assert proc.killed is False
+
+
+def test_codex_terminate_falls_back_to_direct_kill(monkeypatch, tmp_path):
+    """process group 取不到或殺不到時，退回標準庫 proc.kill()。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    proc = FakeCodexProcess()
+
+    monkeypatch.setattr(providers.runner.os, "getpgid", lambda pid: 67890)
+    monkeypatch.setattr(
+        providers.runner.os,
+        "killpg",
+        lambda _pgid, _sig: (_ for _ in ()).throw(OSError("gone")),
+    )
+
+    expert._terminate(proc)
+
+    assert proc.killed is True
+    assert proc.returncode == -9
 
 
 def test_provider_ready_codex(monkeypatch, tmp_path):
