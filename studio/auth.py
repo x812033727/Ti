@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import time
 
@@ -16,6 +17,9 @@ from fastapi import HTTPException, Request, WebSocket
 
 from . import config, netutil
 from .secretfile import write_secret_file
+
+
+log = logging.getLogger("ti.auth")
 
 
 def _sign(payload: bytes) -> str:
@@ -60,6 +64,10 @@ def set_password(new_password: str) -> None:
     write_secret_file(config.env_path(), "TI_ACCESS_PASSWORD", new_password)
     os.environ["TI_ACCESS_PASSWORD"] = new_password
     config.ACCESS_PASSWORD = new_password
+    if new_password:
+        log.warning("存取密碼已變更，門禁已啟用")
+    else:
+        log.warning("存取密碼已清空，門禁已停用")
 
 
 def is_authed(scope: Request | WebSocket) -> bool:

@@ -2757,6 +2757,62 @@
       "rejected": "",
       "session_id": "apd35212a234",
       "created_at": 1781816495.552098
+    },
+    {
+      "decision": "稽核 log 落在 `auth.set_password()`，且只在 `.env`、`os.environ`、`config.ACCESS_PASSWORD` 全部更新成功後發一筆 `WARNING`。",
+      "rationale": "讓 log 代表實際成功狀態，並涵蓋 API 以外的未來呼叫路徑。",
+      "rejected": "不在 route 層補 log，避免呼叫路徑分散後漏記。",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.9181824
+    },
+    {
+      "decision": "使用 auth 模組 logger `ti.auth`，不新增 audit subsystem。",
+      "rationale": "本輪只有單一安全事件，抽象成本高於收益。",
+      "rejected": "",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.918185
+    },
+    {
+      "decision": "log 只記錄狀態，不記錄任何舊密碼、新密碼、hash、token、cookie 或可還原敏感資訊。",
+      "rationale": "稽核需要可觀測性，不需要秘密值。",
+      "rejected": "",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.918186
+    },
+    {
+      "decision": "非空密碼記錄「門禁已啟用／密碼已變更」語意；空字串記錄「門禁已停用／密碼已清空」語意。",
+      "rationale": "稽核者能分辨一般變更與停用認證。",
+      "rejected": "",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.9181867
+    },
+    {
+      "decision": "失敗路徑不得發成功稽核 log；測試需覆蓋 `write_secret_file` 失敗時沒有 warning。",
+      "rationale": "防止未來重構把 log 移到寫入前。",
+      "rejected": "",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.9181876
+    },
+    {
+      "decision": "本輪不修改 `/api/auth/password` 的長度限制；空字串停用只保留 `auth.set_password(\"\")` 直呼能力。",
+      "rationale": "",
+      "rejected": "不把 API/UI 停用門禁混入本需求。",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.9181883
+    },
+    {
+      "decision": "測試放在 `tests/server/test_auth.py`，沿用 `pw_env` 隔離環境，使用 `caplog` 驗證 `ti.auth` 的 warning。",
+      "rationale": "貼合現有測試邊界，不新增依賴。",
+      "rejected": "",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.918189
+    },
+    {
+      "decision": "測試覆蓋非空密碼、空字串停用、失敗不記錄三條路徑，並驗證實際舊密碼與新密碼值不出現在 log。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apf8e2650944",
+      "created_at": 1781819865.9181912
     }
   ]
 }
