@@ -161,6 +161,7 @@ def test_own_history_default_keeps_recent_three_in_order():
     section = _own_history_section(prompt)
 
     assert "【你先前的發言】" in prompt
+    assert section.count("第 ") == 3
     assert "own-1" not in section
     assert "own-2" not in section
     _assert_ordered(section, ["own-3", "own-4", "own-5"])
@@ -185,6 +186,7 @@ def test_own_history_recent_none_keeps_all_in_order():
     section = _own_history_section(prompt)
 
     assert "【你先前的發言】" in prompt
+    assert section.count("第 ") == 5
     assert all(f"own-{i}" in section for i in range(1, 6))
     _assert_ordered(section, [f"own-{i}" for i in range(1, 6)])
 
