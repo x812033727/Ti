@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
+from pathlib import Path
+import tomllib
 from types import SimpleNamespace
 
 import pytest
@@ -479,6 +482,19 @@ def test_codex_terminate_prefers_process_group(monkeypatch, tmp_path):
     assert proc.killed is False
 
 
+def test_codex_terminate_uses_existing_process_group_helper(monkeypatch, tmp_path):
+    """CodexExpert 不自行分叉終止邏輯，應沿用 runner 既有 process-group helper。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    proc = FakeCodexProcess()
+    calls = []
+
+    monkeypatch.setattr(providers.runner, "kill_process_group", lambda seen: calls.append(seen))
+
+    expert._terminate(proc)
+
+    assert calls == [proc]
+
+
 def test_codex_terminate_falls_back_to_direct_kill(monkeypatch, tmp_path):
     """process group 取不到或殺不到時，退回標準庫 proc.kill()。"""
     expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
@@ -495,6 +511,33 @@ def test_codex_terminate_falls_back_to_direct_kill(monkeypatch, tmp_path):
 
     assert proc.killed is True
     assert proc.returncode == -9
+
+
+def test_codex_process_lifecycle_does_not_add_psutil_dependency():
+    """任務 #5 要求保留標準庫方案，不應新增 psutil 依賴或 import。"""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = list(pyproject["project"]["dependencies"])
+    for group in pyproject["project"].get("optional-dependencies", {}).values():
+        dependencies.extend(group)
+
+    assert all(not dep.lower().startswith("psutil") for dep in dependencies)
+    assert not _imports_module(Path("studio/providers.py"), "psutil")
+    assert not _imports_module(Path("studio/runner.py"), "psutil")
+
+
+def _imports_module(path: Path, module_name: str) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(
+                alias.name == module_name or alias.name.startswith(f"{module_name}.")
+                for alias in node.names
+            ):
+                return True
+        if isinstance(node, ast.ImportFrom) and node.module is not None:
+            if node.module == module_name or node.module.startswith(f"{module_name}."):
+                return True
+    return False
 
 
 def test_provider_ready_codex(monkeypatch, tmp_path):
