@@ -21,6 +21,7 @@ from studio.discussion import (
     DiscussionEngine,
     DiscussionResult,
     Mention,
+    SELF_SEGMENT_MAX_CHARS,
     Utterance,
     parse_mentions,
 )
@@ -57,6 +58,11 @@ class StubExpert:
         if self.sem_probe is not None:
             self.sem_probe["cur"] -= 1
         return text
+
+
+def _own_history_section(prompt: str) -> str:
+    assert "【你先前的發言】" in prompt
+    return prompt.split("【你先前的發言】\n", 1)[1].split("\n\n請", 1)[0]
 
 
 async def test_round_robin_order_context_and_transcript():
@@ -165,6 +171,80 @@ def test_own_history_recent_none_keeps_all_in_order():
     assert "【你先前的發言】" in prompt
     assert all(f"own-{i}" in prompt for i in range(1, 6))
     assert prompt.index("own-1") < prompt.index("own-2") < prompt.index("own-5")
+
+
+def test_own_history_recent_kept_segments_still_clipped():
+    s = StubExpert("甲")
+    eng = DiscussionEngine([("甲", s)], max_rounds=1)
+    long_text = "SHOULD_BE_CLIPPED" + ("x" * SELF_SEGMENT_MAX_CHARS) + "TAIL"
+    own_history = [
+        Utterance(1, "甲", "old-round"),
+        Utterance(2, "甲", long_text),
+        Utterance(3, "甲", "mid-round"),
+        Utterance(4, "甲", "new-round"),
+    ]
+
+    prompt = eng._build_prompt("甲", "T", 5, [], own_history)
+    section = _own_history_section(prompt)
+
+    assert "old-round" not in section
+    assert "SHOULD_BE_CLIPPED" not in section
+    assert "…（前段截斷）" in section
+    assert "TAIL" in section
+    assert section.index("TAIL") < section.index("mid-round") < section.index("new-round")
+
+
+@pytest.mark.parametrize("mode", ["round_robin", "parallel"])
+async def test_own_history_recent_default_is_used_by_run_in_both_modes(mode):
+    a = StubExpert(
+        "甲",
+        texts=[
+            "甲-H1-" + ("a" * 80),
+            "甲-H2-" + ("b" * 80),
+            "甲-H3-" + ("c" * 80),
+            "甲-H4-" + ("d" * 80),
+            "甲-H5-" + ("e" * 80),
+        ],
+    )
+    b = StubExpert(
+        "乙",
+        texts=[
+            "乙-H1-" + ("v" * 80),
+            "乙-H2-" + ("w" * 80),
+            "乙-H3-" + ("x" * 80),
+            "乙-H4-" + ("y" * 80),
+            "乙-H5-" + ("z" * 80),
+        ],
+    )
+    eng = DiscussionEngine([("甲", a), ("乙", b)], mode=mode, max_rounds=5)
+
+    res = await eng.run("T")
+    section = _own_history_section(a.prompts[4])
+
+    assert res.stop_reason == "max_rounds"
+    assert "甲-H1-" not in section
+    assert "甲-H2-" in section
+    assert "甲-H3-" in section
+    assert "甲-H4-" in section
+    assert "甲-H5-" not in section
+    assert section.index("甲-H2-") < section.index("甲-H3-") < section.index("甲-H4-")
+
+
+@pytest.mark.parametrize("mode", ["round_robin", "parallel"])
+async def test_own_history_recent_constructor_param_is_used_by_run_in_both_modes(mode):
+    a = StubExpert("甲", texts=["甲-H1", "甲-H2", "甲-H3"])
+    b = StubExpert("乙", texts=["乙-H1", "乙-H2", "乙-H3"])
+    eng = DiscussionEngine(
+        [("甲", a), ("乙", b)], mode=mode, max_rounds=3, own_history_recent_n=1
+    )
+
+    res = await eng.run("T")
+    section = _own_history_section(a.prompts[2])
+
+    assert res.stop_reason == "max_rounds"
+    assert "甲-H1" not in section
+    assert "甲-H2" in section
+    assert "甲-H3" not in section
 
 
 async def test_max_rounds_exact_stop():
