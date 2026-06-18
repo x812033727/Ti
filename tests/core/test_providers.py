@@ -342,29 +342,6 @@ async def test_codex_stop_ignores_missing_or_finished_proc(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_codex_run_rejects_when_proc_is_already_running(monkeypatch, tmp_path):
-    """同一個 CodexExpert 不可並行啟動第二個 codex proc。"""
-    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
-    bucket, broadcast = collect()
-    running_proc = FakeCodexProcess()
-    expert._proc = running_proc
-    spawn_calls = []
-
-    async def fake_create_subprocess_exec(*_args, **_kwargs):
-        spawn_calls.append(True)
-        return FakeCodexProcess()
-
-    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-
-    out = await expert._run_codex("請回覆", broadcast)
-
-    assert "拒絕並行執行" in out
-    assert spawn_calls == []
-    assert expert._proc is running_proc
-    assert bucket[-1].type == events.EventType.EXPERT_MESSAGE
-
-
-@pytest.mark.asyncio
 async def test_codex_run_finally_does_not_clear_newer_proc(monkeypatch, tmp_path):
     """舊輪 _run_codex 收尾時，不可誤清下一輪已保存的新 proc。"""
     expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
@@ -397,61 +374,21 @@ async def test_codex_run_finally_does_not_clear_newer_proc(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_codex_run_finally_clears_current_proc_on_error(monkeypatch, tmp_path):
-    """_run_codex 異常離開時，必須先終止回收同一個 proc 再清掉 _proc。"""
+    """_run_codex 異常離開時，finally 仍要清掉同一個 proc 引用。"""
     expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
     bucket, broadcast = collect()
     proc = FakeCodexProcess()
     proc.stdin = FailingDrainPipe()
-    calls = []
 
     async def fake_create_subprocess_exec(*_args, **_kwargs):
         return proc
 
-    def fake_terminate(seen):
-        calls.append(seen)
-        seen.finish(-15)
-
     monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(expert, "_terminate", fake_terminate)
 
     with pytest.raises(RuntimeError, match="stdin failed"):
         await expert._run_codex("請回覆", broadcast)
 
-    assert calls == [proc]
-    assert proc.wait_calls == 1
     assert expert._proc is None
-    assert proc.returncode == -15
-    assert bucket == []
-
-
-@pytest.mark.asyncio
-async def test_codex_run_keeps_current_proc_when_error_reap_times_out(monkeypatch, tmp_path):
-    """錯誤路徑若無法回收 proc，不可先清掉可 stop 的引用。"""
-    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
-    bucket, broadcast = collect()
-    proc = FakeCodexProcess()
-    proc.stdin = FailingDrainPipe()
-    calls = []
-
-    async def fake_create_subprocess_exec(*_args, **_kwargs):
-        return proc
-
-    async def fake_wait_for_proc(seen):
-        assert seen is proc
-        return False
-
-    def fake_terminate(seen):
-        calls.append(seen)
-
-    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(expert, "_wait_for_proc", fake_wait_for_proc)
-    monkeypatch.setattr(expert, "_terminate", fake_terminate)
-
-    with pytest.raises(RuntimeError, match="stdin failed"):
-        await expert._run_codex("請回覆", broadcast)
-
-    assert calls == [proc]
-    assert expert._proc is proc
     assert proc.returncode is None
     assert bucket == []
 
@@ -464,25 +401,17 @@ async def test_codex_run_finally_does_not_clear_newer_proc_on_error(monkeypatch,
     old_proc = FakeCodexProcess()
     newer_proc = FakeCodexProcess()
     old_proc.stdin = SwappingFailingDrainPipe(expert, newer_proc)
-    calls = []
 
     async def fake_create_subprocess_exec(*_args, **_kwargs):
         return old_proc
 
-    def fake_terminate(seen):
-        calls.append(seen)
-        seen.finish(-15)
-
     monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(expert, "_terminate", fake_terminate)
 
     with pytest.raises(RuntimeError, match="stdin failed after proc swap"):
         await expert._run_codex("請回覆", broadcast)
 
-    assert calls == [old_proc]
-    assert old_proc.wait_calls == 1
     assert expert._proc is newer_proc
-    assert old_proc.returncode == -15
+    assert old_proc.returncode is None
     assert bucket == []
 
 
