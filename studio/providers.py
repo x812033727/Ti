@@ -201,23 +201,52 @@ class CodexExpert:
         errors: list[str] = []
         stderr_tail = ""
         proc = None
+        proc_reaped = False
         stdout_task = None
         stderr_task = None
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=str(self.cwd),
-                env=_codex_env(),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
-            )
-            self._proc = proc
-        except FileNotFoundError:
-            return await self._system_note(
-                "【系統】找不到 Codex CLI，請確認 TI_CODEX_BIN 或 PATH。", broadcast
-            )
+
+        async def _terminate_and_reap_proc() -> None:
+            nonlocal proc_reaped
+            if proc is None or proc.returncode is not None:
+                proc_reaped = True
+                return
+            async with self._stop_lock:
+                if proc.returncode is not None:
+                    proc_reaped = True
+                    return
+                self._terminate(proc)
+                proc_reaped = await self._wait_for_proc(proc)
+
+        async def _cancel_stream_tasks() -> None:
+            for task in (stdout_task, stderr_task):
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
+
+        async with self._stop_lock:
+            current_proc = self._proc
+            if current_proc is not None:
+                if current_proc.returncode is None:
+                    return await self._system_note(
+                        "【系統】Codex CLI 已有執行中的發言，拒絕並行執行。", broadcast
+                    )
+                self._proc = None
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    cwd=str(self.cwd),
+                    env=_codex_env(),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
+                )
+                self._proc = proc
+            except FileNotFoundError:
+                return await self._system_note(
+                    "【系統】找不到 Codex CLI，請確認 TI_CODEX_BIN 或 PATH。", broadcast
+                )
 
         try:
             assert proc.stdin is not None
@@ -268,6 +297,7 @@ class CodexExpert:
             try:
                 while True:
                     if proc.returncode is not None:
+                        proc_reaped = True
                         break
                     now = loop.time()
                     deadlines: list[tuple[str, float]] = []
@@ -281,6 +311,7 @@ class CodexExpert:
                         )
                     if not deadlines:
                         await proc.wait()
+                        proc_reaped = True
                         break
                     deadline_reason, wait_s = min(deadlines, key=lambda item: item[1])
                     if wait_s <= 0:
@@ -288,6 +319,7 @@ class CodexExpert:
                         raise TimeoutError
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=wait_s)
+                        proc_reaped = True
                         break
                     except TimeoutError:
                         now = loop.time()
@@ -306,11 +338,13 @@ class CodexExpert:
                             timeout_reason = "閒置"
                             raise
             except TimeoutError:
-                self._terminate(proc)
-                await proc.wait()
-                with contextlib.suppress(Exception):
-                    await stdout_task
-                stderr_tail = await stderr_task
+                await _terminate_and_reap_proc()
+                if proc_reaped:
+                    with contextlib.suppress(Exception):
+                        await stdout_task
+                    stderr_tail = await stderr_task
+                else:
+                    await _cancel_stream_tasks()
                 limit = (
                     config.TURN_IDLE_TIMEOUT
                     if timeout_reason == "閒置"
@@ -350,17 +384,17 @@ class CodexExpert:
                 )
             return ""
         except asyncio.CancelledError:
-            if proc is not None and proc.returncode is None:
-                self._terminate(proc)
-                await self._wait_for_proc(proc)
-            for task in (stdout_task, stderr_task):
-                if task is not None:
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await task
+            await _terminate_and_reap_proc()
+            await _cancel_stream_tasks()
+            raise
+        except Exception:
+            await _terminate_and_reap_proc()
+            await _cancel_stream_tasks()
             raise
         finally:
-            if self._proc is proc:
+            if self._proc is proc and (
+                proc is None or proc.returncode is not None or proc_reaped
+            ):
                 self._proc = None
 
     async def _handle_codex_event(self, data: dict, broadcast) -> str:
