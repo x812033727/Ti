@@ -65,6 +65,20 @@ def _own_history_section(prompt: str) -> str:
     return prompt.split("【你先前的發言】\n", 1)[1].split("\n\n請", 1)[0]
 
 
+def _prev_round_section(prompt: str) -> str:
+    assert "【上一輪全員發言】" in prompt
+    section = prompt.split("【上一輪全員發言】\n", 1)[1]
+    for marker in ("\n\n【你先前的發言】", "\n\n請"):
+        if marker in section:
+            return section.split(marker, 1)[0]
+    return section
+
+
+def _assert_ordered(text: str, markers: list[str]) -> None:
+    positions = [text.index(marker) for marker in markers]
+    assert positions == sorted(positions)
+
+
 async def test_round_robin_order_context_and_transcript():
     order: list[str] = []
     a, b, c = (StubExpert(n, order=order) for n in ("甲", "乙", "丙"))
@@ -144,11 +158,12 @@ def test_own_history_default_keeps_recent_three_in_order():
     own_history = [Utterance(i, "甲", f"own-{i}") for i in range(1, 6)]
 
     prompt = eng._build_prompt("甲", "T", 6, [], own_history)
+    section = _own_history_section(prompt)
 
     assert "【你先前的發言】" in prompt
-    assert "own-1" not in prompt
-    assert "own-2" not in prompt
-    assert prompt.index("own-3") < prompt.index("own-4") < prompt.index("own-5")
+    assert "own-1" not in section
+    assert "own-2" not in section
+    _assert_ordered(section, ["own-3", "own-4", "own-5"])
 
 
 def test_own_history_recent_zero_disables_section():
@@ -167,10 +182,11 @@ def test_own_history_recent_none_keeps_all_in_order():
     own_history = [Utterance(i, "甲", f"own-{i}") for i in range(1, 6)]
 
     prompt = eng._build_prompt("甲", "T", 6, [], own_history)
+    section = _own_history_section(prompt)
 
     assert "【你先前的發言】" in prompt
-    assert all(f"own-{i}" in prompt for i in range(1, 6))
-    assert prompt.index("own-1") < prompt.index("own-2") < prompt.index("own-5")
+    assert all(f"own-{i}" in section for i in range(1, 6))
+    _assert_ordered(section, [f"own-{i}" for i in range(1, 6)])
 
 
 def test_own_history_recent_kept_segments_still_clipped():
@@ -191,7 +207,7 @@ def test_own_history_recent_kept_segments_still_clipped():
     assert "SHOULD_BE_CLIPPED" not in section
     assert "…（前段截斷）" in section
     assert "TAIL" in section
-    assert section.index("TAIL") < section.index("mid-round") < section.index("new-round")
+    _assert_ordered(section, ["TAIL", "mid-round", "new-round"])
 
 
 @pytest.mark.parametrize("mode", ["round_robin", "parallel"])
@@ -227,7 +243,7 @@ async def test_own_history_recent_default_is_used_by_run_in_both_modes(mode):
     assert "甲-H3-" in section
     assert "甲-H4-" in section
     assert "甲-H5-" not in section
-    assert section.index("甲-H2-") < section.index("甲-H3-") < section.index("甲-H4-")
+    _assert_ordered(section, ["甲-H2-", "甲-H3-", "甲-H4-"])
 
 
 @pytest.mark.parametrize("mode", ["round_robin", "parallel"])
@@ -245,6 +261,39 @@ async def test_own_history_recent_constructor_param_is_used_by_run_in_both_modes
     assert "甲-H1" not in section
     assert "甲-H2" in section
     assert "甲-H3" not in section
+
+
+@pytest.mark.parametrize("mode", ["round_robin", "parallel"])
+async def test_own_history_recent_param_does_not_truncate_prev_round_context(mode):
+    stubs = [StubExpert(n, texts=[f"{n}-R1", f"{n}-R2"]) for n in ("甲", "乙", "丙", "丁")]
+    eng = DiscussionEngine(
+        [(s.name, s) for s in stubs],
+        mode=mode,
+        max_rounds=2,
+        own_history_recent_n=1,
+    )
+
+    res = await eng.run("T")
+    prompt = stubs[-1].prompts[1]
+    prev_section = _prev_round_section(prompt)
+    own_section = _own_history_section(prompt)
+
+    assert res.stop_reason == "max_rounds"
+    assert prev_section.index("@甲：甲-R1") < prev_section.index("@乙：乙-R1")
+    assert prev_section.index("@乙：乙-R1") < prev_section.index("@丙：丙-R1")
+    assert prev_section.index("@丙：丙-R1") < prev_section.index("@丁：丁-R1")
+    assert "第 1 輪：丁-R1" in own_section
+    assert "甲-R1" not in own_section
+    assert "乙-R1" not in own_section
+    assert "丙-R1" not in own_section
+    if mode == "round_robin":
+        assert "@甲：甲-R2" in prev_section
+        assert "@乙：乙-R2" in prev_section
+        assert "@丙：丙-R2" in prev_section
+        assert "@丁：丁-R2" not in prompt
+    else:
+        for n in ("甲", "乙", "丙", "丁"):
+            assert f"{n}-R2" not in prompt
 
 
 async def test_max_rounds_exact_stop():
