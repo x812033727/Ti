@@ -1597,3 +1597,49 @@
 - 時間：2026-06-19 03:02
 - 否決方案：不改業務程式碼、不改 `tests/deploy/` 測試內容。
 
+## 變更範圍限於 `studio/providers.py` 與 `tests/core/test_providers.py`。
+- 時間：2026-06-19 05:01
+- 理由：缺陷在 `CodexExpert` 子程序生命週期，無需動 runner/orchestrator。
+
+## 使用 Python 標準庫 `asyncio`、`os`、`signal`，不引入 `psutil`。
+- 時間：2026-06-19 05:01
+- 否決方案：不新增跨平台 process-tree 抽象。
+
+## `CodexExpert` 持有單一 `self._proc`，代表目前執行中的 `codex exec`。
+- 時間：2026-06-19 05:01
+
+## 同一個 `CodexExpert` instance 不支援並發 speak；若已有執行中 proc，新的執行必須明確失敗，不可 silent overwrite。
+- 時間：2026-06-19 05:01
+- 理由：保護生命週期引用正確性，放棄同角色並發換取可預期停止語意。
+
+## `_run_codex()` 在 `create_subprocess_exec()` 成功後立即設定 `self._proc = proc`。
+- 時間：2026-06-19 05:01
+
+## `_run_codex()` 的 `finally` 只在 `self._proc is proc` 時清空引用。
+- 時間：2026-06-19 05:01
+- 理由：避免舊輪收尾誤清新輪 proc。
+
+## `_run_codex()` 必須處理取消路徑；若 coroutine 被取消且 proc 仍執行，需終止並回收後再重新拋出 `CancelledError`。
+- 時間：2026-06-19 05:01
+- 理由：不依賴外部一定會補呼叫 `stop()`。
+
+## `stop()` 維持 async 且語意為「停止完成」；呼叫 `_terminate(proc)` 後必須 bounded `await proc.wait()`。
+- 時間：2026-06-19 05:01
+
+## `stop()` 若等待逾時，必須升級強制 kill，再 bounded 等待回收。
+- 時間：2026-06-19 05:01
+- 理由：上層使用 `await expert.stop()`，不能只送訊號就返回。
+
+## `_terminate()` 對齊 runner 策略：用 `os.getpgid(proc.pid)` 取得 process group 後送訊號，捕捉 `PermissionError/OSError`，fallback 到 `proc.kill()`。
+- 時間：2026-06-19 05:01
+- 否決方案：不採用只 `os.killpg(proc.pid, SIGTERM)` 的窄版實作。
+
+## `_terminate()` 保持低階 helper，只負責送訊號；等待、逾時、升級 kill 由 `stop()` 與取消清理路徑負責。
+- 時間：2026-06-19 05:01
+
+## 測試使用 fake process 與 monkeypatch，不啟動真 Codex CLI、不連外。
+- 時間：2026-06-19 05:01
+
+## 測試需覆蓋 `_proc` 保存、`stop()` 終止與等待、逾時升級 kill、重複 stop 冪等、finally 不誤清新 proc、取消時清理回收、並發 speak 明確失敗。
+- 時間：2026-06-19 05:01
+
