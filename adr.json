@@ -2561,6 +2561,41 @@
       "rejected": "",
       "session_id": "ap867ab655c0",
       "created_at": 1781698221.8624938
+    },
+    {
+      "decision": "技術選型沿用既有 Ruff + pre-commit + CI，規則來源維持 `pyproject.toml` 單一配置。",
+      "rationale": "降低規則分歧與維護成本。",
+      "rejected": "自製 parser、額外掃描器、平行 lint 規則集。",
+      "session_id": "apdcee1140ae",
+      "created_at": 1781795257.6555743
+    },
+    {
+      "decision": "不基於「`ruff --fix` 可能不停下」直接改 hook；先做一次 pre-commit 實測確認 hook 修改檔案後是否阻擋提交。",
+      "rationale": "避免用錯誤假設堆補丁。",
+      "rejected": "未驗證就新增第二套防線。",
+      "session_id": "apdcee1140ae",
+      "created_at": 1781795257.6555762
+    },
+    {
+      "decision": "若實測確認 pre-commit 已會因自動修正而失敗，實作範圍只補文件或驗收紀錄，不改現有 hook。",
+      "rationale": "現有 CI 已有 `ruff check .` 與 `ruff format --check .` 非修正式 gate。",
+      "rejected": "為了形式安全而增加重複檢查。",
+      "session_id": "apdcee1140ae",
+      "created_at": 1781795257.6555777
+    },
+    {
+      "decision": "若實測發現 hook 會吞掉自動修正，才最小化補強為「修正式 Ruff 後接非修正式 Ruff check」。",
+      "rationale": "保留自動修正體驗，同時確保提交不可靜默通過。",
+      "rejected": "拆出新 workflow、改用 wrapper script、擴大 CI 架構。",
+      "session_id": "apdcee1140ae",
+      "created_at": 1781795257.6555784
+    },
+    {
+      "decision": "依賴方向固定為工具設定驅動流程，業務程式碼不得依賴 lint/pre-commit 實作細節。",
+      "rationale": "讓未來替換 hook 或升級 Ruff 可逆。",
+      "rejected": "",
+      "session_id": "apdcee1140ae",
+      "created_at": 1781795257.655579
     }
   ]
 }
