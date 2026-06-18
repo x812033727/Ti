@@ -22,7 +22,8 @@ semaphore / broadcast / should_stop 一律由呼叫端建構時注入。
   semaphore: AbstractAsyncContextManager | None = None,
   broadcast: Broadcast | None = None,
   should_stop: Callable[[], bool] | None = None,
-  stall_threshold: float = 0.9)``
+  stall_threshold: float = 0.9,
+  own_history_recent_n: int | None = 3)``
 
   ``max_rounds=None`` 時於建構當下取 :data:`studio.config.DISCUSS_MAX_ROUNDS`
   （env ``TI_DISCUSS_MAX_ROUNDS``，未設則退回 ``DEBATE_ROUNDS``）。
@@ -208,6 +209,8 @@ class DiscussionEngine:
     - broadcast：speak 轉手用的事件回呼；None＝no-op。
     - should_stop：每輪開頭檢查，True 即停（stop_reason="cancelled"）。
     - stall_threshold：連續輪次「全員發言串接」相似度 ≥ 此值即提前停（stop_reason="stalled"）。
+    - own_history_recent_n：prompt 只注入最近 N 筆自己的歷史發言；0＝不注入，
+      None＝不截斷。
     """
 
     def __init__(
@@ -219,9 +222,12 @@ class DiscussionEngine:
         broadcast: Broadcast | None = None,
         should_stop: Callable[[], bool] | None = None,
         stall_threshold: float = 0.9,
+        own_history_recent_n: int | None = 3,
     ):
         if mode not in _MODES:
             raise ValueError(f"mode 必須是 {_MODES} 之一，收到 {mode!r}")
+        if own_history_recent_n is not None and own_history_recent_n < 0:
+            raise ValueError(f"own_history_recent_n 必須 ≥ 0 或 None，收到 {own_history_recent_n}")
         if max_rounds is None:
             # 建構當下讀即時全域值（config.reload() 後新建的 engine 即生效）。
             max_rounds = config.DISCUSS_MAX_ROUNDS
@@ -246,6 +252,7 @@ class DiscussionEngine:
         self._broadcast: Broadcast = broadcast or _noop_broadcast
         self._should_stop = should_stop or (lambda: False)
         self._stall_threshold = stall_threshold
+        self._own_history_recent_n = own_history_recent_n
 
     # --- context 組裝 ---------------------------------------------------
     @staticmethod
@@ -274,10 +281,16 @@ class DiscussionEngine:
                 f"@{u.speaker}：{self._clip(u.text, PREV_SEGMENT_MAX_CHARS)}" for u in prev_round
             ]
             parts.append("【上一輪全員發言】\n" + "\n\n".join(lines))
-        if own_history:
+        if self._own_history_recent_n == 0:
+            recent_own_history = []
+        elif self._own_history_recent_n is None:
+            recent_own_history = own_history
+        else:
+            recent_own_history = own_history[-self._own_history_recent_n :]
+        if recent_own_history:
             lines = [
                 f"第 {u.round} 輪：{self._clip(u.text, SELF_SEGMENT_MAX_CHARS)}"
-                for u in own_history
+                for u in recent_own_history
             ]
             parts.append("【你先前的發言】\n" + "\n\n".join(lines))
         parts.append(

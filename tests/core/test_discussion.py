@@ -132,6 +132,41 @@ async def test_parallel_snapshot_barrier_and_throttle():
     assert res.stop_reason == "max_rounds"
 
 
+def test_own_history_default_keeps_recent_three_in_order():
+    s = StubExpert("甲")
+    eng = DiscussionEngine([("甲", s)], max_rounds=1)
+    own_history = [Utterance(i, "甲", f"own-{i}") for i in range(1, 6)]
+
+    prompt = eng._build_prompt("甲", "T", 6, [], own_history)
+
+    assert "【你先前的發言】" in prompt
+    assert "own-1" not in prompt
+    assert "own-2" not in prompt
+    assert prompt.index("own-3") < prompt.index("own-4") < prompt.index("own-5")
+
+
+def test_own_history_recent_zero_disables_section():
+    s = StubExpert("甲")
+    eng = DiscussionEngine([("甲", s)], max_rounds=1, own_history_recent_n=0)
+
+    prompt = eng._build_prompt("甲", "T", 2, [], [Utterance(1, "甲", "own-1")])
+
+    assert "【你先前的發言】" not in prompt
+    assert "own-1" not in prompt
+
+
+def test_own_history_recent_none_keeps_all_in_order():
+    s = StubExpert("甲")
+    eng = DiscussionEngine([("甲", s)], max_rounds=1, own_history_recent_n=None)
+    own_history = [Utterance(i, "甲", f"own-{i}") for i in range(1, 6)]
+
+    prompt = eng._build_prompt("甲", "T", 6, [], own_history)
+
+    assert "【你先前的發言】" in prompt
+    assert all(f"own-{i}" in prompt for i in range(1, 6))
+    assert prompt.index("own-1") < prompt.index("own-2") < prompt.index("own-5")
+
+
 async def test_max_rounds_exact_stop():
     stubs = [StubExpert(n) for n in ("甲", "乙", "丙")]
     eng = DiscussionEngine([(s.name, s) for s in stubs], mode="parallel", max_rounds=2)
@@ -337,6 +372,8 @@ def test_constructor_validation():
         DiscussionEngine([("甲", s)], mode="moderator")  # 不支援的 mode
     with pytest.raises(ValueError):
         DiscussionEngine([("甲", s)], max_rounds=0)  # 壞輪數
+    with pytest.raises(ValueError):
+        DiscussionEngine([("甲", s)], own_history_recent_n=-1)  # 壞自身歷史輪數
 
 
 # --- 任務 #5：parse_mentions @引用解析（含格式不符退化案例）-------------------
