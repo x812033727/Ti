@@ -118,6 +118,7 @@ def record(cwd: Path | None, entries: list[dict], *, session_id: str = "") -> in
             added.append(entry)
         if not added:
             return 0
+        data["entries"] = data["entries"][-_MAX_STORE:]
         tmp = _json_path(cwd).with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(_json_path(cwd))
