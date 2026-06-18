@@ -62,6 +62,34 @@ def test_record_dedup_full_text(cwd):
     assert n == 0 and len(adr.all_entries(cwd)) == 2
 
 
+def test_record_dedup_session_and_return_count_survive_store_cap(cwd, monkeypatch):
+    monkeypatch.setattr(adr, "_MAX_STORE", 3)
+    assert adr.record(cwd, [{"decision": f"ADR {i}"} for i in range(3)], session_id="old") == 3
+    before = {e["decision"]: e for e in adr.all_entries(cwd)}
+
+    n = adr.record(
+        cwd,
+        [
+            {"decision": "ADR 0", "rationale": "重提不應刷新"},
+            {"decision": "ADR 3", "rationale": "新增"},
+            {"decision": "ADR 3", "rationale": "同批重複"},
+        ],
+        session_id="new",
+    )
+
+    assert n == 1
+    stored = adr.all_entries(cwd)
+    assert [e["decision"] for e in stored] == ["ADR 1", "ADR 2", "ADR 3"]
+    assert [e["session_id"] for e in stored] == ["old", "old", "new"]
+    assert stored[0]["created_at"] == before["ADR 1"]["created_at"]
+    assert stored[1]["created_at"] == before["ADR 2"]["created_at"]
+    assert stored[2]["created_at"] > 0
+
+    md = (cwd / "DECISIONS.md").read_text(encoding="utf-8")
+    assert md.count("## ADR ") == 4
+    assert "## ADR 0" in md and "## ADR 3" in md
+
+
 def test_record_caps_json_store_but_keeps_decisions_history(cwd, monkeypatch):
     monkeypatch.setattr(adr, "_MAX_STORE", 3)
     monkeypatch.setattr(config, "ADR_MAX", 1)
