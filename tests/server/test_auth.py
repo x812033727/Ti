@@ -46,6 +46,17 @@ def _assert_no_secret_leak(message, *secrets):
         assert forbidden not in text
 
 
+def _read_env_password(path: str) -> str | None:
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            key, _, value = line.partition("=")
+            if key.strip() == "TI_ACCESS_PASSWORD":
+                return value.strip().strip("\"'")
+    return None
+
+
 def test_set_password_logs_enabled_audit_warning(pw_env, monkeypatch, caplog):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
     with caplog.at_level("WARNING", logger="ti.auth"):
@@ -56,6 +67,7 @@ def test_set_password_logs_enabled_audit_warning(pw_env, monkeypatch, caplog):
     message = warnings[0].getMessage()
     assert "門禁已啟用" in message
     _assert_no_secret_leak(message, "oldpass", "brandnew")
+    assert _read_env_password(config.env_path()) == "brandnew"
     assert os.environ["TI_ACCESS_PASSWORD"] == "brandnew"
     assert config.ACCESS_PASSWORD == "brandnew"
 
@@ -70,6 +82,7 @@ def test_set_password_logs_disabled_audit_warning(pw_env, monkeypatch, caplog):
     message = warnings[0].getMessage()
     assert "門禁已停用" in message
     _assert_no_secret_leak(message, "oldpass")
+    assert _read_env_password(config.env_path()) == ""
     assert os.environ["TI_ACCESS_PASSWORD"] == ""
     assert config.ACCESS_PASSWORD == ""
 
