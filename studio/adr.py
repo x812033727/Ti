@@ -21,6 +21,9 @@ from pathlib import Path
 
 from . import config
 
+# 機讀索引最多保留幾筆（由新到舊截斷）；不同於 config.ADR_MAX，後者只控制 prompt 注入筆數。
+_MAX_STORE = 500
+
 # 行標記解析：`決策:` 與既有 ARCHITECT 格式 `設計決策:` 統一收（roles.py 的定案輸出）；
 # `理由:` / `否決:` 為可選補充行，附掛在前一條決策上。
 _RE_DECISION = re.compile(r"^\s*(?:設計)?決策\s*[:：]\s*(.+?)\s*$")
@@ -115,6 +118,7 @@ def record(cwd: Path | None, entries: list[dict], *, session_id: str = "") -> in
             added.append(entry)
         if not added:
             return 0
+        data["entries"] = data["entries"][-_MAX_STORE:]
         tmp = _json_path(cwd).with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(_json_path(cwd))
