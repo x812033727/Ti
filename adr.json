@@ -2561,6 +2561,90 @@
       "rejected": "",
       "session_id": "ap867ab655c0",
       "created_at": 1781698221.8624938
+    },
+    {
+      "decision": "本輪定案為「開 issue 規格 + 後續獨立 PR 移除」，不在本輪直接刪檔。",
+      "rationale": "保留審核與回滾邊界。",
+      "rejected": "順手 `git rm`。",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607723
+    },
+    {
+      "decision": "技術選型維持純 `git` CLI + `rg`，不新增 wrapper、腳本或框架。",
+      "rationale": "一次性治理任務不值得增加長期維護面。",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607747
+    },
+    {
+      "decision": "Issue 前置證據必用只讀指令核對：`git show --stat 4572a49`、`git log -1 --oneline -- INVENTORY_task1.md`、`git ls-files --stage INVENTORY_task1.md`。",
+      "rationale": "避免把錯誤短 SHA 寫進任務規格。",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607757
+    },
+    {
+      "decision": "Issue 內保存完整 commit SHA，短 SHA 只作輔助顯示。",
+      "rationale": "長期追溯性優先。",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607761
+    },
+    {
+      "decision": "引用搜尋固定用 `rg -n \"INVENTORY_task1\\.md|INVENTORY_task1\" .`，並排除 `.git` 與建置輸出目錄。",
+      "rationale": "搜尋可重跑、可審核。",
+      "rejected": "手動列舉或模糊 grep。",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607766
+    },
+    {
+      "decision": "`INVENTORY_task1.md` 判定為一次性盤點/驗收基準文件，非產品文件。",
+      "rationale": "支持移除，但仍需 PR 化處理。",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607776
+    },
+    {
+      "decision": "移除 PR 預設只做 `git rm INVENTORY_task1.md`，不得順手修改非必要檔案。",
+      "rationale": "控制 blast radius。",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607778
+    },
+    {
+      "decision": "允許保留歷史/決策引用白名單：`DECISIONS.md`、`adr.json`、`VERIFICATION_REPORT_task4.md`，其餘引用需在 issue 中逐項判定。",
+      "rationale": "避免「引用清乾淨」誤傷決策紀錄。",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607785
+    },
+    {
+      "decision": "Issue 必附可複製指令：`git rm INVENTORY_task1.md`、`git status --short`、`git ls-files --error-unmatch INVENTORY_task1.md`、引用搜尋指令。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.660779
+    },
+    {
+      "decision": "驗收的「工作目錄乾淨」只限定在移除 branch / PR 範圍，不拿他人既有 dirty worktree 當失敗。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607795
+    },
+    {
+      "decision": "若 PR 只刪此文件，只跑 git/rg 驗收；若改到 `README.md`、CI、程式碼或非純文件，需加跑受影響範圍檢查。",
+      "rationale": "驗證成本跟風險綁定。",
+      "rejected": "",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.66078
+    },
+    {
+      "decision": "依賴方向固定為證據核對 -> 文件屬性判定 -> issue 規格 -> 獨立 branch/PR 移除 -> 驗收。",
+      "rationale": "",
+      "rejected": "跳過 issue 直接清理。",
+      "session_id": "ap4a6a4af6b1",
+      "created_at": 1781776799.6607804
     }
   ]
 }
