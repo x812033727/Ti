@@ -19,7 +19,7 @@ cp .env.example .env                                     # 視需要填入金鑰
 .venv/bin/python -m pre_commit install                  # 裝 git hook，提交前自動 lint / 格式化
 ```
 
-pre-commit 的 Ruff hook 會自動修正可修的問題；pre-commit 偵測到檔案被修正時，提交會停止，請重新 stage 後再 commit。
+pre-commit 的 Ruff hook 會自動修正可修的問題；pre-commit 偵測到檔案被修正時，提交會停止，請重新 stage 後再 commit。此行為的實測紀錄見 `docs/ruff-precommit-fix-gate.md`。
 
 > 跑測試與離線示範**不需** API 金鑰；只有真正要驅動 LLM 專家時才需要
 > `ANTHROPIC_API_KEY`（或 OpenAI 設定）。
