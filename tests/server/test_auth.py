@@ -30,6 +30,68 @@ def pw_env(tmp_path, monkeypatch):
         os.environ["TI_ACCESS_PASSWORD"] = saved
 
 
+def _auth_warnings(caplog):
+    return [
+        r
+        for r in caplog.records
+        if r.name == "ti.auth" and r.levelname == "WARNING"
+    ]
+
+
+def _assert_no_secret_leak(message, *secrets):
+    text = message.lower()
+    for secret in secrets:
+        assert secret.lower() not in text
+    for forbidden in ("hash", "token", "cookie"):
+        assert forbidden not in text
+
+
+def test_set_password_logs_enabled_audit_warning(pw_env, monkeypatch, caplog):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
+    with caplog.at_level("WARNING", logger="ti.auth"):
+        auth.set_password("brandnew")
+
+    warnings = _auth_warnings(caplog)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "門禁已啟用" in message
+    _assert_no_secret_leak(message, "oldpass", "brandnew")
+    assert os.environ["TI_ACCESS_PASSWORD"] == "brandnew"
+    assert config.ACCESS_PASSWORD == "brandnew"
+
+
+def test_set_password_logs_disabled_audit_warning(pw_env, monkeypatch, caplog):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
+    with caplog.at_level("WARNING", logger="ti.auth"):
+        auth.set_password("")
+
+    warnings = _auth_warnings(caplog)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "門禁已停用" in message
+    _assert_no_secret_leak(message, "oldpass")
+    assert os.environ["TI_ACCESS_PASSWORD"] == ""
+    assert config.ACCESS_PASSWORD == ""
+
+
+def test_set_password_write_failure_does_not_log_success(
+    pw_env, monkeypatch, caplog
+):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("write failed")
+
+    monkeypatch.setattr(auth, "write_secret_file", fail_write)
+    with caplog.at_level("WARNING", logger="ti.auth"):
+        with pytest.raises(OSError):
+            auth.set_password("brandnew")
+
+    assert _auth_warnings(caplog) == []
+    assert os.environ.get("TI_ACCESS_PASSWORD") != "brandnew"
+    assert config.ACCESS_PASSWORD == "oldpass"
+
+
 # --- 門禁停用（預設）：一切照舊放行 ------------------------------------
 def test_auth_disabled_allows_protected_api(app, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
