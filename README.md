@@ -175,7 +175,7 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 啟用 autopilot 自動合併（force-push／merge-admin 等安全旗標）前，務必先在 GitHub 目標分支備妥保護，否則等於把合併閘門大開：
 
 1. 為目標分支設定 **branch protection 或 ruleset**（要求先開 PR、必過 status check 才能合併）。
-2. 把 CI 的 `lint`／`test`／`sandbox-test` 三個 job 設為 **required checks**，確保自動合併前一定先綠燈。
+2. 把 CI 的 `lint`／`test`／`deploy-test`／`sandbox-test` 四個 job 設為 **required checks**，確保自動合併前一定先綠燈；新增或調整 branch protection / ruleset 時，務必確認 `deploy-test` 也列入 required check。
 
 各旗標的預設值、風險與解析規則一律只連結不展開，詳見下方「[設定](#設定)」表與其「[Autopilot 安全旗標補充](#autopilot-安全旗標補充)」小節。
 
