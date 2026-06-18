@@ -745,8 +745,17 @@ async def run_one_task(task: dict) -> None:
         cwd=Path(clone),
         repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
     )
-    result = await session.run(requirement)
-    history.finish_session(sid)
+    try:
+        result = await asyncio.wait_for(
+            session.run(requirement),
+            timeout=config.AUTOPILOT_TASK_TIMEOUT or None,
+        )
+    except TimeoutError as exc:
+        raise TimeoutError(
+            f"autopilot task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s"
+        ) from exc
+    finally:
+        history.finish_session(sid)
 
     # 回饋：討論發現的後續任務寫回 backlog（優先含 priority/type 的結構化版本）
     if result.get("followup_items"):
@@ -822,6 +831,29 @@ def _pause(reason: str) -> None:
     log.warning("已暫停 autopilot：%s", reason)
 
 
+def _recover_stale_in_progress() -> None:
+    """把沒有活躍 history session 的 in_progress 任務放回 pending。
+
+    autopilot 被 kill、LLM turn 被外部中止、或舊版流程卡在 session.run() 時，backlog 可能
+    永久停在 in_progress。busy_sessions 已用 events mtime 做 stale 判定；這裡只負責把
+    backlog 狀態拉回可重跑，避免主迴圈永遠看不到這筆任務。
+    """
+    busy = {m.get("session_id") for m in history.busy_sessions(config.DEPLOY_STALE_AFTER)}
+    for task in backlog.list_tasks("in_progress"):
+        sid = task.get("session_id")
+        if sid in busy:
+            continue
+        if sid:
+            history.mark_interrupted(sid, "autopilot stale in_progress recovery")
+        backlog.set_status(
+            task["id"],
+            "pending",
+            session_id=sid,
+            note="autopilot stale in_progress recovery",
+        )
+        log.warning("回收 stale in_progress 任務 #%s（session %s）", task["id"], sid)
+
+
 # --- 主迴圈 --------------------------------------------------------------
 
 
@@ -835,6 +867,7 @@ async def main() -> None:
             await asyncio.sleep(10)
             continue
 
+        _recover_stale_in_progress()
         task = backlog.next_pending()
         if task is None:
             clone = await _prepare_clone()
