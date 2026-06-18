@@ -96,6 +96,22 @@ class FakeCodexProcess:
         self.finish(-9)
 
 
+class FailingDrainPipe(FakePipe):
+    async def drain(self):
+        raise RuntimeError("stdin failed")
+
+
+class SwappingFailingDrainPipe(FakePipe):
+    def __init__(self, expert, newer_proc):
+        super().__init__()
+        self.expert = expert
+        self.newer_proc = newer_proc
+
+    async def drain(self):
+        self.expert._proc = self.newer_proc
+        raise RuntimeError("stdin failed after proc swap")
+
+
 def test_openai_model_for():
     assert providers.openai_model_for(BY_KEY["pm"]) == config.OPENAI_MODEL_LEAD
     assert providers.openai_model_for(BY_KEY["engineer"]) == config.OPENAI_MODEL_FAST
@@ -353,6 +369,49 @@ async def test_codex_run_finally_does_not_clear_newer_proc(monkeypatch, tmp_path
         await asyncio.wait_for(task, timeout=1)
 
     assert expert._proc is newer_proc
+    assert bucket == []
+
+
+@pytest.mark.asyncio
+async def test_codex_run_finally_clears_current_proc_on_error(monkeypatch, tmp_path):
+    """_run_codex 異常離開時，finally 仍要清掉同一個 proc 引用。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdin = FailingDrainPipe()
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return proc
+
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="stdin failed"):
+        await expert._run_codex("請回覆", broadcast)
+
+    assert expert._proc is None
+    assert proc.returncode is None
+    assert bucket == []
+
+
+@pytest.mark.asyncio
+async def test_codex_run_finally_does_not_clear_newer_proc_on_error(monkeypatch, tmp_path):
+    """舊輪 _run_codex 拋錯離開時，也不可誤清已換上的新 proc。"""
+    expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+    old_proc = FakeCodexProcess()
+    newer_proc = FakeCodexProcess()
+    old_proc.stdin = SwappingFailingDrainPipe(expert, newer_proc)
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return old_proc
+
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="stdin failed after proc swap"):
+        await expert._run_codex("請回覆", broadcast)
+
+    assert expert._proc is newer_proc
+    assert old_proc.returncode is None
     assert bucket == []
 
 

@@ -360,7 +360,7 @@ class CodexExpert:
                         await task
             raise
         finally:
-            if self._proc is proc and (proc is None or proc.returncode is not None):
+            if self._proc is proc:
                 self._proc = None
 
     async def _handle_codex_event(self, data: dict, broadcast) -> str:
