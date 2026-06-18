@@ -148,6 +148,7 @@ class CodexExpert:
         self.cwd = cwd
         self._history: list[tuple[str, str]] = []
         self._proc = None
+        self._stop_lock = asyncio.Lock()
 
     async def speak(self, prompt: str, broadcast) -> str:
         r = self.role
@@ -162,17 +163,18 @@ class CodexExpert:
             await broadcast(events.expert_status(self.session_id, r.key, "idle"))
 
     async def stop(self) -> None:
-        proc = self._proc
-        if proc is None:
-            return
-        if proc.returncode is not None:
-            if self._proc is proc:
+        async with self._stop_lock:
+            proc = self._proc
+            if proc is None:
+                return
+            if proc.returncode is not None:
+                if self._proc is proc:
+                    self._proc = None
+                return
+            self._terminate(proc)
+            reaped = await self._wait_for_proc(proc)
+            if reaped and self._proc is proc:
                 self._proc = None
-            return
-        self._terminate(proc)
-        reaped = await self._wait_for_proc(proc)
-        if reaped and self._proc is proc:
-            self._proc = None
 
     def _prompt(self, prompt: str) -> str:
         parts = [

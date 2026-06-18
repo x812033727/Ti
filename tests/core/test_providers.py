@@ -293,9 +293,15 @@ async def test_codex_stop_is_idempotent(monkeypatch, tmp_path):
     assert not first_stop.done()
     assert expert._proc is proc
 
+    second_stop = asyncio.create_task(expert.stop())
+    await asyncio.sleep(0)
+
+    assert calls == [proc]
+    assert not second_stop.done()
+    assert expert._proc is proc
+
     proc.finish(-15)
-    await asyncio.wait_for(first_stop, timeout=1)
-    await expert.stop()
+    await asyncio.wait_for(asyncio.gather(first_stop, second_stop), timeout=1)
 
     assert calls == [proc]
     assert proc.wait_calls == 1
