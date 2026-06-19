@@ -309,6 +309,7 @@ def _antigravity_status() -> dict:
 def _provider_quota_snapshot() -> dict:
     now = time.time()
     all_usage = usage_report.aggregate()
+    five_hour_usage = usage_report.aggregate(now - 5 * 3600)
     week_usage = usage_report.aggregate(now - 7 * 86400)
     month_usage = usage_report.aggregate(now - 30 * 86400)
 
@@ -394,6 +395,7 @@ def _provider_quota_snapshot() -> dict:
 
     for item in providers:
         item["usage_all"] = _usage_for_provider(all_usage, item["key"])
+        item["usage_5h"] = _usage_for_provider(five_hour_usage, item["key"])
         item["usage_7d"] = _usage_for_provider(week_usage, item["key"])
         item["usage_30d"] = _usage_for_provider(month_usage, item["key"])
 
@@ -404,6 +406,7 @@ def _provider_quota_snapshot() -> dict:
         "updated_at": now,
         "usage": {
             "all": all_usage,
+            "last_5h": five_hour_usage,
             "last_7d": week_usage,
             "last_30d": month_usage,
         },

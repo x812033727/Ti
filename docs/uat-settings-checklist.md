@@ -62,7 +62,7 @@
 | 1.3 | 分組導覽 | 由左側分類導覽與右側分組標題由上往下看 | 依序出現分組：「一般」→「Claude」→「OpenAI」→「MiniMax」→「Gemini」→「Codex」→「Antigravity」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」 | | | |
 | 1.4 | 分組導覽 | 點左側任一分類（例如 Codex 或 Antigravity） | 右側內容捲到對應分組；被點選分類呈現目前選取狀態 | | | |
 | 1.5 | 搜尋設定 | 在搜尋框輸入 provider、模型名稱或環境變數（例如 `codex` 或 `TI_PROVIDER`），再清空搜尋 | 只顯示符合關鍵字的設定列與分組；清空後所有設定列恢復顯示，版面不破裂 | | | |
-| 1.6 | 額度與狀態 | 看設定表單上方的「Provider 狀態與額度」區 | 顯示目前啟用 provider、各 provider 可用／需確認／未設定狀態、近 30 天 Ti 本機 token/call 用量；Antigravity 登入時可看到可列出的模型；不顯示 API Key、OAuth token 或任何秘密明文 | | | 官方訂閱剩餘額度若 CLI 未提供穩定 API，僅顯示狀態與本機用量 |
+| 1.6 | 額度與狀態 | 看設定表單上方的「Provider 狀態與額度」區 | 顯示目前啟用 provider、各 provider 可用／需確認／未設定狀態、近 5 小時／近 7 天／近 30 天 Ti 本機 token/call 用量；Antigravity 登入時可看到可列出的模型；不顯示 API Key、OAuth token 或任何秘密明文 | | | 官方訂閱剩餘額度若 CLI 未提供穩定 API，僅顯示狀態與本機用量 |
 | 1.7 | 額度與狀態 | 點「更新額度」按鈕 | 按鈕短暫不可點並重新載入 provider 狀態與額度；完成後恢復可點，失敗時顯示可讀錯誤文字 | | | |
 | 1.8 | 頁面載入與現值顯示 | 看「一般」分組 | 出現「後端 Provider」下拉選單，且目前值（claude／openai／minimax／gemini／codex／antigravity）已被選取顯示 | | | |
 | 1.9 | 頁面載入與現值顯示 | 看一個非秘密的文字欄位（例如 Claude「主力模型」） | 欄位內直接顯示目前 `.env` 已設定的值（例如 claude-opus-4-8）；若未設定則顯示灰色提示範例 | | | |

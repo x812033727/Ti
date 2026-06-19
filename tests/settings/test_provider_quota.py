@@ -50,6 +50,9 @@ def test_provider_quota_snapshot_antigravity_models(monkeypatch):
     assert agy["ready"] is True
     assert agy["auth"] == "signed_in"
     assert agy["models"] == ["Gemini 3.5 Flash (Medium)", "Claude Sonnet 4.6 (Thinking)"]
+    assert data["usage"]["last_5h"]["total"]["total"] == 15
+    assert agy["usage_5h"]["total"] == 15
+    assert agy["usage_7d"]["total"] == 15
     assert agy["usage_30d"]["total"] == 15
     assert "token" not in str(agy).lower()
 
