@@ -264,6 +264,103 @@ def test_make_expert_codex(monkeypatch, tmp_path):
     assert isinstance(ex, providers.CodexExpert)
 
 
+def test_antigravity_model_for(monkeypatch):
+    """Antigravity 模型槽同樣依 LEAD_ROLES 二分，留空則沿用 CLI 設定。"""
+    monkeypatch.setattr(config, "ANTIGRAVITY_MODEL_LEAD", "Gemini 3.5 Flash (High)")
+    monkeypatch.setattr(config, "ANTIGRAVITY_MODEL_FAST", "Gemini 3.5 Flash (Low)")
+
+    assert providers.antigravity_model_for(BY_KEY["pm"]) == "Gemini 3.5 Flash (High)"
+    assert providers.antigravity_model_for(BY_KEY["engineer"]) == "Gemini 3.5 Flash (Low)"
+
+
+def test_antigravity_argv_uses_print_model_sandbox_and_timeout(monkeypatch):
+    """agy provider 走 print mode，帶模型、sandbox、auto-approve 與現有發言 timeout。"""
+    monkeypatch.setattr(config, "ANTIGRAVITY_BIN", "agy")
+    monkeypatch.setattr(config, "ANTIGRAVITY_MODEL_FAST", "Gemini 3.5 Flash (Low)")
+    monkeypatch.setattr(config, "ANTIGRAVITY_SANDBOX", True)
+    monkeypatch.setattr(config, "ANTIGRAVITY_SKIP_PERMISSIONS", True)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 17)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 99)
+
+    argv = providers._antigravity_argv(BY_KEY["engineer"])
+
+    assert argv[:3] == ["agy", "--sandbox", "--dangerously-skip-permissions"]
+    assert argv[argv.index("--model") + 1] == "Gemini 3.5 Flash (Low)"
+    assert argv[argv.index("--print-timeout") + 1] == "17s"
+    assert argv[-1] == "-p"
+
+
+def test_antigravity_argv_can_disable_sandbox_or_permissions(monkeypatch):
+    """Antigravity sandbox/permission 旗標可各自關閉，方便沿用外部部署限制。"""
+    monkeypatch.setattr(config, "ANTIGRAVITY_MODEL_FAST", "")
+    monkeypatch.setattr(config, "ANTIGRAVITY_SANDBOX", False)
+    monkeypatch.setattr(config, "ANTIGRAVITY_SKIP_PERMISSIONS", False)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+
+    argv = providers._antigravity_argv(BY_KEY["engineer"])
+
+    assert "--sandbox" not in argv
+    assert "--dangerously-skip-permissions" not in argv
+    assert "--model" not in argv
+    assert "--print-timeout" not in argv
+
+
+def test_make_expert_antigravity(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "PROVIDER", "antigravity")
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    assert isinstance(ex, providers.AntigravityExpert)
+
+
+@pytest.mark.asyncio
+async def test_antigravity_success_broadcasts_stdout(monkeypatch, tmp_path):
+    """agy stdout 會被收斂為一般專家訊息。"""
+    expert = providers.AntigravityExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdout = LinesPipe(["完成\n"])
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        proc.finish(0)
+        return proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    out = await expert._run_antigravity("請回覆", broadcast)
+
+    assert out == "完成"
+    assert any(
+        e.type == events.EventType.EXPERT_MESSAGE and e.payload.get("text") == "完成"
+        for e in bucket
+    )
+
+
+@pytest.mark.asyncio
+async def test_antigravity_auth_required_raises_provider_unavailable(monkeypatch, tmp_path):
+    """agy 未登入時不能被包成普通專家訊息，應暫停 provider 等使用者登入。"""
+    expert = providers.AntigravityExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdout = LinesPipe(["Authentication required. Please sign in to continue.\n"])
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        proc.finish(1)
+        return proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(providers.ProviderUnavailable) as seen:
+        await expert._run_antigravity("請回覆", broadcast)
+
+    assert seen.value.provider == "antigravity"
+    assert "Authentication required" in seen.value.detail
+    assert bucket == []
+
+
 @pytest.mark.asyncio
 async def test_codex_run_saves_current_proc_after_spawn(monkeypatch, tmp_path):
     """_run_codex 建立 subprocess 後要立刻保存，讓 stop() 能找到目前 proc。"""
@@ -722,6 +819,16 @@ def test_provider_ready_gemini(monkeypatch):
     assert config.provider_ready() is False
     monkeypatch.setattr(config, "GEMINI_API_KEY", "gm-key")
     assert config.provider_ready() is True
+
+
+def test_provider_ready_antigravity(monkeypatch):
+    """antigravity readiness 只檢查 agy 是否可執行；OAuth/quota 由 CLI 執行時判斷。"""
+    monkeypatch.setattr(config, "PROVIDER", "antigravity")
+    monkeypatch.setattr(config, "ANTIGRAVITY_BIN", "agy")
+    monkeypatch.setattr(config.shutil, "which", lambda name: "/usr/bin/agy")
+    assert config.provider_ready() is True
+    monkeypatch.setattr(config.shutil, "which", lambda name: None)
+    assert config.provider_ready() is False
 
 
 # --- complete_once OpenAI 路徑測試（任務 #2/#3/#4）---------------------------

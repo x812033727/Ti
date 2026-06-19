@@ -183,12 +183,13 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 
 不想改環境變數也可以直接在網頁上設定：按右上角「⚙️ 設定」，即可填入
 
-- 後端 provider（claude / openai / minimax / gemini / codex）
+- 後端 provider（claude / openai / minimax / gemini / codex / antigravity）
 - Claude API key、Claude 主力 / 快速模型
 - OpenAI API key、Base URL（可指向本地模型）、OpenAI 模型
 - MiniMax API key、Base URL、MiniMax 模型
 - Gemini API key、Base URL、Gemini 模型
 - Codex 模型覆寫與 sandbox 模式（登入狀態沿用伺服器上的 Codex CLI）
+- Antigravity CLI 執行檔、模型覆寫、sandbox 與自動核准工具權限（登入/額度沿用伺服器上的 `agy`）
 - GitHub token、發佈目標 repo
 - 任務並行（開關 / 每波支線數上限）
 - **進階流程**開關：需求澄清、卡關討論 huddle、異議檢查 critic、共用筆記、跨場次教訓、反思記憶、客觀驗收閘門、單輪自我精修、子進程資源上限
@@ -294,7 +295,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_PUBLISH_CI_TIMEOUT` / `TI_PUBLISH_CI_INTERVAL` | 自動合併前等待 CI 的最長秒數 / 輪詢間隔 | 600 / 10 |
 | `TI_PUBLISH_MERGE_RETRIES` | 對 stale／`Base branch was modified`（409）的重試次數 | 3 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
-| `TI_PROVIDER` | 後端 provider：`claude`、`openai`、`minimax`、`gemini` 或 `codex` | claude |
+| `TI_PROVIDER` | 後端 provider：`claude`、`openai`、`minimax`、`gemini`、`codex` 或 `antigravity` | claude |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 金鑰 / 相容端點（可指向本地模型） | 未設定 |
 | `TI_OPENAI_MODEL_LEAD` / `TI_OPENAI_MODEL_FAST` | OpenAI 主力 / 快速模型 | gpt-4o / gpt-4o-mini |
 | `GEMINI_API_KEY` / `GEMINI_BASE_URL` | Gemini API key / Google 官方 OpenAI 相容端點 | 未設定 / https://generativelanguage.googleapis.com/v1beta/openai/ |
@@ -302,6 +303,9 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `CODEX_API_KEY` / `CODEX_HOME` / `TI_CODEX_BIN` | Codex CLI provider：可用單次 API key、既有 `CODEX_HOME/auth.json` 登入，或指定 codex 執行檔 | 既有登入 / 空 / codex |
 | `TI_CODEX_MODEL_LEAD` / `TI_CODEX_MODEL_FAST` | Codex CLI 模型覆寫；留空代表沿用 Codex CLI 自身設定 | 空 |
 | `TI_CODEX_SANDBOX` / `TI_CODEX_BYPASS_SANDBOX` | Codex CLI sandbox：`auto` 依角色選 `read-only`/`workspace-write`；可設 `danger-full-access`。`BYPASS=1` 會傳 `--dangerously-bypass-approvals-and-sandbox`，完全停用 Codex 沙盒/核准 | auto / 0 |
+| `TI_ANTIGRAVITY_BIN` | Antigravity CLI provider：本機 `agy` 執行檔；沿用 Google OAuth / Google Cloud project 登入與 Antigravity quota，不需要 API key | agy |
+| `TI_ANTIGRAVITY_MODEL_LEAD` / `TI_ANTIGRAVITY_MODEL_FAST` | Antigravity CLI 模型覆寫；留空代表沿用 CLI settings/model，可用 `agy models` 查看帳號可用模型 | 空 |
+| `TI_ANTIGRAVITY_SANDBOX` / `TI_ANTIGRAVITY_SKIP_PERMISSIONS` | Antigravity CLI 旗標：分別控制 `--sandbox` 與 `--dangerously-skip-permissions`。伺服器自動跑任務時預設開 sandbox 並自動核准工具權限 | 1 / 1 |
 | `TI_AUTOPILOT_FORCE_PUSH` | Autopilot 推送策略：預設非強制（`git push`），遠端已存在同名分支時中止；設 `1` 才略過中止並改用 `--force-with-lease --force-if-includes` 覆寫殘留分支（絕不用裸 `-f`） | 0（安全側） |
 | `TI_AUTOPILOT_MERGE_ADMIN` | Autopilot 合併策略：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效；目標 branch 有保護規則且需維持自動合併時設 `1` | 0（安全側） |
 | `TI_AUTOPILOT_PROTECTION_CHECK` | 第二道防線：squash-merge 前主動查「合併目標分支（`TI_AUTOPILOT_BRANCH`，預設 `main`）」的保護狀態。優先打 Rulesets 端點（classic token 即可讀、**多半不需 `Administration:read`**），舊 branch protection 端點為輔。三態 fail-safe——受保護/無保護皆放行，唯「無法確認」（403 無權／網路／逾時）一律**中止**並回含「無法確認保護狀態」字樣的訊息，絕不誤判為無保護而放行。讀舊 protection 端點才需 `Administration:read`；無此權限而持續卡「無法確認」的環境，設 `0` 整段跳過（明確逃生口） | 1（啟用） |
@@ -379,6 +383,32 @@ TI_CODEX_BYPASS_SANDBOX=1
 ```
 
 `BYPASS` 等同傳入 Codex CLI 的 `--dangerously-bypass-approvals-and-sandbox`，只建議在你已用外層容器/VM/權限邊界隔離好的部署中使用。
+
+### 切換到 Antigravity CLI
+
+Antigravity provider 會呼叫本機 `agy -p`，沿用伺服器上的 Antigravity CLI 登入狀態與 quota。
+這條路徑不需要 `GEMINI_API_KEY`；若用 Google OAuth 登入，會使用對應帳號的 Antigravity /
+Google AI Pro/Ultra 可用額度。企業環境也可在 `agy` 首次啟動時選 Google Cloud project。
+
+```bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy   # 一次性完成 Google OAuth 或 Google Cloud project 登入
+agy models
+TI_PROVIDER=antigravity .venv/bin/python3 -m studio.server
+```
+
+也可以只把特定角色交給 Antigravity，例如讓工程師與 QA 用 `agy`，PM 維持 Claude：
+
+```bash
+TI_PROVIDER=claude TI_PROVIDER_ENGINEER=antigravity TI_PROVIDER_QA=antigravity .venv/bin/python3 -m studio.server
+```
+
+預設會傳 `--sandbox --dangerously-skip-permissions --print-timeout <現有發言逾時>`，避免無人值守時卡在工具權限提示。
+若要停用 Antigravity sandbox：
+
+```bash
+TI_ANTIGRAVITY_SANDBOX=0
+```
 
 ## 測試
 
