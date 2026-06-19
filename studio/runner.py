@@ -183,6 +183,8 @@ def _rlimit_preexec():
 
     補 bwrap 沒有的記憶體／CPU／檔案大小防線——bwrap 缺席（如本機無 /usr/bin/bwrap）時，
     這是唯一能擋住失控指令吃爆主機的防線；bwrap 啟用時 RLIMIT 也會經 exec 繼承進沙箱子進程。
+    preexec_fn 僅在目前主進程維持單執行緒 asyncio 事件循環時安全；未來若引入 worker thread，
+    必須翻案改用 prlimit 或外部 wrapper，避免 fork 後執行 Python code 的死鎖風險。
     closure body 只做 setrlimit syscalls（fork 安全：不配置記憶體、不拿鎖、不 import），各上限
     0＝略過。移植自 ti-studio evaluator._preexec，刻意「不」呼叫 os.setsid()——兩個 subprocess
     分支已 start_new_session=True 自成 group leader，kill_process_group 靠它整組收屍，重複

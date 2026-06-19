@@ -95,11 +95,14 @@ def _reset_require_chown_after_test():
 # 偵測 bwrap 實際是否可用（防止檔案存在但因權限無法使用造成測試紅燈）
 def _check_bwrap_actually_works() -> bool:
     import subprocess
+    from studio import config as _config
+
     try:
         res = subprocess.run(
-            ["/usr/bin/bwrap", "--unshare-pid", "--", "true"],
+            [_config.SANDBOX_BWRAP, "--unshare-pid", "--", "true"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=10,
         )
         return res.returncode == 0
     except Exception:
@@ -107,6 +110,13 @@ def _check_bwrap_actually_works() -> bool:
 
 
 if not _check_bwrap_actually_works():
-    import studio.config
-    studio.config._sandbox_available = lambda: False
+    import warnings
+    from studio import config as _config
 
+    warnings.warn(
+        f"bwrap sandbox probe failed for {_config.SANDBOX_BWRAP}; "
+        "patching studio.config._sandbox_available=False for tests",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    _config._sandbox_available = lambda: False
