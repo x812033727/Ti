@@ -112,7 +112,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .ghost.danger { color: var(--bad); border-color: rgba(255, 107, 107, .35); }
 .ghost.danger:hover:not(:disabled) { background: var(--bad-bg); }
 
-input[type="text"], input[type="password"], select {
+input[type="text"], input[type="password"], input[type="search"], select {
   font-family: inherit;
   padding: 10px 14px;
   border-radius: var(--r-md);
@@ -952,7 +952,7 @@ input:focus-visible, select:focus-visible { outline: none; }
   pointer-events: none;
 }
 .settings-card {
-  width: min(1100px, 100%);
+  width: min(1180px, 100%);
   max-height: calc(100vh - 48px);
   background: rgba(18, 19, 26, .92);
   border-radius: var(--r-lg);
@@ -973,37 +973,204 @@ input:focus-visible, select:focus-visible { outline: none; }
 }
 .settings-head h2 { margin: 0; font-size: 13px; color: var(--text); letter-spacing: .06em; }
 .settings-head button { padding: 4px 10px; border-radius: var(--r-sm); }
-/* 寬螢幕下欄位自動排成多欄善用寬度，窄螢幕自動收回單欄 */
-.settings-form {
-  padding: 12px 16px;
-  overflow-y: auto;
-  flex: 1 1 auto;
-  min-height: 0;
+.settings-main {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 10px 22px;
-  align-content: start;
+  grid-template-columns: 190px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1 1 auto;
 }
-.settings-form h3,
+.settings-nav {
+  border-right: 1px solid var(--border);
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-nav button {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  font-size: 12.5px;
+}
+.settings-nav button:hover,
+.settings-nav button.active {
+  color: var(--text);
+  background: rgba(255,255,255,.06);
+  border-color: var(--border);
+}
+.settings-content {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 12px 16px 16px;
+}
+.settings-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.settings-search {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.settings-search span {
+  color: var(--text-2);
+  font-size: 12px;
+}
+.settings-search input {
+  padding: 9px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+}
+#settingsQuotaRefresh {
+  padding: 9px 14px;
+  white-space: nowrap;
+}
+.settings-quota {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 12px;
+  background: rgba(255,255,255,.035);
+  margin-bottom: 12px;
+}
+.quota-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.quota-kicker {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.quota-title {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+}
+.quota-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.quota-total strong {
+  color: var(--text);
+  font-size: 15px;
+}
+.quota-total em {
+  color: var(--text-2);
+  font-style: normal;
+}
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+.quota-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px;
+  background: rgba(0,0,0,.16);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.quota-card.active {
+  border-color: rgba(110,121,255,.55);
+}
+.quota-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.quota-card-head strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.quota-card-head span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.quota-card.ok .quota-card-head span { color: var(--good); background: var(--good-bg); }
+.quota-card.warn .quota-card-head span { color: var(--warn); background: var(--warn-bg); }
+.quota-card.missing .quota-card-head span { color: var(--bad); background: var(--bad-bg); }
+.quota-note,
+.quota-detail,
+.quota-models {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.quota-usage {
+  color: var(--text-2);
+  font-size: 12px;
+}
+.quota-models {
+  overflow-wrap: anywhere;
+}
+/* 欄位依分區排列；窄螢幕自動收回單欄 */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-section {
+  padding: 6px 0 14px;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 64px;
+}
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px 18px;
+}
+.settings-section h3,
 .settings-pw h3,
 .settings-redeploy h3 {
-  grid-column: 1 / -1;
-  margin: 12px 0 2px;
+  margin: 8px 0 10px;
   font-size: 12.5px;
   letter-spacing: .06em;
-  background: var(--grad-accent);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
+  color: var(--text);
+}
+.settings-section h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-section h3 small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
 }
 .set-row { display: flex; flex-direction: column; gap: 4px; }
 .set-label { font-size: 12.5px; color: var(--text-2); }
+.set-env { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .set-row input, .set-row select { padding: 8px 10px; border-radius: var(--r-sm); font-size: 13px; }
+.set-row.hidden,
+.settings-section.hidden,
+.settings-nav button.hidden { display: none; }
 
 /* 變更門禁密碼區塊 */
-.settings-pw { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
+.settings-pw { padding: 4px 0 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
 .settings-pw input { padding: 8px 10px; border-radius: var(--r-sm); font-size: 13px; }
 .pw-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
 .pw-actions button {
@@ -1016,7 +1183,7 @@ input:focus-visible, select:focus-visible { outline: none; }
 .pw-actions button:hover:not(:disabled) { filter: brightness(1.1); }
 
 /* 重新部署區塊 */
-.settings-redeploy { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); }
+.settings-redeploy { padding: 12px 0; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); }
 .settings-redeploy p { margin: 0; }
 .redeploy-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 .redeploy-actions button {
@@ -1250,7 +1417,25 @@ input:focus-visible, select:focus-visible { outline: none; }
   /* 設定改為整頁：填滿畫面、底部留出分頁列空間 */
   .settings-panel { padding: 0; align-items: stretch; bottom: 72px; }
   .settings-card { width: 100%; height: 100%; max-height: none; border-radius: 0; border: none; overflow-y: auto; }
-  /* 整頁捲動：表單不再內捲被壓扁；標題/儲存列 sticky 保持可達 */
+  .settings-main { display: block; }
+  .settings-nav {
+    position: sticky;
+    top: 45px;
+    z-index: 1;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    overflow-x: auto;
+    background: rgba(18, 19, 26, .96);
+    padding: 8px 10px;
+  }
+  .settings-nav button { white-space: nowrap; }
+  .settings-content { overflow: visible; padding: 10px 12px 16px; }
+  .settings-toolbar { grid-template-columns: 1fr; }
+  .quota-head { align-items: flex-start; }
+  .quota-total { align-items: flex-start; }
+  .settings-grid { grid-template-columns: 1fr; }
+  /* 整頁捲動：內容不再內捲被壓扁；標題/儲存列 sticky 保持可達 */
   .settings-form { flex: none; overflow: visible; }
   .settings-head { position: sticky; top: 0; background: rgba(18, 19, 26, .96); z-index: 1; }
   .settings-foot { position: sticky; bottom: 0; background: rgba(18, 19, 26, .96); z-index: 1; }

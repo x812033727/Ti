@@ -34,6 +34,7 @@
 | DELETE | `/api/groups/{name}` | admin（auth｜fail-safe loopback） | ✅ | 刪除討論小組條目，設定面狀態變更 |
 | GET  | `/api/roles` | auth | ➖ | 讀取角色表（內建＋檔案，含來源標記），無秘密 |
 | GET  | `/api/settings` | auth | ➖ | 讀取設定（秘密欄位不回明文），敏感度低 |
+| GET  | `/api/provider-quota` | auth | ➖ | 讀取 provider ready/auth 狀態、可列模型與 Ti 本機用量彙總；不回傳 API key/OAuth token |
 | GET  | `/api/autopilot` | auth | ➖ | 讀取狀態 |
 | GET  | `/api/autopilot/backlog` | auth | ➖ | 讀取待辦清單 |
 | GET  | `/api/history` | auth | ➖ | 讀取歷史列表 |

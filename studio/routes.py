@@ -6,6 +6,9 @@ WebSocket 與應用組裝分別在 ws.py / server.py。
 
 from __future__ import annotations
 
+import subprocess
+import time
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -23,6 +26,7 @@ from . import (
     role_store,
     roles,
     settings,
+    usage_report,
     workspace,
     ws,
 )
@@ -235,6 +239,176 @@ async def post_settings(request: Request) -> JSONResponse:
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "detail": "格式錯誤"}, status_code=400)
     return JSONResponse({"ok": True, **settings.update(body)})
+
+
+@router.get("/api/provider-quota", dependencies=[Depends(auth.require_auth)])
+async def provider_quota() -> JSONResponse:
+    """Provider 額度/狀態總覽。
+
+    回傳內容刻意只含非秘密資訊：登入/ready 狀態、可列出的模型、Ti 本機累積 token 用量。
+    官方 subscription quota 若 provider CLI 未提供穩定非互動 API，回傳狀態說明而不讀取/暴露憑證。
+    """
+    return JSONResponse(_provider_quota_snapshot())
+
+
+def _bucket() -> dict:
+    return {"prompt": 0, "completion": 0, "total": 0, "cost_usd": 0.0, "calls": 0}
+
+
+def _usage_for_provider(agg: dict, provider: str) -> dict:
+    return dict((agg.get("by_provider") or {}).get(provider) or _bucket())
+
+
+def _run_text(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return (127, "找不到執行檔")
+    except subprocess.TimeoutExpired:
+        return (124, f"執行逾時（{timeout:g}s）")
+    text = "\n".join(x.strip() for x in (proc.stdout, proc.stderr) if x and x.strip())
+    return (int(proc.returncode or 0), text[:2000])
+
+
+def _antigravity_status() -> dict:
+    available = config.antigravity_cli_available()
+    models: list[str] = []
+    detail = ""
+    signed_in = False
+    if available:
+        code, out = _run_text([config.ANTIGRAVITY_BIN, "models"], timeout=12.0)
+        signed_in = code == 0
+        if signed_in:
+            models = [ln.strip() for ln in out.splitlines() if ln.strip()]
+            detail = "Google OAuth / Google Cloud project 已可列模型。"
+        else:
+            detail = out or "Antigravity CLI 尚未登入或無法取得模型清單。"
+    return {
+        "key": "antigravity",
+        "label": "Antigravity CLI",
+        "active": config.PROVIDER == "antigravity",
+        "ready": available and signed_in,
+        "status": "ok" if available and signed_in else ("warn" if available else "missing"),
+        "auth": "signed_in" if signed_in else "needs_login",
+        "binary": config.ANTIGRAVITY_BIN,
+        "models": models,
+        "quota": {
+            "kind": "subscription",
+            "summary": "可用訂閱/帳號額度" if signed_in else "需要先登入 `agy`",
+            "detail": detail,
+        },
+    }
+
+
+def _provider_quota_snapshot() -> dict:
+    now = time.time()
+    all_usage = usage_report.aggregate()
+    week_usage = usage_report.aggregate(now - 7 * 86400)
+    month_usage = usage_report.aggregate(now - 30 * 86400)
+
+    providers = [
+        {
+            "key": "claude",
+            "label": "Claude",
+            "active": config.PROVIDER == "claude",
+            "ready": config.has_api_key() or config.claude_cli_logged_in(),
+            "status": "ok"
+            if (config.has_api_key() or config.claude_cli_logged_in())
+            else "missing",
+            "auth": "api_key"
+            if config.has_api_key()
+            else ("oauth" if config.claude_cli_logged_in() else "missing"),
+            "quota": {
+                "kind": "subscription_or_api",
+                "summary": "API key / Claude CLI 登入狀態",
+                "detail": "實際訂閱額度以 Claude Code 官方介面為準。",
+            },
+        },
+        {
+            "key": "openai",
+            "label": "OpenAI / 相容端點",
+            "active": config.PROVIDER == "openai",
+            "ready": bool(config.OPENAI_API_KEY or config.OPENAI_BASE_URL),
+            "status": "ok" if (config.OPENAI_API_KEY or config.OPENAI_BASE_URL) else "missing",
+            "auth": "api_key"
+            if config.OPENAI_API_KEY
+            else ("base_url" if config.OPENAI_BASE_URL else "missing"),
+            "quota": {
+                "kind": "api",
+                "summary": "API key / Base URL 狀態",
+                "detail": "OpenAI 相容端點沒有通用額度 API；顯示 Ti 本機累積 token 用量。",
+            },
+        },
+        {
+            "key": "minimax",
+            "label": "MiniMax",
+            "active": config.PROVIDER == "minimax",
+            "ready": bool(config.MINIMAX_API_KEY),
+            "status": "ok" if config.MINIMAX_API_KEY else "missing",
+            "auth": "api_key" if config.MINIMAX_API_KEY else "missing",
+            "quota": {
+                "kind": "api",
+                "summary": "API key 狀態",
+                "detail": "MiniMax 額度以官方後台為準；此處顯示 Ti 本機累積 token 用量。",
+            },
+        },
+        {
+            "key": "gemini",
+            "label": "Gemini API",
+            "active": config.PROVIDER == "gemini",
+            "ready": bool(config.GEMINI_API_KEY),
+            "status": "ok" if config.GEMINI_API_KEY else "missing",
+            "auth": "api_key" if config.GEMINI_API_KEY else "missing",
+            "quota": {
+                "kind": "api",
+                "summary": "API key 狀態",
+                "detail": "Gemini API 額度以 Google AI Studio / Cloud Console 為準。",
+            },
+        },
+        {
+            "key": "codex",
+            "label": "Codex CLI",
+            "active": config.PROVIDER == "codex",
+            "ready": config.codex_cli_available() and config.codex_cli_logged_in(),
+            "status": "ok"
+            if (config.codex_cli_available() and config.codex_cli_logged_in())
+            else ("warn" if config.codex_cli_available() else "missing"),
+            "auth": "api_key"
+            if config.CODEX_API_KEY
+            else ("oauth" if config.codex_cli_logged_in() else "missing"),
+            "binary": config.CODEX_BIN,
+            "quota": {
+                "kind": "subscription_or_api",
+                "summary": "Codex CLI 登入/API key 狀態",
+                "detail": "Codex usage limit 會在執行時偵測並暫停任務；官方剩餘額度以 Codex CLI/ChatGPT 介面為準。",
+            },
+        },
+        _antigravity_status(),
+    ]
+
+    for item in providers:
+        item["usage_all"] = _usage_for_provider(all_usage, item["key"])
+        item["usage_7d"] = _usage_for_provider(week_usage, item["key"])
+        item["usage_30d"] = _usage_for_provider(month_usage, item["key"])
+
+    return {
+        "ok": True,
+        "active_provider": config.PROVIDER,
+        "provider_ready": config.provider_ready(),
+        "updated_at": now,
+        "usage": {
+            "all": all_usage,
+            "last_7d": week_usage,
+            "last_30d": month_usage,
+        },
+        "providers": providers,
+    }
 
 
 # --- 角色管理（受保護）--------------------------------------------------

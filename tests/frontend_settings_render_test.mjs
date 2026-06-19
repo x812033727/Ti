@@ -75,12 +75,14 @@ ctx.renderSettings(fields);
 
 // 收集渲染後的 input/select 列（依 data-env 對應回欄位）
 const rendered = new Map();
-for (const row of FORM.children) {
-  if (!row.children) continue;
-  for (const c of row.children) {
+function walkRows(el, currentRow = null) {
+  const row = el.className === 'set-row' ? el : currentRow;
+  for (const c of el.children || []) {
     if (c.dataset && c.dataset.env) rendered.set(c.dataset.env, { row, input: c });
+    walkRows(c, row);
   }
 }
+walkRows(FORM);
 
 const fails = [];
 function check(cond, msg) { if (!cond) fails.push(msg); }

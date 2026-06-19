@@ -41,37 +41,52 @@
         <h2>設定</h2>
         <button id="settingsClose" class="ghost">✕</button>
       </div>
-      <form id="settingsForm" class="settings-form"></form>
+      <div class="settings-main">
+        <aside id="settingsNav" class="settings-nav" aria-label="設定分類"></aside>
+        <div class="settings-content">
+          <div class="settings-toolbar">
+            <label class="settings-search">
+              <span>搜尋</span>
+              <input id="settingsSearch" type="search" placeholder="搜尋 provider、模型、環境變數" autocomplete="off" />
+            </label>
+            <button id="settingsQuotaRefresh" class="ghost" type="button">更新額度</button>
+          </div>
+          <section id="settingsQuota" class="settings-quota" aria-live="polite">
+            <div class="muted">載入 provider 狀態與額度中…</div>
+          </section>
+          <form id="settingsForm" class="settings-form"></form>
 
-      <!-- 重新部署重啟 -->
-      <div class="settings-redeploy">
-        <h3>重新部署</h3>
-        <p class="muted">拉取主 repo 最新 main 並重啟服務，讓合併後的新程式碼生效。重啟會中斷進行中的工作與連線。</p>
-        <div class="redeploy-actions">
-          <button id="redeployBtn" type="button">♻️ 重新部署並重啟</button>
-          <span id="redeployStatus" class="redeploy-status muted"></span>
-        </div>
-      </div>
+          <!-- 重新部署重啟 -->
+          <div class="settings-redeploy">
+            <h3>重新部署</h3>
+            <p class="muted">拉取主 repo 最新 main 並重啟服務，讓合併後的新程式碼生效。重啟會中斷進行中的工作與連線。</p>
+            <div class="redeploy-actions">
+              <button id="redeployBtn" type="button">重新部署並重啟</button>
+              <span id="redeployStatus" class="redeploy-status muted"></span>
+            </div>
+          </div>
 
-      <!-- 變更登入門禁密碼 -->
-      <div class="settings-pw">
-        <h3>存取密碼（登入門禁）</h3>
-        <div id="pwStatus" class="muted"></div>
-        <label class="set-row" id="pwCurrentRow">
-          <span class="set-label">目前密碼</span>
-          <input id="pwCurrent" type="password" placeholder="輸入目前密碼" autocomplete="current-password" />
-        </label>
-        <label class="set-row">
-          <span class="set-label">新密碼</span>
-          <input id="pwNew" type="password" placeholder="至少 4 個字元" autocomplete="new-password" />
-        </label>
-        <label class="set-row">
-          <span class="set-label">確認新密碼</span>
-          <input id="pwConfirm" type="password" placeholder="再次輸入新密碼" autocomplete="new-password" />
-        </label>
-        <div class="pw-actions">
-          <button id="pwSave" type="button">變更密碼</button>
-          <span id="pwHint" class="muted"></span>
+          <!-- 變更登入門禁密碼 -->
+          <div class="settings-pw">
+            <h3>存取密碼（登入門禁）</h3>
+            <div id="pwStatus" class="muted"></div>
+            <label class="set-row" id="pwCurrentRow">
+              <span class="set-label">目前密碼</span>
+              <input id="pwCurrent" type="password" placeholder="輸入目前密碼" autocomplete="current-password" />
+            </label>
+            <label class="set-row">
+              <span class="set-label">新密碼</span>
+              <input id="pwNew" type="password" placeholder="至少 4 個字元" autocomplete="new-password" />
+            </label>
+            <label class="set-row">
+              <span class="set-label">確認新密碼</span>
+              <input id="pwConfirm" type="password" placeholder="再次輸入新密碼" autocomplete="new-password" />
+            </label>
+            <div class="pw-actions">
+              <button id="pwSave" type="button">變更密碼</button>
+              <span id="pwHint" class="muted"></span>
+            </div>
+          </div>
         </div>
       </div>
 
