@@ -1499,7 +1499,7 @@ function renderProviderQuota(data) {
     appendTextEl(cardHead, "span", "", providerStatusLabel(p));
     card.appendChild(cardHead);
     appendTextEl(card, "div", "quota-note", (p.quota && p.quota.summary) || "");
-    if (p.key === "claude" && p.rate_limits) card.appendChild(rateLimitBlock(p.rate_limits));
+    if (p.rate_limits) card.appendChild(rateLimitBlock(p.rate_limits));
     const usageList = document.createElement("div");
     usageList.className = "quota-usage-list";
     appendTextEl(usageList, "span", "", `5 小時 ${fmtInt(usage5h.total)} tokens · ${fmtInt(usage5h.calls)} calls`);

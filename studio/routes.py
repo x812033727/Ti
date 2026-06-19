@@ -18,6 +18,7 @@ from . import (
     backlog,
     blueprint,
     claude_usage,
+    codex_usage,
     config,
     history,
     projects,
@@ -394,8 +395,16 @@ def _provider_quota_snapshot() -> dict:
             "quota": {
                 "kind": "subscription_or_api",
                 "summary": "Codex CLI 登入/API key 狀態",
-                "detail": "Codex usage limit 會在執行時偵測並暫停任務；官方剩餘額度以 Codex CLI/ChatGPT 介面為準。",
+                "detail": "訂閱額度由 codex app-server 即時查詢（每 60 秒快取一次）。",
             },
+            # 訂閱（OAuth 登入、非 API key）時附官方 rate limit；否則 None（前端不顯示）。
+            "rate_limits": (
+                codex_usage.fetch_rate_limits()
+                if config.codex_cli_available()
+                and config.codex_cli_logged_in()
+                and not config.CODEX_API_KEY
+                else None
+            ),
         },
         _antigravity_status(),
     ]
