@@ -170,6 +170,7 @@ def test_no_new_third_party_import():
         "base64",
         "hashlib",
         "hmac",
+        "logging",
         "os",
         "time",
         "__future__",

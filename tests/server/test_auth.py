@@ -31,11 +31,7 @@ def pw_env(tmp_path, monkeypatch):
 
 
 def _auth_warnings(caplog):
-    return [
-        r
-        for r in caplog.records
-        if r.name == "ti.auth" and r.levelname == "WARNING"
-    ]
+    return [r for r in caplog.records if r.name == "ti.auth" and r.levelname == "WARNING"]
 
 
 def _assert_no_secret_leak(message, *secrets):
@@ -87,9 +83,7 @@ def test_set_password_logs_disabled_audit_warning(pw_env, monkeypatch, caplog):
     assert config.ACCESS_PASSWORD == ""
 
 
-def test_set_password_write_failure_does_not_log_success(
-    pw_env, monkeypatch, caplog
-):
+def test_set_password_write_failure_does_not_log_success(pw_env, monkeypatch, caplog):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "oldpass")
 
     def fail_write(*_args, **_kwargs):

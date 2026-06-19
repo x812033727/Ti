@@ -182,6 +182,8 @@ async def test_publish_merge_off_does_not_merge(monkeypatch, _configured, _ok_pu
 async def test_publish_merge_success(monkeypatch, _configured, _ok_push_pr):
     async def fake_flow(number, payload, **kw):
         assert number == 7
+        assert kw["await_registration"] is True
+        assert kw["registration_grace"] == config.PUBLISH_CI_GRACE
         return publisher.MergeOutcome.MERGED, "deadbeef"
 
     monkeypatch.setattr(publisher, "_merge_flow", fake_flow)

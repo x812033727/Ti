@@ -18,10 +18,10 @@ import pytest
 
 from studio import adr, config, events
 from studio.discussion import (
+    SELF_SEGMENT_MAX_CHARS,
     DiscussionEngine,
     DiscussionResult,
     Mention,
-    SELF_SEGMENT_MAX_CHARS,
     Utterance,
     parse_mentions,
 )
@@ -252,9 +252,7 @@ async def test_own_history_recent_default_is_used_by_run_in_both_modes(mode):
 async def test_own_history_recent_constructor_param_is_used_by_run_in_both_modes(mode):
     a = StubExpert("甲", texts=["甲-H1", "甲-H2", "甲-H3"])
     b = StubExpert("乙", texts=["乙-H1", "乙-H2", "乙-H3"])
-    eng = DiscussionEngine(
-        [("甲", a), ("乙", b)], mode=mode, max_rounds=3, own_history_recent_n=1
-    )
+    eng = DiscussionEngine([("甲", a), ("乙", b)], mode=mode, max_rounds=3, own_history_recent_n=1)
 
     res = await eng.run("T")
     section = _own_history_section(a.prompts[2])
