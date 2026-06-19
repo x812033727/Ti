@@ -582,11 +582,14 @@ async def _merge_flow(
     ci_timeout: float,
     ci_interval: float,
     retries: int,
+    await_registration: bool = False,
+    registration_grace: int | None = None,
     sleep=asyncio.sleep,
 ) -> tuple[MergeOutcome, str]:
     """合併協調器：每輪「查狀態 → 等 CI → 合併」，可重試錯誤則 update-branch 後重試。
 
-    - 先 `_wait_for_ci`：CI fail → CI_FAILED 早退；逾時 → TIMEOUT 早退；查詢失敗 → ERROR。
+    - 首輪 publish 可先等 check 註冊，避免 PR 剛建立時把「尚未註冊」誤判為「無 CI」。
+    - 再 `_wait_for_ci`：CI fail → CI_FAILED 早退；逾時 → TIMEOUT 早退；查詢失敗 → ERROR。
     - 再 `_merge_pr`：成功 → MERGED；不可重試 → 用 `classify_merge_state` 精準回報 BLOCKED／CONFLICT。
     - 可重試：
         - `behind`（stale）→ 先 `_update_branch` 把 base 併進來真正修分支，再退避重試；
@@ -595,6 +598,10 @@ async def _merge_flow(
           （避免製造多餘 merge commit 與整輪 CI 重跑）。
       超過次數才放棄並回報。
     """
+    if await_registration:
+        grace = config.PUBLISH_CI_GRACE if registration_grace is None else registration_grace
+        await _await_checks_registered(number, grace, sleep=sleep)
+
     last_outcome, last_detail = MergeOutcome.ERROR, "未知錯誤"
     for attempt in range(retries + 1):
         status = await _get_pr_status(number, sleep=sleep)
@@ -733,6 +740,8 @@ async def _publish_inner(
         ci_timeout=config.PUBLISH_CI_TIMEOUT,
         ci_interval=config.PUBLISH_CI_INTERVAL,
         retries=config.PUBLISH_MERGE_RETRIES,
+        await_registration=True,
+        registration_grace=config.PUBLISH_CI_GRACE,
     )
     res.outcome = outcome
     if outcome == MergeOutcome.MERGED:
