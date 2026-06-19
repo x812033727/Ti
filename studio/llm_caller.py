@@ -123,6 +123,15 @@ class APIErrorSignal(Exception):
         self.partial_text = partial_text
 
 
+class ProviderUnavailable(RuntimeError):
+    """上游 provider 暫時不可用；應停止本場而非把錯誤文字交給 QA 判決。"""
+
+    def __init__(self, provider: str, detail: str):
+        super().__init__(detail)
+        self.provider = provider
+        self.detail = detail
+
+
 def parse_retry_after(text: str) -> float | None:
     """從文字（header 或 JSON）擷取 retry-after 秒數，無則 None。"""
     m = _RETRY_AFTER_RE.search(text or "")
@@ -183,6 +192,108 @@ def classify_api_text(text: str) -> tuple[str, object] | None:
     if code and code in _API_ERROR_CODES:
         return ("api_error", f"HTTP {code}")
     return None
+
+
+_PROVIDER_UNAVAILABLE_API_KINDS: dict[str, tuple[str, str]] = {
+    "billing_error": ("billing", "billing or quota is unavailable"),
+    "authentication_error": ("auth", "provider authentication failed"),
+    "permission_error": ("permission", "provider permission denied"),
+    "timeout_error": ("timeout", "provider request timed out"),
+}
+_PROVIDER_UNAVAILABLE_HTTP_KINDS: dict[str, tuple[str, str]] = {
+    "HTTP 401": ("auth", "provider authentication failed"),
+    "HTTP 403": ("permission", "provider permission denied"),
+    "HTTP 408": ("timeout", "provider request timed out"),
+    "HTTP 502": ("server", "provider gateway error"),
+    "HTTP 503": ("server", "provider service unavailable"),
+}
+_PROVIDER_UNAVAILABLE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, str]], ...] = (
+    (
+        re.compile(
+            r"\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+"
+            r"(?:your\s+)?(?:daily\s+)?usage\s+limit\b",
+            re.I,
+        ),
+        ("usage_limit", "usage limit reached"),
+    ),
+    (
+        re.compile(r"\busage\s+limit\s+(?:reached|exceeded|exhausted)\b", re.I),
+        ("usage_limit", "usage limit reached"),
+    ),
+    (
+        re.compile(
+            r"\b(?:insufficient[_ -]?quota|quota[_ -]?exceeded|resource_exhausted)\b",
+            re.I,
+        ),
+        ("quota", "quota exhausted"),
+    ),
+    (
+        re.compile(
+            r"\b(?:quota|billing\s+quota)\b.{0,80}\b(?:exceeded|exhausted|depleted|"
+            r"insufficient|reached)\b",
+            re.I,
+        ),
+        ("quota", "quota exhausted"),
+    ),
+    (
+        re.compile(
+            r"\b(?:exceeded|exhausted|depleted|insufficient|reached)\b.{0,80}"
+            r"\b(?:quota|billing\s+quota)\b",
+            re.I,
+        ),
+        ("quota", "quota exhausted"),
+    ),
+    (
+        re.compile(
+            r"\b(?:purchase\s+more\s+credits|credit\s+balance|credits?)\b.{0,80}"
+            r"\b(?:exceeded|exhausted|depleted|insufficient|reached|limit)\b",
+            re.I,
+        ),
+        ("quota", "credits exhausted"),
+    ),
+    (
+        re.compile(r"\bbilling_error\b|\bbilling\b.{0,80}\b(?:required|quota|limit)\b", re.I),
+        ("billing", "billing or quota is unavailable"),
+    ),
+    (
+        re.compile(r"\b(?:chat|request|provider)\s+timeout\b|\btimed\s+out\b", re.I),
+        ("timeout", "provider request timed out"),
+    ),
+)
+
+
+def provider_unavailable_kind(text: str) -> tuple[str, str] | None:
+    """辨識「不該讓任務繼續重跑」的 provider 不可用文字。
+
+    回傳 (kind, reason)，kind 為 usage_limit/quota/billing/auth/permission/timeout/server/
+    rate_limit/overloaded。此函式給 provider 收斂層使用；`classify_api_text` 仍維持嚴格錨定，
+    避免正常專家發言提到 quota/rate limit 時被誤殺。
+    """
+    if not text:
+        return None
+    hit = classify_api_text(text)
+    if hit is not None:
+        route, detail = hit
+        if route == "rate_limit":
+            return ("rate_limit", "rate limit reached")
+        if route == "overloaded":
+            return ("overloaded", "provider overloaded")
+        if route == "api_error":
+            value = str(detail)
+            if value in _PROVIDER_UNAVAILABLE_API_KINDS:
+                return _PROVIDER_UNAVAILABLE_API_KINDS[value]
+            if value in _PROVIDER_UNAVAILABLE_HTTP_KINDS:
+                return _PROVIDER_UNAVAILABLE_HTTP_KINDS[value]
+    for pattern, result in _PROVIDER_UNAVAILABLE_PATTERNS:
+        if pattern.search(text):
+            return result
+    return None
+
+
+def provider_unavailable_reason(text: str) -> str | None:
+    """回傳 provider 不可用的人類可讀原因；無法判定則 None。"""
+    hit = provider_unavailable_kind(text)
+    return hit[1] if hit is not None else None
 
 
 def classify_sse_error(
@@ -255,6 +366,8 @@ def classify_failure(exc: Exception) -> tuple[str, float | None, str, str]:
     if hit and hit[0] == "overloaded":
         return ("overloaded", None, str(exc)[:300], "")
     if hit and hit[0] == "api_error":
+        return ("api_error", None, str(exc)[:300], "")
+    if provider_unavailable_kind(str(exc)) is not None:
         return ("api_error", None, str(exc)[:300], "")
     return ("unknown", None, "", "")
 
