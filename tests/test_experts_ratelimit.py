@@ -33,6 +33,10 @@ def collect():
     return bucket, broadcast
 
 
+def _statuses(bucket):
+    return [e.payload["status"] for e in bucket if e.type == events.EventType.EXPERT_STATUS]
+
+
 async def _agen(items):
     for it in items:
         yield it
@@ -70,6 +74,7 @@ _RATE_LIMIT_JSON = '{"type":"error","error":{"type":"rate_limit_error","message"
 _OVERLOADED_JSON = '{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}'
 # 真正不重試的 API 錯誤樣本（非 429／529）——驗證「直接 fallback、不退避」路徑。
 _AUTH_ERROR_JSON = '{"type":"error","error":{"type":"authentication_error","message":"bad key"}}'
+_BILLING_ERROR_JSON = '{"type":"error","error":{"type":"billing_error","message":"quota exceeded"}}'
 
 
 # --- _classify_api_text：錨定判別 + 反向黑樣本 --------------------------
@@ -256,24 +261,25 @@ async def test_speak_exception_429_retries_then_succeeds(
     assert _record_sleep == [1.0]  # 讀到 retry-after=1
 
 
-async def test_speak_rate_limit_text_retries_then_fallback(
+async def test_speak_rate_limit_text_retries_then_provider_unavailable(
     fake_sdk, monkeypatch, _rl_config, _record_sleep
 ):
-    """限流文字每次都命中，重試耗盡 → 走 fallback（不含核可詞、照常進 transcript）。"""
+    """限流文字每次都命中，重試耗盡 → 暫停 claude provider，不讓任務被當 QA fail 重跑。"""
     rl_stream = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_RATE_LIMIT_JSON)])]
     client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=rl_stream)
     exp = _make_expert(monkeypatch, client)
     bucket, broadcast = collect()
 
-    text = await exp.speak("做點事", broadcast)
+    with pytest.raises(llm_caller.ProviderUnavailable) as seen:
+        await exp.speak("做點事", broadcast)
 
-    assert "限流" in text and "中止" in text
-    assert "核可" not in text and "同意" not in text  # 下游不會誤判為通過
+    assert seen.value.provider == "claude"
+    assert "rate_limit_error" in str(seen.value)
     assert client.queries == 3  # 初次 + 2 次重試（RETRIES=2）
     assert len(_record_sleep) == 2  # 指數退避：2.0, 4.0
     assert _record_sleep == [2.0, 4.0]
-    # fallback 說明有進 transcript（廣播 expert_message）
-    assert any("中止" in ev.payload.get("text", "") for ev in bucket)
+    assert _statuses(bucket)[-1] == "idle"
+    assert not any("中止" in ev.payload.get("text", "") for ev in bucket)
 
 
 async def test_speak_api_error_text_fallback_no_retry(
@@ -294,6 +300,25 @@ async def test_speak_api_error_text_fallback_no_retry(
     assert "中止前的半句" in text  # partial 文字被帶入 fallback
     assert client.queries == 1  # 不重試
     assert _record_sleep == []
+
+
+async def test_speak_billing_quota_text_raises_provider_unavailable_no_retry(
+    fake_sdk, monkeypatch, _rl_config, _record_sleep
+):
+    """Claude billing/quota 類錯誤應暫停 provider，避免把額度問題寫進 transcript 重跑。"""
+    stream = [fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(_BILLING_ERROR_JSON)])]
+    client = _ScriptedClient(fake_sdk, query_effects=[], stream_msgs=stream)
+    exp = _make_expert(monkeypatch, client)
+    bucket, broadcast = collect()
+
+    with pytest.raises(llm_caller.ProviderUnavailable) as seen:
+        await exp.speak("做點事", broadcast)
+
+    assert seen.value.provider == "claude"
+    assert "billing_error" in str(seen.value)
+    assert client.queries == 1
+    assert _record_sleep == []
+    assert _statuses(bucket)[-1] == "idle"
 
 
 async def test_speak_overloaded_529_retries_pure_exponential_then_fallback(
@@ -355,7 +380,7 @@ async def test_speak_wires_middleware_observability(
     """task #5 接線：experts 的 speak 路徑確實接上中介層 task #4 的 metrics/observe 接點。
 
     驗證（a）退避時 observe sink 收到中介層穩定 EV_* 事件、（b）RetryMetrics 累加退避次數/延遲，
-    且為純記錄——對外回傳文字與既有 fallback 語義不變（向後相容）。
+    且為純記錄——observe sink 不改變限流耗盡後暫停 provider 的控制流。
     """
     seen: list[str] = []
     monkeypatch.setattr(
@@ -366,10 +391,9 @@ async def test_speak_wires_middleware_observability(
     exp = _make_expert(monkeypatch, client)
     _, broadcast = collect()
 
-    text = await exp.speak("做點事", broadcast)
+    with pytest.raises(llm_caller.ProviderUnavailable):
+        await exp.speak("做點事", broadcast)
 
-    # 對外行為不變：限流耗盡走 fallback、不含核可詞
-    assert "限流" in text and "中止" in text
     assert _record_sleep == [2.0, 4.0]
     # 觀測接點被觸發：退避兩次（EV_RETRY）後收斂到限流耗盡（EV_RATE_LIMIT_EXHAUSTED）
     assert seen.count(llm_caller.EV_RETRY) == 2

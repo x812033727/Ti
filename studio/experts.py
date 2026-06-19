@@ -442,9 +442,10 @@ class Expert:
         await self.start()
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
-        text = await self._speak_with_retries(prompt, broadcast)
-        await broadcast(events.expert_status(self.session_id, r.key, "idle"))
-        return text
+        try:
+            return await self._speak_with_retries(prompt, broadcast)
+        finally:
+            await broadcast(events.expert_status(self.session_id, r.key, "idle"))
 
     async def _speak_with_retries(self, prompt: str, broadcast: Broadcast) -> str:
         """送 prompt 並串流；統一走核心 `llm_caller.run_with_retries` 重試骨幹。
@@ -484,15 +485,28 @@ class Expert:
             await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
 
         async def _on_rate_limit_exhausted(snippet: str, partial: str) -> str:
-            logger.warning("專家 %s 限流重試耗盡（%d 次），走 fallback", r.key, cfg.max_retries)
-            return await self._fallback_note(
-                f"【系統】發言{RATE_LIMIT_FALLBACK_MARKER}退避重試 {cfg.max_retries} 次仍失敗，本輪中止。",
-                partial,
-                broadcast,
+            logger.warning(
+                "專家 %s 限流重試耗盡（%d 次），暫停 claude provider：%s",
+                r.key,
+                cfg.max_retries,
+                snippet,
             )
+            detail = (snippet or partial).strip() or (
+                f"claude rate limit exhausted after {cfg.max_retries} retries"
+            )
+            raise llm_caller.ProviderUnavailable("claude", detail[:2000])
 
         async def _on_api_error(snippet: str, partial: str) -> str:
             logger.warning("專家 %s 收到 API 錯誤文字，走 fallback：%s", r.key, snippet)
+            unavailable = llm_caller.provider_unavailable_kind(snippet)
+            if unavailable is not None and unavailable[0] in {
+                "usage_limit",
+                "quota",
+                "billing",
+                "rate_limit",
+            }:
+                detail = (snippet or partial or unavailable[1]).strip()
+                raise llm_caller.ProviderUnavailable("claude", detail[:2000])
             return await self._fallback_note(
                 f"【系統】{API_ERROR_FALLBACK_MARKER}，本輪中止。", partial, broadcast
             )

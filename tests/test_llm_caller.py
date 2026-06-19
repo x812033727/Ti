@@ -60,6 +60,35 @@ def test_classify_normal_speech_not_misclassified(text):
     assert lc.classify_api_text(text) is None
 
 
+def test_provider_unavailable_reason_detects_usage_limit():
+    text = "You've hit your usage limit. Visit settings to purchase more credits."
+    assert lc.provider_unavailable_kind(text) == ("usage_limit", "usage limit reached")
+    assert lc.provider_unavailable_reason(text) == "usage limit reached"
+
+
+@pytest.mark.parametrize(
+    "text,kind",
+    [
+        ("Error code: 401 - invalid api key", "auth"),
+        ("API Error: HTTP 503 service unavailable", "server"),
+        ("insufficient_quota: quota exceeded", "quota"),
+        ('{"type":"error","error":{"type":"billing_error","message":"quota"}}', "billing"),
+    ],
+)
+def test_provider_unavailable_reason_detects_provider_failures(text, kind):
+    hit = lc.provider_unavailable_kind(text)
+    assert hit is not None
+    assert hit[0] == kind
+
+
+def test_classify_failure_plain_quota_text_is_api_error():
+    kind, _retry_after, snippet, _partial = lc.classify_failure(
+        RuntimeError("insufficient_quota: quota exceeded")
+    )
+    assert kind == "api_error"
+    assert "quota" in snippet
+
+
 # --- _SSE_ERROR_TYPE_TO_STATUS：對照表 + SSE 防線（Issue #1258）---------
 
 

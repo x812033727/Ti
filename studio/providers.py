@@ -413,26 +413,25 @@ class CodexExpert:
         runner.kill_process_group(proc)
 
 
-class ProviderUnavailable(RuntimeError):
-    """上游 provider 暫時不可用；應停止本場而非把錯誤文字交給 QA 判決。"""
-
-    def __init__(self, provider: str, detail: str):
-        super().__init__(detail)
-        self.provider = provider
-        self.detail = detail
+ProviderUnavailable = llm_caller.ProviderUnavailable
 
 
 def _codex_usage_limited(text: str) -> bool:
     """Codex CLI 額度/credits 上限偵測；命中時不應被當作一般專家發言。"""
-    lower = (text or "").lower()
-    return (
-        "you've hit your usage limit" in lower
-        or "you have hit your usage limit" in lower
-        or (
-            "usage limit" in lower
-            and ("codex/settings/usage" in lower or "purchase more credits" in lower)
-        )
-    )
+    return llm_caller.provider_unavailable_reason(text) is not None
+
+
+def _turn_timeout_seconds() -> float | None:
+    """OpenAI-compatible 單次 chat 呼叫的 watchdog 秒數；無設定則不包 timeout。"""
+    candidates: list[float] = []
+    for value in (config.TURN_IDLE_TIMEOUT, config.TURN_HARD_TIMEOUT):
+        try:
+            seconds = float(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if seconds > 0:
+            candidates.append(seconds)
+    return min(candidates) if candidates else None
 
 
 class OpenAIExpert:
@@ -461,6 +460,14 @@ class OpenAIExpert:
         # per-speak 去重快取：speak() 入口會換上新實例（防跨 speak 結果洩漏）。此處先建一份，
         # 避免有人新增旁路呼叫路徑時踩 AttributeError（架構決策）。
         self._dedup_cache = tools.DedupCache()
+
+    def _pauses_on_provider_failure(self) -> bool:
+        """OpenAI-compatible 第三方 provider 失敗時暫停任務；保留 openai 既有 fallback 契約。"""
+        return self._provider in {"minimax", "gemini"}
+
+    def _provider_unavailable(self, detail: str, fallback: str) -> ProviderUnavailable:
+        detail = (detail or fallback).strip() or fallback
+        return ProviderUnavailable(self._provider, _clip(detail, 2000))
 
     async def speak(self, prompt: str, broadcast) -> str:
         """送出 prompt，跑 function-calling 工具迴圈，回傳完整發言文字。
@@ -493,8 +500,22 @@ class OpenAIExpert:
             self._dedup_cache.new_attempt()
             collected: list[str] = []
             usage = {"prompt": 0, "completion": 0, "total": 0, "calls": 0}
+            chat_timeout = _turn_timeout_seconds()
             for _ in range(config.OPENAI_MAX_STEPS):
-                resp = await self._chat(self._messages, self._tools, self._model)
+                try:
+                    if chat_timeout is not None:
+                        resp = await asyncio.wait_for(
+                            self._chat(self._messages, self._tools, self._model),
+                            timeout=chat_timeout,
+                        )
+                    else:
+                        resp = await self._chat(self._messages, self._tools, self._model)
+                except asyncio.TimeoutError as exc:
+                    limit = f"{chat_timeout:g}" if chat_timeout is not None else "unknown"
+                    raise llm_caller.APIErrorSignal(
+                        "timeout_error",
+                        f"{self._provider} chat timeout after {limit}s",
+                    ) from exc
                 resp_usage = getattr(resp, "usage", None)
                 if resp_usage is not None:
                     prompt_tokens = _usage_int(resp_usage, "prompt_tokens", "input_tokens")
@@ -563,15 +584,24 @@ class OpenAIExpert:
 
         async def _on_rate_limit_exhausted(snippet: str, partial: str) -> str:
             logger.warning(
-                "OpenAI 專家 %s 限流重試耗盡（%d 次），回退空字串：%s",
+                "OpenAI 專家 %s 限流重試耗盡（%d 次）：%s",
                 r.key,
                 cfg.max_retries,
                 snippet,
             )
+            if self._pauses_on_provider_failure():
+                raise self._provider_unavailable(
+                    snippet or partial,
+                    f"{self._provider} rate limit exhausted after {cfg.max_retries} retries",
+                )
             return ""
 
         async def _on_api_error(snippet: str, partial: str) -> str:
             logger.warning("OpenAI 專家 %s 收到 API 錯誤，回退空字串：%s", r.key, snippet)
+            if self._pauses_on_provider_failure() and llm_caller.provider_unavailable_reason(
+                snippet
+            ):
+                raise self._provider_unavailable(snippet or partial, f"{self._provider} API error")
             return ""
 
         # 與 Claude 端 _speak_with_retries 對稱接上可觀測接點：metrics 累加退避次數／延遲，

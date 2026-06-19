@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -54,6 +55,17 @@ class ScriptedChat:
         if isinstance(action, BaseException):
             raise action
         return action
+
+
+class HangingChat:
+    """永不回應的 chat，用來驗證 OpenAI-compatible watchdog 會中止。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def __call__(self, messages, tools, model):
+        self.calls += 1
+        await asyncio.Event().wait()
 
 
 def collect():
@@ -209,6 +221,48 @@ async def test_speak_zero_retries_rate_limit_immediate_empty(_cfg, _no_wait, tmp
     assert out == ""
     assert chat.calls == 1
     assert len(_no_wait) == 0
+
+
+@pytest.mark.asyncio
+async def test_minimax_rate_limit_exhausted_raises_provider_unavailable(_cfg, _no_wait, tmp_path):
+    """MiniMax 429 耗盡要暫停 provider，不能回空字串讓任務被當一般 QA fail 重跑。"""
+    _cfg(retries=1)
+    chat = ScriptedChat([_rate_limit_err()])
+    bucket, broadcast = collect()
+    expert = providers.OpenAIExpert(
+        BY_KEY["engineer"], "sess", tmp_path, chat=chat, model="m", provider="minimax"
+    )
+
+    with pytest.raises(providers.ProviderUnavailable) as seen:
+        await expert.speak("做事", broadcast)
+
+    assert seen.value.provider == "minimax"
+    assert chat.calls == 2
+    assert len(_no_wait) == 1
+    assert _statuses(bucket)[-1] == "idle"
+
+
+@pytest.mark.asyncio
+async def test_minimax_chat_timeout_raises_provider_unavailable(
+    _cfg, _no_wait, monkeypatch, tmp_path
+):
+    """MiniMax chat 卡住時由 watchdog 轉成 provider unavailable，而不是永久卡住。"""
+    _cfg(retries=0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0.01)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0.0)
+    chat = HangingChat()
+    bucket, broadcast = collect()
+    expert = providers.OpenAIExpert(
+        BY_KEY["engineer"], "sess", tmp_path, chat=chat, model="m", provider="minimax"
+    )
+
+    with pytest.raises(providers.ProviderUnavailable) as seen:
+        await expert.speak("做事", broadcast)
+
+    assert seen.value.provider == "minimax"
+    assert "timeout" in str(seen.value).lower()
+    assert chat.calls == 1
+    assert _statuses(bucket)[-1] == "idle"
 
 
 # === 3) 非限流 API 錯誤 → 立即回退、不重試 =====================================
