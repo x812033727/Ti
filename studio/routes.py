@@ -298,7 +298,7 @@ def _antigravity_status() -> dict:
             "summary": "可用訂閱/帳號額度" if signed_in else "需要先登入 `agy`",
             "detail": detail,
         },
-        # 登入時附 Google Code Assist 每模型請求配額；否則 None（前端不顯示）。
+        # 登入時附 Google Code Assist 配額（有數值則每模型 buckets，否則訂閱層級）；否則 None。
         "rate_limits": antigravity_usage.fetch_rate_limits() if signed_in else None,
     }
 

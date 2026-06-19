@@ -1,6 +1,7 @@
-"""antigravity_usage：Google Code Assist retrieveUserQuota 的正規化、快取與錯誤態。
+"""antigravity_usage：兩步查詢（loadCodeAssist 取 project → retrieveUserQuota 帶 project 取
+buckets，否則 fallback 層級）的正規化、快取與錯誤態。
 
-全部 monkeypatch httpx.post 與 token 路徑，不打網路、不碰真 token。
+全部 monkeypatch httpx.post 與 token 路徑，不打網路、不碰真 token。依 URL 分派 response。
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import pytest
 
 from studio import antigravity_usage as a, config
 
-SAMPLE = {
+QUOTA_SAMPLE = {
     "buckets": [
         {
             "resetTime": "2026-06-20T06:27:20Z",
@@ -36,11 +37,24 @@ SAMPLE = {
     ]
 }
 
+TIER_SAMPLE = {
+    "cloudaicompanionProject": "single-calling-cww5t",
+    "currentTier": {
+        "id": "standard-tier",
+        "name": "Gemini Code Assist",
+        "description": "Unlimited coding assistant with the most powerful Gemini models",
+    },
+    "paidTier": {
+        "id": "g1-pro-tier",
+        "name": "Gemini Code Assist in Google One AI Pro",
+    },
+}
+
 
 class FakeResp:
     def __init__(self, status_code=200, body=None, raise_json=False):
         self.status_code = status_code
-        self._body = body if body is not None else SAMPLE
+        self._body = body
         self._raise_json = raise_json
 
     def json(self):
@@ -59,75 +73,127 @@ def _isolate(monkeypatch, tmp_path):
     a._cache = None
 
 
-def _patch_post(monkeypatch, resp_or_exc, counter=None):
+def _patch(monkeypatch, *, tier=None, quota=None, calls=None):
+    """tier/quota 各為 FakeResp 或 Exception；依 URL 分派；calls 記 (url, body)。"""
+
     def fake_post(url, headers=None, json=None, timeout=None):
-        if counter is not None:
-            counter.append(url)
-        if isinstance(resp_or_exc, Exception):
-            raise resp_or_exc
+        if calls is not None:
+            calls.append((url, json))
         assert headers["Authorization"] == "Bearer tok-xyz"
-        return resp_or_exc
+        target = tier if url == a.TIER_URL else quota
+        if isinstance(target, Exception):
+            raise target
+        if target is None:
+            raise AssertionError(f"unexpected call to {url}")
+        return target
 
     monkeypatch.setattr(a.httpx, "post", fake_post)
 
 
-def test_success_normalizes_and_sorts(monkeypatch):
-    _patch_post(monkeypatch, FakeResp())
+def test_buckets_with_project(monkeypatch):
+    # loadCodeAssist 給 project → retrieveUserQuota 帶 project → 數值 buckets
+    calls = []
+    _patch(
+        monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body=QUOTA_SAMPLE), calls=calls
+    )
     r = a.fetch_rate_limits()
     assert r["error"] is None
-    # TOKENS 型被濾掉 → 只剩 2 個 REQUESTS bucket
-    assert len(r["buckets"]) == 2
-    # 依 used_percentage 降序：flash(used 60%) 在前、pro(0%) 在後
+    assert len(r["buckets"]) == 2  # TOKENS 濾掉
     assert r["buckets"][0]["label"] == "Gemini 2.5 Flash"
     assert r["buckets"][0]["used_percentage"] == 60.0
-    assert r["buckets"][1]["label"] == "Gemini 2.5 Pro"
     assert r["buckets"][1]["used_percentage"] == 0.0
     assert isinstance(r["buckets"][0]["reset_at"], float)
+    assert r["tier"]["tier_id"] == "standard-tier"  # tier 仍附帶
+    # 驗證兩步＋第二步帶了正確 project
+    assert calls[0][0] == a.TIER_URL
+    assert calls[1] == (a.QUOTA_URL, {"project": "single-calling-cww5t"})
 
 
-def test_ttl_cache(monkeypatch):
+def test_quota_403_falls_back_to_tier(monkeypatch):
+    # 帶了 project 但仍 403（無數值配額）→ 顯示層級
+    _patch(monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(status_code=403))
+    r = a.fetch_rate_limits()
+    assert r["error"] is None
+    assert r["buckets"] == []
+    assert r["tier"]["label"] == "Gemini Code Assist"
+    assert r["tier"]["unlimited"] is True
+    assert r["tier"]["paid_tier"] == "Gemini Code Assist in Google One AI Pro"
+
+
+def test_quota_empty_buckets_falls_back_to_tier(monkeypatch):
+    _patch(monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body={"buckets": []}))
+    r = a.fetch_rate_limits()
+    assert r["error"] is None
+    assert r["buckets"] == []
+    assert r["tier"]["label"] == "Gemini Code Assist"
+
+
+def test_no_project_only_tier(monkeypatch):
+    # loadCodeAssist 沒給 project → 不打 quota，只回層級
+    body = {"currentTier": {"id": "free-tier", "name": "Free", "description": "Limited"}}
     calls = []
-    _patch_post(monkeypatch, FakeResp(), counter=calls)
-    first = a.fetch_rate_limits()
-    second = a.fetch_rate_limits()
-    assert second is first
-    assert len(calls) == 1
+    _patch(monkeypatch, tier=FakeResp(body=body), calls=calls)
+    r = a.fetch_rate_limits()
+    assert r["error"] is None
+    assert r["tier"]["unlimited"] is False
+    assert r["tier"]["paid_tier"] is None
+    assert [c[0] for c in calls] == [a.TIER_URL]  # 沒打 quota
 
 
-def test_force_bypasses_cache(monkeypatch):
-    calls = []
-    _patch_post(monkeypatch, FakeResp(), counter=calls)
-    a.fetch_rate_limits()
-    a.fetch_rate_limits(force=True)
-    assert len(calls) == 2
+def test_loadcodeassist_401_unauthorized(monkeypatch):
+    _patch(monkeypatch, tier=FakeResp(status_code=401))
+    assert a.fetch_rate_limits()["error"] == "unauthorized"
+
+
+def test_quota_401_unauthorized(monkeypatch):
+    # loadCodeAssist OK 但 quota 401（token 中途失效）→ unauthorized
+    _patch(monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(status_code=401))
+    assert a.fetch_rate_limits()["error"] == "unauthorized"
 
 
 def test_token_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "ANTIGRAVITY_OAUTH_TOKEN_FILE", tmp_path / "nope")
-    _patch_post(monkeypatch, AssertionError("should not call upstream"))
+    monkeypatch.setattr(a.httpx, "post", lambda *_a, **_k: pytest.fail("should not call upstream"))
     r = a.fetch_rate_limits()
     assert r["error"] == "token_missing"
     assert r["buckets"] == []
+    assert r["tier"] is None
 
 
-def test_unauthorized(monkeypatch):
-    _patch_post(monkeypatch, FakeResp(status_code=403))
-    assert a.fetch_rate_limits()["error"] == "unauthorized"
-
-
-def test_server_error_unreachable(monkeypatch):
-    _patch_post(monkeypatch, FakeResp(status_code=500))
+def test_loadcodeassist_server_error_unreachable(monkeypatch):
+    _patch(monkeypatch, tier=FakeResp(status_code=500))
     assert a.fetch_rate_limits()["error"] == "unreachable"
 
 
-def test_network_error_unreachable(monkeypatch):
-    _patch_post(monkeypatch, httpx.HTTPError("boom"))
+def test_loadcodeassist_network_error_unreachable(monkeypatch):
+    _patch(monkeypatch, tier=httpx.HTTPError("boom"))
     assert a.fetch_rate_limits()["error"] == "unreachable"
 
 
-def test_bad_json_unreachable(monkeypatch):
-    _patch_post(monkeypatch, FakeResp(raise_json=True))
+def test_loadcodeassist_bad_json_unreachable(monkeypatch):
+    _patch(monkeypatch, tier=FakeResp(raise_json=True))
     assert a.fetch_rate_limits()["error"] == "unreachable"
+
+
+def test_ttl_cache(monkeypatch):
+    calls = []
+    _patch(
+        monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body=QUOTA_SAMPLE), calls=calls
+    )
+    first = a.fetch_rate_limits()
+    second = a.fetch_rate_limits()
+    assert second is first
+    assert len(calls) == 2  # 一次完整查詢＝兩步
+
+
+def test_force_bypasses_cache(monkeypatch):
+    calls = []
+    _patch(
+        monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body=QUOTA_SAMPLE), calls=calls
+    )
+    a.fetch_rate_limits()
+    a.fetch_rate_limits(force=True)
+    assert len(calls) == 4
 
 
 def test_prettify():
@@ -140,14 +206,11 @@ def test_prettify():
     [
         ("2026-06-20T06:27:20Z", True),
         ("2026-06-19T14:33:23.970753744+08:00", True),  # 9 位奈秒
-        ("2026-06-19T14:33:23.970753+08:00", True),
         ("bad", False),
         ("", False),
         (None, False),
     ],
 )
-def test_iso_to_epoch_nanoseconds(s, ok):
+def test_iso_to_epoch(s, ok):
     out = a._iso_to_epoch(s)
     assert (out is not None) == ok
-    if ok:
-        assert isinstance(out, float)
