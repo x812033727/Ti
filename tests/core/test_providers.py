@@ -74,6 +74,17 @@ class FakePipe:
         return b""
 
 
+class LinesPipe(FakePipe):
+    def __init__(self, lines):
+        super().__init__()
+        self._lines = [line.encode("utf-8") for line in lines]
+
+    async def __anext__(self):
+        if not self._lines:
+            raise StopAsyncIteration
+        return self._lines.pop(0)
+
+
 class FakeCodexProcess:
     def __init__(self):
         self.pid = 12345
@@ -169,11 +180,28 @@ def test_openai_model_for_minimax(monkeypatch):
     assert providers.openai_model_for(BY_KEY["engineer"]) == "MiniMax-M2.7"
 
 
+def test_openai_model_for_gemini(monkeypatch):
+    """PROVIDER=gemini 時走 Gemini 模型槽（依 LEAD_ROLES 二分）。"""
+    monkeypatch.setattr(config, "PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_MODEL_LEAD", "gemini-2.5-pro")
+    monkeypatch.setattr(config, "GEMINI_MODEL_FAST", "gemini-2.5-flash")
+    assert providers.openai_model_for(BY_KEY["pm"]) == "gemini-2.5-pro"
+    assert providers.openai_model_for(BY_KEY["engineer"]) == "gemini-2.5-flash"
+
+
 def test_make_expert_minimax(monkeypatch, tmp_path):
     """minimax 與 openai 共用 OpenAIExpert（function-calling 工具迴圈）。"""
     monkeypatch.setattr(config, "PROVIDER", "minimax")
     ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
     assert isinstance(ex, providers.OpenAIExpert)
+
+
+def test_make_expert_gemini(monkeypatch, tmp_path):
+    """gemini 走 OpenAI 相容工具迴圈，但使用 Gemini 憑證/模型槽。"""
+    monkeypatch.setattr(config, "PROVIDER", "gemini")
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    assert isinstance(ex, providers.OpenAIExpert)
+    assert ex._provider == "gemini"
 
 
 def test_codex_argv_uses_exec_json_and_role_sandbox(monkeypatch, tmp_path):
@@ -525,6 +553,34 @@ def test_codex_process_lifecycle_does_not_add_psutil_dependency():
     assert not _imports_module(Path("studio/runner.py"), "psutil")
 
 
+@pytest.mark.asyncio
+async def test_codex_usage_limit_raises_provider_unavailable(monkeypatch, tmp_path):
+    """Codex usage limit 不能被包成普通專家訊息，否則會被 QA 誤記成 qa_fail。"""
+    expert = providers.CodexExpert(BY_KEY["qa"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdout = LinesPipe(
+        [
+            '{"type":"turn.failed","error":{"message":"You\\u0027ve hit your usage limit. '
+            'Visit https://chatgpt.com/codex/settings/usage to purchase more credits."}}\n'
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        proc.finish(1)
+        return proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(providers.ProviderUnavailable) as seen:
+        await expert._run_codex("請驗證", broadcast)
+
+    assert seen.value.provider == "codex"
+    assert bucket == []
+
+
 def _imports_module(path: Path, module_name: str) -> bool:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
@@ -591,6 +647,21 @@ def test_openai_client_args_minimax(monkeypatch):
     assert providers._openai_client_args() == ("mm-key", "https://api.minimax.io/v1")
 
 
+def test_openai_client_args_gemini(monkeypatch):
+    """PROVIDER=gemini 時用 Gemini 的 key/base_url，與 OpenAI/MiniMax 憑證互不污染。"""
+    monkeypatch.setattr(config, "PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "gm-key")
+    monkeypatch.setattr(
+        config, "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "should-not-be-used")
+    monkeypatch.setattr(config, "MINIMAX_API_KEY", "should-not-be-used")
+    assert providers._openai_client_args() == (
+        "gm-key",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+    )
+
+
 def test_openai_client_args_openai(monkeypatch):
     """PROVIDER=openai（及非 minimax 預設）走 OpenAI 憑證。"""
     monkeypatch.setattr(config, "PROVIDER", "openai")
@@ -641,6 +712,15 @@ def test_provider_ready_minimax(monkeypatch):
     monkeypatch.setattr(config, "MINIMAX_API_KEY", "")
     assert config.provider_ready() is False
     monkeypatch.setattr(config, "MINIMAX_API_KEY", "mm-key")
+    assert config.provider_ready() is True
+
+
+def test_provider_ready_gemini(monkeypatch):
+    """gemini 只認 API key；base_url 有官方預設端點。"""
+    monkeypatch.setattr(config, "PROVIDER", "gemini")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "")
+    assert config.provider_ready() is False
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "gm-key")
     assert config.provider_ready() is True
 
 

@@ -8,7 +8,7 @@
 
 預設由 [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/python) 驅動，
 專家們使用內建的 Read / Write / Edit / Bash 工具真的去寫檔案、執行程式。
-也可切換到 **OpenAI 或本地相容模型**（透過 function-calling 工具迴圈，同樣能自己 coding）。
+也可切換到 **OpenAI、MiniMax、Gemini 或本地相容模型**（透過 function-calling 工具迴圈，同樣能自己 coding）。
 
 ## 工作流程
 
@@ -98,7 +98,7 @@ source .venv/bin/activate        # macOS / Linux
 
 ```bash
 .venv/bin/python3 -m pip install -e ".[dev]"     # 開發必裝（pytest / ruff / pre-commit）
-.venv/bin/python3 -m pip install -e ".[openai]"  # 選用：要切到 OpenAI / 本地模型再裝
+.venv/bin/python3 -m pip install -e ".[openai]"  # 選用：要切到 OpenAI / MiniMax / Gemini / 本地模型再裝
 ```
 
 > 預期結果：`.venv/bin/python3 -m pip list` 列表中可看到 `ti-studio`（editable）。
@@ -183,10 +183,11 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 
 不想改環境變數也可以直接在網頁上設定：按右上角「⚙️ 設定」，即可填入
 
-- 後端 provider（claude / openai / minimax / codex）
+- 後端 provider（claude / openai / minimax / gemini / codex）
 - Claude API key、Claude 主力 / 快速模型
 - OpenAI API key、Base URL（可指向本地模型）、OpenAI 模型
 - MiniMax API key、Base URL、MiniMax 模型
+- Gemini API key、Base URL、Gemini 模型
 - Codex 模型覆寫與 sandbox 模式（登入狀態沿用伺服器上的 Codex CLI）
 - GitHub token、發佈目標 repo
 - 任務並行（開關 / 每波支線數上限）
@@ -293,9 +294,11 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_PUBLISH_CI_TIMEOUT` / `TI_PUBLISH_CI_INTERVAL` | 自動合併前等待 CI 的最長秒數 / 輪詢間隔 | 600 / 10 |
 | `TI_PUBLISH_MERGE_RETRIES` | 對 stale／`Base branch was modified`（409）的重試次數 | 3 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
-| `TI_PROVIDER` | 後端 provider：`claude`、`openai`、`minimax` 或 `codex` | claude |
+| `TI_PROVIDER` | 後端 provider：`claude`、`openai`、`minimax`、`gemini` 或 `codex` | claude |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 金鑰 / 相容端點（可指向本地模型） | 未設定 |
 | `TI_OPENAI_MODEL_LEAD` / `TI_OPENAI_MODEL_FAST` | OpenAI 主力 / 快速模型 | gpt-4o / gpt-4o-mini |
+| `GEMINI_API_KEY` / `GEMINI_BASE_URL` | Gemini API key / Google 官方 OpenAI 相容端點 | 未設定 / https://generativelanguage.googleapis.com/v1beta/openai/ |
+| `TI_GEMINI_MODEL_LEAD` / `TI_GEMINI_MODEL_FAST` | Gemini 主力 / 快速模型 | gemini-2.5-pro / gemini-2.5-flash |
 | `CODEX_API_KEY` / `CODEX_HOME` / `TI_CODEX_BIN` | Codex CLI provider：可用單次 API key、既有 `CODEX_HOME/auth.json` 登入，或指定 codex 執行檔 | 既有登入 / 空 / codex |
 | `TI_CODEX_MODEL_LEAD` / `TI_CODEX_MODEL_FAST` | Codex CLI 模型覆寫；留空代表沿用 Codex CLI 自身設定 | 空 |
 | `TI_CODEX_SANDBOX` / `TI_CODEX_BYPASS_SANDBOX` | Codex CLI sandbox：`auto` 依角色選 `read-only`/`workspace-write`；可設 `danger-full-access`。`BYPASS=1` 會傳 `--dangerously-bypass-approvals-and-sandbox`，完全停用 Codex 沙盒/核准 | auto / 0 |
@@ -335,13 +338,15 @@ state 檔案以「同目錄 tmp + `O_EXCL|O_NOFOLLOW` 原子建檔 + `fchown(0,0
   此比對是**字面完全相符、區分大小寫**（程式為 `not in ("0","false","False","")`，無 `.lower()`），
   所以 `FALSE`（全大寫）、`no`、`off`、`disable` 等都**不在關閉集合內，會被當成開啟**。要關閉請固定填 `0`。
 
-### 切換到 OpenAI / 本地模型
+### 切換到 OpenAI / MiniMax / Gemini / 本地模型
 
 ```bash
 .venv/bin/python3 -m pip install -e ".[openai]"
 TI_PROVIDER=openai OPENAI_API_KEY=sk-xxx .venv/bin/python3 -m studio.server
 # 本地模型（OpenAI 相容，如 Ollama）：
 TI_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 TI_OPENAI_MODEL_LEAD=llama3.1 .venv/bin/python3 -m studio.server
+# Gemini（Google AI Studio API key，走官方 OpenAI 相容端點）：
+TI_PROVIDER=gemini GEMINI_API_KEY=xxx .venv/bin/python3 -m studio.server
 ```
 
 ### 切換到 Codex CLI
@@ -354,7 +359,7 @@ codex doctor --summary
 TI_PROVIDER=codex .venv/bin/python3 -m studio.server
 ```
 
-也可以只把特定角色交給 Codex，例如讓工程師用 Codex 實作、PM 維持 Claude 或 MiniMax：
+也可以只把特定角色交給 Codex，例如讓工程師用 Codex 實作、PM 維持 Claude、MiniMax 或 Gemini：
 
 ```bash
 TI_PROVIDER=claude TI_PROVIDER_ENGINEER=codex TI_PROVIDER_QA=codex .venv/bin/python3 -m studio.server

@@ -770,6 +770,12 @@ async def run_one_task(task: dict) -> None:
     if core_added:
         log.info("從討論新增 %d 個核心改動", core_added)
 
+    if result.get("provider_unavailable"):
+        provider = str(result["provider_unavailable"])
+        backlog.set_status(task["id"], "pending", note=f"{provider} provider unavailable")
+        _pause(f"{provider} provider unavailable")
+        return
+
     if not result.get("completed"):
         backlog.set_status(task["id"], "failed", note="討論未達完成")
         log.info("任務 #%s 未完成,標 failed", task["id"])

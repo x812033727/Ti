@@ -40,7 +40,8 @@ def _env_float(name: str, default: float) -> float:
 
 # --- Provider / 模型 ----------------------------------------------------
 # 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）、openai（含 OpenAI 相容/本地模型）、
-# minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面），或 codex（Codex CLI 非互動模式）。
+# minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面）、gemini（Gemini OpenAI 相容端點），
+# 或 codex（Codex CLI 非互動模式）。
 PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
 
 # Claude 模型 ID。PM / 高級工程師需要較強的推理；工程師 / 驗證工程師偏重速度。
@@ -64,7 +65,7 @@ def _role_models() -> dict[str, str]:
 ROLE_MODELS = _role_models()
 
 # 合法的 provider 名單；per-role 覆寫只接受其一，其餘（含 auto／空）＝不覆寫。
-PROVIDERS = ("claude", "openai", "minimax", "codex")
+PROVIDERS = ("claude", "openai", "minimax", "gemini", "codex")
 
 
 def _role_providers() -> dict[str, str]:
@@ -100,6 +101,14 @@ MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
 MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
 MINIMAX_MODEL_LEAD = os.getenv("TI_MINIMAX_MODEL_LEAD", "MiniMax-M3")
 MINIMAX_MODEL_FAST = os.getenv("TI_MINIMAX_MODEL_FAST", "MiniMax-M3")
+
+# Gemini（Google AI Studio API key；走官方 OpenAI 相容端點，重用 OpenAIExpert 工具迴圈）。
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_BASE_URL = os.getenv(
+    "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+)
+GEMINI_MODEL_LEAD = os.getenv("TI_GEMINI_MODEL_LEAD", "gemini-2.5-pro")
+GEMINI_MODEL_FAST = os.getenv("TI_GEMINI_MODEL_FAST", "gemini-2.5-flash")
 
 # Codex CLI（`codex exec`）設定。模型留空＝沿用 Codex CLI 自身設定；CODEX_API_KEY 僅由
 # codex exec 支援，亦可沿用已登入的 CODEX_HOME/auth.json。
@@ -803,6 +812,8 @@ def provider_ready() -> bool:
     if PROVIDER == "minimax":
         # MiniMax base_url 有預設端點，故只認 API key 是否填妥。
         return bool(MINIMAX_API_KEY)
+    if PROVIDER == "gemini":
+        return bool(GEMINI_API_KEY)
     if PROVIDER == "openai":
         return bool(OPENAI_API_KEY or OPENAI_BASE_URL)
     # claude provider：環境變數金鑰，或已登入的 claude CLI 訂閱皆可。
@@ -819,6 +830,7 @@ def reload() -> None:
     global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS, ROLE_PROVIDERS
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL_LEAD, MINIMAX_MODEL_FAST
+    global GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_MODEL_LEAD, GEMINI_MODEL_FAST
     global CODEX_BIN, CODEX_HOME, CODEX_API_KEY, CODEX_MODEL_LEAD, CODEX_MODEL_FAST
     global CODEX_SANDBOX, CODEX_BYPASS_SANDBOX
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
@@ -869,6 +881,12 @@ def reload() -> None:
     MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
     MINIMAX_MODEL_LEAD = os.getenv("TI_MINIMAX_MODEL_LEAD", "MiniMax-M3")
     MINIMAX_MODEL_FAST = os.getenv("TI_MINIMAX_MODEL_FAST", "MiniMax-M3")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_BASE_URL = os.getenv(
+        "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    GEMINI_MODEL_LEAD = os.getenv("TI_GEMINI_MODEL_LEAD", "gemini-2.5-pro")
+    GEMINI_MODEL_FAST = os.getenv("TI_GEMINI_MODEL_FAST", "gemini-2.5-flash")
     CODEX_BIN = os.getenv("TI_CODEX_BIN", "codex")
     CODEX_HOME = os.getenv("CODEX_HOME", "")
     CODEX_API_KEY = os.getenv("CODEX_API_KEY", "")

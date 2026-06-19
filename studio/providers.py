@@ -1,7 +1,8 @@
 """LLM provider 抽象與工廠。
 
 預設 Claude（走 Agent SDK，自帶工具）。也支援 OpenAI 相容介面（含本地模型，如 Ollama /
-LM Studio 透過 OPENAI_BASE_URL）、MiniMax，以及 Codex CLI 非互動模式，讓模型也能「自己 coding」。
+LM Studio 透過 OPENAI_BASE_URL）、MiniMax、Gemini，以及 Codex CLI 非互動模式，讓模型也能
+「自己 coding」。
 
 所有 backend 都符合 orchestrator 的 ExpertLike 介面：`speak(prompt, broadcast) -> str` 與 `stop()`。
 """
@@ -25,8 +26,8 @@ logger = logging.getLogger(__name__)
 def effective_provider(role: Role) -> str:
     """角色的有效 provider：per-role 覆寫（TI_PROVIDER_<KEY>）優先，否則全域 PROVIDER。
 
-    讓 Claude／MiniMax 可混用——例如把 tool-calling 吃重的工程師／QA 留 Claude、
-    討論型角色走 MiniMax。
+    讓 Claude／MiniMax／Gemini／Codex 可混用——例如把 tool-calling 吃重的工程師留 Codex、
+    討論型角色走 Gemini 或 MiniMax。
     """
     return config.role_provider(role.key) or config.PROVIDER
 
@@ -34,12 +35,15 @@ def effective_provider(role: Role) -> str:
 def openai_model_for(role: Role) -> str:
     """OpenAI 相容路徑（openai／minimax）的角色模型：依 LEAD_ROLES 二分。
 
-    依角色的「有效 provider」決定模型槽：minimax 走 MiniMax 自家模型，其餘走 OpenAI 模型槽
-    ——故未顯式覆寫時行為與既有 openai 完全一致。
+    依角色的「有效 provider」決定模型槽：minimax / gemini 走各自模型槽，其餘走 OpenAI
+    模型槽——故未顯式覆寫時行為與既有 openai 完全一致。
     """
     lead = role.key in config.LEAD_ROLES
-    if effective_provider(role) == "minimax":
+    provider = effective_provider(role)
+    if provider == "minimax":
         return config.MINIMAX_MODEL_LEAD if lead else config.MINIMAX_MODEL_FAST
+    if provider == "gemini":
+        return config.GEMINI_MODEL_LEAD if lead else config.GEMINI_MODEL_FAST
     return config.OPENAI_MODEL_LEAD if lead else config.OPENAI_MODEL_FAST
 
 
@@ -338,6 +342,8 @@ class CodexExpert:
                 )
             if proc.returncode:
                 detail = _clip(stderr_tail or "\n".join(errors), 2000)
+                if _codex_usage_limited(detail):
+                    raise ProviderUnavailable("codex", detail or "Codex usage limit reached")
                 note = f"【系統】Codex CLI 執行失敗（exit {proc.returncode}）。"
                 if detail:
                     note += f"\n{detail}"
@@ -405,6 +411,28 @@ class CodexExpert:
 
     def _terminate(self, proc) -> None:
         runner.kill_process_group(proc)
+
+
+class ProviderUnavailable(RuntimeError):
+    """上游 provider 暫時不可用；應停止本場而非把錯誤文字交給 QA 判決。"""
+
+    def __init__(self, provider: str, detail: str):
+        super().__init__(detail)
+        self.provider = provider
+        self.detail = detail
+
+
+def _codex_usage_limited(text: str) -> bool:
+    """Codex CLI 額度/credits 上限偵測；命中時不應被當作一般專家發言。"""
+    lower = (text or "").lower()
+    return (
+        "you've hit your usage limit" in lower
+        or "you have hit your usage limit" in lower
+        or (
+            "usage limit" in lower
+            and ("codex/settings/usage" in lower or "purchase more credits" in lower)
+        )
+    )
 
 
 class OpenAIExpert:
@@ -586,12 +614,15 @@ def _assistant_dict(msg, tool_calls) -> dict:
 def _openai_client_args(provider: str | None = None) -> tuple[str, str | None]:
     """依 provider 選 chat-completions 客戶端的 (api_key, base_url)。
 
-    provider 省略時取全域 config.PROVIDER。minimax 與 openai 共用同一相容客戶端，僅憑證/
-    端點來源不同；抽成純函式以便在未安裝 openai 套件的環境下也能單元測試憑證分流
+    provider 省略時取全域 config.PROVIDER。minimax / gemini 與 openai 共用同一相容客戶端，
+    僅憑證/端點來源不同；抽成純函式以便在未安裝 openai 套件的環境下也能單元測試憑證分流
     （不污染對方的金鑰）。
     """
-    if (provider or config.PROVIDER) == "minimax":
+    provider = provider or config.PROVIDER
+    if provider == "minimax":
         return (config.MINIMAX_API_KEY or "sk-none", config.MINIMAX_BASE_URL or None)
+    if provider == "gemini":
+        return (config.GEMINI_API_KEY or "sk-none", config.GEMINI_BASE_URL or None)
     return (config.OPENAI_API_KEY or "sk-none", config.OPENAI_BASE_URL or None)
 
 
@@ -622,11 +653,11 @@ def _chat_for(provider: str):
 
 
 def make_expert(role: Role, session_id: str, cwd: Path):
-    """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax 混用）。"""
+    """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax／Gemini／Codex 混用）。"""
     prov = effective_provider(role)
     if prov == "codex":
         return CodexExpert(role, session_id, cwd)
-    if prov in ("openai", "minimax"):
+    if prov in ("openai", "minimax", "gemini"):
         return OpenAIExpert(
             role,
             session_id,
