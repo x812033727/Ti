@@ -18,7 +18,6 @@ from fastapi import HTTPException, Request, WebSocket
 from . import config, netutil
 from .secretfile import write_secret_file
 
-
 log = logging.getLogger("ti.auth")
 
 
