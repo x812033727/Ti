@@ -2974,6 +2974,83 @@
       "rejected": "",
       "session_id": "apcc428d35ab",
       "created_at": 1781822828.4609325
+    },
+    {
+      "decision": "本輪只處理 `studio/auth.py::set_password()` 稽核與 Ruff I001，不觸碰 discussion/prompt 截斷流程。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812482
+    },
+    {
+      "decision": "稽核點集中在 `set_password()`，維持密碼門禁狀態變更的單一入口。",
+      "rationale": "保護依賴方向，route 層不承擔 auth 內部狀態細節。",
+      "rejected": "在 route、middleware 或多處呼叫點分散記錄。",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.881251
+    },
+    {
+      "decision": "沿用既有 `ti.auth` logger 與標準庫 `logging`，成功事件用 WARNING。",
+      "rationale": "",
+      "rejected": "導入 loguru、structlog 或完整 audit subsystem。",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812523
+    },
+    {
+      "decision": "資料流固定為寫入 `.env` 成功後，才更新 `os.environ`、`config.ACCESS_PASSWORD` 並發稽核 log。",
+      "rationale": "避免「記錄成功但實際失敗」的假 audit。",
+      "rejected": "",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.881253
+    },
+    {
+      "decision": "log 只記「門禁已啟用」或「門禁已停用」。",
+      "rationale": "",
+      "rejected": "記錄密碼、hash、token、cookie、session 或差異內容。",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812542
+    },
+    {
+      "decision": "停用時維持 `TI_ACCESS_PASSWORD=\"\"`，不移除 env key。",
+      "rationale": "對齊既有 `bool(\"\") == False` 語意。",
+      "rejected": "",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812547
+    },
+    {
+      "decision": "`set_password()` 的 `.strip()` 既有語意維持，不支援前後空白作為密碼內容。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812551
+    },
+    {
+      "decision": "`write_secret_file` 失敗時自然拋例外，不更新 runtime state，也不發成功稽核 log。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812556
+    },
+    {
+      "decision": "測試放在 `tests/server/test_auth.py`，用 `caplog` 覆蓋啟用、停用、失敗不誤記與秘密不外洩。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.881257
+    },
+    {
+      "decision": "Ruff I001 只依既有 Ruff/isort 規則修 `tests/core/test_providers.py` import 排序。",
+      "rationale": "",
+      "rejected": "新增格式工具或手寫自訂排序規則。",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812578
+    },
+    {
+      "decision": "本輪定義為輕量 audit；未來若要 actor/IP/request id，另建 audit event/context 層。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape0567d5a5d",
+      "created_at": 1781828910.8812585
     }
   ]
 }

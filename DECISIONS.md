@@ -1772,3 +1772,43 @@
 - 時間：2026-06-19 06:47
 - 理由：直接鎖住這次新增的 API 語意與主要陷阱。
 
+## 本輪只處理 `studio/auth.py::set_password()` 稽核與 Ruff I001，不觸碰 discussion/prompt 截斷流程。
+- 時間：2026-06-19 08:28
+
+## 稽核點集中在 `set_password()`，維持密碼門禁狀態變更的單一入口。
+- 時間：2026-06-19 08:28
+- 理由：保護依賴方向，route 層不承擔 auth 內部狀態細節。
+- 否決方案：在 route、middleware 或多處呼叫點分散記錄。
+
+## 沿用既有 `ti.auth` logger 與標準庫 `logging`，成功事件用 WARNING。
+- 時間：2026-06-19 08:28
+- 否決方案：導入 loguru、structlog 或完整 audit subsystem。
+
+## 資料流固定為寫入 `.env` 成功後，才更新 `os.environ`、`config.ACCESS_PASSWORD` 並發稽核 log。
+- 時間：2026-06-19 08:28
+- 理由：避免「記錄成功但實際失敗」的假 audit。
+
+## log 只記「門禁已啟用」或「門禁已停用」。
+- 時間：2026-06-19 08:28
+- 否決方案：記錄密碼、hash、token、cookie、session 或差異內容。
+
+## 停用時維持 `TI_ACCESS_PASSWORD=""`，不移除 env key。
+- 時間：2026-06-19 08:28
+- 理由：對齊既有 `bool("") == False` 語意。
+
+## `set_password()` 的 `.strip()` 既有語意維持，不支援前後空白作為密碼內容。
+- 時間：2026-06-19 08:28
+
+## `write_secret_file` 失敗時自然拋例外，不更新 runtime state，也不發成功稽核 log。
+- 時間：2026-06-19 08:28
+
+## 測試放在 `tests/server/test_auth.py`，用 `caplog` 覆蓋啟用、停用、失敗不誤記與秘密不外洩。
+- 時間：2026-06-19 08:28
+
+## Ruff I001 只依既有 Ruff/isort 規則修 `tests/core/test_providers.py` import 排序。
+- 時間：2026-06-19 08:28
+- 否決方案：新增格式工具或手寫自訂排序規則。
+
+## 本輪定義為輕量 audit；未來若要 actor/IP/request id，另建 audit event/context 層。
+- 時間：2026-06-19 08:28
+
