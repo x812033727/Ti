@@ -313,6 +313,7 @@ async def run_command_exec(
     timeout = timeout or config.DEMO_TIMEOUT
     use_sandbox = config.SANDBOX_ENABLED if sandbox is None else sandbox
     display = label or argv[0]
+    preexec = _rlimit_preexec()
     if use_sandbox:
         if not config._sandbox_available():
             return _sandbox_blocked(display)
@@ -322,6 +323,7 @@ async def run_command_exec(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
+            preexec_fn=preexec,
         )
     else:
         proc = await asyncio.create_subprocess_exec(
@@ -330,6 +332,7 @@ async def run_command_exec(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
+            preexec_fn=preexec,
         )
     return await _finalize_proc(proc, display, timeout)
 

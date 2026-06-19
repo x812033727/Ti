@@ -90,3 +90,23 @@ def _reset_require_chown_after_test():
 
     if _config.REQUIRE_CHOWN != "off":
         _config.REQUIRE_CHOWN = "off"
+
+
+# 偵測 bwrap 實際是否可用（防止檔案存在但因權限無法使用造成測試紅燈）
+def _check_bwrap_actually_works() -> bool:
+    import subprocess
+    try:
+        res = subprocess.run(
+            ["/usr/bin/bwrap", "--unshare-pid", "--", "true"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+if not _check_bwrap_actually_works():
+    import studio.config
+    studio.config._sandbox_available = lambda: False
+

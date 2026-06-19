@@ -3051,6 +3051,34 @@
       "rejected": "",
       "session_id": "ape0567d5a5d",
       "created_at": 1781828910.8812585
+    },
+    {
+      "decision": "技術選型 - 沿用 `_rlimit_preexec` 作為 `preexec_fn` 套用資源限制，並於 `runner.py:L181` 明確註記「僅在單執行緒下安全，未來若引入多執行緒須翻案改為 prlimit」之警語。",
+      "rationale": "在主進程為單執行緒 `asyncio` 事件循環的前提下，此做法最為輕量且免除額外包裹腳本的複雜度；加註警語能確保此決策具備高可逆性，保護未來架構變更。",
+      "rejected": "否決直接重構為 `prlimit` 命令包裹器的過度設計，也否決不加警語、鎖死未來多執行緒擴充可能性的短視做法。",
+      "session_id": "ap75ed3b4f11",
+      "created_at": 1781876016.9899874
+    },
+    {
+      "decision": "模組切分 - 資源上限限制邏輯完全內聚於 `runner.run_command_exec` 內部之沙箱與非沙箱分支中，保持呼叫端的介面簽名完全一致。",
+      "rationale": "隱藏實作細節，避免資源限制的具體參數洩漏至 `autopilot.py` 等呼叫端，保護依賴方向。",
+      "rejected": "否決在呼叫端暴露資源上限參數的設計，防止模組邊界劣化。",
+      "session_id": "ap75ed3b4f11",
+      "created_at": 1781876016.989995
+    },
+    {
+      "decision": "測試適應 - 於 `tests/conftest.py` 使用 `config.SANDBOX_BWRAP` 進行 `bwrap` 權限之動態探測，若無權限則 patch `_sandbox_available` 為 `False`，並使用 `warnings.warn` 拋出顯式警告。",
+      "rationale": "避免硬編碼 `/usr/bin/bwrap` 導致自訂路徑環境誤判，且透過 warning 機制防止 CI 環境中安全防線被「靜音」而產生假綠現象。",
+      "rejected": "否決硬編碼測試路徑以及不帶警告的靜默 patch 做法。",
+      "session_id": "ap75ed3b4f11",
+      "created_at": 1781876016.9899964
+    },
+    {
+      "decision": "測試防線 - 於 `tests/core/test_rlimits.py` 移除「exec 不套資源上限」舊斷言，使用 mock 驗證沙箱啟用下 `preexec_fn` 的傳遞，並於非沙箱路徑實際斷言 `RLIMIT_AS` 行為。",
+      "rationale": "避免在無 PID namespace 權限的環境強跑 `bwrap` 導致 CI 紅燈，以 mock 傳參來兼顧安全性驗證與測試穩定性。",
+      "rejected": "否決在測試中強行執行實體沙箱的策略。",
+      "session_id": "ap75ed3b4f11",
+      "created_at": 1781876016.9899974
     }
   ]
 }

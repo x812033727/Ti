@@ -73,7 +73,44 @@ async def test_fsize_limit_enforced_and_toggle(tmp_path, enabled, monkeypatch):
     assert r2.ok  # 停用後同指令成功
 
 
-def test_run_command_exec_has_no_preexec():
-    """git/exec 路徑刻意不套資源上限（autopilot 600s pytest gate 等），避免誤殺。"""
-    src = inspect.getsource(runner.run_command_exec)
-    assert "preexec_fn" not in src
+async def test_run_command_exec_as_limit_applied_to_child(tmp_path, enabled, monkeypatch):
+    """驗證 run_command_exec(..., sandbox=False) 會正確套用資源限制。"""
+    import sys
+    monkeypatch.setattr(config, "RLIMIT_MEM_MB", 512)
+    monkeypatch.setattr(config, "RLIMIT_CPU_S", 0)
+    monkeypatch.setattr(config, "RLIMIT_FSIZE_MB", 0)
+    r = await runner.run_command_exec(
+        tmp_path,
+        [sys.executable, "-c", "import resource; print(resource.getrlimit(resource.RLIMIT_AS)[0])"],
+        sandbox=False
+    )
+    assert r.ok, r.output
+    assert r.output.strip() == str(512 * 1024 * 1024)
+
+
+async def test_run_command_exec_sandbox_true_passes_preexec(tmp_path, enabled, monkeypatch):
+    """驗證 run_command_exec(..., sandbox=True) 會正確傳遞 preexec_fn 給 create_subprocess_exec。"""
+    import asyncio
+    monkeypatch.setattr(config, "_sandbox_available", lambda: True)
+    monkeypatch.setattr(config, "RLIMIT_MEM_MB", 512)
+    
+    called_kwargs = {}
+    
+    async def mock_create_subprocess_exec(*args, **kwargs):
+        called_kwargs.update(kwargs)
+        class MockProcess:
+            returncode = 0
+            pid = 99999
+            async def communicate(self):
+                return b"mocked output", b""
+            async def wait(self):
+                return 0
+        return MockProcess()
+        
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_create_subprocess_exec)
+    
+    r = await runner.run_command_exec(tmp_path, ["python3", "-c", "print(1)"], sandbox=True)
+    assert r.ok
+    assert "preexec_fn" in called_kwargs
+    assert called_kwargs["preexec_fn"] is not None
+
