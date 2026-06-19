@@ -1126,6 +1126,10 @@ async function redeployNow() {
 // --- 設定（API key / provider / 模型 / GitHub token）-------------------
 const settingsPanel = $("#settingsPanel");
 const settingsForm = $("#settingsForm");
+const settingsNav = $("#settingsNav");
+const settingsSearch = $("#settingsSearch");
+const settingsQuota = $("#settingsQuota");
+const settingsQuotaRefresh = $("#settingsQuotaRefresh");
 
 // 未存變更追蹤：欄位有改動且尚未儲存時，重整／關閉分頁前由瀏覽器原生對話框提醒。
 // 點「✕」關面板視為主動放棄變更（不提醒），重新開啟面板會從伺服器重新載入現值。
@@ -1141,9 +1145,11 @@ window.addEventListener("beforeunload", (e) => {
 async function openSettings() {
   settingsPanel.classList.remove("hidden");
   settingsForm.innerHTML = "<div class='muted'>載入中…</div>";
+  if (settingsQuota) settingsQuota.innerHTML = "<div class='muted'>載入 provider 狀態與額度中…</div>";
   try {
     const data = await (await fetch("/api/settings")).json();
     renderSettings(data.fields || []);
+    refreshProviderQuota();
   } catch (e) {
     settingsForm.innerHTML = "<div class='muted'>無法載入設定</div>";
   }
@@ -1202,71 +1208,130 @@ function closeSettings() {
   if (document.body.dataset.mv === "settings") setMobileView("discussion");
 }
 
+function groupSettings(fields) {
+  const groups = [];
+  const byName = new Map();
+  for (const f of fields) {
+    const name = f.group || "一般";
+    if (!byName.has(name)) {
+      const group = { name, fields: [] };
+      groups.push(group);
+      byName.set(name, group);
+    }
+    byName.get(name).fields.push(f);
+  }
+  return groups;
+}
+
+function groupId(name) {
+  return "settings-group-" + String(name || "general").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function createSettingInput(f, row) {
+  let input;
+  if (f.kind === "select") {
+    input = document.createElement("select");
+    for (const opt of f.options) {
+      const o = document.createElement("option");
+      o.value = opt;
+      o.textContent = opt + (f.recommended && opt === f.recommended ? "\uff08\u63a8\u85a6\uff09" : "");
+      if (opt === f.value) o.selected = true;
+      input.appendChild(o);
+    }
+    // 現值不在清單內（如 .env 手動填過清單外的模型）：追加為選項並選取，
+    // 避免開面板再存檔時被靜默改成清單第一項。
+    if (f.value && !f.options.includes(f.value)) {
+      const o = document.createElement("option");
+      o.value = f.value; o.textContent = f.value;
+      o.selected = true;
+      input.appendChild(o);
+    }
+  } else if (f.kind === "combo") {
+    // 可選可打：下拉建議來自 datalist，仍接受任意輸入（如本地模型名稱）。
+    input = document.createElement("input");
+    input.type = "text";
+    input.value = f.value || "";
+    input.placeholder = f.placeholder || "";
+    const dl = document.createElement("datalist");
+    dl.id = "dl-" + f.env;
+    for (const opt of f.options) {
+      const o = document.createElement("option");
+      o.value = opt;
+      dl.appendChild(o);
+    }
+    input.setAttribute("list", dl.id);
+    row.appendChild(dl);
+  } else {
+    input = document.createElement("input");
+    input.type = f.kind === "password" ? "password" : "text";
+    input.value = f.secret ? "" : (f.value || "");
+    input.placeholder = f.secret && f.set
+      ? "已設定（留空＝不變更）"
+      : (f.placeholder || "");
+  }
+  input.dataset.env = f.env;
+  input.dataset.secret = f.secret ? "1" : "";
+  input.dataset.recommended = f.recommended || "";
+  return input;
+}
+
 function renderSettings(fields) {
   settingsDirty = false; // 重新渲染後欄位即為伺服器現值，無未存變更
   settingsForm.innerHTML = "";
-  let lastGroup = null;
-  for (const f of fields) {
-    if (f.group && f.group !== lastGroup) {
-      const h = document.createElement("h3");
-      h.textContent = f.group;
-      settingsForm.appendChild(h);
-      lastGroup = f.group;
-    }
-    const row = document.createElement("label");
-    row.className = "set-row";
-    const cap = document.createElement("span");
-    cap.className = "set-label";
-    cap.textContent = f.label;
-    row.appendChild(cap);
+  if (settingsNav) settingsNav.innerHTML = "";
+  if (settingsSearch) settingsSearch.value = "";
 
-    let input;
-    if (f.kind === "select") {
-      input = document.createElement("select");
-      for (const opt of f.options) {
-        const o = document.createElement("option");
-        o.value = opt;
-        o.textContent = opt + (f.recommended && opt === f.recommended ? "\uff08\u63a8\u85a6\uff09" : "");
-        if (opt === f.value) o.selected = true;
-        input.appendChild(o);
-      }
-      // 現值不在清單內（如 .env 手動填過清單外的模型）：追加為選項並選取，
-      // 避免開面板再存檔時被靜默改成清單第一項。
-      if (f.value && !f.options.includes(f.value)) {
-        const o = document.createElement("option");
-        o.value = f.value; o.textContent = f.value;
-        o.selected = true;
-        input.appendChild(o);
-      }
-    } else if (f.kind === "combo") {
-      // 可選可打：下拉建議來自 datalist，仍接受任意輸入（如本地模型名稱）。
-      input = document.createElement("input");
-      input.type = "text";
-      input.value = f.value || "";
-      input.placeholder = f.placeholder || "";
-      const dl = document.createElement("datalist");
-      dl.id = "dl-" + f.env;
-      for (const opt of f.options) {
-        const o = document.createElement("option");
-        o.value = opt;
-        dl.appendChild(o);
-      }
-      input.setAttribute("list", dl.id);
-      row.appendChild(dl);
-    } else {
-      input = document.createElement("input");
-      input.type = f.kind === "password" ? "password" : "text";
-      input.value = f.secret ? "" : (f.value || "");
-      input.placeholder = f.secret && f.set
-        ? "已設定（留空＝不變更）"
-        : (f.placeholder || "");
+  const groups = groupSettings(fields);
+  for (const [idx, group] of groups.entries()) {
+    const id = groupId(group.name);
+    if (settingsNav) {
+      const navBtn = document.createElement("button");
+      navBtn.type = "button";
+      navBtn.textContent = group.name;
+      navBtn.dataset.target = id;
+      if (idx === 0) navBtn.classList.add("active");
+      navBtn.onclick = () => {
+        const target = document.getElementById(id);
+        if (target && target.scrollIntoView) target.scrollIntoView({ block: "start", behavior: "smooth" });
+        settingsNav.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+        navBtn.classList.add("active");
+      };
+      settingsNav.appendChild(navBtn);
     }
-    input.dataset.env = f.env;
-    input.dataset.secret = f.secret ? "1" : "";
-    input.dataset.recommended = f.recommended || "";
-    row.appendChild(input);
-    settingsForm.appendChild(row);
+
+    const section = document.createElement("section");
+    section.className = "settings-section";
+    section.id = id;
+    section.dataset.group = group.name;
+    const h = document.createElement("h3");
+    const title = document.createElement("span");
+    title.textContent = group.name;
+    const count = document.createElement("small");
+    count.textContent = `${group.fields.length} 欄`;
+    h.appendChild(title);
+    h.appendChild(count);
+    section.appendChild(h);
+    const grid = document.createElement("div");
+    grid.className = "settings-grid";
+    for (const f of group.fields) {
+      const row = document.createElement("label");
+      row.className = "set-row";
+      row.dataset.search = `${f.group || ""} ${f.label || ""} ${f.env || ""}`.toLowerCase();
+      const cap = document.createElement("span");
+      cap.className = "set-label";
+      cap.textContent = f.label;
+      row.appendChild(cap);
+      const meta = document.createElement("span");
+      meta.className = "set-env";
+      meta.textContent = f.env;
+      row.appendChild(meta);
+      row.appendChild(createSettingInput(f, row));
+      grid.appendChild(row);
+    }
+    section.appendChild(grid);
+    settingsForm.appendChild(section);
   }
+  filterSettings();
 }
 
 function applyRecommendedSettings() {
@@ -1281,6 +1346,100 @@ function applyRecommendedSettings() {
   $("#settingsHint").textContent = n
     ? `已填入推薦配置（${n} 個欄位），按「儲存」生效。`
     : "所有欄位已是推薦配置。";
+}
+
+function filterSettings() {
+  const q = (settingsSearch && settingsSearch.value || "").trim().toLowerCase();
+  settingsForm.querySelectorAll(".set-row").forEach((row) => {
+    const match = !q || (row.dataset.search || "").includes(q);
+    row.classList.toggle("hidden", !match);
+  });
+  settingsForm.querySelectorAll(".settings-section").forEach((section) => {
+    const visible = Array.from(section.querySelectorAll(".set-row")).some((row) => !row.classList.contains("hidden"));
+    section.classList.toggle("hidden", !visible);
+    const navBtn = settingsNav && settingsNav.querySelector(`button[data-target="${section.id}"]`);
+    if (navBtn) navBtn.classList.toggle("hidden", !visible);
+  });
+}
+
+function fmtInt(n) {
+  const x = Number(n || 0);
+  return Number.isFinite(x) ? x.toLocaleString() : "0";
+}
+
+function fmtCost(v) {
+  const n = Number(v || 0);
+  return n ? `$${n.toFixed(4)}` : "—";
+}
+
+function providerStatusLabel(p) {
+  if (p.ready) return "可用";
+  if (p.status === "warn") return "需確認";
+  return "未設定";
+}
+
+function appendTextEl(parent, tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  el.textContent = text;
+  parent.appendChild(el);
+  return el;
+}
+
+function renderProviderQuota(data) {
+  if (!settingsQuota) return;
+  const providers = data.providers || [];
+  const active = providers.find((p) => p.active);
+  const total = (data.usage && data.usage.last_30d && data.usage.last_30d.total) || {};
+  settingsQuota.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "quota-head";
+  const titleWrap = document.createElement("div");
+  appendTextEl(titleWrap, "div", "quota-kicker", "Provider 狀態與額度");
+  appendTextEl(titleWrap, "div", "quota-title", active ? active.label : data.active_provider || "未知 provider");
+  const totalWrap = document.createElement("div");
+  totalWrap.className = "quota-total";
+  appendTextEl(totalWrap, "span", "", "近 30 天 Ti 用量");
+  appendTextEl(totalWrap, "strong", "", `${fmtInt(total.total)} tokens`);
+  appendTextEl(totalWrap, "em", "", `${fmtInt(total.calls)} calls · ${fmtCost(total.cost_usd)}`);
+  head.appendChild(titleWrap);
+  head.appendChild(totalWrap);
+  settingsQuota.appendChild(head);
+
+  const grid = document.createElement("div");
+  grid.className = "quota-grid";
+  for (const p of providers) {
+    const usage = p.usage_30d || {};
+    const models = (p.models || []).slice(0, 4).join(" · ");
+    const card = document.createElement("div");
+    card.className = `quota-card ${p.status || ""}${p.active ? " active" : ""}`;
+    const cardHead = document.createElement("div");
+    cardHead.className = "quota-card-head";
+    appendTextEl(cardHead, "strong", "", p.label || p.key || "provider");
+    appendTextEl(cardHead, "span", "", providerStatusLabel(p));
+    card.appendChild(cardHead);
+    appendTextEl(card, "div", "quota-note", (p.quota && p.quota.summary) || "");
+    appendTextEl(card, "div", "quota-usage", `${fmtInt(usage.total)} tokens · ${fmtInt(usage.calls)} calls`);
+    if (models) appendTextEl(card, "div", "quota-models", models);
+    if (p.quota && p.quota.detail) appendTextEl(card, "div", "quota-detail", p.quota.detail);
+    grid.appendChild(card);
+  }
+  settingsQuota.appendChild(grid);
+}
+
+async function refreshProviderQuota() {
+  if (!settingsQuota) return;
+  settingsQuota.innerHTML = "<div class='muted'>更新 provider 狀態與額度中…</div>";
+  if (settingsQuotaRefresh) settingsQuotaRefresh.disabled = true;
+  try {
+    const data = await (await fetch("/api/provider-quota")).json();
+    renderProviderQuota(data);
+  } catch (e) {
+    settingsQuota.innerHTML = "<div class='muted'>無法載入 provider 狀態與額度</div>";
+  } finally {
+    if (settingsQuotaRefresh) settingsQuotaRefresh.disabled = false;
+  }
 }
 
 async function saveSettings() {
@@ -1327,6 +1486,8 @@ settingsPanel.addEventListener("click", (e) => {
 });
 $("#settingsSave").onclick = saveSettings;
 $("#settingsRecommend").onclick = applyRecommendedSettings;
+if (settingsSearch) settingsSearch.addEventListener("input", filterSettings);
+if (settingsQuotaRefresh) settingsQuotaRefresh.onclick = refreshProviderQuota;
 $("#pwSave").onclick = savePassword;
 $("#redeployBtn").onclick = redeployNow;
 $("#downloadBtn").onclick = downloadWorkspace;
