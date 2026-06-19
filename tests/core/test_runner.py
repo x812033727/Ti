@@ -6,6 +6,13 @@ import pytest
 
 from studio import runner
 
+
+@pytest.fixture(autouse=True)
+def _runner_tests_default_to_no_sandbox(monkeypatch):
+    """核心 runner 測試預設走裸執行；沙箱行為由個別測試明確開啟。"""
+    monkeypatch.setattr(runner.config, "SANDBOX_ENABLED", False)
+
+
 # --- 解析執行指令 -------------------------------------------------------
 
 
