@@ -206,14 +206,14 @@ def test_後端接受合法select值(capture_update):
     settings, written = capture_update
     settings.update(
         {
-            "TI_PROVIDER": "openai",
+            "TI_PROVIDER": "minimax",
             "TI_PARALLEL_LANES": "6",
             "TI_PARALLEL_TASKS": "1",
             "TI_PUBLISH_MERGE": "0",
         }
     )
     assert written == {
-        "TI_PROVIDER": "openai",
+        "TI_PROVIDER": "minimax",
         "TI_PARALLEL_LANES": "6",
         "TI_PARALLEL_TASKS": "1",
         "TI_PUBLISH_MERGE": "0",
@@ -222,15 +222,15 @@ def test_後端接受合法select值(capture_update):
 
 def test_後端秘密留空不變更(capture_update):
     settings, written = capture_update
-    settings.update({"ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "   "})
+    settings.update({"ANTHROPIC_API_KEY": "", "MINIMAX_API_KEY": "   "})
     assert written == {}, f"秘密欄留空（含純空白）不應寫入：{written}"
 
 
 def test_後端文字與combo欄接受任意值含超長(capture_update):
     settings, written = capture_update
     longv = "x" * 2000
-    settings.update({"TI_OPENAI_MODEL_LEAD": longv, "TI_PUBLISH_REPO": "owner/repo"})
-    assert written["TI_OPENAI_MODEL_LEAD"] == longv, (
+    settings.update({"TI_MINIMAX_MODEL_LEAD": longv, "TI_PUBLISH_REPO": "owner/repo"})
+    assert written["TI_MINIMAX_MODEL_LEAD"] == longv, (
         "combo 欄應接受任意值含超長（後端不限長、不套白名單）"
     )
     assert written["TI_PUBLISH_REPO"] == "owner/repo"

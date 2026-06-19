@@ -29,7 +29,7 @@ ENV = ROOT / ".env"
 HOST = "127.0.0.1"
 PORT = 8013
 BASE = f"http://{HOST}:{PORT}"
-SECRET_ENVS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"}
+SECRET_ENVS = {"ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "GITHUB_TOKEN"}
 
 
 # ---------------------------------------------------------------------------
@@ -59,17 +59,17 @@ def test_secret_token_persisted_to_env_file(sandbox):
 
 def test_token_synced_to_os_environ(sandbox):
     """寫入後 os.environ 同步更新（同一行程立即可見）。"""
-    settings.update({"GITHUB_TOKEN": "ghp_TEST_env_4", "OPENAI_API_KEY": "sk-test-4"})
+    settings.update({"GITHUB_TOKEN": "ghp_TEST_env_4", "MINIMAX_API_KEY": "sk-test-4"})
     assert os.environ["GITHUB_TOKEN"] == "ghp_TEST_env_4"
-    assert os.environ["OPENAI_API_KEY"] == "sk-test-4"
+    assert os.environ["MINIMAX_API_KEY"] == "sk-test-4"
 
 
 def test_config_reload_takes_effect(sandbox):
     """config.reload() 後可調值即時更新（無需重啟）——驗收 #4 的『生效』。"""
-    settings.update({"TI_MODEL_FAST": "claude-haiku-4-5", "TI_PROVIDER": "openai"})
+    settings.update({"TI_MODEL_FAST": "claude-haiku-4-5", "TI_PROVIDER": "minimax"})
     assert config.MODEL_FAST == "claude-haiku-4-5"
-    assert config.PROVIDER == "openai"
-    # secret 類也同步進 config（reload 內 GITHUB_TOKEN/OPENAI_API_KEY 一起更新）
+    assert config.PROVIDER == "minimax"
+    # secret 類也同步進 config（reload 內 GITHUB_TOKEN/MINIMAX_API_KEY 一起更新）
     settings.update({"GITHUB_TOKEN": "ghp_TEST_cfg_4"})
     assert config.GITHUB_TOKEN == "ghp_TEST_cfg_4"
 
@@ -109,7 +109,7 @@ def live():
     env.pop("TI_ACCESS_PASSWORD", None)
     for k in SECRET_ENVS:
         env.pop(k, None)
-    env["TI_PROVIDER"] = "claude"  # 啟動為 claude，稍後 POST 切 openai 以觀察 reload
+    env["TI_PROVIDER"] = "claude"  # 啟動為 claude，稍後 POST 切 minimax 以觀察 reload
     env["TI_HOST"] = HOST
     env["TI_PORT"] = str(PORT)
     proc = subprocess.Popen(
@@ -158,9 +158,9 @@ def test_live_reload_effect_via_health(live):
     """行程內生效佐證：POST 切換 provider 後，未重啟即可從 /api/health 看到改變。"""
     before = _get("/api/health")[1]["provider"]
     assert before == "claude"
-    _post("/api/settings", {"TI_PROVIDER": "openai"})
+    _post("/api/settings", {"TI_PROVIDER": "minimax"})
     after = _get("/api/health")[1]["provider"]
-    assert after == "openai", f"config.reload() 應讓行程內 provider 變 openai，實為 {after}"
+    assert after == "minimax", f"config.reload() 應讓行程內 provider 變 minimax，實為 {after}"
 
 
 if __name__ == "__main__":

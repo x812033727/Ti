@@ -41,10 +41,6 @@ CLAUDE_MODELS: tuple[str, ...] = (
     "claude-haiku-4-5",
 )
 
-# OpenAI 模型僅為「建議值」：OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio），
-# 模型名稱可能是任意字串，故用 combo（可選可打）而非嚴格 select。
-OPENAI_MODELS: tuple[str, ...] = ("gpt-4o", "gpt-4o-mini")
-
 # MiniMax 模型建議值（2026-06 platform.minimax.io 現行清單）；同樣用 combo——訂閱方案
 # 可用的模型 ID 可能異動，使用者可自由輸入清單外的名稱。
 MINIMAX_MODELS: tuple[str, ...] = (
@@ -54,13 +50,6 @@ MINIMAX_MODELS: tuple[str, ...] = (
     "MiniMax-M2.5",
     "MiniMax-M2.1",
     "MiniMax-M2",
-)
-
-# Gemini 模型建議值（Google AI Gemini API；用 combo，保留使用者填最新/區域可用模型的彈性）。
-GEMINI_MODELS: tuple[str, ...] = (
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
 )
 
 # Codex CLI 建議模型（Codex manual, 2026-06）。同樣使用 combo：Codex 可指向其他
@@ -135,36 +124,6 @@ FIELDS: tuple[Field, ...] = (
             ("devops", "整合維運"),
         )
     ),
-    Field(
-        "OPENAI_API_KEY",
-        "OpenAI API Key",
-        kind="password",
-        secret=True,
-        placeholder="sk-...",
-        group="OpenAI",
-    ),
-    Field(
-        "OPENAI_BASE_URL",
-        "OpenAI Base URL（本地模型可填）",
-        placeholder="http://localhost:11434/v1",
-        group="OpenAI",
-    ),
-    Field(
-        "TI_OPENAI_MODEL_LEAD",
-        "OpenAI 主力模型",
-        kind="combo",
-        options=OPENAI_MODELS,
-        placeholder="gpt-4o",
-        group="OpenAI",
-    ),
-    Field(
-        "TI_OPENAI_MODEL_FAST",
-        "OpenAI 快速模型",
-        kind="combo",
-        options=OPENAI_MODELS,
-        placeholder="gpt-4o-mini",
-        group="OpenAI",
-    ),
     # --- MiniMax（OpenAI 相容；訂閱／API key）。Provider 選 minimax 時生效。 ---
     Field(
         "MINIMAX_API_KEY",
@@ -198,40 +157,6 @@ FIELDS: tuple[Field, ...] = (
         default="MiniMax-M3",
         placeholder="MiniMax-M3",
         group="MiniMax",
-    ),
-    # --- Gemini（Google AI Studio API key；OpenAI 相容端點）。Provider 選 gemini 時生效。 ---
-    Field(
-        "GEMINI_API_KEY",
-        "Gemini API Key",
-        kind="password",
-        secret=True,
-        placeholder="填入 Google AI Studio API key",
-        group="Gemini",
-    ),
-    Field(
-        "GEMINI_BASE_URL",
-        "Gemini Base URL（OpenAI 相容端點）",
-        placeholder="https://generativelanguage.googleapis.com/v1beta/openai/",
-        default="https://generativelanguage.googleapis.com/v1beta/openai/",
-        group="Gemini",
-    ),
-    Field(
-        "TI_GEMINI_MODEL_LEAD",
-        "Gemini 主力模型（PM／高級工程師）",
-        kind="combo",
-        options=GEMINI_MODELS,
-        default="gemini-2.5-pro",
-        placeholder="gemini-2.5-pro",
-        group="Gemini",
-    ),
-    Field(
-        "TI_GEMINI_MODEL_FAST",
-        "Gemini 快速模型（工程師／QA）",
-        kind="combo",
-        options=GEMINI_MODELS,
-        default="gemini-2.5-flash",
-        placeholder="gemini-2.5-flash",
-        group="Gemini",
     ),
     # --- Codex CLI（本機 codex exec；Provider 選 codex 或 per-role 指到 codex 時生效） ---
     Field(
@@ -306,8 +231,8 @@ FIELDS: tuple[Field, ...] = (
         default="1",
         group="Antigravity",
     ),
-    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Gemini／Codex／
-    # Antigravity 混用，例如把 tool-calling 吃重的工程師走 codex/antigravity、討論/審查型角色走 gemini。
+    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Codex／
+    # Antigravity 混用，例如把 tool-calling 吃重的工程師走 codex/antigravity、討論/審查型角色走 minimax。
     *(
         Field(
             f"TI_PROVIDER_{key.upper()}",

@@ -65,7 +65,7 @@ def _role_models() -> dict[str, str]:
 ROLE_MODELS = _role_models()
 
 # 合法的 provider 名單；per-role 覆寫只接受其一，其餘（含 auto／空）＝不覆寫。
-PROVIDERS = ("claude", "openai", "minimax", "gemini", "codex", "antigravity")
+PROVIDERS = ("claude", "minimax", "codex", "antigravity")
 
 
 def _role_providers() -> dict[str, str]:
