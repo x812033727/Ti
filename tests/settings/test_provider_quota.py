@@ -32,6 +32,12 @@ def test_provider_quota_snapshot_antigravity_models(monkeypatch):
     monkeypatch.setattr(config, "antigravity_cli_available", lambda: True)
     monkeypatch.setattr(config, "provider_ready", lambda: True)
     monkeypatch.setattr(routes.usage_report, "aggregate", lambda *_args, **_kwargs: _agg())
+    # signed_in 時會查 Google Code Assist 配額——隔離掉，避免打網路且不依賴 token 檔。
+    monkeypatch.setattr(
+        routes.antigravity_usage,
+        "fetch_rate_limits",
+        lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": None},
+    )
 
     def fake_run(argv, **_kwargs):
         assert argv == ["/usr/local/bin/agy", "models"]
