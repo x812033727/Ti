@@ -5,10 +5,10 @@ from __future__ import annotations
 import ast
 import asyncio
 from pathlib import Path
-import tomllib
 from types import SimpleNamespace
 
 import pytest
+import tomllib
 
 from studio import config, events, providers
 from studio.roles import BY_KEY
