@@ -17,6 +17,7 @@ from . import (
     auth,
     backlog,
     blueprint,
+    claude_usage,
     config,
     history,
     projects,
@@ -328,8 +329,14 @@ def _provider_quota_snapshot() -> dict:
             "quota": {
                 "kind": "subscription_or_api",
                 "summary": "API key / Claude CLI 登入狀態",
-                "detail": "實際訂閱額度以 Claude Code 官方介面為準。",
+                "detail": "訂閱額度由 Anthropic 官方 usage 端點即時查詢（每 60 秒快取一次）。",
             },
+            # 訂閱（OAuth 登入、非 API key）時附官方 rate limit；否則 None（前端不顯示）。
+            "rate_limits": (
+                claude_usage.fetch_rate_limits()
+                if config.claude_cli_logged_in() and not config.has_api_key()
+                else None
+            ),
         },
         {
             "key": "openai",

@@ -599,6 +599,12 @@ HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
 LESSONS_FILE = Path(os.getenv("TI_LESSONS_FILE", str(PROJECT_ROOT / "lessons.json")))
 WEB_DIR = PROJECT_ROOT / "web"
 
+# Claude 訂閱 OAuth 憑證檔（claude CLI 登入後寫入，SDK 子程序沿用；claude_usage 讀其
+# accessToken 查官方額度）。預設 ~/.claude/.credentials.json；可用 env 覆寫（測試隔離）。
+CLAUDE_CREDENTIALS_FILE = Path(
+    os.getenv("TI_CLAUDE_CREDENTIALS_FILE", str(Path.home() / ".claude" / ".credentials.json"))
+)
+
 # --- 歷史 / 工作區保留（GC，避免自托管長跑下 history/ 與 workspaces/ 只增不減）----
 # 每次 session 結束（finish_session）順手做一次輕量回收：刪掉「非 running」且超量/過舊的
 # session（含 meta、events 與其 workspace 產出）。running 中的 session 一律保留。
@@ -804,7 +810,7 @@ def has_api_key() -> bool:
 
 def claude_cli_logged_in() -> bool:
     """是否已透過 claude CLI 登入（訂閱 OAuth 憑證），SDK 子程序會沿用。"""
-    return (Path.home() / ".claude" / ".credentials.json").exists()
+    return CLAUDE_CREDENTIALS_FILE.exists()
 
 
 def codex_cli_available() -> bool:
