@@ -1445,10 +1445,18 @@ function rateLimitBlock(rl) {
     appendTextEl(wrap, "div", "quota-rl-note", RL_ERRORS[rl.error] || "無法取得官方額度。");
     return wrap;
   }
-  if (rl.five_hour) wrap.appendChild(rateLimitRow("5 小時", rl.five_hour));
-  if (rl.seven_day) wrap.appendChild(rateLimitRow("7 天", rl.seven_day));
-  if (rl.seven_day_sonnet) wrap.appendChild(rateLimitRow("7 天 · Sonnet", rl.seven_day_sonnet));
-  if (rl.seven_day_opus) wrap.appendChild(rateLimitRow("7 天 · Opus", rl.seven_day_opus));
+  if (Array.isArray(rl.buckets)) {
+    // Antigravity：每模型請求配額
+    if (!rl.buckets.length) {
+      appendTextEl(wrap, "div", "quota-rl-note", "目前無配額資料。");
+    }
+    for (const b of rl.buckets) wrap.appendChild(rateLimitRow(b.label, b));
+  } else {
+    if (rl.five_hour) wrap.appendChild(rateLimitRow("5 小時", rl.five_hour));
+    if (rl.seven_day) wrap.appendChild(rateLimitRow("7 天", rl.seven_day));
+    if (rl.seven_day_sonnet) wrap.appendChild(rateLimitRow("7 天 · Sonnet", rl.seven_day_sonnet));
+    if (rl.seven_day_opus) wrap.appendChild(rateLimitRow("7 天 · Opus", rl.seven_day_opus));
+  }
   if (rl.fetched_at) {
     appendTextEl(
       wrap,

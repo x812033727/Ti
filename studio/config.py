@@ -605,6 +605,15 @@ CLAUDE_CREDENTIALS_FILE = Path(
     os.getenv("TI_CLAUDE_CREDENTIALS_FILE", str(Path.home() / ".claude" / ".credentials.json"))
 )
 
+# Antigravity（agy）的 OAuth token 檔（agy 登入後寫入、執行時刷新；antigravity_usage 讀其
+# token.access_token 查 Google Code Assist 配額）。預設 ~/.gemini/antigravity-cli/...；可 env 覆寫。
+ANTIGRAVITY_OAUTH_TOKEN_FILE = Path(
+    os.getenv(
+        "TI_ANTIGRAVITY_OAUTH_TOKEN_FILE",
+        str(Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"),
+    )
+)
+
 # --- 歷史 / 工作區保留（GC，避免自托管長跑下 history/ 與 workspaces/ 只增不減）----
 # 每次 session 結束（finish_session）順手做一次輕量回收：刪掉「非 running」且超量/過舊的
 # session（含 meta、events 與其 workspace 產出）。running 中的 session 一律保留。
