@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from studio import config, routes
 
 
@@ -60,22 +58,18 @@ def test_minimax_rate_limits_queried_when_key_set(monkeypatch):
     assert mm["rate_limits"] is sentinel
 
 
-def test_antigravity_models(monkeypatch):
+def test_antigravity_signed_in(monkeypatch):
+    """有效 token：直接附 rate_limits、ready/signed_in，且不再跑 `agy models` 子程序。"""
     monkeypatch.setattr(config, "PROVIDER", "antigravity")
     monkeypatch.setattr(config, "ANTIGRAVITY_BIN", "/usr/local/bin/agy")
     monkeypatch.setattr(config, "antigravity_cli_available", lambda: True)
     monkeypatch.setattr(config, "provider_ready", lambda: True)
     _no_realtime(monkeypatch)
 
-    def fake_run(argv, **_kwargs):
-        assert argv == ["/usr/local/bin/agy", "models"]
-        return SimpleNamespace(
-            returncode=0,
-            stdout="Gemini 3.5 Flash (Medium)\nClaude Sonnet 4.6 (Thinking)\n",
-            stderr="",
-        )
+    def boom(*_a, **_k):  # 新設計不應再用子程序列模型
+        raise AssertionError("不應呼叫 subprocess.run（已移除 agy models gate）")
 
-    monkeypatch.setattr(routes.subprocess, "run", fake_run)
+    monkeypatch.setattr(routes.subprocess, "run", boom)
 
     data = routes._provider_quota_snapshot()
     agy = next(p for p in data["providers"] if p["key"] == "antigravity")
@@ -83,24 +77,23 @@ def test_antigravity_models(monkeypatch):
     assert data["active_provider"] == "antigravity"
     assert agy["ready"] is True
     assert agy["auth"] == "signed_in"
-    assert agy["models"] == ["Gemini 3.5 Flash (Medium)", "Claude Sonnet 4.6 (Thinking)"]
+    assert agy["status"] == "ok"
+    assert agy["models"] == []  # 不再由子程序填充
+    assert agy["rate_limits"] is not None and agy["rate_limits"]["error"] is None
     # 不洩漏任何 token 值
     assert "token" not in str(agy).lower()
 
 
 def test_antigravity_needs_login(monkeypatch):
+    """完全沒登入（token_missing）：ready False、needs_login，但仍附 rate_limits（含 error）。"""
     monkeypatch.setattr(config, "ANTIGRAVITY_BIN", "agy")
     monkeypatch.setattr(config, "antigravity_cli_available", lambda: True)
     monkeypatch.setattr(config, "provider_ready", lambda: False)
     _no_realtime(monkeypatch)
     monkeypatch.setattr(
-        routes.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=1,
-            stdout="",
-            stderr="Please sign in to view available models.",
-        ),
+        routes.antigravity_usage,
+        "fetch_rate_limits",
+        lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": "token_missing"},
     )
 
     data = routes._provider_quota_snapshot()
@@ -109,6 +102,28 @@ def test_antigravity_needs_login(monkeypatch):
     assert agy["ready"] is False
     assert agy["status"] == "warn"
     assert agy["auth"] == "needs_login"
-    assert "Please sign in" in agy["quota"]["detail"]
-    # signed_in=False 時不查配額
-    assert agy["rate_limits"] is None
+    assert "登入" in agy["quota"]["detail"]
+    # 不再 None：附 error 讓前端顯示明確訊息而非空白
+    assert agy["rate_limits"]["error"] == "token_missing"
+
+
+def test_antigravity_token_expired(monkeypatch):
+    """token 過期（unauthorized）：仍視為 ready（可由跑討論刷新），附 rate_limits.error。"""
+    monkeypatch.setattr(config, "ANTIGRAVITY_BIN", "agy")
+    monkeypatch.setattr(config, "antigravity_cli_available", lambda: True)
+    monkeypatch.setattr(config, "provider_ready", lambda: False)
+    _no_realtime(monkeypatch)
+    monkeypatch.setattr(
+        routes.antigravity_usage,
+        "fetch_rate_limits",
+        lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": "unauthorized"},
+    )
+
+    data = routes._provider_quota_snapshot()
+    agy = next(p for p in data["providers"] if p["key"] == "antigravity")
+
+    assert agy["ready"] is True  # 有 token，只是過期
+    assert agy["auth"] == "signed_in"
+    assert agy["status"] == "warn"
+    assert "過期" in agy["quota"]["detail"]
+    assert agy["rate_limits"]["error"] == "unauthorized"

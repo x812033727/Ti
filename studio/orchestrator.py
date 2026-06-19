@@ -1234,7 +1234,10 @@ class StudioSession:
 
     async def _open_lane(self, lane_tasks: list[dict]) -> LaneContext | None:
         """為一條支線開 git worktree 分支 + 獨立專家團隊。失敗回 None（交由序列化重跑）。"""
-        branch = "task-" + "-".join(str(t["id"]) for t in lane_tasks)
+        # 子題 id 每個 session/波次都從 1 重編，光用 "task-<id>" 會跨 session 撞名
+        # （上一輪 timeout/被 kill 沒走到 teardown，殘留的 task-1 分支毒下一輪 → exit 255）。
+        # 加 session_id 前綴使分支全域唯一；git_worktree_add 另會 prune+清同名殘留作雙保險。
+        branch = f"lane-{self.session_id}-" + "-".join(str(t["id"]) for t in lane_tasks)
         wt = self._lane_worktree_path(branch)
         base = self._last_commit or "HEAD"
         if not await runner.git_worktree_add(self.cwd, wt, branch, base=base):

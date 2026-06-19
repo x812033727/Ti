@@ -37,6 +37,20 @@ def _read_token() -> str | None:
     return tok if isinstance(tok, str) and tok else None
 
 
+def _token_expired(now: float) -> bool:
+    """憑證檔的 accessToken 是否已過期（expiresAt 為毫秒 epoch）。讀不到視為未過期。
+
+    access token 約每小時過期、僅在 Claude CLI/SDK 跑時刷新；過期時打 usage 端點必得 401。
+    先用 expiresAt 短路，省一次註定失敗的 8s HTTP，並讓前端拿到明確「過期」而非空白。
+    """
+    try:
+        data = json.loads(config.CLAUDE_CREDENTIALS_FILE.read_text(encoding="utf-8"))
+        exp = (data.get("claudeAiOauth") or {}).get("expiresAt")
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(exp, (int, float)) and now >= exp / 1000.0
+
+
 def _iso_to_epoch(s: Any) -> float | None:
     """ISO8601（含時區與小數秒）→ unix 秒；非字串或解析失敗回 None。"""
     if not isinstance(s, str) or not s:
@@ -83,6 +97,12 @@ def fetch_rate_limits(force: bool = False) -> dict:
     token = _read_token()
     if not token:
         result = _empty("token_missing", now)
+        _cache = (now, result)
+        return result
+
+    if _token_expired(now):
+        # 已知過期：直接回 unauthorized，前端顯示「token 已過期，跑一次討論即恢復」。
+        result = _empty("unauthorized", now)
         _cache = (now, result)
         return result
 

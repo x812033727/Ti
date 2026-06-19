@@ -687,6 +687,15 @@ async def git_worktree_add(
     root = Path(repo)
     if not (root / ".git").exists() and not await git_init(root):
         return False
+    # 開分支前先清掉前一輪 timeout/被 kill 沒 teardown 的殘留：prune 失聯的 worktree
+    # 註冊，再強刪可能殘存的同名分支——否則 `worktree add -b` 會以「branch already
+    # exists」exit 255，整條 lane 開不起來（歷史上 task-1 反覆撞名即此因）。
+    await run_command_exec(
+        root, ["git", "worktree", "prune"], timeout=30, sandbox=False, label="git worktree prune"
+    )
+    await run_command_exec(
+        root, ["git", "branch", "-D", branch], timeout=30, sandbox=False, label="git branch -D 殘留"
+    )
     r = await run_command_exec(
         root,
         ["git", "worktree", "add", "-b", branch, str(worktree_path), base],

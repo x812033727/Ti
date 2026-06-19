@@ -63,6 +63,10 @@ def antigravity_model_for(role: Role) -> str:
 
 _CODEX_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
+# Codex CLI 以 JSONL 串流事件，單則可含整段檔案內容而遠超 asyncio StreamReader 預設
+# 64 KiB 行上限；拉高到 16 MiB 避免 readline 噴 LimitOverrunError 撐爆 stdout reader。
+_CODEX_STREAM_LIMIT = 16 * 1024 * 1024
+
 
 def _clip(text: str, limit: int) -> str:
     """限制內嵌到 prompt / UI 的字串長度，避免一次 Codex 發言把下一輪 prompt 撐爆。"""
@@ -224,6 +228,10 @@ class CodexExpert:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
+                # Codex 單則 JSON 事件（含整段檔案內容）常超過 asyncio StreamReader 預設
+                # 64 KiB 行上限，會讓 readline 噴 LimitOverrunError 撐爆 _stdout reader、
+                # 整個任務硬撐到 timeout 才 fail。拉高到 16 MiB 容納超長單行輸出。
+                limit=_CODEX_STREAM_LIMIT,
             )
             self._proc = proc
         except FileNotFoundError:
@@ -246,21 +254,26 @@ class CodexExpert:
             async def _stdout() -> None:
                 nonlocal last_activity
                 assert proc is not None and proc.stdout is not None
-                async for raw in proc.stdout:
-                    last_activity = loop.time()
-                    line = raw.decode("utf-8", "replace").strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        errors.append(_clip(line, 500))
-                        continue
-                    text = await self._handle_codex_event(data, broadcast)
-                    if text:
-                        final_messages.append(text)
-                    if data.get("type") in ("error", "turn.failed"):
-                        errors.append(_clip(json.dumps(data, ensure_ascii=False), 1000))
+                try:
+                    async for raw in proc.stdout:
+                        last_activity = loop.time()
+                        line = raw.decode("utf-8", "replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            errors.append(_clip(line, 500))
+                            continue
+                        text = await self._handle_codex_event(data, broadcast)
+                        if text:
+                            final_messages.append(text)
+                        if data.get("type") in ("error", "turn.failed"):
+                            errors.append(_clip(json.dumps(data, ensure_ascii=False), 1000))
+                except (ValueError, asyncio.LimitOverrunError):
+                    # 單行仍超過 _CODEX_STREAM_LIMIT（16 MiB，極罕見）：優雅收尾記一筆錯誤，
+                    # 而非讓未處理例外冒泡讓整個任務只能等 timeout 才失敗。
+                    errors.append("codex 單行輸出超過上限，已中止讀取該次輸出")
 
             async def _stderr() -> str:
                 assert proc is not None and proc.stderr is not None
