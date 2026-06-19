@@ -51,14 +51,18 @@ def test_role_provider_recommendations_are_cross_provider_mix():
     fields = {f.env: f for f in settings.FIELDS}
     expected = {
         "TI_PROVIDER_PM": "claude",
-        "TI_PROVIDER_SENIOR": "claude",
-        "TI_PROVIDER_ARCHITECT": "claude",
         "TI_PROVIDER_SECURITY": "claude",
+        "TI_PROVIDER_SENIOR": "antigravity",
+        "TI_PROVIDER_ARCHITECT": "antigravity",
         "TI_PROVIDER_ENGINEER": "codex",
         "TI_PROVIDER_DEVOPS": "codex",
         "TI_PROVIDER_QA": "minimax",
         "TI_PROVIDER_RESEARCHER": "minimax",
     }
+    # 四家均衡：每個 provider 各被推薦兩個角色
+    from collections import Counter
+
+    assert Counter(expected.values()) == {"claude": 2, "antigravity": 2, "codex": 2, "minimax": 2}
     for env, prov in expected.items():
         assert fields[env].recommended == prov
         # 推薦值必須是合法 provider 且在該欄選項內

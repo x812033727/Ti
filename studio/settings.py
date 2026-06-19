@@ -68,13 +68,14 @@ ANTIGRAVITY_MODELS: tuple[str, ...] = (
     "GPT-OSS 120B (Medium)",
 )
 
-# 「✨ 套用推薦模型」對每角色 provider 的推薦分派：跨 provider 混搭、分攤額度。
-# 吃重推理/審查的角色走 Claude（最強），高量產出角色走 codex / minimax。值須在 config.PROVIDERS 內。
+# 「✨ 套用推薦模型」對每角色 provider 的推薦分派：四家均衡 2-2-2-2、分攤額度。
+# 關鍵推理/審查 → Claude；工程設計 → Antigravity；coding/ops → Codex；測試/研究 → MiniMax。
+# 值須在 config.PROVIDERS 內。
 ROLE_PROVIDER_RECOMMEND: dict[str, str] = {
     "pm": "claude",
-    "senior": "claude",
-    "architect": "claude",
     "security": "claude",
+    "senior": "antigravity",
+    "architect": "antigravity",
     "engineer": "codex",
     "devops": "codex",
     "qa": "minimax",
@@ -246,8 +247,9 @@ FIELDS: tuple[Field, ...] = (
     ),
     # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Codex／
     # Antigravity 混用，例如把 tool-calling 吃重的工程師走 codex、討論/審查型角色走 minimax。
-    # 推薦值＝跨 provider 混搭、分攤額度：吃重推理/審查的角色走 Claude（最強）、高量產出角色
-    # 走 codex/minimax，前端「✨ 套用推薦模型」一鍵分派（套完仍須各 provider 已登入/設好才生效）。
+    # 推薦值＝四家均衡 2-2-2-2、分攤額度（見 ROLE_PROVIDER_RECOMMEND）：關鍵推理/審查走 Claude、
+    # 工程設計走 Antigravity、coding/ops 走 Codex、測試/研究走 MiniMax。前端「✨ 套用推薦模型」
+    # 一鍵分派（套完仍須各 provider 已登入/設好才生效）。
     *(
         Field(
             f"TI_PROVIDER_{key.upper()}",
