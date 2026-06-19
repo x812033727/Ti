@@ -1414,8 +1414,8 @@ function rateLimitRow(label, win) {
 }
 
 const RL_ERRORS = {
-  token_missing: "找不到 Claude 訂閱憑證（需 claude CLI 登入）。",
-  unauthorized: "token 已過期：跑一次 Claude 討論或重新登入後重試。",
+  token_missing: "找不到訂閱憑證（需 provider CLI 登入）。",
+  unauthorized: "token 已過期：跑一次該 provider 討論或重新登入後重試。",
   unreachable: "暫時無法取得官方額度（稍後重試）。",
 };
 
@@ -1428,11 +1428,18 @@ function rateLimitBlock(rl) {
     return wrap;
   }
   if (Array.isArray(rl.buckets)) {
-    // Antigravity：每模型請求配額
-    if (!rl.buckets.length) {
+    // Antigravity：有數值配額畫每模型百分比條；不限量則改顯示訂閱層級
+    if (rl.buckets.length) {
+      for (const b of rl.buckets) wrap.appendChild(rateLimitRow(b.label, b));
+    } else if (rl.tier && rl.tier.label) {
+      const plan = rl.tier.unlimited ? `${rl.tier.label} · 不限量` : rl.tier.label;
+      appendTextEl(wrap, "div", "quota-rl-note", `方案：${plan}`);
+      if (rl.tier.paid_tier) {
+        appendTextEl(wrap, "div", "quota-rl-note", `可升級：${rl.tier.paid_tier}`);
+      }
+    } else {
       appendTextEl(wrap, "div", "quota-rl-note", "目前無配額資料。");
     }
-    for (const b of rl.buckets) wrap.appendChild(rateLimitRow(b.label, b));
   } else {
     if (rl.five_hour) wrap.appendChild(rateLimitRow("5 小時", rl.five_hour));
     if (rl.seven_day) wrap.appendChild(rateLimitRow("7 天", rl.seven_day));
