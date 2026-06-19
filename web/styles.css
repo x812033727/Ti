@@ -1139,6 +1139,70 @@ input:focus-visible, select:focus-visible { outline: none; }
 .quota-models {
   overflow-wrap: anywhere;
 }
+/* 訂閱額度（官方 rate limit）區塊 */
+.quota-ratelimits {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.quota-rl-kicker {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.quota-rl-note {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.quota-ratelimit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.quota-rl-label {
+  flex: 0 0 auto;
+  min-width: 58px;
+}
+.quota-ratelimit .bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.quota-ratelimit .fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--good), #6e79ff);
+  transition: width .3s ease;
+}
+.quota-ratelimit.warn .fill { background: var(--warn); }
+.quota-ratelimit.crit .fill { background: var(--bad); }
+.quota-rl-pct {
+  flex: 0 0 auto;
+  min-width: 34px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.quota-ratelimit.warn .quota-rl-pct { color: var(--warn); }
+.quota-ratelimit.crit .quota-rl-pct { color: var(--bad); }
+.quota-rl-reset {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-style: normal;
+  white-space: nowrap;
+}
+.quota-rl-stamp {
+  color: var(--muted);
+  font-size: 10.5px;
+}
 /* 欄位依分區排列；窄螢幕自動收回單欄 */
 .settings-form {
   display: flex;

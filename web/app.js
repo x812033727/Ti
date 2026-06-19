@@ -1400,6 +1400,66 @@ function quotaSummary(label, usage) {
   return wrap;
 }
 
+function fmtResetRelative(epochSec) {
+  if (!epochSec) return "—";
+  const diff = epochSec * 1000 - Date.now();
+  if (diff <= 0) return "已重置";
+  const totalMin = Math.floor(diff / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h >= 1) return m ? `${h} 小時 ${m} 分後重置` : `${h} 小時後重置`;
+  return `${m} 分鐘後重置`;
+}
+
+function rateLimitRow(label, win) {
+  const row = document.createElement("div");
+  row.className = "quota-ratelimit";
+  const raw = win && Number(win.used_percentage);
+  const pct = Number.isFinite(raw) ? raw : 0;
+  if (pct >= 90) row.classList.add("crit");
+  else if (pct >= 75) row.classList.add("warn");
+  appendTextEl(row, "span", "quota-rl-label", label);
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  const fill = document.createElement("div");
+  fill.className = "fill";
+  fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+  bar.appendChild(fill);
+  row.appendChild(bar);
+  appendTextEl(row, "span", "quota-rl-pct", `${pct}%`);
+  appendTextEl(row, "em", "quota-rl-reset", fmtResetRelative(win && win.reset_at));
+  return row;
+}
+
+const RL_ERRORS = {
+  token_missing: "找不到 Claude 訂閱憑證（需 claude CLI 登入）。",
+  unauthorized: "token 已過期：跑一次 Claude 討論或重新登入後重試。",
+  unreachable: "暫時無法取得官方額度（稍後重試）。",
+};
+
+function rateLimitBlock(rl) {
+  const wrap = document.createElement("div");
+  wrap.className = "quota-ratelimits";
+  appendTextEl(wrap, "div", "quota-rl-kicker", "訂閱額度（官方）");
+  if (rl.error) {
+    appendTextEl(wrap, "div", "quota-rl-note", RL_ERRORS[rl.error] || "無法取得官方額度。");
+    return wrap;
+  }
+  if (rl.five_hour) wrap.appendChild(rateLimitRow("5 小時", rl.five_hour));
+  if (rl.seven_day) wrap.appendChild(rateLimitRow("7 天", rl.seven_day));
+  if (rl.seven_day_sonnet) wrap.appendChild(rateLimitRow("7 天 · Sonnet", rl.seven_day_sonnet));
+  if (rl.seven_day_opus) wrap.appendChild(rateLimitRow("7 天 · Opus", rl.seven_day_opus));
+  if (rl.fetched_at) {
+    appendTextEl(
+      wrap,
+      "div",
+      "quota-rl-stamp",
+      `擷取於 ${new Date(rl.fetched_at * 1000).toLocaleTimeString()}`,
+    );
+  }
+  return wrap;
+}
+
 function renderProviderQuota(data) {
   if (!settingsQuota) return;
   const providers = data.providers || [];
@@ -1439,6 +1499,7 @@ function renderProviderQuota(data) {
     appendTextEl(cardHead, "span", "", providerStatusLabel(p));
     card.appendChild(cardHead);
     appendTextEl(card, "div", "quota-note", (p.quota && p.quota.summary) || "");
+    if (p.key === "claude" && p.rate_limits) card.appendChild(rateLimitBlock(p.rate_limits));
     const usageList = document.createElement("div");
     usageList.className = "quota-usage-list";
     appendTextEl(usageList, "span", "", `5 小時 ${fmtInt(usage5h.total)} tokens · ${fmtInt(usage5h.calls)} calls`);
