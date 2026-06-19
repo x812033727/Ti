@@ -1367,10 +1367,6 @@ function fmtInt(n) {
   return Number.isFinite(x) ? x.toLocaleString() : "0";
 }
 
-function fmtCost(v) {
-  const n = Number(v || 0);
-  return n ? `$${n.toFixed(4)}` : "—";
-}
 
 function providerStatusLabel(p) {
   if (p.ready) return "可用";
@@ -1384,20 +1380,6 @@ function appendTextEl(parent, tag, className, text) {
   el.textContent = text;
   parent.appendChild(el);
   return el;
-}
-
-function quotaSummary(label, usage) {
-  const wrap = document.createElement("div");
-  wrap.className = "quota-window";
-  appendTextEl(wrap, "span", "", label);
-  appendTextEl(wrap, "strong", "", `${fmtInt(usage && usage.total)} tokens`);
-  appendTextEl(
-    wrap,
-    "em",
-    "",
-    `${fmtInt(usage && usage.calls)} calls · ${fmtCost(usage && usage.cost_usd)}`,
-  );
-  return wrap;
 }
 
 function fmtResetRelative(epochSec) {
@@ -1471,33 +1453,19 @@ function rateLimitBlock(rl) {
 function renderProviderQuota(data) {
   if (!settingsQuota) return;
   const providers = data.providers || [];
-  const active = providers.find((p) => p.active);
-  const usage = data.usage || {};
-  const total5h = (usage.last_5h && usage.last_5h.total) || {};
-  const total7d = (usage.last_7d && usage.last_7d.total) || {};
-  const total30d = (usage.last_30d && usage.last_30d.total) || {};
   settingsQuota.innerHTML = "";
 
   const head = document.createElement("div");
   head.className = "quota-head";
   const titleWrap = document.createElement("div");
-  appendTextEl(titleWrap, "div", "quota-kicker", "Provider 狀態與額度");
-  appendTextEl(titleWrap, "div", "quota-title", active ? active.label : data.active_provider || "未知 provider");
-  const totalWrap = document.createElement("div");
-  totalWrap.className = "quota-total";
-  totalWrap.appendChild(quotaSummary("近 5 小時 Ti 用量", total5h));
-  totalWrap.appendChild(quotaSummary("近 7 天 Ti 用量", total7d));
-  totalWrap.appendChild(quotaSummary("近 30 天 Ti 用量", total30d));
+  appendTextEl(titleWrap, "div", "quota-kicker", "Provider 即時剩餘額度");
+  appendTextEl(titleWrap, "div", "quota-title", `目前使用：${data.active_provider || "未知 provider"}`);
   head.appendChild(titleWrap);
-  head.appendChild(totalWrap);
   settingsQuota.appendChild(head);
 
   const grid = document.createElement("div");
   grid.className = "quota-grid";
   for (const p of providers) {
-    const usage5h = p.usage_5h || {};
-    const usage7d = p.usage_7d || {};
-    const usage30d = p.usage_30d || {};
     const models = (p.models || []).slice(0, 4).join(" · ");
     const card = document.createElement("div");
     card.className = `quota-card ${p.status || ""}${p.active ? " active" : ""}`;
@@ -1508,12 +1476,6 @@ function renderProviderQuota(data) {
     card.appendChild(cardHead);
     appendTextEl(card, "div", "quota-note", (p.quota && p.quota.summary) || "");
     if (p.rate_limits) card.appendChild(rateLimitBlock(p.rate_limits));
-    const usageList = document.createElement("div");
-    usageList.className = "quota-usage-list";
-    appendTextEl(usageList, "span", "", `5 小時 ${fmtInt(usage5h.total)} tokens · ${fmtInt(usage5h.calls)} calls`);
-    appendTextEl(usageList, "span", "", `7 天 ${fmtInt(usage7d.total)} tokens · ${fmtInt(usage7d.calls)} calls`);
-    appendTextEl(usageList, "span", "", `30 天 ${fmtInt(usage30d.total)} tokens · ${fmtInt(usage30d.calls)} calls`);
-    card.appendChild(usageList);
     if (models) appendTextEl(card, "div", "quota-models", models);
     if (p.quota && p.quota.detail) appendTextEl(card, "div", "quota-detail", p.quota.detail);
     grid.appendChild(card);

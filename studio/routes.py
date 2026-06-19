@@ -22,6 +22,7 @@ from . import (
     codex_usage,
     config,
     history,
+    minimax_usage,
     projects,
     publisher,
     redeploy,
@@ -29,7 +30,6 @@ from . import (
     role_store,
     roles,
     settings,
-    usage_report,
     workspace,
     ws,
 )
@@ -254,14 +254,6 @@ async def provider_quota() -> JSONResponse:
     return JSONResponse(_provider_quota_snapshot())
 
 
-def _bucket() -> dict:
-    return {"prompt": 0, "completion": 0, "total": 0, "cost_usd": 0.0, "calls": 0}
-
-
-def _usage_for_provider(agg: dict, provider: str) -> dict:
-    return dict((agg.get("by_provider") or {}).get(provider) or _bucket())
-
-
 def _run_text(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
     try:
         proc = subprocess.run(
@@ -312,12 +304,12 @@ def _antigravity_status() -> dict:
 
 
 def _provider_quota_snapshot() -> dict:
-    now = time.time()
-    all_usage = usage_report.aggregate()
-    five_hour_usage = usage_report.aggregate(now - 5 * 3600)
-    week_usage = usage_report.aggregate(now - 7 * 86400)
-    month_usage = usage_report.aggregate(now - 30 * 86400)
+    """只回各 provider 的「即時剩餘額度」（官方 rate limit），不含 Ti 本機累積用量。
 
+    僅保留 Claude / Codex CLI / Antigravity CLI / MiniMax 四個 provider；各自向官方端點
+    即時查剩餘配額（claude/codex/minimax/antigravity_usage，皆 60 秒快取）。
+    """
+    now = time.time()
     providers = [
         {
             "key": "claude",
@@ -332,8 +324,8 @@ def _provider_quota_snapshot() -> dict:
             else ("oauth" if config.claude_cli_logged_in() else "missing"),
             "quota": {
                 "kind": "subscription_or_api",
-                "summary": "API key / Claude CLI 登入狀態",
-                "detail": "訂閱額度由 Anthropic 官方 usage 端點即時查詢（每 60 秒快取一次）。",
+                "summary": "Claude 訂閱剩餘額度",
+                "detail": "由 Anthropic 官方 usage 端點即時查詢（每 60 秒快取一次）。",
             },
             # 訂閱（OAuth 登入、非 API key）時附官方 rate limit；否則 None（前端不顯示）。
             "rate_limits": (
@@ -341,47 +333,6 @@ def _provider_quota_snapshot() -> dict:
                 if config.claude_cli_logged_in() and not config.has_api_key()
                 else None
             ),
-        },
-        {
-            "key": "openai",
-            "label": "OpenAI / 相容端點",
-            "active": config.PROVIDER == "openai",
-            "ready": bool(config.OPENAI_API_KEY or config.OPENAI_BASE_URL),
-            "status": "ok" if (config.OPENAI_API_KEY or config.OPENAI_BASE_URL) else "missing",
-            "auth": "api_key"
-            if config.OPENAI_API_KEY
-            else ("base_url" if config.OPENAI_BASE_URL else "missing"),
-            "quota": {
-                "kind": "api",
-                "summary": "API key / Base URL 狀態",
-                "detail": "OpenAI 相容端點沒有通用額度 API；顯示 Ti 本機累積 token 用量。",
-            },
-        },
-        {
-            "key": "minimax",
-            "label": "MiniMax",
-            "active": config.PROVIDER == "minimax",
-            "ready": bool(config.MINIMAX_API_KEY),
-            "status": "ok" if config.MINIMAX_API_KEY else "missing",
-            "auth": "api_key" if config.MINIMAX_API_KEY else "missing",
-            "quota": {
-                "kind": "api",
-                "summary": "API key 狀態",
-                "detail": "MiniMax 額度以官方後台為準；此處顯示 Ti 本機累積 token 用量。",
-            },
-        },
-        {
-            "key": "gemini",
-            "label": "Gemini API",
-            "active": config.PROVIDER == "gemini",
-            "ready": bool(config.GEMINI_API_KEY),
-            "status": "ok" if config.GEMINI_API_KEY else "missing",
-            "auth": "api_key" if config.GEMINI_API_KEY else "missing",
-            "quota": {
-                "kind": "api",
-                "summary": "API key 狀態",
-                "detail": "Gemini API 額度以 Google AI Studio / Cloud Console 為準。",
-            },
         },
         {
             "key": "codex",
@@ -397,10 +348,9 @@ def _provider_quota_snapshot() -> dict:
             "binary": config.CODEX_BIN,
             "quota": {
                 "kind": "subscription_or_api",
-                "summary": "Codex CLI 登入/API key 狀態",
-                "detail": "訂閱額度由 codex app-server 即時查詢（每 60 秒快取一次）。",
+                "summary": "Codex 訂閱剩餘額度",
+                "detail": "由 codex app-server 即時查詢（每 60 秒快取一次）。",
             },
-            # 訂閱（OAuth 登入、非 API key）時附官方 rate limit；否則 None（前端不顯示）。
             "rate_limits": (
                 codex_usage.fetch_rate_limits()
                 if config.codex_cli_available()
@@ -410,25 +360,27 @@ def _provider_quota_snapshot() -> dict:
             ),
         },
         _antigravity_status(),
+        {
+            "key": "minimax",
+            "label": "MiniMax",
+            "active": config.PROVIDER == "minimax",
+            "ready": bool(config.MINIMAX_API_KEY),
+            "status": "ok" if config.MINIMAX_API_KEY else "missing",
+            "auth": "api_key" if config.MINIMAX_API_KEY else "missing",
+            "quota": {
+                "kind": "api",
+                "summary": "MiniMax 訂閱剩餘額度",
+                "detail": "由 MiniMax token_plan/remains 端點即時查詢（每 60 秒快取一次）。",
+            },
+            "rate_limits": minimax_usage.fetch_rate_limits() if config.MINIMAX_API_KEY else None,
+        },
     ]
-
-    for item in providers:
-        item["usage_all"] = _usage_for_provider(all_usage, item["key"])
-        item["usage_5h"] = _usage_for_provider(five_hour_usage, item["key"])
-        item["usage_7d"] = _usage_for_provider(week_usage, item["key"])
-        item["usage_30d"] = _usage_for_provider(month_usage, item["key"])
 
     return {
         "ok": True,
         "active_provider": config.PROVIDER,
         "provider_ready": config.provider_ready(),
         "updated_at": now,
-        "usage": {
-            "all": all_usage,
-            "last_5h": five_hour_usage,
-            "last_7d": week_usage,
-            "last_30d": month_usage,
-        },
         "providers": providers,
     }
 
