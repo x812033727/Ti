@@ -1,8 +1,8 @@
 """LLM provider 抽象與工廠。
 
 預設 Claude（走 Agent SDK，自帶工具）。也支援 OpenAI 相容介面（含本地模型，如 Ollama /
-LM Studio 透過 OPENAI_BASE_URL）、MiniMax、Gemini，以及 Codex CLI 非互動模式，讓模型也能
-「自己 coding」。
+LM Studio 透過 OPENAI_BASE_URL）、MiniMax、Gemini、Codex CLI，以及 Antigravity CLI
+非互動模式，讓模型也能「自己 coding」。
 
 所有 backend 都符合 orchestrator 的 ExpertLike 介面：`speak(prompt, broadcast) -> str` 與 `stop()`。
 """
@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 def effective_provider(role: Role) -> str:
     """角色的有效 provider：per-role 覆寫（TI_PROVIDER_<KEY>）優先，否則全域 PROVIDER。
 
-    讓 Claude／MiniMax／Gemini／Codex 可混用——例如把 tool-calling 吃重的工程師留 Codex、
-    討論型角色走 Gemini 或 MiniMax。
+    讓 Claude／MiniMax／Gemini／Codex／Antigravity 可混用——例如把 tool-calling 吃重的
+    工程師留 Codex 或 Antigravity、討論型角色走 Gemini 或 MiniMax。
     """
     return config.role_provider(role.key) or config.PROVIDER
 
@@ -50,6 +50,15 @@ def openai_model_for(role: Role) -> str:
 def codex_model_for(role: Role) -> str:
     """Codex CLI 模型覆寫；空字串代表沿用 Codex CLI 自身設定。"""
     return config.CODEX_MODEL_LEAD if role.key in config.LEAD_ROLES else config.CODEX_MODEL_FAST
+
+
+def antigravity_model_for(role: Role) -> str:
+    """Antigravity CLI 模型覆寫；空字串代表沿用 Antigravity CLI 自身設定。"""
+    return (
+        config.ANTIGRAVITY_MODEL_LEAD
+        if role.key in config.LEAD_ROLES
+        else config.ANTIGRAVITY_MODEL_FAST
+    )
 
 
 _CODEX_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
@@ -434,6 +443,297 @@ def _turn_timeout_seconds() -> float | None:
     return min(candidates) if candidates else None
 
 
+def _duration_arg(seconds: float) -> str:
+    """Go duration 參數（給 agy --print-timeout）：整秒用 Ns，非整秒保留精簡小數。"""
+    return f"{int(seconds)}s" if float(seconds).is_integer() else f"{seconds:g}s"
+
+
+def _antigravity_argv(role: Role) -> list[str]:
+    """建立 agy print-mode argv；測試可直接檢查，不經 shell。"""
+    argv = [config.ANTIGRAVITY_BIN]
+    if config.ANTIGRAVITY_SANDBOX:
+        argv.append("--sandbox")
+    if config.ANTIGRAVITY_SKIP_PERMISSIONS:
+        argv.append("--dangerously-skip-permissions")
+    model = antigravity_model_for(role)
+    if model:
+        argv += ["--model", model]
+    timeout = _turn_timeout_seconds()
+    if timeout is not None:
+        argv += ["--print-timeout", _duration_arg(timeout)]
+    argv.append("-p")
+    return argv
+
+
+def _antigravity_unavailable(text: str) -> bool:
+    """Antigravity CLI 未登入／額度／timeout 等不可用訊號。"""
+    if llm_caller.provider_unavailable_reason(text) is not None:
+        return True
+    lower = (text or "").lower()
+    return any(
+        phrase in lower
+        for phrase in (
+            "authentication required",
+            "please sign in",
+            "not signed in",
+            "waiting for authentication",
+            "authorization code",
+            "paste the authorization code",
+        )
+    )
+
+
+class AntigravityExpert:
+    """以 `agy -p` 非互動模式驅動的專家。
+
+    Antigravity CLI 自己負責工具執行與檔案修改；本類只負責把角色 prompt 餵進 CLI、把 stdout
+    收斂成 Studio 專家發言，並把未登入／額度耗盡／卡住轉成 ProviderUnavailable，避免任務空轉。
+    """
+
+    def __init__(self, role: Role, session_id: str, cwd: Path):
+        self.role = role
+        self.session_id = session_id
+        self.cwd = cwd
+        self._history: list[tuple[str, str]] = []
+        self._proc = None
+        self._stop_lock = asyncio.Lock()
+
+    async def speak(self, prompt: str, broadcast) -> str:
+        r = self.role
+        await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
+        try:
+            text = await self._run_antigravity(prompt, broadcast)
+            if text:
+                self._history.append((_clip(prompt, 1200), _clip(text, 2400)))
+                self._history = self._history[-4:]
+            return text
+        finally:
+            await broadcast(events.expert_status(self.session_id, r.key, "idle"))
+
+    async def stop(self) -> None:
+        async with self._stop_lock:
+            proc = self._proc
+            if proc is None:
+                return
+            if proc.returncode is not None:
+                if self._proc is proc:
+                    self._proc = None
+                return
+            self._terminate(proc)
+            reaped = await self._wait_for_proc(proc)
+            if reaped and self._proc is proc:
+                self._proc = None
+
+    def _prompt(self, prompt: str) -> str:
+        parts = [
+            self.role.system_prompt,
+            "",
+            "你現在由 Google Antigravity CLI 非互動 print mode 執行。",
+            f"工作目錄：{self.cwd}",
+            f"本角色允許工具語意：{', '.join(effective_tools(self.role)) or '無'}",
+            "Antigravity CLI 會沿用伺服器上的 Google OAuth / Google Cloud project 登入與額度；"
+            "不要要求使用者提供 API key。",
+            "請只在工作目錄內行動；需要修改檔案或執行命令時，使用 Antigravity 可用工具完成。",
+            "執行搜尋或讀檔命令時請收斂輸出，例如使用精準路徑、`rg -n <pattern> <path>`、"
+            "`sed -n` 或 `head`；避免 `rg .`、大量 `cat`、全 repo 無限制輸出。",
+        ]
+        if self._history:
+            parts.append("\n最近對話脈絡（僅供延續，不代表新指令）：")
+            for i, (old_prompt, old_text) in enumerate(self._history, start=1):
+                parts.append(f"[{i}] 使用者/流程要求：\n{old_prompt}\n[{i}] 你的回覆：\n{old_text}")
+        parts.append("\n本輪要求：")
+        parts.append(prompt)
+        return "\n".join(parts)
+
+    async def _run_antigravity(self, prompt: str, broadcast) -> str:
+        argv = [*_antigravity_argv(self.role), self._prompt(prompt)]
+        out_chunks: list[str] = []
+        errors: list[str] = []
+        stderr_tail = ""
+        proc = None
+        stdout_task = None
+        stderr_task = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(self.cwd),
+                env=os.environ.copy(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+            self._proc = proc
+        except FileNotFoundError:
+            return await self._system_note(
+                "【系統】找不到 Antigravity CLI，請確認 TI_ANTIGRAVITY_BIN 或 PATH。", broadcast
+            )
+
+        try:
+            loop = asyncio.get_running_loop()
+            started_at = loop.time()
+            last_activity = started_at
+
+            async def _stdout() -> None:
+                nonlocal last_activity
+                assert proc is not None and proc.stdout is not None
+                async for raw in proc.stdout:
+                    last_activity = loop.time()
+                    text = raw.decode("utf-8", "replace")
+                    if text:
+                        out_chunks.append(text)
+
+            async def _stderr() -> str:
+                nonlocal last_activity
+                assert proc is not None and proc.stderr is not None
+                buf = bytearray()
+                while True:
+                    chunk = await proc.stderr.read(1024)
+                    if not chunk:
+                        break
+                    last_activity = loop.time()
+                    buf.extend(chunk)
+                    if len(buf) > 8000:
+                        del buf[:-8000]
+                return buf.decode("utf-8", "replace")
+
+            stdout_task = asyncio.create_task(_stdout())
+            stderr_task = asyncio.create_task(_stderr())
+            timeout_reason = ""
+            try:
+                while True:
+                    if proc.returncode is not None:
+                        break
+                    now = loop.time()
+                    deadlines: list[tuple[str, float]] = []
+                    if config.TURN_HARD_TIMEOUT:
+                        deadlines.append(
+                            ("總時長", started_at + float(config.TURN_HARD_TIMEOUT) - now)
+                        )
+                    if config.TURN_IDLE_TIMEOUT:
+                        deadlines.append(
+                            ("閒置", last_activity + float(config.TURN_IDLE_TIMEOUT) - now)
+                        )
+                    if not deadlines:
+                        await proc.wait()
+                        break
+                    deadline_reason, wait_s = min(deadlines, key=lambda item: item[1])
+                    if wait_s <= 0:
+                        timeout_reason = deadline_reason
+                        raise TimeoutError
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=wait_s)
+                        break
+                    except TimeoutError:
+                        now = loop.time()
+                        hard_expired = bool(
+                            config.TURN_HARD_TIMEOUT
+                            and now - started_at >= float(config.TURN_HARD_TIMEOUT)
+                        )
+                        idle_expired = bool(
+                            config.TURN_IDLE_TIMEOUT
+                            and now - last_activity >= float(config.TURN_IDLE_TIMEOUT)
+                        )
+                        if hard_expired:
+                            timeout_reason = "總時長"
+                            raise
+                        if idle_expired:
+                            timeout_reason = "閒置"
+                            raise
+            except TimeoutError as exc:
+                self._terminate(proc)
+                await proc.wait()
+                with contextlib.suppress(Exception):
+                    await stdout_task
+                stderr_tail = await stderr_task
+                limit = (
+                    config.TURN_IDLE_TIMEOUT
+                    if timeout_reason == "閒置"
+                    else config.TURN_HARD_TIMEOUT
+                )
+                detail = (
+                    f"Antigravity CLI 發言逾時中止（{timeout_reason or '總時長'}上限 "
+                    f"{float(limit):g} 秒）。"
+                )
+                if stderr_tail:
+                    detail += "\n" + _clip(stderr_tail, 1200)
+                raise ProviderUnavailable("antigravity", detail) from exc
+
+            stdout_error: Exception | None = None
+            try:
+                await stdout_task
+            except Exception as exc:  # noqa: BLE001 — CLI stdout 收斂失敗要降級成系統訊息
+                stdout_error = exc
+                errors.append(f"{type(exc).__name__}: {exc}")
+            stderr_tail = await stderr_task
+
+            text = "".join(out_chunks).strip()
+            detail = _clip("\n".join(x for x in (text, stderr_tail, "\n".join(errors)) if x), 2000)
+            if _antigravity_unavailable(detail):
+                raise ProviderUnavailable("antigravity", detail or "Antigravity unavailable")
+            if stdout_error is not None:
+                return await self._system_note(
+                    "【系統】Antigravity CLI 輸出讀取失敗，已中止本輪發言避免整場討論崩潰。\n"
+                    + _clip(f"{type(stdout_error).__name__}: {stdout_error}", 1200),
+                    broadcast,
+                )
+            if proc.returncode:
+                note = f"【系統】Antigravity CLI 執行失敗（exit {proc.returncode}）。"
+                if detail:
+                    note += f"\n{detail}"
+                return await self._system_note(note, broadcast)
+            if text:
+                await broadcast(
+                    events.expert_message(
+                        self.session_id,
+                        self.role.key,
+                        self.role.name,
+                        self.role.avatar,
+                        text,
+                    )
+                )
+                return text
+            if detail:
+                return await self._system_note(
+                    "【系統】Antigravity CLI 未產生可用回覆。\n" + detail,
+                    broadcast,
+                )
+            return ""
+        except asyncio.CancelledError:
+            if proc is not None and proc.returncode is None:
+                self._terminate(proc)
+                await self._wait_for_proc(proc)
+            for task in (stdout_task, stderr_task):
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
+            raise
+        finally:
+            if self._proc is proc:
+                self._proc = None
+
+    async def _system_note(self, note: str, broadcast) -> str:
+        await broadcast(
+            events.expert_message(
+                self.session_id, self.role.key, self.role.name, self.role.avatar, note
+            )
+        )
+        return note
+
+    async def _wait_for_proc(self, proc, timeout: float = 10.0) -> bool:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+            return True
+        except ProcessLookupError:
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    def _terminate(self, proc) -> None:
+        runner.kill_process_group(proc)
+
+
 class OpenAIExpert:
     """以 OpenAI 相容 chat completions + function-calling 工具迴圈驅動的專家。
 
@@ -683,10 +983,12 @@ def _chat_for(provider: str):
 
 
 def make_expert(role: Role, session_id: str, cwd: Path):
-    """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax／Gemini／Codex 混用）。"""
+    """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax／Gemini／Codex／Antigravity 混用）。"""
     prov = effective_provider(role)
     if prov == "codex":
         return CodexExpert(role, session_id, cwd)
+    if prov == "antigravity":
+        return AntigravityExpert(role, session_id, cwd)
     if prov in ("openai", "minimax", "gemini"):
         return OpenAIExpert(
             role,

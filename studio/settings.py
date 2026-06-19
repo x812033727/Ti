@@ -67,12 +67,24 @@ GEMINI_MODELS: tuple[str, ...] = (
 # OpenAI/API 相容 provider，模型 ID 不應被 UI 寫死。
 CODEX_MODELS: tuple[str, ...] = ("gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark")
 
+# Antigravity CLI 建議模型（`agy models` 顯示名稱會依登入方案/區域異動）。使用 combo：
+# 使用者可直接填當前 CLI 列出的模型名稱，留空則沿用 Antigravity CLI settings/model。
+ANTIGRAVITY_MODELS: tuple[str, ...] = (
+    "Gemini 3.5 Flash (High)",
+    "Gemini 3.5 Flash (Medium)",
+    "Gemini 3.5 Flash (Low)",
+    "Gemini 3.1 Pro (High)",
+    "Claude Sonnet 4.6 (Thinking)",
+    "Claude Opus 4.6 (Thinking)",
+    "GPT-OSS 120B (Medium)",
+)
+
 FIELDS: tuple[Field, ...] = (
     Field(
         "TI_PROVIDER",
         "後端 Provider",
         kind="select",
-        options=("claude", "openai", "minimax", "gemini", "codex"),
+        options=config.PROVIDERS,
         default="claude",
         group="一般",
     ),
@@ -254,14 +266,54 @@ FIELDS: tuple[Field, ...] = (
         default="0",
         group="Codex",
     ),
-    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Gemini／Codex
-    # 混用，例如把 tool-calling 吃重的工程師走 codex、討論/審查型角色走 gemini 或 minimax。
+    # --- Antigravity CLI（本機 agy -p；Provider 選 antigravity 或 per-role 指到 antigravity 時生效） ---
+    Field(
+        "TI_ANTIGRAVITY_BIN",
+        "Antigravity CLI 執行檔",
+        placeholder="agy",
+        default="agy",
+        group="Antigravity",
+    ),
+    Field(
+        "TI_ANTIGRAVITY_MODEL_LEAD",
+        "Antigravity 主力模型（PM／高級工程師）",
+        kind="combo",
+        options=ANTIGRAVITY_MODELS,
+        placeholder="留空＝Antigravity CLI 預設／settings.json",
+        group="Antigravity",
+    ),
+    Field(
+        "TI_ANTIGRAVITY_MODEL_FAST",
+        "Antigravity 快速模型（工程師／QA）",
+        kind="combo",
+        options=ANTIGRAVITY_MODELS,
+        placeholder="留空＝Antigravity CLI 預設／settings.json",
+        group="Antigravity",
+    ),
+    Field(
+        "TI_ANTIGRAVITY_SANDBOX",
+        "Antigravity Sandbox（1 開／0 關）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="Antigravity",
+    ),
+    Field(
+        "TI_ANTIGRAVITY_SKIP_PERMISSIONS",
+        "Antigravity 自動核准工具權限（1 開／0 關）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="Antigravity",
+    ),
+    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Gemini／Codex／
+    # Antigravity 混用，例如把 tool-calling 吃重的工程師走 codex/antigravity、討論/審查型角色走 gemini。
     *(
         Field(
             f"TI_PROVIDER_{key.upper()}",
             f"{zh} provider（auto＝沿用全域）",
             kind="select",
-            options=("auto", "claude", "openai", "minimax", "gemini", "codex"),
+            options=("auto", *config.PROVIDERS),
             default="auto",
             group="混用（每角色 provider）",
         )

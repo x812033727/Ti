@@ -70,6 +70,7 @@ def test_provider_unavailable_reason_detects_usage_limit():
     "text,kind",
     [
         ("Error code: 401 - invalid api key", "auth"),
+        ("Authentication required. Please sign in to continue.", "auth"),
         ("API Error: HTTP 503 service unavailable", "server"),
         ("insufficient_quota: quota exceeded", "quota"),
         ('{"type":"error","error":{"type":"billing_error","message":"quota"}}', "billing"),

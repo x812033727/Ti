@@ -40,8 +40,8 @@ def _env_float(name: str, default: float) -> float:
 
 # --- Provider / 模型 ----------------------------------------------------
 # 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）、openai（含 OpenAI 相容/本地模型）、
-# minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面）、gemini（Gemini OpenAI 相容端點），
-# 或 codex（Codex CLI 非互動模式）。
+# minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面）、gemini（Gemini OpenAI 相容端點）、
+# codex（Codex CLI 非互動模式），或 antigravity（Google Antigravity CLI 非互動模式）。
 PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
 
 # Claude 模型 ID。PM / 高級工程師需要較強的推理；工程師 / 驗證工程師偏重速度。
@@ -65,7 +65,7 @@ def _role_models() -> dict[str, str]:
 ROLE_MODELS = _role_models()
 
 # 合法的 provider 名單；per-role 覆寫只接受其一，其餘（含 auto／空）＝不覆寫。
-PROVIDERS = ("claude", "openai", "minimax", "gemini", "codex")
+PROVIDERS = ("claude", "openai", "minimax", "gemini", "codex", "antigravity")
 
 
 def _role_providers() -> dict[str, str]:
@@ -132,6 +132,24 @@ def _codex_sandbox() -> str:
 CODEX_SANDBOX = _codex_sandbox()
 # 真正停用 Codex CLI sandbox/approval 的高風險逃生口；預設關閉。
 CODEX_BYPASS_SANDBOX = os.getenv("TI_CODEX_BYPASS_SANDBOX", "0") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+
+# Antigravity CLI（`agy -p`）設定。模型留空＝沿用 Antigravity CLI 自身設定；憑證與額度
+# 由 `agy` 的 Google OAuth / Google Cloud project 登入管理，不使用 API key。
+ANTIGRAVITY_BIN = os.getenv("TI_ANTIGRAVITY_BIN", "agy")
+ANTIGRAVITY_MODEL_LEAD = os.getenv("TI_ANTIGRAVITY_MODEL_LEAD", "")
+ANTIGRAVITY_MODEL_FAST = os.getenv("TI_ANTIGRAVITY_MODEL_FAST", "")
+ANTIGRAVITY_SANDBOX = os.getenv("TI_ANTIGRAVITY_SANDBOX", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+ANTIGRAVITY_SKIP_PERMISSIONS = os.getenv("TI_ANTIGRAVITY_SKIP_PERMISSIONS", "1") not in (
     "0",
     "false",
     "False",
@@ -805,10 +823,17 @@ def codex_cli_logged_in() -> bool:
     return (home / "auth.json").exists()
 
 
+def antigravity_cli_available() -> bool:
+    """Antigravity CLI 是否可執行。登入狀態由 `agy -p` 執行時回報並由 provider pause 收斂。"""
+    return shutil.which(ANTIGRAVITY_BIN) is not None
+
+
 def provider_ready() -> bool:
     """目前選定的 provider 是否具備可執行的憑證/設定。"""
     if PROVIDER == "codex":
         return codex_cli_available() and codex_cli_logged_in()
+    if PROVIDER == "antigravity":
+        return antigravity_cli_available()
     if PROVIDER == "minimax":
         # MiniMax base_url 有預設端點，故只認 API key 是否填妥。
         return bool(MINIMAX_API_KEY)
@@ -833,6 +858,8 @@ def reload() -> None:
     global GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_MODEL_LEAD, GEMINI_MODEL_FAST
     global CODEX_BIN, CODEX_HOME, CODEX_API_KEY, CODEX_MODEL_LEAD, CODEX_MODEL_FAST
     global CODEX_SANDBOX, CODEX_BYPASS_SANDBOX
+    global ANTIGRAVITY_BIN, ANTIGRAVITY_MODEL_LEAD, ANTIGRAVITY_MODEL_FAST
+    global ANTIGRAVITY_SANDBOX, ANTIGRAVITY_SKIP_PERMISSIONS
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
@@ -894,6 +921,21 @@ def reload() -> None:
     CODEX_MODEL_FAST = os.getenv("TI_CODEX_MODEL_FAST", "")
     CODEX_SANDBOX = _codex_sandbox()
     CODEX_BYPASS_SANDBOX = os.getenv("TI_CODEX_BYPASS_SANDBOX", "0") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    ANTIGRAVITY_BIN = os.getenv("TI_ANTIGRAVITY_BIN", "agy")
+    ANTIGRAVITY_MODEL_LEAD = os.getenv("TI_ANTIGRAVITY_MODEL_LEAD", "")
+    ANTIGRAVITY_MODEL_FAST = os.getenv("TI_ANTIGRAVITY_MODEL_FAST", "")
+    ANTIGRAVITY_SANDBOX = os.getenv("TI_ANTIGRAVITY_SANDBOX", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    ANTIGRAVITY_SKIP_PERMISSIONS = os.getenv("TI_ANTIGRAVITY_SKIP_PERMISSIONS", "1") not in (
         "0",
         "false",
         "False",

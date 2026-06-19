@@ -85,6 +85,27 @@ def test_update_accepts_codex_sandbox_fields(sandbox):
     assert config.CODEX_BYPASS_SANDBOX is True
 
 
+def test_update_accepts_antigravity_provider_and_fields(sandbox):
+    settings.update(
+        {
+            "TI_PROVIDER": "antigravity",
+            "TI_PROVIDER_ENGINEER": "antigravity",
+            "TI_ANTIGRAVITY_BIN": "/usr/local/bin/agy",
+            "TI_ANTIGRAVITY_MODEL_LEAD": "Gemini 3.5 Flash (High)",
+            "TI_ANTIGRAVITY_MODEL_FAST": "Claude Sonnet 4.6 (Thinking)",
+            "TI_ANTIGRAVITY_SANDBOX": "0",
+            "TI_ANTIGRAVITY_SKIP_PERMISSIONS": "1",
+        }
+    )
+    assert config.PROVIDER == "antigravity"
+    assert config.ROLE_PROVIDERS["engineer"] == "antigravity"
+    assert config.ANTIGRAVITY_BIN == "/usr/local/bin/agy"
+    assert config.ANTIGRAVITY_MODEL_LEAD == "Gemini 3.5 Flash (High)"
+    assert config.ANTIGRAVITY_MODEL_FAST == "Claude Sonnet 4.6 (Thinking)"
+    assert config.ANTIGRAVITY_SANDBOX is False
+    assert config.ANTIGRAVITY_SKIP_PERMISSIONS is True
+
+
 def test_codex_sandbox_env_reloads(sandbox, monkeypatch):
     monkeypatch.setenv("TI_CODEX_SANDBOX", "danger-full-access")
     monkeypatch.setenv("TI_CODEX_BYPASS_SANDBOX", "1")

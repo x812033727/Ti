@@ -256,6 +256,14 @@ _PROVIDER_UNAVAILABLE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, str]], .
         ("billing", "billing or quota is unavailable"),
     ),
     (
+        re.compile(
+            r"\b(?:authentication\s+required|please\s+sign\s+in|not\s+signed\s+in|"
+            r"waiting\s+for\s+authentication|authorization\s+code)\b",
+            re.I,
+        ),
+        ("auth", "provider authentication required"),
+    ),
+    (
         re.compile(r"\b(?:chat|request|provider)\s+timeout\b|\btimed\s+out\b", re.I),
         ("timeout", "provider request timed out"),
     ),
