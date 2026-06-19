@@ -29,7 +29,7 @@ ENV = ROOT / ".env"
 HOST = "127.0.0.1"
 PORT = 8011  # 避開 8000，互不干擾
 BASE = f"http://{HOST}:{PORT}"
-SECRET_ENVS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"}
+SECRET_ENVS = {"ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "GITHUB_TOKEN"}
 
 
 def _get(path: str, timeout: float = 3.0):
@@ -108,7 +108,7 @@ def test_token_fields_present(fields):
 def test_secret_fields_are_password_kind(fields):
     """token／API key 欄位為 password 型態且標記 secret。"""
     m = _by_env(fields)
-    for env in ("GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    for env in ("GITHUB_TOKEN", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY"):
         f = m[env]
         assert f["kind"] == "password", f"{env} kind 應為 password"
         assert f["secret"] is True, f"{env} 應標記 secret"
@@ -124,7 +124,7 @@ def test_secret_fields_no_plaintext(fields):
 def test_unset_fields_set_false(fields):
     """未設定的 token 欄位 set=false（本測試已清掉這些 env）。"""
     m = _by_env(fields)
-    for env in ("GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    for env in ("GITHUB_TOKEN", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY"):
         assert m[env]["set"] is False, f"{env} 未設定時 set 應為 False"
 
 

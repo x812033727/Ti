@@ -37,11 +37,11 @@ def test_read_masks_secrets(sandbox, monkeypatch):
 
 
 def test_update_writes_and_reloads(sandbox):
-    settings.update({"TI_PROVIDER": "openai", "TI_MODEL_LEAD": "claude-haiku-4-5"})
-    assert config.PROVIDER == "openai"
+    settings.update({"TI_PROVIDER": "minimax", "TI_MODEL_LEAD": "claude-haiku-4-5"})
+    assert config.PROVIDER == "minimax"
     assert config.MODEL_LEAD == "claude-haiku-4-5"
     env_text = (sandbox / ".env").read_text()
-    assert "TI_PROVIDER" in env_text and "openai" in env_text
+    assert "TI_PROVIDER" in env_text and "minimax" in env_text
 
 
 def test_update_accepts_codex_provider(sandbox):
@@ -50,22 +50,21 @@ def test_update_accepts_codex_provider(sandbox):
     assert config.ROLE_PROVIDERS["engineer"] == "codex"
 
 
-def test_update_accepts_gemini_provider_and_model_fields(sandbox):
+def test_update_accepts_minimax_provider_and_model_fields(sandbox):
     settings.update(
         {
-            "TI_PROVIDER": "gemini",
-            "TI_PROVIDER_QA": "gemini",
-            "GEMINI_API_KEY": "gm-key",
-            "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "TI_GEMINI_MODEL_LEAD": "gemini-2.5-pro",
-            "TI_GEMINI_MODEL_FAST": "gemini-2.5-flash",
+            "TI_PROVIDER": "minimax",
+            "TI_PROVIDER_QA": "minimax",
+            "MINIMAX_API_KEY": "mm-key",
+            "TI_MINIMAX_MODEL_LEAD": "MiniMax-M3",
+            "TI_MINIMAX_MODEL_FAST": "MiniMax-M2.7",
         }
     )
-    assert config.PROVIDER == "gemini"
-    assert config.ROLE_PROVIDERS["qa"] == "gemini"
-    assert config.GEMINI_API_KEY == "gm-key"
-    assert config.GEMINI_MODEL_LEAD == "gemini-2.5-pro"
-    assert config.GEMINI_MODEL_FAST == "gemini-2.5-flash"
+    assert config.PROVIDER == "minimax"
+    assert config.ROLE_PROVIDERS["qa"] == "minimax"
+    assert config.MINIMAX_API_KEY == "mm-key"
+    assert config.MINIMAX_MODEL_LEAD == "MiniMax-M3"
+    assert config.MINIMAX_MODEL_FAST == "MiniMax-M2.7"
 
 
 def test_update_accepts_codex_model_fields(sandbox):
