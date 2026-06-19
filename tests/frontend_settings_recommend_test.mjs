@@ -78,7 +78,7 @@ const FIELDS = [
   },
   {
     env: 'TI_PROVIDER', label: '後端 Provider', kind: 'select', secret: false,
-    options: ['claude', 'openai'],
+    options: ['claude', 'minimax'],
     placeholder: '', group: '一般', recommended: '', value: 'claude', set: true,
   },
 ];

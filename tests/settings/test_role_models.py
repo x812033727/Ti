@@ -46,6 +46,26 @@ def test_read_exposes_recommended(sandbox):
     assert fields["TI_MODEL_ENGINEER"]["value"] == "auto"  # 未設定時顯示有效預設
 
 
+def test_role_provider_recommendations_are_cross_provider_mix():
+    """每角色 provider 推薦＝跨 provider 混搭；推薦值都須是合法 provider。"""
+    fields = {f.env: f for f in settings.FIELDS}
+    expected = {
+        "TI_PROVIDER_PM": "claude",
+        "TI_PROVIDER_SENIOR": "claude",
+        "TI_PROVIDER_ARCHITECT": "claude",
+        "TI_PROVIDER_SECURITY": "claude",
+        "TI_PROVIDER_ENGINEER": "codex",
+        "TI_PROVIDER_DEVOPS": "codex",
+        "TI_PROVIDER_QA": "minimax",
+        "TI_PROVIDER_RESEARCHER": "minimax",
+    }
+    for env, prov in expected.items():
+        assert fields[env].recommended == prov
+        # 推薦值必須是合法 provider 且在該欄選項內
+        assert prov in config.PROVIDERS
+        assert prov in fields[env].options
+
+
 # ---------- update 驗證與 reload ----------
 
 
