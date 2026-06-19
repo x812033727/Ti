@@ -56,6 +56,13 @@ MINIMAX_MODELS: tuple[str, ...] = (
     "MiniMax-M2",
 )
 
+# Gemini 模型建議值（Google AI Gemini API；用 combo，保留使用者填最新/區域可用模型的彈性）。
+GEMINI_MODELS: tuple[str, ...] = (
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+)
+
 # Codex CLI 建議模型（Codex manual, 2026-06）。同樣使用 combo：Codex 可指向其他
 # OpenAI/API 相容 provider，模型 ID 不應被 UI 寫死。
 CODEX_MODELS: tuple[str, ...] = ("gpt-5.5", "gpt-5.4-mini", "gpt-5.3-codex-spark")
@@ -65,7 +72,7 @@ FIELDS: tuple[Field, ...] = (
         "TI_PROVIDER",
         "後端 Provider",
         kind="select",
-        options=("claude", "openai", "minimax", "codex"),
+        options=("claude", "openai", "minimax", "gemini", "codex"),
         default="claude",
         group="一般",
     ),
@@ -180,6 +187,40 @@ FIELDS: tuple[Field, ...] = (
         placeholder="MiniMax-M3",
         group="MiniMax",
     ),
+    # --- Gemini（Google AI Studio API key；OpenAI 相容端點）。Provider 選 gemini 時生效。 ---
+    Field(
+        "GEMINI_API_KEY",
+        "Gemini API Key",
+        kind="password",
+        secret=True,
+        placeholder="填入 Google AI Studio API key",
+        group="Gemini",
+    ),
+    Field(
+        "GEMINI_BASE_URL",
+        "Gemini Base URL（OpenAI 相容端點）",
+        placeholder="https://generativelanguage.googleapis.com/v1beta/openai/",
+        default="https://generativelanguage.googleapis.com/v1beta/openai/",
+        group="Gemini",
+    ),
+    Field(
+        "TI_GEMINI_MODEL_LEAD",
+        "Gemini 主力模型（PM／高級工程師）",
+        kind="combo",
+        options=GEMINI_MODELS,
+        default="gemini-2.5-pro",
+        placeholder="gemini-2.5-pro",
+        group="Gemini",
+    ),
+    Field(
+        "TI_GEMINI_MODEL_FAST",
+        "Gemini 快速模型（工程師／QA）",
+        kind="combo",
+        options=GEMINI_MODELS,
+        default="gemini-2.5-flash",
+        placeholder="gemini-2.5-flash",
+        group="Gemini",
+    ),
     # --- Codex CLI（本機 codex exec；Provider 選 codex 或 per-role 指到 codex 時生效） ---
     Field(
         "TI_CODEX_MODEL_LEAD",
@@ -213,14 +254,14 @@ FIELDS: tuple[Field, ...] = (
         default="0",
         group="Codex",
     ),
-    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Codex 混用，
-    # 例如把 tool-calling 吃重的工程師／QA 走 codex、討論型角色走 minimax。
+    # 每角色 provider 覆寫（auto＝沿用上方「後端 Provider」）：可讓 Claude／MiniMax／Gemini／Codex
+    # 混用，例如把 tool-calling 吃重的工程師走 codex、討論/審查型角色走 gemini 或 minimax。
     *(
         Field(
             f"TI_PROVIDER_{key.upper()}",
             f"{zh} provider（auto＝沿用全域）",
             kind="select",
-            options=("auto", "claude", "openai", "minimax", "codex"),
+            options=("auto", "claude", "openai", "minimax", "gemini", "codex"),
             default="auto",
             group="混用（每角色 provider）",
         )

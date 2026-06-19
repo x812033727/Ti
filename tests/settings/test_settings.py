@@ -50,6 +50,24 @@ def test_update_accepts_codex_provider(sandbox):
     assert config.ROLE_PROVIDERS["engineer"] == "codex"
 
 
+def test_update_accepts_gemini_provider_and_model_fields(sandbox):
+    settings.update(
+        {
+            "TI_PROVIDER": "gemini",
+            "TI_PROVIDER_QA": "gemini",
+            "GEMINI_API_KEY": "gm-key",
+            "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "TI_GEMINI_MODEL_LEAD": "gemini-2.5-pro",
+            "TI_GEMINI_MODEL_FAST": "gemini-2.5-flash",
+        }
+    )
+    assert config.PROVIDER == "gemini"
+    assert config.ROLE_PROVIDERS["qa"] == "gemini"
+    assert config.GEMINI_API_KEY == "gm-key"
+    assert config.GEMINI_MODEL_LEAD == "gemini-2.5-pro"
+    assert config.GEMINI_MODEL_FAST == "gemini-2.5-flash"
+
+
 def test_update_accepts_codex_model_fields(sandbox):
     settings.update(
         {

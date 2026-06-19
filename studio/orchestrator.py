@@ -812,6 +812,7 @@ class StudioSession:
             "core_changes": [],
             "commit": None,
             "vision": "",
+            "provider_unavailable": "",
         }
         # 開工前先寫 baseline .gitignore（純檔案寫入、不需 .git）:讓 SDK 沙箱散落的 dotfiles／
         # .venv／*.db 等 junk 從不被 `git add -A` 追蹤——乾淨歷史＋乾淨 lane 分支（與 #126 發佈前
@@ -821,6 +822,17 @@ class StudioSession:
         try:
             result = await self._run(requirement)
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
+            provider = getattr(exc, "provider", "")
+            if provider:
+                result["provider_unavailable"] = str(provider)
+                self._stop = True
+                await self.broadcast(
+                    events.phase_change(
+                        self.session_id,
+                        "Provider 暫停",
+                        f"{provider} 暫時不可用，本場停止以避免錯誤被當成 QA 失敗重跑。",
+                    )
+                )
             await self.broadcast(events.error(self.session_id, f"{type(exc).__name__}: {exc}"))
         finally:
             # 回收所有 lane（含 main）的專家與 critic；安全網涵蓋 main_ctx 尚未建立但
@@ -1108,7 +1120,12 @@ class StudioSession:
     ) -> str:
         """經號誌節流 + 標籤化 broadcast 呼叫某 lane 的專家發言。"""
         async with self._llm_semaphore():
-            return await ctx.experts[role_key].speak(prompt, self._tagged_broadcast(task_id))
+            try:
+                return await ctx.experts[role_key].speak(prompt, self._tagged_broadcast(task_id))
+            except Exception as exc:  # noqa: BLE001 — provider-unavailable 要穿透，其餘維持既有路徑
+                if getattr(exc, "provider", ""):
+                    self._stop = True
+                raise
 
     def _lane_tag(self, ctx: LaneContext, task: dict) -> int | None:
         """並行 lane（branch 不為 None）回 task id 供事件標籤；主 lane 回 None（行為不變）。"""
