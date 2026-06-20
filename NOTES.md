@@ -553,3 +553,10 @@ class RetryConfig:
 理由: PM 已逐項核可，無新取捨。
 
 工程師照此改 C 段判定與報告內 HEAD 寫法兩處，其餘不動，task #4 即可收。
+
+## 任務 #4 完成：確立 test_no_py_changed 排除後的收斂驗收命令
+
+設計決策: 本輪正式驗收命令固定為 `python3 -m pytest tests/test_scope_fixture_demo.py -q && test -z "$(git diff -- tests/test_task1_retry_doc.py)" && echo GUARD_UNTOUCHED`。
+理由: 本輪只驗示範 fixture/test 落地與護欄本體未改；`test_no_py_changed` 是 task#1 doc-only lane 護欄，不列入本輪驗收。
+
+驗證結果: 已實跑通過，`tests/test_scope_fixture_demo.py` 為 2 passed；串接命令輸出 `GUARD_UNTOUCHED`，確認 `git diff -- tests/test_task1_retry_doc.py` 為空。
