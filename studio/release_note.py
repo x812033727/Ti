@@ -41,9 +41,8 @@ emoji（⚠️, U+26A0 U+FE0F）是契約的一部分，不可省略——抽取
 from __future__ import annotations
 
 import re
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 #: heading 字串的唯一事實來源。測試與渲染皆引用此常數，禁止硬寫字面量。
 #: 改動此字串＝改動發佈契約，務必同步 CHANGELOG.md 與相依測試。
