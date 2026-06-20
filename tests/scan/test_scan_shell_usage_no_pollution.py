@@ -11,17 +11,10 @@
 import os
 import re
 import subprocess
+import tomllib
 
 import pytest
 from _repo import REPO_ROOT
-
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # Python 3.10 無 tomllib
-    tomllib = None
-
-# 用到 tomllib 解析 pyproject 的測試，在 3.10 上略過（3.11/3.12 仍涵蓋）。
-requires_tomllib = pytest.mark.skipif(tomllib is None, reason="tomllib 需 Python 3.11+")
 
 REPO = REPO_ROOT
 PYPROJECT = REPO / "pyproject.toml"
@@ -40,7 +33,6 @@ def run(args):
 # --- 靜態：主 ruff 設定不含 S 規則 ----------------------------------------
 
 
-@requires_tomllib
 def test_main_ruff_select_excludes_shell_rules():
     cfg = tomllib.loads(PYPROJECT.read_text())
     select = cfg["tool"]["ruff"]["lint"]["select"]
@@ -49,7 +41,6 @@ def test_main_ruff_select_excludes_shell_rules():
     assert not bad, f"主 ruff select 汙染了 shell 規則：{bad}（select={select}）"
 
 
-@requires_tomllib
 def test_main_ruff_extend_select_absent_or_clean():
     """若有 extend-select / per-file-ignores，也不得偷渡 S 規則。"""
     cfg = tomllib.loads(PYPROJECT.read_text())
@@ -79,7 +70,6 @@ def test_ruff_format_check_dot_passes():
 # --- 對照：S 規則只活在 --isolated 掃描，沒進主 lint -----------------------
 
 
-@requires_tomllib
 def test_s_rules_only_fire_under_isolated_scan():
     """同一份 studio/：主設定不報 S60x；--isolated --select 才報。
     證明新規則被隔離在掃描專用路徑，未進入 `ruff check .`。"""
