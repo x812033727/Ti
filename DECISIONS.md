@@ -1876,12 +1876,19 @@
 - 理由：`python3` 本身也可能漂移；版本確認是最外層保險，費用幾乎為零
 - 否決方案：省略版本確認直接跑 format（省了一步但失去最後一道漂移偵測）
 
-## 執行順序固定為 `format <四檔>` → `format --check <四檔>`，兩步串連
+## 任務 #1 基線量測固定先跑 `python3 -m ruff format --check <四檔>`，本輪輸出 `4 files already formatted`
+- 時間：2026-06-21 01:36
+- 命令：`python3 -m ruff format --check studio/autopilot.py tests/docs/test_qa_task3_python3_convention.py tests/server/test_qa_task5_demo_first_step.py tests/test_verify_clean_acceptance.py`
+- 結果：exit=0；stdout=`4 files already formatted`
+- 理由：`--check` 是不寫入的基線量測，可判定現 HEAD 四檔是否原本已格式化；本輪結果代表 no-op 確認通過。
+- 否決方案：先跑 mutating `python3 -m ruff format <四檔>` 當基線（會破壞「原本是否已格式化」的量測語意）
+
+## 需要修正或冪等驗證時，執行順序固定為 `format <四檔>` → `format --check <四檔>`，兩步串連
 - 時間：2026-06-21 01:36
 - 理由：`format` 冪等寫入、`--check` 非零出口閘門，串連後 CI/本地/pre-commit 三端可複現同一驗收命令
-- 否決方案：只跑 `--check`（無法處理真正未格式化的情境，讓指令不通用）
+- 否決方案：在需要修正時只跑 `--check`（無法處理真正未格式化的情境，讓指令不通用）
 
-## 四個目標路徑顯式完整列舉，每次執行固定帶全部四條路徑
+## 四個目標路徑顯式完整列舉，每次執行固定帶全部四條路徑：`studio/autopilot.py`、`tests/docs/test_qa_task3_python3_convention.py`、`tests/server/test_qa_task5_demo_first_step.py`、`tests/test_verify_clean_acceptance.py`
 - 時間：2026-06-21 01:36
 - 理由：防止人工漏改或路徑漂移；若未來重複執行，命令本身即為可稽核的 spec
 - 否決方案：`ruff format .` 或 glob（掃整個 repo 會動到無關檔，製造非預期 diff）
@@ -1905,4 +1912,3 @@
 - 時間：2026-06-21 01:36
 - 理由：本專案已以 ruff formatter 為唯一格式化層，混用會製造邊界差異且增加工具鏈複雜度
 - 否決方案：Black 補充格式化（ruff 官方文件已明確不建議長期混用）
-
