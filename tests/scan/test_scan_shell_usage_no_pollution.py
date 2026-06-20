@@ -11,9 +11,9 @@
 import os
 import re
 import subprocess
+import tomllib
 
 import pytest
-import tomllib
 from _repo import REPO_ROOT
 
 REPO = REPO_ROOT

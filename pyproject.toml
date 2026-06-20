@@ -77,6 +77,8 @@ ignore = ["E501"]
 # 把多個 `from x import a as a` 顯式 re-export（如 orchestrator 對 flow 的相容層）併成
 # 單一括號區塊，而非每個別名各自一行。
 combine-as-imports = true
+# 專案 runtime 為 Python 3.11+；Ruff target 仍是 py310 時需明確把 tomllib 視為標準庫。
+extra-standard-library = ["tomllib"]
 
 [tool.ruff.format]
 quote-style = "double"

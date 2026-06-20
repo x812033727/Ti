@@ -13,17 +13,13 @@ from __future__ import annotations
 import importlib
 import re
 import sys
+import tomllib
 import types
 
 import pytest
 from _repo import REPO_ROOT
 
 from studio import config
-
-try:
-    import tomllib  # py3.11+
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib
 
 
 @pytest.fixture
