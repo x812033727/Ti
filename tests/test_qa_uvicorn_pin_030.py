@@ -12,13 +12,9 @@
 import re
 import subprocess
 import sys
+import tomllib
 
 from _repo import REPO_ROOT
-
-try:
-    import tomllib  # py3.11+
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib
 
 ROOT = REPO_ROOT
 PYPROJECT = ROOT / "pyproject.toml"
