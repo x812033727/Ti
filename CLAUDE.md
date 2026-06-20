@@ -9,6 +9,26 @@
   消費端以 `backlog.add_items(core, source="core")`（省略 `state_dir`＝核心 backlog）路由，
   autopilot 在核心 repo 實作並開 PR。詳見 `ARCHITECTURE.md`「專案 repo 與 Ti 主核心 repo」。
 
+## 發佈鏈 DoD 與 `GH_PAT` 設定
+
+- 發佈鏈契約：`.github/workflows/publish-release.yml` 只在 `push.tags: v*` 建立 GitHub release；
+  `.github/workflows/release-smoke.yml` 只用 `release: published` 接下游 smoke。建立 release 的
+  `GH_TOKEN` 必須維持 `secrets.GH_PAT`，不可換回 `GITHUB_TOKEN`，否則 GitHub 防遞迴機制會讓
+  `release-smoke` 不被觸發。
+- `GH_PAT` 設定指引：建立 Fine-grained PAT；Repository access 務必只選本 repo（非 all-repos）；
+  Repository permissions 僅開 `Contents: Read and write`；
+  到 repo `Settings -> Secrets and variables -> Actions` 建立 secret，名稱固定為 `GH_PAT`。
+- `GH_PAT` 到期或被撤銷時，Step 5 `gh release create` 會以 403 失敗；輪替後只更新同一個 repo
+  secret `GH_PAT`，不要改 workflow token 路由。
+- 發佈 DoD：`body.md` 必須由 `scripts/publish_release.py` 產生，版本來自
+  `studio.release_note.pyproject_version()`，Breaking heading 來自同一 Python SSOT，不在 YAML 硬寫；
+  發佈前需重跑 release 相關守護測試與 `python3 scripts/publish_release.py`。
+- 驗證邊界必須明講：單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證。換句話說：
+  真實 tag-push 端到端尚待生產驗證；第一次正式打 `v*` tag 後，需確認
+  `publish-release -> release-smoke` 生產鏈實際通過。
+- 本輪不加 `--verify-tag`：現有觸發條件已由 `push.tags: v*` 保證 tag 存在，且 workflow 另有
+  `github.ref_name == v{pyproject_version()}` fail-fast。若未來新增 `workflow_dispatch` 手動發佈，需重審此決策。
+
 ## 工程師 — 長期經驗
 
 ### Release 發佈鏈操作記憶
