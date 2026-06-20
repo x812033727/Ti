@@ -496,6 +496,36 @@ def _antigravity_unavailable(text: str) -> bool:
     )
 
 
+# reader join 上限：teardown 先 reap_group 釋放 pipe 寫端後，stdout/stderr 的 async-for 應在
+# 毫秒內 EOF；這個上限只是兜底（萬一某孫程序殺不掉時不再無限等），曾因缺它整輪卡到外層 3600s。
+_READER_JOIN_TIMEOUT = 10.0
+
+# 輪詢子程序 returncode 的間隔（秒）：不靠 proc.wait()（在孫程序握著 pipe 時不返回），改以
+# child watcher 設定的 returncode 偵測退出；間隔小到足以即時收斂、又不致空轉燒 CPU。
+_PROC_POLL_INTERVAL = 0.2
+
+# 「暫態」不可用：本輪軟失敗即可、不該暫停整個 autopilot（與「硬不可用」如未登入/額度/權限相對）。
+_ANTIGRAVITY_TRANSIENT_KINDS = frozenset({"timeout", "server", "rate_limit", "overloaded"})
+
+
+def _antigravity_pause_or_soft(detail: str) -> str | None:
+    """依 CLI 輸出判 antigravity 結局：
+
+    - None：未命中不可用訊號＝正常輸出。
+    - "soft"：暫態（逾時／過載／限流／5xx）→ 本輪軟失敗（回系統 note），autopilot 續跑。
+    - "pause"：硬不可用（未登入／額度／權限等）→ 升 ProviderUnavailable，由 autopilot 暫停。
+
+    把「單次 antigravity 逾時」從「暫停整場」降級成「略過本輪」——agy 冷啟動慢／偶發逾時
+    很常見，不該每次都卡死整個 autopilot。
+    """
+    if not _antigravity_unavailable(detail):
+        return None
+    kind = llm_caller.provider_unavailable_kind(detail)
+    if kind is not None and kind[0] in _ANTIGRAVITY_TRANSIENT_KINDS:
+        return "soft"
+    return "pause"
+
+
 class AntigravityExpert:
     """以 `agy -p` 非互動模式驅動的專家。
 
@@ -582,6 +612,32 @@ class AntigravityExpert:
                 "【系統】找不到 Antigravity CLI，請確認 TI_ANTIGRAVITY_BIN 或 PATH。", broadcast
             )
 
+        # start_new_session=True → proc 自成 group leader，PGID==此刻的 PID。先記下來，事後
+        # 即使 proc 已被 reap、getpgid 取不到，仍能對整組收屍（reap 殘留 sandbox 孫程序）。
+        pgid = proc.pid
+
+        async def _finish_readers() -> str:
+            """teardown 統一收尾：先 killpg 整組釋放 pipe 寫端，再有上限 join 兩個 reader。
+
+            agy `--sandbox` 的工具子命令可能在 agy 主程序退出後仍存活並握著 stdout/stderr
+            pipe → reader 的 async-for 永不 EOF。先 reap_group 收掉它們讓 pipe EOF，stdout
+            已收的內容仍保留在 out_chunks；join 加上限只是兜底。回傳 stderr tail（失敗回 ""）。
+            """
+            runner.reap_group(pgid)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(stdout_task, timeout=_READER_JOIN_TIMEOUT)
+            tail = ""
+            try:
+                tail = await asyncio.wait_for(stderr_task, timeout=_READER_JOIN_TIMEOUT)
+            except Exception:  # noqa: BLE001 — stderr 收斂失敗不致命，降級成空字串
+                tail = ""
+            for reader in (stdout_task, stderr_task):
+                if not reader.done():
+                    reader.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await reader
+            return tail
+
         try:
             loop = asyncio.get_running_loop()
             started_at = loop.time()
@@ -612,78 +668,59 @@ class AntigravityExpert:
 
             stdout_task = asyncio.create_task(_stdout())
             stderr_task = asyncio.create_task(_stderr())
-            timeout_reason = ""
-            try:
-                while True:
-                    if proc.returncode is not None:
-                        break
-                    now = loop.time()
-                    deadlines: list[tuple[str, float]] = []
-                    if config.TURN_HARD_TIMEOUT:
-                        deadlines.append(
-                            ("總時長", started_at + float(config.TURN_HARD_TIMEOUT) - now)
-                        )
-                    if config.TURN_IDLE_TIMEOUT:
-                        deadlines.append(
-                            ("閒置", last_activity + float(config.TURN_IDLE_TIMEOUT) - now)
-                        )
-                    if not deadlines:
-                        await proc.wait()
-                        break
-                    deadline_reason, wait_s = min(deadlines, key=lambda item: item[1])
-                    if wait_s <= 0:
-                        timeout_reason = deadline_reason
-                        raise TimeoutError
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=wait_s)
-                        break
-                    except TimeoutError:
-                        now = loop.time()
-                        hard_expired = bool(
-                            config.TURN_HARD_TIMEOUT
-                            and now - started_at >= float(config.TURN_HARD_TIMEOUT)
-                        )
-                        idle_expired = bool(
-                            config.TURN_IDLE_TIMEOUT
-                            and now - last_activity >= float(config.TURN_IDLE_TIMEOUT)
-                        )
-                        if hard_expired:
-                            timeout_reason = "總時長"
-                            raise
-                        if idle_expired:
-                            timeout_reason = "閒置"
-                            raise
-            except TimeoutError as exc:
-                self._terminate(proc)
-                await proc.wait()
-                with contextlib.suppress(Exception):
-                    await stdout_task
-                stderr_tail = await stderr_task
+            # 等 agy 退出：用 runner.wait_process_exit 輪詢 returncode（不能用 await proc.wait()——
+            # 在 sandbox 孫程序仍握 pipe 時它永不返回，正是 #126 整輪卡到外層 3600s 的真因），
+            # idle／hard watchdog 照常算。回 ""＝正常退出，回 "閒置"/"總時長"＝該上限先到。
+            timeout_reason = await runner.wait_process_exit(
+                proc,
+                idle_timeout=float(config.TURN_IDLE_TIMEOUT or 0),
+                hard_timeout=float(config.TURN_HARD_TIMEOUT or 0),
+                last_activity=lambda: last_activity,
+                started_at=started_at,
+                poll=_PROC_POLL_INTERVAL,
+            )
+            if timeout_reason:
+                # 本端 watchdog（idle／hard）逾時＝暫態：reap 整組收屍（含握 pipe 的 sandbox
+                # 孫程序，取代原本無上限的 await proc.wait()，正是 38 分鐘卡死的根因），有上限
+                # join reader 後，降級成本輪軟失敗（系統 note，不含核可關鍵詞）——不再升
+                # ProviderUnavailable 暫停整個 autopilot。
+                stderr_tail = await _finish_readers()
                 limit = (
                     config.TURN_IDLE_TIMEOUT
                     if timeout_reason == "閒置"
                     else config.TURN_HARD_TIMEOUT
                 )
-                detail = (
-                    f"Antigravity CLI 發言逾時中止（{timeout_reason or '總時長'}上限 "
-                    f"{float(limit):g} 秒）。"
+                note = (
+                    f"【系統】Antigravity CLI 發言逾時中止（{timeout_reason or '總時長'}上限 "
+                    f"{float(limit):g} 秒），略過本輪發言。"
                 )
                 if stderr_tail:
-                    detail += "\n" + _clip(stderr_tail, 1200)
-                raise ProviderUnavailable("antigravity", detail) from exc
+                    note += "\n" + _clip(stderr_tail, 1200)
+                return await self._system_note(note, broadcast)
 
-            stdout_error: Exception | None = None
-            try:
-                await stdout_task
-            except Exception as exc:  # noqa: BLE001 — CLI stdout 收斂失敗要降級成系統訊息
-                stdout_error = exc
-                errors.append(f"{type(exc).__name__}: {exc}")
-            stderr_tail = await stderr_task
+            # proc 已自行結束：reap 整組收掉殘留 sandbox 孫程序釋放 pipe，再有上限 join reader，
+            # 避免孤兒孫程序握著 stdout/stderr 寫端使 async-for 永不 EOF（曾卡到外層 3600s）。
+            stderr_tail = await _finish_readers()
+            stdout_error = (
+                stdout_task.exception()
+                if stdout_task.done() and not stdout_task.cancelled()
+                else None
+            )
+            if stdout_error is not None:
+                errors.append(f"{type(stdout_error).__name__}: {stdout_error}")
 
             text = "".join(out_chunks).strip()
             detail = _clip("\n".join(x for x in (text, stderr_tail, "\n".join(errors)) if x), 2000)
-            if _antigravity_unavailable(detail):
+            decision = _antigravity_pause_or_soft(detail)
+            if decision == "pause":
+                # 硬不可用（未登入／額度／權限）：升 ProviderUnavailable，由 autopilot 暫停。
                 raise ProviderUnavailable("antigravity", detail or "Antigravity unavailable")
+            if decision == "soft":
+                # 暫態（agy 自報逾時／過載／限流）：本輪軟失敗、autopilot 續跑，不暫停整場。
+                return await self._system_note(
+                    "【系統】Antigravity 本輪暫時不可用，略過本輪發言。\n" + _clip(detail, 800),
+                    broadcast,
+                )
             if stdout_error is not None:
                 return await self._system_note(
                     "【系統】Antigravity CLI 輸出讀取失敗，已中止本輪發言避免整場討論崩潰。\n"
@@ -713,9 +750,12 @@ class AntigravityExpert:
                 )
             return ""
         except asyncio.CancelledError:
-            if proc is not None and proc.returncode is None:
-                self._terminate(proc)
-                await self._wait_for_proc(proc)
+            if proc is not None:
+                # 不論 proc 是否仍在跑，都對整組收屍：即使主程序已退出，sandbox 孫程序可能仍握
+                # 著 pipe／續燒資源（reap_group 用記下的 pgid，撐得過 leader 已被 reap）。
+                runner.reap_group(pgid)
+                if proc.returncode is None:
+                    await self._wait_for_proc(proc)
             for task in (stdout_task, stderr_task):
                 if task is not None:
                     task.cancel()
