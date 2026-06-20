@@ -118,7 +118,7 @@ async def test_lane_exception_cleans_up_worktrees(tmp_path, monkeypatch):
     # 收尾後 .lanes worktree 目錄與 git worktree 註冊都清乾淨，無殘留。
     assert not (tmp_path / f"{cwd.name}.lanes").exists(), "lane 例外後 worktree 目錄洩漏"
     wt = await runner.run_command_exec(cwd, ["git", "worktree", "list"], sandbox=False)
-    assert "task-1" not in wt.output and "task-2" not in wt.output, wt.output
+    assert f"lane-{sid}-1" not in wt.output and f"lane-{sid}-2" not in wt.output, wt.output
 
 
 @pytest.mark.asyncio
@@ -164,9 +164,10 @@ async def test_parallel_wave_isolates_and_merges(tmp_path, monkeypatch):
     assert all(t["status"] == "done" for t in session._tasks)
     assert result["completed"] is True
 
-    # 3) 各 lane 的 worktree 成果都序列化合併回主分支。
+    # 3) 各 lane 的 worktree 成果都序列化合併回主分支（lane 分支名 = lane-<sid>-<id>）。
     files = set(workspace.list_files(sid))
-    assert {"task-1.txt", "task-2.txt", "task-3.txt"} <= files, f"主分支缺 lane 成果：{files}"
+    expect = {f"lane-{sid}-{i}.txt" for i in (1, 2, 3)}
+    assert expect <= files, f"主分支缺 lane 成果：{files}"
 
     # 4) NOTES 含每個任務摘要（波末序列化 flush）。
     notes = workspace.read_notes(sid)
@@ -449,7 +450,9 @@ class DepStub(LaneStub):
 
     async def speak(self, prompt: str, broadcast) -> str:
         if self.role.key == "engineer":
-            DepStub.saw_prior[self.cwd.name] = (self.cwd / "task-1.txt").is_file()
+            # 前一波（task #1）的 lane 把成果寫成 <worktree 目錄名>.txt；lane 分支名現含
+            # session 前綴（lane-<sid>-<id>），故第一波產物為 lane-dep-1.txt。
+            DepStub.saw_prior[self.cwd.name] = (self.cwd / "lane-dep-1.txt").is_file()
         return await super().speak(prompt, broadcast)
 
 
@@ -485,10 +488,12 @@ async def test_dependent_tasks_run_in_later_wave_on_merged_base(tmp_path, monkey
 
     await session.run("先做基礎再做依賴")
 
-    # task-1（第一波）開工時看不到自己；task-2（第二波）開工時應已看得到 task-1.txt。
-    assert DepStub.saw_prior.get("task-1") is False
-    assert DepStub.saw_prior.get("task-2") is True, "第二波 worktree 未從前一波合併後的 HEAD 分支"
-    assert {"task-1.txt", "task-2.txt"} <= set(workspace.list_files(sid))
+    # lane 分支名 = lane-<sid>-<id>；第一波(task#1)開工看不到自己，第二波(task#2)應已看到前波成果。
+    assert DepStub.saw_prior.get("lane-dep-1") is False
+    assert DepStub.saw_prior.get("lane-dep-2") is True, (
+        "第二波 worktree 未從前一波合併後的 HEAD 分支"
+    )
+    assert {"lane-dep-1.txt", "lane-dep-2.txt"} <= set(workspace.list_files(sid))
 
 
 @pytest.mark.asyncio

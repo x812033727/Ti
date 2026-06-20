@@ -46,6 +46,20 @@ def _read_token() -> str | None:
     return tok if isinstance(tok, str) and tok else None
 
 
+def _token_expired(now: float) -> bool:
+    """token 檔的 access_token 是否已過期（token.expiry 為 ISO8601）。讀不到視為未過期。
+
+    agy token 約每小時過期、僅在 agy 跑時刷新；過期時打 Code Assist 端點必得 401。
+    先短路省一次註定失敗的 HTTP，並讓前端拿到明確「過期」訊息而非空白。
+    """
+    try:
+        data = json.loads(config.ANTIGRAVITY_OAUTH_TOKEN_FILE.read_text(encoding="utf-8"))
+        exp = _iso_to_epoch((data.get("token") or {}).get("expiry"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return exp is not None and now >= exp
+
+
 def _iso_to_epoch(s: Any) -> float | None:
     """ISO8601 → unix 秒；容忍 9 位奈秒小數（截到 6 位）與結尾 Z。失敗回 None。"""
     if not isinstance(s, str) or not s:
@@ -100,6 +114,10 @@ def fetch_rate_limits(force: bool = False) -> dict:
     token = _read_token()
     if not token:
         return _store(now, _result(now, error="token_missing"))
+
+    if _token_expired(now):
+        # 已知過期：直接回 unauthorized，前端顯示「token 已過期，跑一次討論即恢復」。
+        return _store(now, _result(now, error="unauthorized"))
 
     # 1) loadCodeAssist：取 cloudaicompanionProject（retrieveUserQuota 必需）與層級。
     lstatus, lbody = _post(token, TIER_URL, {})

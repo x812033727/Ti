@@ -124,8 +124,12 @@ _PARALLEL_FILES: dict[int, dict[str, str]] = {
 
 
 def _task_id_from_cwd(cwd: Path) -> int:
-    """從 lane 的 worktree 目錄名（"task-<id>[-<id>...]"）解析出任務 id；解析不到回 0。"""
-    m = re.search(r"task-(\d+)", Path(cwd).name)
+    """從 lane 的 worktree 目錄名解析任務 id；解析不到回 0。
+
+    lane 分支/目錄名為 ``lane-<session_id>-<id>[-<id>...]``（session_id 全域唯一以防跨
+    session 撞名），舊式 ``task-<id>`` 亦相容——兩者尾端都是 `-<數字>` 序列，取第一個。
+    """
+    m = re.search(r"-(\d+)(?:-\d+)*$", Path(cwd).name)
     return int(m.group(1)) if m else 0
 
 

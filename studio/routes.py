@@ -6,6 +6,8 @@ WebSocket 與應用組裝分別在 ws.py / server.py。
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import subprocess
 import time
 
@@ -251,7 +253,8 @@ async def provider_quota() -> JSONResponse:
     回傳內容刻意只含非秘密資訊：登入/ready 狀態、可列出的模型、Ti 本機累積 token 用量。
     官方 subscription quota 若 provider CLI 未提供穩定非互動 API，回傳狀態說明而不讀取/暴露憑證。
     """
-    return JSONResponse(_provider_quota_snapshot())
+    # snapshot 內含對外阻塞 HTTP 查詢；丟到 thread 避免卡住事件迴圈（其他請求照常）。
+    return JSONResponse(await asyncio.to_thread(_provider_quota_snapshot))
 
 
 def _run_text(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
@@ -273,33 +276,40 @@ def _run_text(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
 
 def _antigravity_status() -> dict:
     available = config.antigravity_cli_available()
-    models: list[str] = []
-    detail = ""
-    signed_in = False
-    if available:
-        code, out = _run_text([config.ANTIGRAVITY_BIN, "models"], timeout=12.0)
-        signed_in = code == 0
-        if signed_in:
-            models = [ln.strip() for ln in out.splitlines() if ln.strip()]
-            detail = "Google OAuth / Google Cloud project 已可列模型。"
-        else:
-            detail = out or "Antigravity CLI 尚未登入或無法取得模型清單。"
+    # 過去用 `agy models`（12s 子程序）判 signed_in，且只在它成功時才附 rate_limits。問題：
+    # agy token 約每小時過期、僅在 agy 跑時刷新，token 一過期 `agy models` 就失敗 →
+    # signed_in=False → rate_limits=None → 前端整區「空白」（非顯示明確過期訊息），且每次
+    # snapshot 都付 12s 子程序成本、狀態跟著 flapping。改為：binary 在就直接查 rate_limits，
+    # 由其 error 欄位（token_missing / unauthorized）表達 token 狀態，前端永遠有話可說。
+    rate_limits = antigravity_usage.fetch_rate_limits() if available else None
+    rl_error = (rate_limits or {}).get("error")
+    has_token = available and rl_error != "token_missing"
+    signed_in = available and rl_error is None
+    if not available:
+        detail = "未安裝 Antigravity CLI（`agy`）。"
+    elif signed_in:
+        detail = "Google Code Assist 配額已即時查得。"
+    elif rl_error == "token_missing":
+        detail = "尚未登入 `agy`（找不到 OAuth token）。"
+    else:
+        detail = "Antigravity token 已過期，跑一次 Antigravity 討論即自動刷新。"
     return {
         "key": "antigravity",
         "label": "Antigravity CLI",
         "active": config.PROVIDER == "antigravity",
-        "ready": available and signed_in,
-        "status": "ok" if available and signed_in else ("warn" if available else "missing"),
-        "auth": "signed_in" if signed_in else "needs_login",
+        # 有 token（即使過期、可由跑討論刷新）即視為 ready；只有完全沒登入才算未就緒。
+        "ready": has_token,
+        "status": "ok" if signed_in else ("warn" if available else "missing"),
+        "auth": "signed_in" if has_token else "needs_login",
         "binary": config.ANTIGRAVITY_BIN,
-        "models": models,
+        "models": [],
         "quota": {
             "kind": "subscription",
-            "summary": "可用訂閱/帳號額度" if signed_in else "需要先登入 `agy`",
+            "summary": "可用訂閱/帳號額度" if has_token else "需要先登入 `agy`",
             "detail": detail,
         },
-        # 登入時附 Google Code Assist 配額（有數值則每模型 buckets，否則訂閱層級）；否則 None。
-        "rate_limits": antigravity_usage.fetch_rate_limits() if signed_in else None,
+        # 一律附 rate_limits（含 error 欄位）；前端據 error 顯示明確訊息而非空白。
+        "rate_limits": rate_limits,
     }
 
 
@@ -310,6 +320,22 @@ def _provider_quota_snapshot() -> dict:
     即時查剩餘配額（claude/codex/minimax/antigravity_usage，皆 60 秒快取）。
     """
     now = time.time()
+    claude_on = config.claude_cli_logged_in() and not config.has_api_key()
+    codex_on = (
+        config.codex_cli_available() and config.codex_cli_logged_in() and not config.CODEX_API_KEY
+    )
+    minimax_on = bool(config.MINIMAX_API_KEY)
+    # 四家 rate-limit 查詢彼此獨立、皆為阻塞 I/O（各 60s 快取）；並行跑使端點延遲取「最慢
+    # 一家」而非「總和」，配合 antigravity 已移除 12s 子程序，明顯改善前端轉圈。
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        f_claude = ex.submit(claude_usage.fetch_rate_limits) if claude_on else None
+        f_codex = ex.submit(codex_usage.fetch_rate_limits) if codex_on else None
+        f_minimax = ex.submit(minimax_usage.fetch_rate_limits) if minimax_on else None
+        f_agy = ex.submit(_antigravity_status)
+        claude_rl = f_claude.result() if f_claude else None
+        codex_rl = f_codex.result() if f_codex else None
+        minimax_rl = f_minimax.result() if f_minimax else None
+        agy_status = f_agy.result()
     providers = [
         {
             "key": "claude",
@@ -328,11 +354,7 @@ def _provider_quota_snapshot() -> dict:
                 "detail": "由 Anthropic 官方 usage 端點即時查詢（每 60 秒快取一次）。",
             },
             # 訂閱（OAuth 登入、非 API key）時附官方 rate limit；否則 None（前端不顯示）。
-            "rate_limits": (
-                claude_usage.fetch_rate_limits()
-                if config.claude_cli_logged_in() and not config.has_api_key()
-                else None
-            ),
+            "rate_limits": claude_rl,
         },
         {
             "key": "codex",
@@ -351,15 +373,9 @@ def _provider_quota_snapshot() -> dict:
                 "summary": "Codex 訂閱剩餘額度",
                 "detail": "由 codex app-server 即時查詢（每 60 秒快取一次）。",
             },
-            "rate_limits": (
-                codex_usage.fetch_rate_limits()
-                if config.codex_cli_available()
-                and config.codex_cli_logged_in()
-                and not config.CODEX_API_KEY
-                else None
-            ),
+            "rate_limits": codex_rl,
         },
-        _antigravity_status(),
+        agy_status,
         {
             "key": "minimax",
             "label": "MiniMax",
@@ -372,7 +388,7 @@ def _provider_quota_snapshot() -> dict:
                 "summary": "MiniMax 訂閱剩餘額度",
                 "detail": "由 MiniMax token_plan/remains 端點即時查詢（每 60 秒快取一次）。",
             },
-            "rate_limits": minimax_usage.fetch_rate_limits() if config.MINIMAX_API_KEY else None,
+            "rate_limits": minimax_rl,
         },
     ]
 
