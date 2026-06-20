@@ -133,6 +133,7 @@ class StudioSession:
         publish_repo: str | None = None,
         base_repo: str | None = None,
         group: dict | None = None,
+        time_budget_s: float | None = None,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
@@ -176,6 +177,11 @@ class StudioSession:
         self._demo_url: str | None = None
         self._requirement = ""
         self._stop = False
+        # 軟性時間預算（秒，None=不限）：撞硬 timeout 前主動收斂用。time_budget_s 通常＝autopilot 的
+        # 硬 timeout，session 在其 SESSION_SOFT_DEADLINE_FRAC 比例處停止派發新任務、優雅收尾。
+        self._time_budget_s = time_budget_s
+        self._t0_run: float | None = None  # run() 開工時間戳（_time_exceeded 計時基準）
+        self._deadline_hit = False  # 已觸軟性時間預算（停止派發新任務，但仍正常收尾出貨）
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
         self._followup_items: list[dict] = []  # 同上、含 priority/type（消費端優先用這份）
         self._core_changes: list[
@@ -191,6 +197,22 @@ class StudioSession:
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
         self._stop = True
+
+    def _time_exceeded(self) -> bool:
+        """是否已過軟性時間預算（硬 timeout × SESSION_SOFT_DEADLINE_FRAC）。
+
+        刻意與 self._stop 分離：_stop 代表「中止、不出貨」（shippable_verdict 的 stopped 護欄），
+        本旗標只代表「時間到、停止派發新任務但仍走 Demo/出貨」——讓已完成的任務能優雅出貨，
+        未動的記 known-limit/followup，而非被 autopilot 的 wait_for 硬砍、整場全丟成 timeout。
+        無預算或尚未開工一律回 False。觸發後置 self._deadline_hit 供收尾階段發事件。
+        """
+        if self._time_budget_s is None or self._t0_run is None:
+            return False
+        elapsed = time.monotonic() - self._t0_run
+        if elapsed >= self._time_budget_s * config.SESSION_SOFT_DEADLINE_FRAC:
+            self._deadline_hit = True
+            return True
+        return False
 
     def _drain_human(self) -> str:
         """取出所有待處理的人類插話，合併成一段文字（無則回空字串）。"""
@@ -819,6 +841,7 @@ class StudioSession:
         # 兜底淨化互補）。cwd=None 的單元測試自然略過。
         if self.cwd is not None:
             runner.write_baseline_gitignore(self.cwd)
+        self._t0_run = time.monotonic()  # 軟性時間預算計時基準
         try:
             result = await self._run(requirement)
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
@@ -1033,6 +1056,15 @@ class StudioSession:
 
         # 3) 逐任務迭代：依設定走「波次並行」或循序，兩者共用同一條波次主迴圈。
         all_ok = await self._run_waves(pm_plan + context)
+        if self._deadline_hit:
+            # 撞硬 timeout 前主動收斂：已完成的續走 Demo/出貨，未動的下面記成 known-limit。
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id,
+                    "時間預算收斂",
+                    "接近時間上限，停止派發新任務，以已完成成果優雅收尾出貨（未完成記為已知限制）。",
+                )
+            )
 
         # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
         if devops:
@@ -1164,7 +1196,10 @@ class StudioSession:
         t0 = time.monotonic()
         all_ok = True
         for wave in waves:
-            if self._stop:
+            # 中止或過軟性時間預算 → 不再開新波次；剩餘波次任務留 todo（→ unmet → known-limit）。
+            if self._stop or self._time_exceeded():
+                if self._deadline_hit:
+                    all_ok = False  # 時間截斷未跑完所有波次 → 不謊報全完成
                 break
             # 並行模式：波次邊界先 drain 一次當本波基準（回顯已於收到時即時 broadcast，此處不重複）。
             # 波次內各 lane 另於每個任務再 drain 新插話累加（見 _lane_human_prefix），故波次跑到一半
@@ -1321,7 +1356,9 @@ class StudioSession:
         """在指定 lane 依序跑完配給的任務（lane 之間由 _run_waves 以 gather 並行）。"""
         lane_ok = True
         for task in lane_tasks:
-            if self._stop:
+            # 中止或過軟性時間預算 → 不再派發本 lane 後續任務；未動任務留 todo（→ unmet → known-limit）。
+            # lane_ok 置 False 使 all_ok 反映「未全數完成」，據此走帶已知限制出貨而非謊報全完成。
+            if self._stop or self._time_exceeded():
                 lane_ok = False
                 break
             lane_ok = await self._run_task_in_lane(ctx, task, plan_ctx) and lane_ok

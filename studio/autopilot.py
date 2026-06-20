@@ -744,6 +744,9 @@ async def run_one_task(task: dict) -> None:
         broadcast,
         cwd=Path(clone),
         repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
+        # 軟性時間預算＝硬 timeout：session 會在其 SESSION_SOFT_DEADLINE_FRAC 比例處主動收斂、
+        # 優雅出貨已完成成果，避免撞 wait_for 硬砍把整場(含已完成任務)全丟成 timeout failed。
+        time_budget_s=config.AUTOPILOT_TASK_TIMEOUT or None,
     )
     try:
         result = await asyncio.wait_for(
