@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -27,8 +28,6 @@ from studio import config, settings
 ROOT = REPO_ROOT
 ENV = ROOT / ".env"
 HOST = "127.0.0.1"
-PORT = 8013
-BASE = f"http://{HOST}:{PORT}"
 SECRET_ENVS = {"ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "GITHUB_TOKEN"}
 
 
@@ -85,14 +84,20 @@ def test_env_file_and_environ_consistent(sandbox):
 # ---------------------------------------------------------------------------
 # (B) 真實服務：POST 後 .env 檔出現鍵值 + 行程內 reload 透過 /api/health 佐證
 # ---------------------------------------------------------------------------
-def _get(path, timeout=3.0):
-    with urllib.request.urlopen(BASE + path, timeout=timeout) as r:
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((HOST, 0))
+        return int(s.getsockname()[1])
+
+
+def _get(base, path, timeout=3.0):
+    with urllib.request.urlopen(base + path, timeout=timeout) as r:
         return r.status, json.loads(r.read().decode())
 
 
-def _post(path, body, timeout=3.0):
+def _post(base, path, body, timeout=3.0):
     req = urllib.request.Request(
-        BASE + path,
+        base + path,
         data=json.dumps(body).encode(),
         method="POST",
         headers={"Content-Type": "application/json"},
@@ -103,16 +108,18 @@ def _post(path, body, timeout=3.0):
 
 @pytest.fixture(scope="module")
 def live():
-    """真實啟動服務，回傳 (proc, env_path_bytes_backup)；teardown 還原 .env。"""
+    """真實啟動服務，回傳 base URL；teardown 還原 .env。"""
     backup = ENV.read_bytes() if ENV.exists() else None
     backup_mode = ENV.stat().st_mode if ENV.exists() else None
+    port = _free_port()
+    base = f"http://{HOST}:{port}"
     env = dict(os.environ)
     env["TI_ACCESS_PASSWORD"] = ""
     for k in SECRET_ENVS:
         env.pop(k, None)
     env["TI_PROVIDER"] = "claude"  # 啟動為 claude，稍後 POST 切 minimax 以觀察 reload
     env["TI_HOST"] = HOST
-    env["TI_PORT"] = str(PORT)
+    env["TI_PORT"] = str(port)
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
         cwd=str(ROOT),
@@ -128,7 +135,8 @@ def live():
             if proc.poll() is not None:
                 break
             try:
-                if _get("/api/health")[0] == 200:
+                status, _ = _get(base, "/api/health")
+                if 200 <= status < 300:
                     ok = True
                     break
             except Exception:
@@ -136,7 +144,7 @@ def live():
         if not ok:
             out = proc.stdout.read() if proc.poll() is not None and proc.stdout else ""
             pytest.fail(f"服務未就緒。輸出：\n{out}")
-        yield proc
+        yield base
     finally:
         proc.terminate()
         try:
@@ -153,7 +161,7 @@ def live():
 
 def test_live_post_writes_env_file(live):
     """真實 POST 後，專案根目錄 .env 實際出現對應鍵值。"""
-    _post("/api/settings", {"GITHUB_TOKEN": "ghp_TEST_live_4", "TI_PUBLISH_REPO": "live/repo"})
+    _post(live, "/api/settings", {"GITHUB_TOKEN": "ghp_TEST_live_4", "TI_PUBLISH_REPO": "live/repo"})
     text = ENV.read_text()
     assert "GITHUB_TOKEN" in text and "ghp_TEST_live_4" in text
     assert "TI_PUBLISH_REPO" in text and "live/repo" in text
@@ -161,10 +169,10 @@ def test_live_post_writes_env_file(live):
 
 def test_live_reload_effect_via_health(live):
     """行程內生效佐證：POST 切換 provider 後，未重啟即可從 /api/health 看到改變。"""
-    before = _get("/api/health")[1]["provider"]
+    before = _get(live, "/api/health")[1]["provider"]
     assert before == "claude"
-    _post("/api/settings", {"TI_PROVIDER": "minimax"})
-    after = _get("/api/health")[1]["provider"]
+    _post(live, "/api/settings", {"TI_PROVIDER": "minimax"})
+    after = _get(live, "/api/health")[1]["provider"]
     assert after == "minimax", f"config.reload() 應讓行程內 provider 變 minimax，實為 {after}"
 
 
