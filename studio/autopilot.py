@@ -776,10 +776,18 @@ async def run_one_task(task: dict) -> None:
         _pause(f"{provider} provider unavailable")
         return
 
+    # 「完整完成」與「可帶已知限制出貨」分流：尾票（N-1/N 已過、單一子任務 known-limit）不該把
+    # 整場判「討論未達完成」。shippable＝核心客觀證據已過、未過子任務已回填 backlog followup（上方
+    # 已寫入）→ 不在此硬判 failed,改續走 lint/collect/test/merge 客觀閘門:真紅點由閘門擋並補修復
+    # 任務,通過則以已知限制版本合併。完全不可出貨(沒跑過 Demo/被中止)才維持 failed。
+    shipped_with_limits = False
     if not result.get("completed"):
-        backlog.set_status(task["id"], "failed", note="討論未達完成")
-        log.info("任務 #%s 未完成,標 failed", task["id"])
-        return
+        if not result.get("shippable"):
+            backlog.set_status(task["id"], "failed", note="討論未達完成")
+            log.info("任務 #%s 未完成且不可出貨,標 failed", task["id"])
+            return
+        shipped_with_limits = True
+        log.info("任務 #%s 帶已知限制出貨,續走客觀閘門", task["id"])
 
     # 閘門 1：lint（對齊 CI lint job）—— ruff check + format
     ok, out = await _gate_lint(clone)
@@ -827,8 +835,11 @@ async def run_one_task(task: dict) -> None:
     else:
         log.info("等待逾時,本輪略過重佈(下次任務會追上最新 main)")
 
-    backlog.set_status(task["id"], "done")
-    log.info("任務 #%s 完成", task["id"])
+    if shipped_with_limits:
+        backlog.set_status(task["id"], "done", note="帶已知限制完成(部分子任務已回填 backlog)")
+    else:
+        backlog.set_status(task["id"], "done")
+    log.info("任務 #%s %s", task["id"], "帶已知限制完成" if shipped_with_limits else "完成")
 
 
 def _pause(reason: str) -> None:
