@@ -250,6 +250,12 @@ async def _finalize_proc(proc: asyncio.subprocess.Process, label: str, timeout: 
             output=f"（執行超過 {timeout} 秒逾時，已中止）",
             timed_out=True,
         )
+    except asyncio.CancelledError:
+        # 外層（如 OpenAIExpert 整輪 hard-timeout 守衛）取消本協程時，asyncio.TimeoutError
+        # 之外另拋 CancelledError，原本不收屍會留下整組子程序孤兒繼續燒額度／CPU。對整組
+        # killpg 後原樣 re-raise，維持取消語義。
+        kill_process_group(proc)
+        raise
 
 
 async def run_command(

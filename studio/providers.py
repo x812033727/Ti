@@ -814,61 +814,80 @@ class OpenAIExpert:
             collected: list[str] = []
             usage = {"prompt": 0, "completion": 0, "total": 0, "calls": 0}
             chat_timeout = _turn_timeout_seconds()
-            for _ in range(config.OPENAI_MAX_STEPS):
-                try:
-                    if chat_timeout is not None:
-                        resp = await asyncio.wait_for(
-                            self._chat(self._messages, self._tools, self._model),
-                            timeout=chat_timeout,
-                        )
-                    else:
-                        resp = await self._chat(self._messages, self._tools, self._model)
-                except asyncio.TimeoutError as exc:
-                    limit = f"{chat_timeout:g}" if chat_timeout is not None else "unknown"
-                    raise llm_caller.APIErrorSignal(
-                        "timeout_error",
-                        f"{self._provider} chat timeout after {limit}s",
-                    ) from exc
-                resp_usage = getattr(resp, "usage", None)
-                if resp_usage is not None:
-                    prompt_tokens = _usage_int(resp_usage, "prompt_tokens", "input_tokens")
-                    completion_tokens = _usage_int(resp_usage, "completion_tokens", "output_tokens")
-                    total_tokens = _usage_int(resp_usage, "total_tokens") or (
-                        prompt_tokens + completion_tokens
-                    )
-                    usage["prompt"] += prompt_tokens
-                    usage["completion"] += completion_tokens
-                    usage["total"] += total_tokens
-                    usage["calls"] += 1
-                msg = resp.choices[0].message
-                tool_calls = getattr(msg, "tool_calls", None) or []
-                self._messages.append(_assistant_dict(msg, tool_calls))
 
-                if tool_calls:
-                    await broadcast(events.expert_status(self.session_id, r.key, "working"))
-                    for tc in tool_calls:
-                        name = tc.function.name
-                        args = tools.parse_args(tc.function.arguments)
-                        result = await tools.execute_deduped(
-                            name, args, self.cwd, self._dedup_cache
-                        )
-                        await broadcast(
-                            events.tool_use(
-                                self.session_id, r.key, name, tools.summarize(name, args)
+            async def _run_loop() -> None:
+                for _ in range(config.OPENAI_MAX_STEPS):
+                    try:
+                        if chat_timeout is not None:
+                            resp = await asyncio.wait_for(
+                                self._chat(self._messages, self._tools, self._model),
+                                timeout=chat_timeout,
                             )
+                        else:
+                            resp = await self._chat(self._messages, self._tools, self._model)
+                    except asyncio.TimeoutError as exc:
+                        limit = f"{chat_timeout:g}" if chat_timeout is not None else "unknown"
+                        raise llm_caller.APIErrorSignal(
+                            "timeout_error",
+                            f"{self._provider} chat timeout after {limit}s",
+                        ) from exc
+                    resp_usage = getattr(resp, "usage", None)
+                    if resp_usage is not None:
+                        prompt_tokens = _usage_int(resp_usage, "prompt_tokens", "input_tokens")
+                        completion_tokens = _usage_int(
+                            resp_usage, "completion_tokens", "output_tokens"
                         )
-                        self._messages.append(
-                            {"role": "tool", "tool_call_id": tc.id, "content": result}
+                        total_tokens = _usage_int(resp_usage, "total_tokens") or (
+                            prompt_tokens + completion_tokens
                         )
-                    continue
+                        usage["prompt"] += prompt_tokens
+                        usage["completion"] += completion_tokens
+                        usage["total"] += total_tokens
+                        usage["calls"] += 1
+                    msg = resp.choices[0].message
+                    tool_calls = getattr(msg, "tool_calls", None) or []
+                    self._messages.append(_assistant_dict(msg, tool_calls))
 
-                text = (msg.content or "").strip()
-                if text:
-                    collected.append(text)
-                    await broadcast(
-                        events.expert_message(self.session_id, r.key, r.name, r.avatar, text)
-                    )
-                break
+                    if tool_calls:
+                        await broadcast(events.expert_status(self.session_id, r.key, "working"))
+                        for tc in tool_calls:
+                            name = tc.function.name
+                            args = tools.parse_args(tc.function.arguments)
+                            result = await tools.execute_deduped(
+                                name, args, self.cwd, self._dedup_cache
+                            )
+                            await broadcast(
+                                events.tool_use(
+                                    self.session_id, r.key, name, tools.summarize(name, args)
+                                )
+                            )
+                            self._messages.append(
+                                {"role": "tool", "tool_call_id": tc.id, "content": result}
+                            )
+                        continue
+
+                    text = (msg.content or "").strip()
+                    if text:
+                        collected.append(text)
+                        await broadcast(
+                            events.expert_message(self.session_id, r.key, r.name, r.avatar, text)
+                        )
+                    break
+
+            # 整輪工具迴圈的「總時長」硬上限（對齊 Claude 端 stream_to_events 的 hard_timeout、
+            # Codex/Antigravity 的總時長守衛）：per-chat 的 chat_timeout 只擋單次 LLM 呼叫，擋不住
+            # 「多步迴圈累加」把一輪 speak 拖到逼近 AUTOPILOT_TASK_TIMEOUT。逾時時 wait_for 取消
+            # _run_loop，半途的工具子程序經 runner._finalize_proc 的 CancelledError 分支 killpg 收屍；
+            # 回傳不含核可關鍵詞的系統 note，沿用既有「未過→失敗回饋」收斂路徑，orchestrator 無需改動。
+            hard_timeout = config.TURN_HARD_TIMEOUT or None
+            timed_out = False
+            try:
+                if hard_timeout is not None:
+                    await asyncio.wait_for(_run_loop(), timeout=hard_timeout)
+                else:
+                    await _run_loop()
+            except asyncio.TimeoutError:
+                timed_out = True
 
             if usage["calls"]:
                 await broadcast(
@@ -882,6 +901,14 @@ class OpenAIExpert:
                         usage["total"],
                     )
                 )
+            if timed_out:
+                note = f"【系統】發言逾時中止（總時長上限 {hard_timeout:g} 秒）。"
+                if collected:
+                    note += "\n逾時前的部分輸出：\n" + "\n".join(collected)
+                await broadcast(
+                    events.expert_message(self.session_id, r.key, r.name, r.avatar, note)
+                )
+                return note
             return "\n".join(collected)
 
         async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:
