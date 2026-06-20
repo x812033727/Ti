@@ -22,6 +22,7 @@
 | smoke 驗證 release body 含非空頂層 Breaking Changes 區塊 | 已達成 | `release-smoke.yml:54-60` 將 body 放入 `BODY`，執行 `python -m studio.release_smoke`。 |
 | smoke 權限只需讀 release/body | 已達成 | `release-smoke.yml:10-11` 設 `contents: read`。 |
 | 避免 tag/ref 直接插入 shell `run:` | 已達成 | `publish-release.yml:81-89` 以 env `TAG` 傳入並在 shell 內 `"$TAG"` 引用。 |
+| publish workflow 內建 `GITHUB_TOKEN` 權限下修 | 已達成 | `publish-release.yml:20-21` 設 `contents: read`；建立 release 的寫入權限由 `publish-release.yml:84-89` 的 `secrets.GH_PAT` 提供。 |
 
 ## 缺口/待辦
 
@@ -31,8 +32,7 @@
 | `GH_PAT` 正式設定/輪替文件 | 缺口 | `publish-release.yml:11-14` 有 workflow 註解，但 repo 協作文件尚未固定列出 fine-grained、本 repo only、`Contents: Read and write`、secret 名稱 `GH_PAT`、過期後 Step 5 會 403 與輪替方式。 |
 | 半閉環聲明文件化 | 缺口 | workflow 註解說明觸發鏈設計，但協作文件尚未明文標註「單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證」。 |
 | PAT 過期/撤銷 fail-fast | 缺口 | `publish-release.yml:36-44` 只檢查 secret 非空；`publish-release.yml:36-39` 已註明過期 PAT 仍會到 Create release 才以 403 失敗。這是運維缺口，不是目前程式碼功能缺口。 |
-| publish workflow `GITHUB_TOKEN` 權限過給 | 安全缺口 | `publish-release.yml:20-21` 設 `contents: write`，但實際建立 release 的 `gh release create` 由 `publish-release.yml:84-89` 的 `secrets.GH_PAT` 授權；`permissions:` 只影響 `GITHUB_TOKEN`，目前可下修為 `contents: read` 以縮小爆炸半徑。 |
-| Actions 未以 commit SHA 鎖版 | 安全待改善 | `publish-release.yml:29`、`publish-release.yml:32`、`release-smoke.yml:16`、`release-smoke.yml:19` 使用 `actions/checkout@v4` / `actions/setup-python@v5` 可移動標籤；資安建議改鎖 commit SHA。 |
-| `--verify-tag` | 非阻塞缺口 | `publish-release.yml:89` 目前未加 `--verify-tag`。在現行 `on.push.tags: v*` 與 `Assert tag matches version` 下，tag 已存在且版本有 fail-fast；是否加硬化需由任務 #3 決策，不應在本盤點任務順手改。 |
+| Actions 未以 commit SHA 鎖版 | 非阻塞待辦 | `publish-release.yml:29`、`publish-release.yml:32`、`release-smoke.yml:16`、`release-smoke.yml:19` 使用 `actions/checkout@v4` / `actions/setup-python@v5` 可移動標籤；本輪不補，因為不影響 release 驗收鏈，留待專門供應鏈硬化任務處理。 |
+| `--verify-tag` | 決策：不補 | `publish-release.yml:89` 目前未加 `--verify-tag`。在現行 `on.push.tags: v*` 與 `Assert tag matches version` 下，tag 已存在且版本有 fail-fast；本輪不需作為驗收必要硬化。若未來新增 `workflow_dispatch` 手動發佈，再重審。 |
 
-結論：三個核心檔的發佈鏈功能已大致達成；殘留缺口集中在生產端到端驗證、操作文件、`GITHUB_TOKEN` 權限下修與 Actions 鎖版等硬化決策，不是 `gh release create`、body 注入或 `release-smoke` 觸發鏈的實作缺失。
+結論：三個核心檔的發佈鏈功能已大致達成；任務 #3 最小硬化只實作 `GITHUB_TOKEN` 權限下修，`--verify-tag` 與 actions commit SHA 鎖版明確不補並記錄理由。殘留缺口集中在生產端到端驗證與操作文件，不是 `gh release create`、body 注入或 `release-smoke` 觸發鏈的實作缺失。
