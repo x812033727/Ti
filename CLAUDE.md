@@ -15,8 +15,8 @@
   `.github/workflows/release-smoke.yml` 只用 `release: published` 接下游 smoke。建立 release 的
   `GH_TOKEN` 必須維持 `secrets.GH_PAT`，不可換回 `GITHUB_TOKEN`，否則 GitHub 防遞迴機制會讓
   `release-smoke` 不被觸發。
-- `GH_PAT` 設定指引：建立 Fine-grained PAT；Repository access 選「Only select repositories」
-  且只選本 repo（非 all-repos）；Repository permissions 僅開 `Contents: Read and write`；
+- `GH_PAT` 設定指引：建立 Fine-grained PAT；Repository access 務必只選本 repo（非 all-repos）；
+  Repository permissions 僅開 `Contents: Read and write`；
   到 repo `Settings -> Secrets and variables -> Actions` 建立 secret，名稱固定為 `GH_PAT`。
 - `GH_PAT` 到期或被撤銷時，Step 5 `gh release create` 會以 403 失敗；輪替後只更新同一個 repo
   secret `GH_PAT`，不要改 workflow token 路由。
