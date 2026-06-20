@@ -98,8 +98,12 @@ def _check_bwrap_actually_works() -> bool:
     from studio import config as _config
 
     try:
+        # 必須鏡像真實 runner._bwrap_prefix 的 `--ro-bind / /`：bwrap 預設建立「完全空」
+        # 的 mount namespace，未掛載 rootfs 時新 / 內找不到 `true` 可 exec，探測會在
+        # 任何環境（含 bwrap 完全可用者）都回非 0 → 假性失敗 → 誤關沙箱讓 sandbox-test
+        # job 因「測試被 skip」而紅。綁上 host 唯讀 rootfs 後，PATH 才找得到 true。
         res = subprocess.run(
-            [_config.SANDBOX_BWRAP, "--unshare-pid", "--", "true"],
+            [_config.SANDBOX_BWRAP, "--ro-bind", "/", "/", "--unshare-pid", "--", "true"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=10,
