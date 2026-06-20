@@ -178,6 +178,21 @@ def kill_process_group(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
+def reap_group(pgid: int) -> None:
+    """以「已知 pgid」SIGKILL 整個 process group——撐得過 group leader 已被 reap 的情況。
+
+    `kill_process_group` 靠 `os.getpgid(proc.pid)` 取 pgid，但子程序一旦結束並被 asyncio
+    transport reap 掉，`getpgid` 即拋 ProcessLookupError，於是殘留的孫程序（如 agy/codex
+    在 sandbox 內背景起、仍握著 stdout/stderr pipe 寫端者）就收不掉。因子程序皆以
+    start_new_session=True 啟動、自成 group leader → PGID==啟動時的 PID，故呼叫端可在
+    spawn 後即記下 `pgid = proc.pid`，事後直接對該 group 送訊號，不再經 getpgid。
+    group 已全歿（ProcessLookupError）或平台不支援時靜默略過。
+    """
+    if hasattr(os, "killpg"):
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(pgid, signal.SIGKILL)
+
+
 def _rlimit_preexec():
     """產生「fork 後、exec 前套用資源上限」的 preexec_fn；停用／無 resource／全 0 時回 None。
 
