@@ -106,7 +106,7 @@ def live():
     """真實啟動服務，回傳 (proc, env_path_bytes_backup)；teardown 還原 .env。"""
     backup = ENV.read_bytes() if ENV.exists() else None
     env = dict(os.environ)
-    env.pop("TI_ACCESS_PASSWORD", None)
+    env["TI_ACCESS_PASSWORD"] = ""
     for k in SECRET_ENVS:
         env.pop(k, None)
     env["TI_PROVIDER"] = "claude"  # 啟動為 claude，稍後 POST 切 minimax 以觀察 reload
