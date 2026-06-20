@@ -1832,3 +1832,38 @@
 - 理由：避免在無 PID namespace 權限的環境強跑 `bwrap` 導致 CI 紅燈，以 mock 傳參來兼顧安全性驗證與測試穩定性。
 - 否決方案：否決在測試中強行執行實體沙箱的策略。
 
+## `test_no_py_changed` 不列入本輪驗收範圍，護欄本體零修改。
+- 時間：2026-06-20 19:12
+- 理由：`tests/test_task1_retry_doc.py:160-163` docstring 明定「專屬 task#1 doc-only lane」；skip 條件僅對 `startswith("task-") and != "task-1"` 生效；當前 cwd `ti-autopilot-work` 不符條件，新增任何 `.py` 後跑全套 pytest 必機械性紅，與本輪改碼性質無關。
+- 否決方案：修改 skip 條件讓本輪 cwd 也能繞過——改題護欄即破壞 task#1 lane 的驗收語義，不可接受。
+
+## 本輪唯一新增檔案為 `tests/test_scope_fixture_demo.py`，不新增任何其他 `.py` 或實體測試資料檔。
+- 時間：2026-06-20 19:12
+- 理由：最小可動方案；不引入多餘抽象層，不讓未來 maintainer 誤以為已建立完整 fixture 框架。
+- 否決方案：另建 `tests/demo/` 子目錄——零收益多一層，不值得。
+
+## 示範 fixture 寫在 `tests/test_scope_fixture_demo.py` 同檔，不放入任何 `conftest.py`。
+- 時間：2026-06-20 19:12
+- 理由：單一檔案使用，無需跨檔共用；放同檔 blast radius 最小，隔離最乾淨。
+- 否決方案：放入根層 `tests/conftest.py`——該檔已承載 dotenv stub、env 清洗、autouse reset、bwrap 探測等全域副作用，不適合摻入子系統示範 fixture，會讓副作用範圍擴散到整棵測試樹。
+
+## Fixture 升層規則——同子系統 2+ 檔共用時，才移入該子系統的 `conftest.py`（非根層）；根層 `tests/conftest.py` 本輪不動。
+- 時間：2026-06-20 19:12
+
+## Fixture 實作工具限定為 `tmp_path`（臨時目錄，測試後自動回收）與 `monkeypatch`（env/attr 測試後自動還原），禁止對真實 git worktree 操作或在 `tests/` 寫入實體資料檔。
+- 時間：2026-06-20 19:12
+- 理由：對真實 worktree 操作會影響 `test_no_py_changed` 的 `git diff` 基準；寫入 `tests/` 資料檔會製造 untracked 殘留，導致 `pre-commit --all-files` 與 CI 直接掃描結果分歧（CLAUDE.md 既有鐵則）。
+- 否決方案：用真實 repo 子目錄存放 fixture 資料——製造跨測試執行順序依賴，且產生 untracked 殘留。
+
+## 驗收命令以目標路徑收斂，不以 `-k "not test_no_py_changed"` 作為主要手段。
+- 時間：2026-06-20 19:12
+- 理由：目標路徑是隔離，`-k` 排除是掩蓋；用 `-k` 掩蓋只是讓全套命令表面綠，未來有人直接跑 `pytest` 仍踩雷，不保護依賴方向。
+- 否決方案：在 CI 或 Makefile 裡加 `-k "not test_no_py_changed"` 全域排除——讓護欄靜默失效，破壞 task#1 lane 的長期防線。
+
+## 正式驗收命令為 `python3 -m pytest tests/test_scope_fixture_demo.py -q && test -z "$(git diff -- tests/test_task1_retry_doc.py)" && echo GUARD_UNTOUCHED`，QA 以此為唯一可重跑基準。
+- 時間：2026-06-20 19:12
+
+## PR／驗收說明須明文標註「本輪僅驗 `tests/test_scope_fixture_demo.py`，不代表全套 pytest 已恢復；全套長期解法待 harness 以任務自身 baseline 比對後另行處理」。
+- 時間：2026-06-20 19:12
+- 理由：防止後續 reviewer 誤讀為全套已通過，保護依賴方向的透明度。
+
