@@ -1,18 +1,22 @@
-"""Antigravity 訂閱額度查詢 —— 透過 Google Code Assist 後端取得每模型請求配額。
+"""Antigravity 訂閱額度查詢 —— 透過 Google Code Assist 後端取得 Weekly/5h 群組配額。
 
-Antigravity（`agy`）走 Google OAuth（Gemini Code Assist）。其 `/usage` 顯示的每模型請求配額
-底層是 ``cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota``，回傳每個模型的 REQUESTS
-配額：``remainingFraction``（1=剩 100%）與 ``resetTime``（ISO8601）。
+Antigravity（`agy`）走 Google OAuth（Gemini Code Assist）。其 `/usage` TUI 顯示的「Weekly Limit /
+Five Hour Limit」群組配額，底層是
+``daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary``，body
+``{"project": <cloudaicompanionProject>}``，回傳 ``groups[].buckets[]``，每個 bucket 有
+``displayName``/``window``(weekly|5h)/``remainingFraction``(1=剩 100%)/``resetTime``。
 
-**關鍵**：retrieveUserQuota 的 request body 必須帶 ``{"project": <cloudaicompanionProject>}``
-（取自 loadCodeAssist 回應）——空 body `{}` 會 403「no valid license」。故本模組兩步：
-先 loadCodeAssist 取 project（順帶 currentTier/paidTier），再 retrieveUserQuota 帶 project 取
-buckets。有數值 buckets 就像 claude/codex 畫每模型百分比條；若該帳號層級無數值配額（例如
-retrieveUserQuota 仍 403）則 fallback 顯示訂閱層級。
+**關鍵**：這個端點以 **User-Agent** 把關——少了 ``antigravity/cli/...`` 這個 UA，同樣的 token+body
+一律回 403「caller does not have permission」（這正是過去誤以為「拿不到數字」的真因；2026-06-20
+以受控 MITM 攔 agy 流量確認，差異只有 UA header）。故所有請求都帶 ``_UA``。
+
+兩步：先 loadCodeAssist 取 project（順帶 currentTier/paidTier），再 retrieveUserQuotaSummary 帶
+project 取群組 buckets，正規化成 claude/codex 同款的百分比條。summary 失敗（403/空）→ 退回舊的
+每模型 retrieveUserQuota；再不行 → fallback 顯示訂閱層級。
 
 token 取自 agy 維護的 ``~/.gemini/antigravity-cli/antigravity-oauth-token``（agy 執行時刷新）。
 access_token 約每小時過期、僅在 agy 跑時刷新——過期（401）時回 unauthorized，跑一次
-Antigravity 討論即恢復（不自行 refresh，避免動用內嵌 OAuth client secret）。
+``agy models``（或 Antigravity 討論）即恢復（不自行 refresh，避免動用內嵌 OAuth client secret）。
 """
 
 from __future__ import annotations
@@ -26,11 +30,17 @@ import httpx
 
 from . import config
 
+# agy 用的 daily- preview 後端；summary 端點在此 host 驗證可用。
+SUMMARY_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
 TIER_URL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+# 私有 API 以此把關；任何 antigravity/cli/* 皆可。少了它 summary 一律 403。
+_UA = "antigravity/cli/1.0.10 linux/amd64"
 _TIMEOUT = 8.0
 _TTL = 60.0
 _MAX_BUCKETS = 12
+# group displayName → 簡短前綴；window → 中文窗口標籤。
+_WIN_LABEL = {"weekly": "7 天", "5h": "5 小時"}
 
 # (fetched_at, result)；程序生命週期內共用，重啟即清空。
 _cache: tuple[float, dict] | None = None
@@ -87,7 +97,12 @@ def _post(token: str, url: str, body: dict) -> tuple[int, Any]:
     try:
         resp = httpx.post(
             url,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                # 私有 API 以 UA 把關；retrieveUserQuotaSummary 少了它必得 403。
+                "User-Agent": _UA,
+            },
             json=body,
             timeout=_TIMEOUT,
         )
@@ -119,7 +134,7 @@ def fetch_rate_limits(force: bool = False) -> dict:
         # 已知過期：直接回 unauthorized，前端顯示「token 已過期，跑一次討論即恢復」。
         return _store(now, _result(now, error="unauthorized"))
 
-    # 1) loadCodeAssist：取 cloudaicompanionProject（retrieveUserQuota 必需）與層級。
+    # 1) loadCodeAssist：取 cloudaicompanionProject（quota 端點必需）與層級。
     lstatus, lbody = _post(token, TIER_URL, {})
     if lstatus == -1:
         return _store(now, _result(now, error="unreachable"))
@@ -130,8 +145,17 @@ def fetch_rate_limits(force: bool = False) -> dict:
     project = lbody.get("cloudaicompanionProject")
     tier = _parse_tier(lbody)
 
-    # 2) retrieveUserQuota（帶 project）→ 每模型 buckets。
     if isinstance(project, str) and project:
+        # 2) retrieveUserQuotaSummary（帶 project + UA）→ Weekly/5h 群組 buckets（agy /usage 同源）。
+        sstatus, sbody = _post(token, SUMMARY_URL, {"project": project})
+        if sstatus == 200:
+            buckets = _parse_summary(sbody)
+            if buckets:
+                return _store(now, _result(now, buckets=buckets, tier=tier))
+        elif sstatus == 401:
+            return _store(now, _result(now, error="unauthorized"))
+
+        # 3) 退回每模型 retrieveUserQuota（舊行為），萬一 summary 對此帳號不可用。
         qstatus, qbody = _post(token, QUOTA_URL, {"project": project})
         if qstatus == 200:
             buckets = _parse_buckets(qbody)
@@ -139,9 +163,9 @@ def fetch_rate_limits(force: bool = False) -> dict:
                 return _store(now, _result(now, buckets=buckets, tier=tier))
         elif qstatus == 401:
             return _store(now, _result(now, error="unauthorized"))
-        # 403 / 空 buckets / 其他 → 落到層級顯示（此層級無數值配額）。
+        # 403 / 空 buckets / 其他 → 落到層級顯示。
 
-    # 3) Fallback：顯示訂閱層級。
+    # 4) Fallback：顯示訂閱層級。
     return _store(now, _result(now, tier=tier))
 
 
@@ -149,6 +173,43 @@ def _store(now: float, result: dict) -> dict:
     global _cache
     _cache = (now, result)
     return result
+
+
+def _group_label(name: Any) -> str:
+    """group displayName → 簡短前綴；去掉結尾的「 Models/models」。"""
+    n = name.strip() if isinstance(name, str) else ""
+    for suf in (" Models", " models"):
+        if n.endswith(suf):
+            n = n[: -len(suf)]
+    return n or "Antigravity"
+
+
+def _parse_summary(body: Any) -> list[dict]:
+    """retrieveUserQuotaSummary 回應 → [{label, used_percentage, reset_at}]。
+
+    每個 group（如 "Gemini Models"、"Claude and GPT models"）含 Weekly + 5h 兩個 bucket；
+    展平成「<group> · <窗口>」一條條百分比列，保留 API 群組順序（不依用量排序）。
+    """
+    out: list[dict] = []
+    groups = (body or {}).get("groups", []) if isinstance(body, dict) else []
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        prefix = _group_label(g.get("displayName"))
+        for b in g.get("buckets", []) if isinstance(g.get("buckets"), list) else []:
+            if not isinstance(b, dict):
+                continue
+            win = _WIN_LABEL.get(b.get("window")) or b.get("displayName") or b.get("window")
+            frac = b.get("remainingFraction")
+            used = round((1 - float(frac)) * 100, 1) if isinstance(frac, (int, float)) else None
+            out.append(
+                {
+                    "label": f"{prefix} · {win}",
+                    "used_percentage": used,
+                    "reset_at": _iso_to_epoch(b.get("resetTime")),
+                }
+            )
+    return out[:_MAX_BUCKETS]
 
 
 def _parse_buckets(body: Any) -> list[dict]:
