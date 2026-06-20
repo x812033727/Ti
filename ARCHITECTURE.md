@@ -296,6 +296,8 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
 
 ## LLM 韌性中介層（retry 子系統）
 
+穩定公開契約見 [`docs/llm-caller-public-contract.md`](docs/llm-caller-public-contract.md)；本節只保留架構摘要與接入方向。
+
 所有 provider 的限流／過載退避都收斂於同一條資料流，**provider 層不自帶任何 retry**：
 
 `make_retry_config()` → `RetryConfig` → `run_with_retries`
