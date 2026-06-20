@@ -5,6 +5,7 @@
   - pre-commit 的 ruff hook 維持自動修正設定
   - 文件明確告知修檔後會停止，需重新 stage
   - 真實 git commit：第一次被 Ruff 修檔後失敗，重新 stage 後通過
+  - @pytest.mark.realgit 僅供本機驗收；CI 因無 pre-commit 會自動 skip
 """
 
 from __future__ import annotations
@@ -15,14 +16,10 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.11+ 才有標準 tomllib
-    tomllib = None
 
 yaml = pytest.importorskip("yaml")
 
@@ -53,7 +50,6 @@ def _ruff_hook():
     raise AssertionError("pre-commit 缺 id=ruff hook")
 
 
-@pytest.mark.skipif(tomllib is None, reason="tomllib 需 Python 3.11+")
 def test_ruff_version_pin_consistent_across_dev_precommit_and_ci():
     pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     dev_deps = pyproject["project"]["optional-dependencies"]["dev"]
@@ -172,7 +168,7 @@ def test_real_commit_fails_once_when_ruff_hook_autofixes_then_passes(tmp_path):
     assert "ruff" in second_out and "Passed" in second_out
 
 
-def test_task5_acceptance_has_no_probe_or_pc_cache_residue():
+def test_no_probe_or_pc_cache_residue():
     for command in (
         ["git", "ls-files", ".pc-cache-qa", "qa_ruff_probe.py"],
         [
