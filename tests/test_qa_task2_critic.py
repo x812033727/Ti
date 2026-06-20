@@ -235,6 +235,55 @@ async def test_critic_prompt_excludes_approver_reasoning(monkeypatch):
     assert "獨立的異議檢查者" in pm_critic_prompt
 
 
+# --- 收斂預算：客觀全綠時 critic 退回達上限即放行 ----------------------
+
+
+@pytest.mark.asyncio
+async def test_critic_budget_releases_when_objectively_green(monkeypatch):
+    """qa/senior 全綠、critic 連續『異議: 成立』達 CRITIC_MAX_REJECTS 次 → 以已知限制放行（不無限退回）。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    monkeypatch.setattr(config, "CRITIC_MAX_REJECTS", 2)
+    bucket, broadcast = collect()
+    experts = _happy()
+    critics = {
+        "pm": StubExpert(BY_KEY["pm"], ["異議: 成立，仍可更嚴謹"]),  # 每輪都退回（純語意異議）
+        "senior": StubExpert(BY_KEY["senior"], ["異議: 不成立"]),  # 最終 gate 放行
+    }
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    result = await session.run("需求")
+
+    # 任務 gate 的 pm critic 連退 2 次（達 budget）後收斂放行，整場仍判完成
+    pm_reviews = [
+        e for e in bucket if e.type == events.EventType.CRITIC_REVIEW and e.payload["gate"] == "pm"
+    ]
+    assert len(pm_reviews) == 2
+    assert all(r.payload["passed"] is False for r in pm_reviews)
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is True
+    # 有可觀察的「critic 收斂」phase，且殘留疑慮記成 followup（不靜默丟）
+    phases = [e.payload.get("phase") for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "critic 收斂" in phases
+    assert any("殘留疑慮" in f for f in result["followups"])
+
+
+@pytest.mark.asyncio
+async def test_critic_budget_zero_keeps_unlimited_rejects(monkeypatch):
+    """CRITIC_MAX_REJECTS=0 → 不設限：critic 退回不會被收斂放行，跑滿輪數仍未完成（舊行為）。"""
+    monkeypatch.setattr(config, "CRITIC_ENABLED", True)
+    monkeypatch.setattr(config, "CRITIC_MAX_REJECTS", 0)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)  # 隔離 huddle，純看 critic 路徑
+    bucket, broadcast = collect()
+    experts = _happy()
+    critics = {"pm": StubExpert(BY_KEY["pm"], ["異議: 成立，缺邊界"])}  # 每輪都退回
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, critics=critics)
+    await session.run("需求")
+
+    phases = [e.payload.get("phase") for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "critic 收斂" not in phases  # 不設限時不收斂放行
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is False  # 跑滿輪數仍被 critic 擋下
+
+
 # --- 驗收標準：可關閉（預設） ------------------------------------------
 
 

@@ -250,6 +250,12 @@ HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
 # 維持預設關閉（opt-in）。
 CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 
+# critic 收斂預算：客觀閘門（qa／senior／security／交付前自測）全綠時，critic 至多退回 N 次；
+# 連續退回達上限仍提不出可重現紅點 → 客觀證據優先，以「已知限制」放行並把殘留疑慮記成後續任務
+# （不靜默丟），避免 critic 對 objectively-green 的票無限退回、燒滿輪數後整場判失敗。
+# 0＝不設限（舊行為：critic 可在輪數內無限退回）。只作用於任務審查 gate，不影響最終驗收 gate。
+CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
+
 # 共用知識庫（workspace 內 NOTES.md）：跨任務累積踩過的坑/決策/後續，實作時讀回、結束時寫入。
 # 不進交付物與檔案清單（見 workspace._IGNORE）。純檔案 IO、無額外 LLM 呼叫——預設開啟；
 # 注入時只取尾段 NOTES_MAX_CHARS 字（從段落邊界起），防專案模式長跑 context 無限膨脹。
@@ -881,7 +887,8 @@ def reload() -> None:
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
-    global HUDDLE_ENABLED, CRITIC_ENABLED, NOTES_ENABLED, NOTES_MAX_CHARS, LESSONS_ENABLED
+    global HUDDLE_ENABLED, CRITIC_ENABLED, CRITIC_MAX_REJECTS, NOTES_ENABLED, NOTES_MAX_CHARS
+    global LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT
     global EXPERT_RATE_LIMIT_RETRIES, EXPERT_RATE_LIMIT_BACKOFF, EXPERT_RATE_LIMIT_BACKOFF_CAP
@@ -970,6 +977,7 @@ def reload() -> None:
     # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
     HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
     CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
+    CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
     NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
     NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
     LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")

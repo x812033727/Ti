@@ -1077,6 +1077,7 @@ class StudioSession:
 
         return {
             "completed": done,
+            "shippable": shippable,
             "followups": self._followups,
             "followup_items": self._followup_items,
             "core_changes": self._core_changes,
@@ -1574,6 +1575,7 @@ class StudioSession:
         )  # 本任務所有事件統一帶 task_id；主 lane 回原樣 self.broadcast。
         feedback = seed_feedback
         rounds = max_rounds if max_rounds is not None else config.TASK_MAX_ROUNDS
+        critic_rejects = 0  # 客觀全綠下 critic 退回次數，達 CRITIC_MAX_REJECTS 即收斂放行
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
         prev_commit = ctx.last_commit
         for rnd in range(1, rounds + 1):
@@ -1756,6 +1758,29 @@ class StudioSession:
                 subject = f"任務 #{task['id']}：{task['title']}"
                 critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan, bc)
                 if critic_ok:
+                    return True
+                # 收斂預算：此處已過 qa/senior/security/客觀閘門（gate_veto 早 continue），即「客觀全綠」，
+                # critic 僅剩語意異議。達 CRITIC_MAX_REJECTS 次仍提不出可重現紅點 → 客觀證據優先，以
+                # 已知限制放行，並把殘留疑慮記成後續任務（不靜默丟），避免無限退回燒滿輪數後整場判失敗。
+                critic_rejects += 1
+                if config.CRITIC_MAX_REJECTS > 0 and critic_rejects >= config.CRITIC_MAX_REJECTS:
+                    self._followups.append(
+                        f"覆查 critic 對「{task['title']}」的殘留疑慮"
+                        f"（客觀閘門全綠、{critic_rejects} 次退回均無可重現紅點）：{critic_text[:160]}"
+                    )
+                    self._note(
+                        ctx,
+                        f"## critic 收斂放行 任務 #{task['id']}：{task['title']}"
+                        f"（客觀全綠、critic 連退 {critic_rejects} 次無可重現紅點，以已知限制放行）\n{critic_text}",
+                    )
+                    await bc(
+                        events.phase_change(
+                            self.session_id,
+                            "critic 收斂",
+                            f"任務 #{task['id']} 客觀閘門全綠、critic 退回達上限"
+                            f"（{critic_rejects} 次），以已知限制放行",
+                        )
+                    )
                     return True
                 # 異議成立 → 退回再修，把反對理由帶進下一輪並記入知識庫。
                 feedback = f"【異議檢查（critic）退回理由】\n{critic_text}"
