@@ -159,14 +159,30 @@ def test_no_py_changed():
 
     範圍限縮：此護欄專屬 task#1 自身的 doc-only lane。多 lane 並行共用工作目錄/
     base 時，改碼 lane（task-3 等）合法改 .py，不屬此護欄範疇——以 worktree 目錄名
-    判定，非 task#1 lane 即 skip，避免對改碼任務天生假紅（共用 HEAD 必互相污染）。
+    或分支名判定，非 task#1 lane 即 skip，避免對改碼任務天生假紅（共用 HEAD 必互相污染）。
     根因移交：harness 應以各任務自身 baseline 比對，而非共用 HEAD（核心改動）。
     """
     import pytest
 
     lane = ROOT.name
-    if lane.startswith("task-") and lane != "task-1":
-        pytest.skip(f"非 task#1 doc-only lane（{lane}）：.py 變更護欄不適用，避免跨 lane 假紅")
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    def is_task1_identity(value: str) -> bool:
+        return bool(
+            value and (re.search(r"(^|/)task-1$", value) or re.fullmatch(r"lane-.+-1", value))
+        )
+
+    if not any(is_task1_identity(v) for v in (lane, branch)):
+        pytest.skip(
+            "非 task#1 doc-only lane"
+            f"（worktree={lane!r}, branch={branch or 'detached'!r}）："
+            ".py 變更護欄不適用，避免跨 lane 假紅"
+        )
 
     base = subprocess.run(
         ["git", "merge-base", "HEAD", "origin/main"],
