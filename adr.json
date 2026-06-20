@@ -3135,6 +3135,62 @@
       "rejected": "",
       "session_id": "apd3bad9cb39",
       "created_at": 1781953947.473631
+    },
+    {
+      "decision": "調用入口固定為 `python3 -m ruff`，不使用裸 `ruff`",
+      "rationale": "PATH 漂移可能取到非釘版的 ruff，`python3 -m` 保證使用當前 venv/python 環境下的 0.14.4",
+      "rejected": "裸 `ruff`（可攜性代價太高，版本飄移時靜默通過最危險）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550643
+    },
+    {
+      "decision": "驗收前必須執行 `python3 -m ruff --version` 確認回傳 `ruff 0.14.4`",
+      "rationale": "`python3` 本身也可能漂移；版本確認是最外層保險，費用幾乎為零",
+      "rejected": "省略版本確認直接跑 format（省了一步但失去最後一道漂移偵測）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550793
+    },
+    {
+      "decision": "任務 #1 基線量測固定先跑 `python3 -m ruff format --check studio/autopilot.py tests/docs/test_qa_task3_python3_convention.py tests/server/test_qa_task5_demo_first_step.py tests/test_verify_clean_acceptance.py`；本輪 exit=0、stdout=`4 files already formatted`",
+      "rationale": "`--check` 是不寫入的基線量測，可判定現 HEAD 四檔是否原本已格式化；本輪結果代表 no-op 確認通過。",
+      "rejected": "先跑 mutating `python3 -m ruff format <四檔>` 當基線（會破壞「原本是否已格式化」的量測語意）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550807
+    },
+    {
+      "decision": "四個目標路徑顯式完整列舉，每次執行固定帶全部四條路徑：`studio/autopilot.py`、`tests/docs/test_qa_task3_python3_convention.py`、`tests/server/test_qa_task5_demo_first_step.py`、`tests/test_verify_clean_acceptance.py`",
+      "rationale": "防止人工漏改或路徑漂移；若未來重複執行，命令本身即為可稽核的 spec",
+      "rejected": "`ruff format .` 或 glob（掃整個 repo 會動到無關檔，製造非預期 diff）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550812
+    },
+    {
+      "decision": "`git diff --stat` 無非預期改動作為硬閘門，與 `--check` exit=0 並列為必要條件",
+      "rationale": "CI 環境 `format` 有寫入行為；閘門缺席時「格式通過但悄悄動到其他檔」無法被偵測",
+      "rejected": "只看 `--check` exit=0（忽略副作用 diff，保護層缺一不可）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550817
+    },
+    {
+      "decision": "本輪四檔全數 exit=0 → 結論為「no-op 確認通過」，不開 PR、不產生 commit",
+      "rationale": "已格式化不需空 commit；空 commit 污染 git log 且誤導後續 reviewer",
+      "rejected": "建立確認用 commit（增加 log 噪音，且與「確認任務」定位不符）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550824
+    },
+    {
+      "decision": "`pyproject.toml`、ruff 版本、`.pre-commit-config.yaml` 本輪一律不動",
+      "rationale": "三端（CI/pre-commit/本地）已對齊 0.14.4，任何版本變動需獨立評估影響範圍",
+      "rejected": "順手升版（會改變三端一致基線，超出本輪「確認任務」範疇）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.955083
+    },
+    {
+      "decision": "不引入 Black 或任何其他格式化工具",
+      "rationale": "本專案已以 ruff formatter 為唯一格式化層，混用會製造邊界差異且增加工具鏈複雜度",
+      "rejected": "Black 補充格式化（ruff 官方文件已明確不建議長期混用）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550836
     }
   ]
 }
