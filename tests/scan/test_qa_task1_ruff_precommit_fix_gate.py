@@ -172,7 +172,7 @@ def test_real_commit_fails_once_when_ruff_hook_autofixes_then_passes(tmp_path):
     assert "ruff" in second_out and "Passed" in second_out
 
 
-def test_task5_acceptance_has_no_probe_or_pc_cache_residue():
+def test_no_probe_or_pc_cache_residue():
     for command in (
         ["git", "ls-files", ".pc-cache-qa", "qa_ruff_probe.py"],
         [
