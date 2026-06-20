@@ -2,6 +2,5 @@
 
 本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:
 
-- [ ] 覆蓋啟用門禁與空字串停用門禁的稽核訊息測試，並驗證不洩漏新舊密碼、hash、token、cookie
-- [ ] 覆蓋寫入失敗時不發成功稽核訊息，且環境與 config 不被誤更新
-- [ ] 執行 scoped lint、測試與 `git status --short`，確認無未追蹤或非本需求變更
+- [ ] 對照需求逐項比對 `publish-release.yml`／`scripts/publish_release.py`／`release-smoke.yml`，產出「已達成／缺口」清單
+- [ ] 確認 `GH_PAT` 設定指引齊備、發佈文件納入 DoD，並明文標註「真實 tag-push 端到端尚待生產驗證」
