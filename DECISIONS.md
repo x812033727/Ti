@@ -1866,3 +1866,40 @@
 ## PR／驗收說明須明文標註「本輪僅驗 `tests/test_scope_fixture_demo.py`，不代表全套 pytest 已恢復；全套長期解法待 harness 以任務自身 baseline 比對後另行處理」。
 - 時間：2026-06-20 19:12
 - 理由：防止後續 reviewer 誤讀為全套已通過，保護依賴方向的透明度。
+## 本輪零程式碼改動，唯一實作工作為補 `CLAUDE.md`（或獨立 `docs/release-ops.md`）段落，納入 GH_PAT 設定指引與半閉環聲明。
+- 時間：2026-06-21 00:53
+- 理由：現有 workflow、script、守護測試已閉合需求；額外動碼只增 blast radius，不增保障。
+- 否決方案：補 `--verify-tag`、換 GitHub App token——兩者均屬鍍金，本輪需求未要求且守護測試已覆蓋等效保護。
+
+## `GH_PAT` 文件必須逐字列出四項規格——① fine-grained PAT、② 本 repo only（非 all-repos）、③ 權限 `Contents: read/write`、④ secret 名稱固定 `GH_PAT`。
+- 時間：2026-06-21 00:53
+- 理由：secret 名稱或範圍錯誤是最常見的「設定偏移」，文件若不逐字釘住，後繼維護者輪替 PAT 時容易產出不相容的 token，且 Step 5 失敗僅回 403，錯誤訊息無法自述原因。
+- 否決方案：只寫「設定一個 PAT」——資訊不完整，保護不了依賴方向。
+
+## GH_PAT 到期 / 輪替責任須在同一文件段落明文標注「過期 → Step 5 `gh release create` 403；輪替後到 repo Settings → Secrets 更新 `GH_PAT`」，不得省略。
+- 時間：2026-06-21 00:53
+- 理由：高級工程師點出「過期時 Step 5 會 403」是最大長期運維風險；把處置流程寫進文件是最低成本的防護。
+
+## 「半閉環」聲明放入 `CLAUDE.md`，措辭固定為「真實 `v*` tag-push 端到端尚待生產驗證，單元/守護測試為半閉環」，不得以模糊字眼替代。
+- 時間：2026-06-21 00:53
+- 理由：workflow 註解僅對讀原始碼的人可見；`CLAUDE.md` 是本 repo 的正式協作記憶，後續 reviewer 必然讀到，保護依賴方向的透明度成本最低。
+- 否決方案：只藏在 workflow 註解——可見性不足，reviewer 可能誤判已有完整 E2E 驗證。
+
+## `--verify-tag` 本輪不加；若未來引入 `workflow_dispatch` 手動觸發，此決策必須重審並記入新 ADR。
+- 時間：2026-06-21 00:53
+- 理由：現有觸發條件 `on: push: tags: v*` 保證 tag 已存在，Step 3 `ref_name == v{version}` 為等效 fail-fast；重複加只鍍金。
+
+## Token 路由維持 `secrets.GH_PAT`（fine-grained PAT），不引入 GitHub App。
+- 時間：2026-06-21 00:53
+- 理由：PAT 已解 GITHUB_TOKEN 遞迴死結，範圍可限縮到本 repo；App 需額外安裝與密鑰管理，引入新設定依賴，可逆性下降。
+- 否決方案：GitHub App token——成本高於收益，本輪需求未要求審計追蹤粒度。
+
+## 模組邊界維持 `scripts → studio` 單向依賴；`studio/release_note.py` 永遠不感知 `body.md` 路徑或 `GITHUB_OUTPUT`，I/O orchestration 集中在 `scripts/publish_release.py`。
+- 時間：2026-06-21 00:53
+
+## version 與 heading 字面值禁止出現在 YAML 與腳本內；`test_script_has_zero_breaking_heading_literal` 守護測試為此不變量的機械護欄，本輪及後續均不可碰。
+- 時間：2026-06-21 00:53
+
+## 正式驗收命令為 `python3 -m pytest tests/autopilot/test_qa_task2_release_body.py tests/autopilot/test_qa_task3_release_trigger_chain.py tests/autopilot/test_qa_task4_publish_workflow_guard.py tests/autopilot/test_release_pipeline_dry_run.py -q && python3 scripts/publish_release.py && echo BODY_RENDERED`，QA 以此為唯一可重跑基準；文件須明文標注「本輪守護測試為半閉環，不代表真實 tag-push E2E 已驗證」。
+- 時間：2026-06-21 00:53
+
