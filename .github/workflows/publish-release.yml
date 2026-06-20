@@ -18,7 +18,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write  # gh release create 的最小權限需求
+  contents: read  # 內建 GITHUB_TOKEN 只供 checkout；建立 release 的 write 權限由 secrets.GH_PAT 提供
 
 jobs:
   publish-release:
