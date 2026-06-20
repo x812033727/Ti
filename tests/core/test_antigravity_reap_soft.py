@@ -61,6 +61,77 @@ def test_reap_group_missing_group_is_silent():
     runner.reap_group(2_000_000_000)  # 幾乎不可能存在的 pgid
 
 
+# --- runner.wait_process_exit（輪詢 returncode，不靠 pipe-bound proc.wait）-------
+
+
+@pytest.mark.asyncio
+async def test_wait_process_exit_returns_empty_on_clean_exit():
+    proc = await asyncio.create_subprocess_exec(
+        "/bin/sh", "-c", "exit 0", stdout=asyncio.subprocess.DEVNULL
+    )
+    loop = asyncio.get_running_loop()
+    reason = await asyncio.wait_for(
+        runner.wait_process_exit(
+            proc,
+            idle_timeout=5.0,
+            hard_timeout=5.0,
+            last_activity=lambda: loop.time(),
+            started_at=loop.time(),
+            poll=0.02,
+        ),
+        timeout=3,
+    )
+    assert reason == ""
+    assert proc.returncode == 0
+
+
+@pytest.mark.asyncio
+async def test_wait_process_exit_hard_timeout_reason():
+    proc = await asyncio.create_subprocess_exec(
+        "/bin/sh", "-c", "sleep 30", stdout=asyncio.subprocess.DEVNULL, start_new_session=True
+    )
+    loop = asyncio.get_running_loop()
+    try:
+        reason = await asyncio.wait_for(
+            runner.wait_process_exit(
+                proc,
+                idle_timeout=0.0,  # 只測 hard
+                hard_timeout=0.3,
+                last_activity=lambda: loop.time(),
+                started_at=loop.time(),
+                poll=0.05,
+            ),
+            timeout=3,
+        )
+        assert reason == "總時長"
+    finally:
+        runner.reap_group(proc.pid)
+
+
+@pytest.mark.asyncio
+async def test_wait_process_exit_idle_timeout_reason():
+    proc = await asyncio.create_subprocess_exec(
+        "/bin/sh", "-c", "sleep 30", stdout=asyncio.subprocess.DEVNULL, start_new_session=True
+    )
+    loop = asyncio.get_running_loop()
+    fixed = loop.time()  # last_activity 不前進 → idle 必先到
+    try:
+        reason = await asyncio.wait_for(
+            runner.wait_process_exit(
+                proc,
+                idle_timeout=0.3,
+                hard_timeout=30.0,
+                last_activity=lambda: fixed,
+                started_at=fixed,
+                poll=0.05,
+            ),
+            timeout=3,
+        )
+        assert reason == "閒置"
+    finally:
+        runner.reap_group(proc.pid)
+
+
 # --- _antigravity_pause_or_soft -----------------------------------------
 
 

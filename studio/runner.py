@@ -193,6 +193,44 @@ def reap_group(pgid: int) -> None:
             os.killpg(pgid, signal.SIGKILL)
 
 
+async def wait_process_exit(
+    proc: asyncio.subprocess.Process,
+    *,
+    idle_timeout: float,
+    hard_timeout: float,
+    last_activity,
+    started_at: float,
+    poll: float = 0.2,
+) -> str:
+    """輪詢 `proc.returncode` 等子程序退出，套用 idle／hard watchdog；回 timeout 原因。
+
+    刻意**不**用 `await proc.wait()`：asyncio 把 `Process.wait()` 的完成綁在「所有 pipe 關閉」
+    上，而 sandbox 工具孫程序可能在主程序退出後仍握著 stdout/stderr pipe → 即使 returncode
+    已設定，`wait()` 也永不返回（agy／codex 整輪卡到外層 task timeout 的真因）。改輪詢
+    returncode（child watcher 於退出即設定，不依賴 pipe）。此輪詢是「等程序退出」非「退避」。
+
+    - `last_activity`：callable() -> float，回最近一次輸出活動的事件迴圈時鐘，讓 idle 隨輸出重置。
+    - `started_at`：本輪起算的事件迴圈時鐘（給 hard 上限）。
+    回傳 ""＝程序已正常退出；"閒置"／"總時長"＝對應上限先到（呼叫端據以收尾收屍）。
+    """
+    loop = asyncio.get_running_loop()
+    while proc.returncode is None:
+        now = loop.time()
+        deadlines: list[tuple[str, float]] = []
+        if hard_timeout:
+            deadlines.append(("總時長", started_at + hard_timeout - now))
+        if idle_timeout:
+            deadlines.append(("閒置", last_activity() + idle_timeout - now))
+        if deadlines:
+            reason, wait_s = min(deadlines, key=lambda item: item[1])
+            if wait_s <= 0:
+                return reason
+            await asyncio.sleep(min(wait_s, poll))
+        else:
+            await asyncio.sleep(poll)
+    return ""
+
+
 def _rlimit_preexec():
     """產生「fork 後、exec 前套用資源上限」的 preexec_fn；停用／無 resource／全 0 時回 None。
 

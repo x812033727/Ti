@@ -668,33 +668,18 @@ class AntigravityExpert:
 
             stdout_task = asyncio.create_task(_stdout())
             stderr_task = asyncio.create_task(_stderr())
-            timeout_reason = ""
-            try:
-                # 不能用 `await proc.wait()` 等退出：asyncio 把 wait() 的完成綁在「所有 pipe 關閉」
-                # 上，而 agy --sandbox 的工具孫程序可能在 agy 主程序退出後仍握著 stdout/stderr →
-                # 即使 returncode 已設定，wait() 也永不返回（實測 #126 整輪卡到外層 3600s 的真因）。
-                # 改輪詢 returncode（child watcher 於退出時即設定，不依賴 pipe），watchdog 照常算。
-                while proc.returncode is None:
-                    now = loop.time()
-                    deadlines: list[tuple[str, float]] = []
-                    if config.TURN_HARD_TIMEOUT:
-                        deadlines.append(
-                            ("總時長", started_at + float(config.TURN_HARD_TIMEOUT) - now)
-                        )
-                    if config.TURN_IDLE_TIMEOUT:
-                        deadlines.append(
-                            ("閒置", last_activity + float(config.TURN_IDLE_TIMEOUT) - now)
-                        )
-                    if deadlines:
-                        deadline_reason, wait_s = min(deadlines, key=lambda item: item[1])
-                        if wait_s <= 0:
-                            timeout_reason = deadline_reason
-                            raise TimeoutError
-                        poll = min(wait_s, _PROC_POLL_INTERVAL)
-                    else:
-                        poll = _PROC_POLL_INTERVAL
-                    await asyncio.sleep(poll)
-            except TimeoutError:
+            # 等 agy 退出：用 runner.wait_process_exit 輪詢 returncode（不能用 await proc.wait()——
+            # 在 sandbox 孫程序仍握 pipe 時它永不返回，正是 #126 整輪卡到外層 3600s 的真因），
+            # idle／hard watchdog 照常算。回 ""＝正常退出，回 "閒置"/"總時長"＝該上限先到。
+            timeout_reason = await runner.wait_process_exit(
+                proc,
+                idle_timeout=float(config.TURN_IDLE_TIMEOUT or 0),
+                hard_timeout=float(config.TURN_HARD_TIMEOUT or 0),
+                last_activity=lambda: last_activity,
+                started_at=started_at,
+                poll=_PROC_POLL_INTERVAL,
+            )
+            if timeout_reason:
                 # 本端 watchdog（idle／hard）逾時＝暫態：reap 整組收屍（含握 pipe 的 sandbox
                 # 孫程序，取代原本無上限的 await proc.wait()，正是 38 分鐘卡死的根因），有上限
                 # join reader 後，降級成本輪軟失敗（系統 note，不含核可關鍵詞）——不再升
