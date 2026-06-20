@@ -95,6 +95,7 @@ def _reset_require_chown_after_test():
 # 偵測 bwrap 實際是否可用（防止檔案存在但因權限無法使用造成測試紅燈）
 def _check_bwrap_actually_works() -> bool:
     import subprocess
+
     from studio import config as _config
 
     try:
@@ -115,6 +116,7 @@ def _check_bwrap_actually_works() -> bool:
 
 if not _check_bwrap_actually_works():
     import warnings
+
     from studio import config as _config
 
     warnings.warn(
