@@ -17,7 +17,6 @@
 | 可選寫入 `$GITHUB_OUTPUT`，且支援多行 body | 已達成 | `scripts/publish_release.py:53-60` 用隨機 delimiter 寫多行值；`scripts/publish_release.py:71-73` 僅在有 `GITHUB_OUTPUT` 時寫入。 |
 | 建立 release 使用 PAT，避免 `GITHUB_TOKEN` 觸發死結 | 已達成 | `publish-release.yml:6-14` 說明死結與權限；`publish-release.yml:84-89` 的 `GH_TOKEN` 來自 `secrets.GH_PAT`。 |
 | `GH_PAT` 未設時先 fail-fast | 已達成 | `publish-release.yml:36-44` 的 `Verify PAT` step 以 `test -n "$GH_TOKEN"` 攔空值。 |
-| publish workflow 權限最小化到 release 建立所需 | 已達成 | `publish-release.yml:20-21` 設 `contents: write`。 |
 | 下游 smoke 由 release published 事件觸發 | 已達成 | `release-smoke.yml:6-8` 設 `on.release.types: [published]`。 |
 | smoke 讀「實際 release body」，不是重跑本地 render | 已達成 | `release-smoke.yml:39-52` 使用 `gh release view "$TAG" --json body --jq '.body'`，再寫入 output。 |
 | smoke 驗證 release body 含非空頂層 Breaking Changes 區塊 | 已達成 | `release-smoke.yml:54-60` 將 body 放入 `BODY`，執行 `python -m studio.release_smoke`。 |
@@ -32,6 +31,8 @@
 | `GH_PAT` 正式設定/輪替文件 | 缺口 | `publish-release.yml:11-14` 有 workflow 註解，但 repo 協作文件尚未固定列出 fine-grained、本 repo only、`Contents: Read and write`、secret 名稱 `GH_PAT`、過期後 Step 5 會 403 與輪替方式。 |
 | 半閉環聲明文件化 | 缺口 | workflow 註解說明觸發鏈設計，但協作文件尚未明文標註「單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證」。 |
 | PAT 過期/撤銷 fail-fast | 缺口 | `publish-release.yml:36-44` 只檢查 secret 非空；`publish-release.yml:36-39` 已註明過期 PAT 仍會到 Create release 才以 403 失敗。這是運維缺口，不是目前程式碼功能缺口。 |
+| publish workflow `GITHUB_TOKEN` 權限過給 | 安全缺口 | `publish-release.yml:20-21` 設 `contents: write`，但實際建立 release 的 `gh release create` 由 `publish-release.yml:84-89` 的 `secrets.GH_PAT` 授權；`permissions:` 只影響 `GITHUB_TOKEN`，目前可下修為 `contents: read` 以縮小爆炸半徑。 |
+| Actions 未以 commit SHA 鎖版 | 安全待改善 | `publish-release.yml:29`、`publish-release.yml:32`、`release-smoke.yml:16`、`release-smoke.yml:19` 使用 `actions/checkout@v4` / `actions/setup-python@v5` 可移動標籤；資安建議改鎖 commit SHA。 |
 | `--verify-tag` | 非阻塞缺口 | `publish-release.yml:89` 目前未加 `--verify-tag`。在現行 `on.push.tags: v*` 與 `Assert tag matches version` 下，tag 已存在且版本有 fail-fast；是否加硬化需由任務 #3 決策，不應在本盤點任務順手改。 |
 
-結論：三個核心檔的發佈鏈功能已大致達成；殘留缺口集中在生產端到端驗證、操作文件與是否加硬化的決策，不是 `gh release create`、body 注入或 `release-smoke` 觸發鏈的實作缺失。
+結論：三個核心檔的發佈鏈功能已大致達成；殘留缺口集中在生產端到端驗證、操作文件、`GITHUB_TOKEN` 權限下修與 Actions 鎖版等硬化決策，不是 `gh release create`、body 注入或 `release-smoke` 觸發鏈的實作缺失。
