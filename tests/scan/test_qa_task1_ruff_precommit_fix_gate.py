@@ -5,7 +5,7 @@
   - pre-commit 的 ruff hook 維持自動修正設定
   - 文件明確告知修檔後會停止，需重新 stage
   - 真實 git commit：第一次被 Ruff 修檔後失敗，重新 stage 後通過
-  - @pytest.mark.realgit 僅本機驗收；CI 因無 pre-commit 會自動 skip
+  - @pytest.mark.realgit 僅供本機驗收；CI 因無 pre-commit 會自動 skip
 """
 
 from __future__ import annotations
