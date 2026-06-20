@@ -3158,6 +3158,13 @@
       "created_at": 1781977007.9550807
     },
     {
+      "decision": "需要修正或冪等驗證時，執行順序固定為 `format <四檔>` → `format --check <四檔>`，兩步串連",
+      "rationale": "`format` 冪等寫入、`--check` 非零出口閘門，串連後 CI/本地/pre-commit 三端可複現同一驗收命令",
+      "rejected": "在需要修正時只跑 `--check`（無法處理真正未格式化的情境，讓指令不通用）",
+      "session_id": "ap7da5974dd6",
+      "created_at": 1781977007.9550807
+    },
+    {
       "decision": "四個目標路徑顯式完整列舉，每次執行固定帶全部四條路徑：`studio/autopilot.py`、`tests/docs/test_qa_task3_python3_convention.py`、`tests/server/test_qa_task5_demo_first_step.py`、`tests/test_verify_clean_acceptance.py`",
       "rationale": "防止人工漏改或路徑漂移；若未來重複執行，命令本身即為可稽核的 spec",
       "rejected": "`ruff format .` 或 glob（掃整個 repo 會動到無關檔，製造非預期 diff）",

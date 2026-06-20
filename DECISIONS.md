@@ -1883,6 +1883,11 @@
 - 理由：`--check` 是不寫入的基線量測，可判定現 HEAD 四檔是否原本已格式化；本輪結果代表 no-op 確認通過。
 - 否決方案：先跑 mutating `python3 -m ruff format <四檔>` 當基線（會破壞「原本是否已格式化」的量測語意）
 
+## 需要修正或冪等驗證時，執行順序固定為 `format <四檔>` → `format --check <四檔>`，兩步串連
+- 時間：2026-06-21 01:36
+- 理由：`format` 冪等寫入、`--check` 非零出口閘門，串連後 CI/本地/pre-commit 三端可複現同一驗收命令
+- 否決方案：在需要修正時只跑 `--check`（無法處理真正未格式化的情境，讓指令不通用）
+
 ## 四個目標路徑顯式完整列舉，每次執行固定帶全部四條路徑：`studio/autopilot.py`、`tests/docs/test_qa_task3_python3_convention.py`、`tests/server/test_qa_task5_demo_first_step.py`、`tests/test_verify_clean_acceptance.py`
 - 時間：2026-06-21 01:36
 - 理由：防止人工漏改或路徑漂移；若未來重複執行，命令本身即為可稽核的 spec
