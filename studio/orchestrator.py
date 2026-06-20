@@ -1375,7 +1375,8 @@ class StudioSession:
         t0 = time.monotonic()
         task_ok = await self._work_task(ctx, task, plan_ctx)
         # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
-        if not task_ok and config.HUDDLE_ENABLED and not self._stop:
+        # 過軟性時間預算則不再開 huddle（又一整輪討論+重試）——已超時就收尾出貨，未過記 known-limit。
+        if not task_ok and config.HUDDLE_ENABLED and not self._stop and not self._time_exceeded():
             task_ok = await self._huddle_and_retry(ctx, task, plan_ctx, bc)
         # 累計本任務耗時（供「若循序」估算 → 加速比）。
         self._parallel_metrics.setdefault("_task_durations", []).append(time.monotonic() - t0)
@@ -1616,7 +1617,10 @@ class StudioSession:
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
         prev_commit = ctx.last_commit
         for rnd in range(1, rounds + 1):
-            if self._stop:
+            # 中止或過軟性時間預算 → 結束本任務迴圈（未過＝known-limit）。此檢查必須在任務內「每輪」
+            # 都做：時間多半耗在單任務的多輪實作/審查/huddle 裡，只在 _run_lane/_run_waves 派發邊界
+            # 檢查會整輪漏掉、撐到硬 timeout（見 #217 後驗證:core #27 卡在單任務迴圈、收斂事件沒觸發）。
+            if self._stop or self._time_exceeded():
                 return False
             human = await self._lane_human_prefix(ctx)
 
