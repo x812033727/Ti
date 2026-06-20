@@ -75,45 +75,103 @@ def test_time_exceeded_disabled_without_budget(monkeypatch):
     assert s._deadline_hit is False
 
 
-# --- 整合：截斷後優雅收尾 ----------------------------------------------
+# --- 整合：以可控時鐘驅動真實 _time_exceeded，測截斷後優雅收尾 ----------
+
+
+class ClockEngineer(StubExpert):
+    """工程師發言後把時鐘推過軟性預算（模擬「實作這一輪就耗掉預算」），驅動真實 _time_exceeded。"""
+
+    def __init__(self, role: Role, scripts: list[str], clock: dict):
+        super().__init__(role, scripts)
+        self._clock = clock
+
+    async def speak(self, prompt: str, broadcast) -> str:
+        r = await super().speak(prompt, broadcast)
+        self._clock["t"] = 10_000.0  # 跳過 time_budget_s × frac
+        return r
+
+
+def _deadline_after_first_impl(session, clock):
+    """把 _time_exceeded 換成「時鐘過 850（=1000×0.85）即觸發」的判定（instance 屬性，判定確定）。
+
+    刻意換掉 _time_exceeded 本體而非 patch time.monotonic：本測只驗「orchestrator 有在這些點
+    *呼叫* deadline 檢查」（_work_task 每輪頂、huddle 前、派發邊界）——計時邏輯本身另由
+    test_time_exceeded_threshold 驗。ClockEngineer 在每輪實作後把時鐘推過門檻來驅動。
+    """
+
+    def fake():
+        if clock["t"] >= 850:
+            session._deadline_hit = True
+            return True
+        return False
+
+    return fake
 
 
 @pytest.mark.asyncio
 async def test_deadline_truncates_remaining_tasks_and_wraps_up(monkeypatch):
     """過軟性預算後不再派發新任務:已完成的保留,未動的留 todo,發「時間預算收斂」事件,正常回傳結果。"""
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)  # 序列化兩任務,判定確定性
+
+    clock = {"t": 0.0}
     bucket, broadcast = collect()
     experts = {
         "pm": StubExpert(BY_KEY["pm"], ["任務: A\n任務: B", "決議: 完成", "檢討"]),
-        "engineer": StubExpert(BY_KEY["engineer"], ["做好了"]),
-        "qa": StubExpert(BY_KEY["qa"], ["驗證: PASS"]),
+        "engineer": ClockEngineer(BY_KEY["engineer"], ["做好了"], clock),
+        "qa": StubExpert(BY_KEY["qa"], ["驗證: PASS"]),  # 任務 A 第一輪即過
         "senior": StubExpert(BY_KEY["senior"], ["決議: 核可"]),
     }
-    session = StudioSession("t", broadcast, experts=experts, cwd=None, time_budget_s=100)
-
-    # 前 2 次檢查（wave 入口、任務 A）放行；第 3 次起（任務 B）截斷。
-    calls = {"n": 0}
-
-    def fake_exceeded():
-        calls["n"] += 1
-        if calls["n"] >= 3:
-            session._deadline_hit = True
-            return True
-        return False
-
-    monkeypatch.setattr(session, "_time_exceeded", fake_exceeded)
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, time_budget_s=1000)
+    monkeypatch.setattr(session, "_time_exceeded", _deadline_after_first_impl(session, clock))
 
     result = await session.run("需求")
 
     # 正常回傳結果（沒有拋 TimeoutError、沒有整場崩）
     assert isinstance(result, dict)
-    # 任務 A 完成、任務 B 未動（留 todo → unmet → known-limit）
-    by_id = {t["id"]: t for t in session._tasks}
-    assert by_id[1]["status"] == "done"
-    assert by_id[2]["status"] != "done"
-    # 發出可觀察的「時間預算收斂」事件
+    # 過預算後不再派發新任務 → 至少一個任務被截斷未完成（留 todo → unmet → known-limit）
+    statuses = [t["status"] for t in session._tasks]
+    assert statuses.count("done") < len(session._tasks)
     phases = [e.payload.get("phase") for e in bucket if e.type == events.EventType.PHASE_CHANGE]
     assert "時間預算收斂" in phases
-    # 未全數完成 → 不謊報全完成
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is False
+
+
+# --- 任務「內部」迴圈也要受時間預算約束（#217 後驗證補洞）-------------
+
+
+@pytest.mark.asyncio
+async def test_deadline_breaks_intra_task_loop_and_skips_huddle(monkeypatch):
+    """時間多半耗在單任務的多輪迴圈裡：過預算須在 _work_task 每輪中止、且不再開 huddle。
+
+    回歸 #217 後驗證抓到的破口——core #27 卡在單任務迴圈、deadline 只在派發邊界檢查而漏掉、
+    撐到硬 timeout。修法:_work_task 每輪頂 + huddle 進入前都檢查 _time_exceeded()。
+    """
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
+    monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 3)  # 三輪:沒有「每輪檢查」時三輪全跑→3 次實作
+
+    clock = {"t": 0.0}
+    bucket, broadcast = collect()
+    experts = {
+        "pm": StubExpert(BY_KEY["pm"], ["任務: 只有一個", "決議: 完成", "檢討"]),
+        # 每輪實作後時鐘跳過預算;qa 每輪都 FAIL → 無「每輪檢查」會跑滿 3 輪再 huddle。
+        "engineer": ClockEngineer(BY_KEY["engineer"], ["R1", "R2", "R3", "R4"], clock),
+        "qa": StubExpert(BY_KEY["qa"], ["驗證: FAIL"]),
+        "senior": StubExpert(BY_KEY["senior"], ["決議: 退回"]),
+    }
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, time_budget_s=1000)
+    monkeypatch.setattr(session, "_time_exceeded", _deadline_after_first_impl(session, clock))
+
+    result = await session.run("需求")
+
+    assert isinstance(result, dict)
+    # 迴圈在過預算後的某一輪頂端中止 → 不會跑滿 3 輪（無此修正會是 3 次實作）。
+    assert experts["engineer"].calls <= 2
+    # huddle（卡關討論）不應被召開（huddle 進入前的 deadline 守衛）
+    phases = [e.payload.get("phase") for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "卡關討論" not in phases
+    # 仍優雅收尾、發收斂事件、不謊報完成
+    assert "時間預算收斂" in phases
     done = [e for e in bucket if e.type == events.EventType.DONE][0]
     assert done.payload["completed"] is False
 
