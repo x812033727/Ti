@@ -1,5 +1,6 @@
-"""antigravity_usage：兩步查詢（loadCodeAssist 取 project → retrieveUserQuota 帶 project 取
-buckets，否則 fallback 層級）的正規化、快取與錯誤態。
+"""antigravity_usage：查詢（loadCodeAssist 取 project → retrieveUserQuotaSummary 帶 project 取
+Weekly/5h 群組 buckets，summary 失敗才退回每模型 retrieveUserQuota，再不行 fallback 層級）的
+正規化、快取與錯誤態。
 
 全部 monkeypatch httpx.post 與 token 路徑，不打網路、不碰真 token。依 URL 分派 response。
 """
@@ -13,6 +14,40 @@ import pytest
 
 from studio import antigravity_usage as a, config
 
+# retrieveUserQuotaSummary 回應：每 group 含 Weekly + 5h 兩個 bucket（agy /usage 同源）。
+SUMMARY_SAMPLE = {
+    "groups": [
+        {
+            "displayName": "Gemini Models",
+            "description": "Models within this group: Gemini Flash, Gemini Pro",
+            "buckets": [
+                {
+                    "bucketId": "gemini-weekly",
+                    "displayName": "Weekly Limit",
+                    "window": "weekly",
+                    "resetTime": "2026-06-26T18:35:04Z",
+                    "remainingFraction": 0.92,
+                },
+                {
+                    "bucketId": "gemini-5h",
+                    "displayName": "Five Hour Limit",
+                    "window": "5h",
+                    "resetTime": "2026-06-20T05:44:17Z",
+                    "remainingFraction": 0.4,
+                },
+            ],
+        },
+        {
+            "displayName": "Claude and GPT models",
+            "buckets": [
+                {"window": "weekly", "resetTime": "2026-06-27T05:22:09Z", "remainingFraction": 1},
+                {"window": "5h", "resetTime": "2026-06-20T10:22:09Z", "remainingFraction": 1},
+            ],
+        },
+    ]
+}
+
+# retrieveUserQuota 回應（每模型每日 REQUESTS）—— summary 不可用時的 fallback。
 QUOTA_SAMPLE = {
     "buckets": [
         {
@@ -73,14 +108,18 @@ def _isolate(monkeypatch, tmp_path):
     a._cache = None
 
 
-def _patch(monkeypatch, *, tier=None, quota=None, calls=None):
-    """tier/quota 各為 FakeResp 或 Exception；依 URL 分派；calls 記 (url, body)。"""
+def _patch(monkeypatch, *, tier=None, summary=None, quota=None, calls=None):
+    """tier/summary/quota 各為 FakeResp 或 Exception；依 URL 分派；calls 記 (url, body)。"""
+
+    by_url = {a.TIER_URL: tier, a.SUMMARY_URL: summary, a.QUOTA_URL: quota}
 
     def fake_post(url, headers=None, json=None, timeout=None):
         if calls is not None:
             calls.append((url, json))
         assert headers["Authorization"] == "Bearer tok-xyz"
-        target = tier if url == a.TIER_URL else quota
+        # 私有 API 以 UA 把關——所有請求都必須帶。
+        assert headers["User-Agent"] == a._UA
+        target = by_url.get(url)
         if isinstance(target, Exception):
             raise target
         if target is None:
@@ -90,42 +129,77 @@ def _patch(monkeypatch, *, tier=None, quota=None, calls=None):
     monkeypatch.setattr(a.httpx, "post", fake_post)
 
 
-def test_buckets_with_project(monkeypatch):
-    # loadCodeAssist 給 project → retrieveUserQuota 帶 project → 數值 buckets
+def test_buckets_from_summary(monkeypatch):
+    # loadCodeAssist 給 project → retrieveUserQuotaSummary 帶 project → Weekly/5h 群組 buckets
     calls = []
     _patch(
-        monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body=QUOTA_SAMPLE), calls=calls
+        monkeypatch,
+        tier=FakeResp(body=TIER_SAMPLE),
+        summary=FakeResp(body=SUMMARY_SAMPLE),
+        calls=calls,
     )
     r = a.fetch_rate_limits()
     assert r["error"] is None
-    assert len(r["buckets"]) == 2  # TOKENS 濾掉
-    assert r["buckets"][0]["label"] == "Gemini 2.5 Flash"
-    assert r["buckets"][0]["used_percentage"] == 60.0
-    assert r["buckets"][1]["used_percentage"] == 0.0
+    assert len(r["buckets"]) == 4  # 2 groups × {weekly, 5h}
+    assert r["buckets"][0]["label"] == "Gemini · 7 天"
+    assert r["buckets"][0]["used_percentage"] == 8.0  # 1 - 0.92
+    assert r["buckets"][1]["label"] == "Gemini · 5 小時"
+    assert r["buckets"][1]["used_percentage"] == 60.0  # 1 - 0.4
+    assert r["buckets"][2]["label"] == "Claude and GPT · 7 天"
+    assert r["buckets"][2]["used_percentage"] == 0.0
     assert isinstance(r["buckets"][0]["reset_at"], float)
     assert r["tier"]["tier_id"] == "standard-tier"  # tier 仍附帶
-    # 驗證兩步＋第二步帶了正確 project
+    # 驗證兩步＋summary 帶了正確 project（不打每模型 quota）
     assert calls[0][0] == a.TIER_URL
-    assert calls[1] == (a.QUOTA_URL, {"project": "single-calling-cww5t"})
+    assert calls[1] == (a.SUMMARY_URL, {"project": "single-calling-cww5t"})
+    assert len(calls) == 2
 
 
-def test_quota_403_falls_back_to_tier(monkeypatch):
-    # 帶了 project 但仍 403（無數值配額）→ 顯示層級
-    _patch(monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(status_code=403))
+def test_summary_403_falls_back_to_per_model_quota(monkeypatch):
+    # summary 不可用（403）→ 退回每模型 retrieveUserQuota
+    calls = []
+    _patch(
+        monkeypatch,
+        tier=FakeResp(body=TIER_SAMPLE),
+        summary=FakeResp(status_code=403),
+        quota=FakeResp(body=QUOTA_SAMPLE),
+        calls=calls,
+    )
+    r = a.fetch_rate_limits()
+    assert r["error"] is None
+    assert len(r["buckets"]) == 2  # TOKENS 濾掉，依用量降序
+    assert r["buckets"][0]["label"] == "Gemini 2.5 Flash"
+    assert r["buckets"][0]["used_percentage"] == 60.0
+    assert [c[0] for c in calls] == [a.TIER_URL, a.SUMMARY_URL, a.QUOTA_URL]
+
+
+def test_summary_empty_falls_back_to_per_model_quota(monkeypatch):
+    # summary 200 但無群組 → 退回每模型 quota
+    _patch(
+        monkeypatch,
+        tier=FakeResp(body=TIER_SAMPLE),
+        summary=FakeResp(body={"groups": []}),
+        quota=FakeResp(body=QUOTA_SAMPLE),
+    )
+    r = a.fetch_rate_limits()
+    assert r["error"] is None
+    assert len(r["buckets"]) == 2
+
+
+def test_both_quota_403_falls_back_to_tier(monkeypatch):
+    # summary 與 per-model 都 403（無數值配額）→ 顯示層級
+    _patch(
+        monkeypatch,
+        tier=FakeResp(body=TIER_SAMPLE),
+        summary=FakeResp(status_code=403),
+        quota=FakeResp(status_code=403),
+    )
     r = a.fetch_rate_limits()
     assert r["error"] is None
     assert r["buckets"] == []
     assert r["tier"]["label"] == "Gemini Code Assist"
     assert r["tier"]["unlimited"] is True
     assert r["tier"]["paid_tier"] == "Gemini Code Assist in Google One AI Pro"
-
-
-def test_quota_empty_buckets_falls_back_to_tier(monkeypatch):
-    _patch(monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body={"buckets": []}))
-    r = a.fetch_rate_limits()
-    assert r["error"] is None
-    assert r["buckets"] == []
-    assert r["tier"]["label"] == "Gemini Code Assist"
 
 
 def test_no_project_only_tier(monkeypatch):
@@ -137,7 +211,7 @@ def test_no_project_only_tier(monkeypatch):
     assert r["error"] is None
     assert r["tier"]["unlimited"] is False
     assert r["tier"]["paid_tier"] is None
-    assert [c[0] for c in calls] == [a.TIER_URL]  # 沒打 quota
+    assert [c[0] for c in calls] == [a.TIER_URL]  # 沒打 summary/quota
 
 
 def test_loadcodeassist_401_unauthorized(monkeypatch):
@@ -145,9 +219,20 @@ def test_loadcodeassist_401_unauthorized(monkeypatch):
     assert a.fetch_rate_limits()["error"] == "unauthorized"
 
 
-def test_quota_401_unauthorized(monkeypatch):
-    # loadCodeAssist OK 但 quota 401（token 中途失效）→ unauthorized
-    _patch(monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(status_code=401))
+def test_summary_401_unauthorized(monkeypatch):
+    # loadCodeAssist OK 但 summary 401（token 中途失效）→ unauthorized
+    _patch(monkeypatch, tier=FakeResp(body=TIER_SAMPLE), summary=FakeResp(status_code=401))
+    assert a.fetch_rate_limits()["error"] == "unauthorized"
+
+
+def test_per_model_quota_401_unauthorized(monkeypatch):
+    # summary 403 退回 per-model，per-model 401 → unauthorized
+    _patch(
+        monkeypatch,
+        tier=FakeResp(body=TIER_SAMPLE),
+        summary=FakeResp(status_code=403),
+        quota=FakeResp(status_code=401),
+    )
     assert a.fetch_rate_limits()["error"] == "unauthorized"
 
 
@@ -178,22 +263,34 @@ def test_loadcodeassist_bad_json_unreachable(monkeypatch):
 def test_ttl_cache(monkeypatch):
     calls = []
     _patch(
-        monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body=QUOTA_SAMPLE), calls=calls
+        monkeypatch,
+        tier=FakeResp(body=TIER_SAMPLE),
+        summary=FakeResp(body=SUMMARY_SAMPLE),
+        calls=calls,
     )
     first = a.fetch_rate_limits()
     second = a.fetch_rate_limits()
     assert second is first
-    assert len(calls) == 2  # 一次完整查詢＝兩步
+    assert len(calls) == 2  # 一次完整查詢＝loadCodeAssist + summary
 
 
 def test_force_bypasses_cache(monkeypatch):
     calls = []
     _patch(
-        monkeypatch, tier=FakeResp(body=TIER_SAMPLE), quota=FakeResp(body=QUOTA_SAMPLE), calls=calls
+        monkeypatch,
+        tier=FakeResp(body=TIER_SAMPLE),
+        summary=FakeResp(body=SUMMARY_SAMPLE),
+        calls=calls,
     )
     a.fetch_rate_limits()
     a.fetch_rate_limits(force=True)
-    assert len(calls) == 4
+    assert len(calls) == 4  # 兩次完整查詢 × 兩步
+
+
+def test_parse_summary_group_label():
+    assert a._group_label("Gemini Models") == "Gemini"
+    assert a._group_label("Claude and GPT models") == "Claude and GPT"
+    assert a._group_label("") == "Antigravity"
 
 
 def test_prettify():
