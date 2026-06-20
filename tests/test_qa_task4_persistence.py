@@ -105,8 +105,9 @@ def _post(path, body, timeout=3.0):
 def live():
     """真實啟動服務，回傳 (proc, env_path_bytes_backup)；teardown 還原 .env。"""
     backup = ENV.read_bytes() if ENV.exists() else None
+    backup_mode = ENV.stat().st_mode if ENV.exists() else None
     env = dict(os.environ)
-    env.pop("TI_ACCESS_PASSWORD", None)
+    env["TI_ACCESS_PASSWORD"] = ""
     for k in SECRET_ENVS:
         env.pop(k, None)
     env["TI_PROVIDER"] = "claude"  # 啟動為 claude，稍後 POST 切 minimax 以觀察 reload
@@ -144,6 +145,10 @@ def live():
             proc.kill()
         if backup is not None:
             ENV.write_bytes(backup)
+            if backup_mode is not None:
+                os.chmod(ENV, backup_mode)
+        elif ENV.exists():
+            ENV.unlink()
 
 
 def test_live_post_writes_env_file(live):
