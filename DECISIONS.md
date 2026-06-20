@@ -1834,7 +1834,7 @@
 
 ## `test_no_py_changed` 不列入本輪驗收範圍，護欄本體零修改。
 - 時間：2026-06-20 19:12
-- 理由：`tests/test_task1_retry_doc.py:160-163` docstring 明定「專屬 task#1 doc-only lane」；skip 條件僅對 `startswith("task-") and != "task-1"` 生效；當前 cwd `ti-autopilot-work` 不符條件，新增任何 `.py` 後跑全套 pytest 必機械性紅，與本輪改碼性質無關。
+- 理由：`tests/test_task1_retry_doc.py:160-169` 同時給出 docstring 與 skip 依據：docstring 明定「此護欄專屬 task#1 自身的 doc-only lane」，且 skip 條件僅對 `lane.startswith("task-") and lane != "task-1"` 生效；當前 cwd 不符 `task-*` lane 命名，新增任何 `.py` 後跑全套 pytest 必機械性紅，與本輪改碼性質無關。
 - 否決方案：修改 skip 條件讓本輪 cwd 也能繞過——改題護欄即破壞 task#1 lane 的驗收語義，不可接受。
 
 ## 本輪唯一新增檔案為 `tests/test_scope_fixture_demo.py`，不新增任何其他 `.py` 或實體測試資料檔。
@@ -1866,4 +1866,3 @@
 ## PR／驗收說明須明文標註「本輪僅驗 `tests/test_scope_fixture_demo.py`，不代表全套 pytest 已恢復；全套長期解法待 harness 以任務自身 baseline 比對後另行處理」。
 - 時間：2026-06-20 19:12
 - 理由：防止後續 reviewer 誤讀為全套已通過，保護依賴方向的透明度。
-
