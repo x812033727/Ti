@@ -11,6 +11,24 @@
 
 ## 工程師 — 長期經驗
 
+### Release 發佈鏈操作記憶
+
+`publish-release.yml` 建立 GitHub Release 時固定使用 repo secret `GH_PAT`，不要改回 `GITHUB_TOKEN`；用
+`GITHUB_TOKEN` 建 release 不會觸發下游 `release-smoke.yml` 的 `release: published` workflow。
+
+`GH_PAT` 設定規格固定如下：使用 fine-grained PAT，只授權本 repo，不要選 all repositories；Repository
+permissions 設 `Contents: read and write`；secret 名稱固定為 `GH_PAT`。若 token 過期或被撤銷，`Verify
+PAT` 只能檢查非空，實際會在 Step 5 `gh release create` 以 403 失敗；輪替時到 repo Settings →
+Secrets and variables → Actions 更新同名 `GH_PAT`。
+
+真實 `v*` tag-push 端到端尚待生產驗證，單元/守護測試為半閉環；目前只能證明
+`push tag -> render body -> gh release create 設定 -> release: published smoke 設定` 的結構正確，不代表
+GitHub 生產環境 E2E 已實跑過。
+
+本輪不補 `--verify-tag`：現行 workflow 只由 `on.push.tags: v*` 觸發，tag 已存在，且 `Assert tag matches
+version` 會比對 `github.ref_name` 與 `v{pyproject_version()}` fail-fast；在未加入 `workflow_dispatch` 手動發佈前，
+`--verify-tag` 不需作為驗收必要硬化，避免為重複保護增加範圍。
+
 ### 非預期輸出：先懷疑自己的命令，絕不先怪「環境污染」
 **慘痛教訓（CI 修復任務）**：我把自己命令的真實後果——`$?` 在錯誤位置沒展開、`>>` append 因我「重試」真的執行了 7 次把 `.gitignore` 寫成 30 行、`{ 多命令 } >> "$R"; cat "$R"` 的交錯——**反复誤判為「pty 污染／串擾」**。一旦貼上「污染」標籤，我就不再相信工具輸出（唯一的事實來源），於是反复重跑、查無謂的 git 歷史、**差點 `git checkout origin/main` 覆蓋檔案**（被使用者打斷）、最後把自己製造的混亂包裝成「環境不可信」甩給使用者決策。**環境從頭到尾完全正常。**
 
