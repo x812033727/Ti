@@ -60,6 +60,15 @@ def test_classify_normal_speech_not_misclassified(text):
     assert lc.classify_api_text(text) is None
 
 
+def test_task3_normal_model_text_with_rate_limit_and_error_is_not_failure():
+    text = (
+        "模型摘要：這段正常回答會討論 rate limit 與 error handling，"
+        "但它不是 SSE error 事件，也沒有結構化 API 錯誤型別。"
+    )
+    assert lc.classify_api_text(text) is None
+    assert lc.classify_failure(RuntimeError(text)) == ("unknown", None, "", "")
+
+
 def test_provider_unavailable_reason_detects_usage_limit():
     text = "You've hit your usage limit. Visit settings to purchase more credits."
     assert lc.provider_unavailable_kind(text) == ("usage_limit", "usage limit reached")
@@ -147,8 +156,8 @@ def test_sse_rate_limit_ignores_bogus_status_200():
 class _FakeAPIStatusError(Exception):
     """模擬 SDK 把 SSE error 包成 status_code=200、真實型別藏在 .body 的形態。"""
 
-    def __init__(self, status_code, body):
-        super().__init__(f"APIStatusError status_code={status_code}")
+    def __init__(self, status_code, body, message: str | None = None):
+        super().__init__(message or f"APIStatusError status_code={status_code}")
         self.status_code = status_code
         self.body = body
 
@@ -309,6 +318,48 @@ async def test_run_rate_limit_retry_then_success(recorder):
     assert calls["n"] == 2
     assert delays == [2.0]
     assert retries == [(0, 2, 2.0)]  # before_sleep hook 收到 attempt=0、limit=2、delay=2.0
+
+
+async def test_task3_sse_status_200_rate_limit_body_uses_429_backoff(recorder):
+    delays, retries, sleep, on_retry = recorder
+    calls = {"n": 0}
+    seen_retry_after: list[float | None] = []
+
+    async def attempt():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _FakeAPIStatusError(
+                200,
+                {"type": "error", "error": {"type": "rate_limit_error"}},
+                "APIStatusError status_code=200 retry-after: 6",
+            )
+        return "ok"
+
+    async def exhausted(snip, partial):
+        raise AssertionError
+
+    async def api_err(snip, partial):
+        raise AssertionError
+
+    def backoff(retry_after, attempt_index):
+        seen_retry_after.append(retry_after)
+        return 3.0 + attempt_index
+
+    out = await lc.run_with_retries(
+        attempt,
+        max_retries=2,
+        on_rate_limit_exhausted=exhausted,
+        on_api_error=api_err,
+        backoff=backoff,
+        sleep=sleep,
+        on_retry=on_retry,
+    )
+
+    assert out == "ok"
+    assert calls["n"] == 2
+    assert seen_retry_after == [6.0]
+    assert delays == [3.0]
+    assert retries == [(0, 2, 3.0)]
 
 
 async def test_run_rate_limit_exhausted_fallback(recorder):
