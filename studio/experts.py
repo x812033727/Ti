@@ -438,8 +438,10 @@ class Expert:
         QA／審查的解析自然視為未通過，走既有的失敗回饋／停滯收斂路徑，orchestrator
         無需任何改動。timeout 放在這裡而非 _speak 包裝層，使 _debate、架構決策等
         直呼 speak 的路徑同樣受保護。
+
+        注意：connect／query 的前置（見 `_attempt`）也受同一組逾時保護並走 `_abort_turn`，
+        故 `start()` 改由 `_attempt` 內部呼叫，不在此處先連線。
         """
-        await self.start()
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
         try:
@@ -463,7 +465,23 @@ class Expert:
         cfg = make_retry_config()
 
         async def _attempt() -> str:
-            await self._client.query(prompt)
+            # start()（首次 connect）與 query()（把 prompt 送進 bundled Claude CLI 子程序）都在
+            # stream_to_events 之前，不受其 idle／hard watchdog 保護。子程序若卡在連線／送出，
+            # 整輪會靜默（無 tool／訊息／token）直到外層 AUTOPILOT_TASK_TIMEOUT（3600s）才被砍
+            # ——實測 security 專家第三輪 query() 卡 ~38 分。用同一組 turn 預算把前置也圈進來，
+            # 逾時當「無進展（idle）」中止，交由 passthrough→_abort_turn interrupt／重建 client
+            # 殺掉卡住的子程序（與串流逾時同一條收斂路徑）。start() 為 idempotent，重試時若已
+            # 連線即 no-op；_abort_turn 重建 client 後下次 attempt 會自動重連。
+            setup_budget = config.TURN_IDLE_TIMEOUT or config.TURN_HARD_TIMEOUT or None
+            try:
+                if setup_budget is not None:
+                    await asyncio.wait_for(self.start(), setup_budget)
+                    await asyncio.wait_for(self._client.query(prompt), setup_budget)
+                else:
+                    await self.start()
+                    await self._client.query(prompt)
+            except TimeoutError:
+                raise ExpertTurnTimeout("idle", "") from None
             return await stream_to_events(
                 self._client.receive_response(),
                 self.session_id,

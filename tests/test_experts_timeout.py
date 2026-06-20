@@ -235,3 +235,83 @@ async def test_speak_default_config_no_timeout_wrapping(fake_sdk, monkeypatch):
 
     assert await exp.speak("做點事", broadcast) == "完成"
     assert client.interrupts == 0
+
+
+# --- 前置（connect／query）逾時：stream_to_events 之前的守衛 ------------------
+
+
+class _SetupHangingClient(_HangingClient):
+    """connect 或 query 其一永遠卡住，模擬 bundled Claude CLI 子程序在串流開始前掛死。
+
+    對照實測：security 專家第三輪 query() 卡 ~38 分鐘、整輪零事件，直到外層
+    AUTOPILOT_TASK_TIMEOUT 才被砍——因為舊版 query() 在 stream_to_events 的 idle／hard
+    watchdog 之外、無人看著。
+    """
+
+    def __init__(self, fake_sdk, *, hang_on: str):
+        super().__init__(fake_sdk, interrupt_ok=True)
+        self._hang_on = hang_on  # "connect" | "query"
+        self.queries = 0
+
+    async def connect(self):
+        self.connects += 1
+        if self._hang_on == "connect":
+            await asyncio.Event().wait()  # 永不返回
+
+    async def query(self, prompt):
+        self.queries += 1
+        if self._hang_on == "query":
+            await asyncio.Event().wait()  # 永不返回
+
+
+async def test_speak_query_hang_aborts_via_setup_guard(fake_sdk, monkeypatch, _fast_timeouts):
+    """query() 在串流前卡死時，前置守衛須在 idle 預算內中止整輪，而非等外層 backstop。"""
+    client = _SetupHangingClient(fake_sdk, hang_on="query")
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd: client)
+    exp = experts.Expert(BY_KEY["engineer"], "sess", "/tmp/x")
+    _, broadcast = collect()
+
+    # 無守衛時這裡會永遠卡住；外層 wait_for 只是測試保險，真正中止來自 _attempt 的守衛。
+    text = await asyncio.wait_for(exp.speak("做點事", broadcast), timeout=5)
+
+    assert "逾時中止" in text
+    assert client.queries >= 1
+    assert client.interrupts == 1  # 走 _abort_turn 溫和中止路徑（與串流逾時同一條）
+    # 系統中止說明不含任何核可關鍵詞 → QA／審查解析自然視為未過
+    assert not any(h in text.lower() for h in ("核可", "通過", "approve", "lgtm"))
+
+
+async def test_speak_connect_hang_aborts_via_setup_guard(fake_sdk, monkeypatch, _fast_timeouts):
+    """首次 connect() 卡死（start() 內）同樣被前置守衛中止，不外漏成未捕捉例外。"""
+    client = _SetupHangingClient(fake_sdk, hang_on="connect")
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd: client)
+    exp = experts.Expert(BY_KEY["engineer"], "sess", "/tmp/x")
+    _, broadcast = collect()
+
+    text = await asyncio.wait_for(exp.speak("做點事", broadcast), timeout=5)
+
+    assert "逾時中止" in text
+    assert client.connects >= 1
+    assert client.queries == 0  # connect 還沒過，不該送出 query
+
+
+async def test_speak_setup_no_wrapping_when_timeouts_disabled(fake_sdk, monkeypatch):
+    """timeout 設 0（停用）時前置不包 wait_for，start()+query() 走原路徑正常完成。"""
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0.0)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0.0)
+
+    class _OkClient(_SetupHangingClient):
+        def receive_response(self):
+            async def gen():
+                yield self._sdk.AssistantMessage(content=[self._sdk.TextBlock("完成")])
+                yield self._sdk.ResultMessage()
+
+            return gen()
+
+    client = _OkClient(fake_sdk, hang_on="none")  # 不卡
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd: client)
+    exp = experts.Expert(BY_KEY["engineer"], "sess", "/tmp/x")
+    _, broadcast = collect()
+
+    assert await exp.speak("做點事", broadcast) == "完成"
+    assert client.connects == 1 and client.queries == 1
