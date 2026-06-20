@@ -110,6 +110,7 @@ def _post(base, path, body, timeout=3.0):
 def live():
     """真實啟動服務，回傳 base URL；teardown 還原 .env。"""
     backup = ENV.read_bytes() if ENV.exists() else None
+    backup_mode = ENV.stat().st_mode if ENV.exists() else None
     port = _free_port()
     base = f"http://{HOST}:{port}"
     env = dict(os.environ)
@@ -152,6 +153,10 @@ def live():
             proc.kill()
         if backup is not None:
             ENV.write_bytes(backup)
+            if backup_mode is not None:
+                os.chmod(ENV, backup_mode)
+        elif ENV.exists():
+            ENV.unlink()
 
 
 def test_live_post_writes_env_file(live):
