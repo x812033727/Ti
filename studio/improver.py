@@ -19,7 +19,18 @@ import contextlib
 import logging
 import uuid
 
-from . import backlog, blueprint, config, events, history, projects, repo_base, runner, workspace
+from . import (
+    autopilot,
+    backlog,
+    blueprint,
+    config,
+    events,
+    history,
+    projects,
+    repo_base,
+    runner,
+    workspace,
+)
 from .events import StudioEvent
 from .orchestrator import StudioSession, parse_core_changes, parse_structured_tasks
 
@@ -45,6 +56,15 @@ OFFLINE_BLUEPRINT = """願景: 做一個讓使用者輕鬆上手的示範產品
 
 # 「找問題」單輪最多回填的任務數，避免一次把 backlog 塞爆。
 DISCOVERY_MAX = 5
+
+# 品質下限——與 autopilot 自評（#238）同源，複用 DISCOVERY_LOW_VALUE_TYPES 單一真相清單。
+# 接到三視角「找問題」prompt 尾巴，讓工作室成員在**提案階段**就不輸出低價值/瑣碎任務，
+# 避免它們進 backlog 跑完一輪才被當噪音刪掉（事後刪 → 源頭擋）。
+_DISCOVERY_QUALITY_BAR = (
+    "\n品質下限：只提『使用者可感知的具體缺陷或功能缺口』，每點須能指出證據（檔案:行號＋症狀或重現）。"
+    "以下低價值類型一律不要輸出；高價值點不足時寧可只給 1~2 點，嚴禁充數：\n"
+    + autopilot.DISCOVERY_LOW_VALUE_TYPES
+)
 
 
 def drain_result_to_backlogs(result: dict, project_state_dir) -> tuple[int, int]:
@@ -386,16 +406,30 @@ class ProjectImprover:
             history.finish_session(sid)
             self._record_sid = None
 
+        raw_n = len(items)
         done_titles = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY, state_dir=sdir)
         items = [t for t in items if t["title"].strip() and t["title"].strip() not in done_titles]
-        n = backlog.add_items(items[:DISCOVERY_MAX], source="eval", state_dir=sdir)
-        await self.broadcast(
-            events.phase_change(
-                self.session_id,
-                "找問題",
-                f"提出 {n} 個新改良任務" if n else "本輪未找出新的改良點",
-            )
+        # 進場 pre-filter：與 autopilot 自評同一把關（複用 _filter_pending_duplicates 兩道防線——
+        # 相似度去重 + 子系統廣度），丟掉與專案 backlog 既有 pending/in_progress 語意相近、或同子系統
+        # 已過多的提案。連同上一行 done 去重，把瑣碎/重複任務擋在進 backlog 之前（源頭擋）。
+        existing = [
+            t["title"]
+            for t in backlog.list_tasks(state_dir=sdir)
+            if t["status"] in ("pending", "in_progress")
+        ]
+        kept = set(
+            autopilot._filter_pending_duplicates([t["title"].strip() for t in items], existing)
         )
+        items = [t for t in items if t["title"].strip() in kept]
+        n = backlog.add_items(items[:DISCOVERY_MAX], source="eval", state_dir=sdir)
+        # 留痕閉環：把「源頭擋掉幾個重複/低價值提案」回報前端並寫進伺服器日誌，取代靜默丟棄，
+        # 讓使用者看得到把關量、可據此回饋調整品質下限（dropped 不含 DISCOVERY_MAX 容量截斷）。
+        dropped = raw_n - len(items)
+        msg = f"提出 {n} 個新改良任務" if n else "本輪未找出新的改良點"
+        if dropped:
+            msg += f"（源頭擋掉 {dropped} 個重複/低價值提案）"
+        log.info("找問題：提案 %d、過濾丟棄 %d、入列 %d", raw_n, dropped, n)
+        await self.broadcast(events.phase_change(self.session_id, "找問題", msg))
         return n
 
     def _discover_role_keys(self) -> list[str]:
@@ -426,7 +460,7 @@ class ProjectImprover:
             "（P0 必須~P2 加分）與類型（feature/bug/improvement），標籤可省（視為 P1）。\n"
             "若發現的是「要改 Ti 核心框架本身（orchestrator／runner／發佈流程等），而非本產品的"
             "程式碼」，請改用 `核心改動: <描述>` 另行列出（會路由到 Ti 主核心 repo、不混進本專案）。"
-            "只輸出任務行或核心改動行。"
+            "只輸出任務行或核心改動行。" + _DISCOVERY_QUALITY_BAR
         )
         wid = projects.workspace_id(pid)
         prd_tail = workspace.read_prd_tail(wid, config.KNOWLEDGE_MAX_CHARS)
@@ -464,7 +498,7 @@ class ProjectImprover:
             "請從你的專業視角找出最值得改良的 3~5 點，每點獨立一行，"
             "格式固定為 `任務: [P0/bug] <動詞開頭的具體任務>`（標籤可省，視為 P1）；"
             "若是要改 Ti 核心框架本身（非本產品程式碼）則改用 `核心改動: <描述>`（路由到主核心 repo）。"
-            "只輸出任務行或核心改動行。"
+            "只輸出任務行或核心改動行。" + _DISCOVERY_QUALITY_BAR
         )
 
         core_buf: list[

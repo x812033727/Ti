@@ -527,18 +527,24 @@ def _build_discovery_prompt(
     )
 
 
+# 低價值／陷阱型提案類型清單——discovery 兩條提案路徑（autopilot 自評 + improver「找問題」）
+# 共用的**單一真相**。兩端都在 prompt 階段用它擋掉瑣碎任務，避免低價值提案進 backlog 跑完一輪才被
+# 當噪音手動刪除（事後刪 → 源頭擋）。改這份清單即同時影響兩條路徑，勿在他處複製貼上分叉。
+DISCOVERY_LOW_VALUE_TYPES = (
+    "   - 純文件／格式微調（python→python3、docstring 換行對齊、移除暫存檔、補標題前綴）；\n"
+    "   - 對既有防線／守門『稽核確認是否到位』而無具體已知 bug 的自我審查；\n"
+    "   - 純流程結構任務（補 AST guard、加交付 git status 守門、把字面斷言改關鍵字、收斂 deprecation warning）；\n"
+    "   - 『確認某檔該不該留／盤點追蹤狀態』這類純調查；\n"
+    "   - 對已有上限／截斷的模組再疊加一層防禦。"
+)
+
 # 第三道硬指令：品質下限。autopilot 長跑時 discovery 會反覆自我餵食「稽核既有防線是否到位」
 # 「文件 python→python3」「補交付守門/AST guard」「確認某檔該不該留」這類低價值/陷阱型提案，
 # 跑了燒額度、產出多是噪音。明確列為禁止輸出類型，並要求「寧缺勿濫」——湊不滿就少給，不得充數。
 _DISCOVERY_QUALITY_BAR = (
     "3. 品質下限：只提『使用者或開發者可感知的具體缺陷或功能缺口』，每點須能指出證據"
     "（檔案:行號＋症狀或重現）。以下低價值類型一律不要輸出；高價值點不足時寧可只給 1~2 點，"
-    "嚴禁用這類充數：\n"
-    "   - 純文件／格式微調（python→python3、docstring 換行對齊、移除暫存檔、補標題前綴）；\n"
-    "   - 對既有防線／守門『稽核確認是否到位』而無具體已知 bug 的自我審查；\n"
-    "   - 純流程結構任務（補 AST guard、加交付 git status 守門、把字面斷言改關鍵字、收斂 deprecation warning）；\n"
-    "   - 『確認某檔該不該留／盤點追蹤狀態』這類純調查；\n"
-    "   - 對已有上限／截斷的模組再疊加一層防禦。"
+    "嚴禁用這類充數：\n" + DISCOVERY_LOW_VALUE_TYPES
 )
 
 
@@ -764,13 +770,16 @@ async def _evaluate_self(clone: str) -> int:
         with contextlib.suppress(Exception):
             await ex.stop()
     # 過濾掉與近期已完成標題完全相符者（補 backlog 去重對 done 的缺口，避免剛完成又重排）。
+    raw = parse_tasks(text)
     done_titles = _recent_done_titles()
-    tasks = [t for t in parse_tasks(text) if t.strip() not in done_titles]
+    tasks = [t for t in raw if t.strip() not in done_titles]
     # 進場 pre-filter：丟掉與目前 pending/in_progress 高相似（語意相近）的提案，與 prompt 注入的
     # 禁止清單對齊（同一 titles 快照）。不動 backlog._is_duplicate 的字串等值去重契約，兩者互補。
     tasks = _filter_pending_duplicates(tasks, titles)
     n = backlog.add_many(tasks, source="eval")
-    log.info("自我評估產出 %d 個新任務", n)
+    # 留痕：兩道進場過濾（done 去重 + pending pre-filter）共丟棄多少提案——讓「源頭擋掉多少瑣碎/重複」
+    # 可觀測，而非無聲 log.debug 消失（與 improver._discover 的丟棄留痕對齊）。
+    log.info("自我評估產出 %d 個新任務（提案 %d、過濾丟棄 %d）", n, len(raw), len(raw) - len(tasks))
     return n
 
 

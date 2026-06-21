@@ -154,6 +154,51 @@ async def test_one_view_failure_does_not_break_others(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_discover_prompt_carries_quality_bar(monkeypatch):
+    """工作室成員「找問題」prompt 帶品質下限——在提案階段就擋低價值/瑣碎任務（源頭擋）。
+
+    複用 autopilot 的 DISCOVERY_LOW_VALUE_TYPES 單一真相清單，故三視角 prompt 皆含其代表類型。
+    """
+    monkeypatch.setattr(config, "DISCOVER_ROLES", ["senior", "pm", "researcher"])
+    created: dict = {}
+    _patch_experts(monkeypatch, created)
+    imp, project = _improver()
+
+    await imp._discover_with_experts(project["id"], "sidq")
+    assert created  # 確有視角被建立、prompt 才有意義
+    for ex in created.values():
+        assert "品質下限" in ex.prompt
+        assert "充數" in ex.prompt  # 寧缺勿濫措辭
+        assert "python→python3" in ex.prompt  # 複用的低價值類型清單確實接上
+
+
+@pytest.mark.asyncio
+async def test_discover_prefilters_duplicate_against_project_backlog(monkeypatch):
+    """_discover 在入列前對專案既有 pending 套進場 pre-filter：語意重複提案被源頭擋下、不入列。
+
+    補上舊行為的缺口——過去只對「近期已完成」去重，對既有 pending 不設防，導致換句話說的重複
+    任務照樣進 backlog 跑完一輪才被當噪音刪掉。複用 autopilot._filter_pending_duplicates 兩道防線。
+    """
+    from studio import backlog, projects
+
+    monkeypatch.setattr(config, "DISCOVER_ROLES", ["senior"])
+    created: dict = {}
+    _patch_experts(monkeypatch, created)  # senior: 「補上錯誤處理」+「重構資料層」
+    imp, project = _improver()
+    sdir = projects.state_dir(project["id"])
+
+    # 既有 pending 已有一條與提案完全同名者——pre-filter 應把該提案擋在進場之前。
+    backlog.add("補上錯誤處理", source="seed", state_dir=sdir)
+
+    n = await imp._discover(sdir)
+
+    titles = [t["title"] for t in backlog.list_tasks("pending", state_dir=sdir)]
+    assert n == 1  # 只入列未重複的「重構資料層」
+    assert "重構資料層" in titles
+    assert titles.count("補上錯誤處理") == 1  # 沒有因提案而重複堆疊
+
+
+@pytest.mark.asyncio
 async def test_discovery_routes_core_changes_to_core_backlog(tmp_path, monkeypatch):
     """找問題辨識出的 `核心改動:` 與專案任務分流：進核心 backlog（source=core），不進專案 backlog。"""
     from studio import backlog
