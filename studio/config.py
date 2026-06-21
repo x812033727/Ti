@@ -669,6 +669,11 @@ AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
 # 預設 0.85（留 15% 給 Demo/發佈/wrap-up）。只在 autopilot 傳入 time_budget_s 時生效。
 SESSION_SOFT_DEADLINE_FRAC = float(os.getenv("TI_SESSION_SOFT_DEADLINE_FRAC", "0.85"))
+# 每場用量預算（成本熔斷）：與時間預算同機制——session 累計用量達上限即停止派發新任務、優雅收尾
+# 出貨，治「失控場一路燒 token 到撞硬 timeout」。兩者皆 0＝不限（預設不啟用，維持既有行為）；
+# TOKEN 為單場 total token 上限、USD 為單場估算成本上限（採事件回報的 cost_usd 累計）。
+SESSION_TOKEN_BUDGET = int(os.getenv("TI_SESSION_TOKEN_BUDGET", "0"))
+SESSION_USD_BUDGET = float(os.getenv("TI_SESSION_USD_BUDGET", "0"))
 # 部署 idle 守衛的 stale 門檻（秒）：status 卡在 running 但最後活動超過此值的討論視為死掉、
 # 不再算「進行中」，避免崩潰沒收尾的 session 永久擋住 autodeploy / autopilot 重佈。預設 30 分。
 DEPLOY_STALE_AFTER = int(os.getenv("TI_DEPLOY_STALE_AFTER", "1800"))

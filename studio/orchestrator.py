@@ -137,7 +137,11 @@ class StudioSession:
         auto_publish: bool = True,
     ):
         self.session_id = session_id
-        self.broadcast = broadcast
+        # 單一事件收斂點：所有事件（含專家送出的 token_usage）都經此包裝，累計 token/成本供每場
+        # 用量預算 _budget_exceeded 判斷，再原樣轉送。專家拿到的 broadcast 也是這層（_tagged_broadcast
+        # 亦包它），故計數涵蓋全部 lane／reviewer。
+        self._broadcast_sink = broadcast
+        self.broadcast = self._counting_broadcast
         self.cwd = cwd
         # 檔案面板/下載 API 用的 workspace id；預設＝session_id（一次性 workspace）。
         # 專案模式傳 `project-<pid>`（多場 session 共用同一個固定 workspace）。
@@ -186,6 +190,11 @@ class StudioSession:
         self._time_budget_s = time_budget_s
         self._t0_run: float | None = None  # run() 開工時間戳（_time_exceeded 計時基準）
         self._deadline_hit = False  # 已觸軟性時間預算（停止派發新任務，但仍正常收尾出貨）
+        # 每場用量預算（token／USD，0=不限）：與時間預算共用同一條優雅收尾路徑，撞上限前主動收斂，
+        # 治「失控場一路燒到撞硬 timeout」。_tokens_used／_usd_used 由 _counting_broadcast 即時累計。
+        self._tokens_used = 0
+        self._usd_used = 0.0
+        self._budget_hit = False  # 觸發的是用量預算（而非時間）→ 收尾事件據此區分措辭
         self._followups: list[str] = []  # 檢討時發現的後續任務（autopilot 回寫 backlog）
         self._followup_items: list[dict] = []  # 同上、含 priority/type（消費端優先用這份）
         self._core_changes: list[
@@ -217,6 +226,44 @@ class StudioSession:
             self._deadline_hit = True
             return True
         return False
+
+    async def _counting_broadcast(self, ev: events.StudioEvent) -> None:
+        """事件單一收斂點：把 token_usage 的 token／成本累進每場用量，再原樣轉送下游 sink。
+
+        其餘事件型別只透傳、零行為改變。容錯：payload 欄位異常一律忽略，絕不讓計數阻斷事件流。
+        """
+        if getattr(ev, "type", None) == events.EventType.TOKEN_USAGE:
+            p = getattr(ev, "payload", None) or {}
+            try:
+                self._tokens_used += int(p.get("total_tokens") or 0)
+                cost = p.get("cost_usd")
+                if cost:
+                    self._usd_used += float(cost)
+            except (TypeError, ValueError):
+                pass
+        await self._broadcast_sink(ev)
+
+    def _budget_exceeded(self) -> bool:
+        """是否已過每場用量預算（token 或 USD 任一上限）。
+
+        與 _time_exceeded 同義語：代表「停止派發新任務但仍優雅出貨」，故同樣置 _deadline_hit；
+        另置 _budget_hit 讓收尾事件能區分是「用量」而非「時間」觸發。0／未設一律回 False。
+        """
+        tb = config.SESSION_TOKEN_BUDGET
+        ub = config.SESSION_USD_BUDGET
+        if (tb > 0 and self._tokens_used >= tb) or (ub > 0 and self._usd_used >= ub):
+            self._deadline_hit = True
+            self._budget_hit = True
+            return True
+        return False
+
+    def _should_wind_down(self) -> bool:
+        """軟性收尾總閘：時間預算或用量（token／USD）預算任一觸發即收斂。
+
+        各核心迴圈守衛點（派發邊界／_work_task 輪頂／三審前／huddle 前）統一呼叫本閘，
+        讓兩類預算共用同一條「停止派發新任務、以已完成成果優雅出貨」路徑。
+        """
+        return self._time_exceeded() or self._budget_exceeded()
 
     def _drain_human(self) -> str:
         """取出所有待處理的人類插話，合併成一段文字（無則回空字串）。"""
@@ -1061,14 +1108,19 @@ class StudioSession:
         # 3) 逐任務迭代：依設定走「波次並行」或循序，兩者共用同一條波次主迴圈。
         all_ok = await self._run_waves(pm_plan + context)
         if self._deadline_hit:
-            # 撞硬 timeout 前主動收斂：已完成的續走 Demo/出貨，未動的下面記成 known-limit。
-            await self.broadcast(
-                events.phase_change(
-                    self.session_id,
+            # 撞硬 timeout／用量上限前主動收斂：已完成的續走 Demo/出貨，未動的下面記成 known-limit。
+            phase, detail = (
+                (
+                    "用量預算收斂",
+                    "接近 token／成本上限，停止派發新任務，以已完成成果優雅收尾出貨（未完成記為已知限制）。",
+                )
+                if self._budget_hit
+                else (
                     "時間預算收斂",
                     "接近時間上限，停止派發新任務，以已完成成果優雅收尾出貨（未完成記為已知限制）。",
                 )
             )
+            await self.broadcast(events.phase_change(self.session_id, phase, detail))
 
         # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
         if devops:
@@ -1201,7 +1253,7 @@ class StudioSession:
         all_ok = True
         for wave in waves:
             # 中止或過軟性時間預算 → 不再開新波次；剩餘波次任務留 todo（→ unmet → known-limit）。
-            if self._stop or self._time_exceeded():
+            if self._stop or self._should_wind_down():
                 if self._deadline_hit:
                     all_ok = False  # 時間截斷未跑完所有波次 → 不謊報全完成
                 break
@@ -1362,7 +1414,7 @@ class StudioSession:
         for task in lane_tasks:
             # 中止或過軟性時間預算 → 不再派發本 lane 後續任務；未動任務留 todo（→ unmet → known-limit）。
             # lane_ok 置 False 使 all_ok 反映「未全數完成」，據此走帶已知限制出貨而非謊報全完成。
-            if self._stop or self._time_exceeded():
+            if self._stop or self._should_wind_down():
                 lane_ok = False
                 break
             lane_ok = await self._run_task_in_lane(ctx, task, plan_ctx) and lane_ok
@@ -1380,7 +1432,12 @@ class StudioSession:
         task_ok = await self._work_task(ctx, task, plan_ctx)
         # 卡關升級：跑滿輪數仍未通過 → 召集 huddle 討論替代方案 + 給 1 輪重試。
         # 過軟性時間預算則不再開 huddle（又一整輪討論+重試）——已超時就收尾出貨，未過記 known-limit。
-        if not task_ok and config.HUDDLE_ENABLED and not self._stop and not self._time_exceeded():
+        if (
+            not task_ok
+            and config.HUDDLE_ENABLED
+            and not self._stop
+            and not self._should_wind_down()
+        ):
             task_ok = await self._huddle_and_retry(ctx, task, plan_ctx, bc)
         # 累計本任務耗時（供「若循序」估算 → 加速比）。
         self._parallel_metrics.setdefault("_task_durations", []).append(time.monotonic() - t0)
@@ -1624,7 +1681,7 @@ class StudioSession:
             # 中止或過軟性時間預算 → 結束本任務迴圈（未過＝known-limit）。此檢查必須在任務內「每輪」
             # 都做：時間多半耗在單任務的多輪實作/審查/huddle 裡，只在 _run_lane/_run_waves 派發邊界
             # 檢查會整輪漏掉、撐到硬 timeout（見 #217 後驗證:core #27 卡在單任務迴圈、收斂事件沒觸發）。
-            if self._stop or self._time_exceeded():
+            if self._stop or self._should_wind_down():
                 return False
             human = await self._lane_human_prefix(ctx)
 
@@ -1715,8 +1772,8 @@ class StudioSession:
             # 本任務未過審記未達（unmet → known-limit）。補 #217 盲點——每輪「頂端」檢查擋不住
             # 「單輪本身超長」的稽核型任務：reviewer fan-out 在軟 deadline 後才開始，就會一路撐到
             # 硬 timeout、整場記 timeout failed（見 autopilot #83：3060s 過軟 deadline 後仍跑滿到
-            # 3600s 被硬砍）。_time_exceeded() 已置 _deadline_hit，收尾階段據此走 Demo/出貨而非硬丟。
-            if self._time_exceeded():
+            # 3600s 被硬砍）。_should_wind_down() 已置 _deadline_hit，收尾階段據此走 Demo/出貨而非硬丟。
+            if self._should_wind_down():
                 await bc(
                     events.phase_change(
                         self.session_id,
