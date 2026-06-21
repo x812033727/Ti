@@ -1976,3 +1976,58 @@
 - 時間：2026-06-21 03:15
 - 理由：高級工程師指出 repo 內多處同類 `pop` 有同樣漂移風險；本輪先固定 task4，範圍不擴大，但慣例須明文記錄避免新 fixture 複製舊錯誤
 
+## 本輪收尾模式為「驗證型零改動」，不新增任何實作
+- 時間：2026-06-21 13:07
+- 理由：基線 696 tests 全綠，需求已落地；任何新增改動須先舉具體漏網證據，否則視為 gold-plating
+- 否決方案：趁機補 RapidFuzz／MMR rerank（無實際漏網樣本支撐，引入外部依賴成本不划算）
+
+## discovery 去重採三層有序串流：synonym dedup → Jaccard prefilter → subsystem quota，單向無迴圈
+- 時間：2026-06-21 13:07
+- 理由：可測、可維護、stdlib 無外部依賴；pending 量小標題短，複雜度不值得
+- 否決方案：MMR rerank 多樣性重排（需 embedding 或外部套件，門檻超過現行規模需求）
+
+## 每層去重須保留 drop reason 與 counter（reason: str, dropped_count: int），以備閾值調整審計
+- 時間：2026-06-21 13:07
+- 理由：高級工程師指出「半年後調閾值無法判斷是哪層誤殺」；無可觀測性等於無法維護
+- 否決方案：只記 total dropped（層級混用，調參時定位困難）
+
+## Jaccard 比對對象為 pending ∪ in_progress 聯集，閾值統一不分層
+- 時間：2026-06-21 13:07
+- 理由：目前無差異化需求，統一閾值可維護；pending 與 in_progress 的「占位」語意相同
+- 否決方案：分層閾值（增加規則數量但無對應收益）
+
+## SDK runtime import 採 lazy import；型別宣告放 `TYPE_CHECKING` block；SDK 專屬測試用 `importorskip`
+- 時間：2026-06-21 13:07
+- 理由：runtime 安全優先於靜態型別完整性；一般 autopilot 測試不應被 SDK 有無綁死
+- 否決方案：頂層 `import claude_agent_sdk`（collection-time ImportError 會炸整個測試套件）
+
+## SDK collection guard 以 `pytest --collect-only` + `sys.modules['claude_agent_sdk']=None` 注入為 CI 前置門禁
+- 時間：2026-06-21 13:07
+- 理由：抓 collection-time 誤 import 只能靠實際 collect，靜態掃描有漏網風險
+- 否決方案：只做 AST 靜態掃描（無法覆蓋間接 import 路徑）
+
+## known-limitation（純同義替換無共享字根漏網）維持「確實 < 閾值且確實漏網」釘樁，測試名稱與 docstring 必須明確標示「已知漏網、非期望行為」
+- 時間：2026-06-21 13:07
+- 理由：高級工程師指出若只看 test pass 會誤讀成 expected behavior；誠實標示才能防後人複製
+- 否決方案：強行堵住此漏（需引外部詞典，成本超過當前漏網頻率）
+
+## Git push 策略——預設遇遠端同名分支中止；force push 限定 `--force-with-lease --force-if-includes`，禁裸 `--force`
+- 時間：2026-06-21 13:07
+- 理由：保護下游依賴不被靜默覆蓋；fail-safe 優先於操作便利
+- 否決方案：裸 `--force`（關閉安全檢查，可能遺失 commits）
+
+## branch protection 查詢目標為 `AUTOPILOT_BRANCH`，非 task branch；API 異常一律 fail-closed 成 `unknown`
+- 時間：2026-06-21 13:07
+- 理由：task branch 不是保護對象；`unknown` 比 false negative 安全
+- 否決方案：403 當作「未保護」處理（靜默誤判，可能放行不該放行的操作）
+
+## docs `test_no_bare_python` 列範圍外跟進待辦，**不納入本輪驗收命令集合，不阻擋本輪 PR**
+- 時間：2026-06-21 13:07
+- 理由：與 SDK/discovery 需求無交集，blast radius 不應擴大
+- 否決方案：強行本輪補完（會混入不同模組的改動，diff 可讀性下降）
+
+## 後續新增 subprocess fixture 停用門禁，一律用 `env["TI_ACCESS_PASSWORD"] = ""`，禁止 `pop`
+- 時間：2026-06-21 13:07
+- 理由：高級工程師指出 repo 內多處同類 `pop` 有漂移風險；慣例明文化避免新 fixture 複製舊錯誤
+- 否決方案：`pop` 刪除 key（會讓無此 key 環境行為不一致）
+
