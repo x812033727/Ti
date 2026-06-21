@@ -364,15 +364,30 @@ class CodexExpert:
                 )
             if proc.returncode:
                 detail = _clip(stderr_tail or "\n".join(errors), 2000)
-                if _codex_usage_limited(detail):
-                    raise ProviderUnavailable("codex", detail or "Codex usage limit reached")
+                decision = _codex_pause_or_soft(detail)
+                if decision == "pause":
+                    raise ProviderUnavailable("codex", detail or "Codex unavailable")
+                if decision == "soft":
+                    return await self._system_note(
+                        "【系統】Codex 本輪暫時不可用，略過本輪發言。\n" + detail,
+                        broadcast,
+                    )
                 note = f"【系統】Codex CLI 執行失敗（exit {proc.returncode}）。"
                 if detail:
                     note += f"\n{detail}"
                 return await self._system_note(note, broadcast)
             if errors:
+                detail = _clip("\n".join(errors[-3:]), 2000)
+                decision = _codex_pause_or_soft(detail)
+                if decision == "pause":
+                    raise ProviderUnavailable("codex", detail or "Codex unavailable")
+                if decision == "soft":
+                    return await self._system_note(
+                        "【系統】Codex 本輪暫時不可用，略過本輪發言。\n" + detail,
+                        broadcast,
+                    )
                 return await self._system_note(
-                    "【系統】Codex CLI 未產生可用回覆。\n" + "\n".join(errors[-3:]),
+                    "【系統】Codex CLI 未產生可用回覆。\n" + detail,
                     broadcast,
                 )
             return ""
@@ -438,9 +453,17 @@ class CodexExpert:
 ProviderUnavailable = llm_caller.ProviderUnavailable
 
 
-def _codex_usage_limited(text: str) -> bool:
-    """Codex CLI 額度/credits 上限偵測；命中時不應被當作一般專家發言。"""
-    return llm_caller.provider_unavailable_reason(text) is not None
+_CODEX_TRANSIENT_KINDS = frozenset({"timeout", "server", "rate_limit", "overloaded"})
+
+
+def _codex_pause_or_soft(detail: str) -> str | None:
+    """Codex CLI 錯誤收斂：錯誤文字判型委派核心，provider 端只決定 pause/soft。"""
+    kind = llm_caller.provider_unavailable_kind(detail)
+    if kind is None:
+        return None
+    if kind[0] in _CODEX_TRANSIENT_KINDS:
+        return "soft"
+    return "pause"
 
 
 def _turn_timeout_seconds() -> float | None:
@@ -480,20 +503,7 @@ def _antigravity_argv(role: Role) -> list[str]:
 
 def _antigravity_unavailable(text: str) -> bool:
     """Antigravity CLI 未登入／額度／timeout 等不可用訊號。"""
-    if llm_caller.provider_unavailable_reason(text) is not None:
-        return True
-    lower = (text or "").lower()
-    return any(
-        phrase in lower
-        for phrase in (
-            "authentication required",
-            "please sign in",
-            "not signed in",
-            "waiting for authentication",
-            "authorization code",
-            "paste the authorization code",
-        )
-    )
+    return llm_caller.provider_unavailable_reason(text) is not None
 
 
 # reader join 上限：teardown 先 reap_group 釋放 pipe 寫端後，stdout/stderr 的 async-for 應在
