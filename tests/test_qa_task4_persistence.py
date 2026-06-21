@@ -161,7 +161,9 @@ def live():
 
 def test_live_post_writes_env_file(live):
     """真實 POST 後，專案根目錄 .env 實際出現對應鍵值。"""
-    _post(live, "/api/settings", {"GITHUB_TOKEN": "ghp_TEST_live_4", "TI_PUBLISH_REPO": "live/repo"})
+    _post(
+        live, "/api/settings", {"GITHUB_TOKEN": "ghp_TEST_live_4", "TI_PUBLISH_REPO": "live/repo"}
+    )
     text = ENV.read_text()
     assert "GITHUB_TOKEN" in text and "ghp_TEST_live_4" in text
     assert "TI_PUBLISH_REPO" in text and "live/repo" in text
