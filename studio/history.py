@@ -175,7 +175,17 @@ def _derive_scorecard(events: list[dict], meta: dict) -> dict:
 
 
 def _blank_token_usage() -> dict:
-    return {"prompt": 0, "completion": 0, "total": 0, "cost_usd": 0.0, "calls": 0}
+    # cache_read／cache_write：provider（Claude Agent SDK／OpenAI）回報的 prompt-cache 命中與寫入量。
+    # input_tokens（prompt）與快取 token 由 SDK 分開計列，故另立欄位、不混入 prompt，供量測快取成效。
+    return {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "cost_usd": 0.0,
+        "calls": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+    }
 
 
 def _int_token(value) -> int:
@@ -185,10 +195,20 @@ def _int_token(value) -> int:
         return 0
 
 
-def _add_token_usage(dst: dict, prompt: int, completion: int, total: int, cost_usd) -> None:
+def _add_token_usage(
+    dst: dict,
+    prompt: int,
+    completion: int,
+    total: int,
+    cost_usd,
+    cache_read: int = 0,
+    cache_write: int = 0,
+) -> None:
     dst["prompt"] += prompt
     dst["completion"] += completion
     dst["total"] += total
+    dst["cache_read"] += cache_read
+    dst["cache_write"] += cache_write
     if cost_usd is not None:
         try:
             dst["cost_usd"] += float(cost_usd)
@@ -213,6 +233,8 @@ def _derive_token_usage(events: list[dict]) -> dict:
         prompt = _int_token(p.get("prompt_tokens"))
         completion = _int_token(p.get("completion_tokens"))
         event_total = _int_token(p.get("total_tokens")) or prompt + completion
+        cache_read = _int_token(p.get("cache_read"))
+        cache_write = _int_token(p.get("cache_write"))
         cost_usd = p.get("cost_usd")
         provider = str(p.get("provider") or "unknown")
         model = str(p.get("model") or "unknown")
@@ -223,7 +245,9 @@ def _derive_token_usage(events: list[dict]) -> dict:
             by_model.setdefault(model, _blank_token_usage()),
             by_role.setdefault(role, _blank_token_usage()),
         ):
-            _add_token_usage(bucket, prompt, completion, event_total, cost_usd)
+            _add_token_usage(
+                bucket, prompt, completion, event_total, cost_usd, cache_read, cache_write
+            )
     return {
         "total": total,
         "by_provider": by_provider,

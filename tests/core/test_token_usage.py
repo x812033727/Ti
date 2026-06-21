@@ -83,6 +83,8 @@ def test_derive_token_usage_aggregates_by_group():
                 "completion_tokens": 50,
                 "total_tokens": 250,
                 "cost_usd": 0.5,
+                "cache_read": 800,
+                "cache_write": 40,
             },
         },
         {
@@ -105,10 +107,16 @@ def test_derive_token_usage_aggregates_by_group():
         "total": 384,
         "cost_usd": 0.5,
         "calls": 3,
+        "cache_read": 800,
+        "cache_write": 40,
     }
     assert tu["by_provider"]["minimax"]["total"] == 134
     assert tu["by_provider"]["minimax"]["calls"] == 2
     assert tu["by_provider"]["claude"]["cost_usd"] == 0.5
+    # 快取量只歸 claude 桶（minimax 事件無 cache 欄位 → 0）
+    assert tu["by_provider"]["claude"]["cache_read"] == 800
+    assert tu["by_provider"]["claude"]["cache_write"] == 40
+    assert tu["by_provider"]["minimax"]["cache_read"] == 0
     assert tu["by_model"]["MiniMax-M3"]["prompt"] == 110
     assert tu["by_role"]["engineer"]["total"] == 134
     assert tu["by_role"]["pm"]["completion"] == 50
@@ -376,3 +384,79 @@ def test_usage_report_renders(monkeypatch):
     monkeypatch.setattr(usage_report.history, "list_sessions", lambda: [])
     out = usage_report.render(usage_report.aggregate())
     assert "Ti Token 用量彙總" in out and "依 Provider" in out
+
+
+def test_cache_hit_pct_math():
+    # 命中率＝cache_read /（prompt ＋ cache_read ＋ cache_write）
+    assert usage_report._cache_hit_pct(
+        {"prompt": 100, "cache_read": 300, "cache_write": 100}
+    ) == pytest.approx(60.0)
+    # 分母為 0（無任何 input）→ 0，不得除零
+    assert usage_report._cache_hit_pct({"prompt": 0, "cache_read": 0, "cache_write": 0}) == 0.0
+    # 舊桶缺欄位 → 視為 0
+    assert usage_report._cache_hit_pct({"prompt": 0}) == 0.0
+
+
+def test_usage_report_aggregates_and_renders_cache(monkeypatch):
+    metas = [
+        {
+            "session_id": "c",
+            "started_at": 3000,
+            "token_usage": {
+                "total": {
+                    "prompt": 200,
+                    "completion": 50,
+                    "total": 250,
+                    "cost_usd": 0.5,
+                    "calls": 1,
+                    "cache_read": 800,
+                    "cache_write": 40,
+                },
+                "by_provider": {
+                    "claude": {
+                        "prompt": 200,
+                        "completion": 50,
+                        "total": 250,
+                        "cost_usd": 0.5,
+                        "calls": 1,
+                        "cache_read": 800,
+                        "cache_write": 40,
+                    }
+                },
+                "by_model": {},
+                "by_role": {},
+            },
+        },
+        # 舊 session：聚合桶完全沒有 cache_read/cache_write，須以 0 計、不報錯
+        {
+            "session_id": "old",
+            "started_at": 3100,
+            "token_usage": {
+                "total": {
+                    "prompt": 100,
+                    "completion": 10,
+                    "total": 110,
+                    "cost_usd": 0.1,
+                    "calls": 1,
+                },
+                "by_provider": {
+                    "claude": {
+                        "prompt": 100,
+                        "completion": 10,
+                        "total": 110,
+                        "cost_usd": 0.1,
+                        "calls": 1,
+                    }
+                },
+                "by_model": {},
+                "by_role": {},
+            },
+        },
+    ]
+    monkeypatch.setattr(usage_report.history, "list_sessions", lambda: metas)
+    agg = usage_report.aggregate()
+    assert agg["total"]["cache_read"] == 800 and agg["total"]["cache_write"] == 40
+    # 命中率＝800 /（300 prompt ＋ 800 ＋ 40）= 800/1140
+    assert usage_report._cache_hit_pct(agg["total"]) == pytest.approx(800 / 1140 * 100)
+    out = usage_report.render(agg)
+    assert "Prompt 快取" in out and "cache_hit=" in out
