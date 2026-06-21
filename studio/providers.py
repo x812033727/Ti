@@ -239,6 +239,32 @@ class CodexExpert:
                 "【系統】找不到 Codex CLI，請確認 TI_CODEX_BIN 或 PATH。", broadcast
             )
 
+        # start_new_session=True → proc 自成 group leader，PGID==此刻 PID。先記下來，事後即使
+        # proc 已被 reap、getpgid 取不到，仍能對整組收屍（reap 殘留 sandbox 孫程序釋放 pipe）。
+        pgid = proc.pid
+
+        async def _finish_readers() -> str:
+            """teardown 統一收尾：先 reap_group 整組釋放 pipe 寫端，再有上限 join 兩個 reader。
+
+            codex `--sandbox` 工具子命令可能在 codex 主程序退出後仍存活並握著 stdout/stderr
+            pipe → reader 的 async-for 永不 EOF（曾整輪卡到外層 3600s）。reap 後 stdout 已收的
+            事件仍保留在 final_messages；join 加上限只是兜底。回傳 stderr tail（失敗回 ""）。
+            """
+            runner.reap_group(pgid)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(stdout_task, timeout=_READER_JOIN_TIMEOUT)
+            tail = ""
+            try:
+                tail = await asyncio.wait_for(stderr_task, timeout=_READER_JOIN_TIMEOUT)
+            except Exception:  # noqa: BLE001 — stderr 收斂失敗不致命，降級成空字串
+                tail = ""
+            for reader in (stdout_task, stderr_task):
+                if reader is not None and not reader.done():
+                    reader.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await reader
+            return tail
+
         try:
             assert proc.stdin is not None
             proc.stdin.write(self._prompt(prompt).encode("utf-8"))
@@ -289,69 +315,44 @@ class CodexExpert:
 
             stdout_task = asyncio.create_task(_stdout())
             stderr_task = asyncio.create_task(_stderr())
-            timeout_reason = ""
-            try:
-                while True:
-                    if proc.returncode is not None:
-                        break
-                    now = loop.time()
-                    deadlines: list[tuple[str, float]] = []
-                    if config.TURN_HARD_TIMEOUT:
-                        deadlines.append(
-                            ("總時長", started_at + float(config.TURN_HARD_TIMEOUT) - now)
-                        )
-                    if config.TURN_IDLE_TIMEOUT:
-                        deadlines.append(
-                            ("閒置", last_activity + float(config.TURN_IDLE_TIMEOUT) - now)
-                        )
-                    if not deadlines:
-                        await proc.wait()
-                        break
-                    deadline_reason, wait_s = min(deadlines, key=lambda item: item[1])
-                    if wait_s <= 0:
-                        timeout_reason = deadline_reason
-                        raise TimeoutError
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=wait_s)
-                        break
-                    except TimeoutError:
-                        now = loop.time()
-                        hard_expired = bool(
-                            config.TURN_HARD_TIMEOUT
-                            and now - started_at >= float(config.TURN_HARD_TIMEOUT)
-                        )
-                        idle_expired = bool(
-                            config.TURN_IDLE_TIMEOUT
-                            and now - last_activity >= float(config.TURN_IDLE_TIMEOUT)
-                        )
-                        if hard_expired:
-                            timeout_reason = "總時長"
-                            raise
-                        if idle_expired:
-                            timeout_reason = "閒置"
-                            raise
-            except TimeoutError:
-                self._terminate(proc)
-                await proc.wait()
-                with contextlib.suppress(Exception):
-                    await stdout_task
-                stderr_tail = await stderr_task
+            # 等 codex 退出：用 runner.wait_process_exit 輪詢 returncode（不能用 await proc.wait()
+            # ——sandbox 孫程序仍握 pipe 時它永不返回，正是 senior/engineer 整輪卡到外層 3600s 的
+            # 真因），idle／hard watchdog 照常算。回 ""＝正常退出，回 "閒置"/"總時長"＝該上限先到。
+            timeout_reason = await runner.wait_process_exit(
+                proc,
+                idle_timeout=float(config.TURN_IDLE_TIMEOUT or 0),
+                hard_timeout=float(config.TURN_HARD_TIMEOUT or 0),
+                last_activity=lambda: last_activity,
+                started_at=started_at,
+                poll=_PROC_POLL_INTERVAL,
+            )
+            if timeout_reason:
+                # 本端 watchdog（idle／hard）逾時：reap 整組收屍（含 codex 退出後仍握 pipe 的
+                # sandbox 孫程序，取代原本無上限的 await proc.wait()），有上限 join reader 後降級
+                # 成本輪軟失敗（系統 note），autopilot 續跑而非卡死整場到外層 timeout。
+                stderr_tail = await _finish_readers()
                 limit = (
                     config.TURN_IDLE_TIMEOUT
                     if timeout_reason == "閒置"
                     else config.TURN_HARD_TIMEOUT
                 )
-                return await self._system_note(
-                    f"【系統】Codex CLI 發言逾時中止（{timeout_reason or '總時長'}上限 {float(limit):g} 秒）。",
-                    broadcast,
+                note = (
+                    f"【系統】Codex CLI 發言逾時中止（{timeout_reason or '總時長'}上限 "
+                    f"{float(limit):g} 秒），略過本輪發言。"
                 )
-            stdout_error: Exception | None = None
-            try:
-                await stdout_task
-            except Exception as exc:  # noqa: BLE001 — Codex JSONL/事件轉送失敗要降級成模型訊息
-                stdout_error = exc
-                errors.append(f"{type(exc).__name__}: {exc}")
-            stderr_tail = await stderr_task
+                if stderr_tail:
+                    note += "\n" + _clip(stderr_tail, 1200)
+                return await self._system_note(note, broadcast)
+            # proc 已自行結束：reap 整組收掉殘留 sandbox 孫程序釋放 pipe，再有上限 join reader，
+            # 避免孤兒孫程序握著 stdout/stderr 寫端使 async-for 永不 EOF（曾卡到外層 3600s）。
+            stderr_tail = await _finish_readers()
+            stdout_error = (
+                stdout_task.exception()
+                if stdout_task.done() and not stdout_task.cancelled()
+                else None
+            )
+            if stdout_error is not None:
+                errors.append(f"{type(stdout_error).__name__}: {stdout_error}")
 
             text = "\n".join(m for m in final_messages if m).strip()
             if text:
@@ -396,9 +397,12 @@ class CodexExpert:
                 )
             return ""
         except asyncio.CancelledError:
-            if proc is not None and proc.returncode is None:
-                self._terminate(proc)
-                await self._wait_for_proc(proc)
+            if proc is not None:
+                # 不論 proc 是否仍在跑，都對整組收屍：即使主程序已退出，sandbox 孫程序可能仍握
+                # 著 pipe／續燒資源（reap_group 用記下的 pgid，撐得過 leader 已被 reap）。
+                runner.reap_group(pgid)
+                if proc.returncode is None:
+                    await self._wait_for_proc(proc)
             for task in (stdout_task, stderr_task):
                 if task is not None:
                     task.cancel()
