@@ -69,6 +69,37 @@ def set_password(new_password: str) -> None:
         log.warning("存取密碼已清空，門禁已停用")
 
 
+# --- 登入失敗速率限制（防密碼暴力破解）------------------------------------
+# 記憶體內的 per-client 連續失敗計數；達上限即鎖定一段時間，期間直接拒絕（不比對密碼）。
+# 純記憶體、重啟即清空（自用單機面板足夠；無需引入 redis）。成功登入立刻清除該來源計數。
+_LOGIN_FAILS: dict[str, list[float]] = {}  # client -> [連續失敗次數, 鎖定到期 epoch]
+LOGIN_MAX_FAILS = 5
+LOGIN_LOCK_SECONDS = 60.0
+
+
+def login_lock_remaining(client: str) -> float:
+    """此來源目前剩餘鎖定秒數（0＝未鎖定，可嘗試）。"""
+    rec = _LOGIN_FAILS.get(client)
+    if not rec:
+        return 0.0
+    remaining = rec[1] - time.time()
+    return remaining if remaining > 0 else 0.0
+
+
+def register_login_result(client: str, ok: bool) -> None:
+    """登入結果計入速率限制：成功清除計數；失敗累加，達上限則鎖定 LOGIN_LOCK_SECONDS。"""
+    if ok:
+        _LOGIN_FAILS.pop(client, None)
+        return
+    now = time.time()
+    rec = _LOGIN_FAILS.get(client)
+    fails = int(rec[0]) + 1 if rec else 1
+    locked_until = now + LOGIN_LOCK_SECONDS if fails >= LOGIN_MAX_FAILS else 0.0
+    _LOGIN_FAILS[client] = [float(fails), locked_until]
+    if locked_until:
+        log.warning("登入連續失敗 %d 次，來源 %s 鎖定 %ds", fails, client, int(LOGIN_LOCK_SECONDS))
+
+
 def is_authed(scope: Request | WebSocket) -> bool:
     """門禁停用時恆為 True；啟用時依 cookie 判斷是否已登入。"""
     if not config.auth_enabled():

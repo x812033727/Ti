@@ -497,10 +497,18 @@ PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
 # 留空（預設）則完全停用認證，本地開發與離線示範不受影響、向後相容。
 ACCESS_PASSWORD = os.getenv("TI_ACCESS_PASSWORD", "")
 # 簽發 session cookie 的密鑰。留空時於程序啟動產生一組記憶體內隨機值（重啟即失效所有登入）。
-AUTH_SECRET = os.getenv("TI_AUTH_SECRET", "") or secrets.token_hex(32)
+_env_auth_secret = os.getenv("TI_AUTH_SECRET", "")
+AUTH_SECRET = _env_auth_secret or secrets.token_hex(32)
+# 臨時隨機密鑰旗標；warning 延到服務啟動時才發（見 server._lifespan），避免在 config 被
+# import/reload 的單元測試裡發出非預期 warning 污染其他測試的 caplog 斷言。
+AUTH_SECRET_IS_EPHEMERAL = not _env_auth_secret
 # 登入 cookie 名稱與有效秒數（預設 7 天）。
 AUTH_COOKIE = "ti_session"
 AUTH_TTL = int(os.getenv("TI_AUTH_TTL", "604800"))
+
+# --- 工具讀檔上限：防超大生成檔被全量 read_text 載入記憶體（OOM）------------
+# read_file 工具與 workspace.read_file 在讀取前先檢查檔案大小，超過即拒讀並回提示。
+MAX_READ_FILE_BYTES = int(os.getenv("TI_MAX_READ_FILE_BYTES", str(1_000_000)))
 
 
 def auth_enabled() -> bool:

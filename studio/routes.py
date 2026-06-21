@@ -181,10 +181,20 @@ async def auth_status(request: Request) -> JSONResponse:
 
 
 @router.post("/api/login")
-async def login(body: LoginBody) -> JSONResponse:
+async def login(request: Request, body: LoginBody) -> JSONResponse:
     if not config.auth_enabled():
         return JSONResponse({"ok": True, "detail": "門禁未啟用"})
-    if not auth.check_password(body.password):
+    client = request.client.host if request.client else "?"
+    # 速率限制：連續失敗達上限即鎖定，期間直接拒絕（不比對密碼），擋暴力破解。
+    wait = auth.login_lock_remaining(client)
+    if wait > 0:
+        return JSONResponse(
+            {"ok": False, "detail": f"嘗試過多，請 {int(wait) + 1} 秒後再試"},
+            status_code=429,
+        )
+    ok = auth.check_password(body.password)
+    auth.register_login_result(client, ok)
+    if not ok:
         return JSONResponse({"ok": False, "detail": "密碼錯誤"}, status_code=401)
     response = JSONResponse({"ok": True})
     response.set_cookie(
@@ -828,7 +838,7 @@ async def publish_config() -> JSONResponse:
     )
 
 
-@router.post("/api/publish/{session_id}", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/publish/{session_id}", dependencies=WRITE_DEPS)
 async def publish_now(session_id: str) -> JSONResponse:
     cwd = workspace.workspace_path(session_id)
     if not cwd.exists():

@@ -100,12 +100,19 @@ def list_files(session_id: str) -> list[str]:
 
 
 def read_file(session_id: str, rel_path: str) -> str | None:
-    """安全地讀取 workspace 內某檔案內容；超出範圍或不存在則回 None。"""
+    """安全地讀取 workspace 內某檔案內容；超出範圍或不存在則回 None。
+
+    讀取前先檢查檔案大小：超過 config.MAX_READ_FILE_BYTES 即拒讀回提示字串（而非全量
+    read_text 載入記憶體），避免超大生成檔（log／資料集）觸發 OOM。
+    """
     root = workspace_path(session_id)
     target = safe_resolve(root, rel_path)
     if target is None or not target.is_file():
         return None
     try:
+        size = target.stat().st_size
+        if size > config.MAX_READ_FILE_BYTES:
+            return f"[檔案過大：{size} bytes 超過 {config.MAX_READ_FILE_BYTES} 上限，未載入]"
         return target.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None

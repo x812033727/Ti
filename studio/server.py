@@ -52,6 +52,12 @@ async def _lifespan(app: FastAPI):
         history.enforce_retention()
     except Exception:  # noqa: BLE001
         logging.getLogger("ti.history").warning("啟動回收失敗（略過，不影響啟動）", exc_info=True)
+    # 未設 TI_AUTH_SECRET（用臨時隨機密鑰）時於啟動發告警：重啟即失效所有登入、多實例無法共用 session。
+    if config.AUTH_SECRET_IS_EPHEMERAL:
+        logging.getLogger("ti.config").warning(
+            "未設定 TI_AUTH_SECRET，已用臨時隨機密鑰：本服務重啟後既有登入 token 全部失效、"
+            "多實例間也無法共用 session。正式部署請在 .env 設定固定 TI_AUTH_SECRET。"
+        )
     yield
 
 

@@ -356,6 +356,13 @@ async def execute(name: str, args: dict, cwd: Path) -> str:
             target = _safe_path(cwd, args.get("path", ""))
             if not target or not target.is_file():
                 return f"錯誤：找不到 {args.get('path')}"
+            # 讀取前先擋超大檔，避免專家 tool call 全量載入觸發 OOM。
+            size = target.stat().st_size
+            if size > config.MAX_READ_FILE_BYTES:
+                return (
+                    f"錯誤：{args.get('path')} 過大（{size} bytes 超過 "
+                    f"{config.MAX_READ_FILE_BYTES} 上限），請改用工具分段讀取或縮小範圍"
+                )
             return target.read_text(encoding="utf-8", errors="replace")
 
         if name == "write_file":
