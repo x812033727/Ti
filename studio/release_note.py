@@ -36,7 +36,9 @@ emoji（⚠️, U+26A0 U+FE0F）是契約的一部分，不可省略——抽取
     內容（假綠）——本實作以逐行 fence 狀態機消除此盲區。
 """
 
-# TODO: 若 email_banner 需要 HTML multipart，將 render_email_banner 拆出獨立 renderer 模組。
+# email_banner 的 HTML multipart 渲染已拆到獨立 renderer 模組 `studio.email_renderer`
+# （markdown_to_html / render_email_banner_alternatives / build_email_banner_message），
+# 本模組維持離線資料源純度（不碰 HTML/SMTP），符合 import 守門測試的離線契約。
 
 from __future__ import annotations
 
