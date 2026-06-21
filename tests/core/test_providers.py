@@ -85,6 +85,17 @@ class LinesPipe(FakePipe):
         return self._lines.pop(0)
 
 
+class BytesPipe(FakePipe):
+    def __init__(self, chunks):
+        super().__init__()
+        self._chunks = list(chunks)
+
+    async def read(self, _size=-1):
+        if not self._chunks:
+            return b""
+        return self._chunks.pop(0)
+
+
 class FakeCodexProcess:
     def __init__(self):
         self.pid = 12345
@@ -359,6 +370,20 @@ async def test_antigravity_auth_required_raises_provider_unavailable(monkeypatch
     assert seen.value.provider == "antigravity"
     assert "Authentication required" in seen.value.detail
     assert bucket == []
+
+
+def test_antigravity_unavailable_delegates_to_llm_caller(monkeypatch):
+    """Antigravity 不應保留本地 auth phrase 白名單；核心回 None 就不得自行判 unavailable。"""
+    calls = []
+
+    def fake_reason(text):
+        calls.append(text)
+        return None
+
+    monkeypatch.setattr(providers.llm_caller, "provider_unavailable_reason", fake_reason)
+
+    assert providers._antigravity_unavailable("Authentication required. Please sign in.") is False
+    assert calls == ["Authentication required. Please sign in."]
 
 
 @pytest.mark.asyncio
@@ -676,6 +701,92 @@ async def test_codex_usage_limit_raises_provider_unavailable(monkeypatch, tmp_pa
 
     assert seen.value.provider == "codex"
     assert bucket == []
+
+
+@pytest.mark.asyncio
+async def test_codex_jsonl_error_nonzero_exit_not_hidden_by_stderr(monkeypatch, tmp_path):
+    """非零 exit 時 stderr 雜訊不能遮蔽 JSONL error，仍須進核心不可用分類。"""
+    expert = providers.CodexExpert(BY_KEY["qa"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdout = LinesPipe(
+        [
+            '{"type":"turn.failed","error":{"message":"You\\u0027ve hit your usage limit. '
+            'Visit https://chatgpt.com/codex/settings/usage to purchase more credits."}}\n'
+        ]
+    )
+    proc.stderr = BytesPipe([b"debug: harmless stderr noise\n"])
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        proc.finish(1)
+        return proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(providers.ProviderUnavailable) as seen:
+        await expert._run_codex("請驗證", broadcast)
+
+    assert seen.value.provider == "codex"
+    assert "usage limit" in seen.value.detail
+    assert "harmless stderr noise" in seen.value.detail
+    assert bucket == []
+
+
+@pytest.mark.asyncio
+async def test_codex_jsonl_error_zero_exit_uses_core_unavailable_classification(
+    monkeypatch, tmp_path
+):
+    """Codex JSONL error 即使 exit 0，也要先進核心不可用分類，不能包成普通專家訊息。"""
+    expert = providers.CodexExpert(BY_KEY["qa"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdout = LinesPipe(
+        [
+            '{"type":"turn.failed","error":{"message":"You\\u0027ve hit your usage limit. '
+            'Visit https://chatgpt.com/codex/settings/usage to purchase more credits."}}\n'
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        proc.finish(0)
+        return proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(providers.ProviderUnavailable) as seen:
+        await expert._run_codex("請驗證", broadcast)
+
+    assert seen.value.provider == "codex"
+    assert bucket == []
+
+
+@pytest.mark.asyncio
+async def test_codex_jsonl_rate_limit_zero_exit_is_soft_note(monkeypatch, tmp_path):
+    """Codex JSONL 暫態 rate limit 由核心分類後維持本輪 soft note，不暫停整個 provider。"""
+    expert = providers.CodexExpert(BY_KEY["qa"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdout = LinesPipe(
+        ['{"type":"turn.failed","error":{"message":"Error code: 429 - slow down"}}\n']
+    )
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        proc.finish(0)
+        return proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    out = await expert._run_codex("請驗證", broadcast)
+
+    assert out.startswith("【系統】Codex 本輪暫時不可用")
+    assert "429" in out
+    assert any(e.type == events.EventType.EXPERT_MESSAGE for e in bucket)
 
 
 def _imports_module(path: Path, module_name: str) -> bool:

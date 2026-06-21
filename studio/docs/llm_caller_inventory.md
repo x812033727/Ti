@@ -7,7 +7,7 @@
 - Claude Agent SDK 路徑已收口：`experts.Expert.speak()` 包住 `query()+stream`，統一進 `llm_caller.run_with_retries`。
 - OpenAI 相容路徑（openai/minimax/gemini）已收口：`OpenAIExpert.speak()` 統一進 `llm_caller.run_with_retries`，SDK `max_retries=0`。
 - orchestrator / discussion 串流層沒有自建 LLM stream/retry；只透過 `expert.speak()` 委派 provider。
-- 仍需 #2 收口的死角有 2 個：Codex JSONL error 零 exit 路徑未進核心不可用分類；Antigravity auth phrase 在 provider 端仍有冗餘本地白名單（核心已有 pattern）。
+- #2 已收口死角 2 個：Codex JSONL error 零 exit 路徑已先進核心不可用分類；Antigravity auth phrase 已移除 provider 端冗餘白名單，改全委派核心 pattern。
 
 ## 核心唯一實作
 
@@ -29,8 +29,8 @@
 | `providers.OpenAIExpert`（openai/minimax/gemini） | 已委派 | `providers.py:825`-`838` 宣告整個工具迴圈交核心；`providers.py:991`-`999` 實際呼叫 `llm_caller.run_with_retries`。 |
 | OpenAI 相容 SDK 建構 | 已避免雙層 retry | `providers.py:1043`-`1047` 建 `AsyncOpenAI(..., max_retries=0)`。 |
 | `providers.complete_once` | 已委派到 `speak()`，不自套第二層 | `providers.py:1087`-`1110` 說明退避在 `speak()`；`providers.py:1132`-`1137` 實際只 `make_expert(...).speak(...)` 並吞最終兜底。 |
-| `providers.CodexExpert` | 部分委派，仍有死角 | `providers.py:365`-`368` 非零 exit 的 usage limit 透過 `_codex_usage_limited()`；`providers.py:441`-`443` 委派 `llm_caller.provider_unavailable_reason()`。但 `providers.py:271`-`272` 收到 JSONL `error`/`turn.failed` 後，若 `proc.returncode == 0`，`providers.py:373`-`377` 只回系統 note，未進核心分類。 |
-| `providers.AntigravityExpert` | 部分委派，仍有冗餘死角 | `providers.py:481`-`484` 先委派 `llm_caller.provider_unavailable_reason()`；`providers.py:523`-`526` 用核心 kind 判斷 transient/pause。但 `providers.py:485`-`496` 仍有本地 auth phrase 白名單，而核心已在 `llm_caller.py:259`-`265` 涵蓋，屬重複錯誤文字防線。 |
+| `providers.CodexExpert` | 已委派 | 非零 exit 與 JSONL `error`/`turn.failed` 零 exit 都經 `_codex_pause_or_soft()` 委派 `llm_caller.provider_unavailable_kind()` 判型；provider 端只決定 hard pause 或本輪 soft note。 |
+| `providers.AntigravityExpert` | 已委派 | `_antigravity_unavailable()` 僅委派 `llm_caller.provider_unavailable_reason()`；`_antigravity_pause_or_soft()` 只依核心 kind 決定 transient/pause，無本地 auth phrase 白名單。 |
 | `orchestrator.StudioSession._speak` | 已委派 / 不適用 | `orchestrator.py:1151`-`1161` 只做 semaphore、task tag、provider-unavailable 穿透，實際 LLM 呼叫是 `ctx.experts[role_key].speak()`。 |
 | orchestrator 透過 `_speak()` 的任務/審查路徑 | 已委派 | 合併衝突修復 `orchestrator.py:1558`-`1565`、工程師實作 `orchestrator.py:1650`、自我精修 `orchestrator.py:1683`、QA/高工/資安審查 `orchestrator.py:1717`-`1743`、huddle legacy `orchestrator.py:1940` 都只進 `_speak()`，沒有本地 retry/backoff。 |
 | orchestrator 直接 `.speak()` 階段路徑 | 已委派 | 需求澄清 `orchestrator.py:291`-`300`、異議關卡 `_critic_gate` `orchestrator.py:411`-`417`、legacy 辯論/ADR `orchestrator.py:544`-`568`、DiscussionEngine ADR 蒸餾 `orchestrator.py:603`-`609`、逐子題 ADR `orchestrator.py:745`-`750`、架構師決策 `orchestrator.py:796`-`821`、調研/拆解 `orchestrator.py:946`-`980`、devops 整合驗證 `orchestrator.py:1074`-`1078`、最終驗收/檢討 `orchestrator.py:2065`-`2096`、CI 修正 `orchestrator.py:2257`-`2262` 都只呼叫 provider `speak()`。 |
@@ -38,12 +38,12 @@
 | orchestrator / reflexion `complete_once()` 路徑 | 已委派 | `_store_reflection()` 建 `_llm` callback 走 `providers.complete_once()`：`orchestrator.py:1983`-`1986`，再注入 `reflexion.reflect_and_store()`：`orchestrator.py:1988`-`1990`；`reflexion.py:87`-`90` 只呼叫注入的 `llm` 並 fallback，不自套退避。 |
 | conclusion / lessons / autopilot / improver 延伸消費端 | 已委派 | `conclusion.py:253`、`lessons.py:257`-`263`、`autopilot.py:716`、`improver.py:333`-`348`/`475`-`477` 都透過 `speak()` 或 `complete_once()`，沒有本地退避骨幹。 |
 
-## 死角清單
+## 死角清單（#2 已收口）
 
 | 編號 | 檔案行號 | 類型 | 影響 | 建議 #2 收口 |
 | --- | --- | --- | --- | --- |
-| D1 | `studio/providers.py:271`-`272`, `studio/providers.py:373`-`377` | Codex JSONL `error`/`turn.failed` 零 exit 未委派核心分類 | Codex 若以 JSONL error 回報 rate/usage/auth，但 exit code 為 0，會被當一般系統 note，不會升 `ProviderUnavailable`，也不會走核心 rate/overload 分流。 | 在回系統 note 前，將 `"\n".join(errors)` 交 `llm_caller.provider_unavailable_reason/kind`；命中硬不可用則 raise `ProviderUnavailable("codex", detail)`，transient 則維持本輪 soft note。 |
-| D2 | `studio/providers.py:485`-`496`, `studio/llm_caller.py:259`-`265` | Antigravity auth phrase 冗餘本地白名單 | 核心 `llm_caller` 已涵蓋 authentication/sign-in/authorization-code pattern；provider 端仍保留第二份 phrase 表，造成錯誤文字防線重複維護。雖然不是 429/529 退避，但仍屬「錯誤文字防線」死角。 | 移除 provider 端重複白名單，讓 `_antigravity_unavailable()` 僅委派 `llm_caller.provider_unavailable_reason()`；補核心覆蓋測試鎖住 auth phrase。 |
+| D1 | `studio/providers.py` | Codex JSONL `error`/`turn.failed` 零 exit 未委派核心分類 | 已修正：回系統 note 前先進 `llm_caller.provider_unavailable_kind()`；hard unavailable 升 `ProviderUnavailable("codex", detail)`，rate/overload/timeout/server 暫態維持本輪 soft note。 | 已收口，測試：`test_codex_jsonl_error_zero_exit_uses_core_unavailable_classification`、`test_codex_jsonl_rate_limit_zero_exit_is_soft_note`。 |
+| D2 | `studio/providers.py`, `studio/llm_caller.py` | Antigravity auth phrase 冗餘本地白名單 | 已修正：provider 端移除本地 phrase 掃描，`_antigravity_unavailable()` 僅委派核心；核心測試涵蓋 `authorization code`。 | 已收口，測試：`test_antigravity_unavailable_delegates_to_llm_caller`、`test_provider_unavailable_reason_detects_provider_failures`。 |
 
 ## 已有護欄
 
@@ -52,4 +52,4 @@
 - `tests/core/test_retry_convergence_task5_qa.py:103`-`124`：禁止 `complete_once` 第二層 retry、禁止 `providers.py` 裸 sleep 退避。
 - `tests/core/test_providers_max_retries_task1_qa.py:67`-`111`：OpenAI/minimax client 建構必須 `max_retries=0`，且有反向黑樣本。
 
-核心改動: 本輪只新增盤點文件，未修改 runtime；D1/D2 是後續 #2 的實作入口。
+核心改動: #2 已把 D1/D2 收口到 `studio.llm_caller`；呼叫端只保留 provider-specific pause/soft callback 決策。
