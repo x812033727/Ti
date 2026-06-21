@@ -145,3 +145,18 @@ def test_extract_is_case_insensitive():
     assert autopilot._extract_subsystems("修 BACKLOG 的 Bug") == {"backlog"}
     # 編譯期即帶 IGNORECASE flag，呼叫端無從關閉（#3 的編譯後 pattern 清單）。
     assert all(p.flags & re.IGNORECASE for _, p in autopilot._SUBSYSTEM_COMPILED)
+
+
+# ---------------------------------------------------------------------------
+# 品質下限（第三道硬指令）：壓制低價值/陷阱型自我餵食提案
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_includes_quality_bar_and_banned_types():
+    prompt = autopilot._build_discovery_prompt(outcomes="", pending="", titles=[])
+    assert "品質下限" in prompt
+    # 寧缺勿濫的措辭：高價值不足時少給、不得充數
+    assert "充數" in prompt
+    # 代表性禁止類型都列出（對齊本批退役的陷阱類）
+    for banned in ("python→python3", "稽核確認是否到位", "AST guard", "盤點追蹤狀態"):
+        assert banned in prompt, f"品質下限應列出禁止類型：{banned}"
