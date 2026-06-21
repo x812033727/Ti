@@ -23,9 +23,16 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # 安裝 import 鏈所需的最小依賴。release_note 本身雖只用 stdlib（tomllib/re），但
+      # `import studio.release_note` 會先執行 `studio/__init__.py → secure_write → config`，
+      # 其中 config.py 頂層 `from dotenv import load_dotenv` 需要 python-dotenv；`studio.release_smoke`
+      # 同理。不裝即在 Resolve version step 以 ModuleNotFoundError 崩潰（2026-06-21 首次真實
+      # tag-push 暴露，與 publish-release.yml 同源）。不裝 fastapi/uvicorn/SDK——smoke 不需 app 全量依賴。
+      - name: Install deps for version/smoke
+        run: python -m pip install --upgrade pip python-dotenv
+
       # 版本字串以 studio.release_note.pyproject_version 為單一事實來源（讀 pyproject.toml），
       # 不在 YAML 硬寫版本號。輸出至 GITHUB_OUTPUT 讓版本可見於 Actions log，供 debug 確認。
-      # release_note 僅依賴 stdlib（tomllib/re），無需 pip install。
       - name: Resolve version (SSOT = pyproject.toml)
         id: ver
         run: |
