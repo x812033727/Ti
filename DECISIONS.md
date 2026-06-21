@@ -1866,6 +1866,43 @@
 ## PR／驗收說明須明文標註「本輪僅驗 `tests/test_scope_fixture_demo.py`，不代表全套 pytest 已恢復；全套長期解法待 harness 以任務自身 baseline 比對後另行處理」。
 - 時間：2026-06-20 19:12
 - 理由：防止後續 reviewer 誤讀為全套已通過，保護依賴方向的透明度。
+## **Patch 接縫統一用 `sys.modules["openai"]`，禁用 `studio.providers.openai`**
+- 時間：2026-06-21 09:36
+- 理由：`_openai_chat` 是 lazy import，patch alias 會是假綠；此規則強制寫入各新測試 docstring，`monkeypatch` 自動還原
+- 否決方案：patch `studio.providers.openai`——lazy import 路徑下對應到錯誤接縫，測試會恆通過
+
+## **任務 #2 新增獨立檔案 `tests/core/test_providers_max_retries_gemini_task2_qa.py`，不擴充既有 openai/minimax 檔案**
+- 時間：2026-06-21 09:36
+- 理由：單一 provider 失敗時可精確定位；blast radius 隔離；與既有 openai/minimax 各自獨立的慣例一致
+- 否決方案：三 provider 同一檔——對稱性好看，但任一 provider 新需求會汙染其他 provider 的穩定測試
+
+## **任務 #3 錯誤分類測試採「注入 `expert._chat` callable」，fake exception 物件須符合 `llm_caller.py` 實際分類型別，不得只丟泛用 `Exception`**
+- 時間：2026-06-21 09:36
+- 理由：`run_with_retries` 依例外類型分流（429/503/401 等），丟錯型別會跑到錯的分支，測試喪失判別力
+- 否決方案：mock SDK class——比注入 callable 多一層間接，且與 lazy import 接縫不符
+
+## **任務 #3 每個錯誤 case 須有反向黑樣本，最低要求：`max_retries=0` 情況下斷言 `fake_fn` 只被呼叫一次**
+- 時間：2026-06-21 09:36
+- 理由：防止 retry 測試假綠——若斷言只看「最終未拋出」而不看呼叫次數，retry 邏輯壞掉也會通過
+
+## **任務 #4 範圍重定：本輪測試「工具解析失敗回退 content」＋「驗證現有 `DedupCache/execute_deduped` 機制覆蓋 OpenAI 相容路徑（gemini/minimax）」，新增檔案 `tests/core/test_providers_compat_tool_behavior_task4_qa.py`**
+- 時間：2026-06-21 09:36
+- 理由：`DedupCache`（providers.py:847）與 `execute_deduped`（providers.py:896）在 production 已存在，且 `test_providers_dedup_task3.py:77` 已有 e2e 覆蓋；本輪缺口是「OpenAI 相容後端是否確實走同一去重路徑」，而非「機制不存在」
+- 否決方案：以「production 無 idempotency 機制」為由排除非冪等測試——與現況不符，會誤導 PR reviewer 和後續維護者
+
+## **任務 #4「工具解析失敗回退 content」須含反向黑樣本：格式正確的 tool_call 應觸發工具迴圈，不被誤當 content 吞掉**
+- 時間：2026-06-21 09:36
+
+## **移交待辦（明文記入 PR）改寫為：「確認 `test_providers_dedup_task3.py` 現有覆蓋是否已涵蓋 gemini/minimax 相容後端的去重語意；若有路徑缺口，另開任務補特定 provider 的 `DedupCache` 行為驗證」**
+- 時間：2026-06-21 09:36
+- 理由：不能以「機制不存在」當理由——機制已在；真實移交項是「相容路徑的覆蓋完整度確認」
+- 否決方案：待辦寫「非冪等去重機制設計」——暗示 production 待開發，與現況矛盾
+
+## **三支新測試檔案統一放 `tests/core/`，命名遵循 `test_*_taskN_qa.py` 慣例，fixture 寫同檔不動 `conftest.py`**
+- 時間：2026-06-21 09:36
+
+## **驗收命令為 `python3 -m pytest tests/core/ -q`，基線 765 passed，新增後數量增加且無迴歸；不以 `-k` 排除作主要手段**
+- 時間：2026-06-21 09:36
 ## `live` fixture 第 109 行改 `env["TI_ACCESS_PASSWORD"] = ""`，取代現有 `env.pop("TI_ACCESS_PASSWORD", None)`
 - 時間：2026-06-21 03:15
 - 理由：`pop` 後鍵不存在，子行程 import `config.py` 時 `load_dotenv(override=False)` 從 `.env` 補回密碼，門禁重啟；設空字串讓鍵存在於 subprocess env，dotenv 不覆寫，`auth_enabled()` 返回 False，門禁確實停用
