@@ -10,9 +10,12 @@
 - FORCE_PUSH 開啟：push 帶 --force-with-lease --force-if-includes（無裸 -f），
   且遠端已存在時不中止（force 非死碼）。
 - ls-remote 失敗（rc!=0）：中止，不 push。
-- MERGE_ADMIN 兩態：預設無 --admin、開啟才帶 --admin。
 
-手法：攔截 autopilot._run，依指令分派可控結果並擷取 push / merge argv。
+註（2026-06-21，Option 2）：合併路徑改為「開 PR→取編號→publisher._merge_flow 等 CI 綠才合併」，
+不再有盲合的 `gh pr merge --admin`。本檔聚焦 push 安全旗標矩陣，_merge_flow 一律 monkeypatch
+成 MERGED 以讓流程走完；合併端到端契約由 test_autopilot_push_merge_flags 覆蓋。
+
+手法：攔截 autopilot._run，依指令分派可控結果並擷取 push argv。
 全程不發起真實 git/gh/網路操作。
 """
 
@@ -22,7 +25,7 @@ import asyncio
 
 import pytest
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
 
 _TASK = {"id": "5", "title": "矩陣驗證任務", "detail": ""}
 _BRANCH = "autopilot/task-5"
@@ -74,19 +77,24 @@ def _forbid_real_subprocess(monkeypatch):
 def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", "main")
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", False)
 
 
 async def _run_case(monkeypatch, *, force_push, remote_exists=False, lsremote_rc=0):
     """以指定旗標/遠端狀態跑一次 _commit_push_merge，回傳 (ok, msg, spy)。"""
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", force_push)
-    overrides = {"rev-list --count": (0, "1")}  # 恆有變更可合併
+    overrides = {"rev-list --count": (0, "1"), "pr view": (0, "42")}  # 有變更可合併＋PR 編號
     if lsremote_rc != 0:
         overrides["ls-remote --heads"] = (lsremote_rc, "fatal: could not read from remote")
     elif remote_exists:
         overrides["ls-remote --heads"] = (0, _REMOTE_EXISTS)
     spy = RunSpy(overrides)
     monkeypatch.setattr(autopilot, "_run", spy)
+
+    # 合併走 publisher._merge_flow（等 CI→合併）：一律回 MERGED，聚焦 push 旗標矩陣。
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
     ok, msg = await autopilot._commit_push_merge("/clone", _TASK)
     return ok, msg, spy
 
@@ -113,7 +121,8 @@ async def test_case1_default_non_forced(monkeypatch):
     ok, msg, spy = await _run_case(monkeypatch, force_push=False, remote_exists=False)
     assert ok is True
     _assert_non_forced(spy.push_argv)
-    assert "--admin" not in spy.merge_argv
+    # 合併不再盲合 `gh pr merge`，一律經 publisher._merge_flow（等 CI→合併）。
+    assert not spy.called("pr merge")
     # ls-remote 確實在 push 前跑過
     assert spy.called(f"ls-remote --heads origin {_BRANCH}")
 
@@ -161,16 +170,3 @@ async def test_case5_lsremote_failure_aborts(monkeypatch):
     assert ok is False
     assert not spy.called("push"), f"ls-remote 失敗不應 fall-through 去 push：{spy.calls}"
     assert "ls-remote 檢查失敗" in msg or "無法確認遠端狀態" in msg
-
-
-# === 補充：MERGE_ADMIN 兩態 × 預設非強制推送 ==========================
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("admin,expect_admin", [(False, False), (True, True)])
-async def test_merge_admin_matrix(monkeypatch, admin, expect_admin):
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", admin)
-    ok, msg, spy = await _run_case(monkeypatch, force_push=False, remote_exists=False)
-    assert ok is True
-    assert ("--admin" in spy.merge_argv) is expect_admin
-    assert "--squash" in spy.merge_argv and "--delete-branch" in spy.merge_argv

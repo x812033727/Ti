@@ -137,27 +137,47 @@ async def test_gate_tests_label_budget_not_exceeded(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _gate_failure_branches() -> list[ast.If]:
-    """從 run_one_task 取出三個 `if not ok:` 閘門失敗分支（依序 lint/collect/test）。"""
-    # run_one_task 為頂層函式，getsource 無前導縮排，可直接 parse（勿用 cleandoc，
-    # 它會誤刪函式體相對縮排導致 IndentationError）。
+def _handle_gate_failure_labels() -> list[str]:
+    """從 run_one_task 取出各閘門失敗分支呼叫 `_handle_gate_failure(task, "<label>", out)`
+    傳入的 gate_label 字面字串，依出現順序回傳。
+
+    Option 2（2026-06-21）後：三閘門失敗不再各自 inline `set_status(note=...)`＋`add("修復X")`，
+    改為統一呼叫 `_handle_gate_failure`（有限次重試同一任務、用完才 failed），label 由第二個
+    位置引數帶入；層級辨識（[lint]/[collect]/[test]/[merge]）的真值來源遷至此處。
+    """
     src = inspect.getsource(autopilot.run_one_task)
     tree = ast.parse(src)
     fn = tree.body[0]
-    branches: list[ast.If] = []
+    labels: list[str] = []
     for node in ast.walk(fn):
-        if isinstance(node, ast.If):
-            # 條件為 `not ok`
-            t = node.test
-            if isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not):
-                if isinstance(t.operand, ast.Name) and t.operand.id == "ok":
-                    branches.append(node)
-    return branches
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "_handle_gate_failure":
+                # 簽章：_handle_gate_failure(task, gate_label, detail)
+                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                    labels.append(node.args[1].value)
+    return labels
 
 
-def _note_kwarg(branch: ast.If) -> str | None:
-    """取分支內 backlog.set_status(...) 的 note= 字面字串。"""
-    for node in ast.walk(branch):
+def test_gate_failures_route_through_handler_with_labels():
+    """三閘門（lint/collect/test）失敗分支都呼叫 _handle_gate_failure 並帶對應 label。"""
+    labels = _handle_gate_failure_labels()
+    # 至少涵蓋三閘門 + merge；前三個依序為 lint/collect/test。
+    assert labels[:3] == ["lint", "collect", "test"], f"閘門 label 順序/缺漏：{labels}"
+    assert "merge" in labels, f"merge 失敗也應走同一 handler：{labels}"
+
+
+def test_handler_note_carries_level_label():
+    """_handle_gate_failure 的 set_status note 以 `[<label>]` 開頭，保留一眼辨層的語意。
+
+    解析 _handle_gate_failure 源碼，確認兩條 set_status（重試 pending／放棄 failed）的 note
+    都用 f-string 且以字面 `[` 起頭、緊接 `{gate_label}`，標籤落在開頭非中段。
+    """
+    src = inspect.getsource(autopilot._handle_gate_failure)
+    tree = ast.parse(src)
+    fn = tree.body[0]
+    note_heads: list[str] = []
+    for node in ast.walk(fn):
         if isinstance(node, ast.Call):
             func = node.func
             if (
@@ -167,50 +187,23 @@ def _note_kwarg(branch: ast.If) -> str | None:
                 and func.value.id == "backlog"
             ):
                 for kw in node.keywords:
-                    if kw.arg == "note" and isinstance(kw.value, ast.Constant):
-                        return kw.value.value
-    return None
-
-
-def test_backlog_notes_carry_level_labels():
-    """三閘門失敗分支的 set_status note 依序帶 [lint]/[collect]/[test]。"""
-    branches = _gate_failure_branches()
-    # run_one_task 內三個 gate（lint/collect/test）失敗分支；併合分支可能更多，但前三個
-    # `not ok` 必為三閘門（merge 後續用 `not merged`，不會誤入）。
-    notes = [_note_kwarg(b) for b in branches]
-    notes = [n for n in notes if n is not None]
-    assert len(notes) >= 3, f"未能定位三個閘門失敗 note：{notes}"
-    lint_note, collect_note, test_note = notes[0], notes[1], notes[2]
-    assert lint_note.startswith("[lint]"), f"lint note 漏標籤：{lint_note!r}"
-    assert collect_note.startswith("[collect]"), f"collect note 漏標籤：{collect_note!r}"
-    assert test_note.startswith("[test]"), f"test note 漏標籤：{test_note!r}"
-
-
-def test_backlog_add_detail_from_labeled_gate_output():
-    """三閘門失敗時補的修復任務 detail 取自帶標籤的 gate 輸出（out[-500:]）。
-
-    out 已由 gate 函式加上層級前綴，故 detail 也一眼辨層。驗證源碼確以 out 切片為 detail。
-    """
-    branches = _gate_failure_branches()[:3]
-    found = 0
-    for b in branches:
-        for node in ast.walk(b):
-            if isinstance(node, ast.Call):
-                func = node.func
-                if (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "add"
-                    and isinstance(func.value, ast.Name)
-                    and func.value.id == "backlog"
-                ):
-                    for kw in node.keywords:
-                        if kw.arg == "detail":
-                            # detail=out[-500:] → Subscript on Name 'out'
-                            v = kw.value
-                            assert isinstance(v, ast.Subscript), ast.dump(v)
-                            assert isinstance(v.value, ast.Name) and v.value.id == "out"
-                            found += 1
-    assert found >= 3, f"三閘門修復任務 detail 未全部取自帶標籤 gate 輸出，僅 {found}"
+                    val = kw.value
+                    # note 可能是 f"...".strip()——剝掉外層 .strip() 取得內層 f-string
+                    if (
+                        isinstance(val, ast.Call)
+                        and isinstance(val.func, ast.Attribute)
+                        and val.func.attr == "strip"
+                    ):
+                        val = val.func.value
+                    if kw.arg == "note" and isinstance(val, ast.JoinedStr):
+                        # f-string：第一個片段須為以 "[" 起頭的字面，緊接 gate_label 的格式化欄位
+                        vals = val.values
+                        assert vals and isinstance(vals[0], ast.Constant), ast.dump(kw.value)
+                        head = vals[0].value
+                        assert head.startswith("["), f"note 標籤未落在開頭：{head!r}"
+                        assert isinstance(vals[1], ast.FormattedValue), "標籤後須緊接格式化欄位"
+                        note_heads.append(head)
+    assert len(note_heads) >= 2, f"應有重試/放棄兩條帶標籤 note，實得：{note_heads}"
 
 
 # ---------------------------------------------------------------------------

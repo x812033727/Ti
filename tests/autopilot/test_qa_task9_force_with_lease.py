@@ -18,7 +18,19 @@ import asyncio
 import pytest
 from _repo import REPO_ROOT
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
+
+
+@pytest.fixture(autouse=True)
+def _merge_flow_merged(monkeypatch):
+    """Option 2 後合併走 publisher._merge_flow（等 CI→合併）。本檔聚焦 push/protection 旗標，
+    一律把 _merge_flow 打成回 MERGED，讓 _commit_push_merge 能走完合併段、回 (True, ...)。"""
+
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
+
 
 _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
 _ROOT = REPO_ROOT
@@ -67,7 +79,7 @@ def _install(monkeypatch, overrides):
     return spy
 
 
-_HAS_CHANGE = {"rev-list --count": (0, "1")}
+_HAS_CHANGE = {"rev-list --count": (0, "1"), "pr view": (0, "7")}
 
 
 # === Gate：旗標關閉時 push argv 精確無 force ==========================

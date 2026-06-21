@@ -53,7 +53,6 @@ def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_REPO", _REPO)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", _MAIN)
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
     monkeypatch.setattr(config, "AUTOPILOT_PROTECTION_CHECK", True)
 

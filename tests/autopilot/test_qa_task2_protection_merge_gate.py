@@ -22,7 +22,19 @@ import json
 
 import pytest
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
+
+
+@pytest.fixture(autouse=True)
+def _merge_flow_merged(monkeypatch):
+    """Option 2 後合併走 publisher._merge_flow（等 CI→合併）。本檔聚焦 push/protection 旗標，
+    一律把 _merge_flow 打成回 MERGED，讓 _commit_push_merge 能走完合併段、回 (True, ...)。"""
+
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
+
 
 _TASK = {"id": "2", "title": "接點驗證任務", "detail": ""}
 _BRANCH = "autopilot/task-2"  # task 分支
@@ -75,7 +87,6 @@ def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", _MAIN)
     monkeypatch.setattr(config, "AUTOPILOT_REPO", _REPO)
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
     monkeypatch.setattr(config, "AUTOPILOT_PROTECTION_CHECK", True)
 
@@ -85,6 +96,7 @@ async def _run_merge(monkeypatch, protection_overrides):
     overrides = {
         "rev-list --count": (0, "1"),  # 恆有變更可合併
         "ls-remote --heads": (0, ""),  # 遠端無同名分支（放行 push）
+        "pr view": (0, "7"),  # PR 編號（合併走 publisher._merge_flow，conftest 預設回 MERGED）
     }
     overrides.update(protection_overrides)
     spy = RunSpy(overrides)
@@ -101,7 +113,8 @@ async def test_protected_allows_merge(monkeypatch):
     """有保護（Rulesets 非空）→ 放行，照常 push + pr merge。"""
     ok, msg, spy = await _run_merge(monkeypatch, {"rules/branches": (0, _RULES_PROTECTED)})
     assert ok is True, msg
-    assert spy.called("push") and spy.called("pr merge")
+    # 合併走 publisher._merge_flow（等 CI→合併），不再盲合 `gh pr merge`；放行表現為有開 PR 且 ok。
+    assert spy.called("push") and spy.called("pr create") and not spy.called("pr merge")
     # 端點正確：查的是合併目標 main，不是 task 分支
     assert spy.called(f"repos/{_REPO}/rules/branches/{_MAIN}")
     assert not spy.called("rules/branches/autopilot/task-")
@@ -114,7 +127,7 @@ async def test_unprotected_404_allows_merge(monkeypatch):
         monkeypatch, {"rules/branches": (0, _RULES_EMPTY), "/protection": (1, _HTTP_404)}
     )
     assert ok is True, msg
-    assert spy.called("push") and spy.called("pr merge")
+    assert spy.called("push") and spy.called("pr create") and not spy.called("pr merge")
 
 
 @pytest.mark.asyncio
@@ -147,9 +160,10 @@ async def test_protection_check_runs_before_push_and_merge(monkeypatch):
     assert ok is True, msg
     i_check = spy.index_of("rules/branches")
     i_push = spy.index_of("push")
-    i_merge = spy.index_of("pr merge")
+    # 合併不再盲合 `gh pr merge`，改以 `pr create`（開 PR）為合併階段的可觀測接點。
+    i_merge = spy.index_of("pr create")
     assert i_check != -1 and i_push != -1 and i_merge != -1
-    assert i_check < i_push < i_merge, f"順序須為 保護檢查→push→merge：{spy.calls}"
+    assert i_check < i_push < i_merge, f"順序須為 保護檢查→push→開 PR：{spy.calls}"
     # 同時在 ls-remote 之後（兩道防線串接順序）
     assert spy.index_of("ls-remote") < i_check
 
@@ -182,7 +196,7 @@ async def test_protection_check_disabled_skips_api(monkeypatch):
     assert ok is True, msg
     assert not spy.called("rules/branches"), "關閉開關應整段跳過保護 API"
     assert not spy.called("/protection")
-    assert spy.called("push") and spy.called("pr merge")
+    assert spy.called("push") and spy.called("pr create") and not spy.called("pr merge")
 
 
 # === 不衝突：ls-remote 防覆寫獨立運作 ====================================

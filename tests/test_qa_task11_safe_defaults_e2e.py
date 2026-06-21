@@ -1,14 +1,14 @@
-"""QA 驗收：任務 #11（總驗收標準 #5）「旗標預設安全側，且可由環境變數覆寫」端到端。
+"""QA 驗收：任務 #11（總驗收標準 #5）「push 旗標預設安全側，且可由環境變數覆寫」端到端。
 
-不只測 config 值（見 task1），本檔把「config 值」與「實際 push/merge 行為」串起來，
-釘死語意：預設 = 非強制 + 不繞過保護；環境變數覆寫後行為跟著變。
+不只測 config 值（見 task1），本檔把「config 值」與「實際 push 行為」串起來，
+釘死語意：預設 = 非強制推送；環境變數覆寫後 push flag 跟著變。合併本身一律走
+publisher._merge_flow（等 CI→綠才合併），本檔將其 monkeypatch 成 MERGED 以聚焦 push 旗標。
 
-- 清乾淨環境重載 config：兩旗標預設 False，且實際 push 無 force token、merge 無 --admin。
+- 清乾淨環境重載 config：FORCE_PUSH 預設 False，且實際 push 無 force token、合併走 _merge_flow。
 - TI_AUTOPILOT_FORCE_PUSH=1：實際 push 改用 --force-with-lease --force-if-includes。
-- TI_AUTOPILOT_MERGE_ADMIN=1：實際 merge 帶 --admin。
 - 環境變數解析語意：("0","false","False","",未設) → 安全側 False；其餘 → True。
 
-全程攔截 autopilot._run，不碰網路。
+全程攔截 autopilot._run 與 publisher._merge_flow，不碰網路。
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ import os
 
 import pytest
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
 
 _TASK = {"id": "11", "title": "t", "detail": ""}
 _BRANCH = "autopilot/task-11"
-_ENVS = ("TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN")
+_ENVS = ("TI_AUTOPILOT_FORCE_PUSH",)
 
 
 class RunSpy:
@@ -44,8 +44,8 @@ class RunSpy:
         return next((c for c in self.calls if "push" in c), [])
 
     @property
-    def merge_argv(self):
-        return next((c for c in self.calls if "merge" in c and "pr" in c), [])
+    def merge_flow_called(self):
+        return self._merge_flow_called
 
 
 @pytest.fixture(autouse=True)
@@ -77,8 +77,21 @@ def _reload_with(monkeypatch, env_map):
 
 
 def _install(monkeypatch, overrides):
-    spy = RunSpy(overrides)
+    """裝上 _run spy，並把合併協調器 monkeypatch 成「直接 MERGED」。
+
+    回傳的 spy 另記錄 _merge_flow 是否被呼叫，用以斷言「走的是等 CI 的協調器、
+    而非裸 gh pr merge」。`gh pr view --json number` 需回一個數字，否則
+    _commit_push_merge 會在取 PR 編號處提早失敗。
+    """
+    spy = RunSpy({**overrides, "pr view": (0, "123")})
+    spy._merge_flow_called = False
     monkeypatch.setattr(autopilot, "_run", spy)
+
+    async def _fake_merge_flow(*args, **kwargs):
+        spy._merge_flow_called = True
+        return publisher.MergeOutcome.MERGED, "deadbeef"
+
+    monkeypatch.setattr(publisher, "_merge_flow", _fake_merge_flow)
     return spy
 
 
@@ -91,9 +104,8 @@ _REMOTE_EXISTS = {"ls-remote --heads": (0, f"x\trefs/heads/{_BRANCH}\n")}
 
 @pytest.mark.asyncio
 async def test_clean_defaults_behave_safe(monkeypatch):
-    _reload_with(monkeypatch, {})  # 完全不設兩個 env
+    _reload_with(monkeypatch, {})  # 完全不設 env
     assert config.AUTOPILOT_FORCE_PUSH is False
-    assert config.AUTOPILOT_MERGE_ADMIN is False
 
     spy = _install(monkeypatch, {**_HAS_CHANGE})  # 遠端不存在
     ok, _ = await autopilot._commit_push_merge("/clone", _TASK)
@@ -101,11 +113,12 @@ async def test_clean_defaults_behave_safe(monkeypatch):
     # 非強制推送
     for bad in ("-f", "--force", "--force-with-lease", "--force-if-includes"):
         assert bad not in spy.push_argv
-    # 不繞過保護
-    assert "--admin" not in spy.merge_argv
+    # 走 publisher._merge_flow（等 CI→合併），而非裸 gh pr merge
+    assert spy.merge_flow_called is True
+    assert next((c for c in spy.calls if "merge" in c and "pr" in c), []) == []
 
 
-# === env 覆寫 FORCE_PUSH=1 → 行為變強制 ===============================
+# === env 覆寫 FORCE_PUSH=1 → push 行為變強制 ==========================
 
 
 @pytest.mark.asyncio
@@ -119,22 +132,10 @@ async def test_env_force_push_overrides_behavior(monkeypatch):
     assert "--force-with-lease" in spy.push_argv
     assert "--force-if-includes" in spy.push_argv
     assert "-f" not in spy.push_argv
+    assert spy.merge_flow_called is True
 
 
-# === env 覆寫 MERGE_ADMIN=1 → 行為帶 admin ============================
-
-
-@pytest.mark.asyncio
-async def test_env_merge_admin_overrides_behavior(monkeypatch):
-    _reload_with(monkeypatch, {"TI_AUTOPILOT_MERGE_ADMIN": "1"})
-    assert config.AUTOPILOT_MERGE_ADMIN is True
-    spy = _install(monkeypatch, {**_HAS_CHANGE})
-    ok, _ = await autopilot._commit_push_merge("/clone", _TASK)
-    assert ok is True
-    assert "--admin" in spy.merge_argv
-
-
-# === 解析語意：安全側值 vs 啟用值（兩旗標一致）======================
+# === 解析語意：安全側值 vs 啟用值 ====================================
 
 
 @pytest.mark.parametrize(
@@ -154,4 +155,3 @@ def test_env_parsing_safe_side(monkeypatch, val, expected):
     env_map = {} if val is None else {e: val for e in _ENVS}
     _reload_with(monkeypatch, env_map)
     assert config.AUTOPILOT_FORCE_PUSH is expected
-    assert config.AUTOPILOT_MERGE_ADMIN is expected

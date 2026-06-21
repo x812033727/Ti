@@ -109,7 +109,6 @@ PATH_EXEMPT_GLOBS: list[tuple[str, str]] = [
     # 若有工程師要清，屬「文件一致性」後續工作，不阻擋本任務。
     ("tests/docs/test_qa_task2_contributing_canonical.py", "legacy-guard-test-doc"),
     ("tests/docs/test_qa_task2_happy_path.py", "legacy-guard-test-doc"),
-    ("tests/docs/test_qa_task2_merge_admin_prereq_doc.py", "legacy-guard-test-doc"),
     ("tests/docs/test_qa_task3_precommit_step.py", "legacy-guard-test-doc"),
     ("tests/docs/test_qa_task3_readme_test_section.py", "legacy-guard-test-doc"),
     ("tests/docs/test_docs_pytest_command.py", "legacy-guard-test-doc"),

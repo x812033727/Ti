@@ -134,6 +134,7 @@ class StudioSession:
         base_repo: str | None = None,
         group: dict | None = None,
         time_budget_s: float | None = None,
+        auto_publish: bool = True,
     ):
         self.session_id = session_id
         self.broadcast = broadcast
@@ -152,6 +153,9 @@ class StudioSession:
         # 長期專案自己的發佈 repo（owner/repo，可選）：成果改推到該 repo 並對其 base 開 PR，
         # 解決「專案 workspace 與全域發佈 repo 無共同歷史、開不了 PR」的限制。
         self._publish_repo = (publish_repo or "").strip()
+        # 是否由本 session 自行發佈：autopilot 顯式傳 False，改由其 wrapper 作為唯一發佈者
+        # （等 CI→合併），避免同一份成果被 session 與 autopilot 各開一個 PR（重複 PR）。
+        self._auto_publish = auto_publish
         # 目標 repo＝工作基底（owner/repo，可選）：呼叫端僅在 workspace 確實同步自
         # 該 repo（repo_base.ensure_base 的 based）時帶值——prompt 據此告知專家
         # 「既有程式碼就在工作目錄裡」，絕不對專家宣告不存在的基底。
@@ -2197,6 +2201,9 @@ class StudioSession:
         self, shippable: bool, engineer: ExpertLike | None = None
     ) -> None:
         if not self.cwd or self._stop or not shippable:
+            return
+        # 顯式關閉自動發佈時（如 autopilot：由其 wrapper 作為唯一發佈者，等 CI→合併），不自行發佈。
+        if not self._auto_publish:
             return
         if not (config.PUBLISH_AUTO and publisher.is_configured()):
             return

@@ -653,6 +653,9 @@ AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
 AUTOPILOT_TASK_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TASK_TIMEOUT", "3600"))
+# 單一任務客觀閘門（lint/collect/test/merge）失敗時，重試同一任務的最大嘗試次數。
+# 達上限才標 failed；避免每次失敗就 spawn 一個措辭近似的「修復X」新任務造成 backlog 暴增。
+AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3"))
 # 軟性時間預算：session 在硬 timeout（AUTOPILOT_TASK_TIMEOUT，由 autopilot 的 wait_for 套用）的
 # 此比例處主動收斂——停止派發新任務、把已完成的走 Demo/出貨、未動的記 known-limit/followup，
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
@@ -669,14 +672,6 @@ AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "
 # AUTOPILOT_FORCE_PUSH：預設非強制推送；遠端已存在同名分支會中止。設 1 才略過中止並改用
 #   `git push --force-with-lease --force-if-includes`（覆寫殘留分支用，絕不用裸 -f）。
 AUTOPILOT_FORCE_PUSH = os.getenv("TI_AUTOPILOT_FORCE_PUSH", "0") not in ("0", "false", "False", "")
-# AUTOPILOT_MERGE_ADMIN：預設不帶 `gh pr merge --admin`，讓 GitHub 分支保護生效。若目標 branch
-#   有保護規則、需維持自動合併，須設 TI_AUTOPILOT_MERGE_ADMIN=1。
-AUTOPILOT_MERGE_ADMIN = os.getenv("TI_AUTOPILOT_MERGE_ADMIN", "0") not in (
-    "0",
-    "false",
-    "False",
-    "",
-)
 # PUBLISH_BYPASS_INFRA_CI：自動合併等 CI 時，若 CI「失敗」其實是基礎設施/帳務秒掛
 #   （所有失敗 check 在數秒內 conclusion=failure、零步驟執行，如 GitHub Actions 命中
 #   spending limit）而非程式碼問題，則繞過此「等 CI→紅就保留待人工」的自設閘直接合併。

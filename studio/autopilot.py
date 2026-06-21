@@ -23,7 +23,7 @@ import uuid
 from collections import Counter
 from pathlib import Path
 
-from . import backlog, config, deploy, history, runner
+from . import backlog, config, deploy, history, publisher, runner
 from .orchestrator import StudioSession, parse_tasks
 
 log = logging.getLogger("ti.autopilot")
@@ -278,7 +278,8 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     # AUTOPILOT_BRANCH」的保護狀態。放在 push 之前——unknown 時 fail-safe 中止且尚未 push，
     # 不留遠端孤兒分支。dryrun 已於前面提早 return，此處天然不打 API。
     # 唯一硬規則：state=="unknown" 一律中止（絕不 fall-through 當無保護）；protected/
-    # unprotected 皆放行（受保護分支由既有不帶 --admin 的 pr merge 自然攔下，不重複把關）。
+    # unprotected 皆放行（受保護分支由後續 publisher._merge_flow「等 CI→合併」自然攔下：
+    # 必過檢查未滿足會回 BLOCKED 並關 PR，不在此重複把關）。
     if config.AUTOPILOT_PROTECTION_CHECK:
         state, detail = await _check_branch_protection(clone, config.AUTOPILOT_BRANCH)
         if state == "unknown":
@@ -300,7 +301,7 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         return False, f"push 失敗：{out[-400:]}"
     repo = config.AUTOPILOT_REPO
     body = f"autopilot 自動產生：{task['title']}\n\n{task.get('detail', '')}".strip()
-    await _run(
+    rc, out = await _run(
         [
             *_GH,
             "pr",
@@ -319,16 +320,45 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         cwd=clone,
         timeout=120,
     )
-    # 預設不帶 --admin，讓 GitHub 分支保護/必過檢查生效；僅 MERGE_ADMIN 為真才繞過保護。
-    admin_flag = ["--admin"] if config.AUTOPILOT_MERGE_ADMIN else []
-    rc, out = await _run(
-        [*_GH, "pr", "merge", "-R", repo, branch, "--squash", *admin_flag, "--delete-branch"],
-        cwd=clone,
-        timeout=180,
-    )
     if rc != 0:
-        return False, f"merge 失敗：{out[-400:]}"
-    return True, f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}"
+        return False, f"開 PR 失敗：{out[-400:]}"
+
+    # 取 PR 編號供 publisher 協調器使用；取不到就明確失敗，絕不 fall-through 盲合（避免合到沒等 CI）。
+    rc, out = await _run(
+        [*_GH, "pr", "view", branch, "-R", repo, "--json", "number", "-q", ".number"],
+        cwd=clone,
+        timeout=60,
+    )
+    try:
+        pr_number = int(out.strip())
+    except (TypeError, ValueError):
+        return False, f"無法取得 PR 編號（已開 PR 但解析失敗，未合併）：{out[-400:]}"
+
+    # 等 CI 綠後才合併：複用 publisher 已測過的合併協調器（每輪「查狀態→等 CI→合併」，
+    # behind/stale 會 _update_branch 後重試）。明確把目標 repo 覆寫成 AUTOPILOT_REPO，
+    # 避免 publisher REST 函式 fallback 到 config.PUBLISH_REPO（兩者未必相同）。
+    token = publisher.set_repo_override(config.AUTOPILOT_REPO)
+    try:
+        outcome, detail = await publisher._merge_flow(
+            pr_number,
+            publisher.merge_payload(branch, "squash"),
+            ci_timeout=config.PUBLISH_CI_TIMEOUT,
+            ci_interval=config.PUBLISH_CI_INTERVAL,
+            retries=config.PUBLISH_MERGE_RETRIES,
+        )
+    finally:
+        publisher.reset_repo_override(token)
+    if outcome == publisher.MergeOutcome.MERGED:
+        return (
+            True,
+            f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}（CI 綠後合併）：{detail}",
+        )
+    # 非綠/未合併：關閉 PR 並刪分支，避免留下孤兒 PR
+    await _run([*_GH, "pr", "close", "-R", repo, branch, "--delete-branch"], cwd=clone, timeout=120)
+    return (
+        False,
+        f"CI 未過或合併失敗（{outcome.value if hasattr(outcome, 'value') else outcome}）：{detail}",
+    )
 
 
 # --- 並發協調 ------------------------------------------------------------
@@ -731,6 +761,42 @@ async def _evaluate_self(clone: str) -> int:
 # --- 單一任務 ------------------------------------------------------------
 
 
+def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
+    """客觀閘門失敗時的收斂處置：有限次「重試同一任務」，用完才放棄。
+
+    取代舊行為（每次失敗就 `backlog.add("修復X失敗…")` spawn 一個措辭近似的新任務，
+    導致該任務再失敗又 spawn、backlog 無限暴增）。改為：
+      - 還有重試額度：把同一任務退回 pending、attempts +1、附上失敗筆記，下輪重跑同一任務。
+      - 額度用罄：標 failed 並註明放棄；不再 spawn 任何「修復X」新任務。
+
+    注意只處置「閘門失敗的重試」；討論發現的新工作（followup_items／route_core_changes）
+    仍走各自既有路徑，與此無關。
+    """
+    attempts = int(task.get("attempts") or 0)
+    if attempts + 1 < config.AUTOPILOT_TASK_MAX_ATTEMPTS:
+        backlog.set_status(
+            task["id"],
+            "pending",
+            attempts=attempts + 1,
+            note=f"[{gate_label}] 第 {attempts + 1} 次未過，重試；{detail[-300:]}".strip(),
+        )
+        log.info(
+            "任務 #%s %s 未過，退回 pending 重試（第 %d 次）", task["id"], gate_label, attempts + 1
+        )
+    else:
+        backlog.set_status(
+            task["id"],
+            "failed",
+            note=f"[{gate_label}] 連續 {config.AUTOPILOT_TASK_MAX_ATTEMPTS} 次未過，放棄；{detail[-300:]}".strip(),
+        )
+        log.info(
+            "任務 #%s %s 連續 %d 次未過，標 failed 放棄",
+            task["id"],
+            gate_label,
+            config.AUTOPILOT_TASK_MAX_ATTEMPTS,
+        )
+
+
 async def run_one_task(task: dict) -> None:
     sid = f"ap{uuid.uuid4().hex[:10]}"
     backlog.set_status(task["id"], "in_progress", session_id=sid)
@@ -752,6 +818,9 @@ async def run_one_task(task: dict) -> None:
         # 軟性時間預算＝硬 timeout：session 會在其 SESSION_SOFT_DEADLINE_FRAC 比例處主動收斂、
         # 優雅出貨已完成成果，避免撞 wait_for 硬砍把整場(含已完成任務)全丟成 timeout failed。
         time_budget_s=config.AUTOPILOT_TASK_TIMEOUT or None,
+        # session 不自行發佈：autopilot 作為唯一發佈者（_commit_push_merge 等 CI→合併），
+        # 否則同一份成果會被 session（ti-studio/<sid>）與 autopilot（autopilot/task-N）各開一個 PR。
+        auto_publish=False,
     )
     try:
         result = await asyncio.wait_for(
@@ -800,34 +869,25 @@ async def run_one_task(task: dict) -> None:
     # 閘門 1：lint（對齊 CI lint job）—— ruff check + format
     ok, out = await _gate_lint(clone)
     if not ok:
-        backlog.set_status(task["id"], "failed", note="[lint] 閘門未通過")
-        backlog.add(f"修復 lint 失敗：{task['title']}", detail=out[-500:], source="discovered")
-        log.info("任務 #%s lint 未過,標 failed 並補修復任務", task["id"])
+        _handle_gate_failure(task, "lint", out)
         return
 
     # 閘門 2：無 SDK collection（對齊 CI test job 環境）
     ok, out = await _gate_collect_without_sdk(clone)
     if not ok:
-        backlog.set_status(task["id"], "failed", note="[collect] 無 SDK collection 失敗")
-        backlog.add(
-            f"修復缺 SDK collection：{task['title']}", detail=out[-500:], source="discovered"
-        )
-        log.info("任務 #%s 無 SDK collection 失敗,標 failed 並補修復任務", task["id"])
+        _handle_gate_failure(task, "collect", out)
         return
 
     # 閘門 3：完整測試必須全綠
     ok, out = await _gate_tests(clone)
     if not ok:
-        backlog.set_status(task["id"], "failed", note="[test] 測試未通過")
-        backlog.add(f"修復測試失敗：{task['title']}", detail=out[-500:], source="discovered")
-        log.info("任務 #%s 測試未過,標 failed 並補修復任務", task["id"])
+        _handle_gate_failure(task, "test", out)
         return
 
     # commit / push / squash-merge 進 main
     merged, msg = await _commit_push_merge(clone, task)
     if not merged:
-        backlog.set_status(task["id"], "failed", note=msg)
-        log.info("任務 #%s 未合併：%s", task["id"], msg)
+        _handle_gate_failure(task, "merge", msg)
         return
     log.info("任務 #%s %s", task["id"], msg)
 

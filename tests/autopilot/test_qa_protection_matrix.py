@@ -21,7 +21,19 @@ import json
 
 import pytest
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
+
+
+@pytest.fixture(autouse=True)
+def _merge_flow_merged(monkeypatch):
+    """Option 2 後合併走 publisher._merge_flow（等 CI→合併）。本檔聚焦 push/protection 旗標，
+    一律把 _merge_flow 打成回 MERGED，讓 _commit_push_merge 能走完合併段、回 (True, ...)。"""
+
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
+
 
 _REPO = "octo/Ti"
 _MAIN = "main"
@@ -80,7 +92,6 @@ def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_REPO", _REPO)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", _MAIN)
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
     monkeypatch.setattr(config, "AUTOPILOT_PROTECTION_CHECK", True)
 
@@ -94,7 +105,7 @@ async def _check(monkeypatch, overrides):
 
 async def _gate(monkeypatch, overrides):
     """跑完整 _commit_push_merge，回 (ok, msg, spy)。預設有變更、遠端不存在同名分支。"""
-    base = {"rev-list --count": (0, "1"), "ls-remote --heads": (0, "")}
+    base = {"rev-list --count": (0, "1"), "ls-remote --heads": (0, ""), "pr view": (0, "7")}
     base.update(overrides)
     spy = RunSpy(base)
     monkeypatch.setattr(autopilot, "_run", spy)
@@ -193,10 +204,12 @@ async def test_targets_main_branch_and_rulesets_first(monkeypatch):
     ids=["protected", "unprotected"],
 )
 async def test_gate_allows_protected_and_unprotected(monkeypatch, label, overrides):
-    """protected/unprotected 皆放行，流程走到 pr merge。"""
+    """protected/unprotected 皆放行，流程走到合併段（開 PR→publisher._merge_flow）。"""
     ok, msg, spy = await _gate(monkeypatch, overrides)
     assert ok is True, f"[{label}] 應放行：{msg}"
-    assert spy.called("pr merge"), f"[{label}] 應走到 merge"
+    # 合併不再盲合 `gh pr merge`，改以 `pr create`（開 PR）為合併階段接點，再交 _merge_flow 等 CI。
+    assert spy.called("pr create"), f"[{label}] 應走到合併段（開 PR）"
+    assert not spy.called("pr merge"), f"[{label}] 不該再盲合 gh pr merge"
 
 
 @pytest.mark.asyncio
