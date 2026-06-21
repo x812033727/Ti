@@ -33,11 +33,20 @@ PRICES: dict[str, tuple[float, float]] = {
 
 
 def _blank() -> dict:
-    return {"prompt": 0, "completion": 0, "total": 0, "cost_usd": 0.0, "calls": 0}
+    return {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "cost_usd": 0.0,
+        "calls": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+    }
 
 
 def _add(dst: dict, src: dict) -> None:
-    for k in ("prompt", "completion", "total", "calls"):
+    # cache_read/cache_write 也走 .get：舊版 meta.json 的聚合桶無此欄位，缺則以 0 計、不報錯。
+    for k in ("prompt", "completion", "total", "calls", "cache_read", "cache_write"):
         dst[k] += src.get(k, 0) or 0
     dst["cost_usd"] += src.get("cost_usd", 0.0) or 0.0
 
@@ -100,13 +109,23 @@ def aggregate(since: float | None = None) -> dict:
     }
 
 
+def _cache_hit_pct(b: dict) -> float:
+    """prompt-cache 命中率＝cache_read /（prompt ＋ cache_read ＋ cache_write）。
+
+    SDK 把未快取 input(prompt)、快取命中(cache_read)、快取寫入(cache_write) 分列三項，
+    三者相加才是該次真實 input 量；命中率即 cache_read 佔此總 input 的比例。分母為 0 時回 0。
+    """
+    denom = (b.get("prompt") or 0) + (b.get("cache_read") or 0) + (b.get("cache_write") or 0)
+    return (b.get("cache_read") or 0) / denom * 100 if denom else 0.0
+
+
 def _fmt_row(name: str, b: dict) -> str:
     cost = b.get("cost_usd") or 0.0
     cost_s = f"${cost:,.4f}" if cost else "—"
     return (
         f"  {name:<22} calls={b['calls']:<5} "
         f"in={b['prompt']:>10,} out={b['completion']:>10,} "
-        f"total={b['total']:>11,} cost={cost_s}"
+        f"total={b['total']:>11,} cache_hit={_cache_hit_pct(b):>5.1f}% cost={cost_s}"
     )
 
 
@@ -117,6 +136,12 @@ def render(agg: dict) -> str:
     out.append(f"涵蓋 session 數：{agg['sessions']}")
     out.append(
         f"總計：calls={t['calls']} in={t['prompt']:,} out={t['completion']:,} total={t['total']:,}"
+    )
+    out.append(
+        f"Prompt 快取：命中(cache_read)={t.get('cache_read', 0):,} "
+        f"寫入(cache_write)={t.get('cache_write', 0):,} "
+        f"命中率={_cache_hit_pct(t):.1f}%　"
+        f"（Claude 經 Agent SDK／OpenAI 自動快取，命中愈高代表重複 prompt 前綴省得愈多）"
     )
     claude_cost = t.get("cost_usd") or 0.0
     out.append(

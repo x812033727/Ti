@@ -71,12 +71,18 @@ retry 防疊乘）、**測試隔離**（`conftest.py` 清淨環境、真實 bwra
 `role.system_prompt`（`experts.py:197, 590`）＋累積 transcript，**命中與否完全靠底層 SDK 預設**。
 
 - 系統 prompt／角色守則／辯論 transcript 高度重複，是 prompt caching 的理想標的。
-- 若走 Anthropic API：對穩定前綴（system + 角色定義）加 `cache_control: ephemeral` 斷點，
-  輸入 token 命中後大幅折價，**零品質損失**。
-- 建議：先用 `usage_report` 看 `cache_read` 佔比實況（既有欄位已採集），再決定是否在
-  provider 層為「system + 角色定義」這段穩定前綴顯式設斷點。
-- **注意**：若 Claude 走的是 CLI/Agent SDK 子程序（`providers.py` 的 `--ephemeral` 是 CLI session
-  語義，非 prompt cache），則可能已有部分自動快取——這正是「先稽核再動手」的理由，避免假設。
+
+> **稽核更新（已動手前先查清）**：Claude 主路徑實為 `claude_agent_sdk`（`ClaudeSDKClient`，
+> `experts.py:312-323`），system_prompt 經 `ClaudeAgentOptions(system_prompt=…)` 傳入，**並非裸
+> Anthropic `messages.create`**。走 Agent SDK／bundled CLI 時 prompt caching 由 SDK/CLI **自動處理**，
+> 應用層**無法也不該**手動設 `cache_control` 斷點（OpenAI 路徑同理為自動快取）。`experts.py:292-293`
+> 讀到的 `cache_read_input_tokens` 正是 SDK 回報「快取確實在作用」。
+>
+> 因此本項的正確修法**不是加斷點，而是把快取成效量出來**：原本 `cache_read`/`cache_write` 在
+> `events.token_usage`（`events.py:117-118`）每筆事件都有採集，卻在聚合層 `history._derive_token_usage`
+> 被丟棄、從未在 `usage_report` 呈現。**已落地修正**：聚合與報表補上 `cache_read`/`cache_write` 與
+> **命中率**（total 與 by-provider/model/role 皆顯示 `cache_hit=xx%`），讓「快取有沒有用、省多少」可量測。
+> 後續若新增裸 API provider，才需另案評估顯式斷點。
 
 ### 1.4 成本只到「事後」，缺執行期控制（P0）
 
