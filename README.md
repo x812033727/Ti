@@ -74,7 +74,8 @@ Windows 若 `python3` 找不到，可改用 `py` 啟動器（想鎖 3.x 用 `py 
 
 - **依賴**：Python ≥ 3.11（對齊 `pyproject.toml` 的 `requires-python`）、`git`。
 - **secrets**：`ANTHROPIC_API_KEY`（**必備**，預設由 Claude 後端驅動專家；切換 OpenAI 見下方「[設定](#設定)」）。
-- **token／選填**：`GITHUB_TOKEN`（發佈成果到 GitHub 時才需）、登入密碼（啟用登入門禁才需，見「[登入 / 門禁（選填）](#登入--門禁選填)」）。
+- **token／選填**：`GITHUB_TOKEN`（Ti runtime 發佈 workspace 成果到 GitHub 時才需，不是 Actions secret `GH_PAT`）、
+  登入密碼（啟用登入門禁才需，見「[登入 / 門禁（選填）](#登入--門禁選填)」）。
 
 ### 1. 建立虛擬環境
 
@@ -190,7 +191,7 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 - Gemini API key、Base URL、Gemini 模型
 - Codex 模型覆寫與 sandbox 模式（登入狀態沿用伺服器上的 Codex CLI）
 - Antigravity CLI 執行檔、模型覆寫、sandbox 與自動核准工具權限（登入/額度沿用伺服器上的 `agy`）
-- GitHub token、發佈目標 repo
+- GitHub token、發佈目標 repo（對應 runtime env `GITHUB_TOKEN` / `TI_PUBLISH_REPO`，不是 GitHub Actions repo secret `GH_PAT`）
 - 任務並行（開關 / 每波支線數上限）
 - **進階流程**開關：需求澄清、卡關討論 huddle、異議檢查 critic、共用筆記、跨場次教訓、反思記憶、客觀驗收閘門、單輪自我精修、子進程資源上限
 
@@ -202,6 +203,39 @@ TI_ACCESS_PASSWORD=你的密碼 .venv/bin/python3 -m studio.server
 門禁已啟用時需先輸入目前密碼;門禁未啟用時則可在此設定一組密碼以首次啟用。變更會寫入
 `.env`(`TI_ACCESS_PASSWORD`)並即時生效;既有登入不會因此被登出(cookie 以 `TI_AUTH_SECRET`
 簽章,與密碼無關)。
+
+#### GitHub 發佈 token 與 Release workflow
+
+本專案有兩種 GitHub token，不能混用：
+
+- `GITHUB_TOKEN` 是 Ti runtime env，用於把 workspace 成果推到 `TI_PUBLISH_REPO`、開 PR 或合併 PR；
+  可在設定頁或 `.env` 設定。
+- `GH_PAT` 是 GitHub Actions repo secret，只給 `.github/workflows/publish-release.yml` 在 `v*` tag push 時建立
+  GitHub Release。以 `GITHUB_TOKEN` 建立 release 不會觸發下游 workflow，`release-smoke.yml` 的
+  `release: published` 會收不到事件。
+
+`GH_PAT` 設定指引：
+
+- 建立 Fine-grained PAT。
+- Repository access 選 `Only select repositories`，且只選本 repo，非 all-repos。
+- Repository permissions 僅開 `Contents: Read and write`。
+- 到 repo `Settings -> Secrets and variables -> Actions` 建立 repository secret，名稱固定為 `GH_PAT`。
+
+`GH_PAT` 到期或被撤銷時，Step 5 `gh release create` 會以 403 失敗。處置方式是輪替並更新同一個
+repo secret `GH_PAT`；不要改 workflow 內的 token 路由，也不要把 `GH_TOKEN` 換回 `GITHUB_TOKEN`。
+
+Release workflow 發佈 DoD：
+
+- tag 必須是 `v<pyproject 版本>`；workflow 會用 `studio.release_note.pyproject_version()` fail-fast 檢查。
+- release body 必須先跑 `python3 scripts/publish_release.py` 產生 `body.md`，再由
+  `gh release create "$TAG" -F body.md` file mode 注入。
+- 版本與 Breaking heading 走 Python SSOT（`studio.release_note.pyproject_version()` /
+  `studio.release_note.BREAKING_HEADING`），不在 YAML 硬寫、不寫死。
+- 發佈前必跑 release 守護測試（`test_qa_task2_release_body`、
+  `test_qa_task3_release_trigger_chain`、`test_qa_task4_publish_workflow_guard`、
+  `test_release_pipeline_dry_run`）；實際執行指令見 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 驗證邊界要明講：單元/守護測試目前只證明半閉環，真實 `v*` tag-push 端到端尚待生產驗證。
+  第一次正式打 `v*` tag 後，需確認 `publish-release -> release-smoke` 生產鏈實際通過。
 
 #### (C) 反向代理部署（X-Forwarded 信任鏈）
 
@@ -289,7 +323,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_ACCESS_PASSWORD` | 設定後啟用登入門禁（共用密碼） | 未設定（停用） |
 | `TI_AUTH_SECRET` / `TI_AUTH_TTL` | cookie 簽章密鑰 / 登入有效秒數 | 隨機 / 604800 |
 | `TI_FORWARDED_ALLOW_IPS` | uvicorn ProxyHeaders 信任來源（傳輸層）：僅清單內來源送來的 `X-Forwarded-*` 會被採信改寫 client IP/scheme。預設僅本機；嚴禁 `"*"`（偵測到即拒啟動）。反向代理部署見下方小節。別名 `FORWARDED_ALLOW_IPS` | 127.0.0.1 |
-| `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | 設定後啟用「發佈成果到 GitHub」（owner/repo） | 未設定 |
+| `GITHUB_TOKEN` + `TI_PUBLISH_REPO` | Ti runtime 發佈 workspace 成果到 GitHub（owner/repo）；不可和 Actions secret `GH_PAT` 混用 | 未設定 |
 | `TI_PUBLISH_BASE` / `TI_PUBLISH_AUTO` | PR 目標分支 / 完成後是否自動發佈 | main / 0 |
 | `TI_PUBLISH_MERGE` | push／開 PR 後是否自動合併（先等 CI 通過才合併） | 0 |
 | `TI_PUBLISH_CI_TIMEOUT` / `TI_PUBLISH_CI_INTERVAL` | 自動合併前等待 CI 的最長秒數 / 輪詢間隔 | 600 / 10 |

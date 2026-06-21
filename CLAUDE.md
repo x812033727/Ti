@@ -9,7 +9,52 @@
   消費端以 `backlog.add_items(core, source="core")`（省略 `state_dir`＝核心 backlog）路由，
   autopilot 在核心 repo 實作並開 PR。詳見 `ARCHITECTURE.md`「專案 repo 與 Ti 主核心 repo」。
 
+## 發佈鏈 DoD 與 `GH_PAT` 設定
+
+- 發佈鏈契約：`.github/workflows/publish-release.yml` 只在 `push.tags: v*` 建立 GitHub release；
+  `.github/workflows/release-smoke.yml` 只用 `release: published` 接下游 smoke。建立 release 的
+  `GH_TOKEN` 必須維持 `secrets.GH_PAT`，不可換回 `GITHUB_TOKEN`，否則 GitHub 防遞迴機制會讓
+  `release-smoke` 不被觸發。
+- `GH_PAT` 設定指引：建立 Fine-grained PAT；Repository access 務必只選本 repo（非 all-repos）；
+  Repository permissions 僅開 `Contents: Read and write`；
+  到 repo `Settings -> Secrets and variables -> Actions` 建立 secret，名稱固定為 `GH_PAT`。
+- `GH_PAT` 到期或被撤銷時，Step 5 `gh release create` 會以 403 失敗；輪替後只更新同一個 repo
+  secret `GH_PAT`，不要改 workflow token 路由。
+- 發佈 DoD：`body.md` 必須由 `scripts/publish_release.py` 產生，版本來自
+  `studio.release_note.pyproject_version()`，Breaking heading 來自同一 Python SSOT，不在 YAML 硬寫；
+  發佈前需重跑 release 相關守護測試與 `python3 scripts/publish_release.py`。
+- 驗證邊界必須明講：單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證。換句話說：
+  真實 tag-push 端到端尚待生產驗證；第一次正式打 `v*` tag 後，需確認
+  `publish-release -> release-smoke` 生產鏈實際通過。
+- 本輪不加 `--verify-tag`：現有觸發條件已由 `push.tags: v*` 保證 tag 存在，且 workflow 另有
+  `github.ref_name == v{pyproject_version()}` fail-fast。若未來新增 `workflow_dispatch` 手動發佈，需重審此決策。
+- 任務 #3 最小硬化決策：已將 `publish-release.yml` 的 workflow-level `permissions.contents` 下修為
+  `read`，因為 `gh release create` 的寫入權限走 `secrets.GH_PAT`；`actions/checkout` /
+  `actions/setup-python` 暫不鎖 commit SHA，原因是這不影響本輪 release 驗收閉環，且會增加後續維護成本。
+
 ## 工程師 — 長期經驗
+
+### Release 發佈鏈操作記憶
+
+`publish-release.yml` 建立 GitHub Release 時固定使用 repo secret `GH_PAT`，不要改回 `GITHUB_TOKEN`；用
+`GITHUB_TOKEN` 建 release 不會觸發下游 `release-smoke.yml` 的 `release: published` workflow。
+
+`GH_PAT` 設定規格固定沿用上方四項設定（含 Contents read/write 權限）；不要放大 repo 範圍，也不要改 secret 名稱。若 token 過期或被撤銷，
+`Verify PAT` 只能檢查非空，實際會在 Step 5 `gh release create` 以 403 失敗；輪替時到 repo Settings →
+Secrets and variables → Actions 更新同名 `GH_PAT`。
+
+真實 `v*` tag-push 端到端尚待生產驗證，單元/守護測試為半閉環；目前只能證明
+`push tag -> render body -> gh release create 設定 -> release: published smoke 設定` 的結構正確，不代表
+GitHub 生產環境 E2E 已實跑過。
+
+本輪不補 `--verify-tag`：現行 workflow 只由 `on.push.tags: v*` 觸發，tag 已存在，且 `Assert tag matches
+version` 會比對 `github.ref_name` 與 `v{pyproject_version()}` fail-fast；在未加入 `workflow_dispatch` 手動發佈前，
+`--verify-tag` 不需作為驗收必要硬化，避免為重複保護增加範圍。
+
+最小硬化只做一項：`publish-release.yml` 的 `permissions.contents` 維持 `read`，避免給內建
+`GITHUB_TOKEN` 不必要的 write 權限；建立 release 所需的 write 權限仍固定由 `secrets.GH_PAT` 承擔。
+其他硬化（例如 actions commit SHA 鎖版）本輪不補，因為它不改變 `push tag -> release published ->
+release-smoke` 驗收鏈，留待專門供應鏈硬化任務處理。
 
 ### 非預期輸出：先懷疑自己的命令，絕不先怪「環境污染」
 **慘痛教訓（CI 修復任務）**：我把自己命令的真實後果——`$?` 在錯誤位置沒展開、`>>` append 因我「重試」真的執行了 7 次把 `.gitignore` 寫成 30 行、`{ 多命令 } >> "$R"; cat "$R"` 的交錯——**反复誤判為「pty 污染／串擾」**。一旦貼上「污染」標籤，我就不再相信工具輸出（唯一的事實來源），於是反复重跑、查無謂的 git 歷史、**差點 `git checkout origin/main` 覆蓋檔案**（被使用者打斷）、最後把自己製造的混亂包裝成「環境不可信」甩給使用者決策。**環境從頭到尾完全正常。**
