@@ -10,6 +10,7 @@ import asyncio
 import concurrent.futures
 import subprocess
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -20,6 +21,7 @@ from . import (
     auth,
     backlog,
     blueprint,
+    claude_accounts,
     claude_usage,
     codex_usage,
     config,
@@ -325,17 +327,33 @@ def _provider_quota_snapshot() -> dict:
         config.codex_cli_available() and config.codex_cli_logged_in() and not config.CODEX_API_KEY
     )
     minimax_on = bool(config.MINIMAX_API_KEY)
-    # 四家 rate-limit 查詢彼此獨立、皆為阻塞 I/O（各 60s 快取）；並行跑使端點延遲取「最慢
+    # 多帳號：claude 走訂閱時列出本機憑證標籤檔（acct-A/acct-B…），各帳號獨立查額度，
+    # 讓設定頁同時顯示並可切換。無標籤檔（單帳號舊機）則回 []，前端退回單一額度顯示。
+    claude_accts = claude_accounts.list_accounts() if claude_on else []
+    # 各 rate-limit 查詢彼此獨立、皆為阻塞 I/O（各 60s 快取）；並行跑使端點延遲取「最慢
     # 一家」而非「總和」，配合 antigravity 已移除 12s 子程序，明顯改善前端轉圈。
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4 + len(claude_accts)) as ex:
         f_claude = ex.submit(claude_usage.fetch_rate_limits) if claude_on else None
         f_codex = ex.submit(codex_usage.fetch_rate_limits) if codex_on else None
         f_minimax = ex.submit(minimax_usage.fetch_rate_limits) if minimax_on else None
         f_agy = ex.submit(_antigravity_status)
+        f_accts = [
+            (a, ex.submit(claude_usage.fetch_rate_limits, cred_file=Path(a["cred_file"])))
+            for a in claude_accts
+        ]
         claude_rl = f_claude.result() if f_claude else None
         codex_rl = f_codex.result() if f_codex else None
         minimax_rl = f_minimax.result() if f_minimax else None
         agy_status = f_agy.result()
+        claude_accounts_out = [
+            {
+                "label": a["label"],
+                "subscription": a.get("subscription"),
+                "active": a.get("active", False),
+                "rate_limits": fut.result(),
+            }
+            for a, fut in f_accts
+        ]
     providers = [
         {
             "key": "claude",
@@ -355,6 +373,8 @@ def _provider_quota_snapshot() -> dict:
             },
             # 訂閱（OAuth 登入、非 API key）時附官方 rate limit；否則 None（前端不顯示）。
             "rate_limits": claude_rl,
+            # 多帳號額度與在線標記；單帳號（無標籤檔）時為 []，前端退回上面的單一 rate_limits。
+            "accounts": claude_accounts_out,
         },
         {
             "key": "codex",
@@ -399,6 +419,63 @@ def _provider_quota_snapshot() -> dict:
         "updated_at": now,
         "providers": providers,
     }
+
+
+# --- Claude 多帳號切換（受保護）----------------------------------------
+class ClaudeAccountSwitch(BaseModel):
+    """POST /api/claude-account/switch 的請求本體。"""
+
+    label: str
+
+
+def _schedule_service_restart() -> None:
+    """1 秒後重啟 ti.service + ti-autopilot，讓換檔後的新 Claude 認證生效。
+
+    用 systemd-run 起一次性 transient timer：它脫離 ti.service 的 cgroup，故 restart 殺掉
+    本服務時不會把「重啟動作本身」一起殺掉；1 秒延遲確保切換端點的 200 回應已送達前端。
+    無 systemd-run（權限/環境）時退回 detached subprocess，盡力而為。
+    """
+    cmd = ["systemctl", "restart", "ti.service", "ti-autopilot"]
+    try:
+        subprocess.Popen(
+            ["systemd-run", "--no-block", "--on-active=1", "--", *cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    except OSError:
+        pass
+    subprocess.Popen(
+        ["bash", "-c", "sleep 1; " + " ".join(cmd)],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+@router.post("/api/claude-account/switch", dependencies=WRITE_DEPS)
+async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
+    """切換 Claude 在線訂閱帳號（換憑證檔 + 重啟服務使新認證生效）。
+
+    認證在 SDK 啟動時載入記憶體，換檔後須重啟 ti.service/ti-autopilot 才生效；重啟會中斷
+    互動討論與 autopilot 任務，故先擋下「進行中」狀態（回 409），閒置才放行。
+    """
+    busy: list[str] = []
+    if ws.active_session_count() > 0:
+        busy.append("有互動討論正在進行")
+    in_prog = backlog.list_tasks("in_progress")
+    if in_prog:
+        busy.append(f"autopilot 有 {len(in_prog)} 個任務進行中")
+    if busy:
+        return JSONResponse({"ok": False, "error": "busy", "reasons": busy}, status_code=409)
+
+    try:
+        claude_accounts.switch(body.label)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    _schedule_service_restart()
+    return JSONResponse({"ok": True, "label": body.label, "restarting": True})
 
 
 # --- 角色管理（受保護）--------------------------------------------------

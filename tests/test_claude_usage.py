@@ -36,12 +36,12 @@ class FakeResp:
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
     """每測試清空模組快取，並把憑證指向 tmp（預設寫入一份有效 token）。"""
-    claude_usage._cache = None
+    claude_usage._cache.clear()
     cred = tmp_path / ".credentials.json"
     cred.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok-abc"}}), encoding="utf-8")
     monkeypatch.setattr(config, "CLAUDE_CREDENTIALS_FILE", cred)
     yield
-    claude_usage._cache = None
+    claude_usage._cache.clear()
 
 
 def _patch_get(monkeypatch, resp_or_exc, counter=None):
@@ -134,6 +134,40 @@ def test_iso_to_epoch(s, ok):
     assert (out is not None) == ok
     if ok:
         assert isinstance(out, float)
+
+
+def test_cred_file_overrides_global(monkeypatch, tmp_path):
+    """指定 cred_file 查另一帳號的標籤檔，token 取自該檔而非全域線上憑證。"""
+    acct_b = tmp_path / ".credentials.acct-B.json"
+    acct_b.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok-B"}}), encoding="utf-8")
+    seen = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        seen["auth"] = headers["Authorization"]
+        return FakeResp()
+
+    monkeypatch.setattr(claude_usage.httpx, "get", fake_get)
+    r = claude_usage.fetch_rate_limits(cred_file=acct_b)
+    assert r["error"] is None
+    assert seen["auth"] == "Bearer tok-B"  # 用了 acct-B 的 token，非全域 tok-abc
+
+
+def test_cache_is_per_path(monkeypatch, tmp_path):
+    """不同憑證檔各自獨立快取，互不命中（多帳號顯示的前提）。"""
+    acct_b = tmp_path / ".credentials.acct-B.json"
+    acct_b.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok-B"}}), encoding="utf-8")
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(headers["Authorization"])
+        return FakeResp()
+
+    monkeypatch.setattr(claude_usage.httpx, "get", fake_get)
+    claude_usage.fetch_rate_limits()  # 全域 tok-abc → 打上游
+    claude_usage.fetch_rate_limits(cred_file=acct_b)  # acct-B tok-B → 打上游
+    claude_usage.fetch_rate_limits()  # 命中全域快取
+    claude_usage.fetch_rate_limits(cred_file=acct_b)  # 命中 acct-B 快取
+    assert calls == ["Bearer tok-abc", "Bearer tok-B"]  # 各只打一次
 
 
 def test_window_handles_none_and_missing_util():
