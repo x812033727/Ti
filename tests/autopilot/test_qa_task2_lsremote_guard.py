@@ -18,7 +18,19 @@ import asyncio
 
 import pytest
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
+
+
+@pytest.fixture(autouse=True)
+def _merge_flow_merged(monkeypatch):
+    """Option 2 後合併走 publisher._merge_flow（等 CI→合併）。本檔聚焦 push/protection 旗標，
+    一律把 _merge_flow 打成回 MERGED，讓 _commit_push_merge 能走完合併段、回 (True, ...)。"""
+
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
+
 
 _TASK = {"id": "42", "title": "示範任務", "detail": "細節"}
 _BRANCH = "autopilot/task-42"
@@ -80,8 +92,8 @@ def _install(monkeypatch, overrides):
     return spy
 
 
-# 讓「有變更可合併」恆成立：rev-list --count 回 "1"
-_HAS_CHANGE = {"rev-list --count": (0, "1")}
+# 讓「有變更可合併」恆成立：rev-list --count 回 "1"；pr view 回 PR 編號讓合併段走得完。
+_HAS_CHANGE = {"rev-list --count": (0, "1"), "pr view": (0, "7")}
 
 
 # === 防呆檢查確實在 push 前呼叫 ls-remote ==============================

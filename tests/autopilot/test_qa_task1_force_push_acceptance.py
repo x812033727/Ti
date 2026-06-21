@@ -6,7 +6,7 @@
  2. 預設 push 無 force 旗標；遠端同名分支存在→中止不覆寫。
  3. FORCE_PUSH=1 → push 旗標恰為 --force-with-lease + --force-if-includes。
  4. ls-remote rc!=0 → 中止，不繼續 push。
- 5. 預設 merge 無 --admin；MERGE_ADMIN=1 才帶。
+ 5. 合併走 publisher._merge_flow（等 CI→綠才合併），不再有盲合的 gh pr merge。
  6. publisher.py 的 push -u 屬範圍外（記錄註記，不應受 FORCE_PUSH 管轄）。
 """
 
@@ -18,7 +18,19 @@ import re
 import pytest
 from _repo import REPO_ROOT
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
+
+
+@pytest.fixture(autouse=True)
+def _merge_flow_merged(monkeypatch):
+    """Option 2 後合併走 publisher._merge_flow（等 CI→合併）。本檔聚焦 push/protection 旗標，
+    一律把 _merge_flow 打成回 MERGED，讓 _commit_push_merge 能走完合併段、回 (True, ...)。"""
+
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
+
 
 _ROOT = REPO_ROOT
 _SRC = (_ROOT / "studio" / "autopilot.py").read_text(encoding="utf-8")
@@ -72,12 +84,11 @@ def _base_cfg(monkeypatch):
     # rev-list 需回傳非 0 數量讓流程繼續到 push
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", False)
     monkeypatch.setattr(config, "AUTOPILOT_REPO", "owner/repo")
 
 
 def _spy_for(monkeypatch, overrides=None):
-    base = {"rev-list": (0, "3")}  # 有變更可合併
+    base = {"rev-list": (0, "3"), "pr view": (0, "7")}  # 有變更可合併＋PR 編號
     base.update(overrides or {})
     spy = RunSpy(base)
     monkeypatch.setattr(autopilot, "_run", spy)
@@ -142,20 +153,16 @@ def test_std4_lsremote_failure_aborts(monkeypatch):
     assert not spy.push_argv, "rc!=0 絕不可 fall-through 去 push"
 
 
-# ---- 標準 5：merge --admin gate -------------------------------------------
+# ---- 標準 5：合併走 publisher._merge_flow（等 CI→合併），不再盲合 gh pr merge ----
 
 
-def test_std5_merge_default_no_admin(monkeypatch):
+def test_std5_no_blind_pr_merge(monkeypatch):
+    """Option 2 後：合併經 publisher._merge_flow（等 CI 綠才合併），不再有盲合的 `gh pr merge`。"""
     spy = _spy_for(monkeypatch)
-    asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
-    assert "--admin" not in spy.merge_argv
-
-
-def test_std5_merge_admin_when_flag_set(monkeypatch):
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", True)
-    spy = _spy_for(monkeypatch)
-    asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
-    assert "--admin" in spy.merge_argv
+    ok, _ = asyncio.run(autopilot._commit_push_merge("/clone", _TASK))
+    assert ok is True
+    assert any("create" in c and "pr" in c for c in spy.calls), "應有開 PR"
+    assert not any("merge" in c and "pr" in c for c in spy.calls), "不該再盲合 gh pr merge"
 
 
 # ---- 標準 6：publisher push 屬範圍外（註記） ------------------------------

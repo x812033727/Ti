@@ -105,7 +105,7 @@ def test_autopilot_flags_only_expanded_in_settings():
     def in_comment(p: int) -> bool:
         return any(a <= p < b for a, b in comment_spans)
 
-    for var in ("TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN"):
+    for var in ("TI_AUTOPILOT_FORCE_PUSH",):
         occurrences = [mm.start() for mm in re.finditer(re.escape(var), README)]
         real = [p for p in occurrences if not in_comment(p)]
         assert real, f"README 不再含 {var}（非註解處）"

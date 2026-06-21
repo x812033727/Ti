@@ -19,7 +19,7 @@
 | `GH_PAT` 未設時先 fail-fast | 已達成 | `publish-release.yml:36-44` 的 `Verify PAT` step 以 `test -n "$GH_TOKEN"` 攔空值。 |
 | 下游 smoke 由 release published 事件觸發 | 已達成 | `release-smoke.yml:6-8` 設 `on.release.types: [published]`。 |
 | smoke 讀「實際 release body」，不是重跑本地 render | 已達成 | `release-smoke.yml:39-52` 使用 `gh release view "$TAG" --json body --jq '.body'`，再寫入 output。 |
-| smoke 驗證 release body 含非空頂層 Breaking Changes 區塊 | 已達成 | `release-smoke.yml:54-60` 將 body 放入 `BODY`，執行 `python -m studio.release_smoke`。 |
+| smoke 驗證 release body 含非空頂層 Breaking Changes 區塊 | 已達成 | `release-smoke.yml:54-60` 將 body 放入 `BODY`，執行 `python3 -m studio.release_smoke`。 |
 | smoke 權限只需讀 release/body | 已達成 | `release-smoke.yml:10-11` 設 `contents: read`。 |
 | 避免 tag/ref 直接插入 shell `run:` | 已達成 | `publish-release.yml:81-89` 以 env `TAG` 傳入並在 shell 內 `"$TAG"` 引用。 |
 | publish workflow 內建 `GITHUB_TOKEN` 權限下修 | 已達成 | `publish-release.yml:20-21` 設 `contents: read`；建立 release 的寫入權限由 `publish-release.yml:84-89` 的 `secrets.GH_PAT` 提供。 |

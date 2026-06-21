@@ -94,7 +94,7 @@ def test_subsection_b_links_to_settings():
 
 # ---- 紅線守護：TI_AUTOPILOT_* 完整變數名首現仍在「設定」表（不早於門禁段） ----
 def test_autopilot_varname_first_appearance_in_settings_table():
-    for var in ("TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN"):
+    for var in ("TI_AUTOPILOT_FORCE_PUSH",):
         first = README.find(var)
         assert first != -1, f"README 不再含 {var}"
         # 首現所在行應為設定表的表格行（以 | 起始）

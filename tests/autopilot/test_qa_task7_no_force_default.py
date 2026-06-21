@@ -16,7 +16,19 @@ import asyncio
 import pytest
 from _repo import REPO_ROOT
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
+
+
+@pytest.fixture(autouse=True)
+def _merge_flow_merged(monkeypatch):
+    """Option 2 後合併走 publisher._merge_flow（等 CI→合併）。本檔聚焦 push/protection 旗標，
+    一律把 _merge_flow 打成回 MERGED，讓 _commit_push_merge 能走完合併段、回 (True, ...)。"""
+
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
+
 
 _ROOT = REPO_ROOT
 _TASK = {"id": "1", "title": "t", "detail": ""}
@@ -101,7 +113,7 @@ async def test_default_runtime_push_has_no_force_flags(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", "main")
-    spy = RunSpy({"rev-list --count": (0, "1")})  # 遠端不存在、有變更
+    spy = RunSpy({"rev-list --count": (0, "1"), "pr view": (0, "7")})  # 遠端不存在、有變更
     monkeypatch.setattr(autopilot, "_run", spy)
 
     ok, msg = await autopilot._commit_push_merge("/clone", _TASK)

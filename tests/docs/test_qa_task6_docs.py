@@ -1,13 +1,16 @@
 """QA 驗收：任務 #6「更新註解與文件說明新旗標用途與預設值」一致性測試。
 
 任務 #6 屬文件/註解更新，無可執行邏輯；本測試以「文件一致性檢查」釘住成果，
-避免日後旗標語意改變而文件腐化。驗證四處皆說明兩旗標的用途與預設值，且
+避免日後旗標語意改變而文件腐化。驗證各處皆說明 FORCE_PUSH 旗標的用途與預設值，且
 文件描述的預設值與程式碼實際預設值一致：
-- config.py：兩旗標定義處有解釋註解（用途 + 預設安全側）。
-- autopilot.py：push / merge 旗標使用處有解釋註解。
-- README.md：環境變數表列出兩個 TI_ 變數，標明預設值/安全側。
-- .env.example：列出兩個 TI_ 變數並說明。
+- config.py：FORCE_PUSH 定義處有解釋註解（用途 + 預設安全側）。
+- autopilot.py：push 旗標使用處有解釋註解。
+- README.md：環境變數表列出 TI_AUTOPILOT_FORCE_PUSH，標明預設值/安全側。
+- .env.example：列出該變數並說明。
 - 一致性：文件宣稱「預設安全側」== 程式碼預設 False。
+
+註（2026-06-21）：MERGE_ADMIN 盲合旗標已徹底移除（合併改走 publisher._merge_flow
+等 CI→綠才合併），故本檔的 MERGE_ADMIN 相關斷言一併移除。
 """
 
 from __future__ import annotations
@@ -38,12 +41,6 @@ def test_config_py_documents_force_push():
     assert "預設" in _CONFIG_PY
 
 
-def test_config_py_documents_merge_admin():
-    assert "AUTOPILOT_MERGE_ADMIN" in _CONFIG_PY
-    assert "--admin" in _CONFIG_PY
-    assert "分支保護" in _CONFIG_PY
-
-
 # === autopilot.py：使用處有解釋註解 ===================================
 
 
@@ -55,15 +52,10 @@ def test_autopilot_py_has_push_flag_comment():
     assert "push -f" not in _AUTOPILOT_PY
 
 
-def test_autopilot_py_has_merge_admin_comment():
-    assert "AUTOPILOT_MERGE_ADMIN" in _AUTOPILOT_PY
-    assert "分支保護" in _AUTOPILOT_PY
+# === README.md：環境變數表列出旗標 + 預設值 ===========================
 
 
-# === README.md：環境變數表列出兩旗標 + 預設值 =========================
-
-
-@pytest.mark.parametrize("var", ["TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN"])
+@pytest.mark.parametrize("var", ["TI_AUTOPILOT_FORCE_PUSH"])
 def test_readme_documents_flag(var):
     assert var in _README, f"README 未說明 {var}"
     # 取該變數所在行，確認標明預設值（0 / 安全側）
@@ -74,7 +66,7 @@ def test_readme_documents_flag(var):
 # === .env.example：列出兩旗標 =========================================
 
 
-@pytest.mark.parametrize("var", ["TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN"])
+@pytest.mark.parametrize("var", ["TI_AUTOPILOT_FORCE_PUSH"])
 def test_env_example_documents_flag(var):
     assert var in _ENV_EXAMPLE, f".env.example 未列出 {var}"
 
@@ -83,12 +75,11 @@ def test_env_example_documents_flag(var):
 
 
 def test_docs_match_code_defaults():
-    """乾淨環境下重載 config，兩旗標預設皆 False，呼應文件「預設安全側」。"""
-    for env in ("TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN"):
+    """乾淨環境下重載 config，FORCE_PUSH 預設 False，呼應文件「預設安全側」。"""
+    for env in ("TI_AUTOPILOT_FORCE_PUSH",):
         os.environ.pop(env, None)
     try:
         importlib.reload(config)
         assert config.AUTOPILOT_FORCE_PUSH is False
-        assert config.AUTOPILOT_MERGE_ADMIN is False
     finally:
         importlib.reload(config)

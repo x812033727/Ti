@@ -1,11 +1,14 @@
 """QA 任務 #4：對齊 .env.example 與 README 措辭，補安全預設原則。
 
 驗收重點：
-- .env.example 兩旗標段落含「兩者預設皆關閉/安全側」原則句。
+- .env.example FORCE_PUSH 段落含「預設關閉/安全側」原則句。
 - 該原則句含「分支保護」與「CI gating」。
 - README 對齊句同樣含「預設安全側 + 分支保護 + CI gating」。
-- 兩處兩變數預設值一致（皆 0），不矛盾。
+- 兩處變數預設值一致（皆 0），不矛盾。
 - .env.example 精簡（不重複 README 的長段風險敘述），並指向 README 補充區塊。
+
+註（2026-06-21）：MERGE_ADMIN 旗標已徹底移除（合併改走 publisher._merge_flow
+等 CI→綠才合併），本檔僅保留 FORCE_PUSH 的措辭對齊驗收。
 """
 
 import re
@@ -51,22 +54,21 @@ def test_env_mentions_branch_protection_and_ci(env_text):
 
 def test_readme_has_aligned_principle(readme_text):
     """README 對齊句須含預設安全側 + 分支保護 + CI gating。"""
-    m = re.search(r"兩個?旗標預設皆?為?安全側.*?CI gating", readme_text)
+    m = re.search(r"旗標預設.{0,4}為?安全側.*?CI gating", readme_text)
     assert m, "README 缺少對齊的安全預設原則句"
     line = m.group(0)
     assert "分支保護" in line and "CI gating" in line
 
 
-def test_both_flags_default_zero_in_env(env_text):
-    """.env.example 兩變數均示範為 0。"""
+def test_force_push_default_zero_in_env(env_text):
+    """.env.example FORCE_PUSH 示範為 0。"""
     assert re.search(r"TI_AUTOPILOT_FORCE_PUSH=0", env_text), "FORCE_PUSH 未示範 =0"
-    assert re.search(r"TI_AUTOPILOT_MERGE_ADMIN=0", env_text), "MERGE_ADMIN 未示範 =0"
 
 
 def test_no_contradiction_default_off(env_text, readme_text):
     """兩處皆稱預設關閉/安全側，無矛盾。"""
-    # README 表格兩行預設皆 0（安全側）
-    for var in ("TI_AUTOPILOT_FORCE_PUSH", "TI_AUTOPILOT_MERGE_ADMIN"):
+    # README 表格 FORCE_PUSH 行預設 0（安全側）
+    for var in ("TI_AUTOPILOT_FORCE_PUSH",):
         row = next(
             ln for ln in readme_text.splitlines() if var in ln and ln.lstrip().startswith("|")
         )

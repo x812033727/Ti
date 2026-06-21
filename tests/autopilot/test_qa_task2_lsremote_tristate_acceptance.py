@@ -16,7 +16,19 @@ import asyncio
 import pytest
 from _repo import REPO_ROOT
 
-from studio import autopilot, config
+from studio import autopilot, config, publisher
+
+
+@pytest.fixture(autouse=True)
+def _merge_flow_merged(monkeypatch):
+    """Option 2 後合併走 publisher._merge_flow（等 CI→合併）。本檔聚焦 push/protection 旗標，
+    一律把 _merge_flow 打成回 MERGED，讓 _commit_push_merge 能走完合併段、回 (True, ...)。"""
+
+    async def _merged(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "sha")
+
+    monkeypatch.setattr(publisher, "_merge_flow", _merged)
+
 
 _ROOT = REPO_ROOT
 _TASK = {"id": "2", "title": "t", "detail": "d"}
@@ -57,12 +69,11 @@ def _no_subprocess(monkeypatch):
 def _base_cfg(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
-    monkeypatch.setattr(config, "AUTOPILOT_MERGE_ADMIN", False)
     monkeypatch.setattr(config, "AUTOPILOT_REPO", "owner/repo")
 
 
 def _spy(monkeypatch, overrides=None):
-    base = {"rev-list": (0, "2")}  # 有變更，流程會進到 ls-remote
+    base = {"rev-list": (0, "2"), "pr view": (0, "7")}  # 有變更，流程會進到 ls-remote
     base.update(overrides or {})
     spy = RunSpy(base)
     monkeypatch.setattr(autopilot, "_run", spy)
