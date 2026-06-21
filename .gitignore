@@ -1,84 +1,74 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.eggs/
-build/
-dist/
-.pytest_cache/
-# pytest-cov 覆蓋率資料檔（CI 以 --cov 產生），屬執行期 artifact，不進版控。
-.coverage
-.coverage.*
-.venv/
-venv/
-# QA / 驗證流程產生的暫存 venv 與 pre-commit 快取（本機 artifact，不進版控）
-.qa-venv/
-.qa_venv/
-# 工程師驗證用的隔離 ruff venv（0.14.4），本機 artifact，不進版控
-.venv-ruff/
-.pc-cache-qa/
-# test_qa_no_bare_pytest.py 的 grep-fallback 測試會即時建立此 binstub 目錄（symlink），
-# 屬執行期 artifact，不得進版控。
-.qa-tmp-nopath/
 
-# Secrets
-.env
-.env.*
 !.env.example
-
-# Generated agent workspaces
-workspaces/
-
-# Autopilot 執行期狀態目錄（AUTOPILOT_STATE_DIR，預設 PROJECT_ROOT/autopilot）
-# 含 deploy.lock / backlog.json / backlog.lock 等運維狀態，不得進版控。
-# 錨定 repo 根：原 `autopilot/`（無錨定）會誤殺 tests/autopilot/ 測試目錄，
-# 使該目錄下新增的測試檔（如 test_secure_write*.py）無法 git add。
-/autopilot/
-
-# Session history archive
-history/
-
-# publish-release.yml 由 scripts/publish_release.py 產出的 release body 檔，
-# 屬執行期 artifact（內含逐字注入的 Breaking heading），不進版控、不參與掃描。
-/body.md
-
-# 專案（長期產品）執行期狀態：meta + 專屬改良 backlog（TI_PROJECTS_ROOT，預設 PROJECT_ROOT/projects）
-projects/
-
-# 跨場次教訓庫（LESSONS_FILE，預設 PROJECT_ROOT/lessons.json）+ 其鎖檔，屬執行期狀態，不進版控。
-lessons.json
-lessons.lock
-lessons.json.tmp
-
-# ADR 的 flock 鎖檔（adr._locked 需要時自動重建），屬執行期狀態，不進版控；
-# DECISIONS.md 與 adr.json 為刻意落盤的決策記錄，照常進版控。
-adr.lock
-
-# 沙箱 ro-bind 測試的 host 探針檔（test_qa_ro_bind_reject_qa.py，正常即時清理；防誤 commit）
-.ti_ro_bind_probe_*.txt
-
 # --- Ti baseline（自動補上,避免追蹤/交付沙箱/環境 junk）---
-.Python
-env/
-ENV/
+# ADR 的 flock 鎖檔（adr._locked 需要時自動重建），屬執行期狀態，不進版控；
+# Autopilot 執行期狀態目錄（AUTOPILOT_STATE_DIR，預設 PROJECT_ROOT/autopilot）
+# DECISIONS.md 與 adr.json 為刻意落盤的決策記錄，照常進版控。
+# Generated agent workspaces
+# Python
+# QA / 驗證流程產生的暫存 venv 與 pre-commit 快取（本機 artifact，不進版控）
+# Secrets
+# Session history archive
+# publish-release.yml 由 scripts/publish_release.py 產出的 release body 檔，
+# pytest-cov 覆蓋率資料檔（CI 以 --cov 產生），屬執行期 artifact，不進版控。
+# release pipeline 本地執行 scripts/publish_release.py 的產物
+# test_qa_no_bare_pytest.py 的 grep-fallback 測試會即時建立此 binstub 目錄（symlink），
+# 使該目錄下新增的測試檔（如 test_secure_write*.py）無法 git add。
+# 含 deploy.lock / backlog.json / backlog.lock 等運維狀態，不得進版控。
+# 專案（長期產品）執行期狀態：meta + 專屬改良 backlog（TI_PROJECTS_ROOT，預設 PROJECT_ROOT/projects）
+# 屬執行期 artifact（內含逐字注入的 Breaking heading），不進版控、不參與掃描。
+# 屬執行期 artifact，不得進版控。
+# 工程師驗證用的隔離 ruff venv（0.14.4），本機 artifact，不進版控
+# 沙箱 ro-bind 測試的 host 探針檔（test_qa_ro_bind_reject_qa.py，正常即時清理；防誤 commit）
+# 跨場次教訓庫（LESSONS_FILE，預設 PROJECT_ROOT/lessons.json）+ 其鎖檔，屬執行期狀態，不進版控。
+# 錨定 repo 根：原 `autopilot/`（無錨定）會誤殺 tests/autopilot/ 測試目錄，
 *.db
 *.db-shm
 *.db-wal
+*.egg-info/
+*.env.local
+*.py[cod]
 *.sqlite
 *.sqlite3
-*.env.local
-.idea
-.vscode
-.claude/
-.bashrc
+.Python
 .bash_profile
-.profile
-.zshrc
-.zprofile
+.bashrc
+.claude/
+.coverage
+.coverage.*
+.eggs/
+.env
+.env.*
 .gitconfig
 .gitmodules
-.ripgreprc
+.idea
 .mcp.json
-
-# release pipeline 本地執行 scripts/publish_release.py 的產物
+.pc-cache-qa/
+.profile
+.pytest_cache/
+.qa-tmp-nopath/
+.qa-venv/
+.qa_venv/
+.ripgreprc
+.ti_ro_bind_probe_*.txt
+.venv-ruff/
+.venv/
+.vscode
+.zprofile
+.zshrc
+/autopilot/
 /body.md
+ENV/
+__pycache__/
+adr.lock
+build/
+dist/
+env/
+history/
+lessons.json
+lessons.json.tmp
+lessons.lock
+projects/
+tmp
+venv/
+workspaces/
