@@ -176,6 +176,59 @@ async def test_deadline_breaks_intra_task_loop_and_skips_huddle(monkeypatch):
     assert done.payload["completed"] is False
 
 
+@pytest.mark.asyncio
+async def test_deadline_skips_review_fanout_within_round(monkeypatch):
+    """過軟性預算落在「本輪實作後、三審前」→ 跳過昂貴的 QA/senior fan-out、提早收尾。
+
+    補 #217 盲點:每輪「頂端」檢查（round-top）擋不住「單輪本身超長」的稽核型任務——reviewer
+    fan-out（commit 後）在軟 deadline 之後才開始就會一路撐到硬 timeout、整場記 timeout failed
+    （autopilot #83:3060s 過軟 deadline 後仍跑滿到 3600s 被砍）。修法:commit 後、三審前再檢查
+    _time_exceeded()。
+
+    序列化單任務（PARALLEL 關）下，_time_exceeded 的呼叫點固定為:#1 wave 派發、#2 lane 派發、
+    #3 _work_task 輪頂、#4 commit 後、三審前（本 fix 新增）。故前 3 次回 False（讓 _work_task
+    正常進入並實作 commit）、第 4 次回 True，精準落在本檢查點。
+    """
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
+    monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 3)
+
+    bucket, broadcast = collect()
+    engineer = StubExpert(BY_KEY["engineer"], ["R1", "R2"])
+    experts = {
+        "pm": StubExpert(BY_KEY["pm"], ["任務: 只有一個", "決議: 完成", "檢討"]),
+        "architect": StubExpert(BY_KEY["architect"], ["架構意見"]),
+        "engineer": engineer,
+        # QA 會回 PASS;若 fan-out 沒被跳過、本輪就會過審完成,calls 也會 >0。
+        "qa": StubExpert(BY_KEY["qa"], ["驗證: PASS"]),
+        "senior": StubExpert(BY_KEY["senior"], ["決議: 核可"]),
+    }
+    session = StudioSession("t", broadcast, experts=experts, cwd=None, time_budget_s=1000)
+
+    state = {"n": 0}
+
+    def fake_exceeded() -> bool:
+        state["n"] += 1
+        hit = state["n"] >= 4  # 前 3 次（wave/lane/輪頂）False、第 4 次（三審前）起 True
+        if hit:
+            session._deadline_hit = True
+        return hit
+
+    monkeypatch.setattr(session, "_time_exceeded", fake_exceeded)
+
+    result = await session.run("需求")
+
+    assert isinstance(result, dict)
+    # 三審 fan-out 被跳過:QA 只在 _work_task 的審查階段被呼叫,過 deadline 跳過後 calls 應為 0
+    # （senior 不能拿來斷言——它在「驗收」收尾階段仍會被呼叫一次,非本輪 fan-out）。
+    assert experts["qa"].calls == 0, "過軟預算後不應再跑 QA 審查 fan-out"
+    # 發「時間預算收尾」（本輪內截斷的專屬事件,有別於 session 邊界的「時間預算收斂」）。
+    phases = [e.payload.get("phase") for e in bucket if e.type == events.EventType.PHASE_CHANGE]
+    assert "時間預算收尾" in phases
+    # 不謊報完成。
+    done = [e for e in bucket if e.type == events.EventType.DONE][0]
+    assert done.payload["completed"] is False
+
+
 # --- autopilot 接線：把硬 timeout 當軟性預算傳進 session --------------
 
 
