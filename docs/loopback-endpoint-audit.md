@@ -22,6 +22,7 @@
 |------|------|-----------|:----:|------|
 | POST | `/api/redeploy` | admin（auth｜fail-safe loopback） | ✅ | 拉 main 並自我重啟，高危機器狀態變更 |
 | POST | `/api/claude-account/switch` | admin（auth｜fail-safe loopback） | ✅ | 切換 Claude 在線訂閱帳號（換憑證檔 + 重啟 ti.service/ti-autopilot），高危服務狀態變更；有討論/任務進行中時回 409 擋下 |
+| POST | `/api/publish/{session_id}` | admin（auth｜fail-safe loopback） | ✅ | 觸發對外發佈（push＋開 PR＋等 CI 合併）的對外狀態變更；#196 起由 `auth` 升級為 `WRITE_DEPS`，與其他寫入端點同級 |
 | POST | `/api/auth/password` | admin（auth｜fail-safe loopback） | ✅ | 寫 .env 改存取密碼，秘密寫入面；門禁停用時限本機，公網裸部署不致被搶先設密碼接管 |
 | POST | `/api/settings` | admin（auth｜fail-safe loopback） | ✅ | 改 .env 設定（含 `OPENAI_BASE_URL` 等），可致金鑰外洩/RCE 風險 |
 | POST | `/api/autopilot/pause` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈，遠端可癱瘓（DoS） |
@@ -58,7 +59,6 @@
 
 | 方法 | 路徑 | 現況 deps | 理由 |
 |------|------|-----------|------|
-| POST | `/api/publish/{session_id}` | auth | session 結束後一次性「等 CI→合併」，僅作用於該 session 工作區、不改機器設定面；不在架構決策納管清單 |
 | DELETE | `/api/history/{session_id}` | auth | 刪除歷史紀錄，作用於資料而非機器控制面；門禁已足夠 |
 | POST | `/api/history/cleanup/completed` | auth | 清理已完成歷史，同上 |
 | POST | `/api/history/cleanup/retention` | auth | 依保留策略回收超量/過舊歷史，作用於資料面而非機器控制面；同上 |
