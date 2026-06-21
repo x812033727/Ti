@@ -33,6 +33,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # 安裝版本解析 / body 渲染所需的最小依賴。後兩步會 import `studio.release_note`，
+      # 其匯入鏈 `studio/__init__.py → secure_write → config` 唯一的非 stdlib 依賴是
+      # python-dotenv（config.py 頂層 `from dotenv import load_dotenv`）；release_note 本身
+      # 全 stdlib（re/tomllib/pathlib）。不裝 fastapi/uvicorn/SDK——發佈工具不需要 app 全量依賴。
+      - name: Install deps for version/render
+        run: python -m pip install --upgrade pip python-dotenv
+
       # Step 1 — PAT guard：把「GH_PAT 未設」攔在最前面。
       # 注意：`test -n` 只能偵測「未設（空字串）」，無法驗證 PAT 是否過期/被撤銷——
       # 過期 PAT 仍會通過此 guard，到 Create release 才以 403 失敗。此 guard 的價值
