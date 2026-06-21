@@ -1709,6 +1709,28 @@ class StudioSession:
                 )
                 return False
 
+            # --- 過軟性時間預算：本輪實作已 commit，但時間已過軟 deadline → 不再開昂貴的
+            # 三審 fan-out（QA/senior/security 各一次 LLM turn，是單輪最大且最易把整輪拖過硬
+            # timeout 被砍的開銷）。提早收尾：已 commit 成果交由 session 收尾依客觀證據決定出貨，
+            # 本任務未過審記未達（unmet → known-limit）。補 #217 盲點——每輪「頂端」檢查擋不住
+            # 「單輪本身超長」的稽核型任務：reviewer fan-out 在軟 deadline 後才開始，就會一路撐到
+            # 硬 timeout、整場記 timeout failed（見 autopilot #83：3060s 過軟 deadline 後仍跑滿到
+            # 3600s 被硬砍）。_time_exceeded() 已置 _deadline_hit，收尾階段據此走 Demo/出貨而非硬丟。
+            if self._time_exceeded():
+                await bc(
+                    events.phase_change(
+                        self.session_id,
+                        "時間預算收尾",
+                        f"任務 #{task['id']} 已過軟性時間預算，跳過剩餘審查、提早收尾出貨",
+                    )
+                )
+                self._note(
+                    ctx,
+                    f"## 時間預算收尾 任務 #{task['id']}：{task['title']}"
+                    "（過軟性時間預算，本輪實作已 commit 但未過審，記未達）",
+                )
+                return False
+
             # --- 驗證 + 審查 + 資安：三者都評同一份已 commit 的實作、互相獨立 → 並行省時 ---
             await bc(
                 events.phase_change(
