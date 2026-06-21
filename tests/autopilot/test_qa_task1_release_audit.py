@@ -58,7 +58,8 @@ def test_audit_doc_has_achieved_section_with_file_line_refs():
     assert body_rows, "AC#1：對照表無資料列"
     # 取「已達成」段（檔名/行號樣式）
     achieved_rows = [
-        r for r in body_rows
+        r
+        for r in body_rows
         if "已達成" in r and re.search(r"`[\w/_\-./]+\.(yml|py|md):\d+(-\d+)?`", r)
     ]
     assert len(achieved_rows) >= 10, (
@@ -70,8 +71,11 @@ def test_audit_doc_has_gap_section_with_descriptions():
     """「缺口」段每列必須附具體描述（非空判定欄）。"""
     text = AUDIT.read_text(encoding="utf-8")
     gap_rows = [
-        ln for ln in text.splitlines()
-        if ln.startswith("|") and "缺口" in ln and ln.count("|") >= 4
+        ln
+        for ln in text.splitlines()
+        if ln.startswith("|")
+        and "缺口" in ln
+        and ln.count("|") >= 4
         and not re.match(r"^\|\s*:?-+:?\s*\|", ln)
     ]
     assert gap_rows, "AC#1：對照表無缺口段資料列"
@@ -118,10 +122,16 @@ def test_bodymd_contains_breaking_heading_and_pyproject_version():
     """body.md 必須含頂層 Breaking Changes 區塊，且版本字串來自 pyproject_version()。"""
     # 從 SSOT 動態取版本（避免硬寫）
     spec = subprocess.run(
-        ["python3", "-c",
-         "from studio.release_note import BREAKING_HEADING, pyproject_version; "
-         "print(BREAKING_HEADING); print(pyproject_version())"],
-        cwd=str(ROOT), capture_output=True, text=True, check=True,
+        [
+            "python3",
+            "-c",
+            "from studio.release_note import BREAKING_HEADING, pyproject_version; "
+            "print(BREAKING_HEADING); print(pyproject_version())",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=True,
     )
     heading, version = spec.stdout.strip().splitlines()
     body = BODY_MD.read_text(encoding="utf-8")
@@ -222,13 +232,16 @@ def test_audit_doc_marks_ac5_as_open_gap():
     )
     # 必須以「缺口」狀態出現
     gap_rows = [
-        ln for ln in text.splitlines()
-        if ln.startswith("|") and re.search(r"\b缺口\b", ln) and ln.count("|") >= 4
+        ln
+        for ln in text.splitlines()
+        if ln.startswith("|")
+        and re.search(r"\b缺口\b", ln)
+        and ln.count("|") >= 4
         and not re.match(r"^\|\s*:?-+:?\s*\|", ln)
     ]
-    assert any(
-        any(k in row for k in ("GH_PAT", "半閉環", "端到端")) for row in gap_rows
-    ), f"AC#5 (a)：對照表未把 AC#5 缺口列為「缺口」狀態：{gap_rows}"
+    assert any(any(k in row for k in ("GH_PAT", "半閉環", "端到端")) for row in gap_rows), (
+        f"AC#5 (a)：對照表未把 AC#5 缺口列為「缺口」狀態：{gap_rows}"
+    )
 
 
 def test_ac5_op_guide_present_in_collab_doc():
@@ -280,19 +293,21 @@ def test_guardrail_file_unchanged_in_working_tree(relpath):
     assert fp.exists(), f"前提失效：缺護欄檔 {relpath}"
     out = subprocess.run(
         ["git", "diff", "--", relpath],
-        cwd=str(ROOT), capture_output=True, text=True, check=False,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert out.stdout.strip() == "", (
-        f"AC#6：護欄檔 {relpath} 有未提交修改：\n{out.stdout[:500]}"
-    )
+    assert out.stdout.strip() == "", f"AC#6：護欄檔 {relpath} 有未提交修改：\n{out.stdout[:500]}"
 
 
 def test_smoke_workflow_unchanged_against_last_commit():
     """`release-smoke.yml` 與 HEAD 必須完全一致（無新增/刪除/修飾）。"""
     out = subprocess.run(
         ["git", "diff", "HEAD", "--", ".github/workflows/release-smoke.yml"],
-        cwd=str(ROOT), capture_output=True, text=True, check=False,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert out.stdout.strip() == "", (
-        f"AC#6：release-smoke.yml 與 HEAD 有差異：\n{out.stdout[:500]}"
-    )
+    assert out.stdout.strip() == "", f"AC#6：release-smoke.yml 與 HEAD 有差異：\n{out.stdout[:500]}"

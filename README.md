@@ -231,8 +231,9 @@ Release workflow 發佈 DoD：
   `gh release create "$TAG" -F body.md` file mode 注入。
 - 版本與 Breaking heading 走 Python SSOT（`studio.release_note.pyproject_version()` /
   `studio.release_note.BREAKING_HEADING`），不在 YAML 硬寫、不寫死。
-- 發佈前必跑 release 守護測試：
-  `python3 -m pytest tests/autopilot/test_qa_task2_release_body.py tests/autopilot/test_qa_task3_release_trigger_chain.py tests/autopilot/test_qa_task4_publish_workflow_guard.py tests/autopilot/test_release_pipeline_dry_run.py -q`
+- 發佈前必跑 release 守護測試（`test_qa_task2_release_body`、
+  `test_qa_task3_release_trigger_chain`、`test_qa_task4_publish_workflow_guard`、
+  `test_release_pipeline_dry_run`）；實際執行指令見 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - 驗證邊界要明講：單元/守護測試目前只證明半閉環，真實 `v*` tag-push 端到端尚待生產驗證。
   第一次正式打 `v*` tag 後，需確認 `publish-release -> release-smoke` 生產鏈實際通過。
 

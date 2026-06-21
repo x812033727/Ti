@@ -46,6 +46,29 @@ EXISTING_GUARD_TESTS = (
 TASK4_COMMIT = "550b9e3"  # 任務#4 第1輪 commit（護欄本體應零修改）
 
 
+def _commit_present(sha: str) -> bool:
+    """commit 物件是否在當前 clone 內可見。
+
+    CI 用 `actions/checkout` 淺層 clone（fetch-depth=1，只有 merge commit），
+    `git show <開發期 sha>` 會 `bad object` exit 128。此守衛讓「對特定開發期
+    commit 的歷史斷言」在全歷史沙箱仍實際驗證、在淺 clone 優雅 skip（非紅）。
+    """
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+            cwd=ROOT,
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+_requires_task4_commit = pytest.mark.skipif(
+    not _commit_present(TASK4_COMMIT),
+    reason=f"commit {TASK4_COMMIT} 不在淺層 clone（CI shallow checkout）；開發期一次性歷史斷言，跳過",
+)
+
+
 # ---------------------------------------------------------------------------
 # 解析輔助
 # ---------------------------------------------------------------------------
@@ -85,9 +108,7 @@ def check_gh_pat_specs(text: str) -> list[str]:
         or "本 repo only" in _norm(text)
     )
     has_not_all_repos = (
-        "非 all-repos" in _norm(text)
-        or "non all-repos" in norm
-        or "not all-repos" in norm
+        "非 all-repos" in _norm(text) or "non all-repos" in norm or "not all-repos" in norm
     )
     if not has_only_this_repo:
         problems.append("GH_PAT 設定指引未明指『只選本 repo（Only select repositories）』")
@@ -109,9 +130,7 @@ def check_gh_pat_specs(text: str) -> list[str]:
 def test_claude_md_has_all_four_gh_pat_specs(claude_text):
     """AC#5.1：四項 GH_PAT 規格必須齊備。"""
     problems = check_gh_pat_specs(claude_text)
-    assert problems == [], (
-        "AC#5.1：GH_PAT 設定指引有缺項：\n  - " + "\n  - ".join(problems)
-    )
+    assert problems == [], "AC#5.1：GH_PAT 設定指引有缺項：\n  - " + "\n  - ".join(problems)
 
 
 def test_mutation_drop_fine_grained_turns_red():
@@ -213,9 +232,7 @@ def check_release_dod(text: str) -> list[str]:
 def test_claude_md_release_dod_intact(claude_text):
     """AC#5.2：發佈 DoD 段落必須含四項要件。"""
     problems = check_release_dod(claude_text)
-    assert problems == [], (
-        "AC#5.2：發佈 DoD 段落有缺項：\n  - " + "\n  - ".join(problems)
-    )
+    assert problems == [], "AC#5.2：發佈 DoD 段落有缺項：\n  - " + "\n  - ".join(problems)
 
 
 def test_mutation_drop_pyproject_ssot_turns_red():
@@ -290,9 +307,7 @@ def check_half_closed_disclaimer(text: str) -> list[str]:
 def test_claude_md_has_half_closed_disclaimer(claude_text):
     """AC#5.3：文件必明文標註『真實 tag-push 端到端尚待生產驗證』，且明示守護測試為半閉環。"""
     problems = check_half_closed_disclaimer(claude_text)
-    assert problems == [], (
-        "AC#5.3：半閉環聲明有缺漏：\n  - " + "\n  - ".join(problems)
-    )
+    assert problems == [], "AC#5.3：半閉環聲明有缺漏：\n  - " + "\n  - ".join(problems)
 
 
 def test_mutation_soften_to_fully_verified_turns_red():
@@ -348,12 +363,7 @@ def check_gh_pat_403_runbook(text: str) -> list[str]:
 
     # (a) 必明指 PAT 過期／撤銷會導致 403
     has_403 = "403" in text
-    has_expire_or_revoke = (
-        "過期" in text
-        or "撤銷" in text
-        or "expire" in norm
-        or "revoke" in norm
-    )
+    has_expire_or_revoke = "過期" in text or "撤銷" in text or "expire" in norm or "revoke" in norm
     if not has_403:
         problems.append("GH_PAT runbook 未明指『過期／撤銷會以 403 失敗』")
     if not has_expire_or_revoke:
@@ -380,9 +390,7 @@ def check_gh_pat_403_runbook(text: str) -> list[str]:
 def test_claude_md_gh_pat_403_runbook_intact(claude_text):
     """AC#5.4：GH_PAT 過期／撤銷 403 處置流程必須明文。"""
     problems = check_gh_pat_403_runbook(claude_text)
-    assert problems == [], (
-        "AC#5.4：GH_PAT 403 處置流程有缺項：\n  - " + "\n  - ".join(problems)
-    )
+    assert problems == [], "AC#5.4：GH_PAT 403 處置流程有缺項：\n  - " + "\n  - ".join(problems)
 
 
 def test_mutation_drop_403_hint_turns_red():
@@ -418,14 +426,14 @@ def _git_diff_names(commit: str) -> list[str]:
     return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
 
 
+@_requires_task4_commit
 def test_task4_commit_touches_only_claude_md():
     """AC#6.1：任務#4 commit (550b9e3) 必須只動 CLAUDE.md。"""
     files = _git_diff_names(TASK4_COMMIT)
-    assert files == ["CLAUDE.md"], (
-        f"AC#6.1：任務#4 commit 變更多個檔案={files}（護欄本體應零修改）"
-    )
+    assert files == ["CLAUDE.md"], f"AC#6.1：任務#4 commit 變更多個檔案={files}（護欄本體應零修改）"
 
 
+@_requires_task4_commit
 @pytest.mark.parametrize(
     "guard_path",
     EXISTING_GUARD_TESTS,
@@ -438,6 +446,7 @@ def test_task4_commit_does_not_touch_existing_guard_tests(guard_path):
     assert rel not in files, f"AC#6.2：任務#4 commit 不應觸及 {rel}"
 
 
+@_requires_task4_commit
 def test_task4_commit_does_not_alter_release_smoke_trigger():
     """AC#6.3：release-smoke.yml 的 `release: published` 觸發契約不被破壞性改動。"""
     # 觸發契約檢查：smoke.yml 在任務#4 commit 之前後都仍含 `release: published`。
@@ -491,6 +500,4 @@ def test_claude_md_release_section_full_audit(claude_text):
     all_problems += [f"[發佈 DoD] {p}" for p in check_release_dod(claude_text)]
     all_problems += [f"[半閉環聲明] {p}" for p in check_half_closed_disclaimer(claude_text)]
     all_problems += [f"[403 runbook] {p}" for p in check_gh_pat_403_runbook(claude_text)]
-    assert all_problems == [], (
-        "文件契約有缺漏：\n  - " + "\n  - ".join(all_problems)
-    )
+    assert all_problems == [], "文件契約有缺漏：\n  - " + "\n  - ".join(all_problems)
