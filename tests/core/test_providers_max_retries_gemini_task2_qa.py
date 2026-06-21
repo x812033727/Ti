@@ -14,7 +14,6 @@ import pytest
 
 from studio import config, providers
 
-
 _SDK_DEFAULT_MAX_RETRIES = 2
 
 

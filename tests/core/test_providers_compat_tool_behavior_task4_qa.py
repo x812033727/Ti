@@ -74,9 +74,7 @@ def _rate_limit_err():
 @pytest.mark.asyncio
 async def test_malformed_tool_call_falls_back_to_content(tmp_path):
     """structural malformed tool_call 代表無法形成工具；有 content 時回一般文字。"""
-    chat = ScriptedChat(
-        [_msg(content="直接用文字回答", tool_calls=[_tc_missing_name("bad")])]
-    )
+    chat = ScriptedChat([_msg(content="直接用文字回答", tool_calls=[_tc_missing_name("bad")])])
 
     out = await _expert(chat, tmp_path, provider="gemini").speak("做事", _noop_broadcast)
 
@@ -121,9 +119,7 @@ async def test_BLACK_bad_json_args_use_empty_dict_not_content_fallback(tmp_path)
 
 @pytest.mark.parametrize("provider", ["openai", "minimax", "gemini"])
 @pytest.mark.asyncio
-async def test_compat_provider_retry_replay_dedups_non_idempotent_tool(
-    provider, tmp_path
-):
+async def test_compat_provider_retry_replay_dedups_non_idempotent_tool(provider, tmp_path):
     """同 args 的 run_bash 在 retry 重放同位置時只執行一次，覆蓋三個 OpenAI 相容 provider。"""
     args_json = json.dumps({"command": "echo once >> replay.txt"})
     chat = ScriptedChat(
@@ -144,9 +140,7 @@ async def test_compat_provider_retry_replay_dedups_non_idempotent_tool(
 
 @pytest.mark.parametrize("provider", ["openai", "minimax", "gemini"])
 @pytest.mark.asyncio
-async def test_BLACK_compat_provider_retry_replay_changed_args_is_not_deduped(
-    provider, tmp_path
-):
+async def test_BLACK_compat_provider_retry_replay_changed_args_is_not_deduped(provider, tmp_path):
     """反向對照：retry 重放時 args 改變就不可誤命中去重，副作用會跑兩次。"""
     first = json.dumps({"command": "echo twice >> drift.txt"})
     drifted = json.dumps({"command": "echo twice  >> drift.txt"})
