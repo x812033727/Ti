@@ -653,8 +653,6 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
     比對/計數範圍與 `_pending_awareness_context` 注入 prompt 的禁止清單對齊（pending + in_progress）。
     # O(n×m)，其中 n=proposals 數、m=existing 數；existing 預期 < 50 筆，若規模增長需重估。
     """
-    if not existing_titles:
-        return proposals
     kept: list[str] = []
     for p in proposals:
         hit = next(

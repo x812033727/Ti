@@ -80,7 +80,7 @@ def test_mixed_keeps_only_non_overlapping(monkeypatch):
     assert kept == ["為設定檔加上 schema 驗證"]
 
 
-def test_empty_existing_returns_all_unchanged(monkeypatch):
+def test_empty_existing_keeps_unmatched_topics_unchanged(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DEDUP_RATIO", 0.55)
     proposals = ["任務 A", "任務 B"]
     assert autopilot._filter_pending_duplicates(proposals, []) == proposals

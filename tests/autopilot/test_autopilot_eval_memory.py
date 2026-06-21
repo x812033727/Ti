@@ -164,8 +164,8 @@ def test_filter_pending_duplicates_keeps_non_overlapping(state):
     assert result == unrelated
 
 
-def test_filter_pending_duplicates_empty_existing(state):
-    """existing_titles 為空時，所有提案直接通過（無多餘遍歷）。"""
+def test_filter_pending_duplicates_empty_existing_unmatched_topics(state):
+    """existing_titles 為空時，未命中子系統的提案仍直接通過。"""
     proposals = ["任意提案 A", "任意提案 B"]
     assert autopilot._filter_pending_duplicates(proposals, []) == proposals
 
