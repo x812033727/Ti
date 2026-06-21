@@ -4,6 +4,8 @@
 > **持久化路徑**:`scripts/clean-verification-task-3-EVIDENCE.md`(本檔案 commit 進 HEAD 後的位置)。
 > **生成時間**:`20260615T172653Z`(UTC)。
 
+> **2026-06-21 現況補記**：本檔 §0-§7 保留舊 lane v8 審計紀錄；其中 dirty worktree、ahead commit、`M scripts/verify-clean.sh` 等敘述是歷史證據，不再作為目前 HEAD 的重跑預期。目前可重跑標準以 §8 為準：三項驗收命令 exit 0，最後 `git status --porcelain` 為空。
+
 ---
 
 ## 0. 標頭（lane 端 + worktree 端雙段,誠實記錄）
@@ -255,47 +257,28 @@ fatal: no submodule mapping found in .gitmodules for path '.pc-cache-qa/repor4x7
 
 ---
 
-## 8. 重跑指引（給 QA 任務 #4 覆核用）
+## 8. 現況重跑指引（2026-06-21）
 
 ```bash
-# 1) 重跑驗證
-bash scripts/verify-clean.sh
-
-# 2) 取得最新證據檔
-EVID=$(ls -t /tmp/clean-verify-output-*.txt | head -1)
-WARN=$(ls -t /tmp/git-warnings-*.log | head -1)
-
-# 3) 比對本次跑出與本 close-out:
-#    - worktree 端 4 條命令全綠（§3.1）
-#    - lane 端 status 應顯示 1 行 .M scripts/verify-clean.sh（§3.2.1）
-#    - lane 端 diff --cached exit 0（§3.2.3）
-#    - lane 端 diff origin/main HEAD exit 1、ahead 12 commit（§3.2.2 + §3.2.4）
-#    - 結構性事實: .gitmodules 不可讀、.gitattributes absent、core.autocrlf unset（§4）
-#    - stderr 附件有「已知沙箱產物」三項（§4.1）
-
-# 4) 確認 worktree 已清掉
-git worktree list | grep -v 'clean-main' || echo "OK: 無殘留 worktree"
-
-# 5) 確認 lane 工作樹只有 #3 範圍內微調
-git status --porcelain  # 預期: 'M scripts/verify-clean.sh' + '?? scripts/clean-verification-task-3-EVIDENCE.md'（新增 untracked,準備 commit）
+python3 -c "from studio import secure_write; print('OK:', secure_write.__name__)"
+python3 -m pytest --collect-only -q tests/
+python3 -m ruff check studio/ tests/
+git status --porcelain
 ```
 
 **重點核對項**:
-- §1 標尺轉換紀錄必須存在（架構決策第 2 條審計護欄）
-- §1.5 v3 → v8 修正紀錄必須存在（避免假綠的審計痕跡）
-- §3.2 lane 端實況必須存在且**誠實記錄 diff 1 與 1 行 .M**（不是假綠）
-- §7 已知未清理項必須點名 task-2 遺留
-- 新標尺通過 = 「對既有原始碼/測試零新增 + 腳本微調屬 #3 範圍」,**不是** HEAD == origin/main
+- import 指令 exit 0，表示 `studio.secure_write` re-export 在位。
+- `pytest --collect-only` exit 0 且沒有 collection error；collected 總數會隨測試新增而變動，不作固定驗收值。
+- `ruff check studio/ tests/` exit 0。
+- `git status --porcelain` 在驗收提交後應為空；若本文件正在被本輪修正，未提交前只應看到本文件類文件 diff，不應有產品碼、測試碼或 `scripts/verify-clean.sh` 變更。
 
 ---
 
-## 9. 異動檔案
+## 9. 目前異動判定
 
-- `scripts/verify-clean.sh`：**本輪微調**（加 Step 8 lane 端實況 + Step 9 結論分組 + 補兩條 diff --quiet 的 stderr 分流;主結構不重寫,worktree 模式保留;**這是 #3 範圍內的合法腳本調整,非「既有原始碼/測試」**）
-- `scripts/clean-verification-task-3-EVIDENCE.md`：**本檔案**（v8 新標尺最終版 close-out,落 `scripts/` 下,本 commit 進 HEAD 持久化）
-- `scripts/verify-clean.ROUND4-EVIDENCE.md`：**本任務未動**（#1 第 4 輪 evidence 嵌入檔,已 commit 進 HEAD,舊版鏡像,並存保留）
-- 生產碼/測試碼：**零異動**
+- `scripts/clean-verification-task-3-EVIDENCE.md`：本輪只更新過期重跑指引，保留舊 v8 內容作歷史證據。
+- 生產碼、測試碼、`scripts/verify-clean.sh`：目前驗收標準下應維持零異動。
 
 ```
-決議: 完成（任務 #3 關閉說明 v8,新標尺最終版 + commit 進 HEAD 持久化;PM 根因 + 架構定案 6 項 + 自我捕獲假綠 + 反引號跳脫修正 + 持久化已逐項吸收:標尺轉換紀錄、stderr 分流不吞沒、結論分組、誠實記 exit 1、修正 v3 假綠「0 行」為「1 行 .M #3 範圍」、task-2 點名、ROUND4-EVIDENCE 標為舊版鏡像並存、跨 sandbox 持久化）
+決議: 完成（任務 #3 現況驗收以 §8 可重跑指令為準；舊 lane v8 內容僅作歷史審計紀錄）
 ```

@@ -11,7 +11,7 @@
 | 需求/清單宣稱（修前狀態） | 當前 HEAD 實況 | 證據 |
 |---|---|---|
 | `studio/__init__.py` 缺 `secure_write` 匯出 | 第 10 行 `from . import secure_write as secure_write`（含防誤刪註解） | `sed -n '10p'` |
-| 7 個 secure_write 模組收集失敗（ImportError） | 2555 tests collected, 0 collection error | `pytest --collect-only` exit 0 |
+| 7 個 secure_write 模組收集失敗（ImportError） | `pytest --collect-only` exit 0，無 collection error；測試總數不硬編，避免後續新增測試造成文件漂移 | `pytest --collect-only` exit 0 |
 | `test_providers_dedup_task3.py:16` F401 `events` | 第 16 行 `from studio import config, experts, providers`（無 events） | `sed -n '16p'` |
 | ruff 6 errors | `All checks passed!` | `ruff check` exit 0 |
 
@@ -21,7 +21,7 @@
 |---|---|---|
 | ① | `ruff check studio/ tests/` | `All checks passed!` exit 0 |
 | ② | `python3 -c "from studio import secure_write; print(secure_write)"` | 印出 module，無例外，exit 0 |
-| ③ | `python3 -m pytest --collect-only -q tests/` | `2555 tests collected`，exit 0 |
+| ③ | `python3 -m pytest --collect-only -q tests/` | exit 0，無 collection error；實際 collected 數以當次輸出為準 |
 | 實證 | `git log --oneline studio/__init__.py` | 含修復 commit `f7be01e`，早於清單 |
 | 零 diff | `git diff --stat` | 空 |
 
