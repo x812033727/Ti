@@ -1457,6 +1457,101 @@ function rateLimitBlock(rl) {
   return wrap;
 }
 
+function claudeAccountsBlock(accounts) {
+  // 每個 Claude 訂閱帳號一塊：標題（帳號 + 訂閱類型）、在線標記或切換鈕、官方額度條。
+  const wrap = document.createElement("div");
+  wrap.className = "quota-accounts";
+  appendTextEl(wrap, "div", "quota-rl-kicker", "訂閱帳號（可切換）");
+  for (const a of accounts) {
+    const box = document.createElement("div");
+    box.className = `quota-account${a.active ? " active" : ""}`;
+    const head = document.createElement("div");
+    head.className = "quota-account-head";
+    const name = a.subscription ? `帳號 ${a.label} · ${a.subscription}` : `帳號 ${a.label}`;
+    appendTextEl(head, "strong", "", name);
+    if (a.active) {
+      appendTextEl(head, "span", "quota-account-live", "● 在線");
+    } else {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ghost quota-account-switch";
+      btn.textContent = "切換到此帳號";
+      btn.addEventListener("click", () => switchClaudeAccount(a.label, btn));
+      head.appendChild(btn);
+    }
+    box.appendChild(head);
+    if (a.rate_limits) box.appendChild(rateLimitBlock(a.rate_limits));
+    wrap.appendChild(box);
+  }
+  return wrap;
+}
+
+async function switchClaudeAccount(label, btn) {
+  if (
+    !confirm(
+      `切換到帳號 ${label}？\n\n` +
+        "這會重啟後端服務：本面板會短暫斷線後自動重連。\n" +
+        "若有互動討論或 autopilot 任務正在進行，會被擋下、不會切換。",
+    )
+  )
+    return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "切換中…";
+  }
+  try {
+    const resp = await fetch("/api/claude-account/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    if (resp.status === 409) {
+      const d = await resp.json().catch(() => ({}));
+      toast(`無法切換：${(d.reasons || []).join("、") || "有討論正在進行"}`, "error");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "切換到此帳號";
+      }
+      return;
+    }
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      toast(`切換失敗：${d.error || resp.status}`, "error");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "切換到此帳號";
+      }
+      return;
+    }
+    toast(`已切換到帳號 ${label}，服務重啟中…`, "ok");
+    if (settingsQuota) {
+      settingsQuota.innerHTML = `<div class='muted'>已切換到帳號 ${label}，服務重啟中…（重連後自動刷新額度）</div>`;
+    }
+    waitForReconnectThenRefresh();
+  } catch (e) {
+    toast("切換請求已送出，服務可能正在重啟，稍候重新整理頁面。", "");
+  }
+}
+
+async function waitForReconnectThenRefresh() {
+  // 服務重啟需數秒；輪詢 provider-quota 直到端點恢復再刷新面板（最多約 60 秒）。
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const resp = await fetch("/api/provider-quota", { cache: "no-store" });
+      if (resp.ok) {
+        renderProviderQuota(await resp.json());
+        return;
+      }
+    } catch (e) {
+      // 服務還沒起來，繼續等
+    }
+  }
+  if (settingsQuota) {
+    settingsQuota.innerHTML = "<div class='muted'>服務重啟逾時，請手動重新整理頁面。</div>";
+  }
+}
+
 function renderProviderQuota(data) {
   if (!settingsQuota) return;
   const providers = data.providers || [];
@@ -1482,7 +1577,12 @@ function renderProviderQuota(data) {
     appendTextEl(cardHead, "span", "", providerStatusLabel(p));
     card.appendChild(cardHead);
     appendTextEl(card, "div", "quota-note", (p.quota && p.quota.summary) || "");
-    if (p.rate_limits) card.appendChild(rateLimitBlock(p.rate_limits));
+    if (Array.isArray(p.accounts) && p.accounts.length) {
+      // 多帳號（claude）：逐帳號顯示額度＋在線標記＋切換鈕，取代單一額度區。
+      card.appendChild(claudeAccountsBlock(p.accounts));
+    } else if (p.rate_limits) {
+      card.appendChild(rateLimitBlock(p.rate_limits));
+    }
     if (models) appendTextEl(card, "div", "quota-models", models);
     if (p.quota && p.quota.detail) appendTextEl(card, "div", "quota-detail", p.quota.detail);
     grid.appendChild(card);
