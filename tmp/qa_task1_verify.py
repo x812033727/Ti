@@ -108,7 +108,6 @@ def check_pytest_collect() -> tuple[bool, str]:
     errors_match = re.search(r"(\d+)\s+errors?", text)
     collected = int(collected_match.group(1)) if collected_match else -1
     errors = int(errors_match.group(1)) if errors_match else 0
-    has_error_token = "error" in text.lower() and "0 errors" not in text.lower()
     # 防呆：若 pytest 確實有錯誤行但我們 regex 沒抓到，必須標記
     suspicious = (
         "Error" in text or "ERROR" in text or "Traceback" in text
@@ -177,7 +176,6 @@ def check_causal_boundary() -> tuple[bool, str]:
     old_ruff_rc, old_ruff_out, old_ruff_err = _ruff_f401_stdin(old_src)
     cur_ruff_rc, cur_ruff_out, cur_ruff_err = _ruff_f401_stdin(cur_src)
     old_ruff_text = old_ruff_out + old_ruff_err
-    cur_ruff_text = cur_ruff_out + cur_ruff_err
     old_reports_f401 = old_ruff_rc != 0 and "F401" in old_ruff_text
     current_alias_passes_ruff = cur_ruff_rc == 0
 
