@@ -38,6 +38,18 @@
 | orchestrator / reflexion `complete_once()` 路徑 | 已委派 | `_store_reflection()` 建 `_llm` callback 走 `providers.complete_once()`：`orchestrator.py:1983`-`1986`，再注入 `reflexion.reflect_and_store()`：`orchestrator.py:1988`-`1990`；`reflexion.py:87`-`90` 只呼叫注入的 `llm` 並 fallback，不自套退避。 |
 | conclusion / lessons / autopilot / improver 延伸消費端 | 已委派 | `conclusion.py:253`、`lessons.py:257`-`263`、`autopilot.py:716`、`improver.py:333`-`348`/`475`-`477` 都透過 `speak()` 或 `complete_once()`，沒有本地退避骨幹。 |
 
+## 範圍外：刻意不共用核心的退避（非死角）
+
+`llm_caller` 的退避/分類專責 **LLM 呼叫**（429/529、SSE/SDK 錯誤文字、provider 不可用）。
+`studio/` 另有一處退避屬**不同領域、刻意不共用核心**，列此避免被「單一來源」稽核或 guard 誤判為重複：
+
+| 位置 | 領域 | 為何不委派核心 |
+| --- | --- | --- |
+| `publisher._backoff` (`studio/publisher.py:299`-`301`，用於 `:647`) | GitHub PR 合併 / CI 輪詢重試（409 race、5xx、網路） | 與 LLM 串流退避無關：無 retry-after 語意、無 SSE/provider 錯誤分類、cap 60s 為 GitHub 輪詢節奏而非 LLM token 節流。強行共用核心會把兩個無關的重試節奏耦合在一起。 |
+
+因此任何「退避秒數計算只能在 `llm_caller` 一份」的 guard 必須把 `publisher._backoff` 列為正當例外；
+否則加上即紅、逼出脆弱白名單（對應已退役的 backlog #233/#235/#236）。錯誤文字指紋（`rate limit`/`529`/`overloaded`）亦會與 `*_usage.py` 的**額度查詢**模組碰撞，後者是查 provider rate-limit 配額、與「分類 LLM 錯誤文字」無關。
+
 ## 死角清單（#2 已收口）
 
 | 編號 | 檔案行號 | 類型 | 影響 | 建議 #2 收口 |
