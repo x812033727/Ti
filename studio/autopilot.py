@@ -30,8 +30,9 @@ log = logging.getLogger("ti.autopilot")
 
 _GH = ["gh"]
 _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
-# 改到這些檔（影響迴圈自身行為）就 os.execv 重載。
-_SELF_FILES = ("autopilot.py", "deploy.py", "backlog.py", "config.py")
+# 自我重載：autopilot 跑討論依賴整個 studio 套件（orchestrator／experts／flow／providers…），
+# 故監看整包 studio/*.py 的 mtime——只盯少數檔會漏掉 orchestrator-only 的部署（如 #218），
+# 讓 autopilot 一直跑舊 orchestration 邏輯（self-reload 在任務之間做、安全）。
 
 
 async def _run(cmd: list[str], cwd: str | None = None, timeout: int = 600) -> tuple[int, str]:
@@ -51,12 +52,16 @@ async def _run(cmd: list[str], cwd: str | None = None, timeout: int = 600) -> tu
 
 
 def _self_sig() -> float:
-    """autopilot 自身關鍵檔的最新 mtime 總和，用來判斷部署後是否需重載自己。"""
+    """整個 studio 套件（top-level *.py）的最新 mtime 總和，用來判斷部署後是否需重載自己。
+
+    涵蓋整包而非少數檔:任何被 autopilot 依賴的模組（orchestrator/experts/flow/conclusion/
+    providers…）更新都觸發 reload,避免 orchestrator-only 的 PR 部署後 autopilot 仍跑舊邏輯。
+    """
     base = Path(__file__).resolve().parent
     total = 0.0
-    for name in _SELF_FILES:
+    for path in base.glob("*.py"):
         with contextlib.suppress(OSError):
-            total += (base / name).stat().st_mtime
+            total += path.stat().st_mtime
     return total
 
 
