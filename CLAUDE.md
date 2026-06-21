@@ -15,7 +15,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（`web/`，純 HTML/CSS/J
 討論 → 寫程式 → 測試 → 審查 → Demo → 反覆改進，全程在網頁即時呈現。專家會**真的**寫檔、
 跑指令、git commit、執行 Demo 並以 exit code 驗收。
 
-- 語言/版本：Python 3.11+；套件名 `ti-studio`（見 `pyproject.toml`，版本為 SSOT）。
+- 語言/版本：Python 3.11+；套件名 `ti-studio`（版本 SSOT 由 `studio.release_note.pyproject_version()` 提供）。
 - 主要 LLM 後端：Claude Agent SDK（預設）；可選 OpenAI／MiniMax／Gemini／Codex／Antigravity。
 - 文件與程式碼註解皆為**繁體中文**；沿用此慣例。
 
@@ -93,7 +93,7 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
   `依賴: #後 -> #前`、`後續任務: [P0/bug] <title>`、`核心改動: <描述>`——**改動這些字串會破壞解析**，
   動到前先確認 `flow.py` 對應 parser。
 - **程式風格**：繁中註解、簡潔 docstring、`from __future__ import annotations`；不隨意新增依賴
-  （認證等優先用標準庫）；ruff 規則集中 `pyproject.toml [tool.ruff]`，勿在個別檔覆寫。
+  （認證等優先用標準庫）；ruff 規則集中於專案設定檔的 `[tool.ruff]`，勿在個別檔覆寫。
 - **測試慣例**：放 `tests/`、檔名 `test_*.py`、`asyncio_mode = "auto"`；端到端走離線假專家
   （`tests/test_offline_e2e.py` / `fake_experts.py`），不依賴外部 API；新增後端能力盡量補對應測試。
 
@@ -104,7 +104,7 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
   `TI_SANDBOX=0`）、`deploy-test`（只跑 `tests/deploy`）、`sandbox-test`（bubblewrap + AppArmor + bwrap smoke valve）。
 - **安全掃描 SSOT**：`scripts/scan_shell_usage.sh`（偵測 `shell=True` / `create_subprocess_shell`，目前 warn-only）、
   `scripts/scan_bare_pytest.sh`（掃 `docs/`，block）。CI、pre-commit、本機三處只呼叫同一支腳本，規則天然一致。
-- **發佈鏈**：`push tags v*` → `publish-release.yml`（PAT guard、assert tag == pyproject 版本、
+- **發佈鏈**：`push tags v*` → `publish-release.yml`（PAT guard、assert tag == `pyproject_version()`、
   `scripts/publish_release.py` 渲染 `body.md`、`gh release create` 用 `secrets.GH_PAT`）→ `release: published`
   → `release-smoke.yml`。版本 SSOT = `studio.release_note.pyproject_version()`。**權威細節見下方「發佈鏈 DoD 與 `GH_PAT` 設定」**。
 
