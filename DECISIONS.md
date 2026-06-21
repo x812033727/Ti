@@ -1866,3 +1866,33 @@
 ## PR／驗收說明須明文標註「本輪僅驗 `tests/test_scope_fixture_demo.py`，不代表全套 pytest 已恢復；全套長期解法待 harness 以任務自身 baseline 比對後另行處理」。
 - 時間：2026-06-20 19:12
 - 理由：防止後續 reviewer 誤讀為全套已通過，保護依賴方向的透明度。
+## `studio/__init__.py` 為 `studio` 套件唯一的 public API 宣告點；子模組存在不等於公開，進 `__init__` 才算進 API surface。
+- 時間：2026-06-21 12:24
+- 理由：消解「子模組自然可 import」的隱式暴露假設——呼叫端先 `import studio` 再 `.secure_write` 時，若子模組未被載入，名稱不存在於父 namespace；本次 7 模組失敗的完整因果即此。
+- 否決方案：依賴 Python 子模組自然綁定行為作為公開契約——靜態工具（ruff）無法區分 used/unused，且行為與 import 順序耦合，不可靠。
+
+## re-export 語法固定採 redundant alias 形式 `from . import X as X`，本輪唯一新增行為 `from . import secure_write as secure_write`。
+- 時間：2026-06-21 12:24
+- 理由：ruff F401 以此為官方消法，靜態可辨識為「刻意 re-export」而非 unused import；語義明確，維護者一眼知道這是 public API 聲明。
+- 否決方案：`__all__`——改變 `from studio import *` 語意，且需完整維護清單，維護成本超出需求；否決: 無 alias 的 `from . import X`——ruff 仍可能誤判為 unused。
+
+## `secure_write.py` 業務邏輯本輪零改動；修法邊界嚴格限定於 package namespace 層。
+- 時間：2026-06-21 12:24
+- 否決方案：引入 `atomicwrites` 或重構 `secure_write`——不解 namespace 問題，且引入無關依賴，違反最小改動原則。
+
+## 未來每新增一個 public 子模組，照 `from . import X as X` 格式補一行；`import studio` 啟動時會載入所有 re-export 模組，故 `__init__` 禁止放入有副作用或重依賴的模組。
+- 時間：2026-06-21 12:24
+- 理由：高級工程師指出此為長期可維護性風險點，需以開發約定守住，避免 `import studio` 成為隱性重量級操作。
+
+## 以 `from studio import X` 形式的測試作為 public API 契約守衛，若收集階段即失敗視為 API surface 破壞。
+- 時間：2026-06-21 12:24
+- 理由：高級工程師驗證確認 `tests/autopilot` 內有此契約點；collect 失敗比 runtime 失敗更早暴露，保護依賴方向。
+
+## 驗收命令三步驟缺一不可——`python3 -c "from studio import secure_write"` → `pytest --collect-only -q tests/autopilot` (0 errors) → `ruff check studio/`；三者分別驗 runtime 行為、pytest 收集、靜態檢查，組合才自證因果。
+- 時間：2026-06-21 12:24
+- 否決方案：只跑 ruff 或只跑 pytest 任一——各有盲點，只讀碼不實跑不算驗收（教訓庫既有鐵則）。
+
+## 本輪為零改動確認閉環；工程師與 QA 禁止為「交付感」補抽象或改碼，「已完成」是合法結論。
+- 時間：2026-06-21 12:24
+- 理由：基線已綠（660 collected、0 errors、ruff passed、git clean），硬加改動只會引入新風險，且讓後人誤讀為有框架擴展意圖。
+
