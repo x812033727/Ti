@@ -885,14 +885,22 @@ class OpenAIExpert:
                         usage["total"] += total_tokens
                         usage["calls"] += 1
                     msg = resp.choices[0].message
-                    tool_calls = getattr(msg, "tool_calls", None) or []
+                    raw_tool_calls = getattr(msg, "tool_calls", None) or []
+                    tool_calls = _normalize_tool_calls(raw_tool_calls)
+                    if raw_tool_calls and tool_calls is None:
+                        logger.warning(
+                            "OpenAI-compatible provider %s returned malformed tool_calls; "
+                            "falling back to message content",
+                            self._provider,
+                        )
+                        tool_calls = []
                     self._messages.append(_assistant_dict(msg, tool_calls))
 
                     if tool_calls:
                         await broadcast(events.expert_status(self.session_id, r.key, "working"))
                         for tc in tool_calls:
-                            name = tc.function.name
-                            args = tools.parse_args(tc.function.arguments)
+                            name = tc["name"]
+                            args = tc["args"]
                             result = await tools.execute_deduped(
                                 name, args, self.cwd, self._dedup_cache
                             )
@@ -902,7 +910,7 @@ class OpenAIExpert:
                                 )
                             )
                             self._messages.append(
-                                {"role": "tool", "tool_call_id": tc.id, "content": result}
+                                {"role": "tool", "tool_call_id": tc["id"], "content": result}
                             )
                         continue
 
@@ -1007,14 +1015,63 @@ class OpenAIExpert:
         pass
 
 
+_MISSING = object()
+
+
+def _obj_get(obj, key: str):
+    if isinstance(obj, dict):
+        return obj.get(key, _MISSING)
+    return getattr(obj, key, _MISSING)
+
+
+def _normalize_tool_call(tc) -> dict | None:
+    tool_id = _obj_get(tc, "id")
+    fn = _obj_get(tc, "function")
+    if tool_id is _MISSING or fn is _MISSING:
+        return None
+    name = _obj_get(fn, "name")
+    raw_args = _obj_get(fn, "arguments")
+    if name is _MISSING or raw_args is _MISSING or not str(name).strip():
+        return None
+    if isinstance(raw_args, dict):
+        args = raw_args
+        raw_for_history = json.dumps(raw_args, ensure_ascii=False)
+    elif isinstance(raw_args, str):
+        try:
+            args = json.loads(raw_args or "{}")
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(args, dict):
+            return None
+        raw_for_history = raw_args
+    else:
+        return None
+    return {
+        "id": str(tool_id),
+        "name": str(name),
+        "args": args,
+        "arguments": raw_for_history,
+    }
+
+
+def _normalize_tool_calls(tool_calls) -> list[dict] | None:
+    normalized = []
+    for tc in tool_calls:
+        item = _normalize_tool_call(tc)
+        if item is None:
+            return None
+        normalized.append(item)
+    return normalized
+
+
 def _assistant_dict(msg, tool_calls) -> dict:
     d: dict = {"role": "assistant", "content": getattr(msg, "content", None) or ""}
     if tool_calls:
         d["tool_calls"] = [
             {
-                "id": tc.id,
+                "id": tc["id"],
                 "type": "function",
-                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                "function": {"name": tc["name"], "arguments": tc["arguments"]},
             }
             for tc in tool_calls
         ]
