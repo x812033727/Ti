@@ -569,27 +569,28 @@ async def test_codex_run_finally_does_not_clear_newer_proc_on_error(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_codex_run_cancel_terminates_and_reaps_proc(monkeypatch, tmp_path):
-    """_run_codex() 被取消時，不能只清參照，必須終止並等待目前 proc。"""
+async def test_codex_run_cancel_reaps_group_and_waits_proc(monkeypatch, tmp_path):
+    """_run_codex() 被取消時，不能只清參照，必須對整組收屍（reap_group 用記下的 pgid，撐得過
+    leader 已被 reap）並等待目前 proc——取代會在 leader 被 reap 後失效的 _terminate/getpgid。"""
     expert = providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path)
     bucket, broadcast = collect()
     proc = FakeCodexProcess()
     created = asyncio.Event()
-    terminated = asyncio.Event()
-    calls = []
+    reaped = asyncio.Event()
+    reap_calls = []
 
     async def fake_create_subprocess_exec(*_args, **_kwargs):
         created.set()
         return proc
 
-    def fake_terminate(seen):
-        calls.append(seen)
-        terminated.set()
+    def fake_reap_group(pgid):
+        reap_calls.append(pgid)
+        reaped.set()
 
     monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
     monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
     monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(expert, "_terminate", fake_terminate)
+    monkeypatch.setattr(providers.runner, "reap_group", fake_reap_group)
 
     task = asyncio.create_task(expert._run_codex("請回覆", broadcast))
     await asyncio.wait_for(created.wait(), timeout=1)
@@ -597,10 +598,11 @@ async def test_codex_run_cancel_terminates_and_reaps_proc(monkeypatch, tmp_path)
     assert expert._proc is proc
 
     task.cancel()
-    await asyncio.wait_for(terminated.wait(), timeout=1)
+    await asyncio.wait_for(reaped.wait(), timeout=1)
     await asyncio.sleep(0)
 
-    assert calls == [proc]
+    # 用記下的 pgid（==spawn 當下的 pid）整組收屍，而非依賴 leader 仍在的 getpgid。
+    assert reap_calls == [proc.pid]
     assert not task.done()
     assert expert._proc is proc
 
@@ -1050,3 +1052,71 @@ async def test_complete_once_openai_chat_non_runtime_exception_also_degrades(mon
 
     assert out == ""
     assert called["n"] == 1
+
+
+# --- CodexExpert 整合：真實 fake-codex 腳本，證明 reap 解掉孫程序握 pipe 的卡死 ----------
+# 對應 senior/engineer 整輪卡到外層 3600s 的真因：codex 主程序退出但 --sandbox 工具孫程序
+# 仍握著 stdout/stderr pipe → reader async-for 永不 EOF、無上限的 await proc.wait() 假死。
+# 修法（移植自 AntigravityExpert PR #212）：所有 teardown 路徑先 runner.reap_group(pgid)。
+
+
+def _write_fake_codex(tmp_path, body: str) -> str:
+    p = tmp_path / "fake_codex.sh"
+    p.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    p.chmod(0o755)
+    return str(p)
+
+
+@pytest.fixture
+def _codex_env(monkeypatch):
+    monkeypatch.setattr(config, "CODEX_MODEL_LEAD", "")
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "")
+    monkeypatch.setattr(config, "CODEX_SANDBOX", "danger-full-access")
+    monkeypatch.setattr(config, "CODEX_BYPASS_SANDBOX", False)
+    monkeypatch.setattr(config, "CODEX_HOME", "")
+
+
+@pytest.mark.asyncio
+async def test_codex_normal_exit_with_leaked_grandchild_reaped_not_hung(
+    monkeypatch, tmp_path, _codex_env
+):
+    """codex 退出但背景孫程序握著 stdout pipe：reap 後須迅速回傳，而非卡在 async-for。"""
+    # 放大 join 上限：唯一能讓它「快速」回傳的，就是 reap_group 收掉孫程序讓 pipe EOF。
+    monkeypatch.setattr(providers, "_READER_JOIN_TIMEOUT", 30.0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 30.0)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 30.0)
+    codex = _write_fake_codex(
+        tmp_path,
+        "cat >/dev/null\n"
+        "printf '%s\\n' "
+        '\'{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"審查意見：本輪無阻擋項目。"}}\'\n'
+        "sleep 30 &\nexit 0\n",
+    )
+    monkeypatch.setattr(config, "CODEX_BIN", codex)
+
+    expert = providers.CodexExpert(BY_KEY["senior"], "sess", tmp_path)
+    bucket, broadcast = collect()
+
+    # 若 reap 失效，會卡到 30s join 上限；timeout=5 證明確實是 reap 讓它秒回。
+    text = await asyncio.wait_for(expert.speak("審查任務", broadcast), timeout=5)
+    assert "本輪無阻擋項目" in text
+
+
+@pytest.mark.asyncio
+async def test_codex_turn_timeout_soft_fails_without_pause(monkeypatch, tmp_path, _codex_env):
+    """codex 整輪無輸出卡住：watchdog 逾時須 reap 收屍並回系統 note 軟失敗，不卡到外層 timeout。"""
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0.5)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0.0)
+    codex = _write_fake_codex(tmp_path, "cat >/dev/null\nsleep 30\n")  # 讀完 prompt 後無輸出卡住
+    monkeypatch.setattr(config, "CODEX_BIN", codex)
+
+    expert = providers.CodexExpert(BY_KEY["senior"], "sess", tmp_path)
+    bucket, broadcast = collect()
+
+    result = await asyncio.wait_for(expert.speak("審查任務", broadcast), timeout=8)
+
+    # 軟失敗：回系統 note（含「逾時」），略過本輪而非拋例外或卡死整場。
+    assert result.startswith("【系統】") and "逾時" in result
+    # 最後狀態回 idle（speak 的 finally 有廣播）。
+    assert bucket[-1].payload["status"] == "idle"
