@@ -1903,4 +1903,40 @@
 
 ## **驗收命令為 `python3 -m pytest tests/core/ -q`，基線 765 passed，新增後數量增加且無迴歸；不以 `-k` 排除作主要手段**
 - 時間：2026-06-21 09:36
+## `live` fixture 第 109 行改 `env["TI_ACCESS_PASSWORD"] = ""`，取代現有 `env.pop("TI_ACCESS_PASSWORD", None)`
+- 時間：2026-06-21 03:15
+- 理由：`pop` 後鍵不存在，子行程 import `config.py` 時 `load_dotenv(override=False)` 從 `.env` 補回密碼，門禁重啟；設空字串讓鍵存在於 subprocess env，dotenv 不覆寫，`auth_enabled()` 返回 False，門禁確實停用
+- 否決方案：維持 `pop` 並搭配 `.env` 備份清除密碼——侵入真實 `.env` 結構、teardown 順序脆弱，不可接受
+
+## 門禁停用後走 `require_loopback` 路徑，測試請求來自 127.0.0.1，本機檢查可通過，不需任何登入 cookie
+- 時間：2026-06-21 03:15
+- 理由：本測試目的是驗 persistence，不是驗 auth；auth 流程由專屬 test suite 覆蓋
+
+## 不走 `/api/login` 取 cookie 再帶入 `_post`
+- 時間：2026-06-21 03:15
+- 理由：本測試不該混入 auth 流程，測試意圖單一才可維護；`AUTH_SECRET` 只是輔助理由，真正主因是職責分離
+- 否決方案：用 `httpx.Client` 走真實 login 取 cookie——雖技術可行（同一 server process 的 cookie 有效），但把 persistence 測試與 auth 測試耦合，維護成本不值
+
+## 不引入 `httpx`，`_get`／`_post` 維持現有 `urllib` 實作
+- 時間：2026-06-21 03:15
+- 理由：門禁停用後 `_post` 無需 cookie，現有實作足夠，零依賴新增
+
+## `require_admin` / `WRITE_DEPS` 產品碼不動，`POST /api/settings` 維持受保護
+- 時間：2026-06-21 03:15
+- 理由：安全邊界不因測試退讓；測試應固定環境狀態以符合端點要求，而非降低端點要求以符合測試
+
+## `/api/health` 保持公開 GET，`test_live_reload_effect_via_health` 的 reload 佐證繼續走 health 的 `provider` 欄位，不改端點設計
+- 時間：2026-06-21 03:15
+- 理由：health 本就公開，此路徑正確，只需修 fixture 認證狀態
+
+## 本輪唯一變更落點為 `tests/test_qa_task4_persistence.py` 單一行，不新增檔案，不觸碰護欄檔
+- 時間：2026-06-21 03:15
+- 理由：blast radius 最小，diff 可自證
+
+## 驗收命令為 `python3 -m pytest tests/test_qa_task4_persistence.py -q && git status --porcelain`，diff 必須只差 fixture 那一行
+- 時間：2026-06-21 03:15
+
+## 後續統一慣例——凡 subprocess fixture 需停用門禁，一律用 `env["TI_ACCESS_PASSWORD"] = ""`，禁止 `pop`；本輪不統一修，列為跟進待辦
+- 時間：2026-06-21 03:15
+- 理由：高級工程師指出 repo 內多處同類 `pop` 有同樣漂移風險；本輪先固定 task4，範圍不擴大，但慣例須明文記錄避免新 fixture 複製舊錯誤
 
