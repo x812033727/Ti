@@ -1,7 +1,8 @@
 """任務 #4：OpenAI 相容後端工具行為防護。
 
 本檔補兩個相容後端常見風險，皆含反向黑樣本對照：
-- malformed tool_call 不能炸掉 speak；若同則訊息有 content，回退一般 content。
+- structural malformed tool_call 不能炸掉 speak；若同則訊息有 content，回退一般 content。
+- 壞 JSON args 沿用 tools.parse_args 語意：解析為 {} 後進工具迴圈，不假稱 content fallback。
 - gemini/minimax 等 OpenAI 相容路徑 retry 重放同位置非冪等工具時，命中 DedupCache 不重跑副作用。
 """
 
@@ -24,6 +25,10 @@ def _msg(content=None, tool_calls=None):
 
 def _tc(tool_id, name, arguments):
     return SimpleNamespace(id=tool_id, function=SimpleNamespace(name=name, arguments=arguments))
+
+
+def _tc_missing_name(tool_id, arguments="{}"):
+    return SimpleNamespace(id=tool_id, function=SimpleNamespace(arguments=arguments))
 
 
 class ScriptedChat:
@@ -68,9 +73,9 @@ def _rate_limit_err():
 
 @pytest.mark.asyncio
 async def test_malformed_tool_call_falls_back_to_content(tmp_path):
-    """壞 JSON tool_call 代表工具解析失敗；有 content 時應回一般文字，不執行工具。"""
+    """structural malformed tool_call 代表無法形成工具；有 content 時回一般文字。"""
     chat = ScriptedChat(
-        [_msg(content="直接用文字回答", tool_calls=[_tc("bad", "run_bash", "{not json")])]
+        [_msg(content="直接用文字回答", tool_calls=[_tc_missing_name("bad")])]
     )
 
     out = await _expert(chat, tmp_path, provider="gemini").speak("做事", _noop_broadcast)
@@ -82,7 +87,7 @@ async def test_malformed_tool_call_falls_back_to_content(tmp_path):
 
 @pytest.mark.asyncio
 async def test_BLACK_valid_tool_call_with_content_still_enters_tool_loop(tmp_path):
-    """反向對照：格式正確的 tool_call 不可被 content 吞掉，必須實際跑工具迴圈。"""
+    """反向對照：格式正確 tool_call 不可被 content 吞掉，必須實際跑工具迴圈。"""
     args_json = json.dumps({"command": "echo ran >> log.txt"})
     chat = ScriptedChat(
         [
@@ -96,6 +101,22 @@ async def test_BLACK_valid_tool_call_with_content_still_enters_tool_loop(tmp_pat
     assert out == "工具後結論"
     assert chat.calls == 2
     assert (tmp_path / "log.txt").read_text().splitlines() == ["ran"]
+
+
+@pytest.mark.asyncio
+async def test_BLACK_bad_json_args_use_empty_dict_not_content_fallback(tmp_path):
+    """反向對照：壞 JSON args 轉 {} 後仍進工具迴圈，不假稱 fallback。"""
+    chat = ScriptedChat(
+        [
+            _msg(content="不要直接回這句", tool_calls=[_tc("bad-json", "run_bash", "{not json")]),
+            _msg(content="工具後結論"),
+        ]
+    )
+
+    out = await _expert(chat, tmp_path, provider="gemini").speak("做事", _noop_broadcast)
+
+    assert out == "工具後結論"
+    assert chat.calls == 2
 
 
 @pytest.mark.parametrize("provider", ["openai", "minimax", "gemini"])

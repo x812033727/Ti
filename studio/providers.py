@@ -1037,10 +1037,7 @@ def _normalize_tool_call(tc) -> dict | None:
         args = raw_args
         raw_for_history = json.dumps(raw_args, ensure_ascii=False)
     elif isinstance(raw_args, str):
-        try:
-            args = json.loads(raw_args or "{}")
-        except json.JSONDecodeError:
-            return None
+        args = tools.parse_args(raw_args)
         if not isinstance(args, dict):
             return None
         raw_for_history = raw_args
