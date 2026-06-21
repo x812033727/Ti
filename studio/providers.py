@@ -363,7 +363,11 @@ class CodexExpert:
                     broadcast,
                 )
             if proc.returncode:
-                detail = _clip(stderr_tail or "\n".join(errors), 2000)
+                error_detail = "\n".join(errors[-3:])
+                detail = _clip(
+                    "\n".join(part for part in (error_detail, stderr_tail) if part),
+                    2000,
+                )
                 decision = _codex_pause_or_soft(detail)
                 if decision == "pause":
                     raise ProviderUnavailable("codex", detail or "Codex unavailable")
