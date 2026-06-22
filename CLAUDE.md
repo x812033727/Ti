@@ -1,4 +1,125 @@
+# Ti Studio — AI 協作指南（CLAUDE.md）
+
+本檔是給接手本 repo 的 AI 助手的全景導覽：**這個專案是什麼、程式碼結構、怎麼跑/測/lint、
+有哪些不可違反的慣例**。前半段是上手導覽，後半段「專案協作記憶」是歷次任務累積的硬規則與
+踩坑教訓，兩者都要遵守。指令的唯一權威是 `CONTRIBUTING.md`、架構細節的唯一權威是
+`ARCHITECTURE.md`，本檔僅敘述與交叉連結，不重複可複製的指令區塊（防文件漂移，由 `tests/docs/` 把關）。
+
+> ⚠️ 寫本檔（或任何 repo 文件）時，**禁止裸用 `python` 直譯器**（即後面直接接空白與檔名的寫法）——
+> 一律寫 `python3` 或 `.venv/bin/python`。`tests/docs/test_qa_task2_no_bare_python.py` 會全 repo 掃描，CLAUDE.md 不在豁免名單。
+
+## 專案概覽
+
+Ti Studio 是一個 **FastAPI 後端 + 免建置前端（`web/`，純 HTML/CSS/JS）** 的**多智能體軟體開發工作室**。
+給它一段產品需求，工作室裡的 AI 專家（專案經理／工程師／高級工程師／驗證工程師…）會自己
+討論 → 寫程式 → 測試 → 審查 → Demo → 反覆改進，全程在網頁即時呈現。專家會**真的**寫檔、
+跑指令、git commit、執行 Demo 並以 exit code 驗收。
+
+- 語言/版本：Python 3.11+；套件名 `ti-studio`（版本 SSOT 由 `studio.release_note.pyproject_version()` 提供）。
+- 主要 LLM 後端：Claude Agent SDK（預設）；可選 OpenAI／MiniMax／Gemini／Codex／Antigravity。
+- 文件與程式碼註解皆為**繁體中文**；沿用此慣例。
+
+## 快速上手
+
+完整安裝／測試／lint／pre-commit 指令**以 `CONTRIBUTING.md` 為唯一權威**，請以該檔為準。
+最常用的三條速查（細節見 `CONTRIBUTING.md`）：
+
+- 離線示範（**免 API 金鑰**，最快看到完整流程）：`TI_OFFLINE=1 .venv/bin/python -m studio.server`
+- 跑全部測試：`.venv/bin/python -m pytest -q`
+- Lint：`.venv/bin/python -m ruff check .`
+
+跑測試與離線示範**不需** API 金鑰；只有真正驅動 LLM 專家時才需要 `ANTHROPIC_API_KEY`（或 OpenAI 等設定）。
+ASGI 入口為 `studio.server:app`，也可 `python3 -m studio.server` 直接啟動。
+
+## 程式碼結構（模組地圖）
+
+主套件在 `studio/`。權威的模組分工與資料流見 `ARCHITECTURE.md`；下表為導覽濃縮版。
+
+| 分類 | 模組 | 職責 |
+|------|------|------|
+| 入口/組裝 | `server.py` | 應用組裝：建立 FastAPI app、掛 `/static`、`include_router`、頁面入口、`main()` 啟 uvicorn |
+| | `routes.py` | REST API：health、登入/登出、workspace（列檔/讀檔/下載 zip）、history、publish、`/api/roles`、`/api/groups`、`/api/settings`、`/api/metrics` |
+| | `ws.py` | WebSocket：建 session、串流事件、`_pump_interventions` 收人類插話/停止 |
+| | `auth.py` | 單一密碼門禁（HMAC token + httponly cookie） |
+| 核心狀態機 | `orchestrator.py` | `StudioSession`：（選配）需求澄清 → 需求拆解 → 架構辯論 → 逐任務分波迭代 → Demo → 驗收/檢討 |
+| 純函式決策層 | `flow.py` | **無狀態**解析：`parse_tasks`/`parse_clarify`/`parse_core_changes`/`parse_followups`/`build_waves`/`qa_passed`/`senior_approved`/`is_stalled`… 可單元測試、可 monkeypatch |
+| 執行與隔離 | `runner.py` | 確定性執行：跑程式/Demo、git（含 worktree 合併）、入口偵測、HTTP 服務驗收、bubblewrap sandbox |
+| | `workspace.py` | 每個 session 的沙箱工作目錄（安全路徑、列檔、讀檔、打包 zip） |
+| LLM 中介 | `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，串流回應轉事件；退避工廠 `make_retry_config()` |
+| | `providers.py` | provider 抽象與工廠（Claude / OpenAI 相容 / 其他） |
+| | `llm_caller.py` | provider 無關的 retry 骨幹（`RetryConfig` + `run_with_retries` + `backoff_delay`，退避公式 SSOT） |
+| | `tools.py` | 非 Claude provider 的 function-calling 工具層（read/write/edit/bash…） |
+| 討論/角色 | `discussion.py` | 多角色討論引擎（`round_robin` / `parallel`）、反諂媚引用、提前收斂 |
+| | `roles.py` | 內建 8 角色（CORE 4 + OPTIONAL 4）+ 共通守則 `_COMMON`；對外 `ROSTER`/`BY_KEY` |
+| | `role_store.py` | 自訂角色檔（`roles/*.md`）載入/驗證/原子落檔 + 討論小組（`roles/groups.yaml`）CRUD |
+| 持續改良/發佈 | `backlog.py` | 任務佇列 CRUD（read-modify-write + 檔鎖）；以 `state_dir` 泛化「專案 backlog」與「核心 backlog」 |
+| | `projects.py` | 專案（長期產品）：固定 workspace、專屬 backlog、跨場次累積；`effective_repo()` 決定發佈目標 |
+| | `improver.py` | 專案持續改良迴圈：消化 backlog → 跑討論 → followups 回填 → 空了就「找問題」 |
+| | `autopilot.py` | Ti 核心自我改善迴圈（獨立服務）：抽核心 backlog → headless 討論 → 測試 gate → 合併/部署 |
+| | `publisher.py` | 把 workspace 成果推成 GitHub 分支並開 PR、等 CI、（選配）合併 |
+| | `conclusion.py` | agenda/任務結構、followup 解析、核心改動路由 |
+| 設定/狀態 | `config.py` | 集中設定（~140+ 個 `TI_*` 環境變數）+ `reload()` 執行期套用 |
+| | `settings.py` | UI 可調設定（API key/provider/模型/GitHub token）：寫 `.env` → `config.reload()` |
+| | `history.py` | session 事件存檔（JSONL + meta）、重播、成果記分卡、`/api/metrics` 跨場聚合 |
+| | `events.py` | `StudioEvent` 結構（前後端契約） |
+| | `fake_experts.py` | 離線示範用假專家（真寫檔/commit，供無金鑰試用與 E2E） |
+
+設計重點：**`flow.py`（純函式）vs `orchestrator.py`（有狀態）** 的邊界要守住——決策解析放 `flow.py`、
+所有副作用（broadcast、專家互動、git、workspace 變更）放 `orchestrator.py`。orchestrator 對 flow
+函式採 re-export（`from .flow import parse_tasks as parse_tasks …`），讓測試/autopilot 能
+monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模式。
+
+## 執行期資料流（精簡）
+
+1. 前端開 WebSocket `/ws`，第一則訊息送 `{requirement, repo_url?, project_id?, mode?, group?}`。
+2. `ws.py` 建 workspace、開始錄歷史，啟動 `StudioSession.run()`。
+3. orchestrator 依階段推進，透過 `broadcast()` 送 `StudioEvent`（`session_started`/`phase_change`/
+   `expert_message`/`tool_use`/`board_update`/`run_result`/`git_commit`/`demo_result`/`done`…）。
+4. 每個事件即時渲染並寫入 `history/<id>.jsonl`；前端可送 `{"type":"interject"}` 或 `{"type":"stop"}`。
+5. `done` 結束；歷史可從 `/api/history` 列出並重播。
+
+事件型別是前後端契約，定義集中在 `events.py`，前端在 `web/app.js` 的 `handleEvent()` 對應。詳見 `ARCHITECTURE.md`。
+
+## 關鍵慣例（給 AI 的硬規則）
+
+- **雙軌路由（最重要）**：專案改動 → 專案 repo（`projects.effective_repo()`）；**Ti 核心框架改動**
+  （orchestrator/runner/發佈流程等）→ `config.CORE_REPO`（固定 `x812033727/Ti`）的**獨立 PR**，
+  **絕不混入專案 repo**。偵測靠專家輸出結構化行 `核心改動: <描述>`（`flow.parse_core_changes`），
+  消費端 `backlog.add_items(core, source="core")`（省 `state_dir`＝核心 backlog）路由，autopilot 在核心 repo 實作開 PR。
+  詳見下方「架構鐵則」與 `ARCHITECTURE.md`。
+- **設定走 `config.py` 為 SSOT**：所有行為由 `TI_*` 環境變數定義；UI 改設定 → 寫 `.env` →
+  `config.reload()`，下一個 session 生效。不要在各檔散落硬寫預設。
+- **解析靠穩定 marker 字串**：如 `驗證: PASS/FAIL`、`決議: 核可/退回`、`任務: #<n>`、
+  `依賴: #後 -> #前`、`後續任務: [P0/bug] <title>`、`核心改動: <描述>`——**改動這些字串會破壞解析**，
+  動到前先確認 `flow.py` 對應 parser。
+- **程式風格**：繁中註解、簡潔 docstring、`from __future__ import annotations`；不隨意新增依賴
+  （認證等優先用標準庫）；ruff 規則集中於專案設定檔的 `[tool.ruff]`，勿在個別檔覆寫。
+- **測試慣例**：放 `tests/`、檔名 `test_*.py`、`asyncio_mode = "auto"`；端到端走離線假專家
+  （`tests/test_offline_e2e.py` / `fake_experts.py`），不依賴外部 API；新增後端能力盡量補對應測試。
+
+## 開發 / CI / 發佈流程（敘述 + 連結）
+
+- **CI**（`.github/workflows/ci.yml`）：`lint`（`ruff check` + `ruff format --check` + shell 掃描 warn +
+  bare-pytest 掃描 block）、`test`（Python 3.11/3.12 矩陣，先 `--collect-only` 抓 import 錯，再 `pytest --cov`，
+  `TI_SANDBOX=0`）、`deploy-test`（只跑 `tests/deploy`）、`sandbox-test`（bubblewrap + AppArmor + bwrap smoke valve）。
+- **安全掃描 SSOT**：`scripts/scan_shell_usage.sh`（偵測 `shell=True` / `create_subprocess_shell`，目前 warn-only）、
+  `scripts/scan_bare_pytest.sh`（掃 `docs/`，block）。CI、pre-commit、本機三處只呼叫同一支腳本，規則天然一致。
+- **發佈鏈**：`push tags v*` → `publish-release.yml`（PAT guard、assert tag == `pyproject_version()`、
+  `scripts/publish_release.py` 渲染 `body.md`、`gh release create` 用 `secrets.GH_PAT`）→ `release: published`
+  → `release-smoke.yml`。版本 SSOT = `studio.release_note.pyproject_version()`。**權威細節見下方「發佈鏈 DoD 與 `GH_PAT` 設定」**。
+
+## 延伸閱讀
+
+- `ARCHITECTURE.md` — 模組分工、執行期資料流、認證流程、並行 lane、專案與改良迴圈（架構唯一權威）。
+- `CONTRIBUTING.md` — dev 指令唯一權威（安裝/測試/lint/pre-commit）、風格與提交慣例。
+- `DECISIONS.md` — 架構決策記錄（ADR）。
+- `README.md` — 產品全貌與功能說明。
+
+---
+
 # 專案協作記憶
+
+> 以下為歷次任務累積的硬規則與工程教訓，是上方導覽的權威細節來源，務必遵守。
 
 ## 架構鐵則：專案 repo vs Ti 主核心 repo（雙軌路由）
 
