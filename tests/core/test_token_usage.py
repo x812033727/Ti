@@ -460,3 +460,59 @@ def test_usage_report_aggregates_and_renders_cache(monkeypatch):
     assert usage_report._cache_hit_pct(agg["total"]) == pytest.approx(800 / 1140 * 100)
     out = usage_report.render(agg)
     assert "Prompt 快取" in out and "cache_hit=" in out
+
+
+# --- usage_report：events fallback 與 CLI entrypoint --------------------
+
+
+def test_usage_report_derives_from_events_when_meta_missing(monkeypatch):
+    """meta 無 token_usage 但有 session_id → 回讀 events 即時重算並納入彙總（_usage_for fallback）。"""
+    derived = {
+        "total": {"prompt": 10, "completion": 5, "total": 15, "cost_usd": 0.0, "calls": 1},
+        "by_provider": {},
+        "by_model": {},
+        "by_role": {},
+    }
+    monkeypatch.setattr(
+        usage_report.history, "list_sessions", lambda: [{"session_id": "z", "started_at": 0}]
+    )
+    monkeypatch.setattr(usage_report.history, "load_events", lambda sid: ["ev"])
+    monkeypatch.setattr(usage_report.history, "_derive_token_usage", lambda evs: derived)
+    agg = usage_report.aggregate()
+    assert agg["sessions"] == 1 and agg["total"]["total"] == 15
+
+
+def test_usage_report_skips_session_without_usage(monkeypatch):
+    """meta 無 token_usage 且 derive 也無 calls → 該場跳過、不計入。"""
+    empty = {"total": {"calls": 0}, "by_provider": {}, "by_model": {}, "by_role": {}}
+    monkeypatch.setattr(
+        usage_report.history, "list_sessions", lambda: [{"session_id": "z", "started_at": 0}]
+    )
+    monkeypatch.setattr(usage_report.history, "load_events", lambda sid: [])
+    monkeypatch.setattr(usage_report.history, "_derive_token_usage", lambda evs: empty)
+    assert usage_report.aggregate()["sessions"] == 0
+
+
+def test_usage_report_skips_meta_without_session_id(monkeypatch):
+    """meta 既無 token_usage 又無 session_id → 無從重算，回 None 跳過。"""
+    monkeypatch.setattr(usage_report.history, "list_sessions", lambda: [{"started_at": 0}])
+    assert usage_report.aggregate()["sessions"] == 0
+
+
+def test_usage_report_main_renders_text(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(usage_report.config, "HISTORY_ROOT", tmp_path)  # 存在 → 不早退
+    monkeypatch.setattr(usage_report.history, "list_sessions", lambda: [])
+    assert usage_report.main([]) == 0
+    assert "Ti Token 用量彙總" in capsys.readouterr().out
+
+
+def test_usage_report_main_json_and_since(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(usage_report.config, "HISTORY_ROOT", tmp_path)
+    monkeypatch.setattr(usage_report.history, "list_sessions", lambda: [])
+    assert usage_report.main(["--json", "--since", "2026-01-01"]) == 0
+    assert '"sessions"' in capsys.readouterr().out  # JSON 輸出
+
+
+def test_usage_report_main_missing_history_returns_1(monkeypatch, tmp_path):
+    monkeypatch.setattr(usage_report.config, "HISTORY_ROOT", tmp_path / "nope")  # 不存在
+    assert usage_report.main([]) == 1

@@ -74,3 +74,29 @@ async def test_disabled_reflexion_still_stores_when_called(hist, monkeypatch):
     monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
     await reflexion.reflect_and_store("s", {"id": 2, "title": "y"}, 1, "c", "fb", llm=good)
     assert len(memory.retrieve("s", 2)) == 1
+
+
+def test_excerpt_truncates_only_over_limit():
+    assert reflexion._excerpt("abc", 5) == "abc"  # 未超限不截
+    assert reflexion._excerpt("a" * 5, 5) == "a" * 5  # 剛好等於上限不截
+    assert reflexion._excerpt("a" * 6, 5) == "a" * 5 + "…（略）"  # 超限截斷加省略標記
+    assert reflexion._excerpt("  hi  ", 10) == "hi"  # 先 strip 再判長度
+    assert reflexion._excerpt(None, 5) == ""  # None 視為空字串，不 raise
+
+
+async def test_store_survives_memory_write_failure(hist, monkeypatch):
+    """記憶寫入失敗也不中斷主迴圈：仍回傳非空文字且不 raise（routes 守則）。
+
+    既有測試只覆蓋 LLM 拋錯；此處補 memory.write 拋錯的容錯分支（reflexion.py:100）。
+    """
+
+    def _boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(reflexion.memory, "write", _boom)
+
+    async def good(system: str, user: str) -> str:
+        return "根因：邊界未處理；下一輪先判空"
+
+    text = await reflexion.reflect_and_store("s", {"id": 9, "title": "x"}, 1, "c", "fb", llm=good)
+    assert text.strip() and "根因" in text  # 寫入失敗不影響回傳值
