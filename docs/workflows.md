@@ -68,10 +68,13 @@ Stage 欄位（pydantic `extra="forbid"`，未知欄位報錯）：
 - **review.max_rounds**：>0 時覆寫單任務輪數上限（預設取 `config.TASK_MAX_ROUNDS`）。
 - **gate（critic）**：含 `gate` stage（verdict＝`critic_blocks`）才啟用放行前異議關卡
   （仍受 `TI_CRITIC` 控制）。省略 → 跳過 critic。
+- **dynamic（任務內動態追加把關）**：含 `dynamic` stage 時，標準審查＋critic 通過後，PM 有界地
+  動態挑成員追加把關（`budget` 上限、`fallback` 退路）。被追加成員以 `異議: 成立/不成立` 判定；
+  任一成立 → 退回再修。無 dynamic stage → 直接放行（零行為變更）。防呆同 session 級 dynamic
+  （`_stop`/`is_stalled`/`validate_assignees` fallback）。
 
 > 不被 task_pipeline 影響的硬性護欄：客觀閘門（自測 exit code）、交付前自測、停滯守門、
 > reflexion、critic 收斂預算（`TI_CRITIC_MAX_REJECTS`）——這些是引擎不變式，照常運作。
-> task 級 `dynamic` stage（任務內 PM 動態挑 reviewer）列為後續增量。
 
 ## 範例
 

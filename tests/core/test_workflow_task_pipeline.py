@@ -236,3 +236,86 @@ async def test_work_task_uses_custom_implementer():
     assert ok is True
     assert experts["architect"].calls >= 1  # 客製實作者有發言（實作）
     assert experts["engineer"].calls == 0  # 預設 engineer 未被用作實作者
+
+
+# --- task 級 dynamic stage：PM 任務內動態追加把關 --------------------------
+
+
+def test_task_dynamic_stage_detection():
+    assert _session()._task_dynamic_stage() is None  # 預設無
+    wf = {
+        "name": "追加把關",
+        "stages": [
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                    {"type": "review", "gate": [{"role": "qa", "verdict": "qa_passed"}]},
+                    {"type": "dynamic", "budget": 1, "fallback": "engineer"},
+                ],
+            }
+        ],
+    }
+    st = _session(wf)._task_dynamic_stage()
+    assert st is not None and st["type"] == "dynamic" and st["budget"] == 1
+
+
+def _dynamic_consult_wf():
+    return {
+        "name": "追加把關",
+        "stages": [
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                    {
+                        "type": "review",
+                        "max_rounds": 2,
+                        "gate": [{"role": "qa", "verdict": "qa_passed"}],
+                    },
+                    {"type": "dynamic", "budget": 1, "fallback": "engineer"},
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_task_dynamic_consult_passes_when_no_objection():
+    experts = _experts_with("pm", "engineer", "qa")
+    experts["pm"] = StubExpert(BY_KEY["pm"], "下一步: architect\n指示: 複核安全性")
+    experts["architect"] = StubExpert(BY_KEY["architect"], "異議: 不成立")
+    s = StudioSession("t", _noop, experts=experts, cwd=None, workflow=_dynamic_consult_wf())
+    ctx = LaneContext("main", None, experts, None)
+    ok = await s._work_task(ctx, {"id": 1, "title": "做個東西", "status": "todo"}, "計畫")
+    assert ok is True
+    assert experts["pm"].calls >= 1  # PM 有決定追加把關
+    assert experts["architect"].calls >= 1  # 被追加的專家有發言
+    assert experts["architect"].calls == experts["pm"].calls  # 每次 PM 派人就諮詢一次
+
+
+@pytest.mark.asyncio
+async def test_task_dynamic_consult_block_forces_retry_and_fail():
+    # 追加把關每輪都提異議成立 → 退回再修，撐到 review.max_rounds=2 仍未過 → 任務失敗。
+    experts = _experts_with("pm", "engineer", "qa")
+    experts["pm"] = StubExpert(BY_KEY["pm"], "下一步: architect\n指示: 複核")
+    experts["architect"] = StubExpert(BY_KEY["architect"], "異議: 成立 有嚴重風險")
+    s = StudioSession("t", _noop, experts=experts, cwd=None, workflow=_dynamic_consult_wf())
+    ctx = LaneContext("main", None, experts, None)
+    ok = await s._work_task(ctx, {"id": 1, "title": "做個東西", "status": "todo"}, "計畫")
+    assert ok is False  # 追加把關阻擋、撐滿輪數仍未過
+    assert experts["architect"].calls >= 2  # 每輪都被追加諮詢
+    assert experts["engineer"].calls >= 2  # 每輪都重新實作
+
+
+@pytest.mark.asyncio
+async def test_task_dynamic_consult_end_skips():
+    # PM 一開口就 `下一步: 結束` → 不諮詢任何人、直接放行。
+    experts = _experts_with("pm", "engineer", "qa")
+    experts["pm"] = StubExpert(BY_KEY["pm"], "下一步: 結束")
+    experts["architect"] = StubExpert(BY_KEY["architect"], "異議: 成立")
+    s = StudioSession("t", _noop, experts=experts, cwd=None, workflow=_dynamic_consult_wf())
+    ctx = LaneContext("main", None, experts, None)
+    ok = await s._work_task(ctx, {"id": 1, "title": "做個東西", "status": "todo"}, "計畫")
+    assert ok is True
+    assert experts["architect"].calls == 0  # PM 選擇結束 → 沒有追加任何人

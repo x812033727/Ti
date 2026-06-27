@@ -1446,6 +1446,78 @@ class StudioSession:
         instruction = _VERDICT_INSTRUCTION.get(verdict_name, "給出明確決議。")
         return f"請審查任務 #{task['id']}：{task['title']} 的成果，{instruction}"
 
+    def _task_dynamic_stage(self) -> dict | None:
+        """task_pipeline 的 dynamic stage（PM 任務內動態追加把關）；無則 None。"""
+        for stage in self._build_task_pipeline():
+            if stage.get("type") == "dynamic":
+                return stage
+        return None
+
+    async def _task_dynamic_consult(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        review_section: str,
+        tag: int | None,
+        bc: Broadcast,
+    ) -> tuple[bool, str]:
+        """task 級 dynamic stage：標準審查通過後，PM 有界地動態追加把關。
+
+        回傳 ``(是否有阻擋異議, 退回 feedback)``。task_pipeline 無 dynamic stage → 立即
+        ``(False, "")``＝零行為變更（預設 workflow 不含此 stage）。防呆全部沿用既有範式：
+        budget 硬上限／每圈檢查 _stop+_should_wind_down／validate_assignees fallback／
+        is_stalled 收斂／_speak（號誌＋provider 穿透）。被追加專家以 critic_blocks 判定異議。
+        """
+        stage = self._task_dynamic_stage()
+        if stage is None:
+            return False, ""
+        budget = stage.get("budget") or config.DYNAMIC_STEP_BUDGET
+        fallback = stage.get("fallback", "engineer")
+        experts = ctx.experts
+        roster_desc = "\n".join(
+            f"- {k}: {ex.role.name}（{ex.role.description or ex.role.title}）"
+            for k, ex in experts.items()
+        )
+        decisions: list[str] = []
+        for _hop in range(max(budget, 0)):
+            if self._stop or self._should_wind_down():
+                break
+            decision = await self._speak(
+                ctx,
+                "pm",
+                f"任務 #{task['id']}：{task['title']} 已通過標準審查。審查摘要：\n{review_section}\n\n"
+                f"可追加把關的成員：\n{roster_desc}\n\n"
+                "若你認為還需要某位成員追加把關，輸出兩行：\n"
+                "`下一步: <role_key>`\n`指示: <要他確認什麼>`\n"
+                "若不需要追加、可放行，輸出 `下一步: 結束`。",
+                tag,
+            )
+            decisions.append(decision)
+            if flow.is_stalled(decisions, config.STALL_ROUNDS):
+                break
+            step = flow.parse_next_step(decision)
+            if step["end"]:
+                break
+            fixed, _ = flow.validate_assignees(
+                [{"assignee": step["role"]}], list(experts.keys()), fallback=fallback
+            )
+            role = fixed[0]["assignee"]
+            if not role:
+                break
+            instruction = step["instruction"] or "請追加把關這個任務的成果。"
+            opinion = await self._speak(
+                ctx,
+                role,
+                f"{instruction}\n\n若發現會阻擋交付的實質問題，最後一行輸出 `異議: 成立` 並說明；"
+                "否則輸出 `異議: 不成立`。",
+                tag,
+            )
+            blocks = critic_blocks(opinion)
+            await bc(events.critic_review(self.session_id, role, not blocks, opinion))
+            if blocks:
+                return True, f"【追加把關（{experts[role].role.name}）退回理由】\n{opinion}"
+        return False, ""
+
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
         """單一 lane 內最大同時 gather 數＝review 階段並行發言的 reviewer 數（資料驅動）。
@@ -2152,11 +2224,23 @@ class StudioSession:
                 # workflow 省略 gate stage 時整關跳過（視為放行）；預設含 gate stage→沿用今日，
                 # 實際是否發 critic 仍由 _critic_gate 內的 config.CRITIC_ENABLED 決定。
                 subject = f"任務 #{task['id']}：{task['title']}"
-                if not self._task_critic_enabled():
-                    return True
-                critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan, bc)
+                if self._task_critic_enabled():
+                    critic_ok, critic_text = await self._critic_gate(
+                        ctx, "pm", subject, pm_plan, bc
+                    )
+                else:
+                    critic_ok, critic_text = True, ""
                 if critic_ok:
-                    return True
+                    # task 級 dynamic consult：PM 動態追加把關（task_pipeline 無 dynamic stage 時
+                    # 直接放行＝零行為變更）。被追加專家提出阻擋異議 → 退回再修。
+                    blocked, dyn_feedback = await self._task_dynamic_consult(
+                        ctx, task, review_section, tag, bc
+                    )
+                    if not blocked:
+                        return True
+                    feedback = dyn_feedback
+                    await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
+                    continue
                 # 收斂預算：此處已過 qa/senior/security/客觀閘門（gate_veto 早 continue），即「客觀全綠」，
                 # critic 僅剩語意異議。達 CRITIC_MAX_REJECTS 次仍提不出可重現紅點 → 客觀證據優先，以
                 # 已知限制放行，並把殘留疑慮記成後續任務（不靜默丟），避免無限退回燒滿輪數後整場判失敗。
