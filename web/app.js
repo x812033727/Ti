@@ -1069,6 +1069,115 @@ async function refreshMetrics() {
   }
 }
 
+// --- 動態流程編輯器 ----------------------------------------------------
+const workflowPanel = $("#workflowPanel");
+const WF_DEFAULT_NAME = "預設流程"; // 內建預設流程顯示名（後端保留字，唯讀）
+let wfCache = [];
+
+async function openWorkflowPanel() {
+  workflowPanel.classList.remove("hidden");
+  await loadWorkflowPanel();
+}
+function closeWorkflowPanel() { workflowPanel.classList.add("hidden"); }
+
+function setWfHint(msg) { $("#workflowHint").textContent = msg || ""; }
+
+async function loadWorkflowPanel(selectName) {
+  const sel = $("#workflowList");
+  try {
+    const data = await (await fetch("/api/workflows")).json();
+    wfCache = data.workflows || [];
+  } catch (e) { wfCache = []; }
+  const want = selectName || sel.value || (wfCache[0] && wfCache[0].name) || "";
+  sel.innerHTML = "";
+  for (const w of wfCache) {
+    const opt = document.createElement("option");
+    opt.value = w.name;
+    opt.textContent = w.name + (w.name === WF_DEFAULT_NAME ? "（內建）" : "");
+    sel.appendChild(opt);
+  }
+  if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+  renderWorkflowSelection();
+}
+
+function renderWorkflowSelection() {
+  const name = $("#workflowList").value;
+  const wf = wfCache.find((w) => w.name === name);
+  const isDefault = wf && wf.name === WF_DEFAULT_NAME;
+  $("#workflowName").value = wf ? wf.name : "";
+  $("#workflowDesc").value = wf ? wf.description || "" : "";
+  $("#workflowStages").value = wf ? JSON.stringify(wf.stages || [], null, 2) : "[]";
+  $("#workflowName").readOnly = isDefault;
+  $("#workflowDesc").readOnly = isDefault;
+  $("#workflowStages").readOnly = isDefault;
+  $("#workflowSave").disabled = isDefault;
+  $("#workflowDelete").disabled = isDefault || !wf;
+  setWfHint(isDefault ? "內建預設流程（唯讀）。可「載入預設範本」當新流程起點。" : "");
+}
+
+function newWorkflow() {
+  $("#workflowList").value = "";
+  ["workflowName", "workflowDesc", "workflowStages"].forEach((id) => {
+    $("#" + id).readOnly = false;
+  });
+  $("#workflowName").value = "";
+  $("#workflowDesc").value = "";
+  $("#workflowStages").value = "[\n  \n]";
+  $("#workflowSave").disabled = false;
+  $("#workflowDelete").disabled = true;
+  setWfHint("新流程：填名稱與 stages 後儲存。");
+  $("#workflowName").focus();
+}
+
+function loadWorkflowTemplate() {
+  const def = wfCache.find((w) => w.name === WF_DEFAULT_NAME);
+  if (def) {
+    $("#workflowStages").value = JSON.stringify(def.stages || [], null, 2);
+    $("#workflowStages").readOnly = false;
+    setWfHint("已載入預設流程當範本——改成你要的內容、換個名稱再儲存。");
+  }
+}
+
+async function saveWorkflow() {
+  const name = $("#workflowName").value.trim();
+  const description = $("#workflowDesc").value.trim();
+  if (!name) { toast("請輸入流程名稱", "err"); return; }
+  if (name === WF_DEFAULT_NAME) { toast("「預設流程」為內建唯讀", "err"); return; }
+  let stages;
+  try { stages = JSON.parse($("#workflowStages").value || "[]"); }
+  catch (e) { toast("stages 不是合法 JSON：" + e.message, "err"); return; }
+  if (!Array.isArray(stages)) { toast("stages 必須是 JSON 陣列", "err"); return; }
+  const exists = wfCache.some((w) => w.name === name && w.name !== WF_DEFAULT_NAME);
+  const url = exists ? `/api/workflows/${encodeURIComponent(name)}` : "/api/workflows";
+  const method = exists ? "PUT" : "POST";
+  const body = exists ? { description, stages } : { name, description, stages };
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(`儲存失敗（${res.status}）：${data.error || ""}`, "err"); return; }
+    toast("流程已儲存 ✓", "ok");
+    await loadWorkflowPanel(name);
+    loadWorkflows(); // 同步啟動列「動態流程」下拉
+  } catch (e) { toast("儲存失敗：" + e.message, "err"); }
+}
+
+async function deleteWorkflow() {
+  const name = $("#workflowList").value;
+  if (!name || name === WF_DEFAULT_NAME) return;
+  if (!confirm(`確定刪除流程「${name}」？`)) return;
+  try {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) { toast(`刪除失敗（${res.status}）`, "err"); return; }
+    toast("流程已刪除 ✓", "ok");
+    await loadWorkflowPanel();
+    loadWorkflows();
+  } catch (e) { toast("刪除失敗：" + e.message, "err"); }
+}
+
 // --- 發佈到 GitHub -----------------------------------------------------
 let publishConfigured = false;
 let mergeEnabled = false;
@@ -1701,6 +1810,14 @@ $("#deckStop").onclick = (e) => { e.stopPropagation(); stop(); };
 $("#metricsBtn").onclick = openMetrics;
 $("#metricsClose").onclick = closeMetrics;
 $("#metricsRefresh").onclick = refreshMetrics;
+$("#workflowBtn").onclick = openWorkflowPanel;
+$("#workflowClose").onclick = closeWorkflowPanel;
+$("#workflowRefresh").onclick = () => loadWorkflowPanel();
+$("#workflowList").addEventListener("change", renderWorkflowSelection);
+$("#workflowNew").onclick = newWorkflow;
+$("#workflowTemplate").onclick = loadWorkflowTemplate;
+$("#workflowSave").onclick = saveWorkflow;
+$("#workflowDelete").onclick = deleteWorkflow;
 $("#projectBtn").onclick = openProjectPanel;
 $("#projectClose").onclick = closeProjectPanel;
 $("#projectRefresh").onclick = refreshProjectPanel;
