@@ -95,7 +95,7 @@ function renderRoster(roster) {
     el.dataset.status = "idle";
     el.innerHTML = `
       <div class="av">${r.avatar}</div>
-      <div class="meta"><div class="nm">${r.name}</div><div class="tt">${r.title}</div></div>
+      <div class="meta"><div class="nm">${r.name}</div><div class="tt">${r.title}${r.provider ? " · " + r.provider : ""}</div></div>
       <div class="dot"></div>`;
     expertList.appendChild(el);
   }
@@ -110,7 +110,7 @@ function addRosterMember(r) {
   el.dataset.status = "idle";
   el.innerHTML = `
       <div class="av">${r.avatar || "🆕"}</div>
-      <div class="meta"><div class="nm">${r.name || r.key}</div><div class="tt">${r.title || ""}</div></div>
+      <div class="meta"><div class="nm">${r.name || r.key}</div><div class="tt">${r.title || ""}${r.provider ? " · " + r.provider : ""}</div></div>
       <div class="dot"></div>`;
   expertList.appendChild(el);
 }

@@ -291,3 +291,14 @@ async def test_dynamic_recruit_cap(monkeypatch):
     assert recruited == {}
     # fallback：engineer（在場）被指派發言
     assert experts["engineer"].calls >= 1
+
+
+# --- 混合模式可視化 (PR-E) --------------------------------------------------
+
+
+def test_role_provider_map_covers_all_members():
+    # roster 的 provider 欄資料源：每個在場成員都有綁定的 provider（混合模式可視化）。
+    s, experts, _ = _session(["x"])
+    m = s._role_provider_map(experts)
+    assert set(m.keys()) == set(experts.keys())
+    assert all(v for v in m.values())  # 預設皆 claude，非空

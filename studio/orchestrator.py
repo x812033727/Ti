@@ -1002,6 +1002,7 @@ class StudioSession:
         )
         self._lane_ctxs.append(self._main_ctx)
 
+        role_providers = self._role_provider_map(experts)  # 各成員綁的 provider（混合模式可視化）
         await self.broadcast(
             events.StudioEvent(
                 events.EventType.SESSION_STARTED,
@@ -1012,6 +1013,7 @@ class StudioSession:
                     "base_repo": self._base_repo or None,
                     "workspace_id": self.workspace_id,
                     # 以實際建立的專家為準（offline 顯示 4 位、正式顯示全部）。
+                    # provider：混合模式下各成員實際綁的 provider，前端據此標示「誰用哪家額度」。
                     "roster": [
                         {
                             "key": ex.role.key,
@@ -1019,6 +1021,7 @@ class StudioSession:
                             "avatar": ex.role.avatar,
                             "title": ex.role.title,
                             "tags": ex.role.tags,
+                            "provider": role_providers.get(ex.role.key, ""),
                         }
                         for ex in experts.values()
                     ],
