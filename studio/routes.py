@@ -783,14 +783,16 @@ class WorkflowUpdateBody(BaseModel):
 
 @router.get("/api/workflows", dependencies=[Depends(auth.require_auth)])
 async def workflows_list() -> JSONResponse:
-    """全部動態流程（[{name, description, stages}]）＋內建預設。workflows.yaml 損壞回 500。"""
+    """全部動態流程（[{name, description, stages}]）＋內建保留流程。workflows.yaml 損壞回 500。"""
     try:
         items = workflow.list_workflows()
     except workflow.WorkflowFileError as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    # 內建預設永遠可選（不存檔，故 list_workflows 不含它）——附在最前供 UI 一律可選。
-    if not any(w["name"] == workflow.DEFAULT_WORKFLOW_NAME for w in items):
-        items = [workflow.default_workflow(), *items]
+    # 內建保留流程（預設流程／動態優先）永遠可選（不存檔）——依保留順序附在最前供 UI 一律可選。
+    builtins = [workflow.get_workflow(n) for n in workflow.RESERVED_NAMES]
+    items = [b for b in builtins if b] + [
+        w for w in items if w["name"] not in workflow.RESERVED_NAMES
+    ]
     return JSONResponse({"workflows": items})
 
 

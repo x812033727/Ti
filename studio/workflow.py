@@ -95,8 +95,11 @@ VERDICTS: dict[str, object] = {
     "pm_done": flow.pm_done,
 }
 
-# 預設 workflow 的保留名稱：get_workflow 命中不到此名時回 default_workflow()。
-DEFAULT_WORKFLOW_NAME = "預設流程"
+# 內建 workflow 的保留名稱：get_workflow 命中不到時回對應內建定義；不可被同名檔案覆蓋。
+DEFAULT_WORKFLOW_NAME = "預設流程"  # 等價現有寫死骨架
+DYNAMIC_FIRST_NAME = "動態優先"  # dynamic-first：PM 運行時溝通/分派/招募為主（互動預設）
+# 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
+RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME)
 
 WORKFLOWS_FILENAME = "workflows.yaml"
 
@@ -329,6 +332,60 @@ def default_workflow() -> dict:
     }
 
 
+def dynamic_first_workflow() -> dict:
+    """dynamic-first 內建流程（互動 session 預設）：以 PM 運行時溝通/分派/招募為主。
+
+    與預設骨架的差異：把固定的架構辯論（discuss）換成 session 級 `dynamic`（PM 動態溝通、依
+    額度分派、可招募新人），並在任務 pipeline 末加 task 級 `dynamic`（PM 動態追加把關）。
+    保留全部安全閘門（review／critic／客觀閘門／demo 驗證／wrap_up 檢討＝改善計畫）。
+    不存檔、保留名、不可被覆寫；autopilot／improver 不走此流程（維持安全骨架）。
+    """
+    return {
+        "name": DYNAMIC_FIRST_NAME,
+        "description": (
+            "動態為主：PM 運行時溝通/分派/招募（額度感知）＋標準審查＋驗證＋改善計畫（互動 session 預設）"
+        ),
+        "stages": [
+            {"type": "clarify"},
+            {"type": "research", "optional": True, "when": "has:researcher"},
+            {"type": "decompose"},
+            {"type": "dynamic", "name": "動態溝通與分派", "budget": 5, "fallback": "engineer"},
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                    {
+                        "type": "review",
+                        "mode": "parallel",
+                        "gate": [
+                            {"role": "qa", "verdict": "qa_passed"},
+                            {"role": "senior", "verdict": "senior_approved"},
+                            {"role": "security", "verdict": "security_approved", "optional": True},
+                        ],
+                    },
+                    {
+                        "type": "gate",
+                        "roles": ["pm"],
+                        "gate": [{"role": "pm", "verdict": "critic_blocks"}],
+                    },
+                    {"type": "dynamic", "budget": 2, "fallback": "engineer"},
+                ],
+            },
+            {"type": "integrate", "optional": True, "when": "has:devops"},
+            {"type": "demo"},
+            {"type": "wrap_up"},
+            {"type": "publish"},
+        ],
+    }
+
+
+# 保留名 → 內建定義工廠（get_workflow／list_workflows 用）。
+_BUILTIN_WORKFLOWS = {
+    DEFAULT_WORKFLOW_NAME: default_workflow,
+    DYNAMIC_FIRST_NAME: dynamic_first_workflow,
+}
+
+
 def coerce(workflow: dict | None) -> dict:
     """把 ``StudioSession(workflow=...)`` 收到的值正規化成驗證過的 workflow dict。
 
@@ -404,21 +461,21 @@ def _save_workflows(workflows: list[dict]) -> None:
 
 
 def get_workflow(name: str) -> dict | None:
-    """依名稱查 workflow；不存在回 None。預設名（無同名檔案）回內建 default_workflow()。"""
+    """依名稱查 workflow；不存在回 None。保留名（無同名檔案）回對應內建定義。"""
     name = (name or "").strip()
     for w in list_workflows():
         if w["name"] == name:
             return w
-    if name == DEFAULT_WORKFLOW_NAME:
-        return default_workflow()
+    if name in _BUILTIN_WORKFLOWS:
+        return _BUILTIN_WORKFLOWS[name]()
     return None
 
 
 def create_workflow(name: str, description: str, stages: list) -> dict | None:
-    """驗證後新增 workflow 並落檔；驗證失敗 raise WorkflowError，同名已存在回 None（→409）。"""
+    """驗證後新增 workflow 並落檔；驗證失敗 raise WorkflowError，同名/保留名已存在回 None（→409）。"""
     wf = validate_workflow(name, description, stages)
     workflows = list_workflows()
-    if any(w["name"] == wf["name"] for w in workflows) or wf["name"] == DEFAULT_WORKFLOW_NAME:
+    if any(w["name"] == wf["name"] for w in workflows) or wf["name"] in RESERVED_NAMES:
         return None
     workflows.append(wf)
     _save_workflows(workflows)
