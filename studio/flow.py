@@ -363,19 +363,25 @@ _NEXT_STEP_END = {"結束", "結束。", "完成", "停止", "end", "done", "sto
 
 
 def parse_next_step(text: str) -> dict:
-    """從 PM 的動態決策輸出解析下一步，回傳 ``{role, instruction, end}``。
+    """從 PM 的動態決策輸出解析下一步，回傳 ``{role, instruction, end, recruit, provider}``。
 
     格式（沿用本檔行前綴 parser 範式，全形冒號容錯）：
     - ``下一步: <role_key>`` —— 下一個發言角色（取最後一個 `下一步:` 行為準）。
     - ``下一步: 結束``（或 完成／停止／end／done／stop／finish，大小寫不敏感）→ end=True、role 清空。
     - ``指示: <要該角色做什麼>`` —— 選填，附給被選角色的指示（取最後一行）。
+    - ``招募: <key> | <名稱> | <一句專長>`` —— 選填，PM 現場液生一個新 persona（取最後一行）；
+      呼叫端可據此建臨時角色加入（key 不合法/缺專長則忽略）。
+    - ``provider: <claude|codex|minimax|antigravity>`` —— 選填，招募時指定綁哪個 provider（取最後一行）。
 
-    role 為原始字串、**未驗證**：合法性與 fallback 交由呼叫端（validate_assignees 風格）兜底。
-    找不到任何 `下一步:` 行 → role 空、end False（呼叫端據此走 fallback 或結束）。
+    role/recruit/provider 皆為原始字串、**未驗證**：合法性與 fallback 交由呼叫端
+    （validate_assignees／KEY_RE／provider 白名單）兜底。找不到任何 `下一步:` 行 → role 空、
+    end False（呼叫端據此走 fallback 或結束）。
 
     新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
     """
     role, instruction, end = "", "", False
+    recruit: dict | None = None
+    provider = ""
     for line in (text or "").splitlines():
         m = re.match(r"^\s*下一步\s*[:：]\s*(.+?)\s*$", line)
         if m:
@@ -389,7 +395,24 @@ def parse_next_step(text: str) -> dict:
         m = re.match(r"^\s*指示\s*[:：]\s*(.+?)\s*$", line)
         if m:
             instruction = m.group(1).strip()
-    return {"role": role, "instruction": instruction, "end": end}
+            continue
+        m = re.match(r"^\s*provider\s*[:：]\s*(.+?)\s*$", line, re.I)
+        if m:
+            provider = m.group(1).strip().split()[0].lower() if m.group(1).strip() else ""
+            continue
+        m = re.match(r"^\s*招募\s*[:：]\s*(.+)$", line)
+        if m:
+            parts = [p.strip() for p in m.group(1).replace("｜", "|").split("|", 2)]
+            parts += [""] * (3 - len(parts))
+            if parts[0]:
+                recruit = {"key": parts[0], "name": parts[1], "expertise": parts[2]}
+    return {
+        "role": role,
+        "instruction": instruction,
+        "end": end,
+        "recruit": recruit,
+        "provider": provider,
+    }
 
 
 def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:

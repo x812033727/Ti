@@ -126,9 +126,28 @@ stages:
 `flow.validate_assignees` fallback、PM 連續高相似決策由 `flow.is_stalled` 收斂、每次發言走
 `_speak`（號誌節流＋provider-unavailable 穿透，不誤判「未達完成」）。
 
+### 額度感知分派（混合模式）
+
+dynamic stage 開頭查一次各 provider 即時額度（`studio/provider_quota.py`，60s 快取＋
+`asyncio.to_thread`），把摘要（每 provider 用量%/重置倒數/就緒，標注哪些角色用它）塞進 PM 的
+決策 prompt，讓 PM 依「目前額度分配」分派——混合模式每家 provider 額度不同，避開受限者可減少限流空轉。
+
+### PM 動態招募新人
+
+dynamic step 中，PM 的 `下一步: <role_key>` 若指到不在場的角色：
+
+- **庫招募**：role 存在於 persona 庫（`roles.BY_KEY`，含被 `OPTIONAL_ROLES` 過濾的內建可選角色、
+  或 `roles/*.md` 自訂 persona）→ 即時建 expert 加入。
+- **液生 persona**：PM 加一行 `招募: <key> | <名稱> | <一句專長>` 現場生出全新角色加入。
+- **provider 綁定**：可選 `provider: <claude|codex|minimax|antigravity>` 明指；若該 provider
+  額度受限，系統自動重綁到最寬鬆就緒者（`least_constrained_ready` 安全網）。
+- 招募加入即廣播 `EXPERT_JOINED`（前端動態插入成員欄）；單場上限 `TI_RECRUIT_MAX`（防 roster 爆量）。
+- 招募者作為動態 consultant（序列發言），不進並行 review gather，故不影響號誌下限。
+
 ## 相關設定
 
 | env | 預設 | 說明 |
 |---|---|---|
 | `TI_ROLES_DIR` | `<repo>/roles` | `workflows.yaml` 落點（與角色/小組同目錄） |
 | `TI_DYNAMIC_STEP_BUDGET` | `3` | dynamic stage 未指定 `budget` 時的 hop 上限（空字串容錯） |
+| `TI_RECRUIT_MAX` | `3` | 單場 PM 動態招募新成員的上限（庫招募＋液生共用，空字串容錯） |

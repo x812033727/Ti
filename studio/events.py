@@ -13,6 +13,7 @@ class EventType(str, Enum):
     PHASE_CHANGE = "phase_change"  # 進入新階段（拆解/實作/驗證/審查/檢討…）
     EXPERT_MESSAGE = "expert_message"  # 某位專家發言（可為串流片段）
     EXPERT_STATUS = "expert_status"  # 專家狀態燈（idle/thinking/working）
+    EXPERT_JOINED = "expert_joined"  # PM 動態招募新成員加入 roster（前端動態插入成員欄）
     TOOL_USE = "tool_use"  # 專家使用工具（寫檔/執行指令…）
     BOARD_UPDATE = "board_update"  # 看板整體更新
     TASK_STATUS = "task_status"  # 單一任務狀態變更
@@ -80,6 +81,36 @@ def expert_message(
 def expert_status(session_id: str, speaker_key: str, status: str) -> StudioEvent:
     return StudioEvent(
         EventType.EXPERT_STATUS, session_id, {"speaker": speaker_key, "status": status}
+    )
+
+
+def expert_joined(
+    session_id: str,
+    role_key: str,
+    name: str,
+    avatar: str,
+    title: str,
+    tags: list[str],
+    provider: str,
+    reason: str = "",
+) -> StudioEvent:
+    """PM 動態招募新成員：前端據此把新角色插入成員欄（roster）並渲染其狀態燈。
+
+    payload 與 SESSION_STARTED 的 roster 條目同形（key/name/avatar/title/tags），另含
+    ``provider``（綁到哪個 provider，混合模式可觀測）與 ``reason``（招募緣由，如「庫招募」/「液生」）。
+    """
+    return StudioEvent(
+        EventType.EXPERT_JOINED,
+        session_id,
+        {
+            "key": role_key,
+            "name": name,
+            "avatar": avatar,
+            "title": title,
+            "tags": tags,
+            "provider": provider,
+            "reason": reason,
+        },
     )
 
 

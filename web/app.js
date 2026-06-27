@@ -101,6 +101,20 @@ function renderRoster(roster) {
   }
 }
 
+// 動態招募：把單一新成員插入成員欄（已存在則略過，冪等）。
+function addRosterMember(r) {
+  if (!r.key || expertList.querySelector(`.expert[data-key="${r.key}"]`)) return;
+  const el = document.createElement("div");
+  el.className = "expert";
+  el.dataset.key = r.key;
+  el.dataset.status = "idle";
+  el.innerHTML = `
+      <div class="av">${r.avatar || "🆕"}</div>
+      <div class="meta"><div class="nm">${r.name || r.key}</div><div class="tt">${r.title || ""}</div></div>
+      <div class="dot"></div>`;
+  expertList.appendChild(el);
+}
+
 function setExpertStatus(key, status) {
   const el = expertList.querySelector(`.expert[data-key="${key}"]`);
   if (!el) return;
@@ -285,6 +299,12 @@ function handleEvent(ev) {
       break;
     case "expert_status":
       setExpertStatus(p.speaker, p.status);
+      break;
+    case "expert_joined":
+      addRosterMember(p);
+      addSystem(
+        `👤 PM 招募「${p.name || p.key}」加入（${p.reason || "招募"}${p.provider ? "・" + p.provider : ""}）`,
+      );
       break;
     case "expert_message":
       addMessage(p);
