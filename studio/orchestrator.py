@@ -29,6 +29,7 @@ from . import (
     publisher,
     reflexion,
     runner,
+    workflow as workflow_mod,
     workspace,
 )
 from .discussion import DiscussionEngine, build_summary
@@ -135,6 +136,7 @@ class StudioSession:
         group: dict | None = None,
         time_budget_s: float | None = None,
         auto_publish: bool = True,
+        workflow: dict | None = None,
     ):
         self.session_id = session_id
         # 單一事件收斂點：所有事件（含專家送出的 token_usage）都經此包裝，累計 token/成本供每場
@@ -173,6 +175,10 @@ class StudioSession:
         # 選用的討論小組 {name, role_keys[], mode}（role_store 已驗證）；None＝用預設討論班底。
         # 有值時架構討論階段改以小組成員＋小組 mode 進行（見 _group_participants／_discuss_agenda）。
         self._group = group or None
+        # 動態流程定義：None＝載入內建 default_workflow()（等價現有寫死骨架）。直譯器
+        # （_run_workflow）按 stages 順序派發 _stage_* handler；客製定義改動順序／參與者／
+        # 插 dynamic step。coerce 對壞定義退回預設＋log，執行期不因壞 workflow 崩潰。
+        self._workflow = workflow_mod.coerce(workflow)
         self._pending_human = ""  # 並行模式於波次邊界 drain 的插話，套用到該波各 lane
         self._parallel_metrics: dict = {}  # 並行可觀測性：波次/峰值支線/合併衝突/加速比
         # 全域 LLM 並發節流（lazy 建立，綁當前 event loop）；多 lane × 多 reviewer 時生效。
@@ -206,6 +212,16 @@ class StudioSession:
         self._main_ctx: LaneContext | None = None
         # 所有建立過的 lane（含 main），供 run() 結束時統一回收專家、避免子程序洩漏。
         self._lane_ctxs: list[LaneContext] = []
+        # 動態流程直譯器的「黑板」：stage handler 間共享的中間產物（取代重構前 _run 的 local
+        # 變數）。預設 workflow 走的 handler 與重構前同一段碼、同一順序，故與舊行為等價。
+        self._clarify_note = ""
+        self._research_notes = ""
+        self._pm_plan = ""
+        self._design_note = ""
+        self._all_ok = False
+        self._demo = None
+        self._done = False
+        self._shippable = False
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -937,7 +953,11 @@ class StudioSession:
                     shutil.rmtree(lanes_root, ignore_errors=True)
         return result
 
-    async def _run(self, requirement: str) -> None:
+    async def _run(self, requirement: str) -> dict:
+        """開工：建主 lane、廣播 SESSION_STARTED、git init，再交由 workflow 直譯器派發各
+        stage。預設 workflow（default_workflow）走的 handler 與重構前同一段碼、同一順序，
+        故與舊行為等價（既有測試套件為等價 oracle）。回傳結果摘要供 autopilot 使用。
+        """
         self._requirement = requirement
         experts = self._get_experts()
         # 主（循序）lane：cwd/experts 即 session 本身。逐任務迭代與其 helper 全走它，
@@ -946,12 +966,6 @@ class StudioSession:
             "main", self.cwd, experts, self._critics, last_commit=self._last_commit
         )
         self._lane_ctxs.append(self._main_ctx)
-        # 架構/辯論/驗收/發佈等「整體階段」直接用到的角色（任務內角色由 lane.experts 提供）。
-        pm, engineer, senior = experts["pm"], experts["engineer"], experts["senior"]
-        # 可選角色：不存在（offline 或被 TI_OPTIONAL_ROLES 關閉）就跳過對應階段。
-        researcher = experts.get("researcher")
-        architect = experts.get("architect")
-        devops = experts.get("devops")
 
         await self.broadcast(
             events.StudioEvent(
@@ -979,33 +993,105 @@ class StudioSession:
         if self.cwd:
             await runner.git_init(self.cwd)
 
-        # -1) 需求澄清（互動 session 限定）：模糊需求先反問，逾時按假設續行，絕不卡流程。
-        clarify_note = await self._clarify_requirement(pm, requirement)
-
-        # 0) 調研（研究員上網查資料，供拆解與設計參考）。過往場次的調研先注入：
-        #    沿用既有結論、只查缺口——既省 token 也讓知識跨場次累積（專案模式）。
-        research_notes = ""
-        if researcher:
-            await self.broadcast(events.phase_change(self.session_id, "調研", "研究員正在查資料"))
-            prior_research = self._knowledge_tail("RESEARCH.md")
-            prior_note = (
-                f"【既有調研（docs/RESEARCH.md，過往場次累積）】\n{prior_research}\n\n"
-                "以上是過往調研結論：請先沿用、只查缺口，不要重查已有答案的問題。\n\n"
-                if prior_research
-                else ""
+        # 動態流程定義快照：開場廣播本場採用的 workflow 名稱與 stage 序列，供前端呈現流程
+        # 地圖、入 history 供重播。每筆 stage 帶 type 與顯示名（缺省用 type）。
+        await self.broadcast(
+            events.workflow_plan(
+                self.session_id,
+                self._workflow.get("name", ""),
+                [
+                    {"type": s["type"], "name": s.get("name") or s["type"]}
+                    for s in self._workflow["stages"]
+                ],
             )
-            research_notes = await researcher.speak(
-                clarify_note
-                + prior_note
-                + f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
-                "查可用套件/函式庫、官方 API 與文件、最佳實踐與常見坑，精簡彙整並附來源。",
-                self.broadcast,
-            )
-            # 調研結論沉澱成交付物，下場開場讀回（檔案不存在時 read 回空字串、零行為差）。
-            self._persist_knowledge("RESEARCH.md", research_notes)
-            await self._commit(self._main_ctx, "知識沉澱：調研結論寫入 docs/RESEARCH.md")
+        )
 
-        # 1) 拆解
+        await self._run_workflow()
+
+        return {
+            "completed": self._done,
+            "shippable": self._shippable,
+            "followups": self._followups,
+            "followup_items": self._followup_items,
+            "core_changes": self._core_changes,
+            "commit": self._last_commit,
+            "vision": self._vision,
+        }
+
+    # --- 動態流程直譯器 ------------------------------------------------
+    async def _run_workflow(self) -> None:
+        """按 self._workflow 的 stages 順序派發 stage handler。
+
+        刻意「不」在 stage 之間插入頂層 self._stop 檢查——重構前 _run 也是一路走到底
+        （各 stage 內部各自尊重 _stop／_should_wind_down，如 _run_waves／_wrap_up），
+        Demo／驗收／發佈在被中止後仍照常收尾。維持此控制流即與舊行為等價。
+        """
+        for stage in self._workflow["stages"]:
+            await self._dispatch_stage(stage)
+
+    def _when_ok(self, when: str) -> bool:
+        """評估 stage 的 when 條件 token。空＝恆真。
+
+        ``has:<role_key>`` → 該角色本場在場（取代重構前 `if researcher:`／`if devops:`）；
+        ``flag:<CONFIG_NAME>`` → config 的同名旗標為真。未知前綴一律放行（不擋）。
+        """
+        if not when:
+            return True
+        kind, _, arg = when.partition(":")
+        if kind == "has":
+            return arg in self._get_experts()
+        if kind == "flag":
+            return bool(getattr(config, arg, False))
+        return True
+
+    async def _dispatch_stage(self, stage: dict) -> None:
+        """派發單一 stage：先評估 when（不滿足即跳過），再呼叫對應 _stage_<type> handler。"""
+        when = stage.get("when", "")
+        if when and not self._when_ok(when):
+            return
+        handler = getattr(self, f"_stage_{stage['type']}", None)
+        if handler is None:
+            log.warning("未知 stage type %r，略過", stage.get("type"))
+            return
+        await handler(stage)
+
+    # --- stage handlers（重構自 _run，搬碼不改邏輯；中間產物寫上 self 黑板）-----
+    async def _stage_clarify(self, stage: dict) -> None:
+        # 需求澄清（互動 session 限定）：模糊需求先反問，逾時按假設續行，絕不卡流程。
+        pm = self._get_experts()["pm"]
+        self._clarify_note = await self._clarify_requirement(pm, self._requirement)
+
+    async def _stage_research(self, stage: dict) -> None:
+        # 調研（研究員上網查資料，供拆解與設計參考）。過往場次的調研先注入：沿用既有結論、
+        # 只查缺口——既省 token 也讓知識跨場次累積（專案模式）。研究員缺席則整段跳過。
+        researcher = self._get_experts().get("researcher")
+        if not researcher:
+            return
+        requirement = self._requirement
+        await self.broadcast(events.phase_change(self.session_id, "調研", "研究員正在查資料"))
+        prior_research = self._knowledge_tail("RESEARCH.md")
+        prior_note = (
+            f"【既有調研（docs/RESEARCH.md，過往場次累積）】\n{prior_research}\n\n"
+            "以上是過往調研結論：請先沿用、只查缺口，不要重查已有答案的問題。\n\n"
+            if prior_research
+            else ""
+        )
+        self._research_notes = await researcher.speak(
+            self._clarify_note
+            + prior_note
+            + f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
+            "查可用套件/函式庫、官方 API 與文件、最佳實踐與常見坑，精簡彙整並附來源。",
+            self.broadcast,
+        )
+        # 調研結論沉澱成交付物，下場開場讀回（檔案不存在時 read 回空字串、零行為差）。
+        self._persist_knowledge("RESEARCH.md", self._research_notes)
+        await self._commit(self._main_ctx, "知識沉澱：調研結論寫入 docs/RESEARCH.md")
+
+    async def _stage_decompose(self, stage: dict) -> None:
+        # 拆解：PM 產出結構化任務＋議程，解析任務/依賴邊/議程分派，廣播快照並 commit。
+        experts = self._get_experts()
+        pm = experts["pm"]
+        requirement = self._requirement
         await self.broadcast(events.phase_change(self.session_id, "需求拆解", "PM 正在拆解需求"))
         if self._repo_url:
             repo_note = (
@@ -1020,7 +1106,9 @@ class StudioSession:
             )
         else:
             repo_note = ""
-        research_note = f"研究員的調研結論供參考：\n{research_notes}\n\n" if research_notes else ""
+        research_note = (
+            f"研究員的調研結論供參考：\n{self._research_notes}\n\n" if self._research_notes else ""
+        )
         if not research_note:
             # 研究員缺席（離線或被關閉）時，過往場次的調研沉澱仍可供 PM 參考。
             prior_research = self._knowledge_tail("RESEARCH.md")
@@ -1033,13 +1121,14 @@ class StudioSession:
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
             + adr.context(self.cwd)  # 既有架構決策（停用/無 cwd/空白時為空字串）
             + repo_note
-            + clarify_note
+            + self._clarify_note
             + research_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請拆解成結構化任務清單與驗收標準，並宣告執行指令。\n"
             + AGENDA_PROMPT_RULES.format(keys=", ".join(experts.keys())),
             self.broadcast,
         )
+        self._pm_plan = pm_plan
         self._run_command = runner.parse_run_command(pm_plan)
         self._demo_url = runner.parse_demo_url(pm_plan)
         if config.PARALLEL_TASKS_ENABLED:
@@ -1077,36 +1166,41 @@ class StudioSession:
         await self._board()
         await self._commit(self._main_ctx, "PM 規劃：建立任務清單與驗收標準")
 
-        # 2) 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論。
-        #    既有決策的注入與定案的沉澱由 ADR 模組負責（_architecture_decision／_debate 內
-        #    的 adr.context ＋ adr.record；TI_ADR 開關控制）。
-        design_note = ""
+    async def _stage_discuss(self, stage: dict) -> None:
+        # 架構：有架構師則由其主導設計決策，否則維持工程師⇄高級工程師辯論。既有決策的注入
+        # 與定案沉澱由 ADR 模組負責（_architecture_decision／_debate 內的 adr.context＋record）。
+        # 客製 workflow 若明指 roles，覆蓋既有選角（沿用 stage['roles']）；缺省＝既有路徑。
+        experts = self._get_experts()
+        engineer, senior = experts["engineer"], experts["senior"]
+        architect = experts.get("architect")
+        requirement = self._requirement
+        pm_plan = self._pm_plan
         topic = f"我們要實作這個需求：{requirement}\n任務清單：\n{pm_plan}"
         if self._group:
             # 使用者選定討論小組：以小組成員＋小組 mode 逐子題討論（優先於架構師/預設路徑）。
-            design_note = await self._discuss_agenda(experts, engineer, senior, requirement)
+            self._design_note = await self._discuss_agenda(experts, engineer, senior, requirement)
         elif architect:
-            design_note = await self._architecture_decision(
-                architect, engineer, senior, topic, research_notes
+            self._design_note = await self._architecture_decision(
+                architect, engineer, senior, topic, self._research_notes
             )
         elif config.DISCUSS_MODE in ("round_robin", "parallel"):
             # 引擎模式：逐子題以 topic 餵 DiscussionEngine（引擎介面不動）；各子題結論
             # 串接成 design_note，ADR 蒸餾/commit 收斂為一次（_discuss_agenda 內）。
-            design_note = await self._discuss_agenda(experts, engineer, senior, requirement)
+            self._design_note = await self._discuss_agenda(experts, engineer, senior, requirement)
         else:
             await self._debate(engineer, senior, topic=topic, rounds=config.DEBATE_ROUNDS)
 
-        # 供每個任務實作時參考的脈絡（澄清 + 調研 + 設計決策）
+    async def _stage_build(self, stage: dict) -> None:
+        # 逐任務迭代：依設定走「波次並行」或循序，兩者共用同一條波次主迴圈。
+        # 供每個任務實作時參考的脈絡（澄清 + 調研 + 設計決策）。
         context = ""
-        if clarify_note:
-            context += f"\n{clarify_note}"
-        if research_notes:
-            context += f"\n【研究員調研】\n{research_notes}\n"
-        if design_note:
-            context += f"\n【架構決策】\n{design_note}\n"
-
-        # 3) 逐任務迭代：依設定走「波次並行」或循序，兩者共用同一條波次主迴圈。
-        all_ok = await self._run_waves(pm_plan + context)
+        if self._clarify_note:
+            context += f"\n{self._clarify_note}"
+        if self._research_notes:
+            context += f"\n【研究員調研】\n{self._research_notes}\n"
+        if self._design_note:
+            context += f"\n【架構決策】\n{self._design_note}\n"
+        self._all_ok = await self._run_waves(self._pm_plan + context)
         if self._deadline_hit:
             # 撞硬 timeout／用量上限前主動收斂：已完成的續走 Demo/出貨，未動的下面記成 known-limit。
             phase, detail = (
@@ -1122,23 +1216,30 @@ class StudioSession:
             )
             await self.broadcast(events.phase_change(self.session_id, phase, detail))
 
-        # 3.5) 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）
-        if devops:
-            await self.broadcast(
-                events.phase_change(self.session_id, "整合驗證", "維運工程師驗證整合與環境")
-            )
-            await devops.speak(
-                "請確保整體成果能在乾淨環境跑起來：安裝相依、設定必要環境、實際啟動或跑整合測試，"
-                f"並回報結果。整體計畫供參考：\n{pm_plan}",
-                self.broadcast,
-            )
+    async def _stage_integrate(self, stage: dict) -> None:
+        # 整合驗證（維運：裝相依、設環境、跑整合/啟動驗證）。維運缺席則整段跳過。
+        devops = self._get_experts().get("devops")
+        if not devops:
+            return
+        await self.broadcast(
+            events.phase_change(self.session_id, "整合驗證", "維運工程師驗證整合與環境")
+        )
+        await devops.speak(
+            "請確保整體成果能在乾淨環境跑起來：安裝相依、設定必要環境、實際啟動或跑整合測試，"
+            f"並回報結果。整體計畫供參考：\n{self._pm_plan}",
+            self.broadcast,
+        )
 
-        # 4) 最終 Demo（實際執行整體產出）
-        demo = await self._final_demo()
+    async def _stage_demo(self, stage: dict) -> None:
+        # 最終 Demo（實際執行整體產出）。
+        self._demo = await self._final_demo()
 
-        # 5) PM 驗收 + 檢討。客觀閘門開啟時，Demo「實際執行」未通過則整體不予驗收——PM 仍照常
-        #    發言檢討，但 `決議: 完成` 翻轉不了真實失敗的 Demo（只在 Demo 真的有跑且失敗時否決，
-        #    無 demo 指令不在此誤殺）。
+    async def _stage_wrap_up(self, stage: dict) -> None:
+        # PM 驗收 + 檢討。客觀閘門開啟時，Demo「實際執行」未通過則整體不予驗收——PM 仍照常
+        # 發言檢討，但 `決議: 完成` 翻轉不了真實失敗的 Demo（只在 Demo 真的有跑且失敗時否決，
+        # 無 demo 指令不在此誤殺）。
+        pm = self._get_experts()["pm"]
+        demo = self._demo
         demo_veto = config.objective_gate_enabled() and demo is not None and not demo.ok
         if demo_veto:
             await self.broadcast(
@@ -1146,32 +1247,127 @@ class StudioSession:
                     self.session_id, "客觀閘門", "最終 Demo 實際執行未通過，整體不予驗收"
                 )
             )
-        done = await self._wrap_up(pm, all_ok and not demo_veto)
+        self._done = await self._wrap_up(pm, self._all_ok and not demo_veto)
 
-        # 5.5) 可帶「已知限制」出貨：把「全有全無」放寬為「核心客觀證據通過即發佈」。
-        #   未過的次要任務記成已知限制（寫進交付物＋回填 backlog），不再讓單一 flaky 小任務
-        #   永久擋住整個可用產品的交付。安全護欄在 shippable_verdict：沒跑過 Demo（無客觀證據）
-        #   又非全過時不出貨。完整完成（done）與可出貨（shippable）分流，completed 仍據實回報。
+        # 可帶「已知限制」出貨：把「全有全無」放寬為「核心客觀證據通過即發佈」。未過的次要任務
+        # 記成已知限制（寫進交付物＋回填 backlog），不再讓單一 flaky 小任務永久擋住整個可用
+        # 產品的交付。安全護欄在 shippable_verdict：沒跑過 Demo（無客觀證據）又非全過時不出貨。
+        # 完整完成（done）與可出貨（shippable）分流，completed 仍據實回報。
         core_verified = demo is not None and demo.ok
-        shippable = shippable_verdict(
-            all_ok=all_ok, demo_veto=demo_veto, core_verified=core_verified, stopped=self._stop
+        self._shippable = shippable_verdict(
+            all_ok=self._all_ok,
+            demo_veto=demo_veto,
+            core_verified=core_verified,
+            stopped=self._stop,
         )
         unmet = [t for t in self._tasks if t.get("status") != "done"]
-        if shippable and not done and unmet:
+        if self._shippable and not self._done and unmet:
             await self._record_known_limitations(unmet)
 
-        # 6) 視設定自動發佈成果到 GitHub（此時專家團隊仍在線，可在 CI 失敗時修正）
-        await self._maybe_publish(shippable, engineer)
+    async def _stage_publish(self, stage: dict) -> None:
+        # 視設定自動發佈成果到 GitHub（此時專家團隊仍在線，可在 CI 失敗時修正）。
+        engineer = self._get_experts()["engineer"]
+        await self._maybe_publish(self._shippable, engineer)
 
-        return {
-            "completed": done,
-            "shippable": shippable,
-            "followups": self._followups,
-            "followup_items": self._followup_items,
-            "core_changes": self._core_changes,
-            "commit": self._last_commit,
-            "vision": self._vision,
-        }
+    def _dynamic_blackboard(self) -> str:
+        """組給 PM 動態決策參考的「黑板」摘要：已完成 stage 的關鍵中間產物。"""
+        parts: list[str] = []
+        if self._clarify_note:
+            parts.append(self._clarify_note.strip())
+        if self._design_note:
+            parts.append(f"【架構決策】\n{self._design_note.strip()}")
+        if self._pm_plan:
+            parts.append(f"【任務計畫】\n{self._pm_plan.strip()}")
+        return "\n\n".join(parts)
+
+    async def _stage_dynamic(self, stage: dict) -> None:
+        """動態 step：PM 逐 hop 在運行時決定下一個發言角色（或結束），有界迴圈防無限。
+
+        防呆全部沿用既有範式：budget 硬上限 hop 數（對齊 TASK_MAX_ROUNDS／CRITIC_MAX_REJECTS
+        收斂預算）；每圈先檢查 _stop／_should_wind_down 立即優雅結束；解析不出合法角色→以
+        flow.validate_assignees 風格 fallback；PM 連續輸出高相似決策→flow.is_stalled 收斂；
+        每次發言走 self._speak（號誌節流＋provider-unavailable 穿透，不誤判「未達完成」）。
+        預設 workflow 不含此 stage，故不影響等價性。
+        """
+        experts = self._get_experts()
+        ctx = self._main_ctx
+        budget = stage.get("budget") or config.DYNAMIC_STEP_BUDGET
+        fallback = stage.get("fallback", "engineer")
+        name = stage.get("name") or "動態決策"
+        await self.broadcast(
+            events.phase_change(self.session_id, name, f"PM 運行時決定下一步（最多 {budget} 步）")
+        )
+        roster_desc = "\n".join(
+            f"- {key}: {ex.role.name}（{ex.role.description or ex.role.title}）"
+            for key, ex in experts.items()
+        )
+        decisions: list[str] = []
+        for _hop in range(max(budget, 0)):
+            if self._stop or self._should_wind_down():
+                break
+            decision = await self._speak(
+                ctx,
+                "pm",
+                f"目前進度摘要：\n{self._dynamic_blackboard()}\n\n"
+                f"可調度的團隊成員（role_key）：\n{roster_desc}\n\n"
+                f"需求：{self._requirement}\n\n"
+                "請判斷為了把這個需求推進到可交付，下一步該找誰做什麼，固定輸出兩行：\n"
+                "`下一步: <role_key>`（限上列其一）\n"
+                "`指示: <要請該成員具體做什麼>`\n"
+                "若已無需再推進，輸出一行 `下一步: 結束`。",
+                None,
+            )
+            decisions.append(decision)
+            # 停滯：PM 連續輸出高相似決策（無實質進展）即收斂（重用既有偵測）。
+            if flow.is_stalled(decisions, config.STALL_ROUNDS):
+                break
+            step = flow.parse_next_step(decision)
+            if step["end"]:
+                break
+            # 角色硬驗證＋fallback：非法/缺漏→fallback（在場則用之，否則第一個在場者）。
+            fixed, _ = flow.validate_assignees(
+                [{"assignee": step["role"]}], list(experts.keys()), fallback=fallback
+            )
+            role = fixed[0]["assignee"]
+            if not role:
+                break  # 無任何在場角色（理論上不會發生，pm 必在場）——保底結束。
+            instruction = step["instruction"] or "請依目前進度推進這個需求。"
+            await self._speak(ctx, role, instruction, None)
+
+    # --- task_pipeline 資料驅動（_work_task 讀 workflow 的 build.task_pipeline）-----
+    def _build_task_pipeline(self) -> list[dict]:
+        """取目前 workflow 的 build stage 的 task_pipeline（無 build／無 pipeline 時回 []）。"""
+        for stage in self._workflow.get("stages", []):
+            if stage.get("type") == "build":
+                return stage.get("task_pipeline", [])
+        return []
+
+    def _task_review_role_keys(self) -> set[str]:
+        """task_pipeline 的 review stage 指定的 reviewer 角色集合（其 gate 列出的 role）。
+
+        無 task_pipeline／無 review stage 時回預設 ``{qa, senior, security}``（重現今日行為）。
+        本增量用它決定「security 是否參與審查」；qa／senior 為核心必審（沿用既有裁決聚合）。
+        """
+        for stage in self._build_task_pipeline():
+            if stage.get("type") == "review":
+                keys = {g.get("role") for g in stage.get("gate", []) if g.get("role")}
+                return keys or {"qa", "senior", "security"}
+        return {"qa", "senior", "security"}
+
+    def _task_critic_enabled(self) -> bool:
+        """task_pipeline 是否含 critic 閘門（gate stage 且 verdict 為 critic_blocks）。
+
+        無 task_pipeline 資訊時回 True（重現今日：critic 仍由 config.CRITIC_ENABLED 控制）；
+        客製 workflow 省略 gate stage → 本場跳過 critic 關卡。
+        """
+        pipeline = self._build_task_pipeline()
+        if not pipeline:
+            return True
+        return any(
+            stage.get("type") == "gate"
+            and any(g.get("verdict") == "critic_blocks" for g in stage.get("gate", []))
+            for stage in pipeline
+        )
 
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
@@ -1667,7 +1863,8 @@ class StudioSession:
         max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
         seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
         """
-        has_security = "security" in ctx.experts
+        # security 是否參與審查：須在場 AND 被 workflow 的 review stage 納入（預設納入，重現今日）。
+        has_security = "security" in ctx.experts and "security" in self._task_review_role_keys()
         tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。
         bc = self._tagged_broadcast(
             tag
@@ -1879,7 +2076,11 @@ class StudioSession:
 
             if qa_ok and senior_ok and security_ok:
                 # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
+                # workflow 省略 gate stage 時整關跳過（視為放行）；預設含 gate stage→沿用今日，
+                # 實際是否發 critic 仍由 _critic_gate 內的 config.CRITIC_ENABLED 決定。
                 subject = f"任務 #{task['id']}：{task['title']}"
+                if not self._task_critic_enabled():
+                    return True
                 critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan, bc)
                 if critic_ok:
                     return True

@@ -34,6 +34,7 @@ from . import (
     role_store,
     roles,
     settings,
+    workflow,
     workspace,
     ws,
 )
@@ -923,6 +924,73 @@ async def groups_delete(name: str) -> JSONResponse:
     try:
         ok = role_store.delete_group(name)
     except role_store.GroupFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
+# --- 動態流程 workflow（受保護）----------------------------------------
+class WorkflowBody(BaseModel):
+    """POST /api/workflows 的請求體。stages 為 stage dict 列表，由 workflow 層硬驗證。"""
+
+    name: str
+    description: str = ""
+    stages: list[dict]
+
+
+class WorkflowUpdateBody(BaseModel):
+    """PUT /api/workflows/{name} 的請求體（name 由路徑決定、不可改名）。整筆替換語意。"""
+
+    description: str = ""
+    stages: list[dict]
+
+
+@router.get("/api/workflows", dependencies=[Depends(auth.require_auth)])
+async def workflows_list() -> JSONResponse:
+    """全部動態流程（[{name, description, stages}]）＋內建預設。workflows.yaml 損壞回 500。"""
+    try:
+        items = workflow.list_workflows()
+    except workflow.WorkflowFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    # 內建預設永遠可選（不存檔，故 list_workflows 不含它）——附在最前供 UI 一律可選。
+    if not any(w["name"] == workflow.DEFAULT_WORKFLOW_NAME for w in items):
+        items = [workflow.default_workflow(), *items]
+    return JSONResponse({"workflows": items})
+
+
+@router.post("/api/workflows", dependencies=WRITE_DEPS)
+async def workflows_create(body: WorkflowBody) -> JSONResponse:
+    """建立動態流程。驗證失敗（型別/角色/verdict/結構）回 422；同名（含保留預設名）回 409。"""
+    try:
+        wf = workflow.create_workflow(body.name, body.description, body.stages)
+    except workflow.WorkflowError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    except workflow.WorkflowFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if wf is None:
+        return JSONResponse({"error": f"流程 {body.name.strip()!r} 已存在"}, status_code=409)
+    return JSONResponse({"workflow": wf})
+
+
+@router.put("/api/workflows/{name}", dependencies=WRITE_DEPS)
+async def workflows_update(name: str, body: WorkflowUpdateBody) -> JSONResponse:
+    """整筆更新動態流程（description＋stages）。驗證失敗回 422；不存在回 404。"""
+    try:
+        wf = workflow.update_workflow(name, body.description, body.stages)
+    except workflow.WorkflowError as e:
+        return JSONResponse({"error": str(e)}, status_code=422)
+    except workflow.WorkflowFileError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if wf is None:
+        return JSONResponse({"error": f"流程 {name!r} 不存在"}, status_code=404)
+    return JSONResponse({"workflow": wf})
+
+
+@router.delete("/api/workflows/{name}", dependencies=WRITE_DEPS)
+async def workflows_delete(name: str) -> JSONResponse:
+    """刪除動態流程；不存在回 404。"""
+    try:
+        ok = workflow.delete_workflow(name)
+    except workflow.WorkflowFileError as e:
         return JSONResponse({"error": str(e)}, status_code=500)
     return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 

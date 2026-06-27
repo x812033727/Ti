@@ -34,6 +34,9 @@
 | POST | `/api/groups` | admin（auth｜fail-safe loopback） | ✅ | 寫入討論小組設定 `roles/groups.yaml`（組隊/mode 注入面），#120 起與 `/api/roles` 同級保護 |
 | PUT | `/api/groups/{name}` | admin（auth｜fail-safe loopback） | ✅ | 改寫討論小組設定（同 POST 寫入面） |
 | DELETE | `/api/groups/{name}` | admin（auth｜fail-safe loopback） | ✅ | 刪除討論小組條目，設定面狀態變更 |
+| POST | `/api/workflows` | admin（auth｜fail-safe loopback） | ✅ | 寫入動態流程設定 `roles/workflows.yaml`（stage 序列/角色/閘門注入面），與 `/api/groups` 同級保護 |
+| PUT | `/api/workflows/{name}` | admin（auth｜fail-safe loopback） | ✅ | 改寫動態流程設定（同 POST 寫入面） |
+| DELETE | `/api/workflows/{name}` | admin（auth｜fail-safe loopback） | ✅ | 刪除動態流程條目，設定面狀態變更 |
 | GET  | `/api/roles` | auth | ➖ | 讀取角色表（內建＋檔案，含來源標記），無秘密 |
 | GET  | `/api/settings` | auth | ➖ | 讀取設定（秘密欄位不回明文），敏感度低 |
 | GET  | `/api/provider-quota` | auth | ➖ | 讀取 provider ready/auth 狀態、可列模型與 Ti 本機用量彙總；不回傳 API key/OAuth token |
@@ -46,6 +49,7 @@
 | GET  | `/api/workspace/{session_id}/download` | auth | ➖ | 下載工作區壓縮檔 |
 | GET  | `/api/publish/config` | auth | ➖ | 讀取發佈設定 |
 | GET  | `/api/groups` | auth | ➖ | 讀取討論小組清單（roles/groups.yaml） |
+| GET  | `/api/workflows` | auth | ➖ | 讀取動態流程清單（roles/workflows.yaml＋內建預設） |
 | GET  | `/api/projects` | auth | ➖ | 讀取專案列表與 backlog 統計 |
 | GET  | `/api/projects/{project_id}` | auth | ➖ | 讀取單一專案 meta 與 backlog |
 | GET  | `/api/metrics` | auth | ➖ | 讀取運維指標（活躍場次/並發上限/history 計數/保留策略/workspace 數），無秘密 |

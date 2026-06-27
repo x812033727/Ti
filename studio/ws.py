@@ -21,6 +21,7 @@ from . import (
     repo_base,
     role_store,
     runner,
+    workflow,
     workspace,
 )
 from .events import StudioEvent
@@ -150,6 +151,7 @@ async def ws(websocket: WebSocket) -> None:
         project_id = (data.get("project_id") or "").strip()
         improve_mode = (data.get("mode") or "").strip() == "improve"
         group_name = (data.get("group") or "").strip()
+        workflow_name = (data.get("workflow") or "").strip()
 
         project = projects.get(project_id) if project_id else None
         if project_id and project is None:
@@ -171,6 +173,24 @@ async def ws(websocket: WebSocket) -> None:
             if group is None:
                 await websocket.send_json(
                     {"type": "error", "payload": {"message": f"找不到討論小組「{group_name}」"}}
+                )
+                await websocket.close()
+                return
+
+        # 選用動態流程（可選）：未指定＝走內建預設骨架。未知名稱／設定檔損壞即早退。
+        wf = None
+        if workflow_name:
+            try:
+                wf = workflow.get_workflow(workflow_name)
+            except workflow.WorkflowFileError as e:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"message": f"動態流程設定檔損壞：{e}"}}
+                )
+                await websocket.close()
+                return
+            if wf is None:
+                await websocket.send_json(
+                    {"type": "error", "payload": {"message": f"找不到動態流程「{workflow_name}」"}}
                 )
                 await websocket.close()
                 return
@@ -340,6 +360,7 @@ async def ws(websocket: WebSocket) -> None:
             # 僅在 workspace 確實同步自目標 repo 時告知 session（prompt 不對專家說謊）。
             base_repo=base_repo if base_sync.based else None,
             group=group,
+            workflow=wf,
         )
         if config.OFFLINE_MODE:
             # 離線並行 demo：每條 lane 用假專家工廠（各自寫該任務的檔），無金鑰也能跑多支線。

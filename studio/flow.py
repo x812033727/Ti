@@ -356,6 +356,42 @@ def validate_assignees(
     return out, corrections
 
 
+# --- 動態 step：PM 運行時決定下一步（dynamic workflow stage 用）----------
+
+# 結束 token（大小寫不敏感）：PM 宣告動態流程收斂時用。
+_NEXT_STEP_END = {"結束", "結束。", "完成", "停止", "end", "done", "stop", "finish"}
+
+
+def parse_next_step(text: str) -> dict:
+    """從 PM 的動態決策輸出解析下一步，回傳 ``{role, instruction, end}``。
+
+    格式（沿用本檔行前綴 parser 範式，全形冒號容錯）：
+    - ``下一步: <role_key>`` —— 下一個發言角色（取最後一個 `下一步:` 行為準）。
+    - ``下一步: 結束``（或 完成／停止／end／done／stop／finish，大小寫不敏感）→ end=True、role 清空。
+    - ``指示: <要該角色做什麼>`` —— 選填，附給被選角色的指示（取最後一行）。
+
+    role 為原始字串、**未驗證**：合法性與 fallback 交由呼叫端（validate_assignees 風格）兜底。
+    找不到任何 `下一步:` 行 → role 空、end False（呼叫端據此走 fallback 或結束）。
+
+    新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
+    """
+    role, instruction, end = "", "", False
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*下一步\s*[:：]\s*(.+?)\s*$", line)
+        if m:
+            val = m.group(1).strip()
+            if val.lower() in _NEXT_STEP_END or val in _NEXT_STEP_END:
+                role, end = "", True
+            else:
+                tokens = val.split()
+                role, end = (tokens[0] if tokens else ""), False
+            continue
+        m = re.match(r"^\s*指示\s*[:：]\s*(.+?)\s*$", line)
+        if m:
+            instruction = m.group(1).strip()
+    return {"role": role, "instruction": instruction, "end": end}
+
+
 def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:
     """從 PM 拆解文字抽出任務（含可選 `#id`）與依賴邊，供並行分波使用。
 

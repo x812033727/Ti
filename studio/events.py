@@ -23,6 +23,7 @@ class EventType(str, Enum):
     CI_RESULT = "ci_result"  # 發佈後 CI/CD 驗證與自動合併的進度
     HUMAN_MESSAGE = "human_message"  # 人類中途插話
     CLARIFY_REQUEST = "clarify_request"  # 需求澄清：PM 向使用者反問關鍵問題（附預設假設）
+    WORKFLOW_PLAN = "workflow_plan"  # 動態流程定義快照（stage 序列），開場廣播供前端與重播
     AGENDA_PLAN = "agenda_plan"  # 拆解結果快照（議程子題、任務、分派表），入 history 供重看
     CONCLUSION = "conclusion"  # 結論彙整：一場討論收斂後產出 CONCLUSION.md 的終局快照
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
@@ -166,6 +167,19 @@ def clarify_request(session_id: str, questions: list[dict], timeout_s: float) ->
         EventType.CLARIFY_REQUEST,
         session_id,
         {"questions": questions, "timeout_s": timeout_s},
+    )
+
+
+def workflow_plan(session_id: str, name: str, stages: list[dict]) -> StudioEvent:
+    """動態流程定義快照：本場採用的 workflow 名稱與 stage 序列（每筆含 type 與顯示名）。
+
+    開場（SESSION_STARTED 後）廣播一次，經既有 broadcast→record_event 入 history，
+    供前端呈現流程地圖與事後重播。stages 為已驗證正規化的 dict 列表（直接序列化）。
+    """
+    return StudioEvent(
+        EventType.WORKFLOW_PLAN,
+        session_id,
+        {"name": name, "stages": stages},
     )
 
 
