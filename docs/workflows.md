@@ -56,6 +56,20 @@ Stage 欄位（pydantic `extra="forbid"`，未知欄位報錯）：
 > 客觀閘門（自測 exit code 硬否決）、停滯守門（`is_stalled`）、軟性收尾（`_should_wind_down`）
 > 等引擎不變式刻意**不可**被 workflow 配置掉（反 reward-hacking）。
 
+### task_pipeline 目前生效範圍
+
+`build.task_pipeline` 已被 `_work_task` 讀取，控制單任務內審查的兩個可選關卡（預設定義
+重現今日行為）：
+
+- **security 審查**：`review` stage 的 `gate` 列出 `security` 才參與資安審查（且 security
+  須在場）。客製 workflow 從 review gate 拿掉 security → 跳過資安審查。
+- **critic 異議閘門**：task_pipeline 含 `gate`（verdict＝`critic_blocks`）才啟用放行前異議
+  關卡（仍受 `TI_CRITIC` 控制）。省略 `gate` stage → 跳過 critic。
+
+`qa`／`senior` 為核心必審（沿用既有客觀裁決聚合），其增刪／重排與全自訂 reviewer 列為
+後續增量。`implement` 的 `assignee`、`max_rounds` 等欄位目前作為定義與 UI 呈現，實作迴圈
+仍走 engineer 主寫＋既有輪數旋鈕。
+
 ## 範例
 
 ### 等價內建預設骨架（`default_workflow()`）

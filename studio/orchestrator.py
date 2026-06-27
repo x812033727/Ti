@@ -1334,6 +1334,41 @@ class StudioSession:
             instruction = step["instruction"] or "請依目前進度推進這個需求。"
             await self._speak(ctx, role, instruction, None)
 
+    # --- task_pipeline 資料驅動（_work_task 讀 workflow 的 build.task_pipeline）-----
+    def _build_task_pipeline(self) -> list[dict]:
+        """取目前 workflow 的 build stage 的 task_pipeline（無 build／無 pipeline 時回 []）。"""
+        for stage in self._workflow.get("stages", []):
+            if stage.get("type") == "build":
+                return stage.get("task_pipeline", [])
+        return []
+
+    def _task_review_role_keys(self) -> set[str]:
+        """task_pipeline 的 review stage 指定的 reviewer 角色集合（其 gate 列出的 role）。
+
+        無 task_pipeline／無 review stage 時回預設 ``{qa, senior, security}``（重現今日行為）。
+        本增量用它決定「security 是否參與審查」；qa／senior 為核心必審（沿用既有裁決聚合）。
+        """
+        for stage in self._build_task_pipeline():
+            if stage.get("type") == "review":
+                keys = {g.get("role") for g in stage.get("gate", []) if g.get("role")}
+                return keys or {"qa", "senior", "security"}
+        return {"qa", "senior", "security"}
+
+    def _task_critic_enabled(self) -> bool:
+        """task_pipeline 是否含 critic 閘門（gate stage 且 verdict 為 critic_blocks）。
+
+        無 task_pipeline 資訊時回 True（重現今日：critic 仍由 config.CRITIC_ENABLED 控制）；
+        客製 workflow 省略 gate stage → 本場跳過 critic 關卡。
+        """
+        pipeline = self._build_task_pipeline()
+        if not pipeline:
+            return True
+        return any(
+            stage.get("type") == "gate"
+            and any(g.get("verdict") == "critic_blocks" for g in stage.get("gate", []))
+            for stage in pipeline
+        )
+
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
         """單一 lane 內最大同時 gather 數＝review 階段 qa/senior/security 並行的現役角色數。
@@ -1828,7 +1863,8 @@ class StudioSession:
         max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
         seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
         """
-        has_security = "security" in ctx.experts
+        # security 是否參與審查：須在場 AND 被 workflow 的 review stage 納入（預設納入，重現今日）。
+        has_security = "security" in ctx.experts and "security" in self._task_review_role_keys()
         tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。
         bc = self._tagged_broadcast(
             tag
@@ -2040,7 +2076,11 @@ class StudioSession:
 
             if qa_ok and senior_ok and security_ok:
                 # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
+                # workflow 省略 gate stage 時整關跳過（視為放行）；預設含 gate stage→沿用今日，
+                # 實際是否發 critic 仍由 _critic_gate 內的 config.CRITIC_ENABLED 決定。
                 subject = f"任務 #{task['id']}：{task['title']}"
+                if not self._task_critic_enabled():
+                    return True
                 critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan, bc)
                 if critic_ok:
                     return True
