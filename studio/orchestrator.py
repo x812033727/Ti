@@ -1269,10 +1269,70 @@ class StudioSession:
         engineer = self._get_experts()["engineer"]
         await self._maybe_publish(self._shippable, engineer)
 
+    def _dynamic_blackboard(self) -> str:
+        """組給 PM 動態決策參考的「黑板」摘要：已完成 stage 的關鍵中間產物。"""
+        parts: list[str] = []
+        if self._clarify_note:
+            parts.append(self._clarify_note.strip())
+        if self._design_note:
+            parts.append(f"【架構決策】\n{self._design_note.strip()}")
+        if self._pm_plan:
+            parts.append(f"【任務計畫】\n{self._pm_plan.strip()}")
+        return "\n\n".join(parts)
+
     async def _stage_dynamic(self, stage: dict) -> None:
-        # 動態 step（PM 運行時決定下一步找誰）由後續階段實作；預設 workflow 不含此 stage，
-        # 故此佔位不影響等價性。客製 workflow 用到時會在 task #5 接上真實語意。
-        log.warning("dynamic stage 尚未啟用（將於後續階段實作），本場略過")
+        """動態 step：PM 逐 hop 在運行時決定下一個發言角色（或結束），有界迴圈防無限。
+
+        防呆全部沿用既有範式：budget 硬上限 hop 數（對齊 TASK_MAX_ROUNDS／CRITIC_MAX_REJECTS
+        收斂預算）；每圈先檢查 _stop／_should_wind_down 立即優雅結束；解析不出合法角色→以
+        flow.validate_assignees 風格 fallback；PM 連續輸出高相似決策→flow.is_stalled 收斂；
+        每次發言走 self._speak（號誌節流＋provider-unavailable 穿透，不誤判「未達完成」）。
+        預設 workflow 不含此 stage，故不影響等價性。
+        """
+        experts = self._get_experts()
+        ctx = self._main_ctx
+        budget = stage.get("budget") or config.DYNAMIC_STEP_BUDGET
+        fallback = stage.get("fallback", "engineer")
+        name = stage.get("name") or "動態決策"
+        await self.broadcast(
+            events.phase_change(self.session_id, name, f"PM 運行時決定下一步（最多 {budget} 步）")
+        )
+        roster_desc = "\n".join(
+            f"- {key}: {ex.role.name}（{ex.role.description or ex.role.title}）"
+            for key, ex in experts.items()
+        )
+        decisions: list[str] = []
+        for _hop in range(max(budget, 0)):
+            if self._stop or self._should_wind_down():
+                break
+            decision = await self._speak(
+                ctx,
+                "pm",
+                f"目前進度摘要：\n{self._dynamic_blackboard()}\n\n"
+                f"可調度的團隊成員（role_key）：\n{roster_desc}\n\n"
+                f"需求：{self._requirement}\n\n"
+                "請判斷為了把這個需求推進到可交付，下一步該找誰做什麼，固定輸出兩行：\n"
+                "`下一步: <role_key>`（限上列其一）\n"
+                "`指示: <要請該成員具體做什麼>`\n"
+                "若已無需再推進，輸出一行 `下一步: 結束`。",
+                None,
+            )
+            decisions.append(decision)
+            # 停滯：PM 連續輸出高相似決策（無實質進展）即收斂（重用既有偵測）。
+            if flow.is_stalled(decisions, config.STALL_ROUNDS):
+                break
+            step = flow.parse_next_step(decision)
+            if step["end"]:
+                break
+            # 角色硬驗證＋fallback：非法/缺漏→fallback（在場則用之，否則第一個在場者）。
+            fixed, _ = flow.validate_assignees(
+                [{"assignee": step["role"]}], list(experts.keys()), fallback=fallback
+            )
+            role = fixed[0]["assignee"]
+            if not role:
+                break  # 無任何在場角色（理論上不會發生，pm 必在場）——保底結束。
+            instruction = step["instruction"] or "請依目前進度推進這個需求。"
+            await self._speak(ctx, role, instruction, None)
 
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
