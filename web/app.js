@@ -499,7 +499,7 @@ async function loadWorkflows() {
   try {
     const data = await (await fetch("/api/workflows")).json();
     const cur = sel.value;
-    sel.innerHTML = '<option value="">（預設流程）</option>';
+    sel.innerHTML = '<option value="">（預設：動態優先）</option>';
     for (const w of data.workflows || []) {
       const opt = document.createElement("option");
       opt.value = w.name;
@@ -1091,7 +1091,8 @@ async function refreshMetrics() {
 
 // --- 動態流程編輯器 ----------------------------------------------------
 const workflowPanel = $("#workflowPanel");
-const WF_DEFAULT_NAME = "預設流程"; // 內建預設流程顯示名（後端保留字，唯讀）
+const WF_DEFAULT_NAME = "預設流程"; // 「載入預設範本」用的內建預設名
+const WF_RESERVED = ["預設流程", "動態優先"]; // 內建保留流程（唯讀，不可改名/刪除）
 let wfCache = [];
 
 async function openWorkflowPanel() {
@@ -1113,7 +1114,7 @@ async function loadWorkflowPanel(selectName) {
   for (const w of wfCache) {
     const opt = document.createElement("option");
     opt.value = w.name;
-    opt.textContent = w.name + (w.name === WF_DEFAULT_NAME ? "（內建）" : "");
+    opt.textContent = w.name + (WF_RESERVED.includes(w.name) ? "（內建）" : "");
     sel.appendChild(opt);
   }
   if ([...sel.options].some((o) => o.value === want)) sel.value = want;
@@ -1123,16 +1124,16 @@ async function loadWorkflowPanel(selectName) {
 function renderWorkflowSelection() {
   const name = $("#workflowList").value;
   const wf = wfCache.find((w) => w.name === name);
-  const isDefault = wf && wf.name === WF_DEFAULT_NAME;
+  const isReserved = wf && WF_RESERVED.includes(wf.name);
   $("#workflowName").value = wf ? wf.name : "";
   $("#workflowDesc").value = wf ? wf.description || "" : "";
   $("#workflowStages").value = wf ? JSON.stringify(wf.stages || [], null, 2) : "[]";
-  $("#workflowName").readOnly = isDefault;
-  $("#workflowDesc").readOnly = isDefault;
-  $("#workflowStages").readOnly = isDefault;
-  $("#workflowSave").disabled = isDefault;
-  $("#workflowDelete").disabled = isDefault || !wf;
-  setWfHint(isDefault ? "內建預設流程（唯讀）。可「載入預設範本」當新流程起點。" : "");
+  $("#workflowName").readOnly = isReserved;
+  $("#workflowDesc").readOnly = isReserved;
+  $("#workflowStages").readOnly = isReserved;
+  $("#workflowSave").disabled = isReserved;
+  $("#workflowDelete").disabled = isReserved || !wf;
+  setWfHint(isReserved ? "內建保留流程（唯讀）。可「載入預設範本」當新流程起點。" : "");
 }
 
 function newWorkflow() {
@@ -1162,12 +1163,12 @@ async function saveWorkflow() {
   const name = $("#workflowName").value.trim();
   const description = $("#workflowDesc").value.trim();
   if (!name) { toast("請輸入流程名稱", "err"); return; }
-  if (name === WF_DEFAULT_NAME) { toast("「預設流程」為內建唯讀", "err"); return; }
+  if (WF_RESERVED.includes(name)) { toast(`「${name}」為內建唯讀`, "err"); return; }
   let stages;
   try { stages = JSON.parse($("#workflowStages").value || "[]"); }
   catch (e) { toast("stages 不是合法 JSON：" + e.message, "err"); return; }
   if (!Array.isArray(stages)) { toast("stages 必須是 JSON 陣列", "err"); return; }
-  const exists = wfCache.some((w) => w.name === name && w.name !== WF_DEFAULT_NAME);
+  const exists = wfCache.some((w) => w.name === name && !WF_RESERVED.includes(w.name));
   const url = exists ? `/api/workflows/${encodeURIComponent(name)}` : "/api/workflows";
   const method = exists ? "PUT" : "POST";
   const body = exists ? { description, stages } : { name, description, stages };
@@ -1187,7 +1188,7 @@ async function saveWorkflow() {
 
 async function deleteWorkflow() {
   const name = $("#workflowList").value;
-  if (!name || name === WF_DEFAULT_NAME) return;
+  if (!name || WF_RESERVED.includes(name)) return;
   if (!confirm(`確定刪除流程「${name}」？`)) return;
   try {
     const res = await fetch(`/api/workflows/${encodeURIComponent(name)}`, { method: "DELETE" });

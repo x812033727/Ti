@@ -214,8 +214,28 @@ def test_create_duplicate_name_returns_none(roles_dir):
 
 
 def test_cannot_create_reserved_default_name(roles_dir):
-    # 預設名為保留字，不可被檔案覆蓋（避免遮蔽內建單一真相）。
-    assert workflow.create_workflow(workflow.DEFAULT_WORKFLOW_NAME, "", [{"type": "demo"}]) is None
+    # 全部保留名（預設流程／動態優先）不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    for name in workflow.RESERVED_NAMES:
+        assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
+
+
+def test_dynamic_first_validates_and_resolvable(roles_dir):
+    wf = workflow.dynamic_first_workflow()
+    assert wf["name"] == workflow.DYNAMIC_FIRST_NAME
+    # 自洽：重新 validate 等於自身。
+    assert workflow.validate_workflow(wf["name"], wf["description"], wf["stages"]) == wf
+    # 保留名（無同名檔案）→ get_workflow 回內建定義。
+    assert workflow.get_workflow(workflow.DYNAMIC_FIRST_NAME) == wf
+    # 含 session 級 dynamic stage（dynamic-first 的核心差異）。
+    assert any(s["type"] == "dynamic" for s in wf["stages"])
+
+
+def test_default_workflow_config_resolves(roles_dir):
+    # 互動預設名（config.DEFAULT_WORKFLOW）能解析成內建動態優先流程。
+    from studio import config
+
+    assert config.DEFAULT_WORKFLOW == workflow.DYNAMIC_FIRST_NAME
+    assert workflow.get_workflow(config.DEFAULT_WORKFLOW)["name"] == workflow.DYNAMIC_FIRST_NAME
 
 
 def test_update_nonexistent_returns_none(roles_dir):

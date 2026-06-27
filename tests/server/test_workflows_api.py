@@ -52,15 +52,15 @@ def test_crud_happy_path(client):
     assert res.status_code == 200 and res.json()["workflow"]["description"] == "改版"
     # 刪除
     assert client.delete("/api/workflows/快速原型").status_code == 200
-    assert [w["name"] for w in client.get("/api/workflows").json()["workflows"]] == [
-        workflow.DEFAULT_WORKFLOW_NAME
-    ]
+    assert [w["name"] for w in client.get("/api/workflows").json()["workflows"]] == list(
+        workflow.RESERVED_NAMES
+    )
 
 
-def test_builtin_default_always_listed(client):
-    # 沒建任何 workflow 時，列表也含內建預設（UI 一律可選）。
+def test_builtin_reserved_always_listed(client):
+    # 沒建任何 workflow 時，列表也含全部內建保留流程（預設流程＋動態優先，依序在最前）。
     names = [w["name"] for w in client.get("/api/workflows").json()["workflows"]]
-    assert names == [workflow.DEFAULT_WORKFLOW_NAME]
+    assert names == list(workflow.RESERVED_NAMES)
 
 
 def test_invalid_stage_type_422(client):

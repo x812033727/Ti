@@ -18,7 +18,8 @@ stage 序列」驅動。讓全流程（架構討論→任務波次→整合→De
 
 | 來源 | 怎麼用 |
 |---|---|
-| 內建預設 | 不指定即走，名稱為「預設流程」，永遠可選、不可被同名檔案覆蓋 |
+| 內建保留流程 | 「預設流程」（等價現有寫死骨架）與「動態優先」（dynamic-first，PM 運行時溝通/分派/招募為主）兩個內建定義，永遠可選、不可被同名檔案覆蓋 |
+| 互動預設 | **互動 session（WS，非 improve）未指定時走 `TI_DEFAULT_WORKFLOW`（預設「動態優先」）**；autopilot／improver 不受影響（維持安全骨架） |
 | 網頁編輯器 | 頂列「🧭 流程」開編輯器：列出/新增/編輯（stages 為 JSON）/刪除，可「載入預設範本」當起點，儲存即經 `/api/workflows` 後端驗證 |
 | API / 檔案 | `GET/POST/PUT/DELETE /api/workflows` 或直接編 `workflows.yaml`；寫入走 `require_admin` |
 | 啟動選用 | 前端啟動列「動態流程」下拉，或 WS 握手帶 `{"workflow": "<名稱>"}` |
@@ -151,3 +152,4 @@ dynamic step 中，PM 的 `下一步: <role_key>` 若指到不在場的角色：
 | `TI_ROLES_DIR` | `<repo>/roles` | `workflows.yaml` 落點（與角色/小組同目錄） |
 | `TI_DYNAMIC_STEP_BUDGET` | `3` | dynamic stage 未指定 `budget` 時的 hop 上限（空字串容錯） |
 | `TI_RECRUIT_MAX` | `3` | 單場 PM 動態招募新成員的上限（庫招募＋液生共用，空字串容錯） |
+| `TI_DEFAULT_WORKFLOW` | `動態優先` | 互動 session 未指定 workflow 時走的預設流程名；設空＝退回內建安全骨架。autopilot／improver 不讀此值 |

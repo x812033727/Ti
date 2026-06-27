@@ -194,6 +194,15 @@ async def ws(websocket: WebSocket) -> None:
                 )
                 await websocket.close()
                 return
+        # 互動 session 未指定 workflow → 走互動預設（config.DEFAULT_WORKFLOW，預設「動態優先」）。
+        # improve（ProjectImprover，下方分支）與 autopilot（另一程序、直接建 StudioSession(workflow=None)）
+        # 刻意維持安全骨架不受影響；OFFLINE 示範用決定性假專家、未為動態 stage 編腳本，亦維持安全骨架
+        # ——故僅在「非 improve、非離線、未指定」時套互動預設。
+        if wf is None and not improve_mode and not config.OFFLINE_MODE and config.DEFAULT_WORKFLOW:
+            try:
+                wf = workflow.get_workflow(config.DEFAULT_WORKFLOW)
+            except workflow.WorkflowFileError:
+                wf = None  # 設定檔壞掉→退回安全骨架（workflow=None），不擋使用者開工
         if improve_mode and project is None:
             await websocket.send_json(
                 {"type": "error", "payload": {"message": "持續改良需先選擇一個專案"}}
