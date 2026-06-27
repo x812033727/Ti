@@ -28,6 +28,7 @@
       <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在啟動列選擇專案）">📦 專案</button>
       <button id="historyBtn" class="ghost" title="歷史 session">📜 歷史</button>
       <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
+      <button id="workflowBtn" class="ghost" title="動態流程編排">🧭 流程</button>
       <button id="metricsBtn" class="ghost" title="運維指標">📊 指標</button>
       <button id="logoutBtn" class="ghost hidden" title="登出">登出</button>
     </nav>
@@ -141,6 +142,39 @@
       </div>
     </div>
     <div id="projectBody" class="metrics-body"><span class="muted">載入中…</span></div>
+  </div>
+
+  <!-- 動態流程編排 -->
+  <div id="workflowPanel" class="drawer glass hidden">
+    <div class="drawer-head">
+      <h2>🧭 動態流程</h2>
+      <div class="drawer-actions">
+        <button id="workflowRefresh" class="ghost" title="重新整理">🔄</button>
+        <button id="workflowClose" class="ghost">✕</button>
+      </div>
+    </div>
+    <div class="metrics-body wf-body">
+      <div class="wf-row">
+        <select id="workflowList" class="project-select" title="選擇要檢視/編輯的流程"></select>
+        <button id="workflowNew" class="ghost" type="button">＋ 新流程</button>
+        <button id="workflowDelete" class="ghost danger" type="button" title="刪除選取的流程">🗑️</button>
+      </div>
+      <label class="set-row"><span class="set-label">名稱</span>
+        <input id="workflowName" type="text" placeholder="流程名稱（≤64 字）" autocomplete="off" /></label>
+      <label class="set-row"><span class="set-label">描述</span>
+        <input id="workflowDesc" type="text" placeholder="（選填）一句說明" autocomplete="off" /></label>
+      <div class="wf-stages-head">
+        <span class="set-label">stages（JSON 陣列）</span>
+        <button id="workflowTemplate" class="ghost" type="button" title="以內建預設流程當起點">載入預設範本</button>
+      </div>
+      <textarea id="workflowStages" class="wf-textarea" spellcheck="false"
+                placeholder='[{"type":"decompose"},{"type":"build","task_pipeline":[{"type":"implement","assignee":"engineer"}]},{"type":"demo"}]'></textarea>
+      <div class="wf-actions">
+        <button id="workflowSave" type="button">儲存</button>
+        <span id="workflowHint" class="muted"></span>
+      </div>
+      <p class="muted wf-help">schema 與範例見 <code>docs/workflows.md</code>。「預設流程」為內建唯讀（不可改名/刪除），儲存後可在啟動列的「動態流程」下拉選用。</p>
+    </div>
   </div>
 
   <!-- 運維指標 -->

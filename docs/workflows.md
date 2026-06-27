@@ -19,7 +19,8 @@ stage 序列」驅動。讓全流程（架構討論→任務波次→整合→De
 | 來源 | 怎麼用 |
 |---|---|
 | 內建預設 | 不指定即走，名稱為「預設流程」，永遠可選、不可被同名檔案覆蓋 |
-| `workflows.yaml` | 經 `GET/POST/PUT/DELETE /api/workflows` 或直接編檔；寫入走 `require_admin` |
+| 網頁編輯器 | 頂列「🧭 流程」開編輯器：列出/新增/編輯（stages 為 JSON）/刪除，可「載入預設範本」當起點，儲存即經 `/api/workflows` 後端驗證 |
+| API / 檔案 | `GET/POST/PUT/DELETE /api/workflows` 或直接編 `workflows.yaml`；寫入走 `require_admin` |
 | 啟動選用 | 前端啟動列「動態流程」下拉，或 WS 握手帶 `{"workflow": "<名稱>"}` |
 
 ## Schema

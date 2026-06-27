@@ -1539,3 +1539,18 @@ input:focus-visible, select:focus-visible { outline: none; }
     transition-duration: .01ms !important;
   }
 }
+
+/* --- 動態流程編輯器 --------------------------------------------------- */
+.wf-body { display: flex; flex-direction: column; gap: 10px; }
+.wf-row { display: flex; gap: 8px; align-items: center; }
+.wf-row #workflowList { flex: 1; min-width: 0; }
+.wf-stages-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.wf-textarea {
+  width: 100%; min-height: 280px; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.5; padding: 10px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.25); color: inherit;
+  white-space: pre; tab-size: 2;
+}
+.wf-actions { display: flex; align-items: center; gap: 10px; }
+.wf-help code { font-size: .85em; }
