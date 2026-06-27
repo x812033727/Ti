@@ -183,6 +183,10 @@
           </select>
           <input id="repoUrl" type="text" class="repo-input"
                  placeholder="（選填）GitHub repo 網址，會 clone 進來一起討論" />
+          <select id="workflowSelect" class="project-select"
+                  title="動態流程：選擇本場要走的流程骨架（階段順序／參與者／閘門）；預設為內建完整流程">
+            <option value="">（預設流程）</option>
+          </select>
           <button id="projectRepo" type="button" class="project-repo hidden"
                   title="此專案的目標 repo（工作基底＋發佈目標）。點擊設定。"></button>
           <label class="improve-toggle" title="選定專案後勾選：團隊自動消化改良任務、找問題、一直改良，直到你按停止">

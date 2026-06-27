@@ -438,6 +438,8 @@ function start() {
   const payload = { requirement, repo_url: repoUrl };
   if (projectId) payload.project_id = projectId;
   if (improve) payload.mode = "improve";
+  const workflowName = ($("#workflowSelect") || {}).value || "";
+  if (workflowName) payload.workflow = workflowName;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onopen = () => ws.send(JSON.stringify(payload));
@@ -466,6 +468,26 @@ async function loadProjects() {
     add.value = "__new__";
     add.textContent = "➕ 新增專案…";
     sel.appendChild(add);
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  } catch (e) { /* 忽略 */ }
+}
+
+// 動態流程下拉：從 /api/workflows 拉清單（含內建預設）填入啟動列選擇器。
+async function loadWorkflows() {
+  const sel = $("#workflowSelect");
+  if (!sel) return;
+  try {
+    const data = await (await fetch("/api/workflows")).json();
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">（預設流程）</option>';
+    for (const w of data.workflows || []) {
+      const opt = document.createElement("option");
+      opt.value = w.name;
+      const n = (w.stages || []).length;
+      opt.textContent = `🧭 ${w.name}` + (n ? `（${n} 階段）` : "");
+      opt.title = w.description || "";
+      sel.appendChild(opt);
+    }
     if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
   } catch (e) { /* 忽略 */ }
 }
@@ -1749,6 +1771,7 @@ async function init() {
   loadPublishConfig();
   loadHealth();
   loadProjects();
+  loadWorkflows();
 }
 
 init();
