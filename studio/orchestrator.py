@@ -26,6 +26,7 @@ from . import (
     flow,
     lessons,
     memory,
+    provider_quota,
     publisher,
     reflexion,
     runner,
@@ -58,7 +59,7 @@ from .flow import (
     shippable_verdict as shippable_verdict,
     text_similarity as text_similarity,
 )
-from .roles import ROSTER, Role
+from .roles import BY_KEY, ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
@@ -250,6 +251,12 @@ class StudioSession:
         self._demo = None
         self._done = False
         self._shippable = False
+        # 動態招募狀態：本場已招募人數（受 config.RECRUIT_MAX 上限）＋當前 provider 額度快照
+        # （動態 stage 開頭查一次，供 PM 額度感知分派與招募自動重綁共用）。_recruit_factory 供測試
+        # 注入 stub（簽名 (role, cwd, provider)→expert）；None 時走 providers.make_expert。
+        self._recruited = 0
+        self._quota_snap: dict | None = None
+        self._recruit_factory = None
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -1308,6 +1315,132 @@ class StudioSession:
             parts.append(f"【任務計畫】\n{self._pm_plan.strip()}")
         return "\n\n".join(parts)
 
+    # --- 額度感知分派 + 動態招募（dynamic stage 共用）------------------------
+    def _role_provider_map(self, experts: dict) -> dict[str, str]:
+        """本場各在場角色實際綁的 provider（混合模式 effective_provider）。"""
+        from .providers import effective_provider
+
+        return {k: effective_provider(ex.role) for k, ex in experts.items()}
+
+    async def _refresh_quota_snapshot(self) -> None:
+        """動態 stage 開頭查一次 provider 額度快照（asyncio.to_thread；失敗存 None）。
+
+        snapshot 內各 usage 模組 60s 快取＋未設定 provider 不打外網，故成本低；存於 self 供本
+        stage 的 PM 摘要與招募自動重綁共用，不每 hop 重查。
+        """
+        try:
+            self._quota_snap = await asyncio.to_thread(provider_quota.snapshot)
+        except Exception:  # noqa: BLE001 — 額度查詢失敗不該拖垮討論，退回「無額度資訊」
+            self._quota_snap = None
+
+    def _quota_note(self, experts: dict) -> str:
+        """把 provider 即時額度摘要組成給 PM 的 prompt 片段（無快照/空摘要回空字串）。"""
+        if not self._quota_snap:
+            return ""
+        summary = provider_quota.summarize_for_pm(
+            self._quota_snap, self._role_provider_map(experts)
+        )
+        if not summary:
+            return ""
+        return (
+            "各成員所用 provider 目前額度（混合模式每家不同，分派/招募時優先用還有額度的、"
+            "避開受限者）：\n" + summary + "\n\n"
+        )
+
+    def _build_liquid_role(self, spec: dict) -> Role | None:
+        """從 PM 的 `招募:` 規格現場液生一個臨時 Role；key 不合法/與既有衝突/缺專長回 None。"""
+        from .role_store import KEY_RE
+        from .roles import _COMMON
+
+        key = (spec.get("key") or "").strip()
+        expertise = (spec.get("expertise") or "").strip()
+        if not KEY_RE.match(key) or key in BY_KEY or not expertise:
+            return None
+        name = (spec.get("name") or key).strip() or key
+        body = (
+            f"你是{name}，專長：{expertise}。請只就你的專長對任務追加把關或推進，"
+            "言簡意賅。\n輸出格式：最後一行明確給出你的結論或決議。"
+        )
+        return Role(
+            key=key,
+            name=name,
+            avatar="🆕",
+            title=expertise[:24],
+            model=config.MODEL_FAST,
+            allowed_tools=["Read", "Grep"],
+            permission_mode="default",
+            system_prompt=_COMMON + "\n" + body,
+            tags=["液生招募"],
+            description=expertise,
+        )
+
+    def _pick_provider(self, role: Role, hint: str) -> str:
+        """招募綁定 provider：PM 明指（hint）優先，否則角色有效 provider；受限則自動重綁最寬鬆就緒者。"""
+        from .providers import effective_provider
+
+        prov = (hint or "").strip() or effective_provider(role)
+        if prov not in config.PROVIDERS:
+            prov = effective_provider(role)
+        snap = self._quota_snap
+        if snap and provider_quota.constrained(snap, prov):
+            alt = provider_quota.least_constrained_ready(snap)
+            if alt and alt != prov:
+                log.info("招募 %s：provider %s 受限，自動重綁 %s", role.key, prov, alt)
+                prov = alt
+        return prov
+
+    async def _recruit(self, ctx: LaneContext, role: Role, provider_hint: str, reason: str) -> str:
+        """把一位新角色建成 expert 加入 lane（額度感知綁 provider），廣播 EXPERT_JOINED。回 role_key。
+
+        加進 ctx.experts 即被 run() finally 的回收涵蓋（不另登記）。測試以 self._recruit_factory
+        注入 stub。達 RECRUIT_MAX 上限的把關在呼叫端（_resolve_or_recruit）。
+        """
+        prov = self._pick_provider(role, provider_hint)
+        if self._recruit_factory is not None:
+            expert = self._recruit_factory(role, ctx.cwd, prov)
+        else:
+            from .providers import make_expert
+
+            expert = make_expert(role, self.session_id, ctx.cwd, provider=prov)
+        ctx.experts[role.key] = expert
+        self._recruited += 1
+        await self.broadcast(
+            events.expert_joined(
+                self.session_id,
+                role.key,
+                role.name,
+                role.avatar,
+                role.title,
+                list(role.tags),
+                prov,
+                reason,
+            )
+        )
+        return role.key
+
+    async def _resolve_or_recruit(self, ctx: LaneContext, step: dict, fallback: str) -> str:
+        """把 PM 的下一步解析成「可發言的 role_key」。
+
+        在場→直接用；否則在招募上限內：PM 給 `招募:` 規格→液生 persona 招募；role 在庫(BY_KEY)→
+        庫招募。都不行（達上限/非法）→ flow.validate_assignees fallback（沿用既有兜底）。
+        """
+        experts = ctx.experts
+        role = (step.get("role") or "").strip()
+        if role in experts:
+            return role
+        if self._recruited < config.RECRUIT_MAX:
+            spec = step.get("recruit")
+            if spec:
+                liquid = self._build_liquid_role(spec)
+                if liquid is not None:
+                    return await self._recruit(ctx, liquid, step.get("provider", ""), "液生招募")
+            if role in BY_KEY:
+                return await self._recruit(ctx, BY_KEY[role], step.get("provider", ""), "庫招募")
+        fixed, _ = flow.validate_assignees(
+            [{"assignee": role}], list(experts.keys()), fallback=fallback
+        )
+        return fixed[0]["assignee"]
+
     async def _stage_dynamic(self, stage: dict) -> None:
         """動態 step：PM 逐 hop 在運行時決定下一個發言角色（或結束），有界迴圈防無限。
 
@@ -1317,7 +1450,7 @@ class StudioSession:
         每次發言走 self._speak（號誌節流＋provider-unavailable 穿透，不誤判「未達完成」）。
         預設 workflow 不含此 stage，故不影響等價性。
         """
-        experts = self._get_experts()
+        self._get_experts()  # 確保主 lane 專家已建立（ctx.experts 即此 dict，可被招募就地擴充）
         ctx = self._main_ctx
         budget = stage.get("budget") or config.DYNAMIC_STEP_BUDGET
         fallback = stage.get("fallback", "engineer")
@@ -1325,23 +1458,29 @@ class StudioSession:
         await self.broadcast(
             events.phase_change(self.session_id, name, f"PM 運行時決定下一步（最多 {budget} 步）")
         )
-        roster_desc = "\n".join(
-            f"- {key}: {ex.role.name}（{ex.role.description or ex.role.title}）"
-            for key, ex in experts.items()
-        )
+        # 額度感知：開頭查一次 provider 額度快照，供 PM 依「目前額度分配」分派/招募。
+        await self._refresh_quota_snapshot()
         decisions: list[str] = []
         for _hop in range(max(budget, 0)):
             if self._stop or self._should_wind_down():
                 break
+            roster_desc = "\n".join(  # 每圈重算：招募的新人本圈即可被指派
+                f"- {key}: {ex.role.name}（{ex.role.description or ex.role.title}）"
+                for key, ex in ctx.experts.items()
+            )
             decision = await self._speak(
                 ctx,
                 "pm",
                 f"目前進度摘要：\n{self._dynamic_blackboard()}\n\n"
-                f"可調度的團隊成員（role_key）：\n{roster_desc}\n\n"
+                + self._quota_note(ctx.experts)
+                + f"目前團隊成員（role_key）：\n{roster_desc}\n\n"
                 f"需求：{self._requirement}\n\n"
-                "請判斷為了把這個需求推進到可交付，下一步該找誰做什麼，固定輸出兩行：\n"
-                "`下一步: <role_key>`（限上列其一）\n"
+                "請判斷為了把這個需求推進到可交付，下一步該找誰做什麼，輸出：\n"
+                "`下一步: <role_key>`（現有成員，或庫裡角色 key 以招募之）\n"
                 "`指示: <要請該成員具體做什麼>`\n"
+                "若現有成員都不適合，可現場招募新人：加 `招募: <key> | <名稱> | <一句專長>` "
+                "並用 `下一步: <key>` 指該新人；混合模式可選 "
+                "`provider: <claude|codex|minimax|antigravity>` 指定綁定（額度受限時系統會自動改綁）。\n"
                 "若已無需再推進，輸出一行 `下一步: 結束`。",
                 None,
             )
@@ -1352,11 +1491,8 @@ class StudioSession:
             step = flow.parse_next_step(decision)
             if step["end"]:
                 break
-            # 角色硬驗證＋fallback：非法/缺漏→fallback（在場則用之，否則第一個在場者）。
-            fixed, _ = flow.validate_assignees(
-                [{"assignee": step["role"]}], list(experts.keys()), fallback=fallback
-            )
-            role = fixed[0]["assignee"]
+            # 解析下一個發言者：在場直接用、庫裡有/PM 液生則招募、否則 validate_assignees 兜底。
+            role = await self._resolve_or_recruit(ctx, step, fallback)
             if not role:
                 break  # 無任何在場角色（理論上不會發生，pm 必在場）——保底結束。
             instruction = step["instruction"] or "請依目前進度推進這個需求。"
@@ -1473,22 +1609,24 @@ class StudioSession:
             return False, ""
         budget = stage.get("budget") or config.DYNAMIC_STEP_BUDGET
         fallback = stage.get("fallback", "engineer")
-        experts = ctx.experts
-        roster_desc = "\n".join(
-            f"- {k}: {ex.role.name}（{ex.role.description or ex.role.title}）"
-            for k, ex in experts.items()
-        )
+        await self._refresh_quota_snapshot()  # 額度感知：供 PM 依額度挑追加把關者/招募
         decisions: list[str] = []
         for _hop in range(max(budget, 0)):
             if self._stop or self._should_wind_down():
                 break
+            roster_desc = "\n".join(  # 每圈重算：招募的新人本圈即可被指派
+                f"- {k}: {ex.role.name}（{ex.role.description or ex.role.title}）"
+                for k, ex in ctx.experts.items()
+            )
             decision = await self._speak(
                 ctx,
                 "pm",
                 f"任務 #{task['id']}：{task['title']} 已通過標準審查。審查摘要：\n{review_section}\n\n"
-                f"可追加把關的成員：\n{roster_desc}\n\n"
-                "若你認為還需要某位成員追加把關，輸出兩行：\n"
+                + self._quota_note(ctx.experts)
+                + f"可追加把關的成員：\n{roster_desc}\n\n"
+                "若你認為還需要某位成員（或庫裡角色/現場招募新人）追加把關，輸出：\n"
                 "`下一步: <role_key>`\n`指示: <要他確認什麼>`\n"
+                "招募新人：加 `招募: <key> | <名稱> | <一句專長>`（可選 `provider: <名稱>`）。\n"
                 "若不需要追加、可放行，輸出 `下一步: 結束`。",
                 tag,
             )
@@ -1498,10 +1636,7 @@ class StudioSession:
             step = flow.parse_next_step(decision)
             if step["end"]:
                 break
-            fixed, _ = flow.validate_assignees(
-                [{"assignee": step["role"]}], list(experts.keys()), fallback=fallback
-            )
-            role = fixed[0]["assignee"]
+            role = await self._resolve_or_recruit(ctx, step, fallback)
             if not role:
                 break
             instruction = step["instruction"] or "請追加把關這個任務的成果。"
@@ -1515,7 +1650,7 @@ class StudioSession:
             blocks = critic_blocks(opinion)
             await bc(events.critic_review(self.session_id, role, not blocks, opinion))
             if blocks:
-                return True, f"【追加把關（{experts[role].role.name}）退回理由】\n{opinion}"
+                return True, f"【追加把關（{ctx.experts[role].role.name}）退回理由】\n{opinion}"
         return False, ""
 
     # --- 波次排程（並行支線）------------------------------------------

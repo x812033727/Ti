@@ -32,14 +32,15 @@ def effective_provider(role: Role) -> str:
     return config.role_provider(role.key) or config.PROVIDER
 
 
-def openai_model_for(role: Role) -> str:
+def openai_model_for(role: Role, provider: str | None = None) -> str:
     """OpenAI 相容路徑（openai／minimax）的角色模型：依 LEAD_ROLES 二分。
 
     依角色的「有效 provider」決定模型槽：minimax / gemini 走各自模型槽，其餘走 OpenAI
-    模型槽——故未顯式覆寫時行為與既有 openai 完全一致。
+    模型槽——故未顯式覆寫時行為與既有 openai 完全一致。``provider`` 可由 make_expert 帶入
+    覆寫（動態招募時依額度綁某 provider），缺省則取 effective_provider(role)。
     """
     lead = role.key in config.LEAD_ROLES
-    provider = effective_provider(role)
+    provider = provider or effective_provider(role)
     if provider == "minimax":
         return config.MINIMAX_MODEL_LEAD if lead else config.MINIMAX_MODEL_FAST
     if provider == "gemini":
@@ -1134,9 +1135,13 @@ def _chat_for(provider: str):
     return chat
 
 
-def make_expert(role: Role, session_id: str, cwd: Path):
-    """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax／Gemini／Codex／Antigravity 混用）。"""
-    prov = effective_provider(role)
+def make_expert(role: Role, session_id: str, cwd: Path, *, provider: str | None = None):
+    """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax／Gemini／Codex／Antigravity 混用）。
+
+    ``provider`` 顯式覆寫角色的有效 provider（動態招募時依即時額度把新人綁到還有額度的 provider）；
+    缺省則取 effective_provider(role)，行為與既有完全一致。
+    """
+    prov = provider or effective_provider(role)
     if prov == "codex":
         return CodexExpert(role, session_id, cwd)
     if prov == "antigravity":
@@ -1147,7 +1152,7 @@ def make_expert(role: Role, session_id: str, cwd: Path):
             session_id,
             cwd,
             chat=_chat_for(prov),
-            model=openai_model_for(role),
+            model=openai_model_for(role, prov),
             provider=prov,
         )
     # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
