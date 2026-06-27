@@ -74,6 +74,34 @@ AGENDA_PROMPT_RULES = (
     "  - 任務照上述 `任務:`/`依賴:` 行格式，每任務一句可驗收。\n"
 )
 
+# task_pipeline review stage 的 reviewer：已知核心角色的「專屬 prompt 全文」與「feedback 區段
+# 標籤」（保住預設逐字等價）；新角色用 verdict 對應的 generic 指示。{id}{title}{plan} 由 format 帶入。
+_REVIEW_PROMPTS = {
+    "qa": ("請針對任務 #{id}：{title} 的程式碼撰寫並執行測試，驗證是否符合驗收標準：\n\n{plan}"),
+    "senior": (
+        "請審查任務 #{id}：{title} 的程式碼（品質、設計、安全），"
+        "並給出決議（`決議: 核可` 或 `決議: 退回`）。"
+    ),
+    "security": (
+        "請對任務 #{id}：{title} 的程式碼做資安審查，"
+        "輸出 `決議: 安全核可` 或 `決議: 安全退回`（退回時列具體風險）。"
+    ),
+}
+_REVIEW_LABELS = {
+    "qa": "驗證工程師回報",
+    "senior": "高級工程師審查意見",
+    "security": "資安審查意見",
+}
+# 各 verdict 的輸出格式指示（generic reviewer 用——客製 workflow 指派非核心角色當 reviewer 時，
+# 讓它輸出 verdict parser 認得的決議行）。
+_VERDICT_INSTRUCTION = {
+    "qa_passed": "撰寫並執行測試驗證是否符合驗收標準，最後輸出 `驗證: PASS` 或 `驗證: FAIL`。",
+    "senior_approved": "審查品質/設計/安全，輸出 `決議: 核可` 或 `決議: 退回`。",
+    "security_approved": "做資安審查，輸出 `決議: 安全核可` 或 `決議: 安全退回`（退回時列具體風險）。",
+    "critic_blocks": "挑出『為何這還不算完成』，輸出 `異議: 成立` 或 `異議: 不成立`。",
+    "pm_done": "判定是否達成驗收，輸出 `決議: 完成` 或 `決議: 未完成`。",
+}
+
 
 class ExpertLike(Protocol):
     role: Role
@@ -1369,17 +1397,64 @@ class StudioSession:
             for stage in pipeline
         )
 
+    def _task_reviewers(self, experts: dict) -> list[tuple[str, str]]:
+        """task_pipeline 的 review stage gate → 有序 ``(role_key, verdict_name)``，過濾在場專家。
+
+        無 task_pipeline／無 review stage／review 無 gate 時回預設
+        ``[(qa, qa_passed), (senior, senior_approved), (security, security_approved)]``——
+        過濾在場後即「qa/senior 必審＋security 在場才審」，重現今日行為。
+        客製 workflow 可在 review gate 增刪 reviewer（含非核心角色＋對應 verdict）。
+        """
+        default = [
+            ("qa", "qa_passed"),
+            ("senior", "senior_approved"),
+            ("security", "security_approved"),
+        ]
+        spec: list[tuple[str, str]] | None = None
+        for stage in self._build_task_pipeline():
+            if stage.get("type") == "review":
+                gate = [
+                    (g["role"], g["verdict"])
+                    for g in stage.get("gate", [])
+                    if g.get("role") and g.get("verdict")
+                ]
+                spec = gate or None
+                break
+        if spec is None:
+            spec = default
+        return [(rk, vn) for rk, vn in spec if rk in experts]
+
+    def _task_implementer(self) -> str:
+        """task_pipeline 的 implement stage 指定的實作者 role_key（無則預設 engineer）。"""
+        for stage in self._build_task_pipeline():
+            if stage.get("type") == "implement" and stage.get("assignee"):
+                return stage["assignee"]
+        return "engineer"
+
+    def _task_max_rounds(self) -> int | None:
+        """task_pipeline 的 review stage max_rounds（>0 才覆寫 config.TASK_MAX_ROUNDS）；無則 None。"""
+        for stage in self._build_task_pipeline():
+            if stage.get("type") == "review" and stage.get("max_rounds"):
+                return stage["max_rounds"]
+        return None
+
+    def _review_prompt(self, role_key: str, verdict_name: str, task: dict, pm_plan: str) -> str:
+        """組 reviewer 的 prompt：已知核心角色用專屬全文（保預設逐字等價），其餘用 verdict generic。"""
+        tmpl = _REVIEW_PROMPTS.get(role_key)
+        if tmpl is not None:
+            return tmpl.format(id=task["id"], title=task["title"], plan=pm_plan)
+        instruction = _VERDICT_INSTRUCTION.get(verdict_name, "給出明確決議。")
+        return f"請審查任務 #{task['id']}：{task['title']} 的成果，{instruction}"
+
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
-        """單一 lane 內最大同時 gather 數＝review 階段 qa/senior/security 並行的現役角色數。
+        """單一 lane 內最大同時 gather 數＝review 階段並行發言的 reviewer 數（資料驅動）。
 
         號誌下限須 ≥ 此值，否則單一 lane 的 review gather 會搶不到足夠額度而自我死鎖。
-        改為依實際在場的 reviewer 角色動態計算（取代硬編碼 4），日後增減 reviewer 不必再手調。
+        依 workflow 的 review gate（過濾在場）動態計算，客製增減 reviewer 不必再手調。
         至少回 1（無 reviewer 時也不會把號誌夾成 0）。
         """
-        experts = self._get_experts()
-        reviewers = sum(1 for key in ("qa", "senior", "security") if key in experts)
-        return max(reviewers, 1)
+        return max(len(self._task_reviewers(self._get_experts())), 1)
 
     def _llm_semaphore(self) -> asyncio.Semaphore:
         """全域 LLM 並發節流號誌。下限夾到單一 lane 內最大 gather 數，避免該 lane review 自我死鎖。"""
@@ -1863,14 +1938,23 @@ class StudioSession:
         max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
         seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
         """
-        # security 是否參與審查：須在場 AND 被 workflow 的 review stage 納入（預設納入，重現今日）。
-        has_security = "security" in ctx.experts and "security" in self._task_review_role_keys()
+        # 實作者：task_pipeline 的 implement.assignee（預設 engineer）；不在場則退回 engineer。
+        impl_role = self._task_implementer()
+        if impl_role not in ctx.experts:
+            impl_role = "engineer"
+        # reviewer 集合（資料驅動，過濾在場）：預設 qa/senior＋security 在場才審，重現今日。
+        reviewers = self._task_reviewers(ctx.experts)
         tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。
         bc = self._tagged_broadcast(
             tag
         )  # 本任務所有事件統一帶 task_id；主 lane 回原樣 self.broadcast。
         feedback = seed_feedback
-        rounds = max_rounds if max_rounds is not None else config.TASK_MAX_ROUNDS
+        # 輪數：huddle 重試顯式傳 max_rounds 優先；否則 review stage 的 max_rounds 覆寫，再否則 config。
+        rounds = (
+            max_rounds
+            if max_rounds is not None
+            else (self._task_max_rounds() or config.TASK_MAX_ROUNDS)
+        )
         critic_rejects = 0  # 客觀全綠下 critic 退回次數，達 CRITIC_MAX_REJECTS 即收斂放行
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
         prev_commit = ctx.last_commit
@@ -1905,7 +1989,7 @@ class StudioSession:
                     f"請根據以下意見逐項修正（第 {rnd} 輪）：\n\n{feedback}\n\n"
                     "修正後請自己再跑一次確認。"
                 )
-            impl_text = await self._speak(ctx, "engineer", impl_prompt, tag)
+            impl_text = await self._speak(ctx, impl_role, impl_prompt, tag)
 
             # --- 交付前自測（確定性 smoke-run）---
             smoke = await self._self_test(ctx, impl_text, bc)
@@ -1938,7 +2022,7 @@ class StudioSession:
                         f"自測指令 `{smoke.command}` 實際執行未通過，紀錄如下：\n{smoke.output}\n\n"
                         "請直接修正程式碼讓它能跑過，修好後簡述改了什麼即可。"
                     )
-                    impl_text = await self._speak(ctx, "engineer", refine_prompt, tag)
+                    impl_text = await self._speak(ctx, impl_role, refine_prompt, tag)
                     smoke = await self._self_test(ctx, impl_text, bc)
                     if smoke is None or smoke.ok:
                         break
@@ -1994,38 +2078,31 @@ class StudioSession:
                 )
             )
             await self._set_task_status(task, "review", bc)
+            # reviewer 資料驅動：依 workflow review gate（過濾在場）並行發言。預設 qa/senior(+security
+            # 在場) 用專屬 prompt → 與重構前逐字等價；客製可增刪 reviewer（含非核心角色＋verdict）。
             review_calls = [
-                self._speak(
-                    ctx,
-                    "qa",
-                    f"請針對任務 #{task['id']}：{task['title']} 的程式碼撰寫並執行測試，"
-                    f"驗證是否符合驗收標準：\n\n{pm_plan}",
-                    tag,
-                ),
-                self._speak(
-                    ctx,
-                    "senior",
-                    f"請審查任務 #{task['id']}：{task['title']} 的程式碼（品質、設計、安全），"
-                    "並給出決議（`決議: 核可` 或 `決議: 退回`）。",
-                    tag,
-                ),
+                self._speak(ctx, rk, self._review_prompt(rk, vn, task, pm_plan), tag)
+                for rk, vn in reviewers
             ]
-            if has_security:
-                review_calls.append(
-                    self._speak(
-                        ctx,
-                        "security",
-                        f"請對任務 #{task['id']}：{task['title']} 的程式碼做資安審查，"
-                        "輸出 `決議: 安全核可` 或 `決議: 安全退回`（退回時列具體風險）。",
-                        tag,
-                    )
-                )
-            results = await asyncio.gather(*review_calls)
-            qa_text, senior_text = results[0], results[1]
-            sec_text = results[2] if has_security else ""
-            qa_ok = qa_passed(qa_text)
-            senior_ok = senior_approved(senior_text)
-            security_ok = security_approved(sec_text) if has_security else True
+            texts = await asyncio.gather(*review_calls)
+            # 每個 reviewer 的裁決＋feedback 區段標籤（未知角色用其顯示名）；裁決函式取自白名單。
+            reviews = [
+                {
+                    "role": rk,
+                    "ok": workflow_mod.VERDICTS[vn](txt),
+                    "text": txt,
+                    "label": _REVIEW_LABELS.get(rk, f"{ctx.experts[rk].role.name}意見"),
+                }
+                for (rk, vn), txt in zip(reviewers, texts, strict=True)
+            ]
+            all_review_ok = all(r["ok"] for r in reviews)
+            # 客觀閘門退回 / 改進回饋共用的 reviewer 區段文字（保預設逐字：依序 \n\n 分隔各標籤段）。
+            review_section = "\n\n".join(
+                f"【{r['label']}】\n{r['text']}" for r in reviews if r["text"]
+            )
+            # run_result 顯示燈以 qa_passed 裁決的 reviewer 為準（預設 qa）；無則用整體裁決。
+            qa_review = next((r for r in reviews if r["role"] == "qa"), None)
+            qa_ok = qa_review["ok"] if qa_review else all_review_ok
             await bc(
                 events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
             )
@@ -2057,11 +2134,7 @@ class StudioSession:
                     )
                 else:
                     gate_note = "【客觀閘門】嚴格模式：未宣告任何可執行的自測指令，無從客觀驗證，本輪強制退回。"
-                review_note = ""
-                if qa_text or senior_text:
-                    review_note = f"\n\n【驗證工程師回報】\n{qa_text}\n\n【高級工程師審查意見】\n{senior_text}"
-                    if sec_text:
-                        review_note += f"\n\n【資安審查意見】\n{sec_text}"
+                review_note = f"\n\n{review_section}" if review_section else ""
                 feedback = gate_note + review_note
                 await bc(
                     events.phase_change(
@@ -2074,7 +2147,7 @@ class StudioSession:
                 await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
                 continue
 
-            if qa_ok and senior_ok and security_ok:
+            if all_review_ok:
                 # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
                 # workflow 省略 gate stage 時整關跳過（視為放行）；預設含 gate stage→沿用今日，
                 # 實際是否發 critic 仍由 _critic_gate 內的 config.CRITIC_ENABLED 決定。
@@ -2121,9 +2194,7 @@ class StudioSession:
                 continue
 
             # --- 帶意見回饋，準備下一輪 ---
-            feedback = f"【驗證工程師回報】\n{qa_text}\n\n【高級工程師審查意見】\n{senior_text}"
-            if sec_text:
-                feedback += f"\n\n【資安審查意見】\n{sec_text}"
+            feedback = review_section
             await bc(
                 events.phase_change(
                     self.session_id,
