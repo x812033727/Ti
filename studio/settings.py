@@ -468,6 +468,27 @@ FIELDS: tuple[Field, ...] = (
         placeholder="docs.python.org,developer.mozilla.org",
         group="進階",
     ),
+    Field(
+        "TI_DEFAULT_WORKFLOW",
+        "互動 session 預設動態流程（未在啟動列指定時走此流程；空＝退回安全骨架；"
+        "autopilot／改良迴圈不受影響）",
+        kind="combo",
+        options=("動態優先", "預設流程"),
+        default="動態優先",
+        group="進階",
+    ),
+    Field(
+        "TI_DYNAMIC_STEP_BUDGET",
+        "動態 step 預算（PM 運行時分派的最大 hop 數；空／非法＝3）",
+        placeholder="3",
+        group="進階",
+    ),
+    Field(
+        "TI_RECRUIT_MAX",
+        "動態招募上限（單場 PM 最多招募幾位新成員，含庫招募＋液生 persona；空／非法＝3）",
+        placeholder="3",
+        group="進階",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}

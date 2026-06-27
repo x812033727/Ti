@@ -120,6 +120,7 @@
 | 2.25 | 角色模型欄（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_MODEL_PM`／`TI_MODEL_ENGINEER`／`TI_MODEL_QA`／`TI_MODEL_SENIOR`／`TI_MODEL_RESEARCHER`／`TI_MODEL_ARCHITECT`／`TI_MODEL_SECURITY`／`TI_MODEL_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色模型維持原值（auto＝沿用主力/快速規則）；帶「（推薦）」尾綴的選項與「✨ 套用推薦模型」按鈕可一鍵填入推薦配置 | | | 非法值：後端白名單擋下 |
 | 2.26 | 每角色 provider 混用（select，8 欄，正常） | 在「混用（每角色 provider）」分組把某角色（如「工程師 provider」）選 antigravity、另一角色（如「專案經理 provider」）選 gemini，其餘留 auto，儲存 | 可逐角色選 auto／claude／openai／minimax／gemini／codex／antigravity 並儲存；重開顯示所選值（auto＝沿用上方全域 Provider，達成 Claude／MiniMax／Gemini／Codex／Antigravity 混用） | | | 正常值＋邊界（固定選項集） |
 | 2.27 | 每角色 provider 混用（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_PROVIDER_PM`／`TI_PROVIDER_ENGINEER`／`TI_PROVIDER_QA`／`TI_PROVIDER_SENIOR`／`TI_PROVIDER_RESEARCHER`／`TI_PROVIDER_ARCHITECT`／`TI_PROVIDER_SECURITY`／`TI_PROVIDER_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色 provider 維持原值（auto＝沿用全域） | | | 非法值：後端白名單擋下 |
+| 2.28 | 動態流程旋鈕（combo＋文字，低風險） | 「互動預設動態流程」（combo）從建議選「動態優先」/「預設流程」、或自由輸入流程名後儲存；「動態 step 預算」「動態招募上限」（文字）各做正常值（如 5）／清空／超長 | combo 兩種方式皆可存、不限建議清單（流程名不存在時開工自動退回安全骨架）；兩個文字欄可輸入／清空／儲存，版面不變形（空／非法＝預設 3）；下次討論生效 | | | combo＋低風險文字欄 |
 
 ## ③ 儲存／取消／重新部署／改密碼
 
