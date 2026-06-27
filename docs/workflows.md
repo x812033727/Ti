@@ -56,19 +56,22 @@ Stage 欄位（pydantic `extra="forbid"`，未知欄位報錯）：
 > 客觀閘門（自測 exit code 硬否決）、停滯守門（`is_stalled`）、軟性收尾（`_should_wind_down`）
 > 等引擎不變式刻意**不可**被 workflow 配置掉（反 reward-hacking）。
 
-### task_pipeline 目前生效範圍
+### task_pipeline 生效範圍
 
-`build.task_pipeline` 已被 `_work_task` 讀取，控制單任務內審查的兩個可選關卡（預設定義
-重現今日行為）：
+`build.task_pipeline` 由 `_work_task` 完整讀取（**預設定義逐字重現今日行為**）：
 
-- **security 審查**：`review` stage 的 `gate` 列出 `security` 才參與資安審查（且 security
-  須在場）。客製 workflow 從 review gate 拿掉 security → 跳過資安審查。
-- **critic 異議閘門**：task_pipeline 含 `gate`（verdict＝`critic_blocks`）才啟用放行前異議
-  關卡（仍受 `TI_CRITIC` 控制）。省略 `gate` stage → 跳過 critic。
+- **implement.assignee**：實作者角色（預設 `engineer`）。不在場時退回 engineer。
+- **review.gate**：reviewer 集合——有序 `(role, verdict)`，並行發言、過濾在場。預設
+  `qa/senior/security`；可增刪、換人，**含非核心角色**（如把 `architect` 當 reviewer，
+  其 verdict 取自白名單）。已知角色（qa/senior/security）用專屬 prompt，其餘依 verdict 自動組
+  generic prompt。security 不在場自動濾掉（重現今日）。
+- **review.max_rounds**：>0 時覆寫單任務輪數上限（預設取 `config.TASK_MAX_ROUNDS`）。
+- **gate（critic）**：含 `gate` stage（verdict＝`critic_blocks`）才啟用放行前異議關卡
+  （仍受 `TI_CRITIC` 控制）。省略 → 跳過 critic。
 
-`qa`／`senior` 為核心必審（沿用既有客觀裁決聚合），其增刪／重排與全自訂 reviewer 列為
-後續增量。`implement` 的 `assignee`、`max_rounds` 等欄位目前作為定義與 UI 呈現，實作迴圈
-仍走 engineer 主寫＋既有輪數旋鈕。
+> 不被 task_pipeline 影響的硬性護欄：客觀閘門（自測 exit code）、交付前自測、停滯守門、
+> reflexion、critic 收斂預算（`TI_CRITIC_MAX_REJECTS`）——這些是引擎不變式，照常運作。
+> task 級 `dynamic` stage（任務內 PM 動態挑 reviewer）列為後續增量。
 
 ## 範例
 
