@@ -993,6 +993,19 @@ class StudioSession:
         if self.cwd:
             await runner.git_init(self.cwd)
 
+        # 動態流程定義快照：開場廣播本場採用的 workflow 名稱與 stage 序列，供前端呈現流程
+        # 地圖、入 history 供重播。每筆 stage 帶 type 與顯示名（缺省用 type）。
+        await self.broadcast(
+            events.workflow_plan(
+                self.session_id,
+                self._workflow.get("name", ""),
+                [
+                    {"type": s["type"], "name": s.get("name") or s["type"]}
+                    for s in self._workflow["stages"]
+                ],
+            )
+        )
+
         await self._run_workflow()
 
         return {

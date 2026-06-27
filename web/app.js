@@ -319,6 +319,15 @@ function handleEvent(ev) {
       if (!replaying) interjectInput.focus();
       break;
     }
+    case "workflow_plan": {
+      // 動態流程定義快照：本場採用的 workflow 名稱與 stage 序列（開場廣播、重播亦經此）。
+      const stages = p.stages || [];
+      addSystem(
+        `🧭 動態流程：${p.name || "預設流程"}（${stages.length} 階段）` +
+          (stages.length ? "　" + stages.map((s) => s.name || s.type).join(" → ") : ""),
+      );
+      break;
+    }
     case "agenda_plan": {
       // 拆解結果快照：議程子題＋主責分派（含硬驗證修正紀錄），重播歷史時也會經此渲染。
       const items = p.agenda || [];

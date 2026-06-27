@@ -38,6 +38,18 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_int(name: str, default: int) -> int:
+    """讀整數環境變數，空字串／空白／無法解析時退回 default（同 _env_float 的容錯）。"""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("環境變數 %s=%r 非整數，改用預設 %s", name, raw, default)
+        return default
+
+
 # --- Provider / 模型 ----------------------------------------------------
 # 後端 LLM provider：claude（預設，走 Agent SDK 自帶工具）、openai（含 OpenAI 相容/本地模型）、
 # minimax（MiniMax 訂閱／API key，走 OpenAI 相容介面）、gemini（Gemini OpenAI 相容端點）、
@@ -255,6 +267,10 @@ CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 # （不靜默丟），避免 critic 對 objectively-green 的票無限退回、燒滿輪數後整場判失敗。
 # 0＝不設限（舊行為：critic 可在輪數內無限退回）。只作用於任務審查 gate，不影響最終驗收 gate。
 CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
+
+# 動態流程（workflow）的 dynamic step：PM 運行時逐 hop 決定下一步找誰的最大 hop 數上限
+# （stage 未指定 budget 時取此值）。空字串容錯（_env_int），對齊收斂預算思維防無限退回。
+DYNAMIC_STEP_BUDGET = _env_int("TI_DYNAMIC_STEP_BUDGET", 3)
 
 # 共用知識庫（workspace 內 NOTES.md）：跨任務累積踩過的坑/決策/後續，實作時讀回、結束時寫入。
 # 不進交付物與檔案清單（見 workspace._IGNORE）。純檔案 IO、無額外 LLM 呼叫——預設開啟；
@@ -901,6 +917,7 @@ def reload() -> None:
     global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, CRITIC_MAX_REJECTS, NOTES_ENABLED, NOTES_MAX_CHARS
+    global DYNAMIC_STEP_BUDGET
     global LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT
@@ -991,6 +1008,7 @@ def reload() -> None:
     HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
     CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
     CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
+    DYNAMIC_STEP_BUDGET = _env_int("TI_DYNAMIC_STEP_BUDGET", 3)
     NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
     NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
     LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")

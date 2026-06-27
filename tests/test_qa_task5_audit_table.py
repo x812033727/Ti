@@ -104,6 +104,8 @@ def test_audit_has_no_phantom_routes(app):
 # 服務（高危狀態變更），依架構決策納管。
 # #196 起 /api/publish/{session_id} 由 auth 升級為 WRITE_DEPS(require_admin)：對外發佈
 # （push＋開 PR＋合併）屬對外狀態變更，與其他寫入端點同級納管。
+# 動態流程：/api/workflows 寫入端點（POST/PUT/DELETE）走 WRITE_DEPS(require_admin)，
+# 與 /api/groups 同級保護（workflows.yaml 為 stage 序列/角色/閘門注入面），一併納管。
 def test_audit_managed_set_matches_decision():
     http_docs, _ = parse_audit()
     managed = {p for (m, p), mark in http_docs.items() if mark}
@@ -118,6 +120,8 @@ def test_audit_managed_set_matches_decision():
         "/api/roles/{key}",
         "/api/groups",
         "/api/groups/{name}",
+        "/api/workflows",
+        "/api/workflows/{name}",
         "/api/claude-account/switch",
         "/api/publish/{session_id}",
     }
