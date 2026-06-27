@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from studio import config, routes
+from studio import config, provider_quota
 
 
 def _no_realtime(monkeypatch):
@@ -11,7 +11,7 @@ def _no_realtime(monkeypatch):
     monkeypatch.setattr(config, "claude_cli_logged_in", lambda: False)
     monkeypatch.setattr(config, "codex_cli_logged_in", lambda: False)
     monkeypatch.setattr(
-        routes.antigravity_usage,
+        provider_quota.antigravity_usage,
         "fetch_rate_limits",
         lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": None},
     )
@@ -22,7 +22,7 @@ def test_only_four_providers_no_history(monkeypatch):
     monkeypatch.setattr(config, "provider_ready", lambda: True)
     _no_realtime(monkeypatch)
 
-    data = routes._provider_quota_snapshot()
+    data = provider_quota.snapshot()
 
     # 只剩 4 個 provider，固定順序；openai / gemini 已移除
     assert [p["key"] for p in data["providers"]] == ["claude", "codex", "antigravity", "minimax"]
@@ -46,14 +46,16 @@ def test_minimax_rate_limits_queried_when_key_set(monkeypatch):
         "seven_day": None,
         "error": None,
     }
-    monkeypatch.setattr(routes.minimax_usage, "fetch_rate_limits", lambda *_a, **_k: sentinel)
     monkeypatch.setattr(
-        routes.antigravity_usage,
+        provider_quota.minimax_usage, "fetch_rate_limits", lambda *_a, **_k: sentinel
+    )
+    monkeypatch.setattr(
+        provider_quota.antigravity_usage,
         "fetch_rate_limits",
         lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": None},
     )
 
-    data = routes._provider_quota_snapshot()
+    data = provider_quota.snapshot()
     mm = next(p for p in data["providers"] if p["key"] == "minimax")
     assert mm["rate_limits"] is sentinel
 
@@ -66,12 +68,9 @@ def test_antigravity_signed_in(monkeypatch):
     monkeypatch.setattr(config, "provider_ready", lambda: True)
     _no_realtime(monkeypatch)
 
-    def boom(*_a, **_k):  # 新設計不應再用子程序列模型
-        raise AssertionError("不應呼叫 subprocess.run（已移除 agy models gate）")
+    # 新設計結構性保證不再跑 `agy models` 子程序：provider_quota 模組根本不 import subprocess。
 
-    monkeypatch.setattr(routes.subprocess, "run", boom)
-
-    data = routes._provider_quota_snapshot()
+    data = provider_quota.snapshot()
     agy = next(p for p in data["providers"] if p["key"] == "antigravity")
 
     assert data["active_provider"] == "antigravity"
@@ -91,12 +90,12 @@ def test_antigravity_needs_login(monkeypatch):
     monkeypatch.setattr(config, "provider_ready", lambda: False)
     _no_realtime(monkeypatch)
     monkeypatch.setattr(
-        routes.antigravity_usage,
+        provider_quota.antigravity_usage,
         "fetch_rate_limits",
         lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": "token_missing"},
     )
 
-    data = routes._provider_quota_snapshot()
+    data = provider_quota.snapshot()
     agy = next(p for p in data["providers"] if p["key"] == "antigravity")
 
     assert agy["ready"] is False
@@ -114,12 +113,12 @@ def test_antigravity_token_expired(monkeypatch):
     monkeypatch.setattr(config, "provider_ready", lambda: False)
     _no_realtime(monkeypatch)
     monkeypatch.setattr(
-        routes.antigravity_usage,
+        provider_quota.antigravity_usage,
         "fetch_rate_limits",
         lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": "unauthorized"},
     )
 
-    data = routes._provider_quota_snapshot()
+    data = provider_quota.snapshot()
     agy = next(p for p in data["providers"] if p["key"] == "antigravity")
 
     assert agy["ready"] is True  # 有 token，只是過期
