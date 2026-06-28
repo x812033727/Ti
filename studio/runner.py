@@ -940,6 +940,45 @@ async def git_sanitize_workspace(repo: Path | str) -> None:
     )
 
 
+def _ruff_project(root: Path) -> bool:
+    """workspace 是否為使用 ruff 的專案（pyproject 含 [tool.ruff] 或有 ruff.toml/.ruff.toml）。"""
+    for name in ("ruff.toml", ".ruff.toml"):
+        if (root / name).is_file():
+            return True
+    pp = root / "pyproject.toml"
+    if pp.is_file():
+        try:
+            return "[tool.ruff" in pp.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return False
+    return False
+
+
+async def ruff_format_workspace(repo: Path | str) -> None:
+    """發佈前對使用 ruff 的專案自動套排版（`ruff format`），避免改良迴圈/autopilot 產出的程式碼
+    因格式漂移被目標 repo 的 CI lint（`ruff format --check`）擋住、PR 無法合併。
+
+    背景：autopilot 有 `_gate_lint`（ruff check＋format --check）把關自己的核心 PR,但改良迴圈
+    （improver,專案 session 經 publisher 發佈）無此閘門——當專案就是 Ti(本身跑 ruff CI)時,未排版的
+    交付碼會讓 lint 與 tree-wide format meta-test 雙紅、擋住合併。此步在發佈前自動排版補上這個缺口。
+
+    僅在偵測到 ruff 設定時動作;`ruff format` 為純排版、不改邏輯(刻意不跑 `ruff check --fix`,避免
+    動到交付的程式邏輯)。ruff 未裝/執行失敗一律吞掉不拋（格式化不可拖垮發佈）。應在「發佈前的最後
+    一次 commit」之前呼叫。"""
+    if not config.ENABLE_GIT:
+        return
+    root = Path(repo)
+    if not (root / ".git").exists() or not _ruff_project(root):
+        return
+    await run_command_exec(
+        root,
+        [sys.executable, "-m", "ruff", "format", "."],
+        timeout=120,
+        sandbox=False,
+        label="ruff format",
+    )
+
+
 async def git_has_changes(repo: Path | str) -> bool:
     """工作樹是否有未提交變更（含未追蹤檔）。用於偵測「工程師那輪聲稱寫檔卻零變更」的
     幻覺寫檔——`git status --porcelain` 有任何輸出即 True。git 不可用／查詢失敗一律回 False
