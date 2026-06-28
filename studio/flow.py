@@ -12,7 +12,7 @@ import difflib
 import logging
 import re
 
-from . import config
+from . import config, provider_quota
 
 log = logging.getLogger("ti.flow")
 
@@ -96,6 +96,33 @@ def shippable_verdict(*, all_ok: bool, demo_veto: bool, core_verified: bool, sto
     if stopped or demo_veto:
         return False
     return all_ok or core_verified
+
+
+def plan_preflight_rebind(
+    current_bindings: dict[str, str],
+    snapshot: dict | None,
+    explicit_overrides: dict[str, str],
+) -> list[tuple[str, str, str]]:
+    """規劃場次起點 provider 重綁；純判定，不碰 Role/config/expert 物件。
+
+    回傳 (role_key, from_provider, to_provider)。全受限時沒有可用 to_provider，故不產生
+    plan；呼叫端可依 constrained 另做事件/audit。
+    """
+    if not snapshot:
+        return []
+    alt = provider_quota.least_constrained_ready(snapshot)
+    if not alt:
+        return []
+    plan: list[tuple[str, str, str]] = []
+    for role_key, provider in current_bindings.items():
+        provider = (provider or "").strip()
+        if not provider or explicit_overrides.get(role_key):
+            continue
+        if provider == alt:
+            continue
+        if provider_quota.constrained(snapshot, provider):
+            plan.append((role_key, provider, alt))
+    return plan
 
 
 def parse_tasks(pm_text: str) -> list[str]:

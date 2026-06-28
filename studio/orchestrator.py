@@ -54,6 +54,7 @@ from .flow import (
     parse_tasks as parse_tasks,
     parse_tasks_with_deps as parse_tasks_with_deps,
     parse_vision as parse_vision,
+    plan_preflight_rebind as plan_preflight_rebind,
     pm_done as pm_done,
     qa_passed as qa_passed,
     security_approved as security_approved,
@@ -1033,6 +1034,8 @@ class StudioSession:
         """
         self._requirement = requirement
         experts = self._get_experts()
+        await self._refresh_quota_snapshot()
+        await self._preflight_rebind_experts(experts)
         # 主（循序）lane：cwd/experts 即 session 本身。逐任務迭代與其 helper 全走它，
         # 行為與重構前逐字等價；並行模式（後續階段）才會另建隔離 lane。
         self._main_ctx = LaneContext(
@@ -1374,11 +1377,26 @@ class StudioSession:
         招募成員以實際綁定為準（`_recruit_providers`，可能因額度受限自動重綁／PM 指定而異於
         角色預設）；其餘走 `effective_provider`。讓額度摘要/roster「誰用哪家額度」顯示正確。
         """
+        return {k: self._actual_provider_for_expert(k, ex) for k, ex in experts.items()}
+
+    def _actual_provider_for_expert(self, role_key: str, expert: ExpertLike) -> str:
         from .providers import effective_provider
 
+        return (
+            self._recruit_providers.get(role_key)
+            or getattr(expert, "provider", None)
+            or getattr(expert, "_provider", None)
+            or effective_provider(expert.role)
+        )
+
+    def _current_provider_bindings(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
+        return {k: self._actual_provider_for_expert(k, ex) for k, ex in experts.items()}
+
+    def _explicit_provider_overrides(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
         return {
-            k: self._recruit_providers.get(k) or effective_provider(ex.role)
+            k: config.role_provider(ex.role.key)
             for k, ex in experts.items()
+            if config.role_provider(ex.role.key)
         }
 
     async def _refresh_quota_snapshot(self) -> None:
@@ -1405,6 +1423,51 @@ class StudioSession:
             "各成員所用 provider 目前額度（混合模式每家不同，分派/招募時優先用還有額度的、"
             "避開受限者）：\n" + summary + "\n\n"
         )
+
+    def _apply_preflight_rebind(
+        self,
+        plan: list[tuple[str, str, str]],
+        *,
+        expert_factory=None,
+    ) -> None:
+        """套用 preflight plan：這層只處理 expert 重建與 dict 寫回。"""
+        if not self.cwd:
+            return
+        if expert_factory is None:
+            from .providers import make_expert
+
+            expert_factory = make_expert
+        for role_key, from_provider, to_provider in plan:
+            if role_key not in self._experts or role_key not in BY_KEY:
+                continue
+            log.info(
+                "場次起點 %s：provider %s 受限，自動重綁 %s",
+                role_key,
+                from_provider,
+                to_provider,
+            )
+            self._experts[role_key] = expert_factory(
+                BY_KEY[role_key],
+                self.session_id,
+                self.cwd,
+                provider=to_provider,
+            )
+            self._recruit_providers[role_key] = to_provider
+
+    async def _preflight_rebind_experts(self, experts: dict[str, ExpertLike]) -> None:
+        """場次起點檢查所有在場成員；決策走 flow，副作用由 _apply_preflight_rebind 套用。"""
+        if not self.cwd or not self._quota_snap:
+            return
+        current_bindings = self._current_provider_bindings(experts)
+        explicit_overrides = self._explicit_provider_overrides(experts)
+        plan = plan_preflight_rebind(current_bindings, self._quota_snap, explicit_overrides)
+        planned_roles = {role_key for role_key, _from, _to in plan}
+        for role_key, provider in current_bindings.items():
+            if role_key in planned_roles or explicit_overrides.get(role_key):
+                continue
+            if provider and provider_quota.constrained(self._quota_snap, provider):
+                await self._handle_all_constrained(role_key, provider, self._quota_snap)
+        self._apply_preflight_rebind(plan)
 
     def _build_liquid_role(self, spec: dict) -> Role | None:
         """從 PM 的 `招募:` 規格現場液生一個臨時 Role；key 不合法/與既有衝突/缺專長回 None。"""
@@ -1434,9 +1497,12 @@ class StudioSession:
         )
 
     def _pick_provider(self, role: Role, hint: str) -> str:
-        """招募綁定 provider：PM 明指（hint）優先，否則角色有效 provider；受限則自動重綁最寬鬆就緒者。"""
+        """選 provider：使用者明示覆寫優先；其後才採 PM hint/預設與 quota 重綁。"""
         from .providers import effective_provider
 
+        explicit = config.role_provider(role.key)
+        if explicit:
+            return explicit
         prov = (hint or "").strip() or effective_provider(role)
         if prov not in config.PROVIDERS:
             prov = effective_provider(role)
@@ -1479,12 +1545,33 @@ class StudioSession:
             )
         return providers
 
+    def _quota_snapshot_for_audit(self, snap: dict | None) -> dict:
+        return {
+            p["key"]: {
+                "ready": p["ready"],
+                "error": p["error"],
+                "max_used": p["max_used"],
+                "soonest_reset": p["soonest_reset"],
+            }
+            for p in self._quota_audit_providers(snap)
+            if p.get("key")
+        }
+
     async def _handle_all_constrained(
         self, role_key: str, provider: str, snap: dict | None
     ) -> None:
+        reason = "no_provider_ready"
         providers = self._quota_audit_providers(snap)
+        snapshot = self._quota_snapshot_for_audit(snap)
         await self.broadcast(
-            events.provider_constrained(self.session_id, role_key, provider, providers)
+            events.provider_constrained(
+                self.session_id,
+                role_key,
+                provider,
+                reason,
+                providers,
+                snapshot,
+            )
         )
         try:
             config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1494,8 +1581,9 @@ class StudioSession:
                 "session_id": self.session_id,
                 "role": role_key,
                 "provider": provider,
-                "reason": "no_provider_ready",
+                "reason": reason,
                 "providers": providers,
+                "snapshot": snapshot,
             }
             with (config.AUTOPILOT_STATE_DIR / "audit.jsonl").open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
@@ -1964,13 +2052,22 @@ class StudioSession:
         experts = self._get_experts()
         if self._lane_expert_factory is not None:
             factory = self._lane_expert_factory
+            return {
+                key: factory(experts[key].role, f"{self.session_id}:{suffix}", cwd)
+                for key in experts
+            }
         else:
             from .providers import make_expert
 
-            factory = make_expert
-        return {
-            key: factory(experts[key].role, f"{self.session_id}:{suffix}", cwd) for key in experts
-        }
+            return {
+                key: make_expert(
+                    experts[key].role,
+                    f"{self.session_id}:{suffix}",
+                    cwd,
+                    provider=self._recruit_providers.get(key),
+                )
+                for key in experts
+            }
 
     async def _teardown_lane(self, ctx: LaneContext) -> None:
         """收掉一條並行 lane 的專家連線與 worktree（best-effort）。"""
