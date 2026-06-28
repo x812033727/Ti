@@ -2238,3 +2238,58 @@
 
 ## **離線 e2e 三個失敗標注為「環境限制」不列入本輪驗收**——根因是 `/opt/ti/lessons.lock` 寫入沙箱 read-only 磁碟，CI 正常環境無此限制；完整驗收指令為 `tests/core/test_provider_quota_helpers.py tests/settings/test_provider_quota.py tests/test_user_explicit_provider_contract.py tests/core/test_provider_preflight_routing_qa.py tests/autopilot/test_provider_routing_contract.py`。
 - 時間：2026-06-29 01:23
+## 截圖驅動選型——純 urllib W3C WebDriver HTTP，零新增依賴，不裝 selenium/playwright
+- 時間：2026-06-29 02:25
+- 理由：venv 無 selenium；chromedriver 已存在；stdlib urllib 足夠驅動 W3C JSON Wire Protocol
+- 否決方案：selenium（需 pip install，違反「不新增 runtime 依賴」）
+
+## 腳本單一入口 scripts/capture_metrics.py，分五段：seed → start_server → wait_ready → webdriver_session → assert+screenshot+cleanup
+- 時間：2026-06-29 02:25
+- 理由：單一腳本讓驗收指令一條執行完畢，不需協調多個 process
+
+## Server 啟動環境變數固定為 TI_PORT=8799 TI_OFFLINE=1 TI_HOST=127.0.0.1，無 TI_ACCESS_PASSWORD（空值門禁放行）
+- 時間：2026-06-29 02:25
+- 理由：TI_HOST=127.0.0.1 確保 /api/metrics 不暴露到非本機介面；8799 避免衝撞預設 8765
+- 否決方案：不設 TI_HOST（空值 Password 下 metrics 端點會暴露在 0.0.0.0）
+
+## Health poll 端點為 /api/health（非 /health），最多 15 秒 / 0.5s 間隔，超時 exit 1
+- 時間：2026-06-29 02:25
+- 理由：工程師與高工雙重確認 routes.py 實作路徑為 /api/health
+
+## History seeding 透過匯入 studio.history 模組內部函式完成（不手寫最小 JSON），以程式碼為 schema 唯一真相；若無可直接呼叫的 write API 則 fallback 到複製 history.py 的 meta dataclass 結構再序列化，並在腳本開頭 assert 欄位名稱仍與 _aggregate_scorecard 消費端一致
+- 時間：2026-06-29 02:25
+- 理由：手寫最小 JSON 有 schema 漂移風險——_aggregate_scorecard 改欄位後 fixture 靜默失效
+- 否決方案：手寫最小 meta JSON（漂移風險）；跑真實 offline session（慢、有 race、腳本複雜度倍增）
+
+## History fixture 路徑從 config.HISTORY_ROOT（env TI_HISTORY_ROOT）讀取，不硬寫路徑
+- 時間：2026-06-29 02:25
+- 理由：config.py 為 SSOT，硬寫路徑會在改設定時靜默寫錯位置
+
+## 開面板走 JS execute script（window.openMetrics()），不模擬 DOM 點擊
+- 時間：2026-06-29 02:25
+- 理由：openMetrics 在 app.js 為全域函式，比找按鈕位置穩；但文件明示這是白箱 UI 驗證，不是使用者互動 E2E
+
+## 最小斷言集三條：① #metricsPanel class 不含 hidden ② #metricsBody innerText 含「活躍場次」③ #metricsBody innerText 含「記分卡」；三條全通才 exit 0，任一不符即印 FAIL 並 exit 1
+- 時間：2026-06-29 02:25
+
+## Console log 掃描——建立 WebDriver session 時明確帶入 Chrome logging capability（loggingPrefs: {browser: ALL}）；取到 log 且有 SEVERE 條目印 WARN；若 /session/{id}/log/browser 回 404 或空，報告寫「瀏覽器 log 不可取得（capability 未支援）」而非「無錯誤」；兩種情況均不阻斷 exit 0
+- 時間：2026-06-29 02:25
+- 理由：高工指出不設 capability 時 log endpoint 可能靜默回空，混淆「無錯誤」與「未量測」
+
+## PNG 僅在 docs/screenshots/metrics_panel.png 不存在時寫入；已存在時印 WARN 並提示加 --overwrite 覆寫，避免每次執行造成二進位 churn
+- 時間：2026-06-29 02:25
+- 理由：手動驗收截圖不應自動覆寫；CI 若未來整合需明確 flag
+
+## docs/screenshots/metrics_panel.png 進 repo（非 CI artifact，一次性手動驗收截圖）
+- 時間：2026-06-29 02:25
+- 否決方案：.gitignore 排除（reviewer 無法直接看到眼見驗證結果）
+
+## 假綠排除——腳本支援 --skip-open-panel flag，跳過 openMetrics() 呼叫後斷言①必含 hidden → exit 1；驗收報告記錄此反向實跑結果（含 exit code）
+- 時間：2026-06-29 02:25
+
+## 腳本 finally 段保證：DELETE WebDriver session、SIGTERM server process、等最多 5 秒確認 8799 port 釋放，確保無殘留 process
+- 時間：2026-06-29 02:25
+
+## docs/VERIFY_metrics_panel.md 格式——含執行指令、exit code、截圖路徑、三條斷言各別 PASS/FAIL、console log 狀態（取到/不可取得/有 SEVERE）、假綠排除實跑記錄（--skip-open-panel 的 exit code 與斷言輸出）
+- 時間：2026-06-29 02:25
+
