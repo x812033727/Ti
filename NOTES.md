@@ -1044,7 +1044,7 @@ event/audit 黑樣本走的是 `_preflight_rebind_experts` 路徑，不是 `_pic
 
 ## 卡關討論 任務 #2：排除假綠——暫時移除 `_pick_provider` 的明示覆寫 early-return，確認兩黑樣本轉紅，還原後轉綠
 【專案經理】先看實際卡在哪，再給拆解。讓我快速確認程式碼與測試現況。
-生產護欄是雙層：line 1503-1504（`_pick_provider` early-return）＋ line 1399（`_explicit_provider_overrides` 過濾）。我懷疑卡關根因就在這。讓我實跑驗證假綠實驗到底發生什麼。
+生產護欄是雙層：line 1503-1504（`_pick_provider` early-return）＋ line 1466（`_preflight_rebind_experts` 的 `explicit_overrides.get(role_key)` 跳過）。我懷疑卡關根因就在這。讓我實跑驗證假綠實驗到底發生什麼。
 The parent venv works against the lane code. Let me run the false-green experiment directly to find the actual failure.
 現況 13 綠。現在做假綠實驗：移除 1503-1504 early-return，看黑樣本是否轉紅。
 找到根因了。讓我還原並確認。
@@ -1058,16 +1058,16 @@ The parent venv works against the lane code. Let me run the false-green experime
 | 黑樣本 | 對應護欄 | 移除後 |
 |---|---|---|
 | `test_pick_provider_explicit_override_wins_under_all_constrained` | `_pick_provider` early-return（line 1503-1504） | 轉紅 ✓ |
-| `test_explicit_override_under_all_constrained_emits_no_event_or_audit` | `_explicit_provider_overrides` 過濾（line 1399） | **仍綠** ✗ |
+| `test_explicit_override_under_all_constrained_emits_no_event_or_audit` | `_preflight_rebind_experts` 的 `explicit_overrides.get(role_key)` 跳過（line 1466） | 轉紅 ✓ |
 
-原驗收寫「移除 1503-1504 → **兩**黑樣本都轉紅」。實跑證明：只移除這一道，**第二個黑樣本恆綠**——因為它的「不發事件/不寫 audit」行為是另一條路徑（line 1399 過濾後餵 `plan_preflight_rebind`）在守。任何照字面做的人都會看到一個樣本不轉紅，誤判成「無法重現假綠」而反覆重跑——這就是連 2 輪卡關的真因。這正是 CLAUDE.md 警告的「兩道冗餘護欄互相遮蔽」。
+原驗收寫「移除 1503-1504 → **兩**黑樣本都轉紅」。實跑證明：只移除這一道，**第二個黑樣本恆綠**——因為它的「不發事件/不寫 audit」行為是 `_preflight_rebind_experts` 內 line 1466 的 explicit override 跳過在守。任何照字面做的人都會看到一個樣本不轉紅，誤判成「無法重現假綠」而反覆重跑——這就是連 2 輪卡關的真因。這正是 CLAUDE.md 警告的「兩道冗餘護欄互相遮蔽」。
 
 ## 突破做法：拆成兩道獨立破壞（已實跑驗證）
 
 不要再嘗試「一次移除讓兩樣本都紅」。改成**一道護欄對一個黑樣本**，各別破壞：
 
 - **破壞 A**：移除 `_pick_provider` line 1503-1504 → `test_pick_provider_explicit_override_wins...` 轉 FAIL（已驗：回 `claude` 而非 `codex`、pending 被設）。
-- **破壞 B**：破壞 `_explicit_provider_overrides` line 1399 過濾條件 → `test_explicit_override...no_event_or_audit` 轉 FAIL（已驗：engineer 進入 pc/audit 集合）。
+- **破壞 B**：破壞 `_preflight_rebind_experts` line 1466 的 `explicit_overrides.get(role_key)` 跳過條件 → `test_explicit_override...no_event_or_audit` 轉 FAIL（已驗：engineer 進入 pc/audit 集合）。
 - **還原各自** → 兩樣本轉綠，`git status` 無殘留（已驗）。
 
 這比原條件**更強**：不僅證明黑樣本有真判別力，還證明兩道護欄**彼此非冗餘**、各守一個行為合約。
@@ -1076,7 +1076,7 @@ The parent venv works against the lane code. Let me run the false-green experime
 
 任務 #2 驗收第 3 條改為：
 
-> 假綠對照：分別破壞兩道護欄，各自對應一個黑樣本轉 FAIL——破壞 `_pick_provider` early-return 使 `..._wins_under_all_constrained` 轉紅；破壞 `_explicit_provider_overrides`（line 1399）過濾使 `..._no_event_or_audit` 轉紅；各別還原後轉綠且 `git status` 無殘留。
+> 假綠對照：分別破壞兩道護欄，各自對應一個黑樣本轉 FAIL——破壞 `_pick_provider` early-return 使 `..._wins_under_all_constrained` 轉紅；破壞 `_preflight_rebind_experts`（line 1466）的 `explicit_overrides.get(role_key)` 跳過條件使 `..._no_event_or_audit` 轉紅；各別還原後轉綠且 `git status` 無殘留。
 
 零生產碼改動，純驗證結案。工作樹已還原乾淨。任務 #2 至此**可解**，blocker 解除。
 
@@ -1087,7 +1087,7 @@ The parent venv works against the lane code. Let me run the false-green experime
 
 **雙護欄本來就不是冗餘，而是兩個不同合約層**：
 - `_pick_provider` early-return → 守「選哪個 provider」
-- `_explicit_provider_overrides` 過濾 → 守「事件/audit 名單」
+- `_preflight_rebind_experts` 的 explicit override 跳過 → 守「事件/audit 名單」
 
 兩層各自對應一個不變式，**原本就應該要兩道對照破壞**，這不是臨時打補丁，是驗收條件寫錯了。
 
@@ -1096,7 +1096,7 @@ The parent venv works against the lane code. Let me run the false-green experime
 設計決策: **假綠驗收改為雙軌各別破壞**——每道護欄一個黑樣本，不可合併為單次破壞；驗收文件同步修正。
 放棄了什麼：「一次移除解決所有黑樣本」的簡潔性；換來的是不會被相互遮蔽的真實判別力，值得。
 
-設計決策: **兩道護欄維持各自獨立，不合併**——`_pick_provider`（行為選擇層）與 `_explicit_provider_overrides`（事件過濾層）邊界清楚，合併會讓解析邏輯耦合進 orchestrator 狀態機，違反 `flow.py` vs `orchestrator.py` 的無狀態/有狀態邊界。
+設計決策: **兩道護欄維持各自獨立，不合併**——`_pick_provider`（provider 選擇層）與 `_preflight_rebind_experts`（preflight 事件/audit 層）邊界清楚，合併會把選擇邏輯與 preflight 狀態機耦在一起。
 
 ---
 
@@ -1115,7 +1115,7 @@ The parent venv works against the lane code. Let me run the false-green experime
    - 還原後確認 PASS。
 
 3. **破壞 B：事件/audit 層**
-   - 暫時破壞 `_explicit_provider_overrides` 的 `is_user_explicit_provider` 過濾。
+   - 暫時破壞 `_preflight_rebind_experts` 的 `explicit_overrides.get(role_key)` 跳過條件。
    - 只要求這支轉 FAIL：
      `test_explicit_override_under_all_constrained_emits_no_event_or_audit`
    - 還原後確認 PASS。
@@ -1132,7 +1132,7 @@ The parent venv works against the lane code. Let me run the false-green experime
 
 1. 基線：兩支黑樣本先確認 PASS。
 2. 破壞 A：移除 `_pick_provider` early-return，只要求 `test_pick_provider_explicit_override_wins_under_all_constrained` 轉 FAIL；還原後 PASS。
-3. 破壞 B：破壞 `_explicit_provider_overrides` 的 `is_user_explicit_provider` 過濾，只要求 `test_explicit_override_under_all_constrained_emits_no_event_or_audit` 轉 FAIL；還原後 PASS。
+3. 破壞 B：破壞 `_preflight_rebind_experts` 的 `explicit_overrides.get(role_key)` 跳過條件，只要求 `test_explicit_override_under_all_constrained_emits_no_event_or_audit` 轉 FAIL；還原後 PASS。
 4. 收尾：跑完整相關測試，確認 `git status --short` 乾淨。
 5. 文件同步：把「移除 `_pick_provider` 讓兩黑樣本都紅」改成「兩道護欄各自破壞、各自對應黑樣本轉紅」。
 
@@ -1154,4 +1154,6 @@ The parent venv works against the lane code. Let me run the false-green experime
 - `env TI_SANDBOX=0 timeout 60 .venv/bin/python -m pytest tests/core/test_provider_quota_helpers.py tests/settings/test_provider_quota.py tests/test_user_explicit_provider_contract.py tests/core/test_provider_preflight_routing_qa.py tests/autopilot/test_provider_routing_contract.py -q` → 41 passed
 - `env TI_SANDBOX=0 timeout 60 .venv/bin/python -m pytest tests/autopilot/test_provider_routing_contract.py tests/core/test_provider_all_constrained.py -q` → 29 passed
 
-一句檢討：假綠驗收要先辨識受測行為由幾道護欄把守；N 道護欄就要 N 個對照破壞，不能用單一 mutation 宣稱全部黑樣本已證偽。
+是否需回寫教訓：需。
+
+教訓: 假綠驗收要先辨識受測行為由幾道護欄把守；N 道護欄就要 N 個對照破壞，不能用單一 mutation 宣稱全部黑樣本已證偽。
