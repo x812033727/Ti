@@ -101,9 +101,7 @@ def _make_session(tmp_path, monkeypatch, *, snap=None, explicit_engineer: str | 
 # --- 黑樣本：明示覆寫護欄 × 全受限（核心缺口）-------------------------------
 
 
-def test_explicit_override_under_all_constrained_emits_no_event_or_audit(
-    tmp_path, monkeypatch
-):
+def test_explicit_override_under_all_constrained_emits_no_event_or_audit(tmp_path, monkeypatch):
     """黑樣本：``TI_PROVIDER_ENGINEER=codex`` + 全受限 → engineer 不重綁、不發 provider_constrained
     事件、不寫 audit——驗證「使用者意圖護欄」在全受限下也不會被悄悄降級、誤發噪音到儀表板。
 
@@ -132,13 +130,11 @@ def test_explicit_override_under_all_constrained_emits_no_event_or_audit(
     pc = [e for e in bucket if e.type == events.EventType.PROVIDER_CONSTRAINED]
     assert pc == [], f"明示角色不應觸發 provider_constrained 事件，卻收到: {pc}"
     # 4) 沒寫 audit row（autopilot/audit.jsonl 應不存在或為空）
-    audit = (tmp_path / "ap" / "audit.jsonl")
+    audit = tmp_path / "ap" / "audit.jsonl"
     assert not audit.exists() or audit.read_text(encoding="utf-8").strip() == ""
 
 
-def test_pick_provider_explicit_override_wins_under_all_constrained(
-    tmp_path, monkeypatch
-):
+def test_pick_provider_explicit_override_wins_under_all_constrained(tmp_path, monkeypatch):
     """黑樣本：``_pick_provider`` 同步層就早 return 使用者明示 provider，**不**設 pending marker
     ——補既有 ``test_pick_provider_alternative_exists_rebinds`` 的護欄對偶樣本（前者驗證有 alt
     時自動重綁；本測試驗證明示覆寫時同步層就早 return、連 pending 都不設）。
@@ -305,9 +301,7 @@ def test_preflight_rebind_experts_cwd_none_is_strict_noop(tmp_path, monkeypatch)
 # --- 白樣本：_preflight_rebind_experts 整合路徑 -----------------------------
 
 
-def test_preflight_rebind_experts_does_not_rebind_explicit_override(
-    tmp_path, monkeypatch
-):
+def test_preflight_rebind_experts_does_not_rebind_explicit_override(tmp_path, monkeypatch):
     """白樣本：整合路徑中明示覆寫角色**完全不被** pre-flight 介入——既不重建 expert 物件，
     也不寫 recruit_providers，也不被加進 planned_roles。
     守門「TI_PROVIDER_<KEY> > 一切自動優化」在場次起點 pre-flight 不會被悄悄降級。
@@ -330,7 +324,8 @@ def test_preflight_rebind_experts_does_not_rebind_explicit_override(
     # 但 constrained 的角色」發事件——若 pm/qa 也受限且無 alt，會被發出 1 筆；此處只驗 engineer
     # 不在 pc 事件中）。
     pc_for_engineer = [
-        e for e in bucket
+        e
+        for e in bucket
         if e.type == events.EventType.PROVIDER_CONSTRAINED and e.payload.get("role") == "engineer"
     ]
     assert pc_for_engineer == []

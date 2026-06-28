@@ -126,9 +126,7 @@ async def test_explicit_role_provider_is_not_rebound_or_reported(tmp_path, monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["openai", "gemini"])
-async def test_explicit_openai_compatible_provider_is_not_rebound(
-    tmp_path, monkeypatch, provider
-):
+async def test_explicit_openai_compatible_provider_is_not_rebound(tmp_path, monkeypatch, provider):
     _reload_engineer_provider(monkeypatch, provider)
     snap = _snap(
         _entry(provider, ready=True, used=99),
