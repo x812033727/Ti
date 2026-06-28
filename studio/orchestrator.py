@@ -1176,6 +1176,16 @@ class StudioSession:
                 research_note = (
                     f"過往場次的調研結論（docs/RESEARCH.md）供參考：\n{prior_research}\n\n"
                 )
+        # 既有改善計畫讀回：把過往場次檢討沉澱的後續改善任務／教訓（docs/IMPROVEMENT.md，跨場次
+        # 累積）注入規劃，讓「改善計畫」被下一場行動消化——閉合「驗證→改善計畫→行動」迴圈。
+        # 一次性 session（每場新 workspace）首跑無此檔→空字串、零行為差；專案模式才跨場累積生效。
+        prior_improvement = self._knowledge_tail("IMPROVEMENT.md")
+        improvement_note = (
+            "過往場次的改善計畫（docs/IMPROVEMENT.md，尚待消化的改善建議與教訓）供規劃參考，"
+            f"請優先納入仍適用者：\n{prior_improvement}\n\n"
+            if prior_improvement
+            else ""
+        )
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
@@ -1183,6 +1193,7 @@ class StudioSession:
             + repo_note
             + self._clarify_note
             + research_note
+            + improvement_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請拆解成結構化任務清單與驗收標準，並宣告執行指令。\n"
             + AGENDA_PROMPT_RULES.format(keys=", ".join(experts.keys())),

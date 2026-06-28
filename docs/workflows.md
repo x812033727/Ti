@@ -145,6 +145,18 @@ dynamic step 中，PM 的 `下一步: <role_key>` 若指到不在場的角色：
 - 招募加入即廣播 `EXPERT_JOINED`（前端動態插入成員欄）；單場上限 `TI_RECRUIT_MAX`（防 roster 爆量）。
 - 招募者作為動態 consultant（序列發言），不進並行 review gather，故不影響號誌下限。
 
+## 驗證與改善計畫
+
+每條流程內建「驗證＋改善計畫」閉環：
+
+- **驗證**：`demo` stage 客觀執行整體產出（exit code／HTTP 探測），是放行/出貨的客觀證據。
+- **改善計畫（成果物）**：`wrap_up` 把檢討的後續改善任務（含 priority/type）＋可重用教訓沉澱成
+  workspace 的 `docs/IMPROVEMENT.md`（比照 RESEARCH.md 知識沉澱、跨場次累積），讓改善建議成為
+  可累積的交付物，而非只進 backlog。
+- **行動閉環**：下一場 `decompose` 把 `docs/IMPROVEMENT.md` 讀回注入 PM 規劃，讓改善計畫被消化——
+  形成「驗證 → 改善計畫 → 下一場行動」迴圈（一次性 session 每場新 workspace 無此檔→零行為差；
+  專案模式固定 workspace 才跨場累積生效）。
+
 ## 相關設定
 
 | env | 預設 | 說明 |
