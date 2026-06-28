@@ -1985,13 +1985,22 @@ class StudioSession:
         experts = self._get_experts()
         if self._lane_expert_factory is not None:
             factory = self._lane_expert_factory
+            return {
+                key: factory(experts[key].role, f"{self.session_id}:{suffix}", cwd)
+                for key in experts
+            }
         else:
             from .providers import make_expert
 
-            factory = make_expert
-        return {
-            key: factory(experts[key].role, f"{self.session_id}:{suffix}", cwd) for key in experts
-        }
+            return {
+                key: make_expert(
+                    experts[key].role,
+                    f"{self.session_id}:{suffix}",
+                    cwd,
+                    provider=self._recruit_providers.get(key),
+                )
+                for key in experts
+            }
 
     async def _teardown_lane(self, ctx: LaneContext) -> None:
         """收掉一條並行 lane 的專家連線與 worktree（best-effort）。"""

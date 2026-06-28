@@ -79,6 +79,23 @@ async def test_preflight_rebinds_existing_member_to_least_constrained_provider(t
 
 
 @pytest.mark.asyncio
+async def test_preflight_rebind_is_preserved_in_production_lane_experts(tmp_path, monkeypatch):
+    snap = _snap(
+        _entry("claude", ready=True, used=95),
+        _entry("minimax", ready=True, used=20),
+        _entry("codex", ready=False),
+        _entry("antigravity", ready=False),
+    )
+    experts = {"engineer": StubExpert(BY_KEY["engineer"], "claude")}
+    s, _ = _session(tmp_path, monkeypatch, snap, experts)
+
+    await s._run("req")
+    lane_experts = s._build_lane_experts("lane-a", tmp_path / "lane-a")
+
+    assert lane_experts["engineer"].provider == "minimax"
+
+
+@pytest.mark.asyncio
 async def test_explicit_role_provider_is_not_rebound_or_reported(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ROLE_PROVIDERS", {**config.ROLE_PROVIDERS, "engineer": "codex"})
     snap = _snap(
