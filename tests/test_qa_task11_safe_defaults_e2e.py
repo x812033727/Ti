@@ -83,10 +83,17 @@ def _install(monkeypatch, overrides):
     而非裸 gh pr merge」。`gh pr view --json number` 需回一個數字，否則
     _commit_push_merge 會在取 PR 編號處提早失敗。
     """
-    # origin push URL 須 _repo_key-match AUTOPILOT_REPO（#263 新增的防誤推 guard），否則
-    # _commit_push_merge 在 push 前即中止。本檔聚焦 push 旗標，故 stub 成「正好等於目標 repo」。
-    _repo_url = f"https://github.com/{(config.AUTOPILOT_REPO or '').strip()}.git"
-    spy = RunSpy({**overrides, "pr view": (0, "123"), "get-url": (0, _repo_url)})
+    branch = config.AUTOPILOT_BRANCH
+    repo = config.AUTOPILOT_REPO
+    # 新增的 branch protection 防線在呼叫 _commit_push_merge 時會打兩條 API；在 E2E 單元中提供
+    # 穩定 mock，避免 test 受未模擬 GitHub API 輸出影響而誤判。
+    protection_overrides = {
+        f"repos/{repo}/rules/branches/{branch}": (0, "[]"),
+        f"repos/{repo}/branches/{branch}/protection": (1, "HTTP 404"),
+        "git remote get-url --push origin": (0, f"https://github.com/{repo}.git"),
+        "pr view": (0, "123"),
+    }
+    spy = RunSpy({**overrides, **protection_overrides})
     spy._merge_flow_called = False
     monkeypatch.setattr(autopilot, "_run", spy)
 
