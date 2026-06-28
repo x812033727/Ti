@@ -2146,3 +2146,42 @@
 ## 測試檔 `tests/autopilot/test_improvement_bench.py`（bench 串接 + regress→rollback 反向斷言）與 `tests/test_flow_bench.py`（compare 純函式三向 + 黑樣本）；兩份皆 `async def`
 - 時間：2026-06-28 21:41
 
+## pre-flight 重綁 hook 點置於 orchestrator._run() 的 _get_experts() 後、LaneContext 建立前；對每個 ROSTER 成員呼叫 _pick_provider()，若回傳 provider 與 effective_provider(role) 不同，立即以 make_expert(role, session_id, cwd, provider=alt) 重建該 expert 物件並替換 experts dict 對應項。
+- 時間：2026-06-28 23:32
+- 理由：expert 物件在 _build_experts 時已靜態綁定 provider；只改 map 不重建物件，speak 仍走舊 provider，重綁形同虛設。
+- 否決方案：僅更新 _recruit_providers / role_provider_map 而不重建 expert——高工指摘「UI 顯示已改綁，實際仍走舊 provider」，否決。
+
+## 使用者意圖護欄在 _pick_provider() 開頭實作：config.role_provider(role.key) 非空時，不論 provider_hint 與 quota 狀態，直接 early-return 使用者明示 provider，後續所有重綁邏輯完全跳過。
+- 時間：2026-06-28 23:32
+- 理由：使用者意圖優先於 PM hint 與系統自動優化；混用時若未明確定義優先序，半年後維護者無從判斷。
+- 否決方案：provider_hint 優先於 TI_PROVIDER_<ROLE> 覆寫——否決，PM hint 屬系統建議，不應壓過使用者明示。
+
+## 優先序明確為「TI_PROVIDER_<ROLE> 非空 > PM provider_hint > effective_provider(role) > 額度感知重綁」；測試用黑樣本驗證：TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex。
+- 時間：2026-06-28 23:32
+
+## _pick_provider() 維持同步函式，只返回 provider string；廣播 provider_constrained 事件與 append audit 的 async 邏輯移到 async caller（pre-flight loop 與 _recruit()），統一 await _handle_all_constrained(role_key, from_prov, snap)。
+- 時間：2026-06-28 23:32
+- 理由：不改 _pick_provider 同步簽名可避免牽動所有既有 callsite；async 副作用集中在 caller 層，邊界清楚。
+- 否決方案：將 _pick_provider 改為 async——會牽動所有 callsite（recruit / pre-flight loop），增量風險高於效益。
+
+## _handle_all_constrained(role_key, from_prov, snap) 為 async 私有方法，作：①await broadcast(StudioEvent(type=EventType.PROVIDER_CONSTRAINED, ...))；②try/except 吞所有 IO 例外並 log.warning 後 append audit.jsonl；③不 raise、不 sleep、不設排程。
+- 時間：2026-06-28 23:32
+- 理由：session 不能因審計檔目錄不存在或權限問題掛掉；audit 屬可觀測性，非核心路徑。
+
+## events.py 新增 EventType.PROVIDER_CONSTRAINED = "provider_constrained" 到 EventType enum；不加前端 handleEvent() 處理（本輪後端邏輯為主）；JSONL 自動留存供 P2 儀表板。
+- 時間：2026-06-28 23:32
+- 否決方案：用 Literal 聯集替換 enum——現況已是 enum，不必要重構。
+
+## audit append 在 _handle_all_constrained 中先確保 AUTOPILOT_STATE_DIR 存在（mkdir parents=True, exist_ok=True），再 open("a") append JSON；整段包 try/except OSError 並 log.warning，確保 IO 失敗不中斷 session。
+- 時間：2026-06-28 23:32
+
+## pre-flight 重綁迴圈只對 self._experts 非 None 時執行，不強制重建 _experts；若測試已注入 stub experts，_experts 為 stub 物件時也對每個 stub 角色過一遍 _pick_provider，但只有 isinstance(expert, ExpertLike) 且 provider 屬性可覆寫時才替換——保護既有測試不因重建邏輯破壞 stub。
+- 時間：2026-06-28 23:32
+- 理由：工程師指摘「小心測試注入的 self._experts stub 不要被無條件重建破壞」。
+
+## provider_quota.py / config.py / make_expert / redeploy 公開簽名全不動；所有新邏輯以私有方法加在 orchestrator.py；_refresh_quota_snapshot() 呼叫時機從「動態 stage 開頭」提前至 _run() 入口，原動態 stage 呼叫保留（二次刷新確保長場次額度新鮮）。
+- 時間：2026-06-28 23:32
+
+## 測試新增 tests/autopilot/test_provider_routing_contract.py，含六黑白樣本＋「TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex」優先序樣本；並斷言 provider_constrained 事件 payload 與 audit 欄位一致（為 P2 儀表板預留接縫）；既有 10 個 provider_quota 測試與離線 e2e 不允許回歸。
+- 時間：2026-06-28 23:32
+

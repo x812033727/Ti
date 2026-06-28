@@ -1,76 +1,6 @@
 {
   "entries": [
     {
-      "decision": "移交待辦（不入 P0）——`discussion_round` 事件標籤供前端按輪分組、滾動摘要舊輪次、主持人 LLM 摘要與裁決、真實 LLM API 面驗證",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879956
-    },
-    {
-      "decision": "角色檔格式採 Markdown＋YAML frontmatter、一檔一角色（`roles/<key>.md`）；frontmatter 欄位＝現有 Role 欄位（name/avatar/title/model/allowed_tools/permission_mode/tags，key 由檔名推導、寫明則須一致）＋新增 `description`（給未來 moderator 選人）；body 為角色專屬 prompt，載入時自動前置 `_COMMON`",
-      "rationale": "長文 prompt 放 body 最自然、git diff 友善、與 Claude Code subagents 慣例一致；自動前置 _COMMON 免每個自建角色手抄共通守則",
-      "rejected": "單一大 YAML 檔（多行 prompt 醜、diff 差）；body 含完整 prompt 不前置 _COMMON（漏抄即行為不一致）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989834
-    },
-    {
-      "decision": "解析用 PyYAML `safe_load`＋pydantic BaseModel 驗證（`extra=\"forbid\"` 使未知欄位明確報錯），通過後轉 frozen Role；選填預設——model→`config.MODEL_FAST`、allowed_tools→`[\"Read\",\"Grep\"]`、permission_mode→`\"default\"`（白名單 `{default, acceptEdits}`）；零新依賴（PyYAML 6.0.3、pydantic 隨 fastapi 已在環境）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989892
-    },
-    {
-      "decision": "新增 `studio/role_store.py` 收納載入/驗證/落檔/組隊邏輯，roles.py 僅留內建定義與接面；`role_store.reload()` 為**純同步函式**：先完整 build 好新資料，再於無 await 的同步區塊一次原地變異——`ROSTER[:] =`、`BY_KEY.clear()+update()`、`CORE_ROLES[:] =`，且對被覆蓋的內建 key 一併 `setattr(roles, \"PM\"/\"SENIOR\"/...)` 更新具名常數",
-      "rationale": "orchestrator.py:45 等模組級綁定靠原地變異保活；improver.py:308、autopilot.py:387 用具名常數（函式內 import），不 setattr 會出現「同一角色兩種行為」；同步一次變異杜絕並發讀到 clear/update 空窗",
-      "rejected": "重新賦值模組屬性（既有 import 綁定全失效）；reload 做成 async（引入空窗與重入問題）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989908
-    },
-    {
-      "decision": "合併規則明定兩層——`BY_KEY` 含「全部內建（含被 OPTIONAL_ROLES 過濾者）＋全部合法檔案角色」，維持 BY_KEY ⊇ ROSTER 不對稱；`ROSTER` 為內建（同 key 檔案覆蓋後、沿用 OPTIONAL_ROLES 過濾）＋全部新 key 檔案角色；壞檔逐檔拒絕並 log 原因，不影響其他檔與內建",
-      "rationale": "improver.py:386 靠 `key not in BY_KEY` 判斷，BY_KEY 若縮成只含 ROSTER 會默默改變其行為",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989925
-    },
-    {
-      "decision": "reload 語意明寫入文件——進行中 session 已快照 Role 物件，reload 只影響之後建立的 expert，不熱換進行中討論",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.698994
-    },
-    {
-      "decision": "新增 `config.ROLES_DIR = os.getenv(\"TI_ROLES_DIR\", \"<repo>/roles\")`，加入 config.py reload global 區塊、settings.py FIELDS 白名單、`.env.example` 同步；測試一律 monkeypatch ROLES_DIR 指向 tmp_path，conftest.py 加 `delenv(\"TI_ROLES_DIR\")` 防環境殘留",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989958
-    },
-    {
-      "decision": "`/api/roles` CRUD 照 routes.py 既有 pydantic Body＋auth 依賴慣例；GET 每筆帶 `source ∈ {builtin, override, file}` 與 body 原文；POST/PUT 落檔（temp+rename 原子寫）後立即 reload；DELETE：file→刪檔、override→刪檔還原內建、純 builtin→409；key 格式 `^[a-z][a-z0-9_]{1,31}$`，**POST body 與 PUT/DELETE 路徑參數同套驗證**（防路徑穿越）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989968
-    },
-    {
-      "decision": "空殼 persona 驗證規則——對「角色專屬 body 原文（前置 _COMMON 之前）」檢查：去空白後非空，且至少一行匹配 Python re `(輸出|決議|驗證|格式|指令|決策)[:：]`；不符回 422 並指明缺出力格式段落；檔案載入路徑同規則（拒檔記 log）；內建 8 角色定義本身不經此路徑",
-      "rationale": "原 ERE 對內建 engineer（僅「執行指令:」）與 architect（「設計決策:」）body 不匹配，會卡死 override 編輯往返，故擴入「指令｜決策」；驗證在前置 _COMMON 之前，否則 _COMMON 自帶匹配行會讓驗證形同虛設",
-      "rejected": "規則只對非內建 key 強制（雙軌規則日後難維護，且新角色與 override 應同一標準）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.698998
-    },
-    {
-      "decision": "加一條守門單測：8 個內建角色 body 全數通過上述驗證規則——防未來改內建 prompt 時 override 往返回歸卡死",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989987
-    },
-    {
       "decision": "Group 存單檔 `roles/groups.yaml`（`{name, role_keys[], mode}` 列表），邏輯併入 role_store.py；驗證三硬規則（key 存在於 BY_KEY、不重複、≥2 人）＋mode 白名單 `{round_robin, parallel}`，違反回 422；`/api/groups` CRUD 同 /api/roles 慣例",
       "rationale": "",
       "rejected": "mode 含 legacy（legacy 是無小組的舊路徑，組了小組即無 legacy 語意）",
@@ -3499,6 +3429,76 @@
       "rejected": "",
       "session_id": "pj166c627422",
       "created_at": 1782654116.6821084
+    },
+    {
+      "decision": "pre-flight 重綁 hook 點置於 orchestrator._run() 的 _get_experts() 後、LaneContext 建立前；對每個 ROSTER 成員呼叫 _pick_provider()，若回傳 provider 與 effective_provider(role) 不同，立即以 make_expert(role, session_id, cwd, provider=alt) 重建該 expert 物件並替換 experts dict 對應項。",
+      "rationale": "expert 物件在 _build_experts 時已靜態綁定 provider；只改 map 不重建物件，speak 仍走舊 provider，重綁形同虛設。",
+      "rejected": "僅更新 _recruit_providers / role_provider_map 而不重建 expert——高工指摘「UI 顯示已改綁，實際仍走舊 provider」，否決。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174117
+    },
+    {
+      "decision": "使用者意圖護欄在 _pick_provider() 開頭實作：config.role_provider(role.key) 非空時，不論 provider_hint 與 quota 狀態，直接 early-return 使用者明示 provider，後續所有重綁邏輯完全跳過。",
+      "rationale": "使用者意圖優先於 PM hint 與系統自動優化；混用時若未明確定義優先序，半年後維護者無從判斷。",
+      "rejected": "provider_hint 優先於 TI_PROVIDER_<ROLE> 覆寫——否決，PM hint 屬系統建議，不應壓過使用者明示。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174124
+    },
+    {
+      "decision": "優先序明確為「TI_PROVIDER_<ROLE> 非空 > PM provider_hint > effective_provider(role) > 額度感知重綁」；測試用黑樣本驗證：TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741257
+    },
+    {
+      "decision": "_pick_provider() 維持同步函式，只返回 provider string；廣播 provider_constrained 事件與 append audit 的 async 邏輯移到 async caller（pre-flight loop 與 _recruit()），統一 await _handle_all_constrained(role_key, from_prov, snap)。",
+      "rationale": "不改 _pick_provider 同步簽名可避免牽動所有既有 callsite；async 副作用集中在 caller 層，邊界清楚。",
+      "rejected": "將 _pick_provider 改為 async——會牽動所有 callsite（recruit / pre-flight loop），增量風險高於效益。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174127
+    },
+    {
+      "decision": "_handle_all_constrained(role_key, from_prov, snap) 為 async 私有方法，作：①await broadcast(StudioEvent(type=EventType.PROVIDER_CONSTRAINED, ...))；②try/except 吞所有 IO 例外並 log.warning 後 append audit.jsonl；③不 raise、不 sleep、不設排程。",
+      "rationale": "session 不能因審計檔目錄不存在或權限問題掛掉；audit 屬可觀測性，非核心路徑。",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174129
+    },
+    {
+      "decision": "events.py 新增 EventType.PROVIDER_CONSTRAINED = \"provider_constrained\" 到 EventType enum；不加前端 handleEvent() 處理（本輪後端邏輯為主）；JSONL 自動留存供 P2 儀表板。",
+      "rationale": "",
+      "rejected": "用 Literal 聯集替換 enum——現況已是 enum，不必要重構。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.17413
+    },
+    {
+      "decision": "audit append 在 _handle_all_constrained 中先確保 AUTOPILOT_STATE_DIR 存在（mkdir parents=True, exist_ok=True），再 open(\"a\") append JSON；整段包 try/except OSError 並 log.warning，確保 IO 失敗不中斷 session。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741307
+    },
+    {
+      "decision": "pre-flight 重綁迴圈只對 self._experts 非 None 時執行，不強制重建 _experts；若測試已注入 stub experts，_experts 為 stub 物件時也對每個 stub 角色過一遍 _pick_provider，但只有 isinstance(expert, ExpertLike) 且 provider 屬性可覆寫時才替換——保護既有測試不因重建邏輯破壞 stub。",
+      "rationale": "工程師指摘「小心測試注入的 self._experts stub 不要被無條件重建破壞」。",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174132
+    },
+    {
+      "decision": "provider_quota.py / config.py / make_expert / redeploy 公開簽名全不動；所有新邏輯以私有方法加在 orchestrator.py；_refresh_quota_snapshot() 呼叫時機從「動態 stage 開頭」提前至 _run() 入口，原動態 stage 呼叫保留（二次刷新確保長場次額度新鮮）。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741333
+    },
+    {
+      "decision": "測試新增 tests/autopilot/test_provider_routing_contract.py，含六黑白樣本＋「TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex」優先序樣本；並斷言 provider_constrained 事件 payload 與 audit 欄位一致（為 P2 儀表板預留接縫）；既有 10 個 provider_quota 測試與離線 e2e 不允許回歸。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741343
     }
   ]
 }
