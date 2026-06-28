@@ -2221,12 +2221,13 @@
 - 理由：使用者透過 `TI_PROVIDER_<KEY>=X` 顯式選定 provider，等同聲明「我知道這個選擇，不需要系統干預或警告」；若仍發事件，儀表板會被使用者自願接受的受限噪音淹沒，降低事件信噪比。
 - 否決方案：「明示覆寫仍發事件但加 reason=user_explicit 欄位」——增加事件語意複雜度，且 P2 儀表板尚未定義如何區分展示，過早承諾介面。
 
-## **驗收指標改為「核心黑樣本有真判別力」**，不依賴「13 / 6 / 3 測」數字契約——黑樣本 `test_pick_provider_explicit_override_wins_under_all_constrained` 以 PM hint「claude」+ 全受限 + 明示 codex 確認回傳 codex 且 `_provider_constrained_pending` 為空；`test_explicit_override_under_all_constrained_emits_no_event_or_audit` 確認 `provider_constrained` 事件集合為 `{"pm", "qa"}`、audit 角色集合同上，缺一不可。
+## **驗收指標改為「核心黑樣本有真判別力」**，不依賴「13 / 6 / 3 測」數字契約——`_pick_provider` early-return 由兩支同步黑樣本守：`tests/core/test_provider_preflight_routing_qa.py::test_pick_provider_explicit_override_wins_under_all_constrained` 與 `tests/test_user_explicit_provider_contract.py::test_pick_provider_explicit_override_wins_when_all_constrained`，皆以 PM hint「claude」+ 全受限 + 明示 codex 確認回傳 codex 且 `_provider_constrained_pending` 不含 engineer；pre-flight 黑樣本 `test_explicit_override_under_all_constrained_emits_no_event_or_audit` 則守 `_explicit_provider_overrides` 路徑，確認 `provider_constrained` 事件集合為 `{"pm", "qa"}`、audit 角色集合同上，缺一不可。
 - 時間：2026-06-29 01:23
 - 理由：數字契約隨補白樣本浮動，核心行為合約才是不變式。
 
-## **假綠排除方法**——暫時移除 `_pick_provider` 第一行 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)` 後，至少以下兩個黑樣本必須轉 FAIL：`test_pick_provider_explicit_override_wins_under_all_constrained`（prov 回 "claude" 而非 "codex"；pending marker 被設）與 `test_explicit_override_under_all_constrained_emits_no_event_or_audit`（engineer 出現在 pc/audit 集合）；還原後兩者轉 PASS，工作樹 `git status` 無殘留。
+## **假綠排除方法**——暫時移除 `_pick_provider` 第一行 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)` 後，以下兩個真正走 `_pick_provider` 的黑樣本必須轉 FAIL：`tests/core/test_provider_preflight_routing_qa.py::test_pick_provider_explicit_override_wins_under_all_constrained`（prov 回 "claude" 而非 "codex"；pending marker 被設）與 `tests/test_user_explicit_provider_contract.py::test_pick_provider_explicit_override_wins_when_all_constrained`（prov 回 "claude" 而非 "codex"；pending marker 被設）；pre-flight 黑樣本不列入此 mutation 驗收，因為它走 `_explicit_provider_overrides`，移除 `_pick_provider` early-return 後仍應 PASS；還原後上述測試全數 PASS，工作樹 `git status` 無殘留。
 - 時間：2026-06-29 01:23
+- 第 2 輪實測：移除 early-return 後，兩支 `_pick_provider` 黑樣本皆 FAIL（actual "claude" != expected "codex"），`test_explicit_override_under_all_constrained_emits_no_event_or_audit` 維持 PASS；還原後相關 6 檔 `56 passed`。
 - 否決方案：只讀測試碼確認行為——CLAUDE.md 明確「審查要親自實跑，不靠看起來對」。
 
 ## **`_explicit_provider_overrides` 以 `is_user_explicit_provider` 過濾**——dict comprehension 為 `{k: config.role_provider(ex.role.key) for k, ex in experts.items() if config.is_user_explicit_provider(ex.role.key)}`；空字串角色（未設 env）不進 overrides，避免「所有角色都被視為明示鎖定」永遠關閉自動重綁。
@@ -2237,4 +2238,3 @@
 
 ## **離線 e2e 三個失敗標注為「環境限制」不列入本輪驗收**——根因是 `/opt/ti/lessons.lock` 寫入沙箱 read-only 磁碟，CI 正常環境無此限制；完整驗收指令為 `tests/core/test_provider_quota_helpers.py tests/settings/test_provider_quota.py tests/test_user_explicit_provider_contract.py tests/core/test_provider_preflight_routing_qa.py tests/autopilot/test_provider_routing_contract.py`。
 - 時間：2026-06-29 01:23
-
