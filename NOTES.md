@@ -593,3 +593,44 @@ class RetryConfig:
 
 ## 任務 #4 完成：擴充 `tests/server/test_scorecard.py` 覆蓋三通過率的單場推導與跨場聚合（含 Demo 通過率、零場次邊界）
 
+## 任務 #1 完成：在 flow.py 新增純函式 `classify_failure_followups`，把失敗來源（Demo 失敗、QA FAIL 的未過任務）映射為高優先 bug 待辦項（priority=0、type="bug"），檢討文字明寫的後續任務沿用其原標籤
+
+## 任務 #2 完成：在 orchestrator._wrap_up 改用 #1 的純函式產生 `_followup_items`，取代現行硬塞 priority=1/improvement 的寫法，並維持與檢討解析後續任務的累加去重
+
+## 任務 #3 完成：補單元測試：覆蓋「失敗→P0/bug 待辦」映射、與檢討 P1 建議並存時 `next_pending` 讓失敗待辦排前、舊行為無回歸（空失敗清單不崩潰）
+
+## 異議退回 任務 #4：實跑離線 E2E 與相關測試，確認整鏈（失敗萃取→回填→優先序取出）無回歸
+先盤點現況，實跑驗證，而不是空談。
+實作鏈已存在（#1~#3 已 commit）。任務 #4 的本職就是實跑驗證。直接跑。
+驗收指令三檔綠。但我注意到缺口：任務 #4 標題明寫「**實跑離線 E2E**」，且 #3 新測試加在 `test_orchestrator.py`，但**執行指令並未涵蓋這兩者**。逐一查證。
+執行指令未含本輪新測試（在 `test_orchestrator.py`）也未含離線 E2E。我直接把該跑的都跑了。
+全測試 1 失敗：`test_false_diff_exclusion_policy_evidence`，錯誤是 `PermissionError: .gitmodules`。需判定它是本鏈回歸還是環境問題。
+關鍵查證：本輪最重要的驗收標準（「P0 失敗待辦經 `next_pending` 排在 P1 建議前」）由哪個測試證明、是否落在執行指令涵蓋範圍內。
+## 異議檢查結論
+
+我把該跑的全跑了，盤點如下：
+
+**事實（已實跑）**
+- 執行指令三檔：`24 passed` ✓
+- 我補跑 `test_orchestrator.py` + `test_offline_e2e.py`：`40 passed` ✓
+- ruff：`All checks passed!` ✓
+- 全測試：`3138 passed, 1 failed` —— 唯一失敗 `test_false_diff_exclusion_policy_evidence` 是 `.gitmodules` 在本 lane 是字元裝置（`crw-rw-rw-`）導致的 `PermissionError`，**與本鏈（flow/orchestrator/backlog）無關、非回歸**。
+
+整鏈（失敗萃取→回填→優先序取出）的實質**無回歸成立**。
+
+**但我提一個實質、可驗證的缺口（為何還不算完成）：**
+
+任務 #4 標題明寫「**實跑離線 E2E 與相關測試**」，本輪最關鍵的驗收標準是「同一 backlog 內 P0 失敗待辦經 `next_pending` 排在 P1 前」。我查證：
+- 該排序證明**只存在** `test_failure_followups_sort_before_retro_items_in_backlog`（在 `test_orchestrator.py`，第 217 行）。
+- 官方 `執行指令` 的三個檔（test_backlog / test_improvement_plan / test_core_change_routing）**完全不含此證明**，也**不含離線 E2E**。
+
+也就是說：照 #4 的官方 demo 指令跑出來會綠，卻**從未執行**離線 E2E、也**從未跑到**證明本輪核心成果的那條測試。這正是團隊記憶反覆告誡的「假綠／自證對應」風險——demo 契約沒有 demo 到交付物本身。範圍小、修法明確：把 `執行指令` 補成
+
+`python3 -m pytest -q tests/core/test_orchestrator.py tests/test_offline_e2e.py tests/core/test_backlog.py tests/core/test_improvement_plan.py tests/core/test_core_change_routing.py`
+
+實作本身沒問題，但 #4 是「驗證任務」，其 demo 指令必須真的跑到離線 E2E 與排序證明測試才算交付完成。
+
+異議: 成立
+
+## 任務 #4 完成：實跑離線 E2E 與相關測試，確認整鏈（失敗萃取→回填→優先序取出）無回歸
+
