@@ -392,3 +392,93 @@ Sources: [Karpathy autoresearch (GitHub)](https://github.com/karpathy/autoresear
 
 Sources: [LiteLLM Router - Load Balancing](https://docs.litellm.ai/docs/routing) · [Portkey Fallbacks](https://portkey.ai/docs/product/ai-gateway/fallbacks) · [Anthropic Rate Limits](https://platform.claude.com/docs/en/api/rate-limits) · [Anthropic Usage and Cost API](https://platform.claude.com/docs/en/manage-claude/usage-cost-api) · [Claude Code Authentication](https://code.claude.com/docs/en/iam) · [OpenAI Rate limits](https://developers.openai.com/api/docs/guides/rate-limits) · [Self-Improving AI Agents §4 safety interlocks](https://arxiv.org/abs/2506.04612)
 
+## 2026-06-29 00:44
+
+<think>
+WebFetch 抓 Python docs 不太有用——重複內容。我需要的是測試結構。讓我用 ls 看測試目錄。實際上我沒有 shell 工具，只有 web_fetch 與 read_file。
+
+讓我用 read_file 看 tests 目錄。不過 read_file 只能讀檔案，不能列目錄。讓我嘗試其他路徑。
+
+實際上我已經有足夠的程式碼脈絡。我現在可以開始整合結論。
+
+關鍵事實：
+1. `config.role_provider(key)` 已有完整契約：「回 str（白名單內才回非空，否則 ""）」
+2. `_pick_provider` 與 `_preflight_rebind_experts` 兩處都 inline 用 `config.role_provider(...)` 判定
+3. `effective_provider(role)` 已經在 providers.py 把 `role_provider(role.key) or PROVIDER` 邏輯抽好
+4. flow.py 的 `plan_preflight_rebind` 接受 `explicit_overrides: dict[str, str]` 參數
+5. 既有調研已建議加 `is_user_explicit(role) -> bool`（`config.role_provider(key) != ""`）
+
+所以本輪任務的核心是：抽一個 helper（建議命名 `is_user_explicit_provider(role_key)`），把兩處 inline 判定收斂。
+
+至於是否放 config.py / orchestrator.py：
+- 既有調研建議放 config.py
+- 但任務說「供兩路徑共用」沒指定位置
+- 我傾向 `config.py`（沿用既有調研 + 公開契約的價值）
+
+至於 Web 查詢：本輪任務是純內部程式碼重構，沒有什麼套件/API 可以查。
+- 不需要查 LiteLLM / Portkey（這些是 routing 策略，不是「使用者意圖判定」）
+- 不需要查 Python 慣例（`os.getenv` 已用、列表推導已用，沒什麼特殊)
+- 不需要查什麼新技術
+
+所以本輪**不需要 WebSearch**。我已經有完整現況脈絡，可以直接產出結論。
+
+讓我聚焦：
+1. 重點：現況兩處 inline 用 `config.role_provider(...)` 判定，沒有共用 helper
+2. 建議：在 config.py 加 `is_user_explicit_provider(role_key) -> bool`，兩處改用它
+3. 黑白樣本：依既有調研已有的建議（TI_PROVIDER_engineer=codex + 全程額度受限 → engineer 仍走 codex）
+
+我給的結論需要簡潔，符合角色「精簡、聚焦、不要長篇大論」的要求。
+</think>
+
+我有足夠的現況脈絡了。這是純內部 helper 重構任務，不需要再上網查套件（兩條路徑的判定語意都已收斂在 `config.role_provider`）。直接產出結論。
+
+---
+
+**重點**
+
+- 重點: **現況兩處口徑散落**：`_pick_provider`（orchestrator.py:1422）與 `_explicit_provider_overrides`（orchestrator.py:1380）都 inline 寫 `if config.role_provider(role.key)` 判定「使用者明確覆寫」，但沒有共用 helper。`_pick_provider` 取值用（`return explicit`）、`_explicit_provider_overrides` 只用 bool 篩選，但兩處的「明確覆寫」定義都得記得和 `config.role_provider` 的「白名單 + 正規化」語意保持一致——將來只要 `config.role_provider` 的語意擴張（例如要求大小寫區分、要求不可為空字串當作「明確清空」），兩處都要記得同步改。
+
+- 重點: **單一真值來源已就緒**：`config.role_provider(key)` 已實作好「白名單正規化＋空字串＝未覆寫」的契約（config.py:107-117，回 `""` 表示無覆寫、回 PROVIDERS 白名單內字串表示有覆寫）；`providers.effective_provider(role)` 已把 `role_provider(role.key) or PROVIDER` 的「per-role 覆寫優先，否則全域」邏輯抽好。**本輪 helper 只是把兩處 inline 的 `bool(config.role_provider(...))` 收斂成一個有名稱、可被測試鎖住的 contract**——不引入新邏輯、不改變既有行為。
+
+- 重點: **既有調研已有明確建議**：RESEARCH.md 2026-06-28 23:24 條目已記「建議加 `is_user_explicit(role) -> bool`（`config.role_provider(key) != ""`）並在 pre-flight 自動重綁前過濾」，並指定黑樣本「故意設 TI_PROVIDER_engineer=codex + 全程額度受限 → engineer 仍走 codex 並由 429 退避消化，不被靜默改綁」。本輪是把這條建議落地成程式碼，**不是新決策**。
+
+- 重點: **兩處呼叫點的對稱關係**：
+  - `_pick_provider`：判定「有覆寫就 return 該值」，需同時拿到 (bool, str)
+  - `_explicit_provider_overrides`（`_preflight_rebind_experts` 內）：判定「本場在場角色裡哪些有覆寫」，需 dict comprehension 篩選
+  - 共用部分只是「判定某 role_key 是否被使用者覆寫」這個 bool 語意——值取得仍走 `config.role_provider`。因此 helper 命名 `is_user_explicit_provider(role_key) -> bool`，與既有 `effective_provider(role)` 並列（公開契約）。
+
+- 重點: **測試守門慣例已有**：CLAUDE.md 已寫「黑白樣本驗證、不靠讀碼下結論」、autopilot 已有 `test_provider_routing_contract.py` 風格（守 `least_constrained_ready` 在全受限時必回 None、`constrained(snap, provider)` 在 `error != None` 時必回 True、`make_expert(..., provider=X)` 在 autopilot 路徑下 target_repo 仍守 `CORE_REPO`）——本輪新增的 helper 應補一條 contract 測試「TI_PROVIDER_engineer=codex 設下，`is_user_explicit_provider('engineer')` 必 True、`_pick_provider` 仍走 codex 不被額度重綁」。
+
+- 重點: **既有結構不動**：本輪不砍掉重練 `provider_quota` / `providers` / `llm_caller`；不引入 LiteLLM / Portkey 等外部 gateway；不改 `_preflight_rebind_experts` 的副作用路徑（仍由 `_apply_preflight_rebind` 套用 plan、`_handle_all_constrained` 處理全受限）；不改 `flow.plan_preflight_rebind` 的介面（仍收 `explicit_overrides: dict[str, str]`，內部用 `.get(role_key)` 判定）。
+
+---
+
+**建議**
+
+- 建議: **在 `config.py` 加 helper `is_user_explicit_provider(role_key: str) -> bool`**，與既有 `role_provider(key)` / `effective_provider(role)` 並列為公開契約。理由：(1) 沿用既有調研建議（RESEARCH.md 2026-06-28）；(2) 純粹是 config 語意（環境變數層級的「使用者意圖」判定），不該藏在 routing 邏輯內部；(3) 之後 autopilot / improver / settings UI 若要讀「使用者是否明確指定過某角色 provider」，可以直接用，不必另外 import orchestrator。實作：直接 `return bool(config.role_provider(role_key))` 加 docstring 強調「以 `config.role_provider(key)` 為單一真值來源」+ 一句黑樣本語意。
+
+- 建議: **兩處呼叫點同步改寫**（一次性純機械替換、不改邏輯）：
+  - `_pick_provider` 內：`explicit = config.role_provider(role.key); if explicit: return explicit` → `explicit = config.role_provider(role.key); if is_user_explicit_provider(role.key): return explicit`（兩種寫法並存，後者意圖更明顯；或直接 `if is_user_explicit_provider(role.key): return config.role_provider(role.key)`）
+  - `_explicit_provider_overrides` 的 dict comprehension：`if config.role_provider(ex.role.key)` → `if is_user_explicit_provider(ex.role.key)`
+  - 兩處的 `import` 區塊補上 `from . import config`（已存在），把 `config.role_provider` 的呼叫替換為 `is_user_explicit_provider`；值取得仍走 `config.role_provider`（這是底層讀取，helper 不可遮蔽它）。
+
+- 建議: **加黑白樣本測試**，照既有 `test_provider_routing_contract.py` 風格新增 `test_user_explicit_provider_contract.py`：
+  - 白：環境變數 `TI_PROVIDER_engineer=codex` 設下 → `is_user_explicit_provider('engineer')` 回 True、`is_user_explicit_provider('pm')` 回 False（無覆寫）
+  - 白：無 `TI_PROVIDER_*` 設 → 所有 key 都回 False
+  - 黑：`TI_PROVIDER_engineer=BogusProvider`（不在 PROVIDERS 白名單）→ 回 False（沿用 `config.role_provider` 的白名單語意，不視為覆寫）
+  - 端到端黑樣本（既有調研已記）：`TI_PROVIDER_engineer=codex` + 全額度受限情境下呼叫 `_pick_provider(BY_KEY['engineer'], hint='')` → 必回 `"codex"`，不被 `least_constrained_ready()` 改綁
+  - 對稱黑樣本：把 helper 改名 / 改語意後，contract 測試必紅（守門「口徑不被 autopilot 偷偷改壞」）
+
+- 建議: **不要做的事**（沿用 RESEARCH.md 既有）：
+  - 不要把 helper 命名為 `user_provider` / `explicit_override` / `forced_provider` 等模糊名稱；既有用語「user explicit」明確，且和 `effective_provider` 的「effective」相對——「user explicit vs system effective」的界線即合約本意
+  - 不要把 `effective_provider(role)` 內的 `role_provider(role.key) or PROVIDER` 邏輯也併進 helper（會破壞既有契約層）
+  - 不要改 `_preflight_rebind_experts` 的副作用順序（仍先算 plan、再跑 `_handle_all_constrained`、最後 `_apply_preflight_rebind`）
+  - 不要改 `flow.plan_preflight_rebind` 的簽名（仍收 `explicit_overrides: dict[str, str]`，沿用其內 `explicit_overrides.get(role_key)` 的判定）
+  - 不要現在順手做 M2 的「跨場次 provider 偏好學習」（既有調研已記留 M2）
+
+- 建議: **守門「autopilot 不改 routing 判定 helper」**：依既有 `tests/autopilot/test_provider_routing_contract.py` 風格，在測試加一條 `test_user_explicit_provider_immutable_from_autopilot`：在 autopilot 路徑（monkeypatch `StudioSession` 為 autopilot 包）呼叫 `config.is_user_explicit_provider` 後，該 helper 的行為與未經 autopilot 干預時等價。這條與既有 `_commit_push_merge` 不變式測試精神一致——守住「準評測碼不可被 autopilot 偷改」。
+
+- 建議: **任何 prompt/格式/路由改動照 CLAUDE.md 教訓實跑黑白樣本驗證**：本輪至少跑三組——(a) 既有 70+ autopilot 測試（守住「重構未改既有契約」）、(b) 既有 `test_provider_routing_contract.py`（守住 routing 行為等價）、(c) 新增的 `test_user_explicit_provider_contract.py`（守門「使用者意圖 vs 系統自動優化」的合約）。不靠讀碼下結論。
+
+Sources: 既有 RESEARCH.md 2026-06-28 23:24 條目（quota-aware routing 調研結論）· [Python os.getenv 文件](https://docs.python.org/3/library/os.html#os.getenv) · [Python typing.Protocol 文件](https://docs.python.org/3/library/typing.html#typing.Protocol)
+
