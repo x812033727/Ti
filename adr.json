@@ -1,55 +1,6 @@
 {
   "entries": [
     {
-      "decision": "Group 存單檔 `roles/groups.yaml`（`{name, role_keys[], mode}` 列表），邏輯併入 role_store.py；驗證三硬規則（key 存在於 BY_KEY、不重複、≥2 人）＋mode 白名單 `{round_robin, parallel}`，違反回 422；`/api/groups` CRUD 同 /api/roles 慣例",
-      "rationale": "",
-      "rejected": "mode 含 legacy（legacy 是無小組的舊路徑，組了小組即無 legacy 語意）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.699
-    },
-    {
-      "decision": "範例角色檔放 `roles/_example.md.sample`，載入器只掃 `*.md`，範例不被載入",
-      "rationale": "守住驗收 #1「不放角色檔時行為與現狀完全一致」",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990006
-    },
-    {
-      "decision": "測試三層——role_store 離線單測（覆蓋內建/壞檔被拒/未知欄位報錯/出力格式驗證/內建 8 body 守門）、API 層 TestClient（CRUD＋各 4xx 案）、冒煙照任務 #5 真實啟動 server 走全流程",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990013
-    },
-    {
-      "decision": "移交待辦（不入本輪）——moderator 依 description 自動選角（DyLAN 式）、角色檔 `{variable}` 插值、Web UI 角色編輯器",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990018
-    },
-    {
-      "decision": "技術選型——零新依賴，沿用行前綴 regex 解析（flow.py 慣例）、broadcast 事件持久化（history JSONL 既有管道），不引入 JSON schema 結構化輸出",
-      "rationale": "",
-      "rejected": "JSON schema 結構化輸出——與 codebase 行前綴慣例不一致，且既有條列 fallback 已驗證可用",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391583
-    },
-    {
-      "decision": "模組切分——`flow.parse_agenda` 與 `flow.validate_assignees` 為純函式（離線可測）；orchestrator 只改拆解 prompt 與討論階段呼叫端；discussion.py 與 `parse_tasks_with_deps` 完全不動",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391635
-    },
-    {
-      "decision": "介面——子題行 `子題: <標題> | <描述> | <成功準則>`，解析用 `split(\"|\", 2)` 固定最多三段（後段全歸 criteria），缺段允許空；`負責: <role_key>` 緊跟所屬子題行，找不到前置子題時忽略＋log；無 `子題:` 行 fallback 單一子題（原需求全文），零回歸",
-      "rationale": "高工指出標題含 `|` 會錯切，`split(\"|\", 2)` 一行解決，單測加此樣本",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391652
-    },
-    {
       "decision": "分派硬驗證——合法集合＝本場實際出席角色 keys（experts dict）而非全域 BY_KEY；非法/缺漏 fallback 順序：`engineer` 若在出席集合，否則取第一個出席者（`fallback if fallback in available_keys else next(iter(available_keys))`），修正記錄入 log 與議程事件",
       "rationale": "工程師與高工同點名 fallback 硬編 engineer 在自訂角色組合下自身就是非法 key；純函式不得依賴呼叫端保證",
       "rejected": "fallback 永遠 engineer——engineer 缺席時 fallback 結果仍非法，硬驗證形同虛設",
@@ -3499,6 +3450,55 @@
       "rejected": "",
       "session_id": "pjecba63d3f1",
       "created_at": 1782660765.1741343
+    },
+    {
+      "decision": "在 `config.py` 的 `role_provider()` 後（line 102 後）新增 `is_user_explicit_provider(key: str) -> bool`，實作為 `return bool(role_provider(key))`，含繁中 docstring 說明「以 `role_provider` 為單一真值來源；值不在 PROVIDERS 白名單時 `role_provider` 已回空字串，helper 同樣回 False，不另寫白名單」",
+      "rationale": "布林語意獨立具名後，`_explicit_provider_overrides` 與 `_pick_provider` 的「是否使用者明示覆寫」意圖可讀；之後 autopilot/improver 要判斷同事也能直接 import，不必看懂 `bool(role_provider(...))`；白名單邏輯仍封在 `role_provider` 不外洩",
+      "rejected": "把 helper 放 `orchestrator.py` 私有 — orchestrator 是有狀態執行層，純設定語意的 helper 不該藏在裡面；否決把 `effective_provider(role)` 的 `or config.PROVIDER` 邏輯也合進 helper — 會混淆「使用者意圖」與「執行期兜底」兩個不同層次",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.704373
+    },
+    {
+      "decision": "`_pick_provider`（line 1503-1505）改寫為 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)`，行為與原本 `explicit = ...; if explicit: return explicit` 完全等價，value 取得路徑不變",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043815
+    },
+    {
+      "decision": "`_explicit_provider_overrides`（line 1397-1399）dict comprehension 改為 `k: config.role_provider(ex.role.key) for ... if config.is_user_explicit_provider(ex.role.key)`，消除同一 key 兩次呼叫 `role_provider` 的重複",
+      "rationale": "兩次呼叫雖然是純函式無副作用，但讀者看到 value 和 filter 邏輯是同一表達式時容易懷疑「filter 和 value 是否完全對應」；改用 helper 後意圖明確",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.704383
+    },
+    {
+      "decision": "`_apply_preflight_rebind` 沿用現有的 `make_expert(..., provider=to_provider)` 重建路徑，不改成原地覆寫 `.provider` 屬性",
+      "rationale": "工程師與高工一致指出真 expert 把 provider 綁在內部 client，原地改屬性顯示值與執行值會分離，是隱性 bug；重建路徑已有測試 `test_apply_preflight_rebind_uses_injected_factory` 覆蓋，不回歸",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043848
+    },
+    {
+      "decision": "新增 `tests/test_user_explicit_provider_contract.py`，只放 helper 純合約測試（白：`TI_PROVIDER_engineer=codex` → `True`；`pm` 無覆寫 → `False`；黑：`TI_PROVIDER_engineer=BogusProvider` → `False`）；**不**在此檔重覆 routing E2E",
+      "rationale": "helper 合約測試與 routing 行為測試關注點不同，分開可獨立失敗；但重複已有的 `test_explicit_role_provider_is_not_rebound_or_reported` 等 E2E 只增維護成本，應在既有 `test_provider_routing_contract.py` 補缺口即可",
+      "rejected": "把 helper 樣本全部塞進 `tests/autopilot/test_provider_routing_contract.py` — helper 是 `config` 層的 unit contract，概念上不屬於 autopilot 子目錄，獨立檔案讓 `ruff / pytest -k` 按名稱定位更乾淨",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043865
+    },
+    {
+      "decision": "`config.reload()` 不需修改，現有 line 961 `ROLE_PROVIDERS = _role_providers()` 已在 reload 時重設，測試 monkeypatch 環境變數後呼叫 `config.reload()` 即可拿到正確值，helper 讀的是模組層 `ROLE_PROVIDERS`，同步生效",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043877
+    },
+    {
+      "decision": "`_handle_all_constrained`、`provider_constrained` 廣播、audit.jsonl 寫入，以及 `flow.plan_preflight_rebind` 介面，本輪一律不動；本次改動邊界是「config helper 新增 + 兩處呼叫點替換 + helper 合約測試」，不碰 preflight/rebind 流程",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043886
     }
   ]
 }

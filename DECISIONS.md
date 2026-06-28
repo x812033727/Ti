@@ -2185,3 +2185,30 @@
 ## 測試新增 tests/autopilot/test_provider_routing_contract.py，含六黑白樣本＋「TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex」優先序樣本；並斷言 provider_constrained 事件 payload 與 audit 欄位一致（為 P2 儀表板預留接縫）；既有 10 個 provider_quota 測試與離線 e2e 不允許回歸。
 - 時間：2026-06-28 23:32
 
+## 在 `config.py` 的 `role_provider()` 後（line 102 後）新增 `is_user_explicit_provider(key: str) -> bool`，實作為 `return bool(role_provider(key))`，含繁中 docstring 說明「以 `role_provider` 為單一真值來源；值不在 PROVIDERS 白名單時 `role_provider` 已回空字串，helper 同樣回 False，不另寫白名單」
+- 時間：2026-06-29 00:49
+- 理由：布林語意獨立具名後，`_explicit_provider_overrides` 與 `_pick_provider` 的「是否使用者明示覆寫」意圖可讀；之後 autopilot/improver 要判斷同事也能直接 import，不必看懂 `bool(role_provider(...))`；白名單邏輯仍封在 `role_provider` 不外洩
+- 否決方案：把 helper 放 `orchestrator.py` 私有 — orchestrator 是有狀態執行層，純設定語意的 helper 不該藏在裡面；否決把 `effective_provider(role)` 的 `or config.PROVIDER` 邏輯也合進 helper — 會混淆「使用者意圖」與「執行期兜底」兩個不同層次
+
+## `_pick_provider`（line 1503-1505）改寫為 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)`，行為與原本 `explicit = ...; if explicit: return explicit` 完全等價，value 取得路徑不變
+- 時間：2026-06-29 00:49
+
+## `_explicit_provider_overrides`（line 1397-1399）dict comprehension 改為 `k: config.role_provider(ex.role.key) for ... if config.is_user_explicit_provider(ex.role.key)`，消除同一 key 兩次呼叫 `role_provider` 的重複
+- 時間：2026-06-29 00:49
+- 理由：兩次呼叫雖然是純函式無副作用，但讀者看到 value 和 filter 邏輯是同一表達式時容易懷疑「filter 和 value 是否完全對應」；改用 helper 後意圖明確
+
+## `_apply_preflight_rebind` 沿用現有的 `make_expert(..., provider=to_provider)` 重建路徑，不改成原地覆寫 `.provider` 屬性
+- 時間：2026-06-29 00:49
+- 理由：工程師與高工一致指出真 expert 把 provider 綁在內部 client，原地改屬性顯示值與執行值會分離，是隱性 bug；重建路徑已有測試 `test_apply_preflight_rebind_uses_injected_factory` 覆蓋，不回歸
+
+## 新增 `tests/test_user_explicit_provider_contract.py`，只放 helper 純合約測試（白：`TI_PROVIDER_engineer=codex` → `True`；`pm` 無覆寫 → `False`；黑：`TI_PROVIDER_engineer=BogusProvider` → `False`）；**不**在此檔重覆 routing E2E
+- 時間：2026-06-29 00:49
+- 理由：helper 合約測試與 routing 行為測試關注點不同，分開可獨立失敗；但重複已有的 `test_explicit_role_provider_is_not_rebound_or_reported` 等 E2E 只增維護成本，應在既有 `test_provider_routing_contract.py` 補缺口即可
+- 否決方案：把 helper 樣本全部塞進 `tests/autopilot/test_provider_routing_contract.py` — helper 是 `config` 層的 unit contract，概念上不屬於 autopilot 子目錄，獨立檔案讓 `ruff / pytest -k` 按名稱定位更乾淨
+
+## `config.reload()` 不需修改，現有 line 961 `ROLE_PROVIDERS = _role_providers()` 已在 reload 時重設，測試 monkeypatch 環境變數後呼叫 `config.reload()` 即可拿到正確值，helper 讀的是模組層 `ROLE_PROVIDERS`，同步生效
+- 時間：2026-06-29 00:49
+
+## `_handle_all_constrained`、`provider_constrained` 廣播、audit.jsonl 寫入，以及 `flow.plan_preflight_rebind` 介面，本輪一律不動；本次改動邊界是「config helper 新增 + 兩處呼叫點替換 + helper 合約測試」，不碰 preflight/rebind 流程
+- 時間：2026-06-29 00:49
+
