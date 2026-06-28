@@ -124,6 +124,9 @@ def test_metrics_aggregates_scorecard(client):
             _ev("task_status", id=1, title="A", status="doing"),
             _ev("task_status", id=1, title="A", status="review"),
             _ev("phase_change", phase="停滯收斂", detail="提早結束"),
+            _ev("critic_review", gate="pm", passed=True, text="放行"),
+            _ev("critic_review", gate="senior", passed=False, text="退回"),
+            _ev("demo_result", passed=False, output="broken"),
             _ev("done", completed=False, stopped=False),
         ],
     )
@@ -133,6 +136,10 @@ def test_metrics_aggregates_scorecard(client):
     assert sc["tasks"]["total"] == 3 and sc["tasks"]["done"] == 2
     assert sc["tasks"]["first_try_rate"] == 0.5  # 2 done 中 1 個一次過
     assert sc["rejects"]["stall"] == 1 and sc["rejects"]["qa_fail"] == 1
+    assert sc["rejects"]["critic"] == 1
+    assert sc["qa_pass_rate"] == 0.67  # 2 / 3；自測 run_result 不計分母
+    assert sc["critic_pass_rate"] == 0.5  # 1 / 2
+    assert sc["demo_pass_rate"] == 0.5  # 1 / 2；沒有 demo_result 的場次不計分母
     # 不足 10+10 場時 previous 為空，不給趨勢誤導
     assert sc["trend"]["previous"] == {"n": 0}
     assert sc["trend"]["recent"]["n"] == 2
@@ -140,7 +147,21 @@ def test_metrics_aggregates_scorecard(client):
 
 def test_metrics_scorecard_empty(client):
     sc = client.get("/api/metrics").json()["scorecard"]
-    assert sc == {"n": 0}
+    assert sc == {
+        "n": 0,
+        "qa_pass_rate": None,
+        "critic_pass_rate": None,
+        "demo_pass_rate": None,
+    }
+
+
+def test_metrics_scorecard_rates_none_when_no_denominator(client):
+    _record("no-rates", [_ev("done", completed=True, stopped=False)])
+    sc = client.get("/api/metrics").json()["scorecard"]
+    assert sc["n"] == 1
+    assert sc["qa_pass_rate"] is None
+    assert sc["critic_pass_rate"] is None
+    assert sc["demo_pass_rate"] is None
 
 
 def test_metrics_trend_recent_vs_previous(client):
