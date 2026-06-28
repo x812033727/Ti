@@ -1508,6 +1508,7 @@ class StudioSession:
         # 額度感知：開頭查一次 provider 額度快照，供 PM 依「目前額度分配」分派/招募。
         await self._refresh_quota_snapshot()
         decisions: list[str] = []
+        planning: list[str] = []  # 被指派者的發言內容，收尾沉澱進 design_note 供 build 任務脈絡參考
         for _hop in range(max(budget, 0)):
             if self._stop or self._should_wind_down():
                 break
@@ -1543,7 +1544,14 @@ class StudioSession:
             if not role:
                 break  # 無任何在場角色（理論上不會發生，pm 必在場）——保底結束。
             instruction = step["instruction"] or "請依目前進度推進這個需求。"
-            await self._speak(ctx, role, instruction, None)
+            spoke = await self._speak(ctx, role, instruction, None)
+            if (spoke or "").strip():
+                planning.append(f"【{ctx.experts[role].role.name}】{spoke.strip()}")
+        # 把本階段的動態規劃沉澱進 design_note，讓 build 的逐任務脈絡帶得到——否則 dynamic-first
+        # 用 dynamic 取代 discuss 後，PM 的運行時溝通/分派討論會對任務執行「失聯」。累加不覆寫。
+        if planning:
+            block = "\n【動態規劃與分派】\n" + "\n\n".join(planning)
+            self._design_note = (self._design_note + block) if self._design_note else block.lstrip()
 
     # --- task_pipeline 資料驅動（_work_task 讀 workflow 的 build.task_pipeline）-----
     def _build_task_pipeline(self) -> list[dict]:
