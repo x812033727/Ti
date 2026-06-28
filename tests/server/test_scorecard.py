@@ -54,6 +54,10 @@ def test_scorecard_derived_on_finish():
     assert sc["rounds_total"] == 3  # A:1 輪 + B:2 輪
     assert sc["avg_rounds"] == 1.5
     assert sc["first_try_done"] == 1  # 只有 A 一次過
+    assert sc["qa_total"] == 3  # 自測 run_result 不計入 QA 分母
+    assert sc["qa_pass"] == 2
+    assert sc["critic_total"] == 0
+    assert sc["critic_pass"] == 0
     assert sc["rejects"] == {
         "qa_fail": 1,
         "smoke_fail": 1,
@@ -72,6 +76,7 @@ def test_scorecard_reject_phases_counted():
         _ev("task_status", id=1, title="A", status="review"),
         _ev("phase_change", phase="客觀閘門", detail="第 1 輪強制退回"),
         _ev("critic_review", gate="pm", passed=False, text="反對"),
+        _ev("critic_review", gate="senior", passed=True, text="放行"),
         _ev("phase_change", phase="停滯收斂", detail="提早結束"),
         _ev("huddle", title="A", participants=["pm"], conclusion="換做法"),
         _ev("huddle", title="A", limitation=True),
@@ -80,6 +85,8 @@ def test_scorecard_reject_phases_counted():
     sc = _record("s2", events)["scorecard"]
     assert sc["rejects"]["gate_veto"] == 1
     assert sc["rejects"]["critic"] == 1
+    assert sc["critic_total"] == 2
+    assert sc["critic_pass"] == 1
     assert sc["rejects"]["stall"] == 1
     assert sc["huddles"] == 1
     assert sc["huddle_limits"] == 1
@@ -91,6 +98,10 @@ def test_scorecard_empty_session():
     sc = _record("s3", [_ev("done", completed=False, stopped=True)])["scorecard"]
     assert sc["tasks_total"] == 0
     assert sc["avg_rounds"] == 0.0
+    assert sc["qa_total"] == 0
+    assert sc["qa_pass"] == 0
+    assert sc["critic_total"] == 0
+    assert sc["critic_pass"] == 0
     assert sc["stopped"] is True
 
 
