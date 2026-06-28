@@ -1,97 +1,6 @@
 {
   "entries": [
     {
-      "decision": "parallel 模式＝同輪並行、輪間同步——每輪凍結上一輪 transcript 快照、全員基於同一快照 `asyncio.gather` 發言（每個 speak 包在注入 semaphore 下）、gather 全收齊才寫回＝輪間屏障；寫回與 is_stalled 串接固定依 participants 順序（註解寫明，避免順序抖動誤判相似度）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879817
-    },
-    {
-      "decision": "round_robin 模式同輪內依 participants 順序逐一 await，後者可見同輪前者發言",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879827
-    },
-    {
-      "decision": "context 餵法——議題＋上一輪全員發言＋自己歷史發言（各段截斷上限），不重播全史",
-      "rationale": "",
-      "rejected": "全員共享完整 transcript（O(N²) token）；RCR 式精細路由留後續",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.787984
-    },
-    {
-      "decision": "反諂媚硬指令內建於 engine prompt 模板：要求 `回應 @角色名: 同意|反對 ＋理由`、「至少指出一個可挑戰點，無異議須說明為何」",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879848
-    },
-    {
-      "decision": "`parse_mentions(speaker, text)` 的 regex 用 participants 名單組白名單交替（`回應\\s*@(?:名1|名2)\\s*[:：]\\s*(同意|反對)`，名稱 `re.escape`）；target 不在名單或格式不符的行丟棄，整段無合法匹配回空清單",
-      "rationale": "`@(\\S+)` 遇含空白名稱即斷；白名單交替是專案既有可攜範式",
-      "rejected": "通用 `@(\\S+)` 捕獲後再過濾",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879856
-    },
-    {
-      "decision": "收斂三層——max_rounds 硬上限；每輪把「全員發言按 participants 順序串接」append 進 history，用 `flow.is_stalled(history, rounds=2)` 判提前停止；stop_reason 落入 DiscussionResult",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879868
-    },
-    {
-      "decision": "小結為規則式、零 LLM 呼叫——共識/分歧由 mentions 同意/反對統計推導，final_positions 取各角色末輪發言；介面預留可選 summarizer 參數供 P1 主持人升級",
-      "rationale": "",
-      "rejected": "P0 即加主持人 LLM 摘要呼叫",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879875
-    },
-    {
-      "decision": "`_debate()` 分流——`config.DISCUSS_MODE ∈ {round_robin, parallel}` 時組 participants 走 DiscussionEngine；未設或 `legacy` 時原路徑一行不動",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879884
-    },
-    {
-      "decision": "ADR 蒸餾接縫明確規格——engine 路徑結束後，蒸餾 prompt 餵 `summary.final_positions` 串接＋末輪 transcript（取代舊 proposal/critique 兩變數），沿用同一蒸餾指令與 `adr.record` 落盤；比照 test_adr.py 加一條離線測試",
-      "rationale": "不寫明則實作各寫各的，蒸餾品質不可控",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879899
-    },
-    {
-      "decision": "config——`DISCUSS_MODE = os.getenv(\"TI_DISCUSS_MODE\", \"legacy\")` 白名單 `{legacy, round_robin, parallel}` 非法值 fallback legacy；`DISCUSS_MAX_ROUNDS` 預設取 `DEBATE_ROUNDS`；**兩欄位必須加入 config.py 的 reload global 區塊**；settings.py 白名單、`.env.example`、ARCHITECTURE.md 同步補",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879906
-    },
-    {
-      "decision": "測試隔離——`tests/conftest.py` 統一 `delenv(\"TI_DISCUSS_MODE\")` 防開發機 env 殘留翻轉測試路徑；新測試一律 `monkeypatch.setattr(config, \"DISCUSS_MODE\", ...)` 不用 setenv",
-      "rationale": "config 是 import 時讀 env，殘留 env 會讓全部既有測試默默改道",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879915
-    },
-    {
-      "decision": "broadcast 不加 per-speaker 標籤——既有 `expert_message` 事件已帶 speaker_key/name，並行交錯下身分不丟",
-      "rationale": "",
-      "rejected": "仿 `_tagged_broadcast` 加 speaker 標籤層",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879927
-    },
-    {
-      "decision": "實作前置檢查——確認前端按 speaker_key 聚合 streaming token；若否，parallel 模式下 expert 關 streaming 只發 final",
-      "rationale": "並行 streaming 的 token 級交錯會讓「按最後一筆拼接」的前端花掉",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879937
-    },
-    {
       "decision": "移交待辦（不入 P0）——`discussion_round` 事件標籤供前端按輪分組、滾動摘要舊輪次、主持人 LLM 摘要與裁決、真實 LLM API 面驗證",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3408,97 @@
       "rejected": "",
       "session_id": "pje194f13623",
       "created_at": 1782650377.9864852
+    },
+    {
+      "decision": "新增單一模組 `studio/bench.py`（loader + async runner + JSONL writer），三者不拆散",
+      "rationale": "耦合高，早期不值得分層",
+      "rejected": "多模組分層（過度設計）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820896
+    },
+    {
+      "decision": "Fixture 格式 JSON，目錄 `tests/fixtures/improvement_bench/`，缺欄位或格式錯即 `ValueError`",
+      "rationale": "無新依賴；tests/ 目錄軟隔離，autopilot 慣例改 studio/ 不改 tests/",
+      "rejected": "物理隔離 protected branch（本輪排除項）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820922
+    },
+    {
+      "decision": "bench runner 的 `broadcast` 傳 `async def collect(ev): events_seen.append(ev.type)`，不得傳同步 lambda",
+      "rationale": "`StudioSession` 內部 `await self._broadcast_sink(ev)`，同步 callback 首次廣播即 TypeError",
+      "rejected": "`lambda e: None`（高工確認會炸）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820958
+    },
+    {
+      "decision": "bench runner 顯式傳 `experts=build_fake_experts()` / `critics=build_fake_critics()` 給 `StudioSession`，不依賴 `config.OFFLINE_MODE` 自動切換",
+      "rationale": "高工確認 OFFLINE_MODE 只影響外層 WebSocket 路徑注入，`_get_experts()` 仍建真 provider",
+      "rejected": "只 `setattr(config, \"OFFLINE_MODE\", True)`（不可靠，走真 provider）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820972
+    },
+    {
+      "decision": "Fixture schema 四欄位 `task_id(str)` / `requirement(str)` / `expected_completed(bool)` / `expected_event_types(list[str])`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820986
+    },
+    {
+      "decision": "BenchResult 五欄位 `task_id` / `success` / `duration_s` / `iterations`（expert_message 事件計數）/ `tokens`（fake_experts 下填 0，欄位保留供 M3 擴展）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821
+    },
+    {
+      "decision": "`flow.compare_bench_runs(baseline, post)` 先驗 task_id 集合一致；不一致回 `(\"regress\", \"fixture 集漂移：task_id 集合不符\")`；baseline 為空回 `(\"neutral\", \"baseline 為空，無法對比\")`；post success_rate < baseline 任何下降回 `regress`",
+      "rationale": "先驗 task_id 才能防 fixture 漂移被誤判為進步或退步",
+      "rejected": "只比 success_rate 不驗 task_id 一致性",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.682101
+    },
+    {
+      "decision": "baseline bench 串接點放在 `run_one_task()` 的 `_prepare_clone()` 後、`StudioSession.run()` 前；post bench 放在 `deploy.redeploy()` 成功後立即",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821022
+    },
+    {
+      "decision": "`redeploy()` 前讀 `git rev-parse HEAD` 取 `pre_deploy_sha`（即將成為 last_good）；post bench regress 時先驗 `HEAD == new_merge_head`（本輪合入 SHA）再 rollback；不符則跳過 rollback 並寫 audit 說明「HEAD 已被新部署替換，跳過 rollback」",
+      "rationale": "部署鎖在 `redeploy()` 函式內釋放，post bench 期間鎖已放，另一個 deploy 可能進來；rollback 前驗 HEAD 避免誤回滾新 deploy",
+      "rejected": "直接 rollback 不驗 HEAD（竟態下誤殺新部署）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821036
+    },
+    {
+      "decision": "audit.jsonl 路徑 `AUTOPILOT_STATE_DIR / \"audit.jsonl\"`，append-only，欄位 `ts / task_title / judge / baseline_rate / post_rate / detail / skipped_rollback(bool)`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.682105
+    },
+    {
+      "decision": "`GET /api/bench/latest` 掛 `require_auth`，與 `/api/metrics` 一致",
+      "rationale": "audit 含 task_title/detail，不應裸露",
+      "rejected": "無 auth（高工指出）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.682106
+    },
+    {
+      "decision": "不動 `config.py`/`publisher.py` 公開介面；deploy.py 只讀 `redeploy()` 回傳值，不改其簽名",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821074
+    },
+    {
+      "decision": "測試檔 `tests/autopilot/test_improvement_bench.py`（bench 串接 + regress→rollback 反向斷言）與 `tests/test_flow_bench.py`（compare 純函式三向 + 黑樣本）；兩份皆 `async def`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821084
     }
   ]
 }

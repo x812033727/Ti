@@ -2093,3 +2093,56 @@
 
 ## 不新增依賴、不改 `config.py`/`publisher.py` 任何公開介面；`_REPO_OVERRIDE` / `set_repo_override` / `reset_repo_override` 契約完整保留
 - 時間：2026-06-28 20:39
+## 新增單一模組 `studio/bench.py`（loader + async runner + JSONL writer），三者不拆散
+- 時間：2026-06-28 21:41
+- 理由：耦合高，早期不值得分層
+- 否決方案：多模組分層（過度設計）
+
+## Fixture 格式 JSON，目錄 `tests/fixtures/improvement_bench/`，缺欄位或格式錯即 `ValueError`
+- 時間：2026-06-28 21:41
+- 理由：無新依賴；tests/ 目錄軟隔離，autopilot 慣例改 studio/ 不改 tests/
+- 否決方案：物理隔離 protected branch（本輪排除項）
+
+## bench runner 的 `broadcast` 傳 `async def collect(ev): events_seen.append(ev.type)`，不得傳同步 lambda
+- 時間：2026-06-28 21:41
+- 理由：`StudioSession` 內部 `await self._broadcast_sink(ev)`，同步 callback 首次廣播即 TypeError
+- 否決方案：`lambda e: None`（高工確認會炸）
+
+## bench runner 顯式傳 `experts=build_fake_experts()` / `critics=build_fake_critics()` 給 `StudioSession`，不依賴 `config.OFFLINE_MODE` 自動切換
+- 時間：2026-06-28 21:41
+- 理由：高工確認 OFFLINE_MODE 只影響外層 WebSocket 路徑注入，`_get_experts()` 仍建真 provider
+- 否決方案：只 `setattr(config, "OFFLINE_MODE", True)`（不可靠，走真 provider）
+
+## Fixture schema 四欄位 `task_id(str)` / `requirement(str)` / `expected_completed(bool)` / `expected_event_types(list[str])`
+- 時間：2026-06-28 21:41
+
+## BenchResult 五欄位 `task_id` / `success` / `duration_s` / `iterations`（expert_message 事件計數）/ `tokens`（fake_experts 下填 0，欄位保留供 M3 擴展）
+- 時間：2026-06-28 21:41
+
+## `flow.compare_bench_runs(baseline, post)` 先驗 task_id 集合一致；不一致回 `("regress", "fixture 集漂移：task_id 集合不符")`；baseline 為空回 `("neutral", "baseline 為空，無法對比")`；post success_rate < baseline 任何下降回 `regress`
+- 時間：2026-06-28 21:41
+- 理由：先驗 task_id 才能防 fixture 漂移被誤判為進步或退步
+- 否決方案：只比 success_rate 不驗 task_id 一致性
+
+## baseline bench 串接點放在 `run_one_task()` 的 `_prepare_clone()` 後、`StudioSession.run()` 前；post bench 放在 `deploy.redeploy()` 成功後立即
+- 時間：2026-06-28 21:41
+
+## `redeploy()` 前讀 `git rev-parse HEAD` 取 `pre_deploy_sha`（即將成為 last_good）；post bench regress 時先驗 `HEAD == new_merge_head`（本輪合入 SHA）再 rollback；不符則跳過 rollback 並寫 audit 說明「HEAD 已被新部署替換，跳過 rollback」
+- 時間：2026-06-28 21:41
+- 理由：部署鎖在 `redeploy()` 函式內釋放，post bench 期間鎖已放，另一個 deploy 可能進來；rollback 前驗 HEAD 避免誤回滾新 deploy
+- 否決方案：直接 rollback 不驗 HEAD（竟態下誤殺新部署）
+
+## audit.jsonl 路徑 `AUTOPILOT_STATE_DIR / "audit.jsonl"`，append-only，欄位 `ts / task_title / judge / baseline_rate / post_rate / detail / skipped_rollback(bool)`
+- 時間：2026-06-28 21:41
+
+## `GET /api/bench/latest` 掛 `require_auth`，與 `/api/metrics` 一致
+- 時間：2026-06-28 21:41
+- 理由：audit 含 task_title/detail，不應裸露
+- 否決方案：無 auth（高工指出）
+
+## 不動 `config.py`/`publisher.py` 公開介面；deploy.py 只讀 `redeploy()` 回傳值，不改其簽名
+- 時間：2026-06-28 21:41
+
+## 測試檔 `tests/autopilot/test_improvement_bench.py`（bench 串接 + regress→rollback 反向斷言）與 `tests/test_flow_bench.py`（compare 純函式三向 + 黑樣本）；兩份皆 `async def`
+- 時間：2026-06-28 21:41
+
