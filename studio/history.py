@@ -111,12 +111,14 @@ def _derive_scorecard(events: list[dict], meta: dict) -> dict:
 
     這是「工作室有沒有越做越進步」的量測基礎——/api/metrics 跨場聚合成功率、平均輪數
     與近期趨勢。輪數以 task_status 的 review 次數計（每輪驗證前必進一次 review）；
-    退回原因取自既有結構化事件，不解析自然語言：
+    退回原因與測試／審查分子分母取自既有結構化事件，不解析自然語言：
       qa_fail＝run_result 失敗且非自測、smoke_fail＝自測失敗、gate_veto＝客觀閘門退回、
       critic＝異議檢查退回、stall＝停滯收斂提早結束。
     """
     tasks: dict[int, dict] = {}  # id -> {"reviews": n, "done": bool}
     rejects = {"qa_fail": 0, "smoke_fail": 0, "gate_veto": 0, "critic": 0, "stall": 0}
+    qa_total = qa_pass = 0
+    critic_total = critic_pass = 0
     huddles = huddle_limits = 0
     demo_passed: bool | None = None
     completed = stopped = False
@@ -132,12 +134,21 @@ def _derive_scorecard(events: list[dict], meta: dict) -> dict:
                 rec["reviews"] += 1
             elif p.get("status") == "done":
                 rec["done"] = True
-        elif t == "run_result" and not p.get("passed"):
+        elif t == "run_result":
             # detail 以「自測」開頭＝交付前 smoke-run；其餘為 QA 驗證裁決。
-            key = "smoke_fail" if str(p.get("detail", "")).startswith("自測") else "qa_fail"
-            rejects[key] += 1
-        elif t == "critic_review" and not p.get("passed"):
-            rejects["critic"] += 1
+            is_smoke = str(p.get("detail", "")).startswith("自測")
+            if not is_smoke:
+                qa_total += 1
+                if p.get("passed") is True:
+                    qa_pass += 1
+            if not p.get("passed"):
+                rejects["smoke_fail" if is_smoke else "qa_fail"] += 1
+        elif t == "critic_review":
+            critic_total += 1
+            if p.get("passed") is True:
+                critic_pass += 1
+            if not p.get("passed"):
+                rejects["critic"] += 1
         elif t == "huddle":
             if p.get("limitation"):
                 huddle_limits += 1
@@ -162,6 +173,10 @@ def _derive_scorecard(events: list[dict], meta: dict) -> dict:
         "rounds_total": rounds_total,
         "avg_rounds": round(rounds_total / len(reviewed), 2) if reviewed else 0.0,
         "first_try_done": sum(1 for r in tasks.values() if r["done"] and r["reviews"] == 1),
+        "qa_total": qa_total,
+        "qa_pass": qa_pass,
+        "critic_total": critic_total,
+        "critic_pass": critic_pass,
         "rejects": rejects,
         "huddles": huddles,
         "huddle_limits": huddle_limits,
