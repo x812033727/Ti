@@ -16,10 +16,10 @@
      （守護設計決策：「TI_PROVIDER_<KEY> > 一切自動優化」不會被悄悄降級）。
 
 執行指令：
-    .venv/bin/python -m pytest tests/core/test_provider_quota_helpers.py \\
-                              tests/settings/test_provider_quota.py \\
-                              tests/test_offline_e2e.py \\
-                              tests/core/test_provider_preflight_routing_qa.py -q
+    python3 -m pytest tests/core/test_provider_quota_helpers.py \\
+                      tests/settings/test_provider_quota.py \\
+                      tests/test_offline_e2e.py \\
+                      tests/core/test_provider_preflight_routing_qa.py -q
 """
 
 from __future__ import annotations
@@ -358,18 +358,17 @@ def test_preflight_rebind_experts_all_constrained_emits_event_per_non_explicit_r
 # --- 既有 contract 不變式守門（routing 合約不被 autopilot 改壞）-------------
 
 
-def test_explicit_provider_overrides_only_picks_non_empty_entries():
+def test_explicit_provider_overrides_only_picks_non_empty_entries(tmp_path, monkeypatch):
     """白樣本：``_explicit_provider_overrides`` 只回「非空」覆寫——空字串（沒設 env）不視為覆寫。
 
     守門「空字串 = 未設定」與「非空字串 = 明示」的語意界線；若誤把空字串當覆寫，pre-flight
     會把所有角色都當成「使用者意圖鎖定」，等於永久關閉自動重綁——會讓全受限場景直接卡死。
     """
-    s, _b, _e = _make_session(
-        tmp_path := __import__("pathlib").Path("/tmp"),
-        _mk := __import__("pytest").MonkeyPatch(),
-    )
+    s, _b, _e = _make_session(tmp_path, monkeypatch)
     # 把 engineer 設成空、qa 設成 codex → 只 qa 進 overrides
-    _mk.setattr(config, "ROLE_PROVIDERS", {**config.ROLE_PROVIDERS, "engineer": "", "qa": "codex"})
+    monkeypatch.setattr(
+        config, "ROLE_PROVIDERS", {**config.ROLE_PROVIDERS, "engineer": "", "qa": "codex"}
+    )
     experts = {
         "engineer": StubExpert(BY_KEY["engineer"], "claude"),
         "qa": StubExpert(BY_KEY["qa"], "codex"),
