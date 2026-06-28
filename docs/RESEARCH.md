@@ -145,3 +145,59 @@ Sources: [Council Mode](https://arxiv.org/html/2604.02923v1) · [Sequential Cons
 
 Sources: [Factual Self-Verification (Verify)](https://arxiv.org/pdf/2602.02018) · [CoT+RAG+Self-Consistency+Self-Verification](https://arxiv.org/pdf/2505.09031) · [Factored Verification](https://arxiv.org/pdf/2310.10627) · [Karpathy LLM Wiki (VentureBeat)](https://venturebeat.com/data/karpathy-shares-llm-knowledge-base-architecture-that-bypasses-rag-with-an) · [LLM Wiki vs RAG (MindStudio)](https://www.mindstudio.ai/blog/llm-wiki-vs-rag-knowledge-base) · [Markdown vs JSON for LLMs](https://www.craftmarkdown.com/markdown-vs-json-for-llms)
 
+## 2026-06-28 20:32
+
+<think>
+測試覆蓋已經很完整了。已經有：
+- branch protection 三態矩陣
+- ls-remote 防覆寫
+- force-with-lease 旗標
+- CI gate 等候
+- secure_write 雙路徑
+- release audit / smoke / 流程
+- gate level labels
+- shippable 落閘
+
+調研已經足夠了，可以彙整。關鍵結論：本任務的硬體（autopilot + publisher + deploy + tests）都已完備，但仍有幾個明確的「安全閉環缺口」值得動手。
+
+讓我精簡輸出。
+</think>
+
+調研結束。閉環骨架（autopilot/publisher/deploy/branch protection/ls-remote/force-with-lease/secure_write/test gate）都已實作並有對應測試，本輪屬「補強而非重建」。彙整如下：
+
+---
+
+**重點**
+
+- 重點: 現況盤點——安全自改閉環的**全部主鏈已實作且有測試護欄**：`flow.parse_core_changes` 偵測 `核心改動:` → `backlog.route_core_changes` 路由到 `source="core"` → `autopilot.py` 在 `config.CORE_REPO` (= `x812033727/Ti`) 的 working clone 改 Ti 自己 → `_gate_lint/_gate_collect_without_sdk/_gate_tests` 三道客觀閘（對齊 CI `lint`/`test` job，含「無 SDK collection」攔 import 耦合）→ `_check_branch_protection`（Rulesets + 舊 protection 三態，**unknown 一律 fail-safe 中止**）→ `_commit_push_merge`（ls-remote 防覆寫、force-with-lease --force-if-includes、絕不裸 `-f`）→ `publisher._merge_flow`（等 CI→5 種 outcome→stale update-branch→暫時性退避重試）→ `deploy.redeploy`（reset+pip+restart+health_check，失敗自動 `rollback` 到 `last_good`）。對應測試群：`tests/autopilot/`（70+ 檔，含 `test_qa_protection_matrix`、`test_qa_task*_lsremote_guard`、`test_qa_task5_no_bare_force_audit`、`test_qa_task3_failclosed_contract`、`test_shippable_falls_through_gates`、`test_gate_failure_retry`）、`tests/publish/`、`tests/deploy/`。
+
+- 重點: GitHub 分支保護官方契約已對齊——`Require a pull request before merging` + `Require approvals` + `Require status checks to pass before merging` + `Require linear history`（防 merge commit 與 rebase 亂搞）是「外部不可繞過」的最後底線（[Managing branch protection rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule)、[About status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks)）。本專案 CI 走 `actions-runs/conclusion=failure` 即擋合併；autopilot 用 `PUBLISH_BYPASS_INFRA_CI` 判「秒掛＝帳務」走特例路徑，需謹慎守住**只在 `_merge_pr` 內繞過**而非跳過整個 PR。
+
+- 重點: 自改閉環的**真正風險面**不在 PR/CI/merge（已層層包好），而在「autopilot 改到自己、改壞 deploy/merge/backlog 等核心守門模組後，自家程式碼靠 `_self_sig()` + `os.execv` 重載——若新碼改了 deploy/health 判定邏輯，可能**自我解除健康檢查**而帶病上線」。這是 self-modifying system 的經典坑：自己改自己的驗證器（Goodhart's law on yourself）（[Self-Improving AI Agents](https://arxiv.org/abs/2506.04612) §3.2「modifying one's own reward function」、[Karpathy: Software 2.0](https://karpathy.medium.com/software-2-0-c6417e8c1ba1)）。
+
+- 重點: 防止「改壞自己的驗證器」業界有兩條成熟做法：(a) **Manifest/Pinning 一個外部 trusted invariant**——例如從 `x812033727/Ti` 的特定 tag（v0.x.y）把 `_gate_tests` 用的 pytest 指令、必跑測試名單固定寫進 deploy script，autopilot 改 `studio/autopilot.py` 不會影響此指令（[GitHub Branch Protection + required checks pinning](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)）；(b) **External kill switch**——獨立於 autopilot 程序的 watchdog/circuit breaker，可在「N 次連續失敗」或「健康檢查 N 分鐘未過」時遠端寫 `AUTOPILOT_PAUSED`、或把 systemd service stop（[Hundman et al., Continuous AI](https://arxiv.org/abs/2410.16576) §4 safety interlocks）。
+
+- 重點: **防止「意外污染專案 repo」**目前是約定式而非強制式：`CORE_REPO = AUTOPILOT_REPO` 綁死、`publisher.set_repo_override(config.AUTOPILOT_REPO)` 顯式覆寫，但缺少**測試守門**「autopilot 的任何程式碼路徑都不可 publish 到 `config.PUBLISH_REPO`」——若有人未來新增 helper 忘了傳 override、或 LLM 在 studio 內生成 `publisher.publish(cwd, sid, req, repo=PUBLISH_REPO)` 程式碼，會靜默洩漏核心改動到專案 repo。
+
+- 重點: **可觀測性缺口**：目前閉環有「日誌」「backlog 狀態」「history.jsonl」，但缺**結構化審計日誌**（audit trail）——「誰、何時、為何、開了哪個 PR、CI 結果、merge/close 結局、redeploy 是否回滾」目前是散落在 log 與 backlog 兩處，事故後回溯困難。GitHub 官方建議的 audit trail 來源是 webhook events + structured logs（[GitHub Webhook events](https://docs.github.com/en/webhooks/webhook-events-and-payloads)）。
+
+- 重點: **成本熔斷缺口**：`SESSION_TOKEN_BUDGET` / `SESSION_USD_BUDGET` 已存在於 config（autopilot 透過 `time_budget_s` 串入），但**沒有「每日/每週 PR 上限」或「每日 token 預算」**——若 autopilot 進入「反覆重試同一任務」的循環（已被 `_handle_gate_failure` 限 attempts=3 部分緩解），或 LLM 幻覺大量生成任務，仍可能在單一 session 燒光整月額度。
+
+- 重點: **「持續改良成效驗證」（P1）**目前完全缺——merge 即 done，沒有「自改後再跑同組基準，量化是否真的變強」的 hook。本輪屬 M1 範疇（落地一次改良），這條缺口屬 M2 但**已在 CI 上半閉環**（autopilot 跑 `pytest -q` 必綠才 merge，故「不變爛」已保證；「變強」需 M2 補基準）。
+
+**建議**
+
+- 建議: 本輪最划算的安全增量：**寫一個守門測試**「autopilot/publisher 任意路徑都不可把東西推到 `config.PUBLISH_REPO`」（守門「絕不污染專案 repo」這條產品願景）。覆蓋：`publisher.publish(..., repo=config.PUBLISH_REPO)` 從 autopilot 路徑呼叫時應 raise／早退；或更穩的——在 `autopilot._commit_push_merge` 開頭加 assert `target_repo == config.AUTOPILOT_REPO`，把「自動 push 目標 ≠ 專案 repo」做成 import 期或任務執行期的硬不變式，沿用既有 `assert AUTOPILOT_SUBSYSTEM_MAX < AUTOPILOT_SUBSYSTEM_MAX_PENDING` 風格。測試成本：~30 行；價值：把約定變合約。
+
+- 建議: 補強「改壞自家驗證器」的 kill switch：在 `deploy.health_check` 加「連續 N 次失敗自動 `systemctl stop ti-autopilot`」邏輯（N=2，可調），或部署一支獨立 systemd timer 每 5 分鐘檢查 `AUTOPILOT_HEALTH_URL`＋最近一個 autopilot PR 的 merge 紀錄，異常時 `touch AUTOPILOT_PAUSED`。這是「驗證器不可自己改」的外置底線（[Self-Improving AI Agents](https://arxiv.org/abs/2410.16576) §4 interlocks）。本輪不必實作外部 service，但可加一個 `tests/autopilot/test_external_killswitch_contract.py` 守門「autopilot 自己改不了 `_PAUSE_FILE` 路徑、`AUTOPILOT_SERVICE` 名稱、`AUTOPILOT_HEALTH_URL`」——把現有 `AUTOPILOT_PAUSED` 暫停開關的觸發路徑白名單化。
+
+- 建議: 加**結構化 audit log**——`_commit_push_merge` 成功 merge 後寫一筆 `{"ts", "task_id", "pr", "head_sha", "ci_state", "outcome", "duration_s"}` JSONL 到 `autopilot/audit.jsonl`，事故後一秒定位。規模化前（>100 筆/天）再加索引，現階段單純 append 即可，符合既有 lessons.json / backlog.json 的純檔案 IO 慣例，不需新依賴（[GitHub Webhook events + JSONL audit pattern](https://docs.github.com/en/webhooks/webhook-events-and-payloads)）。
+
+- 建議: 成本熔斷**簡版**——加 `AUTOPILOT_DAILY_PR_BUDGET` 與 `AUTOPILOT_DAILY_TOKEN_BUDGET` 兩個 env，每天 UTC 0 重置；超限即 `_pause(...)`。實作僅在 `_commit_push_merge` 入口加一條 `if today_pr_count >= DAILY_BUDGET: return False, "..."`。比 429 退避更深一層，避免 LLM 幻覺把單日額度燒光。屬 5–10 行改動，零新依賴。
+
+- 建議: **不要做的事**：(a) 不要砍掉重練 autopilot/publisher/deploy——已有 70+ 個測試守住所有 invariant，重寫會丟失；(b) 不要現在引入 OPA/Rego 或外部 policy engine——本專案規模 overkill；(c) 不要現在做 M2 的「改良成效驗證」（基準跑測）——超本輪 M1 範疇，且改 pytest 基準本身有「改自己的測試」的 self-referential 風險；(d) 不要把 `_REPO_OVERRIDE` 的覆寫鏈從「autopilot 顯式 set」改成「隱式從 env 推」——目前「per-session 顯式覆寫」是正確邊界，動它會丟掉「主迴圈和 autopilot 不會意外發到對方 repo」的護欄。
+
+- 建議: 維持既有「規則為骨、LLM 為肉」+「lint/collect/test/merge」四道客觀閘門的架構不變。本輪新加的東西（測試守門、audit log、成本熔斷）都是**純增量、不破壞既有契約**。任何 prompt/格式/路由改動照 CLAUDE.md 教訓——實跑黑白樣本驗證（黑白樣本：①Linter 改 lint 設定→CI 攔；②publisher merge 函式被改→既有 `test_qa_task5_no_bare_force_audit` 攔），不靠讀碼下結論。
+
+Sources: [GitHub Managing branch protection rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule) · [GitHub About status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks) · [GitHub Secret scanning](https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning) · [GitHub Webhook events](https://docs.github.com/en/webhooks/webhook-events-and-payloads) · [Self-Improving AI Agents (arXiv 2506.04612)](https://arxiv.org/abs/2506.04612) · [Continuous AI Systems (arXiv 2410.16576)](https://arxiv.org/abs/2410.16576) · [Karpathy: Software 2.0](https://karpathy.medium.com/software-2-0-c6417e8c1ba1)
+
