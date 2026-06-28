@@ -2212,3 +2212,29 @@
 ## `_handle_all_constrained`、`provider_constrained` 廣播、audit.jsonl 寫入，以及 `flow.plan_preflight_rebind` 介面，本輪一律不動；本次改動邊界是「config helper 新增 + 兩處呼叫點替換 + helper 合約測試」，不碰 preflight/rebind 流程
 - 時間：2026-06-29 00:49
 
+## **現況為已落地**——`config.is_user_explicit_provider`、`_pick_provider` early-return、`_preflight_rebind_experts`、`_apply_preflight_rebind`、`_explicit_provider_overrides`、`_handle_all_constrained`、`flow.plan_preflight_rebind`、`events.EventType.PROVIDER_CONSTRAINED` 均已存在於 workspace；全 13 個 `test_provider_preflight_routing_qa.py` 測試通過，本輪任務定位為「驗收結案 + 假綠排除」，不新增生產碼。
+- 時間：2026-06-29 01:23
+- 理由：設計文件與 `/opt/ti/` 主目錄對比（未含 workspace 子目錄），造成「尚未實作」誤判；正確基準是 `/opt/ti/workspaces/project-ea851408a641/`。
+
+## **明示覆寫角色受限時，不發 `provider_constrained` 事件、不寫 audit**——此為明確產品語意，非 early-return 偶然副作用。
+- 時間：2026-06-29 01:23
+- 理由：使用者透過 `TI_PROVIDER_<KEY>=X` 顯式選定 provider，等同聲明「我知道這個選擇，不需要系統干預或警告」；若仍發事件，儀表板會被使用者自願接受的受限噪音淹沒，降低事件信噪比。
+- 否決方案：「明示覆寫仍發事件但加 reason=user_explicit 欄位」——增加事件語意複雜度，且 P2 儀表板尚未定義如何區分展示，過早承諾介面。
+
+## **驗收指標改為「核心黑樣本有真判別力」**，不依賴「13 / 6 / 3 測」數字契約——黑樣本 `test_pick_provider_explicit_override_wins_under_all_constrained` 以 PM hint「claude」+ 全受限 + 明示 codex 確認回傳 codex 且 `_provider_constrained_pending` 為空；`test_explicit_override_under_all_constrained_emits_no_event_or_audit` 確認 `provider_constrained` 事件集合為 `{"pm", "qa"}`、audit 角色集合同上，缺一不可。
+- 時間：2026-06-29 01:23
+- 理由：數字契約隨補白樣本浮動，核心行為合約才是不變式。
+
+## **假綠排除方法**——暫時移除 `_pick_provider` 第一行 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)` 後，至少以下兩個黑樣本必須轉 FAIL：`test_pick_provider_explicit_override_wins_under_all_constrained`（prov 回 "claude" 而非 "codex"；pending marker 被設）與 `test_explicit_override_under_all_constrained_emits_no_event_or_audit`（engineer 出現在 pc/audit 集合）；還原後兩者轉 PASS，工作樹 `git status` 無殘留。
+- 時間：2026-06-29 01:23
+- 否決方案：只讀測試碼確認行為——CLAUDE.md 明確「審查要親自實跑，不靠看起來對」。
+
+## **`_explicit_provider_overrides` 以 `is_user_explicit_provider` 過濾**——dict comprehension 為 `{k: config.role_provider(ex.role.key) for k, ex in experts.items() if config.is_user_explicit_provider(ex.role.key)}`；空字串角色（未設 env）不進 overrides，避免「所有角色都被視為明示鎖定」永遠關閉自動重綁。
+- 時間：2026-06-29 01:23
+
+## **`plan_preflight_rebind(bindings, snap, explicit_overrides)` 介面不變**——純函式在 `flow.py`，接收三個參數，遇到 `role_key in explicit_overrides` 或 `provider == ""` 或 snap 無此 provider 時跳過不重綁；決策與副作用邊界維持 `flow.py`（無狀態）vs `orchestrator.py`（有副作用）既有架構。
+- 時間：2026-06-29 01:23
+
+## **離線 e2e 三個失敗標注為「環境限制」不列入本輪驗收**——根因是 `/opt/ti/lessons.lock` 寫入沙箱 read-only 磁碟，CI 正常環境無此限制；完整驗收指令為 `tests/core/test_provider_quota_helpers.py tests/settings/test_provider_quota.py tests/test_user_explicit_provider_contract.py tests/core/test_provider_preflight_routing_qa.py tests/autopilot/test_provider_routing_contract.py`。
+- 時間：2026-06-29 01:23
+
