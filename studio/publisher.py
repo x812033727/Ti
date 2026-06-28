@@ -681,6 +681,9 @@ async def _publish_inner(
     # 發佈前淨化:剔除沙箱/環境污染(.venv／*.db／HOME dotfiles／.claude),避免交付膨脹的髒 repo。
     # 必須趕在下面這次「成果」commit 之前,讓交付的 HEAD 工作樹乾淨。
     await runner.git_sanitize_workspace(cwd)
+    # ruff 專案發佈前自動排版:改良迴圈無 lint 閘門,未排版的交付碼會被目標 repo 的 CI（ruff
+    # format --check）擋住合併。在「成果」commit 前自動 ruff format,讓 PR 不因格式漂移卡 CI。
+    await runner.ruff_format_workspace(cwd)
     await runner.git_commit(cwd, "Ti Studio 成果")
 
     # per-project 覆寫的 repo 可能不存在（自動建立）或是空的（首次發佈直接初始化 base）。
