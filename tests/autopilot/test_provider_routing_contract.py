@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from studio import config, events
+from studio import config, events, flow
 from studio.orchestrator import LaneContext, StudioSession
 from studio.roles import BY_KEY, Role
 
@@ -159,3 +159,116 @@ async def test_recruit_all_constrained_emits_event(tmp_path, monkeypatch):
 
     assert ctx.experts["architect"].provider == "claude"
     assert [e for e in bucket if e.type == events.EventType.PROVIDER_CONSTRAINED]
+
+
+def test_plan_preflight_rebind_rebinds_constrained_bindings():
+    snap = _snap(
+        _entry("claude", ready=True, used=95),
+        _entry("minimax", ready=True, used=10),
+        _entry("codex", ready=True, used=20),
+        _entry("antigravity", ready=False),
+    )
+    assert flow.plan_preflight_rebind({"engineer": "claude"}, snap, {}) == [
+        ("engineer", "claude", "minimax")
+    ]
+
+
+def test_plan_preflight_rebind_skips_explicit_overrides():
+    snap = _snap(
+        _entry("claude", ready=True, used=95),
+        _entry("minimax", ready=True, used=10),
+    )
+    plan = flow.plan_preflight_rebind(
+        {"engineer": "claude"}, snap, {"engineer": "codex"}
+    )
+    assert plan == []
+
+
+def test_plan_preflight_rebind_all_constrained_has_no_plan():
+    snap = _snap(
+        _entry("claude", ready=True, used=95),
+        _entry("minimax", ready=False),
+    )
+    assert flow.plan_preflight_rebind({"engineer": "claude"}, snap, {}) == []
+
+
+def test_apply_preflight_rebind_uses_injected_factory(tmp_path):
+    async def broadcast(_ev):
+        pass
+
+    calls = []
+
+    def factory(role, session_id, cwd, *, provider=None):
+        calls.append((role.key, session_id, cwd, provider))
+        return StubExpert(role, provider or "claude")
+
+    experts = {"engineer": StubExpert(BY_KEY["engineer"], "claude")}
+    s = StudioSession("s", broadcast, experts=experts, cwd=tmp_path)
+
+    s._apply_preflight_rebind(
+        [("engineer", "claude", "minimax")], expert_factory=factory
+    )
+
+    assert calls == [("engineer", "s", tmp_path, "minimax")]
+    assert s._experts["engineer"].provider == "minimax"
+    assert s._recruit_providers["engineer"] == "minimax"
+
+
+@pytest.mark.asyncio
+async def test_preflight_rebinds_all_members_on_constrained_provider(tmp_path, monkeypatch):
+    snap = _snap(
+        _entry("claude", ready=True, used=95),
+        _entry("minimax", ready=True, used=10),
+        _entry("codex", ready=True, used=20),
+    )
+    experts = {
+        "engineer": StubExpert(BY_KEY["engineer"], "claude"),
+        "qa": StubExpert(BY_KEY["qa"], "claude"),
+        "pm": StubExpert(BY_KEY["pm"], "claude"),
+    }
+    s, _ = _session(tmp_path, monkeypatch, snap, experts)
+
+    await s._run("req")
+
+    assert {key: ex.provider for key, ex in s._experts.items()} == {
+        "engineer": "minimax",
+        "qa": "minimax",
+        "pm": "minimax",
+    }
+    assert s._recruit_providers == {
+        "engineer": "minimax",
+        "qa": "minimax",
+        "pm": "minimax",
+    }
+
+
+@pytest.mark.asyncio
+async def test_handle_all_constrained_audit_io_failure_does_not_break_session(
+    tmp_path, monkeypatch
+):
+    """白樣本（audit IO 容錯）：當 AUTOPILOT_STATE_DIR 寫入失敗時，session 不掛、不 raise、
+    仍發出 provider_constrained 事件。
+
+    用 mock 讓 path.open 拋 OSError，驗證 broadcast 仍走完、無例外冒出。
+    """
+    snap = _snap(
+        _entry("claude", ready=True, used=95),
+        _entry("minimax", ready=False),
+        _entry("codex", ready=False),
+        _entry("antigravity", ready=False),
+    )
+    state_dir = tmp_path / "ap"
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", state_dir)
+    experts = {"engineer": StubExpert(BY_KEY["engineer"], "claude")}
+    s, bucket = _session(tmp_path, monkeypatch, snap, experts)
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated disk full")
+
+    monkeypatch.setattr("pathlib.Path.open", _boom)
+
+    await s._handle_all_constrained("engineer", "claude", snap)
+
+    events_emit = [e for e in bucket if e.type == events.EventType.PROVIDER_CONSTRAINED]
+    assert len(events_emit) == 1
+    assert events_emit[0].payload["role"] == "engineer"

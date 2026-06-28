@@ -54,6 +54,7 @@ from .flow import (
     parse_tasks as parse_tasks,
     parse_tasks_with_deps as parse_tasks_with_deps,
     parse_vision as parse_vision,
+    plan_preflight_rebind as plan_preflight_rebind,
     pm_done as pm_done,
     qa_passed as qa_passed,
     security_approved as security_approved,
@@ -1375,11 +1376,26 @@ class StudioSession:
         招募成員以實際綁定為準（`_recruit_providers`，可能因額度受限自動重綁／PM 指定而異於
         角色預設）；其餘走 `effective_provider`。讓額度摘要/roster「誰用哪家額度」顯示正確。
         """
+        return {k: self._actual_provider_for_expert(k, ex) for k, ex in experts.items()}
+
+    def _actual_provider_for_expert(self, role_key: str, expert: ExpertLike) -> str:
         from .providers import effective_provider
 
+        return (
+            self._recruit_providers.get(role_key)
+            or getattr(expert, "provider", None)
+            or getattr(expert, "_provider", None)
+            or effective_provider(expert.role)
+        )
+
+    def _current_provider_bindings(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
+        return {k: self._actual_provider_for_expert(k, ex) for k, ex in experts.items()}
+
+    def _explicit_provider_overrides(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
         return {
-            k: self._recruit_providers.get(k) or effective_provider(ex.role)
+            k: config.role_provider(ex.role.key)
             for k, ex in experts.items()
+            if config.role_provider(ex.role.key)
         }
 
     async def _refresh_quota_snapshot(self) -> None:
@@ -1454,25 +1470,50 @@ class StudioSession:
         except OSError as exc:
             log.warning("寫入 provider_constrained audit 失敗：%s", exc)
 
+    def _apply_preflight_rebind(
+        self,
+        plan: list[tuple[str, str, str]],
+        *,
+        expert_factory=None,
+    ) -> None:
+        """套用 preflight plan：這層只處理 expert 重建與 dict 寫回。"""
+        if not self.cwd:
+            return
+        if expert_factory is None:
+            from .providers import make_expert
+
+            expert_factory = make_expert
+        for role_key, from_provider, to_provider in plan:
+            if role_key not in self._experts or role_key not in BY_KEY:
+                continue
+            log.info(
+                "場次起點 %s：provider %s 受限，自動重綁 %s",
+                role_key,
+                from_provider,
+                to_provider,
+            )
+            self._experts[role_key] = expert_factory(
+                BY_KEY[role_key],
+                self.session_id,
+                self.cwd,
+                provider=to_provider,
+            )
+            self._recruit_providers[role_key] = to_provider
+
     async def _preflight_rebind_experts(self, experts: dict[str, ExpertLike]) -> None:
-        """場次起點檢查所有在場成員；受限者重建到最寬鬆就緒 provider。"""
+        """場次起點檢查所有在場成員；決策走 flow，副作用由 _apply_preflight_rebind 套用。"""
         if not self.cwd or not self._quota_snap:
             return
-        from .providers import effective_provider, make_expert
-
-        for role_key, expert in list(experts.items()):
-            role = expert.role
-            current = self._recruit_providers.get(role_key) or effective_provider(role)
-            selected = self._pick_provider(role, "")
-            if selected == current:
-                if config.role_provider(role.key):
-                    continue
-                if provider_quota.constrained(self._quota_snap, current):
-                    await self._handle_all_constrained(role_key, current, self._quota_snap)
+        current_bindings = self._current_provider_bindings(experts)
+        explicit_overrides = self._explicit_provider_overrides(experts)
+        plan = plan_preflight_rebind(current_bindings, self._quota_snap, explicit_overrides)
+        planned_roles = {role_key for role_key, _from, _to in plan}
+        for role_key, provider in current_bindings.items():
+            if role_key in planned_roles or explicit_overrides.get(role_key):
                 continue
-            log.info("場次起點 %s：provider %s 受限，自動重綁 %s", role_key, current, selected)
-            experts[role_key] = make_expert(role, self.session_id, self.cwd, provider=selected)
-            self._recruit_providers[role_key] = selected
+            if provider and provider_quota.constrained(self._quota_snap, provider):
+                await self._handle_all_constrained(role_key, provider, self._quota_snap)
+        self._apply_preflight_rebind(plan)
 
     def _build_liquid_role(self, spec: dict) -> Role | None:
         """從 PM 的 `招募:` 規格現場液生一個臨時 Role；key 不合法/與既有衝突/缺專長回 None。"""
