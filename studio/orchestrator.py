@@ -257,6 +257,9 @@ class StudioSession:
         self._recruited = 0
         self._quota_snap: dict | None = None
         self._recruit_factory = None
+        # 招募成員「實際綁定」的 provider（key→provider）。招募時 _pick_provider 可能把受限/PM 指定的
+        # provider 自動重綁，與 effective_provider(role) 不同；額度摘要/roster 顯示須以此為準才正確。
+        self._recruit_providers: dict[str, str] = {}
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -1320,10 +1323,17 @@ class StudioSession:
 
     # --- 額度感知分派 + 動態招募（dynamic stage 共用）------------------------
     def _role_provider_map(self, experts: dict) -> dict[str, str]:
-        """本場各在場角色實際綁的 provider（混合模式 effective_provider）。"""
+        """本場各在場角色實際綁的 provider（混合模式）。
+
+        招募成員以實際綁定為準（`_recruit_providers`，可能因額度受限自動重綁／PM 指定而異於
+        角色預設）；其餘走 `effective_provider`。讓額度摘要/roster「誰用哪家額度」顯示正確。
+        """
         from .providers import effective_provider
 
-        return {k: effective_provider(ex.role) for k, ex in experts.items()}
+        return {
+            k: self._recruit_providers.get(k) or effective_provider(ex.role)
+            for k, ex in experts.items()
+        }
 
     async def _refresh_quota_snapshot(self) -> None:
         """動態 stage 開頭查一次 provider 額度快照（asyncio.to_thread；失敗存 None）。
@@ -1406,6 +1416,7 @@ class StudioSession:
 
             expert = make_expert(role, self.session_id, ctx.cwd, provider=prov)
         ctx.experts[role.key] = expert
+        self._recruit_providers[role.key] = prov  # 記實際綁定，供額度摘要/roster 正確顯示
         self._recruited += 1
         await self.broadcast(
             events.expert_joined(
@@ -1424,21 +1435,24 @@ class StudioSession:
     async def _resolve_or_recruit(self, ctx: LaneContext, step: dict, fallback: str) -> str:
         """把 PM 的下一步解析成「可發言的 role_key」。
 
-        在場→直接用；否則在招募上限內：PM 給 `招募:` 規格→液生 persona 招募；role 在庫(BY_KEY)→
-        庫招募。都不行（達上限/非法）→ flow.validate_assignees fallback（沿用既有兜底）。
+        `下一步:` 是「找誰」的權威：在場→直接用；否則在招募上限內——若 PM 同時給 `招募:` 規格
+        且其 key 與 `下一步:` 一致（或 PM 只給招募、無下一步）→液生 persona 招募；role 在庫(BY_KEY)
+        →庫招募。都不行（達上限/非法/招募 key 與下一步不符）→ flow.validate_assignees 兜底。
         """
         experts = ctx.experts
         role = (step.get("role") or "").strip()
+        provider = step.get("provider", "")
         if role in experts:
             return role
         if self._recruited < config.RECRUIT_MAX:
             spec = step.get("recruit")
-            if spec:
+            # 液生僅在「無下一步」或「下一步＝招募 key」時觸發，避免遮蔽明指的 `下一步:`。
+            if spec and (not role or (spec.get("key") or "").strip() == role):
                 liquid = self._build_liquid_role(spec)
                 if liquid is not None:
-                    return await self._recruit(ctx, liquid, step.get("provider", ""), "液生招募")
+                    return await self._recruit(ctx, liquid, provider, "液生招募")
             if role in BY_KEY:
-                return await self._recruit(ctx, BY_KEY[role], step.get("provider", ""), "庫招募")
+                return await self._recruit(ctx, BY_KEY[role], provider, "庫招募")
         fixed, _ = flow.validate_assignees(
             [{"assignee": role}], list(experts.keys()), fallback=fallback
         )
