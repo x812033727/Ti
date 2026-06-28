@@ -136,8 +136,10 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
 ## 安全自改合約：`_commit_push_merge` 不變式
 
 - `studio/autopilot.py::_commit_push_merge` 入口先檢查 `config.AUTOPILOT_REPO` 不可為空，且
-  `config.PUBLISH_REPO` 非空時不可與 `AUTOPILOT_REPO` 指向同一 repo；違反即回 `(False, reason)`，
+  `config.PUBLISH_REPO` 非空時必須與 `AUTOPILOT_REPO` 指向同一 repo；違反即回 `(False, reason)`，
   不執行 `git push`、開 PR 或 merge flow。
+- 實際 push 前會讀 `git remote get-url --push origin`，正規化後必須等於 `AUTOPILOT_REPO`；
+  不符即中止，避免傳入 clone 的 origin 被改到專案 repo。
 - guard 通過後立即 `publisher.set_repo_override(config.AUTOPILOT_REPO)`，並用 `try/finally` 包住後續
   checkout/commit/push/PR/merge 全段，確保任何 publisher REST helper 在 autopilot 路徑都只看見
   `AUTOPILOT_REPO`，且異常時會還原 per-session override。

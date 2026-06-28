@@ -15,12 +15,15 @@ _PROJECT_REPO = "product/project"
 
 
 class RunSpy:
-    def __init__(self):
+    def __init__(self, origin: str | None = None):
         self.calls: list[list[str]] = []
+        self.origin = origin or f"https://github.com/{_AUTOPILOT_REPO}.git"
 
     async def __call__(self, cmd, cwd=None, timeout=600):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
+        if "remote get-url --push origin" in joined:
+            return (0, self.origin)
         if "rev-list --count" in joined:
             return (0, "1")
         if "pr view" in joined:
@@ -49,7 +52,7 @@ def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
     monkeypatch.setattr(config, "AUTOPILOT_PROTECTION_CHECK", False)
-    monkeypatch.setattr(config, "PUBLISH_REPO", _PROJECT_REPO)
+    monkeypatch.setattr(config, "PUBLISH_REPO", "")
 
 
 @pytest.mark.asyncio
@@ -68,7 +71,7 @@ async def test_merge_flow_observes_autopilot_repo_override(monkeypatch):
 
     assert ok is True, msg
     assert observed_repos == [_AUTOPILOT_REPO]
-    assert publisher.current_repo() == _PROJECT_REPO
+    assert publisher.current_repo() == ""
     assert spy.called(f"pr create -R {_AUTOPILOT_REPO}")
     assert not spy.called(f"pr create -R {_PROJECT_REPO}")
 
@@ -90,10 +93,10 @@ async def test_empty_autopilot_repo_aborts_before_push_or_pr(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publish_repo_same_as_autopilot_repo_aborts_without_side_effects(monkeypatch):
+async def test_publish_repo_different_from_autopilot_repo_aborts_without_side_effects(monkeypatch):
     run = AsyncMock()
     merge_flow = AsyncMock()
-    monkeypatch.setattr(config, "PUBLISH_REPO", _AUTOPILOT_REPO)
+    monkeypatch.setattr(config, "PUBLISH_REPO", _PROJECT_REPO)
     monkeypatch.setattr(autopilot, "_run", run)
     monkeypatch.setattr(publisher, "_merge_flow", merge_flow)
 
@@ -106,13 +109,13 @@ async def test_publish_repo_same_as_autopilot_repo_aborts_without_side_effects(m
 
 
 @pytest.mark.asyncio
-async def test_empty_publish_repo_does_not_block_autopilot_push(monkeypatch):
+async def test_publish_repo_same_as_autopilot_repo_does_not_block_autopilot_push(monkeypatch):
     spy = RunSpy()
 
     async def _merge_flow(number, payload, **kwargs):
         return (publisher.MergeOutcome.MERGED, "merged")
 
-    monkeypatch.setattr(config, "PUBLISH_REPO", "")
+    monkeypatch.setattr(config, "PUBLISH_REPO", "Core/Autopilot")
     monkeypatch.setattr(autopilot, "_run", spy)
     monkeypatch.setattr(publisher, "_merge_flow", _merge_flow)
 
@@ -121,3 +124,18 @@ async def test_empty_publish_repo_does_not_block_autopilot_push(monkeypatch):
     assert ok is True, msg
     assert spy.called(f"pr create -R {_AUTOPILOT_REPO}")
     assert any("push" in call for call in spy.calls)
+
+
+@pytest.mark.asyncio
+async def test_origin_push_url_must_match_autopilot_repo_before_push(monkeypatch):
+    spy = RunSpy(origin=f"https://github.com/{_PROJECT_REPO}.git")
+    merge_flow = AsyncMock()
+    monkeypatch.setattr(autopilot, "_run", spy)
+    monkeypatch.setattr(publisher, "_merge_flow", merge_flow)
+
+    ok, msg = await autopilot._commit_push_merge("/clone", _TASK)
+
+    assert ok is False
+    assert "origin push URL" in msg
+    assert not any("push" in call for call in spy.calls)
+    merge_flow.assert_not_awaited()

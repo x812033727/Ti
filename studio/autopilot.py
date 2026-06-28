@@ -22,6 +22,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlparse
 
 from . import backlog, config, deploy, history, publisher, runner
 from .orchestrator import StudioSession, parse_tasks
@@ -66,6 +67,26 @@ def _self_sig() -> float:
 
 
 # --- working clone -------------------------------------------------------
+
+
+def _repo_key(value: str) -> str:
+    """把 owner/repo 或常見 Git URL 壓成不分大小寫的 owner/repo key。"""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if "://" in raw:
+        raw = urlparse(raw).path
+    elif "@" in raw and ":" in raw:
+        raw = raw.rsplit(":", 1)[1]
+    elif raw.startswith("github.com/"):
+        raw = raw[len("github.com/") :]
+    raw = raw.strip("/")
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    parts = [part for part in raw.split("/") if part]
+    if len(parts) >= 2:
+        return "/".join(parts[-2:]).lower()
+    return raw.lower()
 
 
 async def _prepare_clone() -> str:
@@ -227,14 +248,15 @@ async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
 
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     """把成果開分支、push、squash-merge 進 main。dryrun 只回報。"""
-    repo = config.AUTOPILOT_REPO
-    publish_repo = config.PUBLISH_REPO
-    if not repo:
-        return False, "AUTOPILOT_REPO 未設定，已中止 autopilot 推送"
-    if publish_repo and publish_repo == repo:
+    repo = (config.AUTOPILOT_REPO or "").strip()
+    publish_repo = (config.PUBLISH_REPO or "").strip()
+    repo_key = _repo_key(repo)
+    if not repo_key:
+        return False, "AUTOPILOT_REPO 未設定，已中止推送"
+    if publish_repo and _repo_key(publish_repo) != repo_key:
         return False, (
-            "PUBLISH_REPO 與 AUTOPILOT_REPO 指向同一 repo，"
-            "為避免專案發佈路由與 autopilot 自改路由相衝，已中止推送"
+            "PUBLISH_REPO 非空且不等於 AUTOPILOT_REPO，"
+            "為避免 autopilot 變更污染專案 repo，已中止推送"
         )
 
     token = publisher.set_repo_override(repo)
@@ -308,6 +330,18 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         push_flags = (
             ["--force-with-lease", "--force-if-includes"] if config.AUTOPILOT_FORCE_PUSH else []
         )
+        rc, push_url = await _run(
+            ["git", "remote", "get-url", "--push", "origin"],
+            cwd=clone,
+            timeout=30,
+        )
+        if rc != 0:
+            return False, f"無法確認 origin push URL，已中止：{push_url[-400:]}"
+        if _repo_key(push_url) != repo_key:
+            return False, (
+                f"origin push URL 不等於 AUTOPILOT_REPO，已中止推送："
+                f"origin={push_url.strip() or '(empty)'} autopilot={repo}"
+            )
         rc, out = await _run(
             ["git", *_GIT_CRED, "push", *push_flags, "-u", "origin", branch],
             cwd=clone,
