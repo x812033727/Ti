@@ -1516,10 +1516,19 @@ class StudioSession:
                 f"- {key}: {ex.role.name}（{ex.role.description or ex.role.title}）"
                 for key, ex in ctx.experts.items()
             )
+            # 已完成的分派與回應餵回 PM，讓它依成員實際回應「接著協調」而非每步盲分派（加強溝通/分派）。
+            planning_note = (
+                "目前為止的分派與回應（請據此協調下一步、避免重複指派）：\n"
+                + "\n\n".join(planning)
+                + "\n\n"
+                if planning
+                else ""
+            )
             decision = await self._speak(
                 ctx,
                 "pm",
                 f"目前進度摘要：\n{self._dynamic_blackboard()}\n\n"
+                + planning_note
                 + self._quota_note(ctx.experts)
                 + f"目前團隊成員（role_key）：\n{roster_desc}\n\n"
                 f"需求：{self._requirement}\n\n"

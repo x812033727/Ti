@@ -338,6 +338,18 @@ async def test_dynamic_planning_feeds_design_note():
 
 
 @pytest.mark.asyncio
+async def test_dynamic_pm_sees_prior_delegation_responses():
+    # PM 第 2 次決策的 prompt 應含第 1 次被指派者（engineer）的回應，據此協調下一步。
+    s, experts, _ = _session(["下一步: engineer\n指示: A", "下一步: qa\n指示: B", "下一步: 結束"])
+    await s._stage_dynamic({"type": "dynamic", "budget": 5})
+    pm_prompts = experts["pm"].prompts
+    assert len(pm_prompts) >= 2
+    assert "分派與回應" in pm_prompts[1]
+    assert "工程師已處理" in pm_prompts[1]  # 第 1 hop engineer 的回應餵回 PM
+    assert "工程師已處理" not in pm_prompts[0]  # 第 1 hop 時還沒有回應
+
+
+@pytest.mark.asyncio
 async def test_dynamic_planning_appends_not_overwrites():
     s, experts, _ = _session(["下一步: engineer\n指示: 規劃", "下一步: 結束"])
     s._design_note = "【架構決策】既有設計"  # 模擬先前 discuss 已寫
