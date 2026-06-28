@@ -133,6 +133,17 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
   消費端以 `backlog.add_items(core, source="core")`（省略 `state_dir`＝核心 backlog）路由，
   autopilot 在核心 repo 實作並開 PR。詳見 `ARCHITECTURE.md`「專案 repo 與 Ti 主核心 repo」。
 
+## 安全自改合約：`_commit_push_merge` 不變式
+
+- `studio/autopilot.py::_commit_push_merge` 入口先檢查 `config.AUTOPILOT_REPO` 不可為空，且
+  `config.PUBLISH_REPO` 非空時不可與 `AUTOPILOT_REPO` 指向同一 repo；違反即回 `(False, reason)`，
+  不執行 `git push`、開 PR 或 merge flow。
+- guard 通過後立即 `publisher.set_repo_override(config.AUTOPILOT_REPO)`，並用 `try/finally` 包住後續
+  checkout/commit/push/PR/merge 全段，確保任何 publisher REST helper 在 autopilot 路徑都只看見
+  `AUTOPILOT_REPO`，且異常時會還原 per-session override。
+- 本輪範圍外移交待辦：結構化 `autopilot/audit.jsonl` 審計紀錄、`AUTOPILOT_DAILY_PR_BUDGET`
+  每日 PR 成本熔斷。不要混進 repo 污染防護修補。
+
 ## 發佈鏈 DoD 與 `GH_PAT` 設定
 
 - 發佈鏈契約：`.github/workflows/publish-release.yml` 只在 `push.tags: v*` 建立 GitHub release；
