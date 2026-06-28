@@ -70,23 +70,29 @@ def _self_sig() -> float:
 
 
 def _repo_key(value: str) -> str:
-    """把 owner/repo 或常見 Git URL 壓成不分大小寫的 owner/repo key。"""
+    """把 GitHub repo 位置壓成不分大小寫的 github.com/owner/repo identity。"""
     raw = (value or "").strip()
     if not raw:
         return ""
+    host = "github.com"
     if "://" in raw:
-        raw = urlparse(raw).path
+        parsed = urlparse(raw)
+        if (parsed.hostname or "").lower() != "github.com":
+            return ""
+        raw = parsed.path
     elif "@" in raw and ":" in raw:
-        raw = raw.rsplit(":", 1)[1]
+        remote_host, raw = raw.rsplit(":", 1)
+        if (remote_host.rsplit("@", 1)[-1] or "").lower() != "github.com":
+            return ""
     elif raw.startswith("github.com/"):
         raw = raw[len("github.com/") :]
     raw = raw.strip("/")
     if raw.endswith(".git"):
         raw = raw[:-4]
     parts = [part for part in raw.split("/") if part]
-    if len(parts) >= 2:
-        return "/".join(parts[-2:]).lower()
-    return raw.lower()
+    if len(parts) == 2:
+        return f"{host}/{'/'.join(parts)}".lower()
+    return ""
 
 
 async def _prepare_clone() -> str:
@@ -255,8 +261,7 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         return False, "AUTOPILOT_REPO 未設定，已中止推送"
     if publish_repo and _repo_key(publish_repo) != repo_key:
         return False, (
-            "PUBLISH_REPO 非空且不等於 AUTOPILOT_REPO，"
-            "為避免 autopilot 變更污染專案 repo，已中止推送"
+            "PUBLISH_REPO 與 AUTOPILOT_REPO 指向不同 repo，為避免污染專案 repo，已中止推送"
         )
 
     token = publisher.set_repo_override(repo)
