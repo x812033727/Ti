@@ -380,6 +380,11 @@ function handleEvent(ev) {
       });
       break;
     }
+    case "provider_constrained":
+      addSystem(
+        `⚠️ Provider 受限：${p.role || ""} 目前綁定 ${p.provider || ""}，暫無可自動重綁目標。`,
+      );
+      break;
     case "critic_review":
       if (p.passed) {
         addSystem("🔍 異議檢查放行（" + (p.gate || "") + " 視角）");
