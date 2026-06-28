@@ -997,3 +997,9 @@ python3 -m pytest tests/autopilot/test_provider_routing_contract.py tests/core/t
 
 ## 任務 #4 完成：補黑白樣本測試守門並確保既有 provider_quota 測試與離線 e2e 全綠
 
+## 任務 #1 完成：在 `config.py` 新增 `is_user_explicit_provider(key: str) -> bool` helper，以 `role_provider(key)` 為單一真值來源（`return bool(role_provider(key))`），含繁中 docstring 與白名單語意說明
+
+## 任務 #2 完成：把 `orchestrator._pick_provider` 與 `_explicit_provider_overrides` 兩處 inline 的 `config.role_provider(...)` 布林判定改用 `config.is_user_explicit_provider(...)`，值取得仍走 `config.role_provider`，行為等價
+
+## 任務 #3 完成：新增 `tests/test_user_explicit_provider_contract.py`，以黑白樣本鎖住 helper 與兩處呼叫點的判定合約
+
