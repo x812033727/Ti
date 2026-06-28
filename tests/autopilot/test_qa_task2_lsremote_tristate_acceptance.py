@@ -46,6 +46,8 @@ class RunSpy:
         for key, val in self.overrides.items():
             if key in joined:
                 return val
+        if "remote get-url --push origin" in joined:
+            return (0, f"https://github.com/{config.AUTOPILOT_REPO}.git")
         return (0, "")
 
     @property

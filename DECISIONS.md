@@ -2053,9 +2053,13 @@
 - 理由：函式內 `gh pr create -R repo` 第 302 行已直接用 `config.AUTOPILOT_REPO`，`publisher.current_repo()` 只在 `_merge_flow` 段才有意義；頂端 override 尚未設定前讀 `current_repo()` 一定是錯的。
 - 否決方案：「頂端讀 `publisher.current_repo()` 判斷」——override 不存在時讀到 `PUBLISH_REPO` 或空字串，正常路徑被誤擋。
 
-## Guard 條件二選一觸發 `return (False, reason)`：① `not config.AUTOPILOT_REPO`（設定空）；② `config.PUBLISH_REPO` 非空 **且** `config.PUBLISH_REPO == config.AUTOPILOT_REPO`（路由相衝）
-- 時間：2026-06-28 20:39
-- 理由：這兩條是「會讓 autopilot 污染專案 repo」的唯二設定錯誤路徑，其他情況（PUBLISH_REPO 為空）不觸發，不誤擋預設環境。
+## Guard 條件二選一觸發 `return (False, reason)`：① `not config.AUTOPILOT_REPO`（設定空）；② `config.PUBLISH_REPO` 非空 **且** 正規化後 `config.PUBLISH_REPO != config.AUTOPILOT_REPO`
+- 時間：2026-06-28 21:12
+- 理由：autopilot 推送路徑只允許空 `PUBLISH_REPO` 或與 `AUTOPILOT_REPO` 指向同一 repo；若 `PUBLISH_REPO` 指向另一個專案 repo，直接拒絕，避免核心自改流污染專案 repo。比較採不分大小寫 repo key。
+
+## `_commit_push_merge` 在真正 `git push` 前必須確認 `git remote get-url --push origin` 正規化後等於 `config.AUTOPILOT_REPO`
+- 時間：2026-06-28 21:12
+- 理由：入口 guard 只能證明 config 目標正確，不能證明傳入 clone 的 `origin` 沒被改；push 前檢查實際 push URL 才能把「實際推送目標 == AUTOPILOT_REPO」變成執行期合約。
 
 ## guard check **之後**立即執行 `token = publisher.set_repo_override(config.AUTOPILOT_REPO)`，並以 `try/finally: publisher.reset_repo_override(token)` 包住函式剩餘全部 body
 - 時間：2026-06-28 20:39
@@ -2075,8 +2079,8 @@
 ## Case B——monkeypatch `config.AUTOPILOT_REPO = ""`，呼叫函式，斷言回傳 `(False, ...)` 且 `_run`/`_merge_flow` 從未被呼叫（無 push/PR 副作用）
 - 時間：2026-06-28 20:39
 
-## Case C——monkeypatch `config.PUBLISH_REPO = config.AUTOPILOT_REPO`（兩者皆非空），呼叫函式，斷言回傳 `(False, ...)` 且無 push/PR 副作用
-- 時間：2026-06-28 20:39
+## Case C——monkeypatch `config.PUBLISH_REPO` 指向不同專案 repo，呼叫函式，斷言回傳 `(False, ...)` 且無 push/PR 副作用
+- 時間：2026-06-28 21:12
 
 ## Case D（邊界）——`config.PUBLISH_REPO = ""`（預設值），`config.AUTOPILOT_REPO` 正常，mock `_run`/`_merge_flow` 讓流程跑完，斷言回傳 `(True, ...)` 不被誤擋
 - 時間：2026-06-28 20:39
@@ -2089,4 +2093,3 @@
 
 ## 不新增依賴、不改 `config.py`/`publisher.py` 任何公開介面；`_REPO_OVERRIDE` / `set_repo_override` / `reset_repo_override` 契約完整保留
 - 時間：2026-06-28 20:39
-
