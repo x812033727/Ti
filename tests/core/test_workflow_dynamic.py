@@ -322,3 +322,25 @@ def test_role_provider_map_covers_all_members():
     m = s._role_provider_map(experts)
     assert set(m.keys()) == set(experts.keys())
     assert all(v for v in m.values())  # 預設皆 claude，非空
+
+
+# --- 動態規劃沉澱進 design_note（讓 dynamic-first 的規劃餵到 build）-----------
+
+
+@pytest.mark.asyncio
+async def test_dynamic_planning_feeds_design_note():
+    # PM 派 engineer 規劃 → engineer 發言內容應沉澱進 design_note，供 build 任務脈絡帶到。
+    s, experts, _ = _session(["下一步: engineer\n指示: 規劃登入流程", "下一步: 結束"])
+    assert s._design_note == ""  # 前提：尚無架構決策
+    await s._stage_dynamic({"type": "dynamic", "budget": 5})
+    assert "動態規劃與分派" in s._design_note
+    assert "工程師已處理" in s._design_note  # engineer stub 的發言內容被捕捉
+
+
+@pytest.mark.asyncio
+async def test_dynamic_planning_appends_not_overwrites():
+    s, experts, _ = _session(["下一步: engineer\n指示: 規劃", "下一步: 結束"])
+    s._design_note = "【架構決策】既有設計"  # 模擬先前 discuss 已寫
+    await s._stage_dynamic({"type": "dynamic", "budget": 5})
+    assert s._design_note.startswith("【架構決策】既有設計")  # 不覆寫
+    assert "動態規劃與分派" in s._design_note  # 累加
