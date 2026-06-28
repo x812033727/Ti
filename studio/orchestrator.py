@@ -581,6 +581,25 @@ class StudioSession:
         if config.KNOWLEDGE_ENABLED and self.cwd and (text or "").strip():
             workspace.append_doc(self.workspace_id, name, text)
 
+    def _persist_improvement_plan(self, retro: str) -> None:
+        """把檢討的「後續改善任務＋可重用教訓」沉澱成 docs/IMPROVEMENT.md（可累積的改善計畫）。
+
+        純加性、不影響完成判定：從 retro 文字解析（與 backlog 回填同一份解析，不重跑 LLM），
+        無項目／停用／無 cwd 時自然略過（走 _persist_knowledge 的既有閘）。
+        """
+        items = parse_followups_meta(retro)
+        plan_lessons = parse_lessons(retro) if config.LESSONS_ENABLED else []
+        if not items and not plan_lessons:
+            return
+        lines = [f"## 改善計畫 — {self._requirement[:60]}"]
+        if items:
+            lines.append("### 後續改善任務")
+            lines += [f"- [P{it['priority']}/{it['type']}] {it['title']}" for it in items]
+        if plan_lessons:
+            lines.append("### 可重用教訓")
+            lines += [f"- {ln}" for ln in plan_lessons]
+        self._persist_knowledge("IMPROVEMENT.md", "\n".join(lines) + "\n")
+
     # --- 停滯守門 ------------------------------------------------------
     def _stalled(self, ctx: LaneContext, history: list[str], committed_change: bool) -> bool:
         """是否陷入停滯（連續多輪只重述且無實質檔案變動）。
@@ -2716,6 +2735,10 @@ class StudioSession:
             )
             # 庫超門檻時順手語意蒸餾一次（雙閘低頻、離線自動短路、壞輸出保留原庫）。
             await lessons.distill(session_id=self.session_id, cwd=self.cwd)
+        # 改善計畫成果物：把本場檢討的後續改善任務＋可重用教訓沉澱成可累積的 docs/IMPROVEMENT.md
+        # （比照 RESEARCH.md 知識沉澱），讓「驗證＋改善計畫」中的改善計畫成為交付物的一部分、
+        # 跨場次累積，而非只進 backlog（一次性 session 的改善建議也得以持久保存）。
+        self._persist_improvement_plan(retro)
         await self.broadcast(
             events.StudioEvent(events.EventType.RETROSPECTIVE, self.session_id, {"text": retro})
         )
