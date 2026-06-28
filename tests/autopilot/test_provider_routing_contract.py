@@ -32,6 +32,14 @@ def _snap(*entries):
     return {"ok": True, "updated_at": 1000.0, "providers": list(entries)}
 
 
+def _reload_engineer_provider(monkeypatch, provider: str) -> None:
+    for key in config.ROLE_KEYS:
+        monkeypatch.delenv(f"TI_PROVIDER_{key.upper()}", raising=False)
+    monkeypatch.setenv("TI_PROVIDER", "claude")
+    monkeypatch.setenv("TI_PROVIDER_ENGINEER", provider)
+    config.reload()
+
+
 @pytest.fixture(autouse=True)
 def _provider_defaults(monkeypatch):
     monkeypatch.setattr(config, "PROVIDER", "claude")
@@ -121,7 +129,7 @@ async def test_explicit_role_provider_is_not_rebound_or_reported(tmp_path, monke
 async def test_explicit_openai_compatible_provider_is_not_rebound(
     tmp_path, monkeypatch, provider
 ):
-    monkeypatch.setattr(config, "ROLE_PROVIDERS", {**config.ROLE_PROVIDERS, "engineer": provider})
+    _reload_engineer_provider(monkeypatch, provider)
     snap = _snap(
         _entry(provider, ready=True, used=99),
         _entry("minimax", ready=True, used=10),
@@ -130,6 +138,8 @@ async def test_explicit_openai_compatible_provider_is_not_rebound(
     experts = {"engineer": StubExpert(BY_KEY["engineer"], provider)}
     s, bucket = _session(tmp_path, monkeypatch, snap, experts)
 
+    assert provider in config.PROVIDERS
+    assert config.ROLE_PROVIDERS["engineer"] == provider
     assert s._pick_provider(BY_KEY["engineer"], "minimax") == provider
     await s._run("req")
 
