@@ -187,6 +187,40 @@ def parse_followups_meta(text: str) -> list[dict]:
     ][:10]
 
 
+def classify_failure_followups(failed_titles: list[str], retro_items: list[dict]) -> list[dict]:
+    """把客觀失敗來源升格為 P0 bug，未命中的檢討後續任務維持原標籤。
+
+    failed_titles 來自 Demo/QA 等機器可判定失敗；retro_items 則是 parse_followups_meta
+    已解析出的檢討後續任務。兩者同標題時以失敗事實為準，覆寫成 P0/bug 且不重複產生項目。
+    """
+    failed: list[str] = []
+    failed_set: set[str] = set()
+    for title in failed_titles or []:
+        clean = str(title or "").strip()
+        if clean and clean not in failed_set:
+            failed.append(clean)
+            failed_set.add(clean)
+
+    items: list[dict] = []
+    seen: set[str] = set()
+    for item in retro_items or []:
+        title = str((item or {}).get("title", "")).strip()
+        if not title or title in seen:
+            continue
+        out = {**item, "title": title}
+        if title in failed_set:
+            out["priority"] = 0
+            out["type"] = "bug"
+        items.append(out)
+        seen.add(title)
+
+    for title in failed:
+        if title not in seen:
+            items.append({"title": title, "priority": 0, "type": "bug"})
+            seen.add(title)
+    return items
+
+
 def parse_core_changes(text: str) -> list[dict]:
     """從專家輸出抽出 `核心改動: [P0/bug] <說明>` 行——代表「要滿足本專案需求，必須改動 Ti 核心
     框架本身（orchestrator／runner／發佈流程等），而非專案自己的程式碼」。

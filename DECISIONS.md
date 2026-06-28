@@ -2011,3 +2011,40 @@
 ## 模組邊界不動——計數推導在 `history.py`，聚合在 `routes.py`，前端在 `web/app.js`；不觸碰 `flow.py`、`events.py`、`orchestrator.py`，不新增依賴，不動 marker 字串。
 - 時間：2026-06-28 18:24
 
+## `classify_failure_followups(failed_titles: list[str], retro_items: list[dict]) -> list[dict]` 放 `flow.py`，為無狀態純函式。
+- 時間：2026-06-28 19:15
+- 理由：可單元測試、可 monkeypatch；決策解析屬 `flow.py` 職責。
+
+## 失敗標題一律輸出為 `priority=0, type="bug"`，**不論其是否出現在 retro_items、也不論 retro_items 裡該標題的現有 priority**——對命中的失敗標題做 upsert（覆寫），而非 skip。
+- 時間：2026-06-28 19:15
+- 理由：`parse_followups_meta` 無法區分「PM 明確標 P1」與「PM 省略標籤被補預設 P1」，若保留 retro 值，失敗標題不帶標籤時根本問題不解決。機器確認的失敗是客觀事實，比 LLM 輸出的預設值更可信。
+- 否決方案：「PM 標注優先不覆蓋」——此策略在 `tag_explicit` 欄位不存在的前提下有 correctness 漏洞；若未來要支援 PM override，先補 `tag_explicit: bool` 到 parser，再談。
+
+## retro_items 中**未命中失敗標題**的項目原樣保留（title/priority/type 不動），累加到回傳結果；失敗標題命中 retro_items 則就地升格（upsert）、不產生重複項。
+- 時間：2026-06-28 19:15
+
+## `_wrap_up` 簽名改為 `_wrap_up(pm, all_ok, demo_veto=False)`，明確傳入 `demo_veto`；呼叫端（行 1321）同步補參數，不從 `all_ok=False` 推斷。
+- 時間：2026-06-28 19:15
+- 否決方案：從 `all_ok` 反推 `demo_veto`——`all_ok` 是多源合併布林，無法可靠還原 demo 失敗語意。
+
+## `demo_veto=True` 時注入固定標題 `"修復 Demo 失敗"` 至 `failed_titles`（priority=0/bug），格式固定不帶摘要。
+- 時間：2026-06-28 19:15
+- 理由：摘要含 LLM 非確定性文字，會讓精確比對去重失效。
+
+## `_record_known_limitations` **只替換** `_followup_items.append({"title": t, "priority": 1, "type": "improvement"})` 這段硬編碼，調用 `classify_failure_followups` 取代之；`KNOWN_LIMITATIONS.md` 寫檔與 broadcast 副作用**完整保留**，不移動、不刪除。
+- 時間：2026-06-28 19:15
+- 否決方案：整段替換 `_record_known_limitations`——工程師已確認它同時負責寫文件，整段刪除會移除非 followup 的副作用。
+
+## `orchestrator.py` 頭部 re-export：`from .flow import classify_failure_followups as classify_failure_followups`，與現有 `parse_followups_meta` re-export 同模式。
+- 時間：2026-06-28 19:15
+
+## 測試必含以下四個明確案例：① 失敗標題不在 retro → 回傳 P0/bug；② 失敗標題在 retro 且**無標籤**（預設 P1）→ 仍升格為 P0/bug（此為高工點名的根因路徑）；③ 同一 backlog 內 P0 失敗待辦經 `backlog.next_pending` 排在 P1 retro 建議前；④ 空 `failed_titles`、空 retro_items 各自不崩潰。
+- 時間：2026-06-28 19:15
+- 理由：案例②是最容易漏掉且最貼近根因的路徑，必須顯式守住。
+
+## 整鏈測試用真實 `backlog.add_items` + `backlog.next_pending`，不 mock；確保 P0 排序這條鏈不依賴 mock 假設。
+- 時間：2026-06-28 19:15
+
+## 本輪不引入 `tag_explicit` 欄位到 `parse_followups_meta`——範圍屬 PM override 精細化，留待獨立任務處理，避免本輪範圍擴散。
+- 時間：2026-06-28 19:15
+
