@@ -38,11 +38,13 @@ ASGI 入口為 `studio.server:app`，也可 `python3 -m studio.server` 直接啟
 | 分類 | 模組 | 職責 |
 |------|------|------|
 | 入口/組裝 | `server.py` | 應用組裝：建立 FastAPI app、掛 `/static`、`include_router`、頁面入口、`main()` 啟 uvicorn |
-| | `routes.py` | REST API：health、登入/登出、workspace（列檔/讀檔/下載 zip）、history、publish、`/api/roles`、`/api/groups`、`/api/settings`、`/api/metrics` |
+| | `routes.py` | REST API：health、登入/登出、workspace（列檔/讀檔/下載 zip）、history、publish、`/api/roles`、`/api/groups`、`/api/workflows`、`/api/provider-quota`、`/api/settings`、`/api/metrics` |
 | | `ws.py` | WebSocket：建 session、串流事件、`_pump_interventions` 收人類插話/停止 |
 | | `auth.py` | 單一密碼門禁（HMAC token + httponly cookie） |
-| 核心狀態機 | `orchestrator.py` | `StudioSession`：（選配）需求澄清 → 需求拆解 → 架構辯論 → 逐任務分波迭代 → Demo → 驗收/檢討 |
-| 純函式決策層 | `flow.py` | **無狀態**解析：`parse_tasks`/`parse_clarify`/`parse_core_changes`/`parse_followups`/`build_waves`/`qa_passed`/`senior_approved`/`is_stalled`… 可單元測試、可 monkeypatch |
+| 核心狀態機 | `orchestrator.py` | `StudioSession`：**workflow 直譯器**（`_run_workflow`→`_stage_*`）；預設骨架＝澄清 → 拆解 → 架構討論 → 逐任務分波迭代 → Demo → 驗收/檢討（`workflow=None` 等價骨架）；含 dynamic step（額度感知分派／PM 動態招募） |
+| 動態流程 | `workflow.py` | 宣告式流程定義：`Stage`/`Workflow` schema＋validate、`default_workflow()`／`dynamic_first_workflow()`、`workflows.yaml` CRUD；`VERDICTS` 白名單只映射 `flow.py` 判定（見 `docs/workflows.md`） |
+| | `provider_quota.py` | provider 即時額度快照＋給 PM 的額度摘要/受限判定/最寬鬆就緒（混合模式額度感知分派與招募重綁的資料源） |
+| 純函式決策層 | `flow.py` | **無狀態**解析：`parse_tasks`/`parse_clarify`/`parse_next_step`/`parse_followups`/`build_waves`/`qa_passed`/`senior_approved`/`is_stalled`… 可單元測試、可 monkeypatch |
 | 執行與隔離 | `runner.py` | 確定性執行：跑程式/Demo、git（含 worktree 合併）、入口偵測、HTTP 服務驗收、bubblewrap sandbox |
 | | `workspace.py` | 每個 session 的沙箱工作目錄（安全路徑、列檔、讀檔、打包 zip） |
 | LLM 中介 | `experts.py` | Claude 專家：包裝 `ClaudeSDKClient`，串流回應轉事件；退避工廠 `make_retry_config()` |
@@ -110,7 +112,8 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
 
 ## 延伸閱讀
 
-- `ARCHITECTURE.md` — 模組分工、執行期資料流、認證流程、並行 lane、專案與改良迴圈（架構唯一權威）。
+- `ARCHITECTURE.md` — 模組分工、執行期資料流、認證流程、並行 lane、動態流程、專案與改良迴圈（架構唯一權威）。
+- `docs/workflows.md` — 動態流程（Dynamic Workflow）schema、dynamic step、額度感知分派、PM 招募、互動預設。
 - `CONTRIBUTING.md` — dev 指令唯一權威（安裝/測試/lint/pre-commit）、風格與提交慣例。
 - `DECISIONS.md` — 架構決策記錄（ADR）。
 - `README.md` — 產品全貌與功能說明。

@@ -10,9 +10,10 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
               ──WS────▶  ws.py       ── 即時事件串流 + 人類插話/停止
                               │
                               ▼
-                     orchestrator.py  ── StudioSession：工作流程狀態機（核心）
-                        │      │     │
-            experts/providers  runner  workspace / history / publisher
+                     orchestrator.py  ── StudioSession：workflow 直譯器驅動的狀態機（核心）
+                        │      │     │            ▲
+            experts/providers  runner  workspace   workflow.py（流程定義）
+              │                                     provider_quota.py（額度感知分派）
 ```
 
 `server.py` 只負責「應用組裝」：建立 `FastAPI` app、掛載 `/static`、`include_router`
@@ -26,10 +27,12 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 | `config.py` | 集中設定：模型、輪數、辯論、Demo、git、門禁、路徑、伺服器；`reload()` 供執行期套用變更 |
 | `auth.py` | 單一密碼門禁：cookie token 簽章/驗證、`require_auth` 依賴、WS 檢查 |
 | `settings.py` | UI 可調設定（API key / provider / 模型 / GitHub token）：白名單、遮蔽秘密、寫入 .env、`config.reload()` |
-| `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish、角色管理（`/api/roles`）、討論小組（`/api/groups`） |
-| `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止 |
+| `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish、角色管理（`/api/roles`）、討論小組（`/api/groups`）、**動態流程（`/api/workflows`）**、**provider 額度（`/api/provider-quota`）** |
+| `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止；握手可帶 `workflow`，**互動 session（非 improve／非離線）未指定時走 `TI_DEFAULT_WORKFLOW`（預設「動態優先」）**——autopilot／improver 不經此、維持安全骨架 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
-| `orchestrator.py` | `StudioSession`：（選配）需求澄清 → 需求拆解 → 架構辯論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討 |
+| `orchestrator.py` | `StudioSession`：**由宣告式 workflow 驅動的 stage 直譯器**（`_run_workflow` 派發 `_stage_*` handler）。預設骨架＝澄清 → 拆解 → 架構討論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討；`workflow=None`＝`default_workflow()`（與重構前位元級等價）。含 **dynamic step**（PM 運行時額度感知分派／動態招募）、task_pipeline 資料驅動審查（見 `docs/workflows.md`） |
+| `workflow.py` | **動態流程定義**：宣告式 `Stage`/`Workflow` schema（`extra="forbid"`）＋ `validate_workflow`、內建 `default_workflow()`（等價骨架）與 `dynamic_first_workflow()`（互動預設）、`workflows.yaml` CRUD（鏡射 `role_store` 的 Group 區段）、`VERDICTS` 白名單只映射 `flow.py` 既有判定（不可注入程式碼） |
+| `provider_quota.py` | provider 即時額度快照（`snapshot()`，60s 快取，自 `routes` 抽出避免反向 import）＋ 給動態分派的 `summarize_for_pm`／`constrained`／`least_constrained_ready`（混合模式額度感知分派與招募自動重綁的資料源） |
 | `discussion.py` | 多角色討論引擎（opt-in，`TI_DISCUSS_MODE`）：N 角色 `round_robin`/`parallel` 兩種發言調度、結構化 `回應 @角色名: 同意\|反對` 引用＋反諂媚硬指令、`flow.is_stalled` 提前收斂、規則式小結；semaphore/broadcast/should_stop 建構時注入，不 import orchestrator |
 | `roles.py` | 內建 8 角色定義（CORE 4＋OPTIONAL 4）、共通守則 `_COMMON`；對外接面 `ROSTER`/`BY_KEY` |
 | `role_store.py` | 自訂角色檔（`roles/*.md`）載入/驗證/原子落檔＋討論小組（`roles/groups.yaml`）CRUD；「內建為預設、檔案同 key 覆蓋」合併進 `roles` 模組（見〈自訂角色與討論小組〉） |
@@ -267,6 +270,26 @@ body 即「角色專屬 system prompt」，載入時自動前置共通守則 `ro
 小組內則排首位取得提案先發言權，否則沿用小組原序。未知小組名／`groups.yaml` 損壞時 WS 即早
 回 error 並關閉。成員以本場出席角色解析，**可解析成員 <2 名時退回預設討論班底**（不靜默退化
 成單人討論）；未帶 `group` 時行為與現狀完全一致。
+
+## 動態流程（Dynamic Workflow，`workflow.py`、`/api/workflows`）
+
+`orchestrator._run()` 不再寫死流程，而是**直譯一份宣告式 workflow 定義**：`_run_workflow()` 按
+`stages` 序列派發 `_stage_<type>` handler（clarify／research／decompose／discuss／build／
+integrate／demo／wrap_up／publish／dynamic）；`build` 內嵌 task 級 pipeline
+（implement／review／gate／dynamic）。中間產物寫在 session 黑板。**單一真相**：
+`default_workflow()` 把今日骨架逐字寫成資料，`workflow=None` 載入它 → 與重構前位元級等價，
+autopilot／improver 不變。
+
+- **檔案/API/UI**：客製流程存 `roles/workflows.yaml`（鏡射 group CRUD）、`/api/workflows`
+  （require_admin）、握手帶 `workflow`、前端「🧭 流程」編輯器。`VERDICTS` 白名單只映射 `flow.py`
+  既有判定——workflow 不可注入程式碼；客觀閘門／stall／wind-down 等引擎不變式刻意不可被配置掉。
+- **dynamic step**：`_stage_dynamic`／`_task_dynamic_consult` 有界迴圈，PM 運行時逐 hop 決定下一步
+  （`flow.parse_next_step`）。**額度感知分派**：開頭查 `provider_quota.snapshot` 餵 PM 摘要，依各
+  provider 即時額度（混合模式每家不同）分派。**PM 動態招募**：指到不在場角色→庫招募（`BY_KEY`）或
+  PM 液生 persona；綁 provider 受限時自動重綁最寬鬆就緒者；`EXPERT_JOINED` 即時加入成員欄；
+  上限 `TI_RECRUIT_MAX`。防呆全沿用 budget／`_stop`／`is_stalled`／`validate_assignees` fallback。
+- **互動預設**：`config.DEFAULT_WORKFLOW`（`TI_DEFAULT_WORKFLOW`，預設「動態優先」）；ws 僅在
+  非 improve／非離線／未指定時套用。詳見 `docs/workflows.md`。
 
 ## 認證 / 門禁流程
 
