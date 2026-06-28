@@ -133,6 +133,24 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
   消費端以 `backlog.add_items(core, source="core")`（省略 `state_dir`＝核心 backlog）路由，
   autopilot 在核心 repo 實作並開 PR。詳見 `ARCHITECTURE.md`「專案 repo 與 Ti 主核心 repo」。
 
+## 安全自改合約：`_commit_push_merge` 不變式
+
+- `studio/autopilot.py::_commit_push_merge` 入口先檢查 `config.AUTOPILOT_REPO` 不可為空，且
+  `config.PUBLISH_REPO` 非空時必須與 `AUTOPILOT_REPO` 指向同一 repo；違反即回 `(False, reason)`，
+  不執行 `git push`、開 PR 或 merge flow。
+- repo identity 由 `studio/autopilot.py::_repo_key` 正規化為 `github.com/owner/repo`；bare
+  `owner/repo`、GitHub HTTPS、GitHub SSH 可視為同一 repo，但同 path 的非 GitHub host 一律視為不符。
+- 實際 push 前會讀 `git remote get-url --push origin`，正規化後必須等於 `AUTOPILOT_REPO`；
+  不符即中止，避免傳入 clone 的 origin 被改到專案 repo 或偽造同 path host。
+- guard 通過後立即 `publisher.set_repo_override(config.AUTOPILOT_REPO)`，並用 `try/finally` 包住後續
+  checkout/commit/push/PR/merge 全段，確保任何 publisher REST helper 在 autopilot 路徑都只看見
+  `AUTOPILOT_REPO`，且異常時會還原 per-session override。
+- 守門測試在 `tests/autopilot/test_qa_no_publish_pollution.py`；黑白樣本需涵蓋
+  `PUBLISH_REPO` 空值、同 repo 放行、不同 repo/非 GitHub 同 path 擋下，以及 origin push URL 不符時
+  push 前中止。
+- 本輪範圍外移交待辦：結構化 `autopilot/audit.jsonl` 審計紀錄、`AUTOPILOT_DAILY_PR_BUDGET`
+  每日 PR 成本熔斷。不要混進 repo 污染防護修補。
+
 ## 發佈鏈 DoD 與 `GH_PAT` 設定
 
 - 發佈鏈契約：`.github/workflows/publish-release.yml` 只在 `push.tags: v*` 建立 GitHub release；
