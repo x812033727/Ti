@@ -275,6 +275,26 @@ async def test_dynamic_recruit_respects_provider_and_rebind(monkeypatch):
     await s._stage_dynamic({"type": "dynamic", "budget": 5})
     # PM 指定 codex，但 codex 用量 95% 受限 → 自動重綁到最寬鬆就緒者 claude（30%）。
     assert recruited["architect"]["provider"] == "claude"
+    # 額度摘要/roster 的 provider 對照須以「實際綁定」為準（重綁後的 claude），
+    # 而非角色預設 effective_provider——否則 PM 看到的「誰用哪家額度」會錯。
+    assert s._role_provider_map(s._main_ctx.experts)["architect"] == "claude"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_next_step_authoritative_over_mismatched_recruit(monkeypatch):
+    from studio import provider_quota
+
+    monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
+    # PM 的 `下一步: architect`（庫角色）與 `招募: foo`（不一致）→ 以下一步為準：招 architect、不液生 foo。
+    s, experts, _ = _session(
+        ["招募: foo | 假人 | 不該被招\n下一步: architect\n指示: 複核", "下一步: 結束"]
+    )
+    recruited: dict = {}
+    s._recruit_factory = _recording_factory(recruited)
+    await s._stage_dynamic({"type": "dynamic", "budget": 5})
+    assert "architect" in s._main_ctx.experts  # 下一步指定的庫角色被招募
+    assert "foo" not in s._main_ctx.experts  # 不一致的招募規格被忽略
+    assert set(recruited) == {"architect"}
 
 
 @pytest.mark.asyncio
