@@ -202,19 +202,36 @@ def _all_constrained_snapshot():
         "providers": [
             {
                 "key": "claude",
-                "ready": False,
+                "ready": True,
                 "rate_limits": {
                     "five_hour": {"used_percentage": 100, "reset_at": 1600.0},
-                    "error": "rate_limited",
+                    "error": None,
                 },
             },
             {
                 "key": "codex",
-                "ready": False,
-                "rate_limits": {"error": "unauthorized"},
+                "ready": True,
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 95, "reset_at": 1700.0},
+                    "error": None,
+                },
             },
-            {"key": "minimax", "ready": False, "rate_limits": None},
-            {"key": "antigravity", "ready": False, "rate_limits": {"error": "token_missing"}},
+            {
+                "key": "minimax",
+                "ready": True,
+                "rate_limits": {
+                    "one_day": {"used_percentage": 92, "reset_at": 1800.0},
+                    "error": None,
+                },
+            },
+            {
+                "key": "antigravity",
+                "ready": True,
+                "rate_limits": {
+                    "buckets": [{"used_percentage": 91, "reset_at": 1900.0}],
+                    "error": None,
+                },
+            },
         ],
     }
 
