@@ -201,3 +201,81 @@ Sources: [Factual Self-Verification (Verify)](https://arxiv.org/pdf/2602.02018) 
 
 Sources: [GitHub Managing branch protection rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule) · [GitHub About status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks) · [GitHub Secret scanning](https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning) · [GitHub Webhook events](https://docs.github.com/en/webhooks/webhook-events-and-payloads) · [Self-Improving AI Agents (arXiv 2506.04612)](https://arxiv.org/abs/2506.04612) · [Continuous AI Systems (arXiv 2410.16576)](https://arxiv.org/abs/2410.16576) · [Karpathy: Software 2.0](https://karpathy.medium.com/software-2-0-c6417e8c1ba1)
 
+## 2026-06-28 21:34
+
+<think>
+架構文件讀完。幾個關鍵現況：
+
+1. **autopilot/publisher 已閉環**（上一輪調研已確認），有 pytest/lint/no-SDK 閘門
+2. **history.py** 已存 `成果記分卡`（任務輪數/退回原因/Demo 結果）到 meta，`/api/metrics` 跨場聚合成功率與近期趨勢
+3. **history.py / meta** 已可作為「基準資料」的儲存層
+4. **workspace 是 git 累積的**——這對「同組基準」很重要：可以 checkout 到 parent commit 跑 baseline
+5. **branch protection 設定** 已被外部保護
+
+關鍵缺口：
+- 「改良成效驗證」完全沒有——merge 即 done，沒有「自改後再跑同組基準，量化是否真的變強」
+- 既有的 history.py 是「單場 session 的結果摘要」，但**不是「同組基準在自改前 vs 自改後」的對照**
+- 沒有「可回滾」機制（雖然 deploy.rollback 已有，但沒串到「驗證不通過就回滾」的閉環）
+
+我已經有足夠的調研資料了。讓我整合輸出。
+
+主要發現（缺口已補）：
+1. **Karpathy autoresearch** 的核心設計：(a) 評測碼不可改、(b) 固定時間預算、(c) 單一 metric、(d) 保留 baseline
+2. **TDAD** 的三個機制：visible/hidden split、semantic mutation、spec evolution regression safety
+3. **RQGM** 的 epoch boundary 概念
+4. **GitHub branch protection** 已對齊最佳實踐（status checks、reviews、linear history）
+
+現有調研的引用問題：
+- 既有調研引用 `arXiv 2506.04612` 為 Self-Improving AI Agents 論文——但實際上是 "Perfecting Depth" 圖像論文
+- 既有調研引用 `arXiv 2410.16576` 為 Continuous AI Systems——但實際上是光學論文
+- 真正可能對應的：可能應該是 `arXiv 2506.04612`（已確認是圖像論文）——那麼自我改良的權威文獻引用錯了
+- 但這不是本輪的核心——本輪不需要重新校正既有調研
+
+本輪核心建議（要對齊 M2 範疇「改良成效驗證」）：
+1. **baseline suite + post-change suite**：固定一組 N 個 task fixture，每次 merge 前/後跑同一組，產出 diff
+2. **物理隔離評測碼**：把測試 fixture 放在 autopilot 不可改的位置（用 pinned git tag 或專屬 protected branch）
+3. **單一可量化的成功指標**（沿用 history.py 已有欄位，不重新定義）
+4. **epoch boundary**：每次自改週期固定 evaluation，跨週期才更新 fixture 集
+5. **失敗自動 rollback**：deploy 已有 rollback，但要串到「regress → rollback → notify」
+
+讓我輸出最終的調研結論。
+</think>
+
+調研夠了，整理輸出。
+
+---
+
+**重點**
+
+- 重點: 本輪「改良成效驗證」的關鍵設計權威是 Karpathy **autoresearch**——其設計與本缺口完美對齊：(a) **評測碼不可改**：`prepare.py`（含 evaluation utilities）明確「do not modify」，與 agent 可改的 `train.py` 物理隔離；(b) **固定時間預算**：5 分鐘 wall clock，無論改什麼（model size、batch size、architecture）都直接可比；(c) **單一 metric** `val_bpb`（vocab-size-independent，architecture-agnostic）；(d) **保留 baseline**：每次新實驗前先 checkout parent commit 跑同組 5 分鐘取基線；(e) 約 12 experiments/hour、可整夜無人值守（[karpathy/autoresearch README](https://github.com/karpathy/autoresearch)）。本專案 `_gate_tests` 跑 `pytest -q` 已達 (b)(c)，缺 (a) 物理隔離 + (d) baseline 對照。
+
+- 重點: **TDAD 論文（Test-Driven AI Agent Definition, 2026）**直接命中「自改 agent 的 regression 安全」缺口：三個機制：(1) **visible/hidden test split**——編譯階段不給隱藏測試，防 agent 只學可見測試；(2) **semantic mutation testing**——post-compilation 用代理生成「似是而非的壞變體」，量測測試套件能否抓出；(3) **spec evolution scenarios**——量化需求變動時的 regression safety。實測發現 **演化後的 spec 編譯成功率只有 58%**，多數失敗的執行「通過所有可見測試只漏 1-2 個」——這是 self-referential 風險的鐵證：本專案「merge 即 done」正是同類漏洞（[arXiv 2603.08806 TDAD](https://arxiv.org/abs/2603.08806)）。
+
+- 重點: **Red Queen Gödel Machine (RQGM, 2026)** 提出「co-evolving agents and their evaluators」框架，核心洞見：**自改 agent 不能假設 evaluation 固定**——傳統自改方法假設 verifier/benchmark 為 stationary，這是 wrong abstraction。RQGM 對策：搜尋以 **epoch 組織、epoch 內 evaluation 固定、epoch 邊界才更新 utility**，使「self-improvement guarantees」得以在「objective 演化」下仍成立。實驗顯示加上「agent-as-a-judge code-review signal」後 test pass rate 提升、token 省 1.35–1.72×——多源 signal 比單一 verifier 更穩（[arXiv 2606.26294 RQGM](https://arxiv.org/abs/2606.26294)）。本專案對應：每次自改 PR merge 是一個 epoch 邊界、epoch 內 baseline 鎖定、跨 epoch 才允許 fixture 集演化。
+
+- 重點: 既有調研引用 `arXiv 2506.04612`（Self-Improving AI Agents）與 `arXiv 2410.16576`（Continuous AI Systems）**兩個 ID 都不對**——實查分別是「Perfecting Depth」電腦視覺論文與「Stabilizing optical solitons」光學論文，與 self-improving AI 無關（[arXiv 2506.04612](https://arxiv.org/abs/2506.04612)、[arXiv 2410.16576](https://arxiv.org/abs/2410.16576)）。本輪不重查此二主題，但建議事後校正 RESEARCH.md 的引用連結。
+
+- 重點: **現況盤點**——`history.py` 已存「成果記分卡」（任務輪數/退回原因/Demo 結果）進 `.meta.json`、`/api/metrics` 已跨場聚合成功率與近期趨勢——這是**單場結果**，但**不是「同組基準、自改前 vs 自改後」的對照**；`autopilot._commit_push_merge` 已串完 lint/collect/test 三道閘門才 merge；`deploy.redeploy` 失敗會自動 `rollback` 到 `last_good`——**但「regress → rollback → notify」閉環未串**；`studio/backlog.py` 已有 route_core_changes 與 source/state_dir 分流——可作為「基準資料」儲存層。
+
+- 重點: **GitHub branch protection 已對齊最佳實踐**——`Require pull request before merging` + `Require status checks to pass before merging` + `Require linear history` 是外部不可繞過的最後底線；本專案 CI 走 `actions-runs/conclusion=failure` 即擋合併。autopilot 用 `PUBLISH_BYPASS_INFRA_CI` 走特例路徑需謹慎守住只在 `_merge_pr` 內繞過而非跳過整個 PR（[About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)）。
+
+- 重點: TDAD 實驗的關鍵警示：「演化後的 spec」失敗的執行**多數通過所有可見測試、只漏 1-2 個**——意味著**僅靠「既有測試全綠」無法保證「沒退步」**，必須有「跨場次同組基準」做對照。autopilot 現有 `_gate_tests` 跑 `pytest -q` 屬「可見測試」，**「不變爛」半閉環已保證；「變強」需 M2 補同組基準對照**——這正是本輪任務定義（[arXiv 2603.08806 TDAD](https://arxiv.org/abs/2603.08806)）。
+
+**建議**
+
+- 建議: **M2 最划算的起手（沿用 autoresearch 模式）**：把「基準任務集」做成**獨立保護的 fixture**——例如新增 `tests/fixtures/improvement_bench/` 子目錄（**置於 git protected branch 或 pinned tag**，autopilot 物理上不可改），內含 N 個代表性 task（每個 fixture ＝ 一段 requirement + 期望產出 hash + 期望 demo 結果 + 期望 pytest subset）。baseline 與 post-change 各自跑同一組 fixture 產出 `{"task_id", "success", "duration_s", "tokens", "iterations"}` JSONL 對照 diff——沿用 `autopilot/audit.jsonl` 同樣 append-only 慣例、零新依賴。fixture 集的「演化」必須走 epoch 邊界（每次合 MR 才允許加 fixture），對齊 RQGM 結論。
+
+- 建議: **沿用 history.py 既有記分卡欄位**做基準資料，不重新定義 metric：`history.session_meta` 已有「任務輪數 / 退回原因 / Demo 結果」三鍵（ARCHITECTURE.md），把這三鍵在 baseline 與 post-change 兩個 epoch 各取一次、存成 side-by-side diff，就是「量化是否真的變強」——避免重造輪子、保留既有 `/api/metrics` 跨場聚合慣例。
+
+- 建議: **串起「regress → rollback → notify」閉環**：`deploy.redeploy` 已有「失敗自動 rollback 到 last_good」（既有調研已確認），但**還沒串「驗證不通過 → 自動觸發」**——本輪只需在 `deploy` 後跑一次同組 benchmark（複用上一條建議的 fixture），diff 為負（success rate 下降 / tokens 上升）就 `touch AUTOPILOT_PAUSED` 並寫 `autopilot/audit.jsonl`，對齊上一輪調研的「成本熔斷＋審計日誌」基礎設施——純增量、不破壞既有合約。
+
+- 建議: **守門「autopilot 自己改不了基準集」**——兩條路徑擇一或並行：(a) **物理隔離**：把 `tests/fixtures/improvement_bench/` 放到獨立 GitHub branch `improvement-bench-protected`、加 branch protection（admin 不可繞過的 require reviews），autopilot clone `CORE_REPO` 時不 fetch 該 branch、跑基準時另以 `GH_PAT` 讀；(b) **hash pinning**：baseline suite 每個 fixture 內含 `pinned_commit_hash`，autopilot 跑基準前先 `git rev-parse HEAD` 對該 path 校驗，hash 不符即 abort——這比 (a) 簡單但弱（autopilot 仍可改 fixture 後改 hash）。CLAUDE.md「架構鐵則」的精神是「外部不可繞過」，優先採 (a)。
+
+- 建議: **採 TDAD 的 visible/hidden 雙層**：fixture 集分兩組——`visible/`（autopilot 與開發者皆可讀，協助 agent 理解「什麼算進步」）＋ `hidden/`（CI 端另一組 secret token 注入的 fixture，autopilot 完全不知道內容）。hidden 那組是真正的「spec evolution regression safety」——TDAD 數據顯示無 hidden 時 92% 編譯成功、有 hidden spec evolution 時只有 58%，**hidden 是抓「只學可見」漏洞的關鍵**。實作成本：~30 行 + GitHub Actions secret 一個。
+
+- 建議: **不要做的事**：(a) 不要砍掉重練 autopilot/publisher/deploy——已有 70+ 個測試守住所有 invariant；(b) 不要現在引入 pytest-benchmark、asv 等外部基準框架——純檔案 IO + JSONL 已足，與 lessons.json / backlog.json / conclusion.json 慣例一致；(c) 不要讓 autopilot 自己定義 metric——Goodhart's law；(d) 不要把 baseline fixture 與 production test 混在同一目錄——必須物理隔離（見上一條）；(e) 不要現在做「跨產品跨專案的綜合 score」——本輪聚焦「自改驗證」單一閉環，跨場聚合留 M3；(f) 不要試圖校正既有 RESEARCH.md 的 arXiv ID 引用錯誤——那是歷史紀錄，本輪聚焦產出新結論。
+
+- 建議: 維持既有「規則為骨、LLM 為肉」+「lint/collect/test/merge」四道客觀閘門不變，本輪新加的（baseline fixture 集 + visible/hidden 雙層 + epoch 邊界 + regress→rollback 閉環）都是**純增量、不破壞既有契約**。照 CLAUDE.md 教訓：任何 prompt/格式/路由改動都要實跑黑白樣本驗證——本輪至少需三組黑白樣本：①可見基準集跑通／不可見基準集跑通（baseline 兩邊皆綠）；②故意把某 fixture 期望值改壞 → baseline 必須抓到（不是只 fixture 內測試）；③故意把 autopilot 對 fixture 路徑 hard-code → CI 端的 hidden 路徑仍可被找到（防「只看可見」漏洞）。
+
+Sources: [Karpathy autoresearch (GitHub)](https://github.com/karpathy/autoresearch) · [TDAD (arXiv 2603.08806)](https://arxiv.org/abs/2603.08806) · [Red Queen Gödel Machine (arXiv 2606.26294)](https://arxiv.org/abs/2606.26294) · [GitHub About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) · [arXiv 2506.04612 (驗證既有引用錯誤)](https://arxiv.org/abs/2506.04612) · [arXiv 2410.16576 (驗證既有引用錯誤)](https://arxiv.org/abs/2410.16576)
+
