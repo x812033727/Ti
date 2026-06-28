@@ -24,12 +24,11 @@
 
 from __future__ import annotations
 
-import pytest
+import json
 
 from studio import config, events, flow
-from studio.orchestrator import LaneContext, StudioSession
+from studio.orchestrator import StudioSession
 from studio.roles import BY_KEY, Role
-
 
 # --- 共用 helpers ----------------------------------------------------------
 
@@ -88,9 +87,10 @@ def _make_session(tmp_path, monkeypatch, *, snap=None, explicit_engineer: str | 
         monkeypatch.setattr(
             config, "ROLE_PROVIDERS", {**config.ROLE_PROVIDERS, "engineer": explicit_engineer}
         )
+    engineer_provider = explicit_engineer or "claude"
     experts = {
         "pm": StubExpert(BY_KEY["pm"]),
-        "engineer": StubExpert(BY_KEY["engineer"]),
+        "engineer": StubExpert(BY_KEY["engineer"], engineer_provider),
         "qa": StubExpert(BY_KEY["qa"]),
     }
     s = StudioSession("qa-task4", broadcast, experts=experts, cwd=tmp_path)
@@ -126,12 +126,13 @@ def test_explicit_override_under_all_constrained_emits_no_event_or_audit(tmp_pat
     # 2) recruit_providers 不寫入 engineer（明示角色的實際綁定由 effective_provider 決定、
     #    不需 pre-flight 介入）
     assert "engineer" not in s._recruit_providers
-    # 3) 沒發 provider_constrained 事件（明示角色不是「自動優化範圍」內的可報錯對象）
+    # 3) 明示角色不發 provider_constrained；同場未明示的 pm/qa 仍可正常回報全受限。
     pc = [e for e in bucket if e.type == events.EventType.PROVIDER_CONSTRAINED]
-    assert pc == [], f"明示角色不應觸發 provider_constrained 事件，卻收到: {pc}"
-    # 4) 沒寫 audit row（autopilot/audit.jsonl 應不存在或為空）
+    assert {e.payload["role"] for e in pc} == {"pm", "qa"}
+    # 4) audit 也不應寫入 engineer row；pm/qa 的全受限 audit 是正確行為。
     audit = tmp_path / "ap" / "audit.jsonl"
-    assert not audit.exists() or audit.read_text(encoding="utf-8").strip() == ""
+    rows = [json.loads(line) for line in audit.read_text(encoding="utf-8").splitlines()]
+    assert {row["role"] for row in rows} == {"pm", "qa"}
 
 
 def test_pick_provider_explicit_override_wins_under_all_constrained(tmp_path, monkeypatch):

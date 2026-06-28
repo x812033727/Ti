@@ -101,6 +101,15 @@ def role_provider(key: str) -> str:
     return ROLE_PROVIDERS.get(key, "")
 
 
+def is_user_explicit_provider(key: str) -> bool:
+    """使用者是否明示指定該角色 provider。
+
+    以 role_provider(key) 為單一真值來源；空值、auto 或不在 PROVIDERS 白名單內的值，
+    會先被 role_provider 正規化為 ""，因此不視為明示覆寫。
+    """
+    return bool(role_provider(key))
+
+
 # OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")

@@ -1396,7 +1396,7 @@ class StudioSession:
         return {
             k: config.role_provider(ex.role.key)
             for k, ex in experts.items()
-            if config.role_provider(ex.role.key)
+            if config.is_user_explicit_provider(ex.role.key)
         }
 
     async def _refresh_quota_snapshot(self) -> None:
@@ -1500,9 +1500,8 @@ class StudioSession:
         """選 provider：使用者明示覆寫優先；其後才採 PM hint/預設與 quota 重綁。"""
         from .providers import effective_provider
 
-        explicit = config.role_provider(role.key)
-        if explicit:
-            return explicit
+        if config.is_user_explicit_provider(role.key):
+            return config.role_provider(role.key)
         prov = (hint or "").strip() or effective_provider(role)
         if prov not in config.PROVIDERS:
             prov = effective_provider(role)
