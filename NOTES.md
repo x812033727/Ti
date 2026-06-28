@@ -560,3 +560,36 @@ class RetryConfig:
 理由: 本輪只驗示範 fixture/test 落地與護欄本體未改；`test_no_py_changed` 是 task#1 doc-only lane 護欄，不列入本輪驗收。
 
 驗證結果: 已實跑通過，`tests/test_scope_fixture_demo.py` 為 2 passed；串接命令輸出 `GUARD_UNTOUCHED`，確認 `git diff -- tests/test_task1_retry_doc.py` 為空。
+## 異議退回 任務 #1：在 `_derive_scorecard` 新增單場「測試通過率／審查通過率」所需的分子分母計數（run_result 與 critic_review 的 pass/total），確定性從既有事件推導、不解析自然語言，且不破壞既有欄位
+我來實際讀碼驗證，不靠設計文件下結論。
+已有測試檔 `test_qa_task1_scorecard_counts.py`——看來任務 #1 可能已實作。我來讀實際碼。
+任務 #1 已實作。關鍵反對點要查口徑：「非自測 run_result == QA 驗證」這假設是否成立？若有其他用途的 run_result 會污染 qa_total。
+兩個 run_result 發射點都已涵蓋：QA 裁決（計入）、自測（排除）。口徑假設「非自測 == QA」與現況碼一致。我跑一下任務 #1 的測試與 ruff 確認。
+找到實質問題了。任務 #1 的專屬驗收測試 `test_qa_task1_scorecard_counts.py` **有 2 條紅燈**。我逐一查根因，確認是實作對還是測試對。
+
+**實作（`_derive_scorecard`）分析：正確**
+- 自測 `passed=True`：`is_smoke=True` 不計 qa；`not True`→False 不計 smoke_fail ✓
+- QA `passed=True/False/"true"`：qa_total 計 3、qa_pass 計 1 ✓
+
+**兩條失敗都是測試斷言寫錯，但結果就是紅燈：**
+
+1. `test_qa_counts_only_run_result_non_smoke`：事件給的是自測**通過**（`passed=True`），卻斷言 `rejects["smoke_fail"] == 1`。自測通過不可能產生 smoke_fail，實作回 0，正確 → 測試斷言與自己給的事件自相矛盾。
+
+2. `test_critic_counts_include_all_events`：斷言 `rejects["critic"] == 2`，但第三筆 `passed="True"`（字串，truthy），`not "True"`→False 不計退回，實際 critic reject = 1，實作正確 → 測試期望錯。
+
+**判定**
+
+任務 #1 的實作邏輯（四個計數欄位的確定性推導、舊欄位保留、不解析自然語言）本身站得住。但驗收標準 3 白紙黑字要求對應測試「**全綠**」，而本任務的 QA 驗收測試檔現有 2 條紅燈——交付狀態就是紅的，不論根因是測試斷言寫錯。測試作者對「既有 rejects 語意」（自測通過不算 smoke_fail、truthy 非 bool 不算退回）理解有誤，必須修正斷言使其符合實作真實語意後重跑全綠，才能算完成。紅燈當綠燈放行，正是錯誤共識。
+
+退回要做的最小事：修正上述兩條斷言（smoke_fail 應為 0、critic reject 應為 1，或改事件設計使其名實相符），重跑該檔全綠。
+
+異議: 成立
+
+## 任務 #1 完成：在 `_derive_scorecard` 新增單場「測試通過率／審查通過率」所需的分子分母計數（run_result 與 critic_review 的 pass/total），確定性從既有事件推導、不解析自然語言，且不破壞既有欄位
+
+## 任務 #2 完成：在 `_aggregate_scorecard` 跨場聚合測試通過率、審查通過率，並補上目前完全缺失的 Demo 通過率（demo_passed 為 True 的場次佔有 demo 場次比例）
+
+## 任務 #3 完成：在 `web/app.js` metrics 面板的成果記分卡區塊呈現「測試／Demo／審查通過率」三個正向指標
+
+## 任務 #4 完成：擴充 `tests/server/test_scorecard.py` 覆蓋三通過率的單場推導與跨場聚合（含 Demo 通過率、零場次邊界）
+
