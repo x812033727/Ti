@@ -1976,3 +1976,38 @@
 - 時間：2026-06-21 03:15
 - 理由：高級工程師指出 repo 內多處同類 `pop` 有同樣漂移風險；本輪先固定 task4，範圍不擴大，但慣例須明文記錄避免新 fixture 複製舊錯誤
 
+## `_derive_scorecard`（`history.py`）新增四個欄位：`qa_total`、`qa_pass`、`critic_total`、`critic_pass`，從事件流確定性推導，原有欄位（rejects、demo_passed 等）原樣保留。
+- 時間：2026-06-28 18:24
+- 理由：保留分子分母而非直接算單場率，讓聚合層能 sum 後除，避免平均的平均造成小樣本扭曲。
+- 否決方案：單場直接算通過率再存入 scorecard——聚合層無法重新加權，小場次（1 次 QA）會放大失真。
+
+## `run_result` 計 QA 計數時，改為「所有非自測 run_result 都計 qa_total，`passed is True`（嚴格型別比對）計 qa_pass」，與現有 fail-only 退回邏輯獨立分開，不混用同一分支。
+- 時間：2026-06-28 18:24
+- 理由：現有 reject 路徑只走 failed；若複用同一 `elif not passed` 分支，pass 事件的分母永遠漏計。
+- 否決方案：在現有失敗分支補計數——會導致 qa_total 只記失敗場次，分母語意錯誤。
+
+## `critic_review` 計數：所有 `critic_review` 事件計 `critic_total`，`passed is True` 計 `critic_pass`，無需特別條件篩選。
+- 時間：2026-06-28 18:24
+
+## `demo_passed` 在 `_derive_scorecard` 維持現有 `bool | None`，不新增欄位。Demo 通過率由聚合層以場次維度計算。
+- 時間：2026-06-28 18:24
+- 理由：一場最多一個 demo_result，場次維度與事件維度等價，單場不需要分子分母結構。
+
+## `_aggregate_scorecard`（`routes.py`）新增三個跨場通過率：`qa_pass_rate`、`critic_pass_rate`、`demo_pass_rate`，分母為 0 時一律回傳 `None`，不回傳 0。
+- 時間：2026-06-28 18:24
+- 理由：`0` 會被前端與使用者誤讀為「通過率為零」，`None` 語意才是「本輪無資料」，對應前端顯示 `—`。
+- 否決方案：分母為 0 時回傳 0——語意歧義，無法區分「所有測試都失敗」與「根本沒跑過測試」。
+
+## 聚合時舊 meta.json 缺新欄位一律用 `.get("qa_total", 0)` 等防守讀取，自動視為 0，不丟例外。Demo 通過率以 `demo_passed is not None` 判定該場是否有 Demo。
+- 時間：2026-06-28 18:24
+
+## `web/app.js` 在 `sc.n > 0` 區塊的現有 rows 內，以 `rows.push` 新增「測試通過率」「Demo 通過率」「審查通過率」三行，格式沿用既有 `pct()` 函式，不改 DOM 結構。
+- 時間：2026-06-28 18:24
+- 否決方案：改 DOM 結構或新增渲染函式——diff 更大、回歸風險高、三行 push 已足夠。
+
+## 測試（`tests/server/test_scorecard.py`）至少補四個案例：自測排除不計入 qa_total、QA 加總後除（非平均的平均）、critic 加總後除、舊 scorecard 缺新欄位仍可聚合且三率回傳 None；另補 demo 聚合含 None（無 demo 場次）邊界案例。
+- 時間：2026-06-28 18:24
+
+## 模組邊界不動——計數推導在 `history.py`，聚合在 `routes.py`，前端在 `web/app.js`；不觸碰 `flow.py`、`events.py`、`orchestrator.py`，不新增依賴，不動 marker 字串。
+- 時間：2026-06-28 18:24
+

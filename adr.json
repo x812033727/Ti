@@ -3324,6 +3324,69 @@
       "rejected": "",
       "session_id": "apffa66565fc",
       "created_at": 1781982930.4382167
+    },
+    {
+      "decision": "`_derive_scorecard`（`history.py`）新增四個欄位：`qa_total`、`qa_pass`、`critic_total`、`critic_pass`，從事件流確定性推導，原有欄位（rejects、demo_passed 等）原樣保留。",
+      "rationale": "保留分子分母而非直接算單場率，讓聚合層能 sum 後除，避免平均的平均造成小樣本扭曲。",
+      "rejected": "單場直接算通過率再存入 scorecard——聚合層無法重新加權，小場次（1 次 QA）會放大失真。",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014264
+    },
+    {
+      "decision": "`run_result` 計 QA 計數時，改為「所有非自測 run_result 都計 qa_total，`passed is True`（嚴格型別比對）計 qa_pass」，與現有 fail-only 退回邏輯獨立分開，不混用同一分支。",
+      "rationale": "現有 reject 路徑只走 failed；若複用同一 `elif not passed` 分支，pass 事件的分母永遠漏計。",
+      "rejected": "在現有失敗分支補計數——會導致 qa_total 只記失敗場次，分母語意錯誤。",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.601431
+    },
+    {
+      "decision": "`critic_review` 計數：所有 `critic_review` 事件計 `critic_total`，`passed is True` 計 `critic_pass`，無需特別條件篩選。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014326
+    },
+    {
+      "decision": "`demo_passed` 在 `_derive_scorecard` 維持現有 `bool | None`，不新增欄位。Demo 通過率由聚合層以場次維度計算。",
+      "rationale": "一場最多一個 demo_result，場次維度與事件維度等價，單場不需要分子分母結構。",
+      "rejected": "",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014345
+    },
+    {
+      "decision": "`_aggregate_scorecard`（`routes.py`）新增三個跨場通過率：`qa_pass_rate`、`critic_pass_rate`、`demo_pass_rate`，分母為 0 時一律回傳 `None`，不回傳 0。",
+      "rationale": "`0` 會被前端與使用者誤讀為「通過率為零」，`None` 語意才是「本輪無資料」，對應前端顯示 `—`。",
+      "rejected": "分母為 0 時回傳 0——語意歧義，無法區分「所有測試都失敗」與「根本沒跑過測試」。",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014354
+    },
+    {
+      "decision": "聚合時舊 meta.json 缺新欄位一律用 `.get(\"qa_total\", 0)` 等防守讀取，自動視為 0，不丟例外。Demo 通過率以 `demo_passed is not None` 判定該場是否有 Demo。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014366
+    },
+    {
+      "decision": "`web/app.js` 在 `sc.n > 0` 區塊的現有 rows 內，以 `rows.push` 新增「測試通過率」「Demo 通過率」「審查通過率」三行，格式沿用既有 `pct()` 函式，不改 DOM 結構。",
+      "rationale": "",
+      "rejected": "改 DOM 結構或新增渲染函式——diff 更大、回歸風險高、三行 push 已足夠。",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014373
+    },
+    {
+      "decision": "測試（`tests/server/test_scorecard.py`）至少補四個案例：自測排除不計入 qa_total、QA 加總後除（非平均的平均）、critic 加總後除、舊 scorecard 缺新欄位仍可聚合且三率回傳 None；另補 demo 聚合含 None（無 demo 場次）邊界案例。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014383
+    },
+    {
+      "decision": "模組邊界不動——計數推導在 `history.py`，聚合在 `routes.py`，前端在 `web/app.js`；不觸碰 `flow.py`、`events.py`、`orchestrator.py`，不新增依賴，不動 marker 字串。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjd57a4a5c9e",
+      "created_at": 1782642266.6014388
     }
   ]
 }
