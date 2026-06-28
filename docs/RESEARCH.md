@@ -279,3 +279,116 @@ Sources: [GitHub Managing branch protection rules](https://docs.github.com/en/re
 
 Sources: [Karpathy autoresearch (GitHub)](https://github.com/karpathy/autoresearch) · [TDAD (arXiv 2603.08806)](https://arxiv.org/abs/2603.08806) · [Red Queen Gödel Machine (arXiv 2606.26294)](https://arxiv.org/abs/2606.26294) · [GitHub About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) · [arXiv 2506.04612 (驗證既有引用錯誤)](https://arxiv.org/abs/2506.04612) · [arXiv 2410.16576 (驗證既有引用錯誤)](https://arxiv.org/abs/2410.16576)
 
+## 2026-06-28 23:24
+
+<think>
+我已蒐集到足夠資料。讓我聚焦在最重要的：
+
+**重要發現**：
+1. **Anthropic 官方 Rate Limits 用 token bucket algorithm**（不是固定窗口重置，而是持續補充）— 這對「重置倒數」的計算方式有重大影響，我們現有的 `soonest_reset` 是基於視窗重置，**不適用於 token bucket**。需要釐清我們 `claude_usage.fetch_rate_limits()` 拿到的是哪種資訊（看起來是 OAuth subscription 端的「剩餘額度」快照，不是 server-side token bucket）。
+
+2. **Anthropic Admin API 需 Admin API key（sk-ant-admin01-...）** — 不適用個人帳號，也不是本專案現在的取法。我們現在用的是 OAuth 訂閱帳號，從 `~/.claude/.credentials.json` 讀 accessToken 查官方 usage endpoint。
+
+3. **LiteLLM 有 Rate-Limit Aware routing** — 透過 Redis 追蹤 tpm/rpm、用 cooldown state 避免把請求派到快撞限流的部署。但這是「請求級」決策（每次 acompletion 都要查 Redis），不是「會話級」決策。
+
+4. **Portkey Fallbacks** — 觸發 on_status_codes（429/503）、cross-provider fallback、load balancer + fallback 組合。純被動：在請求失敗時切換，不是主動依額度切換。
+
+5. **Claude Code IAM**：
+   - 預設 OAuth credentials 存在 `~/.claude/.credentials.json`（macOS 用 Keychain）
+   - 支援 `apiKeyHelper` 自動刷新憑證（每 5 分鐘或 401 時）
+   - 環境變數 `ANTHROPIC_API_KEY`（X-Api-Key header）/ `ANTHROPIC_AUTH_TOKEN`（Bearer header）
+   - **沒有原生多帳號切換** — 單帳號為主
+   - Claude Code 透過 `CLAUDE_CONFIG_DIR` 環境變數可以覆寫 .credentials.json 位置，這就是我們的 `claude_accounts` 機制的基礎（用不同 `cred_file` 切換）
+
+6. **OpenAI rate limits** — 從官網來看是 tier-based、有 RPM/TPM，沒有像 LiteLLM 那樣提供可程式化的 quota 查詢 endpoint。
+
+現在我已有足夠資料產出本輪調研結論。讓我聚焦最關鍵的發現與建議。
+
+**本輪關鍵建議方向**：
+
+1. **不要砍掉重練** — `provider_quota.snapshot/constrained/least_constrained_ready/summarize_for_pm` + `make_expert(..., provider=...)` 已是骨架，只是「PM 運行時呼叫」的執行路徑沒串起來。
+
+2. **採「雙軌策略」**：
+   - **(a) 預防式（pre-flight）：任務分派前** 查 `provider_quota.snapshot`，依 `least_constrained_ready()` 決定本場預設 provider；對已被綁到受限 provider 的角色，自動改綁 least_constrained（既有的「受限角色自動重綁最寬鬆就緒」安全網）
+   - **(b) 反應式（in-flight）：任務執行中** 若 `ProviderUnavailable` 被拋出，依 `least_constrained_ready()` 即時切換 provider 重試
+
+3. **「全受限」的 fallback 策略**：
+   - 等下一個 reset（最長到 soonest_reset +30s 安全邊界）
+   - 仍受限 → 觸發 `AUTOPILOT_PAUSED`（沿用既有暫停開關）或退到下一輪
+   - 不要無限 spin（避免 token 空燒）
+
+4. **多帳號 Claude 切換**：
+   - 沿用既有 `claude_accounts` + `fetch_rate_limits(cred_file=...)` 介面
+   - 「同 provider 多帳號」與「跨 provider」兩種自動重綁方式要分開
+   - 多帳號用 round-robin（避免單帳號過熱）+ least_constrained 排序（最空者先）
+
+5. **可觀測性**：
+   - 在 `autopilot/audit.jsonl` 寫一筆 `{"event": "provider_rebind", "from": "claude", "to": "minimax", "reason": "constrained", "max_used": 95.3}`
+   - 前端 `/api/provider-quota` 已存在，加上「最近一次重綁原因」的顯示
+
+6. **autopilot 自改閉環**：
+   - 把 provider_quota / least_constrained_ready 加到 M2「評測碼不可改」清單（沿用 Karpathy autoresearch + TDAD 概念）
+   - autopilot 改 orchestrator.py 不應影響 quota 查詢路徑（已有 — provider_quota.py 是獨立模組）
+
+7. **常見坑**：
+   - 不要把 `snapshot()` 60s 快取延長太多（避免額度快速變化時決策失準）
+   - 不要讓 PM 自動決策覆蓋使用者明確設定的 `TI_PROVIDER_<role>`（per-role 覆寫優先）
+   - 不要把 antigravity/codex 的「CLI 冷啟動成本」算進 routing 決策（會誤導成「每次都別用它」）
+   - 「受限門檻 CONSTRAINED_THRESHOLD=90%」要可在 settings 面板調整
+   - 不要現在引入 LiteLLM / Portkey 之類外部 gateway — overkill 且會跟本專案的「規則為骨 LLM 為肉」哲學衝突
+
+8. **測試設計**：
+   - 黑樣本：給定 A 受限 → 應選 B
+   - 白樣本：給定全部受限 → 觸發 pause 或 wait_for_reset
+   - 黑樣本：使用者明確 TI_PROVIDER_engineer=codex → 不應被自動重綁
+   - 白樣本：per-role 覆寫生效、least_constrained 不覆寫它
+   - 白樣本：60s 快取有效（連續兩次 snapshot 第二次走快取）
+   - 黑樣本：snapshot 異常 → constrained() 仍安全回 True（fail-closed）
+
+讓我精簡輸出。
+</think>
+
+已蒐集到本輪關鍵決策依據。整理輸出。
+
+---
+
+**重點**
+
+- 重點: **現況盤點——骨架已實作，只缺「執行路徑串接」**。`provider_quota.snapshot/constrained/least_constrained_ready/summarize_for_pm` 四件套已就緒（60s 快取、四家 provider 並行查詢、`CONSTRAINED_THRESHOLD=90%` 受限門檻、相容 window/bucket 兩種 rate_limits 結構），`providers.make_expert(role, session_id, cwd, *, provider=...)` 已有顯式 provider 覆寫的接縫，`llm_caller` 統一退避工廠（429/529 分流、`ProviderUnavailable` 例外、`ProviderUnavailable` 已有 `provider_unavailable_kind` 文字分類）皆完整。**唯獨「PM 動態分派」實際呼叫這條執行鏈沒串起來**——`dynamic_first_workflow()` 文件說有，但程式碼端沒有「查 quota → 改分派」的閉環。本輪是純增量、不重建。
+
+- 重點: **業界兩條主流 quota-aware routing 策略**：(a) **LiteLLM Rate-Limit Aware v2**——Redis 追蹤每 deployment 的 tpm/rpm、用 cooldown state 在每次 `acompletion` 前避免把請求派到快撞限流的部署（[LiteLLM routing](https://docs.litellm.ai/docs/routing)）；(b) **Portkey Fallbacks**——被動式，預設所有非 2xx 觸發，可指定 `on_status_codes: [429, 503]` 限定只在限流／過載時切換，且可巢狀（fallback 目標本身是 load balancer、conditional router）（[Portkey Fallbacks](https://portkey.ai/docs/product/ai-gateway/fallbacks)）。**前者是請求級動態、後者是失敗級被動**——對本專案「PM 運行時做會話級決策」都不完全適用；我們需要的是 **(a)+**(b) 的混合：會話起點 pre-flight 預防式分派 + 執行中反應式 fallback。
+
+- 重點: **Anthropic 官方 Rate Limits 用 token bucket algorithm**——不是固定窗口重置，而是「容量持續補充到上限」（[Anthropic rate limits](https://platform.claude.com/docs/en/api/rate-limits)）。本專案 `provider_quota._usage()` 從 `claude_usage.fetch_rate_limits()` 抽 `used_percentage` 與 `reset_at`——若 OAuth usage endpoint 回的是「window 倒數」而非「bucket 補充速率」，則 `soonest_reset` 在 Anthropic 是「視窗邊界」（rough heuristic），不是嚴格意義的「額度回到 0 的時刻」。**這是已存在的假設，不在本輪重新校正**，但提醒：`least_constrained_ready` 的「最低用量」排序對 Anthropic 而言已是 best-effort 訊號，配合 `run_with_retries` 的 retry-after 退避才能真正撐過 429。
+
+- 重點: **Claude Code 多帳號機制是「cred_file 路徑切換」非原生 round-robin**——`~/.claude/.credentials.json` 是單帳號預設位置；`apiKeyHelper` 可自動刷新憑證（每 5 分鐘或 HTTP 401 時），但無原生多帳號輪詢（[Claude Code Authentication](https://code.claude.com/docs/en/iam) §Credential management）。本專案 `claude_accounts.list_accounts()` 配合 `claude_usage.fetch_rate_limits(cred_file=...)` 已實作「用不同 cred_file 查各帳號額度」的介面——這是把「同 provider 多帳號」併進 quota-aware routing 的基礎接縫。
+
+- 重點: **Antigravity 額度查詢的特殊坑**——`agy` OAuth token 約每小時過期；目前實作是「有 token（即使過期、可由跑討論刷新）即視為 ready」（`provider_quota._antigravity_status`），只有完全沒登入才算未就緒。換言之 **「額度查詢失敗」不等於「不可用」**，要避免把它誤判成受限而提前跳過 antigravity。`provider_unavailable_kind` 已把 `token_missing` 與 `unauthorized` 分流，但需在 routing 決策層守門：「查詢異常」與「額度耗盡」要分開處理——前者重試，後者才跳過。
+
+- 重點: **跨 provider 路由的隱藏成本**——Codex CLI 與 Antigravity CLI 都有冷啟動延遲（曾達 12s 之子程序成本——為此 `snapshot()` 已從 sequential 改成 `ThreadPoolExecutor` 並行查詢）；若 routing 演算法只看「當下額度」會誤導成「每次都跳過 CLI 改用 OpenAI」，但實際上 CLI 的工具能力（檔案寫入、shell）是 OpenAI 相容介面沒有的。**routing 必須在「額度寬鬆」與「工具能力需求」之間取捨**，不該用 LLM 自動決定每個 tool-call 的 backend。
+
+- 重點: **「全受限」沒有業界標準 fallback**——LiteLLM / Portkey 都把「全失敗」留給使用者；對自改閉環（autopilot）這是危險空窗。經查「self-improving AI systems + quota exhaustion」沒有專門論文，但 [Self-Improving AI Agents](https://arxiv.org/abs/2506.04612) §4 的 safety interlocks 概念可直接套用：本專案的 `AUTOPILOT_PAUSED`（已有）、`AUTOPILOT_DAILY_*_BUDGET`（前一輪調研建議但尚未實作）就是這條防線。本輪至少需定義「全受限 → 暫停 + 寫 audit.jsonl + 等下一 reset」的明確路徑。
+
+- 重點: **`make_expert(..., provider=...)` 接縫已備但目前只用在 `make_expert` 的 `provider` 參數**——沒有任何 `orchestrator` / `improver` / `autopilot` 路徑真的在運行時根據額度決定改用哪家。ARCHITECTURE.md 已明確說「動態分派」會呼叫它，但程式碼端只是定義、未串接。本輪就是要把這個 gap 補上。
+
+**建議**
+
+- 建議: **採「pre-flight + in-flight 雙軌」**（最小成本、最對齊既有 `provider_quota` 抽象）：(a) **pre-flight**——`StudioSession` 進入任務分派階段（`_stage_build` / `_stage_dynamic` 入口）時，先 `snapshot()` 一次拿 `least_constrained_ready()`；對 `constrained()` 的角色自動以 `make_expert(role, session_id, cwd, provider=<least_constrained>)` 重綁（沿用既有顯式 provider 覆寫接縫）；對 `TI_PROVIDER_<KEY>` 明確覆寫的角色**不**被自動重綁（使用者意圖優先）。(b) **in-flight**——`OpenAIExpert.speak()` 拋出 `ProviderUnavailable` 時（已收斂於 `llm_caller._pauses_on_provider_failure` 路徑），由 `orchestrator` 捕捉後查 `least_constrained_ready()`，把「下一輪 speak」以 `make_expert(..., provider=...)` 換到還有額度的 backend——這是「受限角色自動重綁」最便宜的接線點。
+
+- 建議: **全受限 fallback 採「短等 reset + 暫停」雙階**：(a) 若所有 provider 都 `constrained()`，先算 `min(soonest_reset) + 30s 安全邊界` 與當下的差，< `EXPERT_RATE_LIMIT_BACKOFF_CAP`（60s）就 `asyncio.sleep` 等一下後重 snapshot；(b) 若等待 > 上限或已等過一次仍受限，**對 autopilot 路徑 `touch AUTOPILOT_PAUSED` + 寫 `autopilot/audit.jsonl`**，互動 session 路徑則發 `provider_constrained` 事件讓前端顯示「所有 provider 額度已耗盡」。**不要無限 spin**——會把會話時間預算燒光、觸發既有 `SESSION_SOFT_DEADLINE_FRAC` 收斂時反而混亂歸因。
+
+- 建議: **把 per-role 明確覆寫的「使用者意圖」保護好**——`config.role_provider(key)` 已存在但只有 `effective_provider(role)` 在用，沒有任何路徑保護「使用者明確設了 TI_PROVIDER_engineer=codex 就別被自動換掉」。建議加 `is_user_explicit(role) -> bool`（`config.role_provider(key) != ""`）並在 pre-flight 自動重綁前過濾——這是把「使用者意圖 vs 系統自動優化」的界線變成合約（黑樣本：故意設 TI_PROVIDER_engineer=codex + 全程額度受限 → engineer 仍走 codex 並由 429 退避消化，不被靜默改綁）。
+
+- 建議: **多帳號 Claude 切換加進 routing 表**——沿用 `claude_accounts.list_accounts()` + `claude_usage.fetch_rate_limits(cred_file=...)` 既有介面，把「同 provider 多 cred_file」視為 routing 表的擴展項：`least_constrained_ready()` 回的不再只是 provider key，可回 `(provider, cred_file_or_None)` 元組。對「無 cred_file」的單帳號使用者零影響（沿用全域憑證）；對多帳號使用者提供 round-robin + least_constrained 混合策略（最低用量帳號優先，避免單帳號過熱）。
+
+- 建議: **「quota 變化」事件串到 audit 與前端**——`autopilot/audit.jsonl` 新增 `{"event": "provider_rebind", "from": ..., "to": ..., "reason": "constrained"|"user_explicit"|"no_provider_ready", "max_used": 95.3, "ts": ...}`，前端 `/api/provider-quota` 回傳多加 `last_rebind` 欄位讓 UI 顯示「剛才因額度受限，pm 從 claude 換到 minimax」——事故後一秒定位，無需新依賴（沿用 `autopilot/audit.jsonl` 純檔案 IO 慣例）。
+
+- 建議: **動態 workflow prompt 微更新**（純增量 1-2 行）——`_stage_dynamic` 的 PM prompt 在開頭加一段：`provider_quota.summarize_for_pm(snap, role_provider_map)` 餵給 PM，讓 PM 在「該找誰」決策時考慮當下額度（既有 `_dynamic_first_workflow` 已是 opt-in，動態優先流程已經會走到這層）。**不要**把 routing 完全交給 LLM——`constrained()`/`least_constrained_ready()` 是程式化硬不變式，LLM 只在「受限時要不要堅持用受限角色（例如該角色有獨占工具）」做例外決策，防 CrewAI 式「manager 全權即興」失靈（既有調研已記）。
+
+- 建議: **測試設計黑白樣本**（照 CLAUDE.md「黑白樣本驗證、不靠讀碼下結論」）：① 白：`A 受限 / B 就緒` → 自動重綁到 B；② 黑：所有受限 → 觸發 pause 或 `provider_constrained` 事件、不無限 spin；③ 白：`TI_PROVIDER_engineer=codex` + claude 受限 → engineer 仍走 codex（不破壞使用者意圖）；④ 黑：`ProviderUnavailable` 拋出 → 下一輪 speak 走 `least_constrained` 重試並成功；⑤ 白：`snapshot()` 60s 快取有效（連兩次第二次走快取）；⑥ 黑：snapshot 異常 → `constrained()` 安全回 True（fail-closed，避免把壞資料當額度用）。
+
+- 建議: **不要做的事**：(a) 不要砍掉重練 provider_quota / providers / llm_caller——已有完整骨架；(b) 不要現在引入 LiteLLM / Portkey / OpenRouter 等外部 LLM gateway——overkill 且會破壞「規則為骨 LLM 為肉」與既有 provider 抽象；(c) 不要把 quota-aware routing 推到 tool-call 級別（單一訊息多次決定 backend）——CLI 冷啟動成本會把整場拖慢，違反既有 `TI_LLM_MAX_CONCURRENCY` 節流哲學；(d) 不要把「全受限時要不要等 reset」交給 LLM 決定——這是 hard invariant，必須程式碼硬編碼；(e) 不要讓 autopilot 自動改 `provider_quota.py` 的 `CONSTRAINED_THRESHOLD` 或 routing 表——沿用 TDAD 「評測碼不可改」原則，routing 邏輯屬準評測碼，autopilot 可改 quota 查詢路徑但不應改 routing 決策；(f) 不要現在做 M2 的「跨場次 provider 偏好學習」——本輪聚焦「會話內 quota-aware routing」單一閉環，跨場學習留 M2。
+
+- 建議: **守門「routing 邏輯不被 autopilot 偷偷改壞」**——在 `tests/autopilot/` 加 `test_provider_routing_contract.py` 守門：`least_constrained_ready` 在「全受限」時必回 None（不會誤回某個 provider）、`constrained(snap, provider)` 在 `error != None` 時必回 True（fail-closed）、`make_expert(..., provider=X)` 在 autopilot 路徑下呼叫時 target_repo 仍守 `CORE_REPO` 不變（沿用既有 `_commit_push_merge` 不變式測試風格）。
+
+Sources: [LiteLLM Router - Load Balancing](https://docs.litellm.ai/docs/routing) · [Portkey Fallbacks](https://portkey.ai/docs/product/ai-gateway/fallbacks) · [Anthropic Rate Limits](https://platform.claude.com/docs/en/api/rate-limits) · [Anthropic Usage and Cost API](https://platform.claude.com/docs/en/manage-claude/usage-cost-api) · [Claude Code Authentication](https://code.claude.com/docs/en/iam) · [OpenAI Rate limits](https://developers.openai.com/api/docs/guides/rate-limits) · [Self-Improving AI Agents §4 safety interlocks](https://arxiv.org/abs/2506.04612)
+
