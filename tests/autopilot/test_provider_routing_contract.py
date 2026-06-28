@@ -117,6 +117,28 @@ async def test_explicit_role_provider_is_not_rebound_or_reported(tmp_path, monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "gemini"])
+async def test_explicit_openai_compatible_provider_is_not_rebound(
+    tmp_path, monkeypatch, provider
+):
+    monkeypatch.setattr(config, "ROLE_PROVIDERS", {**config.ROLE_PROVIDERS, "engineer": provider})
+    snap = _snap(
+        _entry(provider, ready=True, used=99),
+        _entry("minimax", ready=True, used=10),
+        _entry("claude", ready=True, used=20),
+    )
+    experts = {"engineer": StubExpert(BY_KEY["engineer"], provider)}
+    s, bucket = _session(tmp_path, monkeypatch, snap, experts)
+
+    assert s._pick_provider(BY_KEY["engineer"], "minimax") == provider
+    await s._run("req")
+
+    assert s._experts["engineer"] is experts["engineer"]
+    assert s._experts["engineer"].provider == provider
+    assert not [e for e in bucket if e.type == events.EventType.PROVIDER_CONSTRAINED]
+
+
+@pytest.mark.asyncio
 async def test_preflight_all_constrained_emits_event_and_audit(tmp_path, monkeypatch):
     state_dir = tmp_path / "ap"
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", state_dir)
@@ -181,6 +203,15 @@ def test_plan_preflight_rebind_skips_explicit_overrides():
         _entry("minimax", ready=True, used=10),
     )
     plan = flow.plan_preflight_rebind({"engineer": "claude"}, snap, {"engineer": "codex"})
+    assert plan == []
+
+
+def test_plan_preflight_rebind_skips_explicit_override_even_when_provider_constrained():
+    snap = _snap(
+        _entry("claude", ready=True, used=95),
+        _entry("minimax", ready=True, used=10),
+    )
+    plan = flow.plan_preflight_rebind({"engineer": "claude"}, snap, {"engineer": "claude"})
     assert plan == []
 
 
