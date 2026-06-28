@@ -31,6 +31,7 @@ class EventType(str, Enum):
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
     TOKEN_USAGE = "token_usage"  # LLM 呼叫 token / cost 用量
+    PROVIDER_CONSTRAINED = "provider_constrained"  # 所有 provider 皆不可用/查詢異常，需停止靜默重綁
     DONE = "done"  # 專案完成
     ERROR = "error"  # 錯誤
 
@@ -254,6 +255,21 @@ def conclusion(session_id: str, path: str, summary: dict) -> StudioEvent:
         EventType.CONCLUSION,
         session_id,
         {"path": path, "summary": summary},
+    )
+
+
+def provider_constrained(
+    session_id: str, role_key: str, provider: str, providers: list[dict]
+) -> StudioEvent:
+    return StudioEvent(
+        EventType.PROVIDER_CONSTRAINED,
+        session_id,
+        {
+            "role": role_key,
+            "provider": provider,
+            "reason": "no_provider_ready",
+            "providers": providers,
+        },
     )
 
 
