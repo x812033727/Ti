@@ -2048,3 +2048,48 @@
 ## 本輪不引入 `tag_explicit` 欄位到 `parse_followups_meta`——範圍屬 PM override 精細化，留待獨立任務處理，避免本輪範圍擴散。
 - 時間：2026-06-28 19:15
 
+## `_commit_push_merge` 頂端 guard 使用 `config.AUTOPILOT_REPO`（config 值），**不**使用 `publisher.current_repo()`
+- 時間：2026-06-28 20:39
+- 理由：函式內 `gh pr create -R repo` 第 302 行已直接用 `config.AUTOPILOT_REPO`，`publisher.current_repo()` 只在 `_merge_flow` 段才有意義；頂端 override 尚未設定前讀 `current_repo()` 一定是錯的。
+- 否決方案：「頂端讀 `publisher.current_repo()` 判斷」——override 不存在時讀到 `PUBLISH_REPO` 或空字串，正常路徑被誤擋。
+
+## Guard 條件二選一觸發 `return (False, reason)`：① `not config.AUTOPILOT_REPO`（設定空）；② `config.PUBLISH_REPO` 非空 **且** 正規化後 `config.PUBLISH_REPO != config.AUTOPILOT_REPO`
+- 時間：2026-06-28 21:12
+- 理由：autopilot 推送路徑只允許空 `PUBLISH_REPO` 或與 `AUTOPILOT_REPO` 指向同一 repo；若 `PUBLISH_REPO` 指向另一個專案 repo，直接拒絕，避免核心自改流污染專案 repo。比較採不分大小寫 repo key。
+
+## `_commit_push_merge` 在真正 `git push` 前必須確認 `git remote get-url --push origin` 正規化後等於 `config.AUTOPILOT_REPO`
+- 時間：2026-06-28 21:12
+- 理由：入口 guard 只能證明 config 目標正確，不能證明傳入 clone 的 `origin` 沒被改；push 前檢查實際 push URL 才能把「實際推送目標 == AUTOPILOT_REPO」變成執行期合約。
+
+## guard check **之後**立即執行 `token = publisher.set_repo_override(config.AUTOPILOT_REPO)`，並以 `try/finally: publisher.reset_repo_override(token)` 包住函式剩餘全部 body
+- 時間：2026-06-28 20:39
+- 理由：工程師正確指出 override 必須早於任何可能呼叫 `publisher.current_repo()` 的後段程式碼（含未來新增段落）；`try/finally` 確保異常時也還原狀態。
+- 否決方案：「只包 `_merge_flow` 段」（現況）——未來有人在 PR 建立後、merge 前加入任何 `publisher.current_repo()` 呼叫會無 override 保護。
+
+## 刪除現有第 340-350 行的內層 `set_repo_override`/`reset_repo_override` 對——它被上移的外層 `try/finally` 完整涵蓋，留著會造成雙重 override 混淆
+- 時間：2026-06-28 20:39
+
+## 測試四案，各自獨立不共用 monkeypatch 狀態
+- 時間：2026-06-28 20:39
+
+## Case A（wiring 案，高工點名的核心）——**不** mock `publisher.current_repo`；mock `_run` 回傳成功、mock `publisher._merge_flow` 在呼叫時即時讀取 `publisher.current_repo()` 並記錄，事後斷言記錄值 == `config.AUTOPILOT_REPO`
+- 時間：2026-06-28 20:39
+- 理由：這是唯一能證明「真實 override wiring 有效」的測試；若改成 mock `current_repo` 則測不到覆寫鏈，高工說「把錯誤契約固定下來」。
+
+## Case B——monkeypatch `config.AUTOPILOT_REPO = ""`，呼叫函式，斷言回傳 `(False, ...)` 且 `_run`/`_merge_flow` 從未被呼叫（無 push/PR 副作用）
+- 時間：2026-06-28 20:39
+
+## Case C——monkeypatch `config.PUBLISH_REPO` 指向不同專案 repo，呼叫函式，斷言回傳 `(False, ...)` 且無 push/PR 副作用
+- 時間：2026-06-28 21:12
+
+## Case D（邊界）——`config.PUBLISH_REPO = ""`（預設值），`config.AUTOPILOT_REPO` 正常，mock `_run`/`_merge_flow` 讓流程跑完，斷言回傳 `(True, ...)` 不被誤擋
+- 時間：2026-06-28 20:39
+
+## 測試檔路徑 `tests/autopilot/test_qa_no_publish_pollution.py`，四案皆為 `async def`（`asyncio_mode = "auto"`）；`_run`/`_merge_flow` 用 `AsyncMock`，不打真實 git/GitHub
+- 時間：2026-06-28 20:39
+
+## `CLAUDE.md` 新增「安全自改合約：`_commit_push_merge` 不變式」節，說明：guard 條件位置、`try/finally` 覆蓋範圍；並明列本輪排除（audit.jsonl、`AUTOPILOT_DAILY_PR_BUDGET`）為移交待辦
+- 時間：2026-06-28 20:39
+
+## 不新增依賴、不改 `config.py`/`publisher.py` 任何公開介面；`_REPO_OVERRIDE` / `set_repo_override` / `reset_repo_override` 契約完整保留
+- 時間：2026-06-28 20:39

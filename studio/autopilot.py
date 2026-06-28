@@ -22,6 +22,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlparse
 
 from . import backlog, config, deploy, history, publisher, runner
 from .orchestrator import StudioSession, parse_tasks
@@ -66,6 +67,32 @@ def _self_sig() -> float:
 
 
 # --- working clone -------------------------------------------------------
+
+
+def _repo_key(value: str) -> str:
+    """把 GitHub repo 位置壓成不分大小寫的 github.com/owner/repo identity。"""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    host = "github.com"
+    if "://" in raw:
+        parsed = urlparse(raw)
+        if (parsed.hostname or "").lower() != "github.com":
+            return ""
+        raw = parsed.path
+    elif "@" in raw and ":" in raw:
+        remote_host, raw = raw.rsplit(":", 1)
+        if (remote_host.rsplit("@", 1)[-1] or "").lower() != "github.com":
+            return ""
+    elif raw.startswith("github.com/"):
+        raw = raw[len("github.com/") :]
+    raw = raw.strip("/")
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    parts = [part for part in raw.split("/") if part]
+    if len(parts) == 2:
+        return f"{host}/{'/'.join(parts)}".lower()
+    return ""
 
 
 async def _prepare_clone() -> str:
@@ -227,118 +254,143 @@ async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
 
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     """把成果開分支、push、squash-merge 進 main。dryrun 只回報。"""
-    branch = f"autopilot/task-{task['id']}"
-    title = f"autopilot: {task['title']}"[:72]
-    # 確保所有變更都已 commit（session 通常已 commit，這裡兜底）
-    await _run(["git", "checkout", "-B", branch], cwd=clone, timeout=60)
-    await _run(["git", "add", "-A"], cwd=clone, timeout=60)
-    rc, out = await _run(
-        [
-            "git",
-            "-c",
-            "user.email=noreply@anthropic.com",
-            "-c",
-            "user.name=Ti Autopilot",
-            "commit",
-            "-m",
-            title,
-            "--author=Claude <noreply@anthropic.com>",
-        ],
-        cwd=clone,
-        timeout=60,
-    )
-    # rc!=0 且訊息為 nothing to commit 仍可能 branch == main，視為無變更
-    rc_diff, diff = await _run(
-        ["git", "rev-list", "--count", f"origin/{config.AUTOPILOT_BRANCH}..HEAD"],
-        cwd=clone,
-        timeout=30,
-    )
-    if diff.strip() in ("", "0"):
-        return False, "沒有產生任何變更（無 commit 可合併）"
-
-    if config.AUTOPILOT_DRYRUN:
-        return True, f"[dryrun] 會 push {branch} 並 squash-merge 進 {config.AUTOPILOT_BRANCH}"
-
-    # push 前防呆：每個 task 都是全新分支，遠端不該已存在同名分支。三態判定——
-    #   rc!=0：ls-remote 本身失敗（網路/認證），視為錯誤中止，不可 fall-through 當「不存在」。
-    #   rc==0 且有輸出：遠端已存在同名分支（task 重跑或殘留），預設中止；FORCE_PUSH 為真才放行覆寫。
-    #   rc==0 且空輸出：遠端不存在，放行。
-    rc, out = await _run(
-        ["git", *_GIT_CRED, "ls-remote", "--heads", "origin", branch], cwd=clone, timeout=60
-    )
-    if rc != 0:
-        return False, f"ls-remote 檢查失敗（無法確認遠端狀態，已中止）：{out[-400:]}"
-    if out.strip() and not config.AUTOPILOT_FORCE_PUSH:
+    repo = (config.AUTOPILOT_REPO or "").strip()
+    publish_repo = (config.PUBLISH_REPO or "").strip()
+    repo_key = _repo_key(repo)
+    if not repo_key:
+        return False, "AUTOPILOT_REPO 未設定，已中止推送"
+    if publish_repo and _repo_key(publish_repo) != repo_key:
         return False, (
-            f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
-            f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
+            "PUBLISH_REPO 與 AUTOPILOT_REPO 指向不同 repo，為避免污染專案 repo，已中止推送"
         )
 
-    # 第二道防線（與上方 ls-remote 防覆寫各自獨立）：merge 進 main 前，主動查「合併目標
-    # AUTOPILOT_BRANCH」的保護狀態。放在 push 之前——unknown 時 fail-safe 中止且尚未 push，
-    # 不留遠端孤兒分支。dryrun 已於前面提早 return，此處天然不打 API。
-    # 唯一硬規則：state=="unknown" 一律中止（絕不 fall-through 當無保護）；protected/
-    # unprotected 皆放行（受保護分支由後續 publisher._merge_flow「等 CI→合併」自然攔下：
-    # 必過檢查未滿足會回 BLOCKED 並關 PR，不在此重複把關）。
-    if config.AUTOPILOT_PROTECTION_CHECK:
-        state, detail = await _check_branch_protection(clone, config.AUTOPILOT_BRANCH)
-        if state == "unknown":
+    token = publisher.set_repo_override(repo)
+    try:
+        branch = f"autopilot/task-{task['id']}"
+        title = f"autopilot: {task['title']}"[:72]
+        # 確保所有變更都已 commit（session 通常已 commit，這裡兜底）
+        await _run(["git", "checkout", "-B", branch], cwd=clone, timeout=60)
+        await _run(["git", "add", "-A"], cwd=clone, timeout=60)
+        rc, out = await _run(
+            [
+                "git",
+                "-c",
+                "user.email=noreply@anthropic.com",
+                "-c",
+                "user.name=Ti Autopilot",
+                "commit",
+                "-m",
+                title,
+                "--author=Claude <noreply@anthropic.com>",
+            ],
+            cwd=clone,
+            timeout=60,
+        )
+        # rc!=0 且訊息為 nothing to commit 仍可能 branch == main，視為無變更
+        rc_diff, diff = await _run(
+            ["git", "rev-list", "--count", f"origin/{config.AUTOPILOT_BRANCH}..HEAD"],
+            cwd=clone,
+            timeout=30,
+        )
+        if diff.strip() in ("", "0"):
+            return False, "沒有產生任何變更（無 commit 可合併）"
+
+        if config.AUTOPILOT_DRYRUN:
+            return True, f"[dryrun] 會 push {branch} 並 squash-merge 進 {config.AUTOPILOT_BRANCH}"
+
+        # push 前防呆：每個 task 都是全新分支，遠端不該已存在同名分支。三態判定——
+        #   rc!=0：ls-remote 本身失敗（網路/認證），視為錯誤中止，不可 fall-through 當「不存在」。
+        #   rc==0 且有輸出：遠端已存在同名分支（task 重跑或殘留），預設中止；FORCE_PUSH 為真才放行覆寫。
+        #   rc==0 且空輸出：遠端不存在，放行。
+        rc, out = await _run(
+            ["git", *_GIT_CRED, "ls-remote", "--heads", "origin", branch],
+            cwd=clone,
+            timeout=60,
+        )
+        if rc != 0:
+            return False, f"ls-remote 檢查失敗（無法確認遠端狀態，已中止）：{out[-400:]}"
+        if out.strip() and not config.AUTOPILOT_FORCE_PUSH:
             return False, (
-                f"無法確認保護狀態（{config.AUTOPILOT_BRANCH}），fail-safe 已中止：{detail}；"
-                f"若部署環境缺 Administration:read 權限而持續卡此，設 "
-                f"TI_AUTOPILOT_PROTECTION_CHECK=0 跳過此檢查"
+                f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
+                f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
             )
 
-    # 預設非強制推送（全新分支即可成功）；僅 FORCE_PUSH 開啟才用 --force-with-lease
-    # 搭配 --force-if-includes（杜絕背景 fetch 讓 lease 退化成裸 force）。絕不用裸 -f。
-    push_flags = (
-        ["--force-with-lease", "--force-if-includes"] if config.AUTOPILOT_FORCE_PUSH else []
-    )
-    rc, out = await _run(
-        ["git", *_GIT_CRED, "push", *push_flags, "-u", "origin", branch], cwd=clone, timeout=180
-    )
-    if rc != 0:
-        return False, f"push 失敗：{out[-400:]}"
-    repo = config.AUTOPILOT_REPO
-    body = f"autopilot 自動產生：{task['title']}\n\n{task.get('detail', '')}".strip()
-    rc, out = await _run(
-        [
-            *_GH,
-            "pr",
-            "create",
-            "-R",
-            repo,
-            "--base",
-            config.AUTOPILOT_BRANCH,
-            "--head",
-            branch,
-            "--title",
-            title,
-            "--body",
-            body,
-        ],
-        cwd=clone,
-        timeout=120,
-    )
-    if rc != 0:
-        return False, f"開 PR 失敗：{out[-400:]}"
+        # 第二道防線（與上方 ls-remote 防覆寫各自獨立）：merge 進 main 前，主動查「合併目標
+        # AUTOPILOT_BRANCH」的保護狀態。放在 push 之前——unknown 時 fail-safe 中止且尚未 push，
+        # 不留遠端孤兒分支。dryrun 已於前面提早 return，此處天然不打 API。
+        # 唯一硬規則：state=="unknown" 一律中止（絕不 fall-through 當無保護）；protected/
+        # unprotected 皆放行（受保護分支由後續 publisher._merge_flow「等 CI→合併」自然攔下：
+        # 必過檢查未滿足會回 BLOCKED 並關 PR，不在此重複把關）。
+        if config.AUTOPILOT_PROTECTION_CHECK:
+            state, detail = await _check_branch_protection(clone, config.AUTOPILOT_BRANCH)
+            if state == "unknown":
+                return False, (
+                    f"無法確認保護狀態（{config.AUTOPILOT_BRANCH}），fail-safe 已中止：{detail}；"
+                    f"若部署環境缺 Administration:read 權限而持續卡此，設 "
+                    f"TI_AUTOPILOT_PROTECTION_CHECK=0 跳過此檢查"
+                )
 
-    # 取 PR 編號供 publisher 協調器使用；取不到就明確失敗，絕不 fall-through 盲合（避免合到沒等 CI）。
-    rc, out = await _run(
-        [*_GH, "pr", "view", branch, "-R", repo, "--json", "number", "-q", ".number"],
-        cwd=clone,
-        timeout=60,
-    )
-    try:
-        pr_number = int(out.strip())
-    except (TypeError, ValueError):
-        return False, f"無法取得 PR 編號（已開 PR 但解析失敗，未合併）：{out[-400:]}"
+        # 預設非強制推送（全新分支即可成功）；僅 FORCE_PUSH 開啟才用 --force-with-lease
+        # 搭配 --force-if-includes（杜絕背景 fetch 讓 lease 退化成裸 force）。絕不用裸 -f。
+        push_flags = (
+            ["--force-with-lease", "--force-if-includes"] if config.AUTOPILOT_FORCE_PUSH else []
+        )
+        rc, push_url = await _run(
+            ["git", "remote", "get-url", "--push", "origin"],
+            cwd=clone,
+            timeout=30,
+        )
+        if rc != 0:
+            return False, f"無法確認 origin push URL，已中止：{push_url[-400:]}"
+        if _repo_key(push_url) != repo_key:
+            return False, (
+                f"origin push URL 不等於 AUTOPILOT_REPO，已中止推送："
+                f"origin={push_url.strip() or '(empty)'} autopilot={repo}"
+            )
+        rc, out = await _run(
+            ["git", *_GIT_CRED, "push", *push_flags, "-u", "origin", branch],
+            cwd=clone,
+            timeout=180,
+        )
+        if rc != 0:
+            return False, f"push 失敗：{out[-400:]}"
+        body = f"autopilot 自動產生：{task['title']}\n\n{task.get('detail', '')}".strip()
+        rc, out = await _run(
+            [
+                *_GH,
+                "pr",
+                "create",
+                "-R",
+                repo,
+                "--base",
+                config.AUTOPILOT_BRANCH,
+                "--head",
+                branch,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            cwd=clone,
+            timeout=120,
+        )
+        if rc != 0:
+            return False, f"開 PR 失敗：{out[-400:]}"
 
-    # 等 CI 綠後才合併：複用 publisher 已測過的合併協調器（每輪「查狀態→等 CI→合併」，
-    # behind/stale 會 _update_branch 後重試）。明確把目標 repo 覆寫成 AUTOPILOT_REPO，
-    # 避免 publisher REST 函式 fallback 到 config.PUBLISH_REPO（兩者未必相同）。
-    token = publisher.set_repo_override(config.AUTOPILOT_REPO)
-    try:
+        # 取 PR 編號供 publisher 協調器使用；取不到就明確失敗，絕不 fall-through 盲合（避免合到沒等 CI）。
+        rc, out = await _run(
+            [*_GH, "pr", "view", branch, "-R", repo, "--json", "number", "-q", ".number"],
+            cwd=clone,
+            timeout=60,
+        )
+        try:
+            pr_number = int(out.strip())
+        except (TypeError, ValueError):
+            return False, f"無法取得 PR 編號（已開 PR 但解析失敗，未合併）：{out[-400:]}"
+
+        # 等 CI 綠後才合併：複用 publisher 已測過的合併協調器（每輪「查狀態→等 CI→合併」，
+        # behind/stale 會 _update_branch 後重試）。入口已把目標 repo 覆寫成 AUTOPILOT_REPO，
+        # 避免 publisher REST 函式 fallback 到 config.PUBLISH_REPO（兩者未必相同）。
         outcome, detail = await publisher._merge_flow(
             pr_number,
             publisher.merge_payload(branch, "squash"),
@@ -346,19 +398,23 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             ci_interval=config.PUBLISH_CI_INTERVAL,
             retries=config.PUBLISH_MERGE_RETRIES,
         )
+        if outcome == publisher.MergeOutcome.MERGED:
+            return (
+                True,
+                f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}（CI 綠後合併）：{detail}",
+            )
+        # 非綠/未合併：關閉 PR 並刪分支，避免留下孤兒 PR
+        await _run(
+            [*_GH, "pr", "close", "-R", repo, branch, "--delete-branch"],
+            cwd=clone,
+            timeout=120,
+        )
+        return (
+            False,
+            f"CI 未過或合併失敗（{outcome.value if hasattr(outcome, 'value') else outcome}）：{detail}",
+        )
     finally:
         publisher.reset_repo_override(token)
-    if outcome == publisher.MergeOutcome.MERGED:
-        return (
-            True,
-            f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}（CI 綠後合併）：{detail}",
-        )
-    # 非綠/未合併：關閉 PR 並刪分支，避免留下孤兒 PR
-    await _run([*_GH, "pr", "close", "-R", repo, branch, "--delete-branch"], cwd=clone, timeout=120)
-    return (
-        False,
-        f"CI 未過或合併失敗（{outcome.value if hasattr(outcome, 'value') else outcome}）：{detail}",
-    )
 
 
 # --- 並發協調 ------------------------------------------------------------
