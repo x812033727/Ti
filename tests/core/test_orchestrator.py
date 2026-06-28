@@ -6,9 +6,10 @@ import asyncio
 
 import pytest
 
-from studio import config, events
+from studio import backlog, config, events
 from studio.orchestrator import (
     StudioSession,
+    classify_failure_followups,
     critic_blocks,
     is_stalled,
     parse_tasks,
@@ -112,6 +113,26 @@ async def test_record_known_limitations_writes_file_and_followups(tmp_path):
     # 未過任務回填 followups,確保「已出貨」不等於「遺忘」
     assert "撰寫 README.md" in session._followups
     assert "新增設定檔範例" in session._followups
+    assert session._followup_items == [
+        {"title": "撰寫 README.md", "priority": 0, "type": "bug"},
+        {"title": "新增設定檔範例", "priority": 0, "type": "bug"},
+    ]
+
+
+async def test_record_known_limitations_upgrades_existing_retro_followup(tmp_path):
+    async def bc(ev):
+        pass
+
+    session = StudioSession("t", bc, experts={}, cwd=tmp_path)
+    session._followups = ["新增設定檔範例"]
+    session._followup_items = [{"title": "新增設定檔範例", "priority": 1, "type": "improvement"}]
+
+    await session._record_known_limitations(
+        [{"id": 2, "title": "新增設定檔範例", "status": "review"}]
+    )
+
+    assert session._followups.count("新增設定檔範例") == 1
+    assert session._followup_items == [{"title": "新增設定檔範例", "priority": 0, "type": "bug"}]
 
 
 def test_shippable_verdict():
@@ -169,6 +190,67 @@ def test_parse_followups_meta_and_strip():
     assert meta[1] == {"title": "補測試", "priority": 1, "type": "improvement"}
     # 純標題版剝掉標籤（舊消費端不破）
     assert parse_followups(text) == ["修資料遺失", "補測試"]
+
+
+def test_classify_failure_followups_maps_missing_failure_to_p0_bug():
+    assert classify_failure_followups([" 修復 Demo 失敗 ", ""], []) == [
+        {"title": "修復 Demo 失敗", "priority": 0, "type": "bug"}
+    ]
+
+
+def test_classify_failure_followups_upgrades_unlabeled_retro_failure():
+    retro_items = [{"title": "修復 QA 未過任務", "priority": 1, "type": "improvement"}]
+
+    assert classify_failure_followups(["修復 QA 未過任務"], retro_items) == [
+        {"title": "修復 QA 未過任務", "priority": 0, "type": "bug"}
+    ]
+
+
+def test_classify_failure_followups_keeps_unmatched_retro_labels_and_empty_inputs():
+    retro_items = [{"title": "補互動文件", "priority": 2, "type": "feature"}]
+
+    assert classify_failure_followups([], retro_items) == retro_items
+    assert classify_failure_followups([], []) == []
+    assert classify_failure_followups(["", "  "], [{"title": ""}]) == []
+
+
+def test_failure_followups_sort_before_retro_items_in_backlog(tmp_path):
+    items = classify_failure_followups(
+        ["修復 QA 未過任務"],
+        [{"title": "改善檢討文件", "priority": 1, "type": "improvement"}],
+    )
+
+    backlog.add_items(items, source="test", state_dir=tmp_path)
+
+    first = backlog.next_pending(state_dir=tmp_path)
+    assert first["title"] == "修復 QA 未過任務"
+    assert first["priority"] == 0
+    assert first["type"] == "bug"
+
+
+async def test_wrap_up_records_demo_veto_as_p0_bug(monkeypatch):
+    monkeypatch.setattr(config, "LESSONS_ENABLED", False)
+    bucket, bc = collect()
+    pm = StubExpert(
+        BY_KEY["pm"],
+        [
+            "決議: 未完成",
+            "後續任務: 補檢討建議",
+        ],
+    )
+    session = StudioSession("t", bc, experts={}, cwd=None)
+
+    async def _noop_commit(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(session, "_commit", _noop_commit)
+
+    done = await session._wrap_up(pm, all_ok=False, demo_veto=True)
+
+    assert not done
+    assert {"title": "修復 Demo 失敗", "priority": 0, "type": "bug"} in session._followup_items
+    assert {"title": "補檢討建議", "priority": 1, "type": "improvement"} in session._followup_items
+    assert events.EventType.RETROSPECTIVE in types(bucket)
 
 
 def test_parse_tasks_structured():

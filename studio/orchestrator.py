@@ -41,6 +41,7 @@ from .discussion import DiscussionEngine, build_summary
 # 的 monkeypatch 仍然有效。
 from .flow import (
     build_waves as build_waves,
+    classify_failure_followups as classify_failure_followups,
     critic_blocks as critic_blocks,
     is_stalled as is_stalled,
     parse_clarify as parse_clarify,
@@ -599,6 +600,19 @@ class StudioSession:
             lines.append("### 可重用教訓")
             lines += [f"- {ln}" for ln in plan_lessons]
         self._persist_knowledge("IMPROVEMENT.md", "\n".join(lines) + "\n")
+
+    def _merge_followup_items(
+        self, retro_items: list[dict], failed_titles: list[str] | None = None
+    ) -> None:
+        """累加結構化後續任務；客觀失敗同標題時升格為 P0 bug。"""
+        merged = classify_failure_followups(failed_titles or [], self._followup_items + retro_items)
+        self._followup_items = merged
+        seen = set(self._followups)
+        for item in merged:
+            title = item["title"]
+            if title not in seen:
+                seen.add(title)
+                self._followups.append(title)
 
     # --- 停滯守門 ------------------------------------------------------
     def _stalled(self, ctx: LaneContext, history: list[str], committed_change: bool) -> bool:
@@ -1318,7 +1332,7 @@ class StudioSession:
                     self.session_id, "客觀閘門", "最終 Demo 實際執行未通過，整體不予驗收"
                 )
             )
-        self._done = await self._wrap_up(pm, self._all_ok and not demo_veto)
+        self._done = await self._wrap_up(pm, self._all_ok and not demo_veto, demo_veto=demo_veto)
 
         # 可帶「已知限制」出貨：把「全有全無」放寬為「核心客觀證據通過即發佈」。未過的次要任務
         # 記成已知限制（寫進交付物＋回填 backlog），不再讓單一 flaky 小任務永久擋住整個可用
@@ -2698,7 +2712,7 @@ class StudioSession:
         )
         return result
 
-    async def _wrap_up(self, pm: ExpertLike, all_ok: bool) -> bool:
+    async def _wrap_up(self, pm: ExpertLike, all_ok: bool, demo_veto: bool = False) -> bool:
         await self.broadcast(events.phase_change(self.session_id, "驗收", "PM 確認驗收標準"))
         verdict = await pm.speak(
             (await self._human_prefix()) + "請依驗收標準檢查目前工作目錄的成果，判斷是否完成"
@@ -2733,13 +2747,9 @@ class StudioSession:
             )
         retro = await pm.speak(retro_prompt, self.broadcast)
         # 結構化後續任務（main #95：含 priority/type）；累加而非覆寫——先前階段
-        # 可能已放入後續任務，不可被檢討清掉。
-        seen = set(self._followups)
-        for item in parse_followups_meta(retro):
-            if item["title"] not in seen:
-                seen.add(item["title"])
-                self._followup_items.append(item)
-                self._followups.append(item["title"])
+        # 可能已放入後續任務，不可被檢討清掉。Demo 客觀失敗固定回填成 P0/bug。
+        failed_titles = ["修復 Demo 失敗"] if demo_veto else []
+        self._merge_followup_items(parse_followups_meta(retro), failed_titles=failed_titles)
         # 核心改動：判定需改 Ti 核心框架的項目，與後續任務分流——不進專案 backlog／PR，
         # 由消費端（improver／autopilot）路由到核心 backlog，autopilot 對核心 repo 開獨立 PR。
         core_seen = {c["title"] for c in self._core_changes}
@@ -2805,12 +2815,7 @@ class StudioSession:
         except OSError:
             log.warning("寫入 KNOWN_LIMITATIONS.md 失敗（略過,不影響發佈）", exc_info=True)
         # 未過任務同時回填後續任務,確保不會因為「已出貨」而被遺忘。
-        seen = set(self._followups)
-        for t in titles:
-            if t not in seen:
-                seen.add(t)
-                self._followups.append(t)
-                self._followup_items.append({"title": t, "priority": 1, "type": "improvement"})
+        self._merge_followup_items([], failed_titles=titles)
         await self.broadcast(
             events.phase_change(
                 self.session_id,
