@@ -62,7 +62,9 @@ def _session(tmp_path, monkeypatch, snap, experts):
 
 
 @pytest.mark.asyncio
-async def test_preflight_rebinds_existing_member_to_least_constrained_provider(tmp_path, monkeypatch):
+async def test_preflight_rebinds_existing_member_to_least_constrained_provider(
+    tmp_path, monkeypatch
+):
     snap = _snap(
         _entry("claude", ready=True, used=95),
         _entry("minimax", ready=True, used=20),
@@ -137,7 +139,7 @@ async def test_preflight_all_constrained_emits_event_and_audit(tmp_path, monkeyp
     rec = json.loads((state_dir / "audit.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert rec["event"] == "provider_constrained"
     assert rec["role"] == "engineer"
-    assert rec["providers"]["claude"]["max_used"] == 95
+    assert rec["snapshot"]["claude"]["max_used"] == 95
 
 
 @pytest.mark.asyncio
@@ -178,9 +180,7 @@ def test_plan_preflight_rebind_skips_explicit_overrides():
         _entry("claude", ready=True, used=95),
         _entry("minimax", ready=True, used=10),
     )
-    plan = flow.plan_preflight_rebind(
-        {"engineer": "claude"}, snap, {"engineer": "codex"}
-    )
+    plan = flow.plan_preflight_rebind({"engineer": "claude"}, snap, {"engineer": "codex"})
     assert plan == []
 
 
@@ -205,9 +205,7 @@ def test_apply_preflight_rebind_uses_injected_factory(tmp_path):
     experts = {"engineer": StubExpert(BY_KEY["engineer"], "claude")}
     s = StudioSession("s", broadcast, experts=experts, cwd=tmp_path)
 
-    s._apply_preflight_rebind(
-        [("engineer", "claude", "minimax")], expert_factory=factory
-    )
+    s._apply_preflight_rebind([("engineer", "claude", "minimax")], expert_factory=factory)
 
     assert calls == [("engineer", "s", tmp_path, "minimax")]
     assert s._experts["engineer"].provider == "minimax"

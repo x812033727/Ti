@@ -263,6 +263,7 @@ class StudioSession:
         # 招募成員「實際綁定」的 provider（key→provider）。招募時 _pick_provider 可能把受限/PM 指定的
         # provider 自動重綁，與 effective_provider(role) 不同；額度摘要/roster 顯示須以此為準才正確。
         self._recruit_providers: dict[str, str] = {}
+        self._provider_constrained_pending: dict[str, str] = {}
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -1423,53 +1424,6 @@ class StudioSession:
             "避開受限者）：\n" + summary + "\n\n"
         )
 
-    def _quota_snapshot_for_audit(self, snap: dict | None) -> dict:
-        if not snap:
-            return {}
-        out: dict[str, dict] = {}
-        for entry in snap.get("providers", []):
-            key = entry.get("key")
-            if not key:
-                continue
-            u = provider_quota._usage(entry)
-            out[key] = {
-                "ready": u["ready"],
-                "error": u["error"],
-                "max_used": u["max_used"],
-                "soonest_reset": u["soonest_reset"],
-            }
-        return out
-
-    async def _handle_all_constrained(self, role_key: str, provider: str, snap: dict | None) -> None:
-        """記錄全受限狀態；只做可觀測性，不 sleep、不 raise。"""
-        reason = "no_provider_ready"
-        audit_snapshot = self._quota_snapshot_for_audit(snap)
-        await self.broadcast(
-            events.provider_constrained(
-                self.session_id,
-                role_key,
-                provider,
-                reason,
-                audit_snapshot,
-            )
-        )
-        try:
-            config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
-            path = config.AUTOPILOT_STATE_DIR / "audit.jsonl"
-            rec = {
-                "event": "provider_constrained",
-                "session_id": self.session_id,
-                "role": role_key,
-                "provider": provider,
-                "reason": reason,
-                "providers": audit_snapshot,
-                "ts": time.time(),
-            }
-            with path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        except OSError as exc:
-            log.warning("寫入 provider_constrained audit 失敗：%s", exc)
-
     def _apply_preflight_rebind(
         self,
         plan: list[tuple[str, str, str]],
@@ -1552,13 +1506,89 @@ class StudioSession:
         prov = (hint or "").strip() or effective_provider(role)
         if prov not in config.PROVIDERS:
             prov = effective_provider(role)
+        self._provider_constrained_pending.pop(role.key, None)
         snap = self._quota_snap
         if snap and provider_quota.constrained(snap, prov):
             alt = provider_quota.least_constrained_ready(snap)
             if alt and alt != prov:
                 log.info("招募 %s：provider %s 受限，自動重綁 %s", role.key, prov, alt)
                 prov = alt
+            elif alt is None:
+                log.warning("招募 %s：provider %s 受限，且沒有可重綁的 provider", role.key, prov)
+                self._provider_constrained_pending[role.key] = prov
         return prov
+
+    def _quota_audit_providers(self, snap: dict | None) -> list[dict]:
+        providers: list[dict] = []
+        for entry in (snap or {}).get("providers", []):
+            rl = entry.get("rate_limits") or {}
+            if isinstance(rl.get("buckets"), list):
+                windows = [w for w in rl["buckets"] if isinstance(w, dict)]
+            else:
+                windows = [v for v in rl.values() if isinstance(v, dict)]
+            used = [
+                w.get("used_percentage")
+                for w in windows
+                if isinstance(w.get("used_percentage"), (int, float))
+            ]
+            resets = [
+                w.get("reset_at") for w in windows if isinstance(w.get("reset_at"), (int, float))
+            ]
+            providers.append(
+                {
+                    "key": entry.get("key", ""),
+                    "ready": bool(entry.get("ready")),
+                    "error": rl.get("error"),
+                    "max_used": max(used) if used else None,
+                    "soonest_reset": min(resets) if resets else None,
+                }
+            )
+        return providers
+
+    def _quota_snapshot_for_audit(self, snap: dict | None) -> dict:
+        return {
+            p["key"]: {
+                "ready": p["ready"],
+                "error": p["error"],
+                "max_used": p["max_used"],
+                "soonest_reset": p["soonest_reset"],
+            }
+            for p in self._quota_audit_providers(snap)
+            if p.get("key")
+        }
+
+    async def _handle_all_constrained(
+        self, role_key: str, provider: str, snap: dict | None
+    ) -> None:
+        reason = "no_provider_ready"
+        providers = self._quota_audit_providers(snap)
+        snapshot = self._quota_snapshot_for_audit(snap)
+        await self.broadcast(
+            events.provider_constrained(
+                self.session_id,
+                role_key,
+                provider,
+                reason,
+                providers,
+                snapshot,
+            )
+        )
+        try:
+            config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
+            row = {
+                "ts": time.time(),
+                "event": "provider_constrained",
+                "session_id": self.session_id,
+                "role": role_key,
+                "provider": provider,
+                "reason": reason,
+                "providers": providers,
+                "snapshot": snapshot,
+            }
+            with (config.AUTOPILOT_STATE_DIR / "audit.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        except OSError as exc:
+            log.warning("provider_constrained audit 寫入失敗：%s", exc)
 
     async def _recruit(self, ctx: LaneContext, role: Role, provider_hint: str, reason: str) -> str:
         """把一位新角色建成 expert 加入 lane（額度感知綁 provider），廣播 EXPERT_JOINED。回 role_key。
@@ -1567,11 +1597,7 @@ class StudioSession:
         注入 stub。達 RECRUIT_MAX 上限的把關在呼叫端（_resolve_or_recruit）。
         """
         prov = self._pick_provider(role, provider_hint)
-        if (
-            self._quota_snap
-            and not config.role_provider(role.key)
-            and provider_quota.constrained(self._quota_snap, prov)
-        ):
+        if self._provider_constrained_pending.pop(role.key, None) == prov:
             await self._handle_all_constrained(role.key, prov, self._quota_snap)
         if self._recruit_factory is not None:
             expert = self._recruit_factory(role, ctx.cwd, prov)

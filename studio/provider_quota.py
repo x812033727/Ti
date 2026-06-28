@@ -225,19 +225,20 @@ def constrained(snap: dict, provider: str, threshold: float = CONSTRAINED_THRESH
 
 
 def least_constrained_ready(snap: dict) -> str | None:
-    """就緒且最寬鬆（用量最低、無 error）的 provider key；都不可用回 None。
+    """就緒、未受限且最寬鬆（用量最低、無 error）的 provider key；都不可用回 None。
 
     受限角色自動重綁的安全網——把工作導到還有額度的 provider，避免限流空轉。
     """
     best: str | None = None
     best_used: float | None = None
     for entry in snap.get("providers", []):
-        u = _usage(entry)
-        if not u["ready"] or u["error"]:
+        key = entry.get("key")
+        if not key or constrained(snap, key):
             continue
+        u = _usage(entry)
         used = u["max_used"] if u["max_used"] is not None else 0.0
         if best_used is None or used < best_used:
-            best, best_used = entry.get("key"), used
+            best, best_used = key, used
     return best
 
 

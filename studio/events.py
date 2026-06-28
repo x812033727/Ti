@@ -262,9 +262,13 @@ def provider_constrained(
     session_id: str,
     role_key: str,
     provider: str,
-    reason: str,
+    reason: str | list[dict] = "no_provider_ready",
+    providers: list[dict] | None = None,
     snapshot: dict | None = None,
 ) -> StudioEvent:
+    if not isinstance(reason, str):
+        providers = reason
+        reason = "no_provider_ready"
     return StudioEvent(
         EventType.PROVIDER_CONSTRAINED,
         session_id,
@@ -272,6 +276,7 @@ def provider_constrained(
             "role": role_key,
             "provider": provider,
             "reason": reason,
+            "providers": providers or [],
             "snapshot": snapshot or {},
         },
     )
