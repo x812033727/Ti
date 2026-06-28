@@ -203,8 +203,14 @@ def test_scorecard_uses_structured_event_flags_only():
     src = inspect.getsource(_derive_scorecard)
     # 確定性推導：只該看到結構化欄位讀取與布林/計數判斷
     forbidden = [
-        "import openai", "import anthropic", "import litellm", "import google.generativeai",
-        ".chat(", ".complete(", "langchain", "llama_index",
+        "import openai",
+        "import anthropic",
+        "import litellm",
+        "import google.generativeai",
+        ".chat(",
+        ".complete(",
+        "langchain",
+        "llama_index",
     ]
     for tok in forbidden:
         assert tok not in src, f"_derive_scorecard 不該引入自然語言依賴：{tok}"
