@@ -458,6 +458,12 @@ function handleEvent(ev) {
       addSystem(voteLine);
       break;
     }
+    case "appraisal": {
+      // 考核：收尾檢討時 PM 對參與 AI 的績效評分（log-line 樣式，比照 dispatch_decision）。
+      const who = (p.provider || p.role || "?") + (p.model ? "/" + p.model : "");
+      addSystem(`📋 考核 ${who}：★${p.score ?? "?"}${p.comment ? " " + p.comment : ""}`);
+      break;
+    }
   }
 }
 
@@ -807,9 +813,36 @@ async function refreshAutopilot() {
     $("#apState").textContent = "讀取失敗（autopilot 服務可能未啟動）";
     $("#apMini").textContent = "讀取失敗";
   }
-  // 額度迷你條與動態 timeline 各自容錯：任一端點失敗不影響上方狀態列。
+  // 額度迷你條、績效榜與動態 timeline 各自容錯：任一端點失敗不影響上方狀態列。
   await refreshApQuota();
+  await refreshApAppraisal();
   await refreshApActivity();
+}
+
+// --- 績效榜（讀 /api/appraisals：per provider 平均分/樣本數/QA 通過率）--------
+async function refreshApAppraisal() {
+  const box = $("#apAppraisal");
+  if (!box) return;
+  try {
+    const data = await (await fetch("/api/appraisals")).json();
+    const provs = (data.summary || {}).providers || {};
+    box.innerHTML = "";
+    const keys = Object.keys(provs);
+    if (!keys.length) {
+      appendTextEl(box, "span", "muted", "尚無考核");
+      return;
+    }
+    // 平均分高者在前（同分按名稱穩定排序）。
+    keys.sort((a, b) => (provs[b].avg_score || 0) - (provs[a].avg_score || 0) || a.localeCompare(b));
+    for (const k of keys) {
+      const st = provs[k] || {};
+      const pass = st.pass_rate == null ? "" : `・通過率 ${Math.round(st.pass_rate * 100)}%`;
+      appendTextEl(box, "div", "ap-appraisal-row", `${k}　★${st.avg_score ?? "?"}（${st.n || 0} 件${pass}）`);
+    }
+  } catch (e) {
+    // 考核端點不可用（舊後端）時容錯：區塊留空，不影響其餘面板。
+    box.textContent = "";
+  }
 }
 
 // --- provider 額度迷你條（讀 /api/provider-quota，四家 5h/7d 用量）----------

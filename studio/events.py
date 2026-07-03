@@ -35,6 +35,7 @@ class EventType(str, Enum):
     DONE = "done"  # 專案完成
     ERROR = "error"  # 錯誤
     VOTE_RESULT = "vote_result"  # 3-AI 表決結果（PM 無法決定時跨 provider 多數決）
+    APPRAISAL = "appraisal"  # 考核：收尾檢討時 PM 對參與 AI 的績效評分（1–5 分＋評語）
 
 
 @dataclass
@@ -369,5 +370,32 @@ def vote_result(
             "winner": winner,
             "tie": tie,
             "degraded": degraded,
+        },
+    )
+
+
+def appraisal(
+    session_id: str,
+    provider: str,
+    model: str,
+    role: str,
+    score: int,
+    comment: str,
+) -> StudioEvent:
+    """一筆 AI 成員考核：收尾檢討時 PM 對參與者打的 1–5 分（5 最佳）＋一句評語。
+
+    ``provider``／``role`` 至少一者非空（PM 以 provider 名或在場 role key 指認對象）；
+    ``model`` 可為空字串（未知或該 provider 預設模型槽）。前端以 log-line 顯示、經既有
+    broadcast→record_event 入 history 供重播；持久化聚合另走 studio/appraisal 考核庫。
+    """
+    return StudioEvent(
+        EventType.APPRAISAL,
+        session_id,
+        {
+            "provider": provider,
+            "model": model,
+            "role": role,
+            "score": int(score),
+            "comment": comment,
         },
     )

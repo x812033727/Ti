@@ -86,6 +86,8 @@ const known = [
   ev('publish_result', { ok: true, detail: 'done', branch: 'b', pr_url: 'http://x' }),
   ev('done', { completed: true, stopped: false, files: [] }),
   ev('error', { message: '壞了' }),
+  ev('appraisal', { provider: 'claude', model: 'claude-opus-4-8', role: 'engineer', score: 4, comment: '穩定高質量' }),
+  ev('appraisal', { provider: '', model: '', role: 'qa', score: 5, comment: '' }),
 ];
 
 let pass = 0, fail = 0;
