@@ -136,3 +136,67 @@ def test_switch_rejects_unknown_and_illegal_label(_isolate):
         claude_accounts.switch("Z")  # 無此標籤檔
     with pytest.raises(ValueError):
         claude_accounts.switch("../x")  # 非法 label
+
+
+# --- pick_account：雙帳號 95% 輪替的純決策（無 I/O，不碰檔案）--------------
+
+
+def _pick(usages, active, preferred="B", threshold=95.0):
+    return claude_accounts.pick_account(usages, active, preferred, threshold)
+
+
+def test_pick_account_switches_away_when_active_hits_threshold():
+    """規則 2：在線 B「恰達」95% 且 A 未達 → 切 A（門檻採 >=）。"""
+    assert _pick({"A": 10.0, "B": 95.0}, "B") == "A"
+
+
+def test_pick_account_switches_back_when_other_side_exhausted():
+    """規則 2（雙向互切）：在線 A 達門檻且 B 未達 → 切回 B。"""
+    assert _pick({"A": 96.0, "B": 40.0}, "A") == "B"
+
+
+def test_pick_account_picks_lowest_usage_among_candidates():
+    """規則 2：多帳號時切到未達門檻者中「用量最低」的那個。"""
+    assert _pick({"A": 50.0, "B": 97.0, "C": 20.0}, "B") == "C"
+
+
+def test_pick_account_none_when_all_exhausted():
+    """規則 3：兩邊都 ≥95% → None（不切換，交給既有 quota gate 睡到重置）。"""
+    assert _pick({"A": 97.0, "B": 95.0}, "B") is None
+    assert _pick({"A": 95.0, "B": 99.0}, "A") is None
+
+
+def test_pick_account_returns_to_preferred_after_reset():
+    """規則 1：在線 A 未達門檻、且 preferred B 已降回門檻以下（重置）→ 回 B。"""
+    assert _pick({"A": 50.0, "B": 3.0}, "A") == "B"
+
+
+def test_pick_account_stays_when_preferred_still_exhausted():
+    """在線 A 未達門檻、但 preferred B 仍 ≥95% → 不切（留在 A 繼續消化額度）。"""
+    assert _pick({"A": 50.0, "B": 96.0}, "A") is None
+
+
+def test_pick_account_noop_when_active_is_preferred_and_healthy():
+    """在線即 preferred 且未達門檻 → 不切換。"""
+    assert _pick({"A": 10.0, "B": 50.0}, "B") is None
+
+
+def test_pick_account_single_account_none():
+    """只有一個帳號 → 無處可切，一律 None。"""
+    assert _pick({"B": 99.0}, "B") is None
+    assert _pick({"B": 10.0}, "B") is None
+
+
+def test_pick_account_unknown_usage_is_not_a_target():
+    """None 用量＝查不到 → 不可作為切入目標；在線帳號查不到用量也不動作。"""
+    assert _pick({"A": None, "B": 96.0}, "B") is None  # 目標查不到 → 不切入
+    assert _pick({"A": 20.0, "B": None}, "B") is None  # 在線查不到 → 不動作
+    assert _pick({"A": 10.0, "B": None}, "A") is None  # preferred 查不到 → 不回切
+
+
+def test_pick_account_missing_preferred_or_unknown_active_none():
+    """preferred 缺席 → 不回切；在線 label 未知（None／不在 usages）→ 不動作。"""
+    assert _pick({"A": 10.0, "C": 20.0}, "A") is None  # preferred B 缺席
+    assert _pick({"A": 96.0, "C": 20.0}, "A") == "C"  # 但規則 2 不依賴 preferred
+    assert _pick({"A": 10.0, "B": 20.0}, None) is None  # 無在線 label
+    assert _pick({"A": 10.0, "B": 20.0}, "Z") is None  # 在線 label 不在 usages
