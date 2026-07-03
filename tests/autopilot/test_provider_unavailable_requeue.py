@@ -1,4 +1,9 @@
-"""Autopilot provider unavailable handling."""
+"""Autopilot provider unavailable handling.
+
+契約（自「額度感知節奏」後改版）：provider 不可用時把任務退回 pending 即 return，
+**不再 _pause() 寫 pause 檔永久暫停等人工 resume**——下一輪主迴圈的額度閘門
+（provider_quota.gate）會睡到額度重置後自動續跑。_pause() 保留給重佈失敗分支。
+"""
 
 from __future__ import annotations
 
@@ -8,8 +13,8 @@ from studio import autopilot
 
 
 @pytest.mark.asyncio
-async def test_run_one_task_pauses_on_provider_unavailable(monkeypatch, tmp_path):
-    """Provider 額度/可用性問題應暫停 autopilot，避免把任務打成 failed 後繼續燒。"""
+async def test_run_one_task_requeues_on_provider_unavailable(monkeypatch, tmp_path):
+    """Provider 額度/可用性問題應把任務退回 pending 且不寫 pause 檔（長跑不間斷）。"""
     clone = tmp_path / "clone"
     clone.mkdir()
     statuses = []
@@ -50,5 +55,7 @@ async def test_run_one_task_pauses_on_provider_unavailable(monkeypatch, tmp_path
 
     assert statuses[0][0:2] == (7, "in_progress")
     assert statuses[0][2]["session_id"].startswith("ap")
+    # 退回 pending（帶原因 note），由下一輪額度閘門自然睡眠後重跑
     assert statuses[-1] == (7, "pending", {"note": "codex provider unavailable"})
-    assert pauses == ["codex provider unavailable"]
+    # 關鍵改版斷言：不得呼叫 _pause（不寫 pause 檔、不永久暫停）
+    assert pauses == []

@@ -12,6 +12,7 @@
   標注哪些角色用它），塞進 PM 的動態 step prompt，讓 PM 依「目前額度」分派/招募。
 - ``constrained(snap, provider)``：該 provider 是否受限（未就緒/查詢異常/用量達門檻）。
 - ``least_constrained_ready(snap)``：就緒且最寬鬆的 provider key（受限角色自動重綁的安全網）。
+- ``gate(snap)``：全域額度閘門 ``(any_usable, earliest_reset_epoch)``（autopilot 主迴圈節流用）。
 """
 
 from __future__ import annotations
@@ -258,6 +259,30 @@ def least_constrained_ready(snap: dict) -> str | None:
         if best_used is None or used < best_used:
             best, best_used = entry.get("key"), used
     return best
+
+
+def gate(snap: dict, threshold: float = CONSTRAINED_THRESHOLD) -> tuple[bool, float | None]:
+    """全域額度閘門：回 ``(any_usable, earliest_reset_epoch)``，供 autopilot 主迴圈節流。
+
+    any_usable＝至少一個 provider「可用」：ready、無 error、且 ``max_used`` 低於受限門檻
+    （複用 ``constrained()`` 的 ``CONSTRAINED_THRESHOLD``，勿另造門檻）；拿不到用量資訊
+    （``max_used is None``）視為可用，與 ``constrained()`` 的判定對齊。
+
+    earliest_reset_epoch＝「就緒且無 error、但用量達門檻」的 provider 中最早的 reset_at
+    （epoch 秒）——只有這類 provider 會在重置後重新變可用，未就緒/查詢異常者的 reset 不算數。
+    全無 reset 資訊回 None，呼叫端自行套睡眠下限/上限。
+    """
+    any_usable = False
+    resets: list[float] = []
+    for entry in snap.get("providers", []):
+        u = _usage(entry)
+        if not u["ready"] or u["error"]:
+            continue
+        if u["max_used"] is None or u["max_used"] < threshold:
+            any_usable = True
+        elif u["soonest_reset"] is not None:
+            resets.append(u["soonest_reset"])
+    return any_usable, (min(resets) if resets else None)
 
 
 def summarize_for_pm(snap: dict, role_provider_map: dict[str, str] | None = None) -> str:
