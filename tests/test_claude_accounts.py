@@ -138,65 +138,92 @@ def test_switch_rejects_unknown_and_illegal_label(_isolate):
         claude_accounts.switch("../x")  # 非法 label
 
 
-# --- pick_account：雙帳號 95% 輪替的純決策（無 I/O，不碰檔案）--------------
+# --- pick_account：雙帳號負載平均分配的純決策（無 I/O，不碰檔案）------------
 
 
-def _pick(usages, active, preferred="B", threshold=95.0):
-    return claude_accounts.pick_account(usages, active, preferred, threshold)
+def _w(fh: float | None = None, sd: float | None = None) -> dict:
+    """兩額度窗的 usages 值：{"five_hour": fh, "seven_day": sd}。"""
+    return {"five_hour": fh, "seven_day": sd}
 
 
-def test_pick_account_switches_away_when_active_hits_threshold():
-    """規則 2：在線 B「恰達」95% 且 A 未達 → 切 A（門檻採 >=）。"""
-    assert _pick({"A": 10.0, "B": 95.0}, "B") == "A"
+def _pick(usages, active, preferred="B", threshold=95.0, margin=10.0):
+    return claude_accounts.pick_account(usages, active, preferred, threshold, margin)
 
 
-def test_pick_account_switches_back_when_other_side_exhausted():
-    """規則 2（雙向互切）：在線 A 達門檻且 B 未達 → 切回 B。"""
-    assert _pick({"A": 96.0, "B": 40.0}, "A") == "B"
+def test_pick_account_balances_when_gap_reaches_margin():
+    """平均分配主規則：在線 B 負載比 A 高出 ≥margin → 切 A 攤平用量（未達上限也切）。"""
+    assert _pick({"A": _w(18.0, 8.0), "B": _w(40.0, 12.0)}, "B") == "A"
 
 
-def test_pick_account_picks_lowest_usage_among_candidates():
-    """規則 2：多帳號時切到未達門檻者中「用量最低」的那個。"""
-    assert _pick({"A": 50.0, "B": 97.0, "C": 20.0}, "B") == "C"
+def test_pick_account_load_is_max_of_windows():
+    """負載＝5h/7d 取最大：B 的 7d 45 才是負載（5h 僅 30），比 A(25) 高 ≥margin → 切。"""
+    assert _pick({"A": _w(25.0, 20.0), "B": _w(30.0, 45.0)}, "B") == "A"
 
 
-def test_pick_account_none_when_all_exhausted():
-    """規則 3：兩邊都 ≥95% → None（不切換，交給既有 quota gate 睡到重置）。"""
-    assert _pick({"A": 97.0, "B": 95.0}, "B") is None
-    assert _pick({"A": 95.0, "B": 99.0}, "A") is None
+def test_pick_account_gap_below_margin_stays():
+    """遲滯：負載差 <margin → 不切（兩帳號負載相近時避免頻繁互切、每次切換都要重啟）。"""
+    assert _pick({"A": _w(35.0), "B": _w(40.0)}, "B") is None
+    assert _pick({"A": _w(40.0), "B": _w(35.0)}, "A") is None  # 反向同理：也不為回 B 而切
 
 
-def test_pick_account_returns_to_preferred_after_reset():
-    """規則 1：在線 A 未達門檻、且 preferred B 已降回門檻以下（重置）→ 回 B。"""
-    assert _pick({"A": 50.0, "B": 3.0}, "A") == "B"
+def test_pick_account_gap_exactly_margin_switches():
+    """負載差恰等於 margin 即切（≥ 語意）。"""
+    assert _pick({"A": _w(20.0), "B": _w(30.0)}, "B") == "A"
 
 
-def test_pick_account_stays_when_preferred_still_exhausted():
-    """在線 A 未達門檻、但 preferred B 仍 ≥95% → 不切（留在 A 繼續消化額度）。"""
-    assert _pick({"A": 50.0, "B": 96.0}, "A") is None
+def test_pick_account_equal_load_stays_put():
+    """同分：best 依 tie-break 是 preferred B，但差距 0 <margin → 留在原帳號不切。"""
+    assert _pick({"A": _w(20.0), "B": _w(20.0)}, "A") is None
+    assert _pick({"A": _w(20.0), "B": _w(20.0)}, "B") is None
 
 
-def test_pick_account_noop_when_active_is_preferred_and_healthy():
-    """在線即 preferred 且未達門檻 → 不切換。"""
-    assert _pick({"A": 10.0, "B": 50.0}, "B") is None
+def test_pick_account_tiebreak_prefers_preferred_then_alpha():
+    """同分 tie-break：preferred 優先、再字母序。"""
+    # A、B 同為 10 → best=B（preferred）；在線 C 高出 ≥margin → 切 B
+    assert _pick({"A": _w(10.0), "B": _w(10.0), "C": _w(50.0)}, "C") == "B"
+    # preferred B 不在同分組：A、C 同為 10 → 字母序取 A
+    assert _pick({"A": _w(10.0), "B": _w(50.0), "C": _w(10.0)}, "B") == "A"
+
+
+def test_pick_account_threshold_forces_switch_ignoring_margin():
+    """安全上限：在線負載 ≥threshold → 即使差距 <margin 也強制切到仍低於上限者。"""
+    assert _pick({"A": _w(94.0), "B": _w(96.0)}, "B") == "A"  # 差 2 <margin 仍切
+    assert _pick({"A": _w(95.0), "B": _w(50.0)}, "A") == "B"  # 恰達上限（≥ 語意）→ 切
+    assert _pick({"A": _w(90.0, 96.0), "B": _w(94.0)}, "A") == "B"  # 7d 窗達上限也算
+
+
+def test_pick_account_none_when_all_at_threshold():
+    """全部帳號負載 ≥threshold → 無候選 → None（交給既有 quota gate 睡到重置）。"""
+    assert _pick({"A": _w(97.0), "B": _w(95.0)}, "B") is None
+
+
+def test_pick_account_unavailable_active_switches_away():
+    """在線帳號兩窗皆 None（額度查不到）→ 視為需要切走，切到可用帳號。"""
+    assert _pick({"A": _w(50.0), "B": _w(None, None)}, "B") == "A"
+
+
+def test_pick_account_active_missing_from_usages_switches_away():
+    """在線 label 不在 usages（標籤檔遺失等）→ 同不可用，切到最低負載候選。"""
+    assert _pick({"A": _w(10.0), "B": _w(20.0)}, "Z") == "A"
+
+
+def test_pick_account_unavailable_account_not_a_target():
+    """兩窗皆 None 的帳號不得為切換目標。"""
+    assert _pick({"A": _w(None, None), "B": _w(96.0)}, "B") is None  # 唯一候選查不到 → 交給 gate
+    assert _pick({"A": _w(None, None), "B": _w(40.0)}, "B") is None  # 在線健康、無其他候選 → 不動
+
+
+def test_pick_account_none_window_ignored():
+    """單一 None 窗忽略、以另一窗當負載：B 負載 80（7d）、A 20（5h）→ 差 ≥margin 切 A。"""
+    assert _pick({"A": _w(20.0, None), "B": _w(None, 80.0)}, "B") == "A"
 
 
 def test_pick_account_single_account_none():
     """只有一個帳號 → 無處可切，一律 None。"""
-    assert _pick({"B": 99.0}, "B") is None
-    assert _pick({"B": 10.0}, "B") is None
+    assert _pick({"B": _w(99.0)}, "B") is None
+    assert _pick({"B": _w(10.0)}, "B") is None
 
 
-def test_pick_account_unknown_usage_is_not_a_target():
-    """None 用量＝查不到 → 不可作為切入目標；在線帳號查不到用量也不動作。"""
-    assert _pick({"A": None, "B": 96.0}, "B") is None  # 目標查不到 → 不切入
-    assert _pick({"A": 20.0, "B": None}, "B") is None  # 在線查不到 → 不動作
-    assert _pick({"A": 10.0, "B": None}, "A") is None  # preferred 查不到 → 不回切
-
-
-def test_pick_account_missing_preferred_or_unknown_active_none():
-    """preferred 缺席 → 不回切；在線 label 未知（None／不在 usages）→ 不動作。"""
-    assert _pick({"A": 10.0, "C": 20.0}, "A") is None  # preferred B 缺席
-    assert _pick({"A": 96.0, "C": 20.0}, "A") == "C"  # 但規則 2 不依賴 preferred
-    assert _pick({"A": 10.0, "B": 20.0}, None) is None  # 無在線 label
-    assert _pick({"A": 10.0, "B": 20.0}, "Z") is None  # 在線 label 不在 usages
+def test_pick_account_unknown_active_none():
+    """在線 label 未知（None）→ 不動作，寧可不切也不亂切。"""
+    assert _pick({"A": _w(10.0), "B": _w(20.0)}, None) is None

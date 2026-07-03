@@ -167,46 +167,54 @@ def switch(label: str) -> None:
     _active_file().write_text(label, encoding="utf-8")
 
 
+def _load(windows: dict[str, float | None] | None) -> float | None:
+    """帳號負載＝5h／7d 兩額度窗 used_percentage 取最大。
+
+    None 的窗忽略（查不到該窗不影響另一窗）；兩窗皆 None 回 None（帳號額度完全查不到）。
+    """
+    if not windows:
+        return None
+    vals = [v for v in (windows.get("five_hour"), windows.get("seven_day")) if v is not None]
+    return max(vals) if vals else None
+
+
 def pick_account(
-    usages: dict[str, float | None],
+    usages: dict[str, dict[str, float | None]],
     active: str | None,
     preferred: str,
     threshold: float,
+    margin: float,
 ) -> str | None:
-    """雙（多）帳號額度輪替的純決策：回「應切換到的 label」，不需切換回 None。
+    """雙（多）帳號的「負載平均分配」純決策：回「應切換到的 label」，不需切換回 None。
 
-    ``usages`` 為 ``{label: 該帳號額度用量%}``（取 5h/7d 窗的最大值；None＝查不到，
-    視為不可用、不得作為切入目標）；``active`` 為目前在線 label；``preferred`` 為主帳號；
-    ``threshold`` 為收斂門檻（%）。三規則：
+    ``usages`` 為 ``{label: {"five_hour": 用量%|None, "seven_day": 用量%|None}}``；每帳號
+    **負載＝兩窗取最大**（None 窗忽略；兩窗皆 None＝額度查不到→該帳號不可用，不得作為
+    切換目標；在線帳號兩窗皆 None 則視為需要切走）。``preferred`` 為主帳號（同分優先）。
 
-    1. 每個額度週期先用主帳號 ``preferred``：在線帳號未達門檻、但不是 preferred，且
-       preferred 用量已降回門檻以下（額度重置）→ 切回 preferred。
-    2. 在線帳號用量達 ``threshold`` 且存在其他未達門檻的帳號 → 切到其中用量最低者
-       （雙向互切、一直輪替：B→A、A→B）。
-    3. 全部帳號都達門檻 → None（不切換，交給既有 quota gate 睡到額度重置；重置後
-       由規則 1 回到 preferred）。
+    規則（平均分配為主、``threshold`` 為安全上限、``margin`` 為遲滯）：
 
-    其餘情況（在線 label 未知、在線用量查不到、只有一個帳號、preferred 缺席或查不到）
-    一律回 None——查不到就不動作，寧可不切也不要亂切。純函式、無 I/O，好單測。
+    1. 候選＝負載 < ``threshold``（安全上限，預設 95%）的帳號；無候選 → None
+       （全部達上限或查不到，交給既有 quota gate 睡到額度重置）。
+    2. best＝候選中負載最低者；同分 tie-break：``preferred`` 優先、再字母序。
+    3. 在線帳號不在候選（負載達安全上限、或額度查不到）→ 回 best（安全上限強制切）。
+    4. 在線帳號在候選 → 只有當 best ≠ 在線且「在線負載 − best 負載 ≥ ``margin``」才回
+       best（**平均分配主規則**：把用量攤平到各帳號；margin 遲滯避免兩帳號負載相近時
+       頻繁互切、每次切換都要重啟服務）。差距未達 margin → None（留在原帳號）。
+
+    在線 label 未知（``active is None``）一律回 None——不知道現在是誰就不動作，寧可
+    不切也不要亂切。純函式、無 I/O，好單測。
     """
     if active is None:
         return None
-    active_used = usages.get(active)
-    if active_used is None:
-        return None
-    if active_used >= threshold:
-        # 規則 2：收斂切換——候選＝其他帳號中「用量已知且未達門檻」者，取用量最低的
-        candidates = {
-            label: used
-            for label, used in usages.items()
-            if label != active and used is not None and used < threshold
-        }
-        if not candidates:
-            return None  # 規則 3：全受限 → 不切換，交給 quota gate
-        return min(candidates, key=candidates.__getitem__)
-    # 規則 1：在線未達門檻但非主帳號，且主帳號額度已重置（降回門檻以下）→ 回主帳號
-    if active != preferred:
-        preferred_used = usages.get(preferred)
-        if preferred_used is not None and preferred_used < threshold:
-            return preferred
+    loads = {label: _load(windows) for label, windows in usages.items()}
+    candidates = {label: ld for label, ld in loads.items() if ld is not None and ld < threshold}
+    if not candidates:
+        return None  # 全部達安全上限／查不到 → 交給 quota gate
+    # 負載最低者；同分 preferred 優先（False < True）、再字母序
+    best = min(candidates, key=lambda lb: (candidates[lb], lb != preferred, lb))
+    active_load = candidates.get(active)
+    if active_load is None:
+        return best  # 在線達安全上限或不可用（best 必 ≠ active，因 active 不在候選）
+    if best != active and active_load - candidates[best] >= margin:
+        return best
     return None
