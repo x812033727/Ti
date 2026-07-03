@@ -29,6 +29,7 @@ class EventType(str, Enum):
     CONCLUSION = "conclusion"  # 結論彙整：一場討論收斂後產出 CONCLUSION.md 的終局快照
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
+    DISPATCH_DECISION = "dispatch_decision"  # 額度感知 per-task 派工（任務暫換 provider/model）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
     TOKEN_USAGE = "token_usage"  # LLM 呼叫 token / cost 用量
     DONE = "done"  # 專案完成
@@ -180,6 +181,34 @@ def demo_result(
             "exit_code": exit_code,
             "passed": exit_code == 0,
             "output": output,
+        },
+    )
+
+
+def dispatch_decision(
+    session_id: str,
+    task_id: int,
+    title: str,
+    role: str,
+    provider: str,
+    model: str,
+    reason: str,
+) -> StudioEvent:
+    """額度感知 per-task 派工：任務 #task_id 的實作者（role）暫時換綁 provider/model 的決策快照。
+
+    ``model`` 空字串＝沿用該 provider 的預設模型槽；``reason`` 為 flow.choose_dispatch 的
+    繁中一句話決策理由（前端以 log-line 顯示、入 history 供重播）。
+    """
+    return StudioEvent(
+        EventType.DISPATCH_DECISION,
+        session_id,
+        {
+            "task_id": task_id,
+            "title": title,
+            "role": role,
+            "provider": provider,
+            "model": model,
+            "reason": reason,
         },
     )
 

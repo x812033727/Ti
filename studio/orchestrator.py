@@ -261,6 +261,18 @@ class StudioSession:
         # 招募成員「實際綁定」的 provider（key→provider）。招募時 _pick_provider 可能把受限/PM 指定的
         # provider 自動重綁，與 effective_provider(role) 不同；額度摘要/roster 顯示須以此為準才正確。
         self._recruit_providers: dict[str, str] = {}
+        # 額度感知 per-task 派工狀態：PM 拆解時的 `派工:` 建議（task_id→{provider, model}）、
+        # 已派 provider 序列（同分時避開剛用過的、把任務分攤到各家）、任務期間的暫時綁定
+        # （併入 _role_provider_map 供額度摘要顯示正確）。_dispatch_factory 供測試注入 stub
+        # （簽名同 providers.make_expert：(role, session_id, cwd, *, provider, model)→expert）。
+        self._dispatch_hints: dict[int, dict] = {}
+        self._dispatch_recent: list[str] = []
+        self._dispatch_bindings: dict[str, str] = {}
+        self._dispatch_factory = None
+        # 呼叫端顯式注入 experts（測試 stub／離線假專家）時，per-task 派工不換綁——絕不把
+        # stub 換成真 provider 專家（與 _get_critic 的離線護欄同一道理）；注入 _dispatch_factory
+        # 的測試除外。
+        self._experts_injected = experts is not None
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -1200,6 +1212,16 @@ class StudioSession:
             if prior_improvement
             else ""
         )
+        # 額度感知派工：拆解前查一次 provider 額度快照，讓 PM 依「目前各家額度」把任務
+        # 分散到各 provider（`派工:` 行只是建議，合法性與受限與否由 flow.choose_dispatch 兜底）。
+        await self._refresh_quota_snapshot()
+        dispatch_note = (
+            self._quota_note(experts)
+            + "每個任務可（選填）加一行 `派工: #<id> <provider> [<model>]`（provider 限 "
+            + "、".join(config.PROVIDERS)
+            + "；model 可省略＝該家預設模型），依上方額度把任務分散到各 provider、避開受限者；"
+            "未標派工的任務由系統依額度自動分派。\n"
+        )
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
@@ -1210,12 +1232,15 @@ class StudioSession:
             + improvement_note
             + f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請拆解成結構化任務清單與驗收標準，並宣告執行指令。\n"
-            + AGENDA_PROMPT_RULES.format(keys=", ".join(experts.keys())),
+            + AGENDA_PROMPT_RULES.format(keys=", ".join(experts.keys()))
+            + dispatch_note,
             self.broadcast,
         )
         self._pm_plan = pm_plan
         self._run_command = runner.parse_run_command(pm_plan)
         self._demo_url = runner.parse_demo_url(pm_plan)
+        # PM 的派工建議（無派工行＝空 dict）；消費端在 _work_task 開工前 choose_dispatch。
+        self._dispatch_hints = flow.parse_dispatch(pm_plan)
         if config.PARALLEL_TASKS_ENABLED:
             # 並行：解析任務 + 依賴邊，供拓撲分波。
             self._tasks, self._edges = parse_tasks_with_deps(pm_plan)
@@ -1369,13 +1394,16 @@ class StudioSession:
     def _role_provider_map(self, experts: dict) -> dict[str, str]:
         """本場各在場角色實際綁的 provider（混合模式）。
 
-        招募成員以實際綁定為準（`_recruit_providers`，可能因額度受限自動重綁／PM 指定而異於
+        per-task 派工的暫時綁定最優先（`_dispatch_bindings`，任務期間實作者換綁到別家）、
+        其次招募成員的實際綁定（`_recruit_providers`，可能因額度受限自動重綁／PM 指定而異於
         角色預設）；其餘走 `effective_provider`。讓額度摘要/roster「誰用哪家額度」顯示正確。
         """
         from .providers import effective_provider
 
         return {
-            k: self._recruit_providers.get(k) or effective_provider(ex.role)
+            k: self._dispatch_bindings.get(k)
+            or self._recruit_providers.get(k)
+            or effective_provider(ex.role)
             for k, ex in experts.items()
         }
 
@@ -1403,6 +1431,105 @@ class StudioSession:
             "各成員所用 provider 目前額度（混合模式每家不同，分派/招募時優先用還有額度的、"
             "避開受限者）：\n" + summary + "\n\n"
         )
+
+    def _allowed_models(self) -> dict[str, tuple[str, ...]]:
+        """各 provider 的模型白名單（settings 常數）——orchestrator 可 import settings、flow 不可。
+
+        choose_dispatch／招募用它兜底 PM 給的 model：不在對應 provider 白名單即棄用、
+        沿用該家預設模型槽，絕不把 LLM 即興發明的模型 ID 直通到 provider。
+        """
+        from . import settings
+
+        return {
+            "claude": settings.CLAUDE_MODELS,
+            "codex": settings.CODEX_MODELS,
+            "minimax": settings.MINIMAX_MODELS,
+            "antigravity": settings.ANTIGRAVITY_MODELS,
+        }
+
+    async def _dispatch_task_expert(self, ctx: LaneContext, task: dict, impl_role: str):
+        """任務開工前的額度感知 per-task 派工：暫時把實作者換綁到最有額度的 provider/model。
+
+        決策是純函式 flow.choose_dispatch（PM `派工:` 建議優先、受限跳開、同分分攤避開剛用過
+        的），本方法只做副作用：查額度快照、以（_dispatch_factory 或 providers.make_expert）建
+        臨時專家換綁 ctx.experts[impl_role]、記綁定/序列、廣播 dispatch_decision。回傳「還原
+        callback」，呼叫端在 finally 執行：還原原專家、還原綁定、best-effort stop 臨時專家。
+
+        安全邊界（不換綁、回 no-op）：呼叫端顯式注入 experts（測試 stub／離線假專家）且未注入
+        _dispatch_factory、離線模式、無 cwd、快照查詢失敗、choose 回空 provider（全掛）、或選擇
+        與現綁定相同且無模型覆寫——以上皆完全沿用既有行為。臨時專家建立失敗亦不拖垮任務。
+        """
+
+        async def _noop() -> None:
+            return None
+
+        prev_expert = ctx.experts.get(impl_role)
+        if prev_expert is None:
+            return _noop
+        if self._dispatch_factory is None and (
+            self._experts_injected or ctx.cwd is None or config.OFFLINE_MODE
+        ):
+            return _noop
+        await self._refresh_quota_snapshot()
+        if not self._quota_snap:
+            return _noop
+        choice = flow.choose_dispatch(
+            provider_quota.digest(self._quota_snap),
+            task,
+            self._dispatch_hints.get(task["id"]) or {},
+            self._allowed_models(),
+            list(self._dispatch_recent),
+        )
+        provider, model = choice.get("provider", ""), choice.get("model", "")
+        current = self._role_provider_map({impl_role: prev_expert}).get(impl_role, "")
+        # 全掛（空 provider）→ 沿用原綁定；與現綁定同家且無模型覆寫 → 不必換（零成本路徑）。
+        if not provider or (provider == current and not model):
+            return _noop
+        if self._dispatch_factory is not None:
+            factory = self._dispatch_factory
+        else:
+            from .providers import make_expert
+
+            factory = make_expert
+        try:
+            temp = factory(
+                prev_expert.role,
+                f"{self.session_id}:task{task['id']}",
+                ctx.cwd,
+                provider=provider,
+                model=model,
+            )
+        except Exception:  # noqa: BLE001 — 換綁失敗不得拖垮任務，沿用原綁定
+            log.exception("任務 #%s 派工建立 %s 專家失敗，沿用原綁定", task["id"], provider)
+            return _noop
+        prev_binding = self._dispatch_bindings.get(impl_role)
+        ctx.experts[impl_role] = temp
+        self._dispatch_bindings[impl_role] = provider  # 併入 _role_provider_map（額度摘要正確）
+        self._dispatch_recent.append(provider)
+        await self.broadcast(
+            events.dispatch_decision(
+                self.session_id,
+                task["id"],
+                task.get("title", ""),
+                impl_role,
+                provider,
+                model,
+                choice.get("reason", ""),
+            )
+        )
+
+        async def _restore() -> None:
+            ctx.experts[impl_role] = prev_expert
+            if prev_binding is None:
+                self._dispatch_bindings.pop(impl_role, None)
+            else:
+                self._dispatch_bindings[impl_role] = prev_binding
+            try:
+                await temp.stop()  # best-effort：臨時專家的子程序/連線不可洩漏
+            except Exception:  # noqa: BLE001
+                log.warning("任務 #%s 臨時專家 stop 失敗", task["id"], exc_info=True)
+
+        return _restore
 
     def _build_liquid_role(self, spec: dict) -> Role | None:
         """從 PM 的 `招募:` 規格現場液生一個臨時 Role；key 不合法/與既有衝突/缺專長回 None。"""
@@ -1446,19 +1573,25 @@ class StudioSession:
                 prov = alt
         return prov
 
-    async def _recruit(self, ctx: LaneContext, role: Role, provider_hint: str, reason: str) -> str:
+    async def _recruit(
+        self, ctx: LaneContext, role: Role, provider_hint: str, reason: str, model: str = ""
+    ) -> str:
         """把一位新角色建成 expert 加入 lane（額度感知綁 provider），廣播 EXPERT_JOINED。回 role_key。
 
         加進 ctx.experts 即被 run() finally 的回收涵蓋（不另登記）。測試以 self._recruit_factory
-        注入 stub。達 RECRUIT_MAX 上限的把關在呼叫端（_resolve_or_recruit）。
+        注入 stub（簽名 (role, cwd, provider) 不變）。達 RECRUIT_MAX 上限的把關在呼叫端
+        （_resolve_or_recruit）。``model``＝PM `模型:` 行指定的模型（選填）：僅在屬於實際綁定
+        provider 的白名單時傳給 make_expert，否則棄用、沿用該家預設模型槽。
         """
         prov = self._pick_provider(role, provider_hint)
+        if model and model not in (self._allowed_models().get(prov) or ()):
+            model = ""  # 模型不屬於實際綁定 provider 的白名單（或 provider 被重綁）→ 棄用
         if self._recruit_factory is not None:
             expert = self._recruit_factory(role, ctx.cwd, prov)
         else:
             from .providers import make_expert
 
-            expert = make_expert(role, self.session_id, ctx.cwd, provider=prov)
+            expert = make_expert(role, self.session_id, ctx.cwd, provider=prov, model=model)
         ctx.experts[role.key] = expert
         self._recruit_providers[role.key] = prov  # 記實際綁定，供額度摘要/roster 正確顯示
         self._recruited += 1
@@ -1486,6 +1619,7 @@ class StudioSession:
         experts = ctx.experts
         role = (step.get("role") or "").strip()
         provider = step.get("provider", "")
+        model = (step.get("model") or "").strip()  # PM `模型:` 行（選填；白名單兜底在 _recruit）
         if role in experts:
             return role
         if self._recruited < config.RECRUIT_MAX:
@@ -1494,9 +1628,9 @@ class StudioSession:
             if spec and (not role or (spec.get("key") or "").strip() == role):
                 liquid = self._build_liquid_role(spec)
                 if liquid is not None:
-                    return await self._recruit(ctx, liquid, provider, "液生招募")
+                    return await self._recruit(ctx, liquid, provider, "液生招募", model)
             if role in BY_KEY:
-                return await self._recruit(ctx, BY_KEY[role], provider, "庫招募")
+                return await self._recruit(ctx, BY_KEY[role], provider, "庫招募", model)
         fixed, _ = flow.validate_assignees(
             [{"assignee": role}], list(experts.keys()), fallback=fallback
         )
@@ -1551,7 +1685,8 @@ class StudioSession:
                 "`指示: <要請該成員具體做什麼>`\n"
                 "若現有成員都不適合，可現場招募新人：加 `招募: <key> | <名稱> | <一句專長>` "
                 "並用 `下一步: <key>` 指該新人；混合模式可選 "
-                "`provider: <claude|codex|minimax|antigravity>` 指定綁定（額度受限時系統會自動改綁）。\n"
+                "`provider: <claude|codex|minimax|antigravity>` 指定綁定（額度受限時系統會自動改綁），"
+                "另可加 `模型: <model>` 指定該 provider 的模型（非白名單值會被忽略）。\n"
                 "若已無需再推進，輸出一行 `下一步: 結束`。",
                 None,
             )
@@ -2216,17 +2351,42 @@ class StudioSession:
         max_rounds: int | None = None,
         seed_feedback: str = "",
     ) -> bool:
-        """單一任務的 實作→自測→驗證→審查→改進 迴圈，回傳是否通過。
+        """單一任務入口：先做額度感知 per-task 派工（暫換實作者的 provider/model），再跑實作迴圈。
 
-        所有工作（cwd / 專家 / commit / NOTES）都綁定在傳入的 lane context 上，循序模式
-        傳 main_ctx＝今日行為，並行模式傳各 lane 的隔離 context。
-        max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
-        seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
+        換綁只影響本任務：finally 一定還原原專家並 best-effort stop 臨時專家（含中途 return／
+        例外／stop 路徑）。choose 回空 provider（額度全掛/查詢失敗）、與現綁定相同、或處於
+        測試 stub／離線護欄時不換綁＝與既有行為完全一致。實作迴圈本體在 _work_task_rounds。
         """
         # 實作者：task_pipeline 的 implement.assignee（預設 engineer）；不在場則退回 engineer。
         impl_role = self._task_implementer()
         if impl_role not in ctx.experts:
             impl_role = "engineer"
+        restore = await self._dispatch_task_expert(ctx, task, impl_role)
+        try:
+            return await self._work_task_rounds(
+                ctx, task, pm_plan, impl_role, max_rounds=max_rounds, seed_feedback=seed_feedback
+            )
+        finally:
+            await restore()
+
+    async def _work_task_rounds(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        pm_plan: str,
+        impl_role: str,
+        *,
+        max_rounds: int | None = None,
+        seed_feedback: str = "",
+    ) -> bool:
+        """單一任務的 實作→自測→驗證→審查→改進 迴圈，回傳是否通過。
+
+        所有工作（cwd / 專家 / commit / NOTES）都綁定在傳入的 lane context 上，循序模式
+        傳 main_ctx＝今日行為，並行模式傳各 lane 的隔離 context。
+        impl_role：實作者 role key（由 _work_task 解析並可能已被 per-task 派工暫時換綁）。
+        max_rounds：限制本次迴圈輪數（huddle 後重試只給 1 輪）；None 用 config 預設。
+        seed_feedback：預先注入的回饋（huddle 結論），非空時第一輪即走「改進」路徑。
+        """
         # reviewer 集合（資料驅動，過濾在場）：預設 qa/senior＋security 在場才審，重現今日。
         reviewers = self._task_reviewers(ctx.experts)
         tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。

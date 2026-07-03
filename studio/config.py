@@ -100,6 +100,14 @@ def role_provider(key: str) -> str:
     return ROLE_PROVIDERS.get(key, "")
 
 
+# PM 釘選 provider／模型：PM 是分派、檢驗與表決的最終決策者，判斷品質必須穩定，
+# 故預設釘在 claude + claude-fable-5，不隨全域 provider、per-role 覆寫或動態派工漂移。
+# 設為空字串＝解除釘選（provider 回到 TI_PROVIDER_PM → TI_PROVIDER 的一般優先序、
+# model 回到 TI_MODEL_PM → LEAD/FAST 二分法）。釘選 provider 非法（不在 PROVIDERS 內）視同解除。
+PM_PIN_PROVIDER = os.getenv("TI_PM_PIN_PROVIDER", "claude").strip().lower()
+PM_PIN_MODEL = os.getenv("TI_PM_PIN_MODEL", "claude-fable-5").strip()
+
+
 # OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
@@ -936,6 +944,7 @@ def reload() -> None:
     設定面板可改的項目；其餘（門禁、路徑、伺服器位址）維持啟動時的值。
     """
     global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS, ROLE_PROVIDERS
+    global PM_PIN_PROVIDER, PM_PIN_MODEL
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL_LEAD, MINIMAX_MODEL_FAST
     global GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_MODEL_LEAD, GEMINI_MODEL_FAST
@@ -989,6 +998,8 @@ def reload() -> None:
     MODEL_FAST = os.getenv("TI_MODEL_FAST", "claude-sonnet-4-6")
     ROLE_MODELS = _role_models()
     ROLE_PROVIDERS = _role_providers()
+    PM_PIN_PROVIDER = os.getenv("TI_PM_PIN_PROVIDER", "claude").strip().lower()
+    PM_PIN_MODEL = os.getenv("TI_PM_PIN_MODEL", "claude-fable-5").strip()
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
     OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")

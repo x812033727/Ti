@@ -58,6 +58,7 @@ if (typeof handleEvent !== "function") {
 // 1) 完全未知的事件型別 → 不應崩潰
 // 2) payload 缺失 → 不應崩潰（依賴 ev.payload || {}）
 // 3) 新事件 huddle / critic_review（含 limitation/passed 兩種分支）→ 不應崩潰
+// 4) 額度感知派工 dispatch_decision（完整 payload／缺 model／無 payload）→ 不應崩潰
 const cases = [
   { type: "totally_unknown_event_xyz", session_id: "t", payload: { whatever: 1 } },
   { type: "another_future_event", session_id: "t" }, // 無 payload
@@ -65,6 +66,9 @@ const cases = [
   { type: "huddle", session_id: "t", payload: { title: "X", limitation: true } },
   { type: "critic_review", session_id: "t", payload: { gate: "pm", passed: false, text: "缺錯誤處理" } },
   { type: "critic_review", session_id: "t", payload: { gate: "senior", passed: true } },
+  { type: "dispatch_decision", session_id: "t", payload: { task_id: 2, title: "登入頁", role: "engineer", provider: "codex", model: "gpt-5.5", reason: "codex 用量最低" } },
+  { type: "dispatch_decision", session_id: "t", payload: { task_id: 3, role: "engineer", provider: "claude", model: "" } },
+  { type: "dispatch_decision", session_id: "t" }, // 無 payload
 ];
 
 try {

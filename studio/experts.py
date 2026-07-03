@@ -227,9 +227,12 @@ def _make_fs_guard_hook(cwd: Path):
 def _model_for(role: Role) -> str:
     """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。
 
-    優先序：該角色的個別覆寫（config.ROLE_MODELS，設定面板「<角色>模型」欄位）
-    → 沒覆寫（auto）就沿用 LEAD_ROLES → MODEL_LEAD/FAST 的二分法。
+    優先序：PM 釘選（config.PM_PIN_MODEL——PM 是分派/檢驗/表決的決策者，判斷品質須穩定，
+    預設釘 claude-fable-5；設空字串＝解除釘選）→ 該角色的個別覆寫（config.ROLE_MODELS，
+    設定面板「<角色>模型」欄位）→ 沒覆寫（auto）就沿用 LEAD_ROLES → MODEL_LEAD/FAST 的二分法。
     """
+    if role.key == "pm" and config.PM_PIN_MODEL:
+        return config.PM_PIN_MODEL
     override = config.ROLE_MODELS.get(role.key, "")
     if override:
         return override
@@ -295,12 +298,13 @@ async def _emit_claude_token_usage(
     )
 
 
-def _build_client(role: Role, session_id: str, cwd: Path):
+def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
     """建立該專家的 ClaudeSDKClient。
 
     抽成模組級函式以開出注入縫：測試可 monkeypatch 本函式回傳假 client，
     從而在未安裝 claude-agent-sdk、不連線的情況下驗證 Expert 生命週期。
-    執行期內容與原 __init__ 完全相同。
+    執行期內容與原 __init__ 完全相同。``model`` 非空時覆寫 _model_for(role)
+    （per-task 派工／招募指定模型）；空＝缺省行為不變。
 
     # 重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，避免雙層疊乘。
     # ClaudeAgentOptions 不暴露 max_retries 旋鈕（與 OpenAI SDK 不同），故無需也無從顯式設 0——
@@ -322,7 +326,7 @@ def _build_client(role: Role, session_id: str, cwd: Path):
             hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_make_fs_guard_hook(cwd)])]},
             sandbox=config.expert_sandbox_settings(),
             cwd=str(cwd),
-            model=_model_for(role),
+            model=model or _model_for(role),
             max_turns=config.MAX_TURNS_PER_TURN,
         )
     )
@@ -411,12 +415,23 @@ async def stream_to_events(
 
 
 class Expert:
-    def __init__(self, role: Role, session_id: str, cwd: Path):
+    def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
         self.role = role
         self.session_id = session_id
         self._cwd = cwd  # 逾時斷線後重建 client 需要
-        self._client = _build_client(role, session_id, cwd)
+        self._model = model  # 非空＝per-task 派工／招募指定的模型覆寫；空＝沿用 _model_for
+        self._client = self._new_client()
         self._connected = False
+
+    def _new_client(self):
+        """建 client（含逾時斷線後重建）。
+
+        無模型覆寫時維持既有三參數呼叫形——大量既有測試以 ``lambda role, sid, cwd: ...``
+        monkeypatch `_build_client`，此處不無故破壞其簽名相容。
+        """
+        if self._model:
+            return _build_client(self.role, self.session_id, self._cwd, self._model)
+        return _build_client(self.role, self.session_id, self._cwd)
 
     async def start(self) -> None:
         if not self._connected:
@@ -588,7 +603,7 @@ class Expert:
             except Exception:
                 pass
             self._connected = False
-            self._client = _build_client(r, self.session_id, self._cwd)
+            self._client = self._new_client()  # 重建沿用同一模型覆寫（若有）
             note += "（會話無法中斷，已重建；此前脈絡遺失）"
         if exc.partial_text:
             note += f"\n逾時前的部分輸出：\n{exc.partial_text}"
