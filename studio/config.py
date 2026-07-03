@@ -751,6 +751,11 @@ AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3
 # 上限秒數（防 reset 資訊異常導致睡過頭，醒來會重查快照再決定）。
 AUTOPILOT_QUOTA_GATE = os.getenv("TI_AUTOPILOT_QUOTA_GATE", "1") not in ("0", "false", "False", "")
 AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+# provider 額度快照 SWR（stale-while-revalidate）：provider_quota.snapshot() 的模組級快取
+# 過期後，只要舊快照年齡未超過此秒數，就立即回舊快照（附 stale=true）並由背景執行緒刷新，
+# 讓設定面板、orchestrator 派工與 autopilot 額度閘門等關鍵路徑不必同步等最慢 provider。
+# 設 0 停用 SWR（快取一過期就同步查，回到舊行為）。
+QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
 # 軟性時間預算：session 在硬 timeout（AUTOPILOT_TASK_TIMEOUT，由 autopilot 的 wait_for 套用）的
 # 此比例處主動收斂——停止派發新任務、把已完成的走 Demo/出貨、未動的記 known-limit/followup，
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
@@ -1004,7 +1009,7 @@ def reload() -> None:
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
     global APPRAISAL_ENABLED, APPRAISAL_MAX_STORE
     global ROLES_DIR, AUTOPILOT_NORTH_STAR
-    global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP
+    global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP, QUOTA_STALE_MAX
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
@@ -1145,6 +1150,8 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+    # provider 額度快照 SWR（預設值須與檔頂宣告一致）
+    QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
     # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）
     CLAUDE_ROTATE = os.getenv("TI_CLAUDE_ROTATE", "1") not in ("0", "false", "False", "")
     CLAUDE_ACCOUNT_PREFERRED = os.getenv("TI_CLAUDE_ACCOUNT_PREFERRED", "B")

@@ -1910,6 +1910,8 @@ function renderProviderQuota(data) {
   const titleWrap = document.createElement("div");
   appendTextEl(titleWrap, "div", "quota-kicker", "Provider 即時剩餘額度");
   appendTextEl(titleWrap, "div", "quota-title", `目前使用：${data.active_provider || "未知 provider"}`);
+  // 後端 SWR：stale=true 表示回的是舊快照、背景刷新中——標註即可，下次輪詢/手動更新自然拿到新值。
+  if (data.stale) appendTextEl(titleWrap, "div", "quota-stale muted", "（額度更新中…）");
   head.appendChild(titleWrap);
   settingsQuota.appendChild(head);
 
