@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -20,6 +19,7 @@ from . import (
     blueprint,
     claude_accounts,
     config,
+    deploy,
     history,
     projects,
     provider_quota,
@@ -301,29 +301,9 @@ class ClaudeAccountSwitch(BaseModel):
     label: str
 
 
-def _schedule_service_restart() -> None:
-    """1 秒後重啟 ti.service + ti-autopilot，讓換檔後的新 Claude 認證生效。
-
-    用 systemd-run 起一次性 transient timer：它脫離 ti.service 的 cgroup，故 restart 殺掉
-    本服務時不會把「重啟動作本身」一起殺掉；1 秒延遲確保切換端點的 200 回應已送達前端。
-    無 systemd-run（權限/環境）時退回 detached subprocess，盡力而為。
-    """
-    cmd = ["systemctl", "restart", "ti.service", "ti-autopilot"]
-    try:
-        subprocess.Popen(
-            ["systemd-run", "--no-block", "--on-active=1", "--", *cmd],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return
-    except OSError:
-        pass
-    subprocess.Popen(
-        ["bash", "-c", "sleep 1; " + " ".join(cmd)],
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+# 重啟排程本體已抽到 deploy.schedule_service_restart（autopilot 自動輪替共用同一 SSOT）；
+# 保留模組層名稱給既有測試 monkeypatch（tests/server/test_claude_account_switch.py）。
+_schedule_service_restart = deploy.schedule_service_restart
 
 
 @router.post("/api/claude-account/switch", dependencies=WRITE_DEPS)
@@ -867,8 +847,9 @@ class TaskBody(BaseModel):
 
 @router.get("/api/autopilot", dependencies=[Depends(auth.require_auth)])
 async def autopilot_status() -> JSONResponse:
-    # 心跳：autopilot 主迴圈每輪寫入的 status.json（state=idle/running/quota_sleep、
-    # task_id、sleep_until、各 provider 用量）。檔案不存在或壞損＝null（尚未跑過/未寫入）。
+    # 心跳：autopilot 主迴圈每輪寫入的 status.json（state=idle/running/quota_sleep/
+    # rotate_restart、task_id、sleep_until、各 provider 用量）。檔案不存在或壞損＝null
+    # （尚未跑過/未寫入）。
     try:
         heartbeat = json.loads(
             (config.AUTOPILOT_STATE_DIR / "status.json").read_text(encoding="utf-8")

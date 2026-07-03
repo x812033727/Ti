@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import fcntl
 import shutil
+import subprocess
 
 from . import config, runner
 
@@ -93,6 +94,34 @@ async def health_check(
             return True, "健康檢查通過（200 + 沙箱依賴齊全）"
         await asyncio.sleep(delay)
     return False, f"健康檢查失敗：{url} 在 {attempts} 次內未回 200"
+
+
+def schedule_service_restart() -> None:
+    """1 秒後重啟 ti.service + ti-autopilot，讓換檔後的新 Claude 認證生效。
+
+    Claude 帳號切換（換憑證檔）的共用重啟機制：UI 手動切換端點（routes.py）與 autopilot
+    自動輪替共用此函式（SSOT）。認證在 SDK 啟動時載入記憶體，換檔後須重啟兩個服務才生效。
+    用 systemd-run 起一次性 transient timer：它脫離呼叫端服務的 cgroup，故 restart 殺掉
+    呼叫端（ti.service 或 ti-autopilot 自己）時不會把「重啟動作本身」一起殺掉；1 秒延遲
+    確保切換端點的 200 回應已送達前端／autopilot 已寫完心跳。
+    無 systemd-run（權限/環境）時退回 detached subprocess，盡力而為。
+    """
+    cmd = ["systemctl", "restart", "ti.service", "ti-autopilot"]
+    try:
+        subprocess.Popen(
+            ["systemd-run", "--no-block", "--on-active=1", "--", *cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    except OSError:
+        pass
+    subprocess.Popen(
+        ["bash", "-c", "sleep 1; " + " ".join(cmd)],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 async def _reinstall_and_restart(deploy_dir: str, service: str) -> tuple[bool, str]:

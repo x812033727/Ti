@@ -670,6 +670,14 @@ CLAUDE_CREDENTIALS_FILE = Path(
     os.getenv("TI_CLAUDE_CREDENTIALS_FILE", str(Path.home() / ".claude" / ".credentials.json"))
 )
 
+# --- Claude 訂閱雙帳號自動輪替（決策純函式在 claude_accounts.pick_account、執行點在
+# autopilot 主迴圈）。ROTATE=0 整段停用；PREFERRED 為主帳號 label（每個額度週期優先使用、
+# 額度重置後切回）；THRESHOLD 為收斂門檻（%）：在線帳號任一額度窗（5h/7d）用量達此值
+# 即切到另一個未達門檻的帳號（雙向互切）。三者皆納入 reload()（UI 改 .env 後即時生效）。
+CLAUDE_ROTATE = os.getenv("TI_CLAUDE_ROTATE", "1") not in ("0", "false", "False", "")
+CLAUDE_ACCOUNT_PREFERRED = os.getenv("TI_CLAUDE_ACCOUNT_PREFERRED", "B")
+CLAUDE_ROTATE_THRESHOLD = _env_float("TI_CLAUDE_ROTATE_THRESHOLD", 95.0)
+
 # Antigravity（agy）的 OAuth token 檔（agy 登入後寫入、執行時刷新；antigravity_usage 讀其
 # token.access_token 查 Google Code Assist 配額）。預設 ~/.gemini/antigravity-cli/...；可 env 覆寫。
 ANTIGRAVITY_OAUTH_TOKEN_FILE = Path(
@@ -980,6 +988,7 @@ def reload() -> None:
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
     global ROLES_DIR, AUTOPILOT_NORTH_STAR
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP
+    global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     AUTOPILOT_NORTH_STAR = os.getenv(
         "TI_AUTOPILOT_NORTH_STAR",
@@ -1116,3 +1125,7 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+    # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）
+    CLAUDE_ROTATE = os.getenv("TI_CLAUDE_ROTATE", "1") not in ("0", "false", "False", "")
+    CLAUDE_ACCOUNT_PREFERRED = os.getenv("TI_CLAUDE_ACCOUNT_PREFERRED", "B")
+    CLAUDE_ROTATE_THRESHOLD = _env_float("TI_CLAUDE_ROTATE_THRESHOLD", 95.0)
