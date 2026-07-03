@@ -86,6 +86,57 @@ def list_accounts() -> list[dict]:
     return out
 
 
+def _save_live_to(label: str) -> None:
+    """把線上憑證檔內容存到 ``label`` 標籤檔並收斂權限（chmod 600）。
+
+    供 ``switch()``（切走前保住自動續期後的最新 token）與 ``sync_active_label()``
+    （在線 label 長期不切換時回寫快照）共用。呼叫端須自行確認線上檔存在。
+    """
+    dest = _label_file(label)
+    dest.write_bytes(config.CLAUDE_CREDENTIALS_FILE.read_bytes())
+    try:
+        dest.chmod(0o600)
+    except OSError:
+        pass
+
+
+def _expires_at(path: Path) -> float | None:
+    """讀憑證檔 ``claudeAiOauth.expiresAt``（毫秒 epoch）；缺檔/壞檔/非數值回 None。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    exp = (data.get("claudeAiOauth") or {}).get("expiresAt")
+    return float(exp) if isinstance(exp, (int, float)) else None
+
+
+def sync_active_label() -> bool:
+    """線上憑證比在線 label 標籤檔新（expiresAt 較大）時，回寫標籤檔；有回寫回 True。
+
+    線上檔由 Claude CLI/SDK 自動續期，但標籤檔只在 ``switch()`` 時回存——在線 label 長期
+    不切換就 stale，額度查詢會因 expiresAt 過期短路回 unauthorized。呼叫端（如
+    provider_quota.snapshot）在讀多帳號額度前先呼叫本函式即可保持在線 label 快照新鮮。
+    任何條件不符（無在線 label、線上檔/標籤檔缺失、expiresAt 讀不到或未較新）皆回 False，
+    不拋例外。
+    """
+    active = active_label()
+    if not active:
+        return False
+    live = config.CLAUDE_CREDENTIALS_FILE
+    label_file = _label_file(active)
+    if not live.exists() or not label_file.exists():
+        return False
+    live_exp = _expires_at(live)
+    label_exp = _expires_at(label_file)
+    if live_exp is None or label_exp is None or live_exp <= label_exp:
+        return False
+    try:
+        _save_live_to(active)
+    except OSError:
+        return False
+    return True
+
+
 def switch(label: str) -> None:
     """把線上憑證切到 ``label`` 對應的帳號。
 
@@ -105,7 +156,7 @@ def switch(label: str) -> None:
     if cur and live.exists():
         cur_file = _label_file(cur)
         if cur_file.exists() and cur_file != target:
-            cur_file.write_bytes(live.read_bytes())
+            _save_live_to(cur)
     # 2) 目標標籤檔覆蓋線上，並收斂權限
     live.write_bytes(target.read_bytes())
     try:

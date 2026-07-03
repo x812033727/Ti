@@ -72,6 +72,19 @@ def _antigravity_status() -> dict:
     }
 
 
+def _account_rate_limits(acct: dict, rl: dict | None) -> dict | None:
+    """非在線帳號的 ``unauthorized`` 改映射為 ``stale_label``（誠實顯示、不誤導）。
+
+    非在線帳號的標籤檔本來就不會被 CLI 續期，token 過期只代表「快照舊了」——額度本身
+    不受影響，切換到該帳號一次即刷新；照抄 unauthorized 會讓使用者誤以為帳號登出。
+    在線帳號的 error 保留原值（真 unauthorized 就該顯示）。回新 dict，不改動
+    claude_usage 的 TTL 快取物件。
+    """
+    if rl is None or acct.get("active", False) or rl.get("error") != "unauthorized":
+        return rl
+    return {**rl, "error": "stale_label"}
+
+
 def snapshot() -> dict:
     """只回各 provider 的「即時剩餘額度」（官方 rate limit），不含 Ti 本機累積用量。
 
@@ -86,6 +99,12 @@ def snapshot() -> dict:
     minimax_on = bool(config.MINIMAX_API_KEY)
     # 多帳號：claude 走訂閱時列出本機憑證標籤檔（acct-A/acct-B…），各帳號獨立查額度，
     # 讓設定頁同時顯示並可切換。無標籤檔（單帳號舊機）則回 []，前端退回單一額度顯示。
+    # 讀之前先把線上憑證（CLI 自動續期後最新）回寫在線 label 標籤檔，否則長期不切換時
+    # 標籤檔 expiresAt 過期 → 在線帳號額度誤顯示 unauthorized。同步失敗不得拖垮快照。
+    try:
+        claude_accounts.sync_active_label()
+    except Exception:
+        pass
     claude_accts = claude_accounts.list_accounts() if claude_on else []
     # 各 rate-limit 查詢彼此獨立、皆為阻塞 I/O（各 60s 快取）；並行跑使端點延遲取「最慢
     # 一家」而非「總和」，配合 antigravity 已移除 12s 子程序，明顯改善前端轉圈。
@@ -107,7 +126,7 @@ def snapshot() -> dict:
                 "label": a["label"],
                 "subscription": a.get("subscription"),
                 "active": a.get("active", False),
-                "rate_limits": fut.result(),
+                "rate_limits": _account_rate_limits(a, fut.result()),
             }
             for a, fut in f_accts
         ]
