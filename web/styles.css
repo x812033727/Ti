@@ -913,6 +913,10 @@ input:focus-visible, select:focus-visible { outline: none; }
 .ap-quota-bar.warn .fill { background: var(--warn); }
 .ap-quota-bar.crit .fill { background: var(--bad); }
 
+/* Autopilot：績效榜（AI 成員考核聚合，per provider 平均分/樣本/通過率） */
+.ap-appraisal { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 16px 0; font-size: 11px; }
+.ap-appraisal-row { color: var(--text-2); }
+
 /* Autopilot：工作室動態 timeline */
 .ap-timeline-head { padding: 12px 16px 0; font-size: 12px; }
 .ap-timeline {

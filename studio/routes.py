@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    appraisal,
     auth,
     backlog,
     blueprint,
@@ -944,3 +945,16 @@ async def autopilot_activity(limit: int = 50) -> JSONResponse:
     """工作室動態視圖：backlog 任務 × history 成果（記分卡/token 用量）聚合，updated_at 倒序。"""
     limit = max(1, min(int(limit), 500))  # 夾範圍：防 limit=0/負值/超大值拖垮回應
     return JSONResponse(await asyncio.to_thread(_activity_snapshot, limit))
+
+
+# --- 考核（Appraisal；受保護）-------------------------------------------
+def _appraisals_snapshot(limit: int) -> dict:
+    """考核總覽：近期聚合（per provider／per provider+model 平均分/樣本/通過率）＋最近 N 筆。"""
+    return {"summary": appraisal.summary(), "recent": appraisal.recent(limit)}
+
+
+@router.get("/api/appraisals", dependencies=[Depends(auth.require_auth)])
+async def appraisals_view(limit: int = 50) -> JSONResponse:
+    """AI 成員考核總覽（前端「績效榜」用）。純檔案 IO 仍走 to_thread，不卡事件迴圈。"""
+    limit = max(1, min(int(limit), 500))  # 夾範圍：防 limit=0/負值/超大值拖垮回應
+    return JSONResponse(await asyncio.to_thread(_appraisals_snapshot, limit))

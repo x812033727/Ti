@@ -20,6 +20,7 @@ from typing import Protocol
 
 from . import (
     adr,
+    appraisal,
     conclusion,
     config,
     events,
@@ -278,6 +279,11 @@ class StudioSession:
         # stub 換成真 provider 專家（與 _get_critic 的離線護欄同一道理）；注入 _dispatch_factory
         # 的測試除外。
         self._experts_injected = experts is not None
+        # 考核（Appraisal）暫存：本場 per-task 客觀指標（task_id → {qa_rounds, qa_passed,
+        # senior_approved, provider, model, duration_s, role}）。qa_* 由 _work_task_rounds
+        # 逐輪寫入、provider/model 由 per-task 派工換綁與 _collect_task_perf 補齊，
+        # _wrap_up 時與 PM 的 `考核:` 主觀評分合併寫入 studio/appraisal 考核庫。
+        self._task_perf: dict[int, dict] = {}
 
     # --- 控制 ----------------------------------------------------------
     def request_stop(self) -> None:
@@ -1219,9 +1225,11 @@ class StudioSession:
         )
         # 額度感知派工：拆解前查一次 provider 額度快照，讓 PM 依「目前各家額度」把任務
         # 分散到各 provider（`派工:` 行只是建議，合法性與受限與否由 flow.choose_dispatch 兜底）。
+        # 績效感知：另附各 AI 近期考核摘要（studio/appraisal 聚合；無資料/失敗＝空字串）。
         await self._refresh_quota_snapshot()
         dispatch_note = (
             self._quota_note(experts)
+            + self._appraisal_note(await self._appraisal_perf())
             + "每個任務可（選填）加一行 `派工: #<id> <provider> [<model>]`（provider 限 "
             + "、".join(config.PROVIDERS)
             + "；model 可省略＝該家預設模型），依上方額度把任務分散到各 provider、避開受限者；"
@@ -1437,6 +1445,69 @@ class StudioSession:
             "避開受限者）：\n" + summary + "\n\n"
         )
 
+    # --- 考核（Appraisal）：績效聚合注入與 per-task 客觀指標收集 ----------------
+    async def _appraisal_perf(self) -> dict:
+        """近期考核聚合快照（appraisal.summary；asyncio.to_thread）；停用/失敗一律回 {}。
+
+        兩個消費端共用：PM 拆解 prompt 的 _appraisal_note 摘要、per-task 派工
+        choose_dispatch 的 performance 次序鍵（providers 層的 avg_score）。查詢失敗
+        容錯回空 dict——考核是旁路觀測，絕不拖垮拆解與派工。
+        """
+        if not config.APPRAISAL_ENABLED:
+            return {}
+        try:
+            return await asyncio.to_thread(appraisal.summary) or {}
+        except Exception:  # noqa: BLE001 — 考核聚合失敗不得影響拆解/派工
+            log.warning("考核聚合查詢失敗（略過，回空摘要）", exc_info=True)
+            return {}
+
+    def _appraisal_note(self, summ: dict) -> str:
+        """把近期考核聚合組成給 PM 的 prompt 片段（同 _quota_note 樣式；無資料回空字串）。
+
+        例：「各 AI 近期考核（平均分 1–5，分派時可偏好表現好的）：claude 4.5（12 件，
+        通過率 92%）、codex 3.8（5 件）」。pass_rate 無客觀樣本（None）時省略該段。
+        """
+        provs = (summ or {}).get("providers") or {}
+        parts: list[str] = []
+        for prov, st in provs.items():
+            if not isinstance(st, dict) or st.get("avg_score") is None:
+                continue
+            seg = f"{prov} {st['avg_score']}（{st.get('n', 0)} 件"
+            if st.get("pass_rate") is not None:
+                seg += f"，通過率 {round(st['pass_rate'] * 100)}%"
+            seg += "）"
+            parts.append(seg)
+        if not parts:
+            return ""
+        return "各 AI 近期考核（平均分 1–5，分派時可偏好表現好的）：" + "、".join(parts) + "\n\n"
+
+    def _collect_task_perf(
+        self, ctx: LaneContext, task: dict, impl_role: str, duration_s: float
+    ) -> None:
+        """任務結束（還原換綁前）收客觀指標：實際 provider 綁定與耗時，併入本場考核暫存。
+
+        qa_rounds/qa_passed/senior_approved 由 _work_task_rounds 逐輪寫入；此處補
+        「該任務實作者實際綁定的 provider」（per-task 派工換綁尚未還原，_role_provider_map
+        會先看 _dispatch_bindings）與累計耗時（huddle 重試再進來時累加）。model 僅在
+        per-task 派工顯式指定時已由 _dispatch_task_expert 記下，取不到＝None。
+        永不 raise——考核是旁路觀測，不得影響任務主流程。
+        """
+        try:
+            perf = self._task_perf.setdefault(task["id"], {})
+            perf.setdefault("qa_rounds", 0)
+            perf.setdefault("qa_passed", None)
+            perf.setdefault("senior_approved", None)
+            perf.setdefault("model", None)
+            perf["role"] = impl_role
+            expert = ctx.experts.get(impl_role)
+            provider = ""
+            if expert is not None:
+                provider = self._role_provider_map({impl_role: expert}).get(impl_role, "")
+            perf["provider"] = provider or perf.get("provider") or ""
+            perf["duration_s"] = round((perf.get("duration_s") or 0.0) + duration_s, 1)
+        except Exception:  # noqa: BLE001 — 考核收集失敗不得拖垮任務
+            log.warning("任務 #%s 考核指標收集失敗（略過）", task.get("id"), exc_info=True)
+
     def _allowed_models(self) -> dict[str, tuple[str, ...]]:
         """各 provider 的模型白名單（settings 常數）——orchestrator 可 import settings、flow 不可。
 
@@ -1478,12 +1549,20 @@ class StudioSession:
         await self._refresh_quota_snapshot()
         if not self._quota_snap:
             return _noop
+        # 績效感知：近期考核的 {provider: avg_score} 作 choose_dispatch 同分次序鍵
+        # （偏好歷史表現高者）；聚合失敗回 {} ＝ 行為與純額度分派相同。
+        perf_summary = await self._appraisal_perf()
         choice = flow.choose_dispatch(
             provider_quota.digest(self._quota_snap),
             task,
             self._dispatch_hints.get(task["id"]) or {},
             self._allowed_models(),
             list(self._dispatch_recent),
+            performance={
+                p: st.get("avg_score") or 0.0
+                for p, st in (perf_summary.get("providers") or {}).items()
+                if isinstance(st, dict)
+            },
         )
         provider, model = choice.get("provider", ""), choice.get("model", "")
         current = self._role_provider_map({impl_role: prev_expert}).get(impl_role, "")
@@ -1511,6 +1590,10 @@ class StudioSession:
         ctx.experts[impl_role] = temp
         self._dispatch_bindings[impl_role] = provider  # 併入 _role_provider_map（額度摘要正確）
         self._dispatch_recent.append(provider)
+        # 考核暫存：記下本任務實際換綁的 provider/model（_collect_task_perf 併入客觀指標；
+        # model 空字串＝該 provider 預設模型槽，考核紀錄以 None 表「未知/未指定」）。
+        perf = self._task_perf.setdefault(task["id"], {})
+        perf["provider"], perf["model"] = provider, model or None
         await self.broadcast(
             events.dispatch_decision(
                 self.session_id,
@@ -2505,12 +2588,16 @@ class StudioSession:
         impl_role = self._task_implementer()
         if impl_role not in ctx.experts:
             impl_role = "engineer"
+        t0 = time.monotonic()
         restore = await self._dispatch_task_expert(ctx, task, impl_role)
         try:
             return await self._work_task_rounds(
                 ctx, task, pm_plan, impl_role, max_rounds=max_rounds, seed_feedback=seed_feedback
             )
         finally:
+            # 考核客觀指標：於還原換綁「前」收集（此時 _dispatch_bindings 仍指向本任務
+            # 實際綁定），提供 _wrap_up 與 PM 主觀評分合併入考核庫。永不 raise。
+            self._collect_task_perf(ctx, task, impl_role, time.monotonic() - t0)
             await restore()
 
     async def _work_task_rounds(
@@ -2692,6 +2779,13 @@ class StudioSession:
             # run_result 顯示燈以 qa_passed 裁決的 reviewer 為準（預設 qa）；無則用整體裁決。
             qa_review = next((r for r in reviews if r["role"] == "qa"), None)
             qa_ok = qa_review["ok"] if qa_review else all_review_ok
+            # 考核客觀指標：逐輪累計 QA 輪數、逐輪覆寫裁決（以最後一輪為準；對應 reviewer
+            # 缺席＝None）。與記分卡（history._derive_scorecard）互不依賴，供 _wrap_up 合併。
+            senior_review = next((r for r in reviews if r["role"] == "senior"), None)
+            perf = self._task_perf.setdefault(task["id"], {})
+            perf["qa_rounds"] = (perf.get("qa_rounds") or 0) + 1
+            perf["qa_passed"] = qa_review["ok"] if qa_review else None
+            perf["senior_approved"] = senior_review["ok"] if senior_review else None
             await bc(
                 events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
             )
@@ -3049,7 +3143,18 @@ class StudioSession:
                 "\n另外，若有可跨專案重用的具體經驗（踩過的坑、有效做法、技術選型結論），"
                 "請逐行列出，格式固定為 `教訓: <一句精簡、可重用的經驗>`（最多 5 條，沒有就不必列）。"
             )
+        if config.APPRAISAL_ENABLED:
+            provs = sorted({p for p in self._role_provider_map(self._get_experts()).values() if p})
+            retro_prompt += (
+                "\n另外，請對每位參與的 AI 成員做績效考核，逐行輸出，格式固定為 "
+                "`考核: <provider> <1-5分> <一句評語>`（分數限 1–5 整數、5 為最佳"
+                + ("；本場參與 provider：" + "、".join(provs) if provs else "")
+                + "）。"
+            )
         retro = await pm.speak(retro_prompt, self.broadcast)
+        # 考核：PM 的 `考核:` 主觀評分與本場客觀指標合併入庫＋逐筆廣播（停用/無考核行＝no-op）。
+        if config.APPRAISAL_ENABLED:
+            await self._record_appraisals(retro)
         # 結構化後續任務（main #95：含 priority/type）；累加而非覆寫——先前階段
         # 可能已放入後續任務，不可被檢討清掉。Demo 客觀失敗固定回填成 P0/bug。
         failed_titles = ["修復 Demo 失敗"] if demo_veto else []
@@ -3100,6 +3205,67 @@ class StudioSession:
             )
         )
         return done
+
+    async def _record_appraisals(self, retro: str) -> None:
+        """把 PM 檢討的 `考核:` 行與本場客觀指標合併，寫入考核庫並逐筆廣播 APPRAISAL。
+
+        target 容錯兩種指認：provider 名（直接採用）或在場 role key（換算成該角色實際
+        綁定的 provider，role 一併記錄）。客觀指標取「該 provider／角色本場實際做過任務」
+        的聚合：qa_rounds 加總、qa_passed／senior_approved 取全數通過與否（無裁決樣本＝
+        None）、duration_s 加總；沒做過任務＝各欄 None。task_id 僅在恰有一個任務吻合時
+        記錄。入庫走 asyncio.to_thread、失敗只記 log——考核是旁路觀測，絕不拖垮收尾。
+        """
+        rows = flow.parse_appraisals(retro)
+        if not rows:
+            return
+        role_providers = self._role_provider_map(self._get_experts())
+        now = time.time()
+        entries: list[dict] = []
+        for r in rows:
+            target = r["target"]
+            role = target if target in role_providers else ""
+            provider = role_providers.get(target) or ("" if role else target)
+            matched = [
+                (tid, m)
+                for tid, m in self._task_perf.items()
+                if (provider and m.get("provider") == provider) or (role and m.get("role") == role)
+            ]
+            qa_vals = [m.get("qa_passed") for _, m in matched if m.get("qa_passed") is not None]
+            senior_vals = [
+                m.get("senior_approved") for _, m in matched if m.get("senior_approved") is not None
+            ]
+            durations = [m["duration_s"] for _, m in matched if m.get("duration_s") is not None]
+            models = [m["model"] for _, m in matched if m.get("model")]
+            entries.append(
+                {
+                    "session_id": self.session_id,
+                    "task_id": matched[0][0] if len(matched) == 1 else None,
+                    "role": role,
+                    "provider": provider,
+                    "model": models[-1] if models else "",
+                    "score": r["score"],
+                    "comment": r["comment"],
+                    "objective": {
+                        "qa_rounds": sum(m.get("qa_rounds") or 0 for _, m in matched)
+                        if matched
+                        else None,
+                        "qa_passed": all(qa_vals) if qa_vals else None,
+                        "senior_approved": all(senior_vals) if senior_vals else None,
+                        "duration_s": round(sum(durations), 1) if durations else None,
+                    },
+                    "created_at": now,
+                }
+            )
+        try:
+            await asyncio.to_thread(appraisal.record, entries)
+        except Exception:  # noqa: BLE001 — 考核入庫失敗不得拖垮收尾
+            log.warning("考核入庫失敗（略過，不影響收尾）", exc_info=True)
+        for e in entries:
+            await self.broadcast(
+                events.appraisal(
+                    self.session_id, e["provider"], e["model"], e["role"], e["score"], e["comment"]
+                )
+            )
 
     async def _record_known_limitations(self, unmet: list[dict]) -> None:
         """帶已知限制出貨前：把未通過的次要任務寫進交付物 KNOWN_LIMITATIONS.md（隨發佈一起

@@ -60,6 +60,7 @@ if (typeof handleEvent !== "function") {
 // 3) 新事件 huddle / critic_review（含 limitation/passed 兩種分支）→ 不應崩潰
 // 4) 額度感知派工 dispatch_decision（完整 payload／缺 model／無 payload）→ 不應崩潰
 // 5) 3-AI 表決 vote_result（完整／平手／降級＋棄權／無 payload）→ 不應崩潰
+// 6) 考核 appraisal（完整 payload／缺 model 以 role 指認／無 payload）→ 不應崩潰
 const cases = [
   { type: "totally_unknown_event_xyz", session_id: "t", payload: { whatever: 1 } },
   { type: "another_future_event", session_id: "t" }, // 無 payload
@@ -74,6 +75,9 @@ const cases = [
   { type: "vote_result", session_id: "t", payload: { topic: "平手案", options: ["A", "B"], ballots: [{ voter: "pm", provider: "claude", choice: "A" }, { voter: "voter_codex", provider: "codex", choice: "B" }], winner: "A", tie: true, degraded: false } },
   { type: "vote_result", session_id: "t", payload: { topic: "降級案", options: ["A", "B"], ballots: [{ voter: "pm", provider: "claude", choice: "" }], winner: "A", tie: false, degraded: true } },
   { type: "vote_result", session_id: "t" }, // 無 payload
+  { type: "appraisal", session_id: "t", payload: { provider: "claude", model: "claude-opus-4-8", role: "engineer", score: 4, comment: "穩定高質量" } },
+  { type: "appraisal", session_id: "t", payload: { provider: "", model: "", role: "qa", score: 5, comment: "" } },
+  { type: "appraisal", session_id: "t" }, // 無 payload
 ];
 
 try {

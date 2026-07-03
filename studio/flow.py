@@ -736,3 +736,44 @@ def pick_vote_providers(
         candidates.append((used, i, key))
     candidates.sort()
     return [key for _, _, key in candidates[: max(n, 0)]]
+
+
+# --- 考核（Appraisal）解析（純函式；持久化在 studio/appraisal.py、事件廣播在 orchestrator）---
+
+# 全形數字容錯：LLM 偶爾輸出「４分」這類全形分數，translate 正規化後再驗證範圍。
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def parse_appraisals(text: str) -> list[dict]:
+    """解析 PM 收尾檢討的考核行，回傳 ``[{"target", "score", "comment"}, ...]``。
+
+    行格式：``考核: <角色或provider> <1-5> <一句評語>``（沿用本檔 marker 範式：行前綴、
+    全形冒號容錯、逐行收集）。分數容錯「分」字尾與全形數字；非 1–5 **整數**（0、6、4.5、
+    非數字…）一律丟棄該行——絕不讓 LLM 亂給的分數直通長期庫。target 正規化為小寫
+    （provider 名／role key 皆小寫慣例）；評語可空。無任何考核行回空 list。
+
+    新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
+    """
+    out: list[dict] = []
+    for line in (text or "").splitlines():
+        m = re.match(
+            r"^\s*考核\s*[:：]\s*(\S+)\s+([0-9０-９]+(?:[.．][0-9０-９]+)?)\s*分?\s*(.*?)\s*$",
+            line,
+        )
+        if not m:
+            continue
+        raw = m.group(2).translate(_FULLWIDTH_DIGITS).replace("．", ".")
+        try:
+            score = float(raw)
+        except ValueError:  # 防禦性：正則已限數字形，理論上不會進來
+            continue
+        if not score.is_integer() or not 1 <= score <= 5:
+            continue
+        out.append(
+            {
+                "target": m.group(1).strip().lower(),
+                "score": int(score),
+                "comment": m.group(3).strip(),
+            }
+        )
+    return out

@@ -311,6 +311,14 @@ LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "Fa
 LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
 LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))  # 最小間隔（秒）
 
+# 考核庫（appraisals.json）：每場收尾檢討 PM 對各參與 AI 打 1–5 分（`考核:` 行），與客觀
+# 指標（QA 輪數／裁決、高工核可、耗時）合併持久化；拆解與 per-task 派工時聚合成
+# {provider: 平均分} 餵 flow.choose_dispatch（同用量偏好歷史表現好者）與 PM 拆解摘要。
+# 近零成本（搭檢討 prompt 順帶解析，無額外 LLM 呼叫）——預設開啟；MAX_STORE 為檔案
+# 保留上限（由新到舊裁剪，防長跑只增不減）。
+APPRAISAL_ENABLED = os.getenv("TI_APPRAISAL", "1") not in ("0", "false", "False", "")
+APPRAISAL_MAX_STORE = int(os.getenv("TI_APPRAISAL_MAX_STORE", "2000"))
+
 # 需求澄清階段：拆解前 PM 先就模糊需求向使用者反問關鍵問題（附預設假設），等回覆逾時則按
 # 假設續行——流程絕不因等人而卡死。僅互動 session 生效（須有插話佇列）；autopilot／持續改良
 # 迴圈等自主流程一律跳過。預設開啟：這是「說一句產品就能開工」的核心，無插話佇列時
@@ -662,6 +670,8 @@ WORKSPACE_ROOT = Path(os.getenv("TI_WORKSPACE_ROOT", str(PROJECT_ROOT / "workspa
 HISTORY_ROOT = Path(os.getenv("TI_HISTORY_ROOT", str(PROJECT_ROOT / "history")))
 # 跨場次教訓庫持久化檔（見 LESSONS_ENABLED）。預設置於專案根，已列入 .gitignore，不進版控。
 LESSONS_FILE = Path(os.getenv("TI_LESSONS_FILE", str(PROJECT_ROOT / "lessons.json")))
+# 考核庫持久化檔（見 APPRAISAL_ENABLED）。預設置於專案根，已列入 .gitignore，不進版控。
+APPRAISALS_FILE = Path(os.getenv("TI_APPRAISALS_FILE", str(PROJECT_ROOT / "appraisals.json")))
 WEB_DIR = PROJECT_ROOT / "web"
 
 # Claude 訂閱 OAuth 憑證檔（claude CLI 登入後寫入，SDK 子程序沿用；claude_usage 讀其
@@ -989,6 +999,7 @@ def reload() -> None:
     global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
     global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
+    global APPRAISAL_ENABLED, APPRAISAL_MAX_STORE
     global ROLES_DIR, AUTOPILOT_NORTH_STAR
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1089,6 +1100,8 @@ def reload() -> None:
     LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "False", "")
     LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
     LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))
+    APPRAISAL_ENABLED = os.getenv("TI_APPRAISAL", "1") not in ("0", "false", "False", "")
+    APPRAISAL_MAX_STORE = int(os.getenv("TI_APPRAISAL_MAX_STORE", "2000"))
     REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
     SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))

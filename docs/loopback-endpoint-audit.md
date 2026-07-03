@@ -55,6 +55,7 @@
 | GET  | `/api/projects` | auth | ➖ | 讀取專案列表與 backlog 統計 |
 | GET  | `/api/projects/{project_id}` | auth | ➖ | 讀取單一專案 meta 與 backlog |
 | GET  | `/api/metrics` | auth | ➖ | 讀取運維指標（活躍場次/並發上限/history 計數/保留策略/workspace 數），無秘密 |
+| GET  | `/api/appraisals` | auth | ➖ | 讀取 AI 成員考核聚合（per provider 平均分/樣本數/通過率）與最近紀錄，無秘密 |
 | POST | `/api/login` | — | ➖ | 認證握手，必須對外可達才能登入 |
 | POST | `/api/logout` | — | ➖ | 認證握手 |
 | GET  | `/api/auth/status` | — | ➖ | 公開狀態查詢（前端判斷是否需登入） |
