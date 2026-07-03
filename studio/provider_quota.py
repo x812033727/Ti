@@ -7,6 +7,11 @@
 各 provider 的即時剩餘額度由 `studio/{claude,codex,minimax,antigravity}_usage.py:fetch_rate_limits()`
 查官方端點（皆 60 秒記憶體快取）。`snapshot()` 內含阻塞 I/O，呼叫端應 `asyncio.to_thread` 包起來。
 
+`snapshot()` 另有模組級 stale-while-revalidate（SWR）快取：快取新鮮直接回；過期但未超過
+`config.QUOTA_STALE_MAX` 則**立即回舊快照（附 ``stale: true``）**並由背景執行緒單飛刷新——
+設定面板、orchestrator 派工前與 autopilot 額度閘門等關鍵路徑不再同步等最慢 provider；
+無快取或太舊才同步查（首次啟動仍正確）。詳見 ``snapshot()`` docstring。
+
 給混合模式動態分派用的衍生 helper：
 - ``summarize_for_pm(snap, role_provider_map)``：精簡人讀摘要（每 provider 用量%/重置倒數/就緒，
   標注哪些角色用它），塞進 PM 的動態 step prompt，讓 PM 依「目前額度」分派/招募。
@@ -20,6 +25,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import logging
+import threading
 import time
 from pathlib import Path
 
@@ -32,8 +39,20 @@ from . import (
     minimax_usage,
 )
 
+log = logging.getLogger("ti.provider_quota")
+
 # 受限門檻：任一額度窗用量達此百分比即視為「受限」（觸發自動重綁/PM 避用）。
 CONSTRAINED_THRESHOLD = 90.0
+
+# --- snapshot 的模組級 SWR 快取 ------------------------------------------------
+# 各 usage 模組已有 60s TTL 快取，但快取一過期，snapshot() 呼叫端就得同步等「最慢一家」
+# provider 查完（實測 ~1.3s）。此處在 snapshot 層再加一層 stale-while-revalidate：
+# 過期但未超過 config.QUOTA_STALE_MAX 的舊快照先回（附 stale=true），刷新丟背景執行緒
+# 單飛跑，關鍵路徑（設定面板/派工/額度閘門）不再白等。
+_TTL = 60.0  # 快照「新鮮」秒數：與各 usage 模組的 60s TTL 對齊
+_lock = threading.Lock()  # 保護 _cache 與 _refresh_thread（單飛 flag）的讀寫
+_cache: tuple[float, dict] | None = None  # (fetched_at, snapshot)
+_refresh_thread: threading.Thread | None = None  # 進行中的背景刷新；None＝沒有在跑
 
 
 def _antigravity_status() -> dict:
@@ -88,11 +107,12 @@ def _account_rate_limits(acct: dict, rl: dict | None) -> dict | None:
     return {**rl, "error": "stale_label"}
 
 
-def snapshot() -> dict:
-    """只回各 provider 的「即時剩餘額度」（官方 rate limit），不含 Ti 本機累積用量。
+def _fetch() -> dict:
+    """同步聚合各 provider 的「即時剩餘額度」（阻塞 I/O，耗時＝最慢一家 provider）。
 
     僅保留 Claude / Codex CLI / Antigravity CLI / MiniMax 四個 provider；各自向官方端點
     即時查剩餘配額（claude/codex/minimax/antigravity_usage，皆 60 秒快取）。
+    對外請走 ``snapshot()``（帶 SWR 快取）；本函式只給 snapshot 的同步路徑與背景刷新用。
     """
     now = time.time()
     claude_on = config.claude_cli_logged_in() and not config.has_api_key()
@@ -196,8 +216,73 @@ def snapshot() -> dict:
         "active_provider": config.PROVIDER,
         "provider_ready": config.provider_ready(),
         "updated_at": now,
+        # SWR 標記：同步查得的快照必為新鮮；stale 路徑會在複本上蓋成 True。
+        "stale": False,
         "providers": providers,
     }
+
+
+def _refresh_in_background() -> None:
+    """背景刷新 worker：成功則更新快取；失敗保留舊快照並記 log，**絕不拋出**。"""
+    global _cache, _refresh_thread
+    try:
+        snap = _fetch()
+        with _lock:
+            _cache = (time.time(), snap)
+    except Exception:  # noqa: BLE001 — 背景執行緒無人接例外，失敗只記 log、沿用舊快照
+        log.exception("provider 額度背景刷新失敗，沿用舊快照")
+    finally:
+        with _lock:
+            # 只清掉自己（防極端時序下誤清新一輪刷新的 flag），讓下一次 stale 呼叫可再觸發。
+            if _refresh_thread is threading.current_thread():
+                _refresh_thread = None
+
+
+def _spawn_refresh_locked() -> None:
+    """觸發一次背景刷新（呼叫端須已持 ``_lock``）；已有刷新在跑則跳過（單飛）。"""
+    global _refresh_thread
+    if _refresh_thread is not None and _refresh_thread.is_alive():
+        return
+    t = threading.Thread(target=_refresh_in_background, name="ti-quota-refresh", daemon=True)
+    _refresh_thread = t
+    t.start()
+
+
+def _reset_cache() -> None:
+    """清空模組級快照快取與單飛狀態（測試隔離用；生產不需呼叫）。"""
+    global _cache, _refresh_thread
+    with _lock:
+        _cache = None
+        _refresh_thread = None
+
+
+def snapshot() -> dict:
+    """回 provider 額度快照，帶 stale-while-revalidate（SWR）模組級快取。
+
+    - 快取新鮮（年齡 < 60s）→ 直接回快取。
+    - 快取過期但年齡未超過 ``config.QUOTA_STALE_MAX``（預設 300s；0＝停用）→ **立即回舊
+      快照的複本**，附 ``stale: true``（``updated_at`` 仍為舊值，前端可顯示「更新中…」），
+      同時由背景 daemon 執行緒單飛刷新（同時只允許一個在跑），完成後更新快取。
+    - 無快取或超過 STALE_MAX → 同步查（首次啟動／久未使用仍拿到正確資料）。
+
+    回傳結構與舊版相同，僅新增 ``stale`` 欄位；``gate()``/``digest()``/``constrained()``
+    等下游零改動。同步路徑仍含阻塞 I/O，呼叫端照舊以 ``asyncio.to_thread`` 包起來。
+    """
+    global _cache
+    now = time.time()
+    with _lock:
+        if _cache is not None:
+            age = now - _cache[0]
+            if age < _TTL:
+                return _cache[1]
+            if age < config.QUOTA_STALE_MAX:
+                _spawn_refresh_locked()
+                # 回複本，不就地改動快取物件（背景刷新完成前，快取仍是這份舊快照）。
+                return {**_cache[1], "stale": True}
+    snap = _fetch()
+    with _lock:
+        _cache = (time.time(), snap)
+    return snap
 
 
 # --- 給混合模式動態分派的衍生 helper ----------------------------------------

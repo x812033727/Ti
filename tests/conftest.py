@@ -92,6 +92,23 @@ def _reset_require_chown_after_test():
         _config.REQUIRE_CHOWN = "off"
 
 
+# --- 防 provider_quota SWR 快取跨測試洩漏 ---------------------------------------
+# provider_quota.snapshot() 有模組級 SWR 快取（_cache）＋背景刷新單飛執行緒。若不重置，
+# 測試 A 佈置的假額度會被 60s TTL 快取住，測試 B 再呼叫 snapshot() 就拿到 A 的殘留快照
+# （純執行順序相依的假綠/假紅）。每個測試開始前：先 join 掉上一個測試殘留的背景刷新
+# （避免它在 monkeypatch 還原後才寫 _cache 污染本測試），再清空快取回到「無快取＝同步查」
+# 的確定起點。
+@pytest.fixture(autouse=True)
+def _reset_provider_quota_cache():
+    from studio import provider_quota as _pq
+
+    _t = _pq._refresh_thread
+    if _t is not None:
+        _t.join(timeout=10)
+    _pq._reset_cache()
+    yield
+
+
 # 偵測 bwrap 實際是否可用（防止檔案存在但因權限無法使用造成測試紅燈）
 def _check_bwrap_actually_works() -> bool:
     import subprocess
