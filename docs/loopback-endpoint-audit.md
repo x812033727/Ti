@@ -28,6 +28,7 @@
 | POST | `/api/autopilot/pause` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈，遠端可癱瘓（DoS） |
 | POST | `/api/autopilot/resume` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈狀態 |
 | POST | `/api/autopilot/task` | admin（auth｜fail-safe loopback） | ✅ | 向會自主執行 bash 的 autopilot 注入任務 |
+| POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
 | POST | `/api/roles` | admin（auth｜fail-safe loopback） | ✅ | 寫入角色檔 `roles/<key>.md` 並 reload 角色表（system_prompt 注入面） |
 | PUT | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 改寫角色檔並 reload（同 POST 寫入面） |
 | DELETE | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 刪角色檔（file＝移除、override＝還原內建），機器狀態變更 |
@@ -42,6 +43,7 @@
 | GET  | `/api/provider-quota` | auth | ➖ | 讀取 provider ready/auth 狀態、可列模型與 Ti 本機用量彙總；不回傳 API key/OAuth token |
 | GET  | `/api/autopilot` | auth | ➖ | 讀取狀態 |
 | GET  | `/api/autopilot/backlog` | auth | ➖ | 讀取待辦清單 |
+| GET  | `/api/autopilot/activity` | auth | ➖ | 讀取任務動態視圖（backlog × history 記分卡/token 用量聚合） |
 | GET  | `/api/history` | auth | ➖ | 讀取歷史列表 |
 | GET  | `/api/history/{session_id}/events` | auth | ➖ | 讀取單場事件 |
 | GET  | `/api/workspace/{session_id}/files` | auth | ➖ | 讀取工作區檔案清單 |

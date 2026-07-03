@@ -748,13 +748,28 @@ async function expandAutopilot() {
   await refreshAutopilot();
 }
 
+// autopilot 目標 repo（PR 連結用）；由 /api/autopilot 回應更新，取不到時退回核心 repo。
+let apRepo = "x812033727/Ti";
+const AP_STATUS_ICON = { pending: "🕓", in_progress: "⚙️", done: "✅", failed: "❌", parked: "🅿️" };
+
 async function refreshAutopilot() {
   try {
     const st = await (await fetch("/api/autopilot")).json();
+    if (st.repo) apRepo = st.repo;
     const c = st.counts || {};
+    // 心跳：/api/autopilot 的巢狀 heartbeat 物件（autopilot 主迴圈寫 status.json：
+    // state=idle/running/quota_sleep、task_id、sleep_until）；兼容頂層欄位，缺省時容錯不顯示。
+    const hbObj = st.heartbeat || {};
+    const hbState = hbObj.state || st.state;
+    const hbSleep = hbObj.sleep_until || st.sleep_until;
+    let hb = "";
+    if (hbState) hb += `　心跳 ${hbState}`;
+    if (hbObj.task_id) hb += `（任務 #${hbObj.task_id}）`;
+    if (hbSleep) hb += `（休眠至 ${new Date(hbSleep * 1000).toLocaleTimeString()}）`;
     $("#apState").textContent =
       `${st.paused ? "⏸ 已暫停" : "▶ 執行中"}　待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
-      `完成 ${c.done || 0}・失敗 ${c.failed || 0}${st.dryrun ? "　(dryrun)" : ""}`;
+      `完成 ${c.done || 0}・失敗 ${c.failed || 0}${c.parked ? `・停放 ${c.parked}` : ""}` +
+      `${st.dryrun ? "　(dryrun)" : ""}${hb}`;
     $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
     $("#apToggle").dataset.paused = st.paused ? "1" : "0";
     $("#apMini").textContent = `${st.paused ? "⏸" : "▶"} 待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}`;
@@ -763,13 +778,127 @@ async function refreshAutopilot() {
     ul.innerHTML = "";
     (list.tasks || []).slice().reverse().forEach((t) => {
       const li = document.createElement("li");
-      const icon = { pending: "🕓", in_progress: "⚙️", done: "✅", failed: "❌" }[t.status] || "•";
+      const icon = AP_STATUS_ICON[t.status] || "•";
       li.textContent = `${icon} #${t.id} ${t.title}　[${t.source}]`;
       ul.appendChild(li);
     });
   } catch (e) {
     $("#apState").textContent = "讀取失敗（autopilot 服務可能未啟動）";
     $("#apMini").textContent = "讀取失敗";
+  }
+  // 額度迷你條與動態 timeline 各自容錯：任一端點失敗不影響上方狀態列。
+  await refreshApQuota();
+  await refreshApActivity();
+}
+
+// --- provider 額度迷你條（讀 /api/provider-quota，四家 5h/7d 用量）----------
+function apQuotaWindows(p) {
+  // 相容三種 rate_limits 形態：單帳號 window 式、claude 多帳號（取在線帳號）、
+  // antigravity bucket 式（取前兩個 bucket 當迷你條）。
+  let rl = p.rate_limits;
+  if (!rl && Array.isArray(p.accounts)) {
+    const act = p.accounts.filter((a) => a.active && a.rate_limits)[0];
+    if (act) rl = act.rate_limits;
+  }
+  rl = rl || {};
+  const wins = [];
+  if (Array.isArray(rl.buckets)) {
+    rl.buckets.slice(0, 2).forEach((b) => wins.push({ label: b.label || "", pct: Number(b.used_percentage) }));
+  } else {
+    if (rl.five_hour) wins.push({ label: "5h", pct: Number(rl.five_hour.used_percentage) });
+    if (rl.seven_day) wins.push({ label: "7d", pct: Number(rl.seven_day.used_percentage) });
+  }
+  return wins.filter((w) => Number.isFinite(w.pct));
+}
+
+async function refreshApQuota() {
+  const box = $("#apQuota");
+  if (!box) return;
+  try {
+    const data = await (await fetch("/api/provider-quota")).json();
+    box.innerHTML = "";
+    for (const p of data.providers || []) {
+      const cell = document.createElement("div");
+      cell.className = "ap-quota-cell";
+      appendTextEl(cell, "span", "ap-quota-name", p.label || p.key || "?");
+      const wins = apQuotaWindows(p);
+      if (!wins.length) appendTextEl(cell, "span", "ap-quota-win", "—");
+      for (const w of wins) {
+        appendTextEl(cell, "span", "ap-quota-win", w.label);
+        const pct = Math.min(100, Math.max(0, w.pct));
+        const bar = document.createElement("div");
+        bar.className = "ap-quota-bar" + (pct >= 90 ? " crit" : pct >= 75 ? " warn" : "");
+        bar.title = `${p.label || p.key} ${w.label} 已用 ${w.pct}%`;
+        const fill = document.createElement("div");
+        fill.className = "fill";
+        fill.style.width = `${pct}%`;
+        bar.appendChild(fill);
+        cell.appendChild(bar);
+      }
+      box.appendChild(cell);
+    }
+  } catch (e) {
+    box.textContent = "";
+  }
+}
+
+// --- 工作室動態 timeline（讀 /api/autopilot/activity）----------------------
+function apChip(parent, text, cls) {
+  if (text) appendTextEl(parent, "span", `ap-chip${cls ? ` ${cls}` : ""}`, text);
+}
+
+async function refreshApActivity() {
+  const ul = $("#apActivity");
+  if (!ul) return;
+  try {
+    const data = await (await fetch("/api/autopilot/activity?limit=50")).json();
+    ul.innerHTML = "";
+    // 後端已按 updated_at 倒序（最新在最上）。
+    for (const t of data.tasks || []) {
+      const li = document.createElement("li");
+      li.className = "ap-item";
+      const head = document.createElement("div");
+      head.className = "ap-item-head";
+      appendTextEl(head, "span", "", AP_STATUS_ICON[t.status] || "•");
+      appendTextEl(head, "strong", "ap-item-title", `#${t.id} ${t.title || ""}`);
+      if (t.updated_at) {
+        appendTextEl(head, "span", "ap-item-time muted", new Date(t.updated_at * 1000).toLocaleString());
+      }
+      li.appendChild(head);
+      const chips = document.createElement("div");
+      chips.className = "ap-item-chips";
+      const tu = t.token_usage || {};
+      Object.keys(tu.by_provider || {}).forEach((prov) => apChip(chips, prov, "prov"));
+      Object.keys(tu.by_model || {}).forEach((model) => apChip(chips, model, ""));
+      if (t.pr) {
+        const a = document.createElement("a");
+        a.className = "ap-chip ap-pr";
+        a.href = `https://github.com/${apRepo}/pull/${t.pr}`;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = `PR #${t.pr}`;
+        chips.appendChild(a);
+      }
+      if (chips.childNodes.length) li.appendChild(chips);
+      if (t.deploy_msg) appendTextEl(li, "div", "ap-item-note", `🚀 ${t.deploy_msg}`);
+      if (t.note && t.note !== t.deploy_msg) {
+        appendTextEl(li, "div", `ap-item-note${t.status === "failed" ? " bad" : " muted"}`, t.note);
+      }
+      const sc = t.scorecard;
+      if (sc) {
+        const demo = sc.demo_passed === true ? "・Demo ✓" : sc.demo_passed === false ? "・Demo ✗" : "";
+        appendTextEl(
+          li,
+          "div",
+          "ap-item-score muted",
+          `記分卡：任務 ${sc.tasks_done || 0}/${sc.tasks_total || 0}・QA ${sc.qa_pass || 0}/${sc.qa_total || 0}${demo}`,
+        );
+      }
+      ul.appendChild(li);
+    }
+  } catch (e) {
+    // activity 端點不可用（舊後端）時容錯：timeline 留空，不影響其餘面板。
+    ul.innerHTML = "";
   }
 }
 

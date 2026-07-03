@@ -1,7 +1,8 @@
 """持久任務 backlog —— 跨場次任務佇列（autopilot 與專案持續改良迴圈共用）。
 
 存成單一 JSON 檔（read-modify-write，以檔案鎖序列化），讓自動迴圈與網頁 API 兩個
-程序都能安全增減。任務狀態：pending → in_progress → done | failed。
+程序都能安全增減。任務狀態：pending → in_progress → done | failed | parked
+（parked＝分診歸檔的長期失敗任務，不再被 next_pending 撿走，但保留紀錄可稽核）。
 
 預設操作 autopilot 的全域 backlog（config.AUTOPILOT_STATE_DIR）；所有公開函式都接受
 keyword-only 的 `state_dir`，傳入即操作該目錄下的 backlog（專案持續改良迴圈用——每個
@@ -16,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import re
 import time
 from pathlib import Path
 
@@ -25,7 +27,7 @@ from . import config, secure_write
 # module-level alias 兼顧可被測試 monkeypatch。
 secure_write_root = secure_write.secure_write_root
 
-VALID_STATUS = ("pending", "in_progress", "done", "failed")
+VALID_STATUS = ("pending", "in_progress", "done", "failed", "parked")
 
 # 任務類型：功能缺口 / 缺陷 / 一般改良。來源外的值一律正規化成 improvement。
 VALID_TYPES = ("feature", "bug", "improvement")
@@ -247,3 +249,69 @@ def route_core_changes(items: list[dict]) -> int:
     done = recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
     items = [c for c in items if c.get("title", "").strip() not in done]
     return add_items(items, source="core") if items else 0
+
+
+# --- failed 分診（確定性規則、無 LLM）--------------------------------------
+
+# 基礎設施型失敗的 note 特徵：環境／網路／部署互斥等非任務本身缺陷，值得自動重試。
+# 對應來源：runner/_run 逾時（「逾時」）、autopilot task timeout（timeout）、provider
+# 額度/連線（unreachable / provider unavailable）、deploy.redeploy（重佈失敗／另一個部署進行中）。
+INFRA_FAILURE_RE = re.compile(
+    r"逾時|timeout|unreachable|provider unavailable|重佈失敗|另一個部署進行中",
+    re.IGNORECASE,
+)
+
+# 單次分診至多退回 pending 的筆數（取 updated_at 最近者），避免一次灌爆佇列；
+# 超出者維持 failed，下次分診再處理。
+TRIAGE_RETRY_MAX = 10
+
+# 非基礎設施型 failed 滿此秒數仍未被處理即歸檔 parked（14 天）。
+TRIAGE_PARK_AFTER_S = 14 * 86400
+
+
+def triage_failed(*, state_dir: Path | None = None) -> dict:
+    """failed 任務的確定性分診（純規則、無 LLM），回傳 {"retried": n, "parked": m}。
+
+    規則（單次 _locked 內完成，跨程序安全）：
+      1. legacy 非法狀態 "cancelled"（歷史殘留，set_status 會 reject）一律直接改 dict
+         洗白成 parked。
+      2. failed 且 note 命中 INFRA_FAILURE_RE 且 attempts < AUTOPILOT_TASK_MAX_ATTEMPTS
+         → 重置 attempts、退回 pending 重試；單次至多 TRIAGE_RETRY_MAX 筆（取最近更新者）。
+      3. 其餘 failed（含「連續 N 次未過，放棄」「討論未達完成」等任務本身缺陷）滿
+         TRIAGE_PARK_AFTER_S（14 天）→ 歸檔 parked，不再佔據失敗清單；未滿則維持
+         failed 等待人工或後續分診。
+    """
+    retried = parked = 0
+    now = time.time()
+    with _locked(state_dir):
+        data = _load(state_dir)
+        for t in data["tasks"]:
+            if t.get("status") == "cancelled":
+                # legacy 非法值：set_status 會 raise，故在鎖內直接改 dict 洗白。
+                t["status"] = "parked"
+                t["updated_at"] = now
+                t["note"] = "[triage] legacy status cancelled 轉 parked"
+                parked += 1
+        failed = [t for t in data["tasks"] if t.get("status") == "failed"]
+        infra = [
+            t
+            for t in failed
+            if INFRA_FAILURE_RE.search(t.get("note") or "")
+            and int(t.get("attempts") or 0) < config.AUTOPILOT_TASK_MAX_ATTEMPTS
+        ]
+        infra.sort(key=lambda t: t.get("updated_at", 0), reverse=True)
+        retry_ids = {t["id"] for t in infra[:TRIAGE_RETRY_MAX]}
+        for t in failed:
+            if t["id"] in retry_ids:
+                t["status"] = "pending"
+                t["attempts"] = 0
+                t["updated_at"] = now
+                t["note"] = f"[triage] 基礎設施型失敗，重置重試；{(t.get('note') or '')[:300]}"
+                retried += 1
+            elif now - float(t.get("updated_at") or 0) >= TRIAGE_PARK_AFTER_S:
+                t["status"] = "parked"
+                t["updated_at"] = now
+                parked += 1
+        if retried or parked:
+            _save(data, state_dir)
+    return {"retried": retried, "parked": parked}
