@@ -698,6 +698,12 @@ AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
 AUTOPILOT_TASK_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TASK_TIMEOUT", "3600"))
+# 本工作室長期目標（北極星）：注入 autopilot 自評與 improver「找問題」的 discovery prompt，
+# 讓自主提案可追溯到一致的長期方向（單一真相在此，消費端一律讀 config）。空字串＝不注入。
+AUTOPILOT_NORTH_STAR = os.getenv(
+    "TI_AUTOPILOT_NORTH_STAR",
+    "持續提升 Ti 程式品質；強化 agent 間與跨 provider 溝通協作效能",
+)
 # 單一任務客觀閘門（lint/collect/test/merge）失敗時，重試同一任務的最大嘗試次數。
 # 達上限才標 failed；避免每次失敗就 spawn 一個措辭近似的「修復X」新任務造成 backlog 暴增。
 AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3"))
@@ -956,9 +962,13 @@ def reload() -> None:
     global RESEARCH_TOOLS_ENABLED, RESEARCH_ALLOWED_DOMAINS
     global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
-    global ROLES_DIR
+    global ROLES_DIR, AUTOPILOT_NORTH_STAR
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
+    AUTOPILOT_NORTH_STAR = os.getenv(
+        "TI_AUTOPILOT_NORTH_STAR",
+        "持續提升 Ti 程式品質；強化 agent 間與跨 provider 溝通協作效能",
+    )
     ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
     PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))

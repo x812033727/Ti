@@ -449,10 +449,15 @@ class ProjectImprover:
         """各視角的「找問題」prompt。共用成績單前綴、藍圖脈絡與結構化 `任務:` 輸出格式。"""
         name = self.project.get("name", "")
         vision = self.project.get("vision", "")
-        head = self._recent_outcomes_context() + (
-            f"你正在審視長期產品專案「{name}」（程式碼就在你的工作目錄）。\n"
-            + (f"產品願景：{vision}\n" if vision else "")
-            + blueprint.context(pid)
+        # 長期目標段與 autopilot 自評同源（autopilot.north_star_context → config，單一真相）。
+        head = (
+            autopilot.north_star_context()
+            + self._recent_outcomes_context()
+            + (
+                f"你正在審視長期產品專案「{name}」（程式碼就在你的工作目錄）。\n"
+                + (f"產品願景：{vision}\n" if vision else "")
+                + blueprint.context(pid)
+            )
         )
         tail = (
             "找出最值得改良的 3~5 點，每點獨立一行，格式固定為 "
@@ -493,7 +498,8 @@ class ProjectImprover:
         keys = self._discover_role_keys()
         prompts = self._discover_prompts(pid)
         generic = (
-            self._recent_outcomes_context()
+            autopilot.north_star_context()
+            + self._recent_outcomes_context()
             + f"你正在審視長期產品專案「{self.project.get('name', '')}」。"
             "請從你的專業視角找出最值得改良的 3~5 點，每點獨立一行，"
             "格式固定為 `任務: [P0/bug] <動詞開頭的具體任務>`（標籤可省，視為 P1）；"

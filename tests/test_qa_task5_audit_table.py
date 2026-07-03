@@ -116,6 +116,7 @@ def test_audit_managed_set_matches_decision():
         "/api/autopilot/pause",
         "/api/autopilot/resume",
         "/api/autopilot/task",
+        "/api/autopilot/triage",
         "/api/roles",
         "/api/roles/{key}",
         "/api/groups",

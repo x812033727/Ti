@@ -237,8 +237,30 @@ async def _check_branch_protection(clone: str, branch: str) -> tuple[str, str]:
     )
 
 
+class MergeResult(tuple):
+    """`(ok, msg)` 二元組的向後相容擴充：額外攜帶 pr_number / branch 供落檔追溯。
+
+    刻意繼承 tuple 並固定只裝兩個元素——既有呼叫端（含大量守護測試）的
+    `ok, msg = await _commit_push_merge(...)` 解包完全不受影響；需要 PR 編號／
+    合併分支的呼叫端（run_one_task 落檔 pr/merged_branch）用屬性取。
+    （不設 __slots__：tuple 子類不支援非空 __slots__，屬性走一般 __dict__。）
+    """
+
+    def __new__(cls, ok: bool, msg: str, *, pr_number: int | None = None, branch: str = ""):
+        self = super().__new__(cls, (ok, msg))
+        return self
+
+    def __init__(self, ok: bool, msg: str, *, pr_number: int | None = None, branch: str = ""):
+        self.pr_number = pr_number
+        self.branch = branch
+
+
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
-    """把成果開分支、push、squash-merge 進 main。dryrun 只回報。"""
+    """把成果開分支、push、squash-merge 進 main。dryrun 只回報。
+
+    成功（已合併）時回傳 MergeResult——解包仍是 (True, msg)，另帶 pr_number / branch
+    屬性供 run_one_task 落檔（呼叫端以 getattr 容錯讀取，失敗路徑維持純 tuple）。
+    """
     repo = (config.AUTOPILOT_REPO or "").strip()
     publish_repo = (config.PUBLISH_REPO or "").strip()
     repo_key = _repo_key(repo)
@@ -390,9 +412,11 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             retries=config.PUBLISH_MERGE_RETRIES,
         )
         if outcome == publisher.MergeOutcome.MERGED:
-            return (
+            return MergeResult(
                 True,
                 f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}（CI 綠後合併）：{detail}",
+                pr_number=pr_number,
+                branch=branch,
             )
         # 非綠/未合併：關閉 PR 並刪分支，避免留下孤兒 PR
         await _run(
@@ -492,6 +516,19 @@ def _pending_titles() -> list[str]:
     return [clean for t in rows if (clean := _sanitize_for_prompt(t.get("title", ""), 200))]
 
 
+def north_star_context() -> str:
+    """把長期目標（config.AUTOPILOT_NORTH_STAR）組成 discovery prompt 段。
+
+    單一組裝點：autopilot 自評與 improver「找問題」皆由此取段，目標本身的單一真相在
+    config（TI_AUTOPILOT_NORTH_STAR，可 reload）。目標為空時回 ""（該段自然消失）。
+    嵌入前過 `_sanitize_for_prompt`，防多行值穿透 prompt 結構。
+    """
+    ns = _sanitize_for_prompt(config.AUTOPILOT_NORTH_STAR, 300)
+    if not ns:
+        return ""
+    return f"【本工作室長期目標】{ns}。提案須可追溯到此目標。\n\n"
+
+
 def _pending_awareness_context(titles: list[str] | None = None) -> str:
     """把目前 pending/in_progress 標題整理成 bullet 清單（只回資料，不含任何硬指令）。
 
@@ -538,7 +575,7 @@ def _build_discovery_prompt(
 ) -> str:
     """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
 
-    結構：近期成敗回顧 + pending-awareness 清單 + 任務基底說明 + 兩條硬指令。
+    結構：長期目標（北極星）+ 近期成敗回顧 + pending-awareness 清單 + 任務基底說明 + 兩條硬指令。
     兩條硬指令（禁止實質重疊、優先廣度覆蓋不同子系統）明確置於組裝層，為上層決策而非資料層職責。
     參數預設由 backlog 即時讀取；測試可注入字串以隔離 backlog 狀態。
 
@@ -559,7 +596,8 @@ def _build_discovery_prompt(
         else "1. 目前尚無排隊／進行中任務，但各點之間仍不得實質重疊（同一主題換句話說也算）。\n"
     )
     return (
-        outcomes
+        north_star_context()
+        + outcomes
         + pending
         + oversubscribed
         + (
@@ -964,18 +1002,26 @@ async def run_one_task(task: dict) -> None:
         return
 
     # commit / push / squash-merge 進 main
-    merged, msg = await _commit_push_merge(clone, task)
+    merge_res = await _commit_push_merge(clone, task)
+    merged, msg = merge_res
     if not merged:
         _handle_gate_failure(task, "merge", msg)
         return
     log.info("任務 #%s %s", task["id"], msg)
+    # PR 追溯欄位：成功路徑為 MergeResult（帶 pr_number/branch）；dryrun 等純 tuple 以
+    # getattr 容錯取 None/""，不改變既有行為。
+    done_fields = {
+        "pr": getattr(merge_res, "pr_number", None),
+        "merged_branch": getattr(merge_res, "branch", ""),
+    }
 
     # 重佈（等手動討論結束才動,避免打斷使用者；deploy 會 fetch 最新 main,延後也會追上）
     if await _wait_until_idle():
         ok, dmsg = await deploy.redeploy()
         log.info("重佈：%s", dmsg)
+        done_fields["deploy_msg"] = dmsg  # 含 old→new commit（deploy.redeploy 成功訊息）
         if not ok:
-            backlog.set_status(task["id"], "failed", note=dmsg)
+            backlog.set_status(task["id"], "failed", note=dmsg, **done_fields)
             backlog.add("修復導致重佈失敗的 regression", detail=dmsg, source="discovered")
             _pause("重佈失敗已自動回滾,暫停待人工檢視")
             return
@@ -983,9 +1029,11 @@ async def run_one_task(task: dict) -> None:
         log.info("等待逾時,本輪略過重佈(下次任務會追上最新 main)")
 
     if shipped_with_limits:
-        backlog.set_status(task["id"], "done", note="帶已知限制完成(部分子任務已回填 backlog)")
+        backlog.set_status(
+            task["id"], "done", note="帶已知限制完成(部分子任務已回填 backlog)", **done_fields
+        )
     else:
-        backlog.set_status(task["id"], "done")
+        backlog.set_status(task["id"], "done", **done_fields)
     log.info("任務 #%s %s", task["id"], "帶已知限制完成" if shipped_with_limits else "完成")
 
 

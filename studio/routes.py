@@ -909,3 +909,57 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
     return JSONResponse({"ok": True, "task": task})
+
+
+@router.post("/api/autopilot/triage", dependencies=WRITE_DEPS)
+async def autopilot_triage() -> JSONResponse:
+    """failed 任務確定性分診（無 LLM）：基礎設施型失敗退回 pending、陳年失敗歸檔 parked。"""
+    stats = await asyncio.to_thread(backlog.triage_failed)
+    return JSONResponse({"ok": True, **stats})
+
+
+# activity 每筆任務輸出的 backlog 欄位（pr/merged_branch/deploy_msg 由 autopilot 成功路徑落檔）。
+_ACTIVITY_FIELDS = (
+    "id",
+    "title",
+    "status",
+    "updated_at",
+    "note",
+    "attempts",
+    "source",
+    "session_id",
+    "pr",
+    "merged_branch",
+    "deploy_msg",
+)
+
+
+def _activity_snapshot(limit: int) -> dict:
+    """聚合 backlog 全部任務（updated_at 倒序、取前 limit 筆）＋各自 history meta 的
+    記分卡與 token 用量（有 session_id 才查；meta 缺欄位即略過，容錯舊資料）。"""
+    tasks = sorted(backlog.list_tasks(), key=lambda t: t.get("updated_at") or 0, reverse=True)
+    rows: list[dict] = []
+    for t in tasks[:limit]:
+        row = {k: t.get(k) for k in _ACTIVITY_FIELDS}
+        sid = t.get("session_id")
+        meta = history.get_meta(sid) if sid else None
+        if meta:
+            if meta.get("scorecard"):
+                row["scorecard"] = meta["scorecard"]
+            usage = meta.get("token_usage") or {}
+            if usage:
+                # 只帶 timeline 會用到的維度（total + per-provider/model），不整包塞給前端。
+                row["token_usage"] = {
+                    "total": usage.get("total"),
+                    "by_provider": usage.get("by_provider") or {},
+                    "by_model": usage.get("by_model") or {},
+                }
+        rows.append(row)
+    return {"tasks": rows, "total": len(tasks)}
+
+
+@router.get("/api/autopilot/activity", dependencies=[Depends(auth.require_auth)])
+async def autopilot_activity(limit: int = 50) -> JSONResponse:
+    """工作室動態視圖：backlog 任務 × history 成果（記分卡/token 用量）聚合，updated_at 倒序。"""
+    limit = max(1, min(int(limit), 500))  # 夾範圍：防 limit=0/負值/超大值拖垮回應
+    return JSONResponse(await asyncio.to_thread(_activity_snapshot, limit))
