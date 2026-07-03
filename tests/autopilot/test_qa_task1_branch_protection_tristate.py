@@ -61,6 +61,8 @@ def _forbid_real_subprocess(monkeypatch):
 def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_REPO", _REPO)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", _BRANCH)
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"octo"}))
 
 
 async def _check(monkeypatch, overrides):

@@ -42,7 +42,9 @@ def test_branch_name_empty_fallback():
     assert publisher.branch_name("@#%/. ") == "ti-studio/session"
 
 
-def test_remote_url_and_redact():
+def test_remote_url_and_redact(monkeypatch):
+    # remote_url 掛了 owner allowlist 護欄：放行本測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"octo"}))
     url = publisher.remote_url("octo/repo", "secrettoken")
     assert url == "https://x-access-token:secrettoken@github.com/octo/repo.git"
     assert "secrettoken" not in publisher.redact(url, "secrettoken")
@@ -78,6 +80,8 @@ def _configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"o"}))
 
     # 跳過實際 git init/commit
     async def _noop(*a, **k):

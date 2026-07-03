@@ -53,6 +53,9 @@ def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
     monkeypatch.setattr(config, "AUTOPILOT_PROTECTION_CHECK", False)
     monkeypatch.setattr(config, "PUBLISH_REPO", "")
+    # 本檔的黑白樣本聚焦 repo identity 污染防護；owner allowlist 放行本檔用的測試 owner，
+    # allowlist 自身的黑樣本見下方 owner 案與 tests/publish/test_owner_allowlist.py。
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"core"}))
 
 
 @pytest.mark.asyncio
@@ -170,3 +173,41 @@ async def test_origin_push_url_same_path_on_non_github_host_aborts_before_push(m
     assert "origin push URL" in msg
     assert not any("push" in call for call in spy.calls)
     merge_flow.assert_not_awaited()
+
+
+# --- owner allowlist 案（發佈與建庫的 owner 護欄，黑白樣本）-------------------
+
+
+@pytest.mark.asyncio
+async def test_autopilot_repo_owner_not_in_allowlist_aborts_without_side_effects(monkeypatch):
+    """AUTOPILOT_REPO 的 owner 不在 allowlist → 中止，無任何 git／merge 副作用（黑樣本）。"""
+    run = AsyncMock()
+    merge_flow = AsyncMock()
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"x812033727"}))
+    monkeypatch.setattr(autopilot, "_run", run)
+    monkeypatch.setattr(publisher, "_merge_flow", merge_flow)
+
+    ok, msg = await autopilot._commit_push_merge("/clone", _TASK)
+
+    assert ok is False
+    assert "allowlist" in msg
+    run.assert_not_awaited()
+    merge_flow.assert_not_awaited()
+    assert publisher.current_repo() == ""  # 覆寫未生效、未殘留
+
+
+@pytest.mark.asyncio
+async def test_autopilot_repo_owner_in_allowlist_proceeds(monkeypatch):
+    """owner 在 allowlist（本檔 fixture 已放行 core）→ 照常 push＋開 PR（白樣本對照）。"""
+    spy = RunSpy()
+
+    async def _merge_flow(number, payload, **kwargs):
+        return (publisher.MergeOutcome.MERGED, "merged")
+
+    monkeypatch.setattr(autopilot, "_run", spy)
+    monkeypatch.setattr(publisher, "_merge_flow", _merge_flow)
+
+    ok, msg = await autopilot._commit_push_merge("/clone", _TASK)
+
+    assert ok is True, msg
+    assert any("push" in call for call in spy.joined())
