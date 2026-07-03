@@ -701,6 +701,12 @@ AUTOPILOT_TASK_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TASK_TIMEOUT", "3600"))
 # 單一任務客觀閘門（lint/collect/test/merge）失敗時，重試同一任務的最大嘗試次數。
 # 達上限才標 failed；避免每次失敗就 spawn 一個措辭近似的「修復X」新任務造成 backlog 暴增。
 AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3"))
+# 額度感知節奏（quota gate）：主迴圈取任務前先查 provider 額度快照（provider_quota.snapshot
+# ＋ gate()），全部 provider 受限（未就緒/查詢異常/用量達門檻）時睡到最早重置再重查，取代
+# 「額度耗盡仍空轉把任務燒成 failed」。GATE=0 可關閉（維持舊行為）；MAX_SLEEP 為單次睡眠
+# 上限秒數（防 reset 資訊異常導致睡過頭，醒來會重查快照再決定）。
+AUTOPILOT_QUOTA_GATE = os.getenv("TI_AUTOPILOT_QUOTA_GATE", "1") not in ("0", "false", "False", "")
+AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
 # 軟性時間預算：session 在硬 timeout（AUTOPILOT_TASK_TIMEOUT，由 autopilot 的 wait_for 套用）的
 # 此比例處主動收斂——停止派發新任務、把已完成的走 Demo/出貨、未動的記 known-limit/followup，
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
@@ -951,6 +957,7 @@ def reload() -> None:
     global RESEARCH_FETCH_TIMEOUT, RESEARCH_FETCH_MAX_CHARS
     global LESSONS_DISTILL, LESSONS_DISTILL_THRESHOLD, LESSONS_DISTILL_INTERVAL
     global ROLES_DIR
+    global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
@@ -1071,3 +1078,11 @@ def reload() -> None:
     ]
     RESEARCH_FETCH_TIMEOUT = float(os.getenv("TI_RESEARCH_FETCH_TIMEOUT", "20"))
     RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))
+    # autopilot 額度感知節奏（預設值須與檔頂宣告一致）
+    AUTOPILOT_QUOTA_GATE = os.getenv("TI_AUTOPILOT_QUOTA_GATE", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))

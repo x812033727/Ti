@@ -12,6 +12,7 @@
   標注哪些角色用它），塞進 PM 的動態 step prompt，讓 PM 依「目前額度」分派/招募。
 - ``constrained(snap, provider)``：該 provider 是否受限（未就緒/查詢異常/用量達門檻）。
 - ``least_constrained_ready(snap)``：就緒且最寬鬆的 provider key（受限角色自動重綁的安全網）。
+- ``gate(snap)``：全域額度閘門 ``(any_usable, earliest_reset_epoch)``（autopilot 主迴圈節流用）。
 """
 
 from __future__ import annotations
@@ -72,6 +73,19 @@ def _antigravity_status() -> dict:
     }
 
 
+def _account_rate_limits(acct: dict, rl: dict | None) -> dict | None:
+    """非在線帳號的 ``unauthorized`` 改映射為 ``stale_label``（誠實顯示、不誤導）。
+
+    非在線帳號的標籤檔本來就不會被 CLI 續期，token 過期只代表「快照舊了」——額度本身
+    不受影響，切換到該帳號一次即刷新；照抄 unauthorized 會讓使用者誤以為帳號登出。
+    在線帳號的 error 保留原值（真 unauthorized 就該顯示）。回新 dict，不改動
+    claude_usage 的 TTL 快取物件。
+    """
+    if rl is None or acct.get("active", False) or rl.get("error") != "unauthorized":
+        return rl
+    return {**rl, "error": "stale_label"}
+
+
 def snapshot() -> dict:
     """只回各 provider 的「即時剩餘額度」（官方 rate limit），不含 Ti 本機累積用量。
 
@@ -86,6 +100,12 @@ def snapshot() -> dict:
     minimax_on = bool(config.MINIMAX_API_KEY)
     # 多帳號：claude 走訂閱時列出本機憑證標籤檔（acct-A/acct-B…），各帳號獨立查額度，
     # 讓設定頁同時顯示並可切換。無標籤檔（單帳號舊機）則回 []，前端退回單一額度顯示。
+    # 讀之前先把線上憑證（CLI 自動續期後最新）回寫在線 label 標籤檔，否則長期不切換時
+    # 標籤檔 expiresAt 過期 → 在線帳號額度誤顯示 unauthorized。同步失敗不得拖垮快照。
+    try:
+        claude_accounts.sync_active_label()
+    except Exception:
+        pass
     claude_accts = claude_accounts.list_accounts() if claude_on else []
     # 各 rate-limit 查詢彼此獨立、皆為阻塞 I/O（各 60s 快取）；並行跑使端點延遲取「最慢
     # 一家」而非「總和」，配合 antigravity 已移除 12s 子程序，明顯改善前端轉圈。
@@ -107,7 +127,7 @@ def snapshot() -> dict:
                 "label": a["label"],
                 "subscription": a.get("subscription"),
                 "active": a.get("active", False),
-                "rate_limits": fut.result(),
+                "rate_limits": _account_rate_limits(a, fut.result()),
             }
             for a, fut in f_accts
         ]
@@ -239,6 +259,30 @@ def least_constrained_ready(snap: dict) -> str | None:
         if best_used is None or used < best_used:
             best, best_used = entry.get("key"), used
     return best
+
+
+def gate(snap: dict, threshold: float = CONSTRAINED_THRESHOLD) -> tuple[bool, float | None]:
+    """全域額度閘門：回 ``(any_usable, earliest_reset_epoch)``，供 autopilot 主迴圈節流。
+
+    any_usable＝至少一個 provider「可用」：ready、無 error、且 ``max_used`` 低於受限門檻
+    （複用 ``constrained()`` 的 ``CONSTRAINED_THRESHOLD``，勿另造門檻）；拿不到用量資訊
+    （``max_used is None``）視為可用，與 ``constrained()`` 的判定對齊。
+
+    earliest_reset_epoch＝「就緒且無 error、但用量達門檻」的 provider 中最早的 reset_at
+    （epoch 秒）——只有這類 provider 會在重置後重新變可用，未就緒/查詢異常者的 reset 不算數。
+    全無 reset 資訊回 None，呼叫端自行套睡眠下限/上限。
+    """
+    any_usable = False
+    resets: list[float] = []
+    for entry in snap.get("providers", []):
+        u = _usage(entry)
+        if not u["ready"] or u["error"]:
+            continue
+        if u["max_used"] is None or u["max_used"] < threshold:
+            any_usable = True
+        elif u["soonest_reset"] is not None:
+            resets.append(u["soonest_reset"])
+    return any_usable, (min(resets) if resets else None)
 
 
 def summarize_for_pm(snap: dict, role_provider_map: dict[str, str] | None = None) -> str:

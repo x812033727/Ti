@@ -12,8 +12,11 @@ import pytest
 from studio import claude_accounts, config
 
 
-def _cred(token: str, sub: str = "max") -> str:
-    return json.dumps({"claudeAiOauth": {"accessToken": token, "subscriptionType": sub}})
+def _cred(token: str, sub: str = "max", exp: float | None = None) -> str:
+    oauth: dict = {"accessToken": token, "subscriptionType": sub}
+    if exp is not None:
+        oauth["expiresAt"] = exp
+    return json.dumps({"claudeAiOauth": oauth})
 
 
 @pytest.fixture(autouse=True)
@@ -79,6 +82,51 @@ def test_switch_swaps_live_and_preserves_current(_isolate):
     assert live == "B-tok"  # 線上換成 B
     assert acct_a == "A-fresh"  # 切走前把線上最新 token 存回 A 標籤檔
     assert claude_accounts.active_label() == "B"
+
+
+def test_sync_active_label_writes_back_when_live_newer(_isolate):
+    """線上檔 expiresAt 較新（CLI 自動續期過）→ 回寫在線 label 標籤檔並回 True。"""
+    tmp = _isolate
+    _write(tmp, ".credentials.acct-A.json", _cred("A-old", exp=1_000))
+    _write(tmp, ".credentials.json", _cred("A-fresh", exp=2_000))
+    _write(tmp, ".credentials.active", "A")
+
+    assert claude_accounts.sync_active_label() is True
+
+    oauth = json.loads((tmp / ".credentials.acct-A.json").read_text())["claudeAiOauth"]
+    assert oauth["accessToken"] == "A-fresh"
+    assert oauth["expiresAt"] == 2_000
+
+
+def test_sync_active_label_noop_when_label_not_older(_isolate):
+    """標籤檔較新或相同 expiresAt → 不動檔案、回 False。"""
+    tmp = _isolate
+    for label_exp in (3_000, 2_000):  # 較新 / 相同
+        _write(tmp, ".credentials.acct-A.json", _cred("A-label", exp=label_exp))
+        _write(tmp, ".credentials.json", _cred("A-live", exp=2_000))
+        _write(tmp, ".credentials.active", "A")
+
+        assert claude_accounts.sync_active_label() is False
+        oauth = json.loads((tmp / ".credentials.acct-A.json").read_text())["claudeAiOauth"]
+        assert oauth["accessToken"] == "A-label"  # 標籤檔未被覆蓋
+
+
+def test_sync_active_label_false_when_missing_or_broken(_isolate):
+    """無在線 label／檔案缺失／檔案壞掉 → 一律回 False 不炸。"""
+    tmp = _isolate
+    assert claude_accounts.sync_active_label() is False  # 無 .active
+
+    _write(tmp, ".credentials.active", "A")
+    assert claude_accounts.sync_active_label() is False  # 標籤檔與線上檔皆缺
+
+    _write(tmp, ".credentials.acct-A.json", _cred("A-tok", exp=1_000))
+    assert claude_accounts.sync_active_label() is False  # 線上檔缺
+
+    _write(tmp, ".credentials.json", "{壞掉的 json")
+    assert claude_accounts.sync_active_label() is False  # 線上檔壞掉（expiresAt 讀不到）
+
+    _write(tmp, ".credentials.json", _cred("A-new"))  # 線上檔沒有 expiresAt
+    assert claude_accounts.sync_active_label() is False
 
 
 def test_switch_rejects_unknown_and_illegal_label(_isolate):

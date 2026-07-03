@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from _repo import REPO_ROOT
+
 from studio import config, provider_quota
 
 
@@ -58,6 +60,93 @@ def test_minimax_rate_limits_queried_when_key_set(monkeypatch):
     data = provider_quota.snapshot()
     mm = next(p for p in data["providers"] if p["key"] == "minimax")
     assert mm["rate_limits"] is sentinel
+
+
+def _claude_multi_account(monkeypatch, accounts: list[dict], rate_limits: dict) -> list[str]:
+    """佈置「claude 訂閱＋多帳號」情境；回傳呼叫順序記錄（sync/list）供斷言。"""
+    monkeypatch.setattr(config, "antigravity_cli_available", lambda: False)
+    monkeypatch.setattr(config, "provider_ready", lambda: True)
+    monkeypatch.setattr(config, "MINIMAX_API_KEY", "")
+    monkeypatch.setattr(config, "codex_cli_logged_in", lambda: False)
+    monkeypatch.setattr(config, "claude_cli_logged_in", lambda: True)
+    monkeypatch.setattr(config, "has_api_key", lambda: False)
+    monkeypatch.setattr(
+        provider_quota.antigravity_usage,
+        "fetch_rate_limits",
+        lambda *_a, **_k: {"buckets": [], "fetched_at": 0.0, "error": None},
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        provider_quota.claude_accounts,
+        "sync_active_label",
+        lambda: calls.append("sync") or False,
+    )
+    monkeypatch.setattr(
+        provider_quota.claude_accounts,
+        "list_accounts",
+        lambda: calls.append("list") or accounts,
+    )
+    monkeypatch.setattr(
+        provider_quota.claude_usage, "fetch_rate_limits", lambda *_a, **_k: rate_limits
+    )
+    return calls
+
+
+def test_claude_stale_label_mapping_and_sync_called(monkeypatch):
+    """非在線帳號的 unauthorized → stale_label；在線帳號保留原 error；sync 先於 list。"""
+    unauthorized = {
+        "five_hour": None,
+        "seven_day": None,
+        "fetched_at": 0.0,
+        "error": "unauthorized",
+    }
+    accounts = [
+        {"label": "A", "cred_file": "/tmp/acct-A.json", "subscription": "max", "active": True},
+        {"label": "B", "cred_file": "/tmp/acct-B.json", "subscription": "max", "active": False},
+    ]
+    calls = _claude_multi_account(monkeypatch, accounts, unauthorized)
+
+    data = provider_quota.snapshot()
+
+    claude = next(p for p in data["providers"] if p["key"] == "claude")
+    by = {a["label"]: a for a in claude["accounts"]}
+    assert by["A"]["rate_limits"]["error"] == "unauthorized"  # active：真過期就誠實顯示
+    assert by["B"]["rate_limits"]["error"] == "stale_label"  # inactive：快照 stale，非登出
+    # 不得就地改動 claude_usage 的 TTL 快取物件（映射須回新 dict）
+    assert unauthorized["error"] == "unauthorized"
+    # snapshot 讀帳號前先同步在線 label 快照
+    assert calls[:2] == ["sync", "list"]
+
+
+def test_claude_snapshot_survives_sync_failure(monkeypatch):
+    """sync_active_label 炸掉不得拖垮 snapshot（包 try/except）。"""
+    ok = {"five_hour": None, "seven_day": None, "fetched_at": 0.0, "error": None}
+    accounts = [
+        {"label": "A", "cred_file": "/tmp/acct-A.json", "subscription": "max", "active": True},
+    ]
+    _claude_multi_account(monkeypatch, accounts, ok)
+
+    def _boom():
+        raise RuntimeError("sync 壞掉")
+
+    monkeypatch.setattr(provider_quota.claude_accounts, "sync_active_label", _boom)
+
+    data = provider_quota.snapshot()
+
+    assert data["ok"] is True
+    claude = next(p for p in data["providers"] if p["key"] == "claude")
+    assert [a["label"] for a in claude["accounts"]] == ["A"]
+    assert claude["accounts"][0]["rate_limits"]["error"] is None  # error 不因 sync 失敗改變
+
+
+def test_frontend_rl_errors_has_stale_label_message():
+    """前後端契約：後端新 error 碼 stale_label 在前端 RL_ERRORS 有對應訊息。"""
+    src = (REPO_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    start = src.index("const RL_ERRORS")
+    end = src.index("};", start)
+    table = src[start:end]
+    assert "stale_label:" in table
+    assert "切換到此帳號一次即會刷新" in table
 
 
 def test_antigravity_signed_in(monkeypatch):

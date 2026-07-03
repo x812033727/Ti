@@ -5,6 +5,10 @@
 （含健康檢查+自動回滾）→ 把討論發現的後續任務寫回 backlog → 下一個。backlog 空時跑
 自我評估產生新任務。可隨時用暫停開關（pause 檔）叫停；改到自身程式碼後 os.execv 重載。
 
+長跑不間斷：迴圈頂端有額度閘門（provider_quota.gate）——全部 provider 額度受限時睡到
+最早重置再重查，而非空轉燒失敗；provider 中途不可用只把任務退回 pending（不寫 pause 檔）。
+每輪把 {state, task_id, sleep_until, quota…} 心跳寫進 <state dir>/status.json 供 /api/autopilot 觀測。
+
 獨立於 ti.service 跑,所以重佈（restart ti.service）不會打斷自己；狀態存在 backlog 檔,
 崩潰/重啟可續跑。
 """
@@ -23,7 +27,7 @@ import uuid
 from collections import Counter
 from pathlib import Path
 
-from . import backlog, config, deploy, history, publisher, runner
+from . import backlog, config, deploy, history, provider_quota, publisher, runner, secure_write
 from .orchestrator import StudioSession, parse_tasks
 
 # repo identity 正規化的單一真相（host-aware，同 path 非 GitHub host 視為不同）已抽至
@@ -31,6 +35,10 @@ from .orchestrator import StudioSession, parse_tasks
 from .repo_ident import repo_key as _repo_key
 
 log = logging.getLogger("ti.autopilot")
+
+# 心跳檔寫入唯一 choke point：與 backlog/history 同範式走 secure_write.secure_write_root
+# （原子 tmp+rename + owner 驗證）。module-level alias 兼顧可被測試 monkeypatch。
+secure_write_root = secure_write.secure_write_root
 
 _GH = ["gh"]
 _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
@@ -913,8 +921,15 @@ async def run_one_task(task: dict) -> None:
 
     if result.get("provider_unavailable"):
         provider = str(result["provider_unavailable"])
+        # 只把任務退回 pending 即 return，不再 _pause() 寫 pause 檔永久暫停等人工 resume：
+        # 下一輪主迴圈的額度閘門（provider_quota.gate）會查快照，全受限就睡到最早重置再
+        # 自動續跑，長跑不間斷。_pause() 保留給「重佈失敗」這類必須人工檢視的分支。
         backlog.set_status(task["id"], "pending", note=f"{provider} provider unavailable")
-        _pause(f"{provider} provider unavailable")
+        log.warning(
+            "任務 #%s 因 %s provider 不可用退回 pending，待額度閘門判定恢復後自動重跑",
+            task["id"],
+            provider,
+        )
         return
 
     # 「完整完成」與「可帶已知限制出貨」分流：尾票（N-1/N 已過、單一子任務 known-limit）不該把
@@ -1003,6 +1018,47 @@ def _recover_stale_in_progress() -> None:
         log.warning("回收 stale in_progress 任務 #%s（session %s）", task["id"], sid)
 
 
+# --- 心跳 ----------------------------------------------------------------
+
+
+def _quota_summary(snap: dict) -> dict[str, float | None]:
+    """把額度快照壓成 ``{provider_key: max_used%}``，供心跳檔與 log 使用（None＝無用量資訊）。"""
+    return {
+        str(entry.get("key")): provider_quota._usage(entry)["max_used"]
+        for entry in snap.get("providers", [])
+    }
+
+
+def _write_status(
+    state: str,
+    *,
+    task_id: int | str | None = None,
+    sleep_until: float | None = None,
+    quota: dict | None = None,
+) -> None:
+    """心跳：每輪主迴圈把當前狀態原子寫入 ``<AUTOPILOT_STATE_DIR>/status.json``。
+
+    state ∈ {"idle", "running", "quota_sleep"}；/api/autopilot 讀此檔回報「迴圈還活著、
+    正在做什麼、睡到何時、各 provider 用量」。寫入走 secure_write_root（與 backlog 同範式，
+    原子 tmp+rename）；心跳只是輔助觀測，任何寫入失敗都不得弄死主迴圈（僅留 debug log）。
+    """
+    payload = {
+        "state": state,
+        "task_id": task_id,
+        "sleep_until": sleep_until,
+        "updated_at": time.time(),
+        "quota": quota or {},
+    }
+    try:
+        config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        secure_write_root(
+            config.AUTOPILOT_STATE_DIR / "status.json",
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        )
+    except Exception:  # noqa: BLE001 — 心跳失敗不影響主迴圈
+        log.debug("心跳寫入 status.json 失敗（忽略，不影響主迴圈）", exc_info=True)
+
+
 # --- 主迴圈 --------------------------------------------------------------
 
 
@@ -1016,9 +1072,31 @@ async def main() -> None:
             await asyncio.sleep(10)
             continue
 
+        # 額度閘門：取任務前先確認至少一個 provider 還有額度；全受限就睡到最早重置
+        # （夾在 [60, AUTOPILOT_QUOTA_MAX_SLEEP]）後 continue 重查，避免額度耗盡時
+        # 空轉把任務全燒成 failed。snapshot() 含阻塞 I/O，丟 to_thread 跑。
+        quota: dict[str, float | None] = {}
+        if config.AUTOPILOT_QUOTA_GATE:
+            snap = await asyncio.to_thread(provider_quota.snapshot)
+            quota = _quota_summary(snap)
+            usable, reset_at = provider_quota.gate(snap)
+            if not usable:
+                now = time.time()
+                wait = (reset_at - now) if reset_at is not None else 60.0
+                sleep_s = min(max(wait, 60.0), float(config.AUTOPILOT_QUOTA_MAX_SLEEP))
+                _write_status("quota_sleep", sleep_until=now + sleep_s, quota=quota)
+                log.info(
+                    "所有 provider 額度受限（%s），休眠 %.0f 秒後重查額度",
+                    quota,
+                    sleep_s,
+                )
+                await asyncio.sleep(sleep_s)
+                continue
+
         _recover_stale_in_progress()
         task = backlog.next_pending()
         if task is None:
+            _write_status("idle", quota=quota)
             clone = await _prepare_clone()
             n = await _evaluate_self(clone)
             if n == 0:
@@ -1026,6 +1104,7 @@ async def main() -> None:
                 await asyncio.sleep(max(config.AUTOPILOT_COOLDOWN, 60))
             continue
 
+        _write_status("running", task_id=task.get("id"), quota=quota)
         try:
             await run_one_task(task)
         except Exception as exc:  # noqa: BLE001 — 單一任務出錯不該弄死整個迴圈

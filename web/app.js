@@ -1581,6 +1581,7 @@ const RL_ERRORS = {
   token_missing: "找不到訂閱憑證（需 provider CLI 登入）。",
   unauthorized: "token 已過期：跑一次該 provider 討論或重新登入後重試。",
   unreachable: "暫時無法取得官方額度（稍後重試）。",
+  stale_label: "此帳號的憑證快照已過期（額度不受影響）：切換到此帳號一次即會刷新。",
 };
 
 function rateLimitBlock(rl) {
