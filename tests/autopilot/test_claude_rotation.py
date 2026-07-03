@@ -1,8 +1,9 @@
-"""Claude 訂閱雙帳號自動輪替：_maybe_rotate_claude_account 的防護與副作用、主迴圈接線。
+"""Claude 訂閱雙帳號負載平衡：_maybe_rotate_claude_account 的防護與副作用、主迴圈接線。
 
-決策純函式 pick_account 的規則矩陣在 tests/test_claude_accounts.py；本檔只驗 autopilot
-執行點的合約：claude 訂閱模式才輪替、有討論進行中不切、switch → 排程重啟的呼叫順序、
-切換失敗不炸主迴圈、主迴圈在 gate 睡眠判斷「之前」輪替並寫 rotate_restart 心跳（含
+決策純函式 pick_account（負載平均分配＋95% 安全上限＋margin 遲滯）的規則矩陣在
+tests/test_claude_accounts.py；本檔只驗 autopilot 執行點的合約：claude 訂閱模式才輪替、
+兩窗（5h/7d）用量正確餵進決策、有討論進行中不切、switch → 排程重啟的呼叫順序、切換
+失敗不炸主迴圈、主迴圈在 gate 睡眠判斷「之前」輪替並寫 rotate_restart 心跳（含
 rotated_to）。全部合成快照＋monkeypatch，不打外網、不動真憑證、不起真重啟。
 """
 
@@ -48,6 +49,7 @@ def rotate_env(monkeypatch):
     monkeypatch.setattr(config, "CLAUDE_ROTATE", True)
     monkeypatch.setattr(config, "CLAUDE_ACCOUNT_PREFERRED", "B")
     monkeypatch.setattr(config, "CLAUDE_ROTATE_THRESHOLD", 95.0)
+    monkeypatch.setattr(config, "CLAUDE_ROTATE_MARGIN", 10.0)
     monkeypatch.setattr(config, "PROVIDER", "claude")
     monkeypatch.setattr(config, "has_api_key", lambda: False)
     monkeypatch.setattr(config, "claude_cli_logged_in", lambda: True)
@@ -65,14 +67,31 @@ def rotate_env(monkeypatch):
 
 
 def test_rotate_switches_then_schedules_restart_in_order(rotate_env):
-    """在線 B 達門檻、A 未達 → 先 switch("A") 再排程重啟（順序不可反）。"""
+    """在線 B 達安全上限、A 低 → 先 switch("A") 再排程重啟（順序不可反）。"""
     snap = _snap([_acct("A", 10.0), _acct("B", 96.0, active=True)])
     assert autopilot._maybe_rotate_claude_account(snap) == "A"
     assert rotate_env == [("switch", "A"), ("restart",)]
 
 
+def test_rotate_balances_on_margin_gap_with_log(rotate_env, caplog):
+    """平均分配主案：B 負載 40、A 18（差 ≥margin）→ 未達上限也切 A；log 為負載平衡樣式。"""
+    snap = _snap([_acct("A", 18.0), _acct("B", 40.0, active=True)])
+    with caplog.at_level("INFO", logger="ti.autopilot"):
+        assert autopilot._maybe_rotate_claude_account(snap) == "A"
+    assert rotate_env == [("switch", "A"), ("restart",)]
+    # _acct 的 7d 窗＝5h−5 → B(5h 40/7d 35)、A(5h 18/7d 13)
+    assert "Claude 帳號負載平衡：B（5h 40/7d 35）→ A（5h 18/7d 13）" in caplog.text
+
+
+def test_rotate_gap_below_margin_stays(rotate_env):
+    """遲滯：兩帳號負載差 <margin → 不切（避免頻繁重啟）。"""
+    snap = _snap([_acct("A", 35.0), _acct("B", 40.0, active=True)])
+    assert autopilot._maybe_rotate_claude_account(snap) is None
+    assert rotate_env == []
+
+
 def test_rotate_returns_to_preferred_after_reset(rotate_env):
-    """在線 A 未達門檻、preferred B 已重置 → 切回 B（每個額度週期先用 B）。"""
+    """在線 A 負載 50、preferred B 已重置（負載 3，差 ≥margin）→ 平衡切回 B。"""
     snap = _snap([_acct("A", 50.0, active=True), _acct("B", 3.0)])
     assert autopilot._maybe_rotate_claude_account(snap) == "B"
     assert rotate_env == [("switch", "B"), ("restart",)]
@@ -111,14 +130,14 @@ def test_rotate_non_claude_subscription_noop(rotate_env, monkeypatch, attr, valu
 
 
 def test_rotate_all_exhausted_noop(rotate_env):
-    """兩邊都 ≥95% → 不切換（交給既有 quota gate 睡到重置）。"""
+    """兩邊負載都 ≥95%（安全上限）→ 不切換（交給既有 quota gate 睡到重置）。"""
     snap = _snap([_acct("A", 97.0), _acct("B", 95.0, active=True)])
     assert autopilot._maybe_rotate_claude_account(snap) is None
     assert rotate_env == []
 
 
 def test_rotate_error_account_not_a_target(rotate_env):
-    """另一帳號額度查詢異常（error → 用量 None）→ 不可切入、不動作。"""
+    """另一帳號額度查詢異常（error → 兩窗皆 None）→ 不可切入、不動作。"""
     snap = _snap([_acct("A", None, error="stale_label"), _acct("B", 96.0, active=True)])
     assert autopilot._maybe_rotate_claude_account(snap) is None
     assert rotate_env == []
@@ -142,18 +161,21 @@ def test_rotate_switch_failure_does_not_raise(rotate_env, monkeypatch):
 def test_config_rotate_defaults():
     assert config.CLAUDE_ROTATE is True
     assert config.CLAUDE_ACCOUNT_PREFERRED == "B"
-    assert config.CLAUDE_ROTATE_THRESHOLD == 95.0
+    assert config.CLAUDE_ROTATE_THRESHOLD == 95.0  # 安全上限
+    assert config.CLAUDE_ROTATE_MARGIN == 10.0  # 平均分配遲滯
 
 
 def test_config_reload_reads_rotate_env(monkeypatch):
     monkeypatch.setenv("TI_CLAUDE_ROTATE", "0")
     monkeypatch.setenv("TI_CLAUDE_ACCOUNT_PREFERRED", "A")
     monkeypatch.setenv("TI_CLAUDE_ROTATE_THRESHOLD", "80")
+    monkeypatch.setenv("TI_CLAUDE_ROTATE_MARGIN", "5")
     try:
         config.reload()
         assert config.CLAUDE_ROTATE is False
         assert config.CLAUDE_ACCOUNT_PREFERRED == "A"
         assert config.CLAUDE_ROTATE_THRESHOLD == 80.0
+        assert config.CLAUDE_ROTATE_MARGIN == 5.0
     finally:
         monkeypatch.undo()
         config.reload()
@@ -220,8 +242,8 @@ async def test_main_loop_rotates_before_gate_sleep(rotate_env, state_dir, monkey
 
 
 async def test_main_loop_no_rotation_takes_task(rotate_env, state_dir, monkeypatch):
-    """不需輪替（在線即 preferred 且未達門檻）→ 照常取任務跑，心跳寫 running。"""
-    snap = _snap([_acct("A", 10.0), _acct("B", 50.0, active=True)], active_used=50.0)
+    """不需切換（負載差 <margin 且未達安全上限）→ 照常取任務跑，心跳寫 running。"""
+    snap = _snap([_acct("A", 45.0), _acct("B", 50.0, active=True)], active_used=50.0)
     monkeypatch.setattr(autopilot.provider_quota, "snapshot", lambda: snap)
     monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: None)
     monkeypatch.setattr(autopilot.backlog, "next_pending", lambda: {"id": 9, "title": "t"})
@@ -240,7 +262,7 @@ async def test_main_loop_no_rotation_takes_task(rotate_env, state_dir, monkeypat
 
 
 async def test_main_loop_rotate_disabled_falls_through(rotate_env, state_dir, monkeypatch):
-    """CLAUDE_ROTATE=0：即便 B 達門檻也不切換，主迴圈走既有 gate/取任務路徑。"""
+    """CLAUDE_ROTATE=0：即便 B 達安全上限也不切換，主迴圈走既有 gate/取任務路徑。"""
     monkeypatch.setattr(config, "CLAUDE_ROTATE", False)
     # 另附一個可用 provider，讓 gate 判定 usable → 直接取任務（不進 quota_sleep）。
     extra = [{"key": "codex", "ready": True, "rate_limits": {"five_hour": {"used_percentage": 5}}}]

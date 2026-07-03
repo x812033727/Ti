@@ -7,8 +7,9 @@
 
 長跑不間斷：迴圈頂端有額度閘門（provider_quota.gate）——全部 provider 額度受限時睡到
 最早重置再重查，而非空轉燒失敗；provider 中途不可用只把任務退回 pending（不寫 pause 檔）。
-Claude 訂閱雙帳號會依用量自動輪替（決策在 claude_accounts.pick_account：主帳號 B 優先、
-在線帳號達 95% 即互切、全受限交給 quota gate），切換後排程重啟服務使新憑證生效。
+Claude 訂閱雙帳號會依負載自動平均分配（決策在 claude_accounts.pick_account：帳號負載＝
+5h/7d 兩額度窗取最大，在線帳號比最低負載帳號高出 margin 即切換攤平用量，95% 為安全上限，
+全部達上限交給 quota gate），切換後排程重啟服務使新憑證生效。
 每輪把 {state, task_id, sleep_until, quota…} 心跳寫進 <state dir>/status.json 供 /api/autopilot 觀測。
 
 獨立於 ti.service 跑,所以重佈（restart ti.service）不會打斷自己；狀態存在 backlog 檔,
@@ -1085,32 +1086,59 @@ def _recover_stale_in_progress() -> None:
 _ROTATE_RESTART_SLEEP = 30.0
 
 
-def _claude_accounts_usage(snap: dict) -> tuple[dict[str, float | None], str | None]:
+def _window_used(rl: dict, window: str) -> float | None:
+    """從帳號 rate_limits 抽單一額度窗（five_hour/seven_day）的 used_percentage；缺失回 None。"""
+    w = rl.get(window)
+    v = w.get("used_percentage") if isinstance(w, dict) else None
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _claude_accounts_usage(
+    snap: dict,
+) -> tuple[dict[str, dict[str, float | None]], str | None]:
     """從額度快照的 claude 區塊抽 ``(usages, active_label)``，餵給 pick_account。
 
-    usages＝``{label: 該帳號所有額度窗（5h/7d）的最大 used_percentage}``；帳號額度查詢
-    異常（error，含非在線帳號的 stale_label）或無用量資訊 → None（pick_account 視為
-    不可切入）。無 claude 區塊或無多帳號標籤檔時回 ``({}, None)``。
+    usages＝``{label: {"five_hour": 用量%|None, "seven_day": 用量%|None}}``（兩窗分開傳，
+    負載＝兩窗取最大的邏輯集中在 pick_account）；帳號額度查詢異常（error，含非在線帳號
+    的 stale_label）→ 兩窗皆 None（pick_account 視為不可用、不得切入）。無 claude 區塊
+    或無多帳號標籤檔時回 ``({}, None)``。
     """
     entry = provider_quota._by_key(snap, "claude") or {}
-    usages: dict[str, float | None] = {}
+    usages: dict[str, dict[str, float | None]] = {}
     active: str | None = None
     for acct in entry.get("accounts") or []:
         label = acct.get("label")
         if not isinstance(label, str) or not label:
             continue
-        u = provider_quota._usage(acct)  # 只取 error/max_used（帳號條目沒有 ready 欄位）
-        usages[label] = None if u["error"] else u["max_used"]
+        rl = acct.get("rate_limits") or {}
+        if rl.get("error"):
+            usages[label] = {"five_hour": None, "seven_day": None}
+        else:
+            usages[label] = {
+                "five_hour": _window_used(rl, "five_hour"),
+                "seven_day": _window_used(rl, "seven_day"),
+            }
         if acct.get("active"):
             active = label
     return usages, active
 
 
+def _fmt_load(windows: dict[str, float | None] | None) -> str:
+    """帳號兩窗負載的 log 樣式：``5h 40/7d 12``（查不到的窗顯示 ?）。"""
+    w = windows or {}
+
+    def f(v: float | None) -> str:
+        return "?" if v is None else f"{v:.0f}"
+
+    return f"5h {f(w.get('five_hour'))}/7d {f(w.get('seven_day'))}"
+
+
 def _maybe_rotate_claude_account(snap: dict) -> str | None:
     """Claude 訂閱雙帳號自動輪替：需要切換時換帳號＋排程服務重啟，回目標 label；否則 None。
 
-    決策純函式在 ``claude_accounts.pick_account``（B 為主帳號、95% 收斂互切、全受限交給
-    quota gate——三規則見其 docstring）；本函式只負責前置防護與副作用：
+    決策純函式在 ``claude_accounts.pick_account``（負載平均分配為主：帳號負載＝5h/7d
+    兩窗取最大，差距達 margin 即切換攤平；95% 為安全上限、全部達上限交給 quota gate——
+    規則見其 docstring）；本函式只負責前置防護與副作用：
 
     - ``config.CLAUDE_ROTATE`` 關閉、或非「claude 訂閱模式」（provider 非 claude／走
       API key／CLI 未登入）→ 直接不輪替；
@@ -1128,7 +1156,11 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
             return None
         usages, active = _claude_accounts_usage(snap)
         target = claude_accounts.pick_account(
-            usages, active, config.CLAUDE_ACCOUNT_PREFERRED, config.CLAUDE_ROTATE_THRESHOLD
+            usages,
+            active,
+            config.CLAUDE_ACCOUNT_PREFERRED,
+            config.CLAUDE_ROTATE_THRESHOLD,
+            config.CLAUDE_ROTATE_MARGIN,
         )
         if not target:
             return None
@@ -1139,11 +1171,14 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
         claude_accounts.switch(target)
         deploy.schedule_service_restart()
         log.info(
-            "Claude 帳號輪替：%s → %s（用量 %s、門檻 %.0f%%），已排程重啟服務使新憑證生效",
+            "Claude 帳號負載平衡：%s（%s）→ %s（%s），上限 %.0f%%／遲滯 %.0f%%，"
+            "已排程重啟服務使新憑證生效",
             active,
+            _fmt_load(usages.get(active or "")),
             target,
-            usages,
+            _fmt_load(usages.get(target)),
             config.CLAUDE_ROTATE_THRESHOLD,
+            config.CLAUDE_ROTATE_MARGIN,
         )
         return target
     except Exception:  # noqa: BLE001 — 輪替只是額度優化，失敗不得弄死主迴圈
@@ -1213,10 +1248,10 @@ async def main() -> None:
         if config.AUTOPILOT_QUOTA_GATE:
             snap = await asyncio.to_thread(provider_quota.snapshot)
             quota = _quota_summary(snap)
-            # Claude 訂閱雙帳號輪替：必須在 gate 的睡眠判斷「之前」——gate 只看得到在線
-            # 帳號的額度，若在線帳號達門檻而另一帳號仍有額度，先輪替才不會被 gate 誤判
-            # 「全受限」睡到重置（違反「達 95% 就互切」）。命中即已排程服務重啟，本輪
-            # 不取任務，睡短暫等 systemd 重啟接手。
+            # Claude 訂閱雙帳號負載平衡：必須在 gate 的睡眠判斷「之前」——gate 只看得到
+            # 在線帳號的額度，若在線帳號達上限而另一帳號仍有額度，先切換才不會被 gate
+            # 誤判「全受限」睡到重置。命中即已排程服務重啟，本輪不取任務，睡短暫等
+            # systemd 重啟接手。
             rotated = _maybe_rotate_claude_account(snap)
             if rotated:
                 quota = {**quota, "rotated_to": rotated}
