@@ -34,6 +34,7 @@ class EventType(str, Enum):
     TOKEN_USAGE = "token_usage"  # LLM 呼叫 token / cost 用量
     DONE = "done"  # 專案完成
     ERROR = "error"  # 錯誤
+    VOTE_RESULT = "vote_result"  # 3-AI 表決結果（PM 無法決定時跨 provider 多數決）
 
 
 @dataclass
@@ -341,3 +342,32 @@ def task_status(session_id: str, task_id: int, title: str, status: str) -> Studi
 
 def error(session_id: str, message: str) -> StudioEvent:
     return StudioEvent(EventType.ERROR, session_id, {"message": message})
+
+
+def vote_result(
+    session_id: str,
+    topic: str,
+    options: list[str],
+    ballots: list[dict],
+    winner: str,
+    tie: bool,
+    degraded: bool = False,
+) -> StudioEvent:
+    """3-AI 表決結果：PM 無法決定時，找兩位不同 provider 的 AI 與 PM 多數決的終局快照。
+
+    ``ballots``＝``[{voter, provider, choice}]``（choice 空字串＝棄權）；``tie``＝最高票
+    平手（此時以 PM 票定案）；``degraded``＝可用外部 provider 不足兩位、未建投票員、
+    退化為 PM 單票定案。經既有 broadcast→record_event 管道入 history 供重播。
+    """
+    return StudioEvent(
+        EventType.VOTE_RESULT,
+        session_id,
+        {
+            "topic": topic,
+            "options": options,
+            "ballots": ballots,
+            "winner": winner,
+            "tie": tie,
+            "degraded": degraded,
+        },
+    )

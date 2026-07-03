@@ -635,3 +635,104 @@ def build_waves(tasks: list[dict], edges: list[tuple[int, int]]) -> list[list[di
             for nxt in adj[tid]:
                 indeg[nxt] -= 1
     return waves
+
+
+# --- 3-AI 表決（PM 無法決定時跨 provider 多數決；副作用在 orchestrator._hold_vote）--------
+
+
+def parse_vote_request(text: str) -> dict | None:
+    """解析 PM 的表決請求行 ``表決: <議題> | <選項A> | <選項B>[ | <選項C>]``。
+
+    沿用本檔 marker 範式：行前綴＋全形冒號容錯、全形管線 ``｜`` 先正規化為半形再切、
+    取最後一個命中行為準（與 ``_last_match`` 一致）。選項剔除空段落、去重保序。
+    無命中行、議題為空、或有效選項不足 2 個 → 回 None（不是合法表決請求）。
+    合法時回 ``{"topic": <議題>, "options": [<選項>...]}``。
+
+    新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
+    """
+    matches = re.findall(r"^\s*表決\s*[:：]\s*(.+?)\s*$", text or "", re.M)
+    if not matches:
+        return None
+    parts = [p.strip() for p in matches[-1].replace("｜", "|").split("|")]
+    topic = parts[0]
+    options = list(dict.fromkeys(p for p in parts[1:] if p))  # 去空段、去重、保序
+    if not topic or len(options) < 2:
+        return None
+    return {"topic": topic, "options": options}
+
+
+def parse_ballot(text: str, options: list[str]) -> str:
+    """解析投票員輸出的 ``投票: <選項>`` 行，正規化回 options 中的選項原文。
+
+    取最後一個命中行（全形冒號容錯）。精確比對優先；否則以 difflib 相似度對每個
+    選項打分、≥0.6 取最佳者（LLM 常少字/多字/改標點，不因此丟票）。無命中行、
+    options 為空、或與所有選項都不像 → 回 ""（棄權）。
+    """
+    matches = re.findall(r"^\s*投票\s*[:：]\s*(.+?)\s*$", text or "", re.M)
+    if not matches or not options:
+        return ""
+    val = matches[-1]
+    if val in options:
+        return val
+    best, best_ratio = "", 0.0
+    for opt in options:
+        ratio = difflib.SequenceMatcher(None, val, opt).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = opt, ratio
+    return best if best_ratio >= 0.6 else ""
+
+
+def tally_votes(ballots: list[dict]) -> dict:
+    """多數決計票。ballots＝``[{voter, provider, choice}]``；choice 空字串＝棄權（不計票）。
+
+    回 ``{"winner": <選項>, "counts": {選項: 票數}, "tie": bool}``：
+    - 唯一最高票 → 該選項為 winner、tie=False。
+    - 最高票平手 → tie=True；PM（voter=="pm"）有投且其票在平手集合 → 以 PM 票為
+      winner（僵局時 PM 票定案），否則 winner=""（交呼叫端降級兜底）。
+    - 全棄權／空 ballots → ``{"winner": "", "counts": {}, "tie": False}``。
+    """
+    counts: dict[str, int] = {}
+    for b in ballots or []:
+        choice = (b or {}).get("choice") or ""
+        if choice:
+            counts[choice] = counts.get(choice, 0) + 1
+    if not counts:
+        return {"winner": "", "counts": {}, "tie": False}
+    top = max(counts.values())
+    leaders = [c for c, n in counts.items() if n == top]
+    if len(leaders) == 1:
+        return {"winner": leaders[0], "counts": counts, "tie": False}
+    pm_choice = next(
+        (b.get("choice") for b in ballots if (b or {}).get("voter") == "pm" and b.get("choice")),
+        "",
+    )
+    winner = pm_choice if pm_choice in leaders else ""
+    return {"winner": winner, "counts": counts, "tie": True}
+
+
+def pick_vote_providers(
+    digest: dict, exclude: str, n: int = 2, threshold: float = 90.0
+) -> list[str]:
+    """從額度 digest 挑至多 n 個可當投票員的 provider，回 provider key 列表。
+
+    digest＝``provider_quota.digest`` 的 plain dict（``{provider: {ready, error,
+    max_used, soonest_reset}}``）——flow 不 import provider_quota，由 orchestrator
+    查快照後把 digest 當參數傳入（與 choose_dispatch 同一邊界）。
+
+    入選條件：就緒（ready）、無 error、``max_used`` 未達 threshold（缺用量資訊視為
+    0＝最寬鬆）、且 ≠ exclude（PM 自己的 provider，表決須跨 provider）。按 max_used
+    升冪取前 n（同分按 digest 次序決勝、可重現）；彼此天然相異（digest 鍵唯一）。
+    合格者不足 n 個時回實際數（呼叫端據此降級）。
+    """
+    exclude = (exclude or "").strip().lower()
+    candidates: list[tuple[float, int, str]] = []
+    for i, (key, usage) in enumerate((digest or {}).items()):
+        u = usage or {}
+        if key == exclude or not u.get("ready") or u.get("error"):
+            continue
+        used = float(u["max_used"]) if u.get("max_used") is not None else 0.0
+        if used >= threshold:
+            continue
+        candidates.append((used, i, key))
+    candidates.sort()
+    return [key for _, _, key in candidates[: max(n, 0)]]

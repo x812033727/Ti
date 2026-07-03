@@ -446,6 +446,18 @@ function handleEvent(ev) {
       // 持續改良模式下，單輪錯誤不終止迴圈（improver 會記 failed 並評估續跑）。
       if (!improveMode) setRunning(false);
       break;
+    case "vote_result": {
+      // 3-AI 表決：PM 無法決定時跨 provider 多數決（逐票列出，平手/降級標示）。
+      addSystem(`🗳️ 表決：${p.topic || ""}`);
+      (p.ballots || []).forEach((b) => {
+        addSystem(`　${b.voter || "?"}（${b.provider || "?"}）→ ${b.choice || "棄權"}`);
+      });
+      let voteLine = `🏁 勝出：${p.winner || "（無多數共識）"}`;
+      if (p.tie) voteLine += "（平手，以 PM 票定案）";
+      if (p.degraded) voteLine += "（降級：可用 provider 不足兩位，PM 單票定案）";
+      addSystem(voteLine);
+      break;
+    }
   }
 }
 
