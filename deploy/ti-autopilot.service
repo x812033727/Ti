@@ -16,7 +16,9 @@ Environment=TI_LESSONS=1
 Environment=TI_AUTOPILOT_EVAL_MEMORY=20
 WorkingDirectory=/opt/ti
 ExecStart=/opt/ti/.venv/bin/python -m studio.autopilot
-Restart=on-failure
+# 長跑不間斷：on-failure 對「exit 0 收場的非預期停止」不會拉起來，一停就永久停擺。
+# 改 always＋10 秒間隔——額度耗盡由迴圈內的額度閘門睡眠處理，不靠 restart 空轉。
+Restart=always
 RestartSec=10
 
 [Install]

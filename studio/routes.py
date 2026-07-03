@@ -7,6 +7,7 @@ WebSocket 與應用組裝分別在 ws.py / server.py。
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 
 from fastapi import APIRouter, Depends, Request
@@ -866,12 +867,21 @@ class TaskBody(BaseModel):
 
 @router.get("/api/autopilot", dependencies=[Depends(auth.require_auth)])
 async def autopilot_status() -> JSONResponse:
+    # 心跳：autopilot 主迴圈每輪寫入的 status.json（state=idle/running/quota_sleep、
+    # task_id、sleep_until、各 provider 用量）。檔案不存在或壞損＝null（尚未跑過/未寫入）。
+    try:
+        heartbeat = json.loads(
+            (config.AUTOPILOT_STATE_DIR / "status.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        heartbeat = None
     return JSONResponse(
         {
             "paused": config.autopilot_paused(),
             "counts": backlog.counts(),
             "dryrun": config.AUTOPILOT_DRYRUN,
             "repo": config.AUTOPILOT_REPO,
+            "heartbeat": heartbeat,
         }
     )
 
