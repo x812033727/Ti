@@ -177,6 +177,8 @@ async def test_tool_loop_plain_answer(tmp_path):
 
 
 def test_make_expert_openai(monkeypatch, tmp_path):
+    # 解除 PM 釘選（預設釘 claude），驗證的是「全域 provider → 專家型別」的一般路徑。
+    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "")
     monkeypatch.setattr(config, "PROVIDER", "openai")
     ex = providers.make_expert(BY_KEY["pm"], "t", tmp_path)
     assert isinstance(ex, providers.OpenAIExpert)
@@ -184,6 +186,7 @@ def test_make_expert_openai(monkeypatch, tmp_path):
 
 def test_openai_model_for_minimax(monkeypatch):
     """PROVIDER=minimax 時走 MiniMax 模型槽（依 LEAD_ROLES 二分），不污染 openai 行為。"""
+    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "")  # 解除 PM 釘選，驗證一般模型槽二分
     monkeypatch.setattr(config, "PROVIDER", "minimax")
     monkeypatch.setattr(config, "MINIMAX_MODEL_LEAD", "MiniMax-M3")
     monkeypatch.setattr(config, "MINIMAX_MODEL_FAST", "MiniMax-M2.7")
@@ -193,6 +196,7 @@ def test_openai_model_for_minimax(monkeypatch):
 
 def test_openai_model_for_gemini(monkeypatch):
     """PROVIDER=gemini 時走 Gemini 模型槽（依 LEAD_ROLES 二分）。"""
+    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "")  # 解除 PM 釘選，驗證一般模型槽二分
     monkeypatch.setattr(config, "PROVIDER", "gemini")
     monkeypatch.setattr(config, "GEMINI_MODEL_LEAD", "gemini-2.5-pro")
     monkeypatch.setattr(config, "GEMINI_MODEL_FAST", "gemini-2.5-flash")
@@ -881,7 +885,8 @@ def test_openai_client_args_openai(monkeypatch):
 
 
 def test_effective_provider_override(monkeypatch):
-    """per-role 覆寫優先於全域；無覆寫沿用全域。"""
+    """per-role 覆寫優先於全域；無覆寫沿用全域（PM 釘選另測 tests/core/test_pm_pin.py）。"""
+    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "")  # 解除 PM 釘選，驗證一般優先序
     monkeypatch.setattr(config, "PROVIDER", "claude")
     monkeypatch.setattr(config, "ROLE_PROVIDERS", {"engineer": "claude", "pm": "minimax"})
     assert providers.effective_provider(BY_KEY["pm"]) == "minimax"  # 覆寫
@@ -891,6 +896,7 @@ def test_effective_provider_override(monkeypatch):
 
 def test_make_expert_mixed_per_role(monkeypatch, tmp_path):
     """混用：全域 claude，但把 pm 覆寫成 minimax → pm 走 OpenAIExpert、其餘走 Claude Expert。"""
+    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "")  # 解除 PM 釘選，驗證 per-role 混用路徑
     monkeypatch.setattr(config, "PROVIDER", "claude")
     monkeypatch.setattr(config, "ROLE_PROVIDERS", {"pm": "minimax"})
     pm = providers.make_expert(BY_KEY["pm"], "t", tmp_path)
@@ -907,6 +913,7 @@ def test_make_expert_mixed_per_role(monkeypatch, tmp_path):
 
 def test_make_expert_mixed_model_slot(monkeypatch):
     """混用時模型槽依角色有效 provider 決定，不被全域帶歪。"""
+    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "")  # 解除 PM 釘選，驗證 per-role 混用路徑
     monkeypatch.setattr(config, "PROVIDER", "openai")
     monkeypatch.setattr(config, "ROLE_PROVIDERS", {"pm": "minimax"})
     monkeypatch.setattr(config, "MINIMAX_MODEL_LEAD", "MiniMax-M3")
@@ -914,6 +921,69 @@ def test_make_expert_mixed_model_slot(monkeypatch):
     assert providers.openai_model_for(BY_KEY["pm"]) == "MiniMax-M3"
     # engineer 無覆寫 → 全域 openai 快速模型
     assert providers.openai_model_for(BY_KEY["engineer"]) == config.OPENAI_MODEL_FAST
+
+
+# --- make_expert 的 model 覆寫貫通四 provider（額度感知 per-task 派工／招募指定模型）----
+
+
+def test_make_expert_model_override_openai_path(monkeypatch, tmp_path):
+    """openai 相容路徑：model 覆寫直達 OpenAIExpert；缺省沿用模型槽＝現行為。"""
+    monkeypatch.setattr(config, "PROVIDER", "openai")
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path, model="gpt-custom")
+    assert isinstance(ex, providers.OpenAIExpert)
+    assert ex._model == "gpt-custom"
+    ex2 = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    assert ex2._model == config.OPENAI_MODEL_FAST  # 缺省＝現行為
+
+
+def test_make_expert_model_override_codex(monkeypatch, tmp_path):
+    """codex 路徑：覆寫優先進 argv --model；無覆寫沿用 config 模型槽。"""
+    monkeypatch.setattr(config, "PROVIDER", "codex")
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "slot-model")
+    monkeypatch.setattr(config, "CODEX_SANDBOX", "auto")
+    monkeypatch.setattr(config, "CODEX_BYPASS_SANDBOX", False)
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path, model="gpt-5.5")
+    assert isinstance(ex, providers.CodexExpert)
+    assert ex._model_override == "gpt-5.5"
+    argv = providers._codex_argv(ex.role, tmp_path, ex._model_override)
+    assert argv[argv.index("--model") + 1] == "gpt-5.5"
+    ex2 = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    argv2 = providers._codex_argv(ex2.role, tmp_path, ex2._model_override)
+    assert argv2[argv2.index("--model") + 1] == "slot-model"  # 缺省＝現行為
+
+
+def test_make_expert_model_override_antigravity(monkeypatch, tmp_path):
+    """antigravity 路徑：覆寫優先進 argv --model（可含空白）；無覆寫沿用 config 模型槽。"""
+    monkeypatch.setattr(config, "PROVIDER", "antigravity")
+    monkeypatch.setattr(config, "ANTIGRAVITY_MODEL_FAST", "Slot (Low)")
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path, model="Gemini 3.5 Flash (High)")
+    assert isinstance(ex, providers.AntigravityExpert)
+    assert ex._model_override == "Gemini 3.5 Flash (High)"
+    argv = providers._antigravity_argv(ex.role, ex._model_override)
+    assert argv[argv.index("--model") + 1] == "Gemini 3.5 Flash (High)"
+    ex2 = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    argv2 = providers._antigravity_argv(ex2.role, ex2._model_override)
+    assert argv2[argv2.index("--model") + 1] == "Slot (Low)"  # 缺省＝現行為
+
+
+def test_make_expert_model_override_claude(monkeypatch, tmp_path):
+    """claude 路徑：model 覆寫存進 Expert 並到達 _build_client 的 model 參數；缺省走三參數形。"""
+    from studio import experts
+
+    seen: dict = {}
+
+    def fake_build_client(role, sid, cwd, model=""):
+        seen["model"] = model
+        return object()
+
+    monkeypatch.setattr(experts, "_build_client", fake_build_client)
+    monkeypatch.setattr(config, "PROVIDER", "claude")
+    ex = providers.make_expert(BY_KEY["engineer"], "t", tmp_path, model="claude-haiku-4-5")
+    assert isinstance(ex, experts.Expert)
+    assert ex._model == "claude-haiku-4-5"
+    assert seen["model"] == "claude-haiku-4-5"
+    ex2 = providers.make_expert(BY_KEY["engineer"], "t", tmp_path)
+    assert ex2._model == "" and seen["model"] == ""  # 缺省＝沿用 _model_for
 
 
 def test_provider_ready_minimax(monkeypatch):

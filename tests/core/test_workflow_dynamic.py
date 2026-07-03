@@ -64,6 +64,7 @@ def test_parse_next_step_basic():
         "end": False,
         "recruit": None,
         "provider": "",
+        "model": "",
     }
 
 
@@ -85,6 +86,7 @@ def test_parse_next_step_missing_returns_empty():
         "end": False,
         "recruit": None,
         "provider": "",
+        "model": "",
     }
 
 

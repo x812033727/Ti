@@ -13,6 +13,8 @@
 - ``constrained(snap, provider)``：該 provider 是否受限（未就緒/查詢異常/用量達門檻）。
 - ``least_constrained_ready(snap)``：就緒且最寬鬆的 provider key（受限角色自動重綁的安全網）。
 - ``gate(snap)``：全域額度閘門 ``(any_usable, earliest_reset_epoch)``（autopilot 主迴圈節流用）。
+- ``digest(snap)``：壓成 ``{provider: {ready, error, max_used, soonest_reset}}`` plain dict，
+  給 flow.choose_dispatch（純函式層不 import 本模組，由 orchestrator 傳參）。
 """
 
 from __future__ import annotations
@@ -231,6 +233,22 @@ def _usage(entry: dict) -> dict:
         "max_used": max(used) if used else None,
         "soonest_reset": min(resets) if resets else None,
     }
+
+
+def digest(snap: dict) -> dict:
+    """把 snapshot 壓成 ``{provider: {ready, error, max_used, soonest_reset}}`` 的 plain dict。
+
+    供 flow.choose_dispatch（純函式決策層）消費——flow 不得 import 本模組，由 orchestrator
+    查快照後把 digest 當參數傳入。條目非 dict／缺 key 者略過；空或壞快照回空 dict。
+    """
+    out: dict[str, dict] = {}
+    for entry in (snap or {}).get("providers", []):
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("key")
+        if key:
+            out[key] = _usage(entry)
+    return out
 
 
 def constrained(snap: dict, provider: str, threshold: float = CONSTRAINED_THRESHOLD) -> bool:

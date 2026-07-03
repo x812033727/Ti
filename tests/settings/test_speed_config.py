@@ -8,6 +8,8 @@ from studio.roles import BY_KEY
 
 
 def test_model_for_respects_lead_roles(monkeypatch):
+    # 解除 PM 模型釘選(預設釘 claude-fable-5,另測 tests/core/test_pm_pin.py),驗證 LEAD 二分法。
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "")
     monkeypatch.setattr(config, "LEAD_ROLES", {"pm"})
     assert experts._model_for(BY_KEY["pm"]) == config.MODEL_LEAD
     # 非 lead 角色一律走快速模型(加速)

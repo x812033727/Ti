@@ -326,6 +326,15 @@ function handleEvent(ev) {
     case "git_commit":
       addCommit(p);
       break;
+    case "dispatch_decision": {
+      // 額度感知 per-task 派工：任務實作者暫時換綁 provider/model（log-line 樣式，比照 git_commit）。
+      const target = (p.provider || "") + (p.model ? "/" + p.model : "");
+      addSystem(
+        `🧭 任務 #${p.task_id ?? "?"} → ${p.role || ""}@${target}` +
+          (p.reason ? `（${p.reason}）` : ""),
+      );
+      break;
+    }
     case "human_message":
       addHuman(p.text);
       break;

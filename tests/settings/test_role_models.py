@@ -91,6 +91,8 @@ def test_update_rejects_bad_role_model(sandbox, monkeypatch):
 
 
 def test_model_for_override_beats_lead_roles(monkeypatch):
+    # 解除 PM 模型釘選（預設釘 claude-fable-5，另測 tests/core/test_pm_pin.py），驗證一般優先序。
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "")
     monkeypatch.setattr(config, "LEAD_ROLES", {"pm"})
     monkeypatch.setattr(config, "MODEL_LEAD", "lead-model")
     monkeypatch.setattr(config, "MODEL_FAST", "fast-model")
@@ -102,7 +104,8 @@ def test_model_for_override_beats_lead_roles(monkeypatch):
 
 
 def test_model_for_auto_is_backward_compatible(monkeypatch):
-    """全部 auto（空字串）＝與改動前完全相同的行為。"""
+    """全部 auto（空字串）＝與改動前完全相同的行為（PM 釘選解除下）。"""
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "")
     monkeypatch.setattr(config, "LEAD_ROLES", {"pm"})
     monkeypatch.setattr(config, "MODEL_LEAD", "lead-model")
     monkeypatch.setattr(config, "MODEL_FAST", "fast-model")

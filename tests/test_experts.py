@@ -66,6 +66,8 @@ def test_summarize_tool_bash_truncates_long_command():
 
 
 def test_model_for_lead_vs_fast(monkeypatch):
+    # 解除 PM 模型釘選（預設釘 claude-fable-5，另測 tests/core/test_pm_pin.py），驗證 LEAD 二分法。
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "")
     monkeypatch.setattr(config, "LEAD_ROLES", {"pm"})
     monkeypatch.setattr(config, "MODEL_LEAD", "lead-model")
     monkeypatch.setattr(config, "MODEL_FAST", "fast-model")

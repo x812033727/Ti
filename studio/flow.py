@@ -4,6 +4,12 @@
 以顯式 re-export 保住既有 import 路徑——tests、autopilot、improver 皆 `from studio.orchestrator
 import ...`，且對 `studio.orchestrator.<fn>` 的 monkeypatch 仍有效（orchestrator 內部沿用裸名
 查找本模組屬性）。對 `studio.flow.<fn>` 的 monkeypatch 不影響 orchestrator 內部呼叫。
+
+額度感知 per-task 派工的新 marker（與既有 `任務:`／`依賴:`／`下一步:` 同為穩定字串，改動前
+先確認對應 parser）：
+- ``派工: #<id> <provider> [<model>]`` —— PM 拆解時對單一任務的派工建議（parse_dispatch），
+  合法性與額度受限由 choose_dispatch 對照 digest／allowed_models 兜底。
+- ``模型: <model>`` —— 動態 step 招募時指定綁定 provider 的模型（parse_next_step 的 model 鍵）。
 """
 
 from __future__ import annotations
@@ -397,7 +403,7 @@ _NEXT_STEP_END = {"結束", "結束。", "完成", "停止", "end", "done", "sto
 
 
 def parse_next_step(text: str) -> dict:
-    """從 PM 的動態決策輸出解析下一步，回傳 ``{role, instruction, end, recruit, provider}``。
+    """從 PM 的動態決策輸出解析下一步，回傳 ``{role, instruction, end, recruit, provider, model}``。
 
     格式（沿用本檔行前綴 parser 範式，全形冒號容錯）：
     - ``下一步: <role_key>`` —— 下一個發言角色（取最後一個 `下一步:` 行為準）。
@@ -406,16 +412,18 @@ def parse_next_step(text: str) -> dict:
     - ``招募: <key> | <名稱> | <一句專長>`` —— 選填，PM 現場液生一個新 persona（取最後一行）；
       呼叫端可據此建臨時角色加入（key 不合法/缺專長則忽略）。
     - ``provider: <claude|codex|minimax|antigravity>`` —— 選填，招募時指定綁哪個 provider（取最後一行）。
+    - ``模型: <model>`` —— 選填，招募時指定該 provider 的模型（取最後一行；可含空白）。
 
-    role/recruit/provider 皆為原始字串、**未驗證**：合法性與 fallback 交由呼叫端
-    （validate_assignees／KEY_RE／provider 白名單）兜底。找不到任何 `下一步:` 行 → role 空、
-    end False（呼叫端據此走 fallback 或結束）。
+    role/recruit/provider/model 皆為原始字串、**未驗證**：合法性與 fallback 交由呼叫端
+    （validate_assignees／KEY_RE／provider 白名單／模型白名單）兜底。找不到任何 `下一步:` 行
+    → role 空、end False（呼叫端據此走 fallback 或結束）。
 
     新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
     """
     role, instruction, end = "", "", False
     recruit: dict | None = None
     provider = ""
+    model = ""
     for line in (text or "").splitlines():
         m = re.match(r"^\s*下一步\s*[:：]\s*(.+?)\s*$", line)
         if m:
@@ -434,6 +442,10 @@ def parse_next_step(text: str) -> dict:
         if m:
             provider = m.group(1).strip().split()[0].lower() if m.group(1).strip() else ""
             continue
+        m = re.match(r"^\s*模型\s*[:：]\s*(.+?)\s*$", line)
+        if m:
+            model = m.group(1).strip()
+            continue
         m = re.match(r"^\s*招募\s*[:：]\s*(.+)$", line)
         if m:
             parts = [p.strip() for p in m.group(1).replace("｜", "|").split("|", 2)]
@@ -446,7 +458,119 @@ def parse_next_step(text: str) -> dict:
         "end": end,
         "recruit": recruit,
         "provider": provider,
+        "model": model,
     }
+
+
+# --- 額度感知 per-task 派工（純函式決策；快照查詢與換綁副作用在 orchestrator）--------
+
+
+def parse_dispatch(text: str) -> dict[int, dict]:
+    """解析 PM 拆解輸出的派工行，回傳 ``{task_id: {"provider": ..., "model": ...}}``。
+
+    行格式：``派工: #<id> <provider> [<model>]``（沿用本檔 marker 範式：行前綴、全形冒號
+    容錯、逐行收集；同一 id 出現多行取最後一行）。model 可含空白（如 Antigravity 的顯示
+    名稱），省略＝空字串。provider 正規化為小寫；兩者皆**未驗證**——合法性由
+    choose_dispatch 對照 digest 與 allowed_models 兜底。無任何派工行回空 dict。
+
+    新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
+    """
+    out: dict[int, dict] = {}
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*派工\s*[:：]\s*#(\d+)\s+(\S+)(?:\s+(.+?))?\s*$", line)
+        if m:
+            out[int(m.group(1))] = {
+                "provider": m.group(2).strip().lower(),
+                "model": (m.group(3) or "").strip(),
+            }
+    return out
+
+
+def choose_dispatch(
+    digest: dict,
+    task: dict,
+    hint: dict,
+    allowed_models: dict,
+    recent: list[str],
+    performance: dict | None = None,
+    threshold: float = 90.0,
+) -> dict:
+    """依即時額度為單一任務挑 provider／model，回傳 ``{provider, model, reason}``。
+
+    純函式：額度快照的查詢（provider_quota.digest）、換綁專家與事件廣播等副作用都在
+    orchestrator；本函式只做決策，可單元測試、可 monkeypatch。
+
+    參數：
+    - digest: ``{provider: {ready, error, max_used, soonest_reset}}``。
+    - task: 任務 dict（``{id, title, ...}``，供 reason 描述）。
+    - hint: parse_dispatch 對該任務的派工建議（``{provider, model}``）或 ``{}``。
+    - allowed_models: ``{provider: tuple[str, ...]}`` 模型白名單；hint.model 不在名單即棄用。
+    - recent: 已派 provider 序列（尾端＝最近），同分時避開剛用過的、把任務分攤到各家。
+    - performance: 可選 ``{provider: avg_score}``——同用量時偏好歷史表現高者（缺省視為 0）。
+      目前僅作次序鍵；詳細考核資料流由後續 PR 接上。
+    - threshold: 受限門檻（任一額度窗用量 % 達此值即視為受限）。
+
+    規則：hint.provider 合法（在 digest 內）且未受限（就緒、無 error、用量<門檻）→ 採用；
+    否則在「就緒未受限」集合取用量最低者（同分先比 performance 高者、再避開 recent 尾端剛
+    用過的、最後以 digest 次序決勝確保可重現）；全受限時取「就緒」中用量最低者；全掛回
+    ``{"provider": "", "model": "", "reason": ...}``（呼叫端沿用原綁定）。
+
+    model：hint.model 在 allowed_models[選定 provider] 內才採用，否則空字串（沿用該
+    provider 的預設模型槽）。reason 為繁中一句話（供 dispatch_decision 事件顯示）。
+    """
+    perf = performance or {}
+    hint = hint or {}
+
+    def _usage(key: str) -> dict:
+        return digest.get(key) or {}
+
+    def _used(key: str) -> float:
+        used = _usage(key).get("max_used")
+        return float(used) if used is not None else 0.0
+
+    def _ready(key: str) -> bool:
+        u = _usage(key)
+        return bool(u.get("ready")) and not u.get("error")
+
+    def _unconstrained(key: str) -> bool:
+        return _ready(key) and _used(key) < threshold
+
+    def _model_for(provider: str) -> str:
+        model = (hint.get("model") or "").strip()
+        return model if model and model in (allowed_models.get(provider) or ()) else ""
+
+    tid = task.get("id", "?")
+    hinted = ((hint.get("provider") or "").strip().lower()) if hint else ""
+    if hinted and hinted in digest and _unconstrained(hinted):
+        return {
+            "provider": hinted,
+            "model": _model_for(hinted),
+            "reason": f"任務 #{tid}：PM 指定 {hinted}，額度未受限，照派",
+        }
+
+    order = {key: i for i, key in enumerate(digest)}  # digest 保序：最終同分以此決勝（可重現）
+    last = recent[-1] if recent else ""
+    candidates = [k for k in digest if _unconstrained(k)]
+    if candidates:
+        best = min(
+            candidates,
+            key=lambda k: (_used(k), -float(perf.get(k) or 0.0), 1 if k == last else 0, order[k]),
+        )
+        prefix = f"PM 指定的 {hinted} 受限或不可用，" if hinted else ""
+        return {
+            "provider": best,
+            "model": _model_for(best),
+            "reason": f"任務 #{tid}：{prefix}改派就緒中用量最低的 {best}（{_used(best):.0f}%）",
+        }
+    ready = [k for k in digest if _ready(k)]
+    if ready:
+        best = min(ready, key=lambda k: (_used(k), order[k]))
+        return {
+            "provider": best,
+            "model": _model_for(best),
+            "reason": f"任務 #{tid}：各 provider 額度皆受限，取用量最低的 {best}（{_used(best):.0f}%）",
+        }
+    return {"provider": "", "model": "", "reason": f"任務 #{tid}：無任何就緒 provider，沿用原綁定"}
 
 
 def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:

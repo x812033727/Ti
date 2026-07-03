@@ -24,11 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 def effective_provider(role: Role) -> str:
-    """角色的有效 provider：per-role 覆寫（TI_PROVIDER_<KEY>）優先，否則全域 PROVIDER。
+    """角色的有效 provider：PM 釘選最優先，其次 per-role 覆寫（TI_PROVIDER_<KEY>），否則全域 PROVIDER。
 
     讓 Claude／MiniMax／Gemini／Codex／Antigravity 可混用——例如把 tool-calling 吃重的
-    工程師留 Codex 或 Antigravity、討論型角色走 Gemini 或 MiniMax。
+    工程師留 Codex 或 Antigravity、討論型角色走 Gemini 或 MiniMax。PM 是分派／檢驗／表決的
+    最終決策者，判斷品質必須穩定，故預設釘在 claude（config.PM_PIN_PROVIDER；設空＝解除
+    釘選、非法值視同解除），不隨 TI_PROVIDER_PM 或全域 provider 漂移。
     """
+    if role.key == "pm" and config.PM_PIN_PROVIDER in config.PROVIDERS:
+        return config.PM_PIN_PROVIDER
     return config.role_provider(role.key) or config.PROVIDER
 
 
@@ -84,8 +88,12 @@ def _codex_sandbox_for(role: Role) -> str:
     return "workspace-write" if allowed & _CODEX_WRITE_TOOLS else "read-only"
 
 
-def _codex_argv(role: Role, cwd: Path) -> list[str]:
-    """建立 codex exec argv；測試可直接檢查，不經 shell。"""
+def _codex_argv(role: Role, cwd: Path, model_override: str = "") -> list[str]:
+    """建立 codex exec argv；測試可直接檢查，不經 shell。
+
+    ``model_override`` 非空時優先於角色模型槽（per-task 派工／招募指定模型）；空＝沿用
+    config 的 CODEX_MODEL_LEAD/FAST 槽（缺省行為不變）。
+    """
     argv = [
         config.CODEX_BIN,
         "exec",
@@ -99,7 +107,7 @@ def _codex_argv(role: Role, cwd: Path) -> list[str]:
     else:
         argv += ["--sandbox", _codex_sandbox_for(role), "-c", 'approval_policy="never"']
     argv += ["--color", "never"]
-    model = codex_model_for(role)
+    model = model_override or codex_model_for(role)
     if model:
         argv += ["--model", model]
     argv.append("-")
@@ -157,12 +165,14 @@ class CodexExpert:
 
     Codex CLI 自己負責工具執行與檔案修改；本類只負責把角色 prompt 餵進 CLI、把 JSONL 事件轉成
     Ti Studio 事件，並維持短期文字歷史，讓同一位專家的下一次 speak() 有基本脈絡。
+    ``model`` 非空時覆寫角色模型槽（per-task 派工／招募指定模型）；空＝沿用 config 槽。
     """
 
-    def __init__(self, role: Role, session_id: str, cwd: Path):
+    def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
         self.role = role
         self.session_id = session_id
         self.cwd = cwd
+        self._model_override = model
         self._history: list[tuple[str, str]] = []
         self._proc = None
         self._stop_lock = asyncio.Lock()
@@ -213,7 +223,7 @@ class CodexExpert:
         return "\n".join(parts)
 
     async def _run_codex(self, prompt: str, broadcast) -> str:
-        argv = _codex_argv(self.role, self.cwd)
+        argv = _codex_argv(self.role, self.cwd, self._model_override)
         final_messages: list[str] = []
         errors: list[str] = []
         stderr_tail = ""
@@ -493,14 +503,18 @@ def _duration_arg(seconds: float) -> str:
     return f"{int(seconds)}s" if float(seconds).is_integer() else f"{seconds:g}s"
 
 
-def _antigravity_argv(role: Role) -> list[str]:
-    """建立 agy print-mode argv；測試可直接檢查，不經 shell。"""
+def _antigravity_argv(role: Role, model_override: str = "") -> list[str]:
+    """建立 agy print-mode argv；測試可直接檢查，不經 shell。
+
+    ``model_override`` 非空時優先於角色模型槽（per-task 派工／招募指定模型）；空＝沿用
+    config 的 ANTIGRAVITY_MODEL_LEAD/FAST 槽（缺省行為不變）。
+    """
     argv = [config.ANTIGRAVITY_BIN]
     if config.ANTIGRAVITY_SANDBOX:
         argv.append("--sandbox")
     if config.ANTIGRAVITY_SKIP_PERMISSIONS:
         argv.append("--dangerously-skip-permissions")
-    model = antigravity_model_for(role)
+    model = model_override or antigravity_model_for(role)
     if model:
         argv += ["--model", model]
     timeout = _turn_timeout_seconds()
@@ -550,12 +564,14 @@ class AntigravityExpert:
 
     Antigravity CLI 自己負責工具執行與檔案修改；本類只負責把角色 prompt 餵進 CLI、把 stdout
     收斂成 Studio 專家發言，並把未登入／額度耗盡／卡住轉成 ProviderUnavailable，避免任務空轉。
+    ``model`` 非空時覆寫角色模型槽（per-task 派工／招募指定模型）；空＝沿用 config 槽。
     """
 
-    def __init__(self, role: Role, session_id: str, cwd: Path):
+    def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
         self.role = role
         self.session_id = session_id
         self.cwd = cwd
+        self._model_override = model
         self._history: list[tuple[str, str]] = []
         self._proc = None
         self._stop_lock = asyncio.Lock()
@@ -608,7 +624,7 @@ class AntigravityExpert:
         return "\n".join(parts)
 
     async def _run_antigravity(self, prompt: str, broadcast) -> str:
-        argv = [*_antigravity_argv(self.role), self._prompt(prompt)]
+        argv = [*_antigravity_argv(self.role, self._model_override), self._prompt(prompt)]
         out_chunks: list[str] = []
         errors: list[str] = []
         stderr_tail = ""
@@ -1135,30 +1151,38 @@ def _chat_for(provider: str):
     return chat
 
 
-def make_expert(role: Role, session_id: str, cwd: Path, *, provider: str | None = None):
+def make_expert(
+    role: Role,
+    session_id: str,
+    cwd: Path,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+):
     """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax／Gemini／Codex／Antigravity 混用）。
 
-    ``provider`` 顯式覆寫角色的有效 provider（動態招募時依即時額度把新人綁到還有額度的 provider）；
-    缺省則取 effective_provider(role)，行為與既有完全一致。
+    ``provider`` 顯式覆寫角色的有效 provider（動態招募／額度感知 per-task 派工時依即時額度綁定）；
+    ``model`` 顯式覆寫該 provider 的模型（單一任務或招募成員指定模型），空＝沿用該 provider 的
+    預設模型槽。兩者缺省時行為與既有完全一致。
     """
     prov = provider or effective_provider(role)
     if prov == "codex":
-        return CodexExpert(role, session_id, cwd)
+        return CodexExpert(role, session_id, cwd, model=model or "")
     if prov == "antigravity":
-        return AntigravityExpert(role, session_id, cwd)
+        return AntigravityExpert(role, session_id, cwd, model=model or "")
     if prov in ("openai", "minimax", "gemini"):
         return OpenAIExpert(
             role,
             session_id,
             cwd,
             chat=_chat_for(prov),
-            model=openai_model_for(role, prov),
+            model=model or openai_model_for(role, prov),
             provider=prov,
         )
     # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
     from .experts import Expert
 
-    return Expert(role, session_id, cwd)
+    return Expert(role, session_id, cwd, model=model or "")
 
 
 async def complete_once(
