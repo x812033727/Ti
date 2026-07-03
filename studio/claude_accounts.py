@@ -178,28 +178,38 @@ def _load(windows: dict[str, float | None] | None) -> float | None:
     return max(vals) if vals else None
 
 
+def _reset_of(windows: dict[str, float | None] | None) -> float:
+    """帳號 5 小時窗的重置時間（epoch 秒）；查不到（None）視為 +inf（最晚重置）。"""
+    r = (windows or {}).get("five_hour_reset")
+    return float(r) if isinstance(r, (int, float)) else float("inf")
+
+
 def pick_account(
     usages: dict[str, dict[str, float | None]],
     active: str | None,
     preferred: str,
     threshold: float,
     margin: float,
+    reset_edge: float,
 ) -> str | None:
-    """雙（多）帳號的「負載平均分配」純決策：回「應切換到的 label」，不需切換回 None。
+    """雙（多）帳號分配的純決策（v3）：回「應切換到的 label」，不需切換回 None。
 
-    ``usages`` 為 ``{label: {"five_hour": 用量%|None, "seven_day": 用量%|None}}``；每帳號
-    **負載＝兩窗取最大**（None 窗忽略；兩窗皆 None＝額度查不到→該帳號不可用，不得作為
-    切換目標；在線帳號兩窗皆 None 則視為需要切走）。``preferred`` 為主帳號（同分優先）。
+    ``usages`` 為 ``{label: {"five_hour": %|None, "seven_day": %|None,
+    "five_hour_reset": epoch|None, "seven_day_reset": epoch|None}}``；每帳號**負載＝
+    5h/7d 兩用量窗取最大**（None 窗忽略；兩窗皆 None＝額度查不到→不可用，不得作為
+    切換目標；在線帳號不可用則視為需要切走）。三層優先序：**安全上限 > 重置時間 >
+    負載平衡**：
 
-    規則（平均分配為主、``threshold`` 為安全上限、``margin`` 為遲滯）：
-
-    1. 候選＝負載 < ``threshold``（安全上限，預設 95%）的帳號；無候選 → None
-       （全部達上限或查不到，交給既有 quota gate 睡到額度重置）。
-    2. best＝候選中負載最低者；同分 tie-break：``preferred`` 優先、再字母序。
-    3. 在線帳號不在候選（負載達安全上限、或額度查不到）→ 回 best（安全上限強制切）。
-    4. 在線帳號在候選 → 只有當 best ≠ 在線且「在線負載 − best 負載 ≥ ``margin``」才回
-       best（**平均分配主規則**：把用量攤平到各帳號；margin 遲滯避免兩帳號負載相近時
-       頻繁互切、每次切換都要重啟服務）。差距未達 margin → None（留在原帳號）。
+    1. 安全上限：候選＝負載 < ``threshold``（預設 95%）的帳號——負載達上限者即使最早
+       重置也**不得**為切換目標；無候選 → None（交給既有 quota gate 睡到額度重置）；
+       在線不在候選（達上限或不可用）→ 強制切到下述 target（不受 margin 遲滯限制）。
+    2. 重置時間（**早重置多吃**）：取各候選的 ``five_hour_reset``（None 視為 +inf），
+       若最早重置者比次早者早 ≥ ``reset_edge``（秒）→ target＝最早重置者——它的用量
+       很快歸還，多吃划算；晚重置的要背久。edge 差距本身就是遲滯：由此規則選出且
+       target ≠ 在線即切；target＝在線 → None（留在線多吃，**不**退回負載平衡）。
+    3. 負載平衡（同 v2）：重置差 < edge 或候選重置皆查不到時退回——target＝負載最低者
+       （同分 tie-break：``preferred`` 優先、再字母序）；在線在候選時須「在線負載 −
+       target 負載 ≥ ``margin``」（遲滯，避免頻繁互切重啟）才切，否則 None。
 
     在線 label 未知（``active is None``）一律回 None——不知道現在是誰就不動作，寧可
     不切也不要亂切。純函式、無 I/O，好單測。
@@ -210,7 +220,18 @@ def pick_account(
     candidates = {label: ld for label, ld in loads.items() if ld is not None and ld < threshold}
     if not candidates:
         return None  # 全部達安全上限／查不到 → 交給 quota gate
-    # 負載最低者；同分 preferred 優先（False < True）、再字母序
+    # 第 2 層：重置時間——最早 5h 重置者比次早者早 ≥ reset_edge → 它多吃
+    if len(candidates) >= 2:
+        by_reset = sorted(candidates, key=lambda lb: _reset_of(usages.get(lb)))
+        earliest, second = by_reset[0], by_reset[1]
+        earliest_reset = _reset_of(usages.get(earliest))
+        if (
+            earliest_reset != float("inf")
+            and _reset_of(usages.get(second)) - earliest_reset >= reset_edge
+        ):
+            # edge 差距即遲滯：非在線就切（含在線不在候選的強制切）；在線即最早者 → 留著多吃
+            return earliest if earliest != active else None
+    # 第 3 層：負載平衡（同 v2）——負載最低者；同分 preferred 優先（False < True）、再字母序
     best = min(candidates, key=lambda lb: (candidates[lb], lb != preferred, lb))
     active_load = candidates.get(active)
     if active_load is None:

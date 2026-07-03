@@ -138,16 +138,22 @@ def test_switch_rejects_unknown_and_illegal_label(_isolate):
         claude_accounts.switch("../x")  # 非法 label
 
 
-# --- pick_account：雙帳號負載平均分配的純決策（無 I/O，不碰檔案）------------
+# --- pick_account：雙帳號分配的純決策（無 I/O，不碰檔案）--------------------
+# v3 優先序：安全上限 > 重置時間（早重置多吃）> 負載平均分配。
 
 
-def _w(fh: float | None = None, sd: float | None = None) -> dict:
-    """兩額度窗的 usages 值：{"five_hour": fh, "seven_day": sd}。"""
-    return {"five_hour": fh, "seven_day": sd}
+def _w(
+    fh: float | None = None,
+    sd: float | None = None,
+    fhr: float | None = None,
+    sdr: float | None = None,
+) -> dict:
+    """usages 值：兩額度窗用量 + 兩窗重置時間（epoch）。"""
+    return {"five_hour": fh, "seven_day": sd, "five_hour_reset": fhr, "seven_day_reset": sdr}
 
 
-def _pick(usages, active, preferred="B", threshold=95.0, margin=10.0):
-    return claude_accounts.pick_account(usages, active, preferred, threshold, margin)
+def _pick(usages, active, preferred="B", threshold=95.0, margin=10.0, reset_edge=900.0):
+    return claude_accounts.pick_account(usages, active, preferred, threshold, margin, reset_edge)
 
 
 def test_pick_account_balances_when_gap_reaches_margin():
@@ -227,3 +233,64 @@ def test_pick_account_single_account_none():
 def test_pick_account_unknown_active_none():
     """在線 label 未知（None）→ 不動作，寧可不切也不亂切。"""
     assert _pick({"A": _w(10.0), "B": _w(20.0)}, None) is None
+
+
+# --- pick_account v3：重置時間優先（早重置多吃）-----------------------------
+
+_T = 1_800_000_000.0  # 固定 epoch 基準：決策只比較相對差，避免測試依賴當下時間
+
+
+def test_pick_account_earlier_reset_wins_even_with_higher_load():
+    """早重置 ≥edge 且非在線 → 切（即使負載較高，只要 <threshold：用量很快歸還、多吃划算）。"""
+    usages = {"A": _w(60.0, fhr=_T + 600), "B": _w(30.0, fhr=_T + 3600)}
+    assert _pick(usages, "B") == "A"  # A 早 3000 秒 ≥ edge 900，負載較高仍切
+
+
+def test_pick_account_reset_gap_below_edge_falls_back_to_load():
+    """早重置 <edge → 退回負載平衡規則（margin 遲滯照舊）。"""
+    below = {"A": _w(18.0, fhr=_T + 600), "B": _w(40.0, fhr=_T + 1200)}
+    assert _pick(below, "B") == "A"  # 重置差 600 <edge；負載差 22 ≥margin → 負載規則切
+    close = {"A": _w(35.0, fhr=_T + 600), "B": _w(40.0, fhr=_T + 1200)}
+    assert _pick(close, "B") is None  # 重置差 <edge 且負載差 5 <margin → 不切
+
+
+def test_pick_account_reset_edge_exact_boundary():
+    """edge 遲滯精確邊界：重置差恰等於 edge 即切（≥ 語意）、差 edge−1 退回負載規則。"""
+    at_edge = {"A": _w(30.0, fhr=_T + 100), "B": _w(30.0, fhr=_T + 100 + 900)}
+    assert _pick(at_edge, "B") == "A"  # 負載同分（負載規則不會切）→ 證明由重置規則觸發
+    below_edge = {"A": _w(30.0, fhr=_T + 100), "B": _w(30.0, fhr=_T + 100 + 899)}
+    assert _pick(below_edge, "B") is None  # 退回負載規則：同分 → 不切
+
+
+def test_pick_account_reset_none_falls_back_to_load():
+    """候選重置皆查不到（None）→ 退回負載平衡；單邊 None 視為 +inf（已知者即最早）。"""
+    assert _pick({"A": _w(18.0), "B": _w(40.0)}, "B") == "A"  # 皆 None → 純負載規則
+    assert _pick({"A": _w(18.0, fhr=_T + 600), "B": _w(40.0)}, "B") == "A"  # A 已知 → 差 inf ≥edge
+    # 在線 B 已知重置、A 未知：B 即「最早重置者」→ 留在線多吃（不退回負載規則）
+    assert _pick({"A": _w(18.0), "B": _w(40.0, fhr=_T + 600)}, "B") is None
+
+
+def test_pick_account_earliest_reset_is_active_stays():
+    """早重置者＝在線 → 不切（留在線多吃），即使負載差 ≥margin 也不退回負載規則。"""
+    usages = {"A": _w(18.0, fhr=_T + 3600), "B": _w(40.0, fhr=_T + 600)}
+    assert _pick(usages, "B") is None
+
+
+def test_pick_account_early_reset_but_exhausted_not_a_target():
+    """最早重置但負載 ≥threshold → 不得為 target（安全上限優先於重置時間）。"""
+    usages = {
+        "A": _w(96.0, fhr=_T + 60),  # 全場最早重置但已達上限 → 排除在候選外
+        "B": _w(50.0, fhr=_T + 7200),  # 在線
+        "C": _w(20.0, fhr=_T + 3600),  # 候選中最早（比 B 早 3600 ≥edge）
+    }
+    assert _pick(usages, "B") == "C"
+
+
+def test_pick_account_forced_switch_prefers_earlier_reset():
+    """在線達上限的強制切同樣走重置優先：早重置 ≥edge 者勝過低負載者。"""
+    usages = {
+        "A": _w(60.0, fhr=_T + 600),
+        "B": _w(96.0, fhr=_T + 300),  # 在線、達上限（不在候選）
+        "C": _w(20.0, fhr=_T + 3600),
+    }
+    assert _pick(usages, "B") == "A"  # 負載規則會選 C；A 比 C 早 3000 秒 → 重置優先勝出
