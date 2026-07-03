@@ -7,9 +7,10 @@
 
 長跑不間斷：迴圈頂端有額度閘門（provider_quota.gate）——全部 provider 額度受限時睡到
 最早重置再重查，而非空轉燒失敗；provider 中途不可用只把任務退回 pending（不寫 pause 檔）。
-Claude 訂閱雙帳號會依負載自動平均分配（決策在 claude_accounts.pick_account：帳號負載＝
-5h/7d 兩額度窗取最大，在線帳號比最低負載帳號高出 margin 即切換攤平用量，95% 為安全上限，
-全部達上限交給 quota gate），切換後排程重啟服務使新憑證生效。
+Claude 訂閱雙帳號會自動分配（決策在 claude_accounts.pick_account，優先序：95% 安全上限
+> 重置時間「早重置多吃」（最早 5h 重置者比次早者早 ≥ reset_edge 即切給它）> 負載平均分配
+（負載＝5h/7d 兩窗取最大，差 ≥ margin 即切換攤平），全部達上限交給 quota gate），切換後
+排程重啟服務使新憑證生效。
 每輪把 {state, task_id, sleep_until, quota…} 心跳寫進 <state dir>/status.json 供 /api/autopilot 觀測。
 
 獨立於 ti.service 跑,所以重佈（restart ti.service）不會打斷自己；狀態存在 backlog 檔,
@@ -1086,10 +1087,11 @@ def _recover_stale_in_progress() -> None:
 _ROTATE_RESTART_SLEEP = 30.0
 
 
-def _window_used(rl: dict, window: str) -> float | None:
-    """從帳號 rate_limits 抽單一額度窗（five_hour/seven_day）的 used_percentage；缺失回 None。"""
+def _window_field(rl: dict, window: str, field: str) -> float | None:
+    """從帳號 rate_limits 抽單一額度窗（five_hour/seven_day）的數值欄位
+    （used_percentage/reset_at）；缺失或非數值回 None。"""
     w = rl.get(window)
-    v = w.get("used_percentage") if isinstance(w, dict) else None
+    v = w.get(field) if isinstance(w, dict) else None
     return float(v) if isinstance(v, (int, float)) else None
 
 
@@ -1098,10 +1100,11 @@ def _claude_accounts_usage(
 ) -> tuple[dict[str, dict[str, float | None]], str | None]:
     """從額度快照的 claude 區塊抽 ``(usages, active_label)``，餵給 pick_account。
 
-    usages＝``{label: {"five_hour": 用量%|None, "seven_day": 用量%|None}}``（兩窗分開傳，
-    負載＝兩窗取最大的邏輯集中在 pick_account）；帳號額度查詢異常（error，含非在線帳號
-    的 stale_label）→ 兩窗皆 None（pick_account 視為不可用、不得切入）。無 claude 區塊
-    或無多帳號標籤檔時回 ``({}, None)``。
+    usages＝``{label: {"five_hour": 用量%|None, "seven_day": 用量%|None,
+    "five_hour_reset": epoch|None, "seven_day_reset": epoch|None}}``（兩窗用量與重置
+    時間分開傳，負載＝兩窗取最大、重置優先的邏輯集中在 pick_account）；帳號額度查詢
+    異常（error，含非在線帳號的 stale_label）→ 全欄位 None（pick_account 視為不可用、
+    不得切入）。無 claude 區塊或無多帳號標籤檔時回 ``({}, None)``。
     """
     entry = provider_quota._by_key(snap, "claude") or {}
     usages: dict[str, dict[str, float | None]] = {}
@@ -1112,33 +1115,44 @@ def _claude_accounts_usage(
             continue
         rl = acct.get("rate_limits") or {}
         if rl.get("error"):
-            usages[label] = {"five_hour": None, "seven_day": None}
-        else:
-            usages[label] = {
-                "five_hour": _window_used(rl, "five_hour"),
-                "seven_day": _window_used(rl, "seven_day"),
-            }
+            rl = {}  # 查詢異常 → 全欄位 None（不可用）
+        usages[label] = {
+            "five_hour": _window_field(rl, "five_hour", "used_percentage"),
+            "seven_day": _window_field(rl, "seven_day", "used_percentage"),
+            "five_hour_reset": _window_field(rl, "five_hour", "reset_at"),
+            "seven_day_reset": _window_field(rl, "seven_day", "reset_at"),
+        }
         if acct.get("active"):
             active = label
     return usages, active
 
 
-def _fmt_load(windows: dict[str, float | None] | None) -> str:
-    """帳號兩窗負載的 log 樣式：``5h 40/7d 12``（查不到的窗顯示 ?）。"""
-    w = windows or {}
+def _rotate_log_detail(usages: dict, active: str | None, target: str) -> str:
+    """切換 log 的括號內文：``5h 重置 14:30，較 B 早 42 分；負載 A 26/B 30``。
+
+    重置時間取目標帳號的 5h 窗（本地 HH:MM）；在線帳號重置較晚時附「較 <在線> 早 N 分」
+    （重置優先切換的可讀依據）。查不到的欄位顯示 ?，不因缺資料炸 log。
+    """
+    t, a = usages.get(target) or {}, usages.get(active or "") or {}
+    rt, ra = t.get("five_hour_reset"), a.get("five_hour_reset")
+    reset_txt = f"5h 重置 {time.strftime('%H:%M', time.localtime(rt))}" if rt else "5h 重置 ?"
+    if rt and ra and ra - rt >= 60:  # 不足 1 分鐘不標，避免「早 0 分」噪音
+        reset_txt += f"，較 {active} 早 {round((ra - rt) / 60)} 分"
 
     def f(v: float | None) -> str:
         return "?" if v is None else f"{v:.0f}"
 
-    return f"5h {f(w.get('five_hour'))}/7d {f(w.get('seven_day'))}"
+    lt, la = claude_accounts._load(t), claude_accounts._load(a)
+    return f"{reset_txt}；負載 {target} {f(lt)}/{active or '?'} {f(la)}"
 
 
 def _maybe_rotate_claude_account(snap: dict) -> str | None:
     """Claude 訂閱雙帳號自動輪替：需要切換時換帳號＋排程服務重啟，回目標 label；否則 None。
 
-    決策純函式在 ``claude_accounts.pick_account``（負載平均分配為主：帳號負載＝5h/7d
-    兩窗取最大，差距達 margin 即切換攤平；95% 為安全上限、全部達上限交給 quota gate——
-    規則見其 docstring）；本函式只負責前置防護與副作用：
+    決策純函式在 ``claude_accounts.pick_account``（優先序：95% 安全上限 > 重置時間
+    「早重置多吃」（差 ≥ reset_edge 秒）> 負載平均分配（差 ≥ margin）；帳號負載＝5h/7d
+    兩窗取最大，全部達上限交給 quota gate——規則見其 docstring）；本函式只負責前置防護
+    與副作用：
 
     - ``config.CLAUDE_ROTATE`` 關閉、或非「claude 訂閱模式」（provider 非 claude／走
       API key／CLI 未登入）→ 直接不輪替；
@@ -1161,6 +1175,7 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
             config.CLAUDE_ACCOUNT_PREFERRED,
             config.CLAUDE_ROTATE_THRESHOLD,
             config.CLAUDE_ROTATE_MARGIN,
+            config.CLAUDE_ROTATE_RESET_EDGE,
         )
         if not target:
             return None
@@ -1171,14 +1186,13 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
         claude_accounts.switch(target)
         deploy.schedule_service_restart()
         log.info(
-            "Claude 帳號負載平衡：%s（%s）→ %s（%s），上限 %.0f%%／遲滯 %.0f%%，"
+            "Claude 帳號分配：切至 %s（%s），上限 %.0f%%／負載遲滯 %.0f%%／重置優先 %.0f 秒，"
             "已排程重啟服務使新憑證生效",
-            active,
-            _fmt_load(usages.get(active or "")),
             target,
-            _fmt_load(usages.get(target)),
+            _rotate_log_detail(usages, active, target),
             config.CLAUDE_ROTATE_THRESHOLD,
             config.CLAUDE_ROTATE_MARGIN,
+            config.CLAUDE_ROTATE_RESET_EDGE,
         )
         return target
     except Exception:  # noqa: BLE001 — 輪替只是額度優化，失敗不得弄死主迴圈

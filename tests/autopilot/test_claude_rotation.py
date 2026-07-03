@@ -1,10 +1,11 @@
 """Claude 訂閱雙帳號負載平衡：_maybe_rotate_claude_account 的防護與副作用、主迴圈接線。
 
-決策純函式 pick_account（負載平均分配＋95% 安全上限＋margin 遲滯）的規則矩陣在
-tests/test_claude_accounts.py；本檔只驗 autopilot 執行點的合約：claude 訂閱模式才輪替、
-兩窗（5h/7d）用量正確餵進決策、有討論進行中不切、switch → 排程重啟的呼叫順序、切換
-失敗不炸主迴圈、主迴圈在 gate 睡眠判斷「之前」輪替並寫 rotate_restart 心跳（含
-rotated_to）。全部合成快照＋monkeypatch，不打外網、不動真憑證、不起真重啟。
+決策純函式 pick_account（優先序：95% 安全上限 > 重置時間「早重置多吃」> 負載平均
+分配＋margin 遲滯）的規則矩陣在 tests/test_claude_accounts.py；本檔只驗 autopilot 執行
+點的合約：claude 訂閱模式才輪替、兩窗（5h/7d）用量與 reset_at 正確餵進決策、有討論進行
+中不切、switch → 排程重啟的呼叫順序、切換失敗不炸主迴圈、主迴圈在 gate 睡眠判斷「之前」
+輪替並寫 rotate_restart 心跳（含 rotated_to）。全部合成快照＋monkeypatch，不打外網、
+不動真憑證、不起真重啟。
 """
 
 from __future__ import annotations
@@ -21,12 +22,26 @@ from studio import autopilot, config
 # --- 合成快照 helper（與 tests/autopilot/test_quota_gate.py 同構）-----------
 
 
-def _acct(label: str, used: float | None, *, active: bool = False, error: str | None = None):
-    """單一帳號條目：used 取 5h 窗（7d 窗放較低值，驗證取 max 的語意）。"""
+def _acct(
+    label: str,
+    used: float | None,
+    *,
+    active: bool = False,
+    error: str | None = None,
+    fhr: float | None = None,
+    sdr: float | None = None,
+):
+    """單一帳號條目：used 取 5h 窗（7d 窗放較低值，驗證取 max 的語意）；可指定兩窗 reset_at。"""
     rl: dict = {"error": error}
     if used is not None:
-        rl["five_hour"] = {"used_percentage": used, "reset_at": time.time() + 3600}
-        rl["seven_day"] = {"used_percentage": max(0.0, used - 5), "reset_at": time.time() + 86400}
+        rl["five_hour"] = {
+            "used_percentage": used,
+            "reset_at": fhr if fhr is not None else time.time() + 3600,
+        }
+        rl["seven_day"] = {
+            "used_percentage": max(0.0, used - 5),
+            "reset_at": sdr if sdr is not None else time.time() + 86400,
+        }
     return {"label": label, "subscription": "max", "active": active, "rate_limits": rl}
 
 
@@ -50,6 +65,7 @@ def rotate_env(monkeypatch):
     monkeypatch.setattr(config, "CLAUDE_ACCOUNT_PREFERRED", "B")
     monkeypatch.setattr(config, "CLAUDE_ROTATE_THRESHOLD", 95.0)
     monkeypatch.setattr(config, "CLAUDE_ROTATE_MARGIN", 10.0)
+    monkeypatch.setattr(config, "CLAUDE_ROTATE_RESET_EDGE", 900.0)
     monkeypatch.setattr(config, "PROVIDER", "claude")
     monkeypatch.setattr(config, "has_api_key", lambda: False)
     monkeypatch.setattr(config, "claude_cli_logged_in", lambda: True)
@@ -74,13 +90,56 @@ def test_rotate_switches_then_schedules_restart_in_order(rotate_env):
 
 
 def test_rotate_balances_on_margin_gap_with_log(rotate_env, caplog):
-    """平均分配主案：B 負載 40、A 18（差 ≥margin）→ 未達上限也切 A；log 為負載平衡樣式。"""
-    snap = _snap([_acct("A", 18.0), _acct("B", 40.0, active=True)])
+    """平均分配案（重置差 <edge）：B 負載 40、A 18（差 ≥margin）→ 切 A；log 為「帳號分配」樣式。"""
+    t0 = time.time() + 3600
+    snap = _snap([_acct("A", 18.0, fhr=t0), _acct("B", 40.0, active=True, fhr=t0)])
     with caplog.at_level("INFO", logger="ti.autopilot"):
         assert autopilot._maybe_rotate_claude_account(snap) == "A"
     assert rotate_env == [("switch", "A"), ("restart",)]
-    # _acct 的 7d 窗＝5h−5 → B(5h 40/7d 35)、A(5h 18/7d 13)
-    assert "Claude 帳號負載平衡：B（5h 40/7d 35）→ A（5h 18/7d 13）" in caplog.text
+    hhmm = time.strftime("%H:%M", time.localtime(t0))
+    assert f"Claude 帳號分配：切至 A（5h 重置 {hhmm}；負載 A 18/B 40）" in caplog.text
+
+
+def test_rotate_prefers_earlier_reset_with_log(rotate_env, caplog):
+    """重置優先案：A 比在線 B 早 42 分（≥edge）→ 即使 A 負載較高也切；log 含「較 B 早 42 分」。"""
+    ra = time.time() + 3600
+    rt = ra - 42 * 60
+    snap = _snap([_acct("A", 30.0, fhr=rt), _acct("B", 26.0, active=True, fhr=ra)])
+    with caplog.at_level("INFO", logger="ti.autopilot"):
+        assert autopilot._maybe_rotate_claude_account(snap) == "A"
+    assert rotate_env == [("switch", "A"), ("restart",)]
+    hhmm = time.strftime("%H:%M", time.localtime(rt))
+    assert f"切至 A（5h 重置 {hhmm}，較 B 早 42 分；負載 A 30/B 26）" in caplog.text
+
+
+def test_rotate_reset_gap_below_edge_uses_load_rule(rotate_env):
+    """重置差 <edge → 退回負載規則：負載差 5 <margin → 不切（重置差不足不觸發）。"""
+    t0 = time.time()
+    snap = _snap([_acct("A", 35.0, fhr=t0 + 600), _acct("B", 40.0, active=True, fhr=t0 + 1200)])
+    assert autopilot._maybe_rotate_claude_account(snap) is None
+    assert rotate_env == []
+
+
+def test_claude_accounts_usage_extracts_windows_and_resets(rotate_env):
+    """_claude_accounts_usage：兩窗用量與 reset_at 一起抽；error 帳號全欄位 None。"""
+    t0 = time.time()
+    snap = _snap(
+        [
+            _acct("A", 18.0, fhr=t0 + 600, sdr=t0 + 86400),
+            _acct("B", None, active=True, error="stale_label"),
+        ]
+    )
+    usages, active = autopilot._claude_accounts_usage(snap)
+    assert active == "B"
+    assert usages["A"]["five_hour"] == 18.0 and usages["A"]["seven_day"] == 13.0
+    assert usages["A"]["five_hour_reset"] == pytest.approx(t0 + 600)
+    assert usages["A"]["seven_day_reset"] == pytest.approx(t0 + 86400)
+    assert usages["B"] == {
+        "five_hour": None,
+        "seven_day": None,
+        "five_hour_reset": None,
+        "seven_day_reset": None,
+    }
 
 
 def test_rotate_gap_below_margin_stays(rotate_env):
@@ -163,6 +222,7 @@ def test_config_rotate_defaults():
     assert config.CLAUDE_ACCOUNT_PREFERRED == "B"
     assert config.CLAUDE_ROTATE_THRESHOLD == 95.0  # 安全上限
     assert config.CLAUDE_ROTATE_MARGIN == 10.0  # 平均分配遲滯
+    assert config.CLAUDE_ROTATE_RESET_EDGE == 900.0  # 重置時間優先的最小差距（秒）
 
 
 def test_config_reload_reads_rotate_env(monkeypatch):
@@ -170,12 +230,14 @@ def test_config_reload_reads_rotate_env(monkeypatch):
     monkeypatch.setenv("TI_CLAUDE_ACCOUNT_PREFERRED", "A")
     monkeypatch.setenv("TI_CLAUDE_ROTATE_THRESHOLD", "80")
     monkeypatch.setenv("TI_CLAUDE_ROTATE_MARGIN", "5")
+    monkeypatch.setenv("TI_CLAUDE_ROTATE_RESET_EDGE", "300")
     try:
         config.reload()
         assert config.CLAUDE_ROTATE is False
         assert config.CLAUDE_ACCOUNT_PREFERRED == "A"
         assert config.CLAUDE_ROTATE_THRESHOLD == 80.0
         assert config.CLAUDE_ROTATE_MARGIN == 5.0
+        assert config.CLAUDE_ROTATE_RESET_EDGE == 300.0
     finally:
         monkeypatch.undo()
         config.reload()
