@@ -2834,7 +2834,16 @@ class StudioSession:
         專案有自己的 publish_repo 時，整段（publish＋CI 迴圈的 verify_and_merge／
         ci_failure_logs／repush）都以 contextvar 覆寫目標 repo——同一 task 內全程生效。
         """
-        token = publisher.set_repo_override(self._publish_repo)
+        try:
+            token = publisher.set_repo_override(self._publish_repo)
+        except ValueError as e:
+            # owner allowlist 護欄攔下違規的專案 repo：以失敗的發佈結果回報，不讓例外炸掉 session。
+            await self.broadcast(
+                events.publish_result(
+                    self.session_id, publisher.PublishResult(False, str(e)).to_dict()
+                )
+            )
+            return
         try:
             await self._maybe_publish_inner(shippable, engineer)
         finally:

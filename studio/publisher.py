@@ -20,6 +20,7 @@ from datetime import datetime
 from enum import Enum
 
 from . import config, runner
+from .repo_ident import repo_key, repo_owner
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
 
@@ -37,9 +38,33 @@ def current_repo() -> str:
     return _REPO_OVERRIDE.get() or config.PUBLISH_REPO
 
 
+def assert_repo_allowed(repo: str) -> None:
+    """發佈安全護欄：目標 repo 的 owner 必須在 config.PUBLISH_OWNER_ALLOWLIST 內。
+
+    owner 解析走 repo_ident.repo_owner（host-aware 單一真相）：bare `owner/repo`、
+    GitHub HTTPS、GitHub SSH 皆可；非 GitHub host／格式不符解析不出 owner，一律
+    fail-closed。owner 不在 allowlist（TI_PUBLISH_OWNER_ALLOWLIST）→ raise ValueError，
+    阻止任何對 allowlist 外 repo 的 push／PR／merge／建庫。
+    """
+    owner = repo_owner(repo)
+    if not owner or owner not in config.PUBLISH_OWNER_ALLOWLIST:
+        allowed = "、".join(sorted(config.PUBLISH_OWNER_ALLOWLIST)) or "（空）"
+        raise ValueError(
+            f"發佈目標 repo 被 owner allowlist 擋下：{repo!r}"
+            f"（解析出的 owner：{owner or '無法解析'}；允許的 owner：{allowed}）"
+        )
+
+
 def set_repo_override(repo: str | None) -> contextvars.Token:
-    """設定 repo 覆寫（None/空＝無覆寫），回傳 token 供 reset_repo_override 還原。"""
-    return _REPO_OVERRIDE.set((repo or "").strip())
+    """設定 repo 覆寫（None/空＝無覆寫），回傳 token 供 reset_repo_override 還原。
+
+    護欄 chokepoint：非空覆寫必須通過 owner allowlist（assert_repo_allowed），
+    否則 raise ValueError——擋在覆寫生效之前，後續所有 REST/push 都不會看到違規 repo。
+    """
+    value = (repo or "").strip()
+    if value:
+        assert_repo_allowed(value)
+    return _REPO_OVERRIDE.set(value)
 
 
 def reset_repo_override(token: contextvars.Token) -> None:
@@ -114,6 +139,8 @@ def branch_name(session_id: str) -> str:
 
 
 def remote_url(repo: str, token: str) -> str:
+    """組出帶 token 的 push URL。護欄 chokepoint：owner 不在 allowlist → raise ValueError。"""
+    assert_repo_allowed(repo)
     return f"https://x-access-token:{token}@github.com/{repo}.git"
 
 
@@ -376,14 +403,33 @@ async def _ensure_repo(repo: str, base: str) -> str:
 
     - "ready"：repo 存在且 base 分支存在 → 走正常「分支＋PR」流程。
     - "empty"：repo 存在但沒有 base 分支（空 repo，含剛自動建立者）→ 首次發佈直接初始化 base。
-    - "unavailable: <原因>"：不存在且無法自動建立（owner 非 token 使用者／權限不足）。
+    - "unavailable: <原因>"：不存在且無法自動建立（owner 非 token 使用者／權限不足），
+      或屬「既有 repo 但非已知發佈目標」的拒推（見下）。
+
+    護欄 chokepoint（owner allowlist 之外的第二道防線）：**既有** repo 只有
+    config.AUTOPILOT_REPO／config.PUBLISH_REPO 這兩個已知目標可推；其他既有 repo 一律
+    拒推，避免污染任何外部既有 repo。允許在同 owner 底下**建立全新 repo**（SaaS 工作流），
+    放行憑據是本流程 create API 的成功回傳（201）——不用二次 GET 判斷，避免競態。
     """
     import httpx
+
+    # owner allowlist：不在名單內直接 raise（fail-closed），連查詢都不必做。
+    assert_repo_allowed(repo)
 
     headers = _headers()
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(f"https://api.github.com/repos/{repo}", headers=headers)
         if r.status_code == 200:
+            # 既有 repo：只有已知發佈目標（AUTOPILOT_REPO／PUBLISH_REPO）可推。
+            known_targets = {
+                repo_key(config.AUTOPILOT_REPO),
+                repo_key(config.PUBLISH_REPO),
+            } - {""}
+            if repo_key(repo) not in known_targets:
+                return (
+                    "unavailable: repo 已存在且非 AUTOPILOT_REPO／PUBLISH_REPO，"
+                    "拒絕推送以免污染既有 repo"
+                )
             b = await client.get(
                 f"https://api.github.com/repos/{repo}/branches/{base}", headers=headers
             )
@@ -401,6 +447,7 @@ async def _ensure_repo(repo: str, base: str) -> str:
             headers=headers,
         )
         if c.status_code in (200, 201):
+            # 剛由本流程 create 成功的全新 repo：以 create 回傳為憑據直接放行初始化。
             return "empty"
         return f"unavailable: 自動建立 repo 失敗（{c.status_code}）：{c.text[:120]}"
 
@@ -658,10 +705,20 @@ async def publish(
     merge: bool = False,
     repo: str | None = None,
 ) -> PublishResult:
-    """發佈 workspace 成果。repo 給值＝per-project 覆寫（含自動建 repo／空 repo 初始化）。"""
-    token = set_repo_override(repo) if repo else None
+    """發佈 workspace 成果。repo 給值＝per-project 覆寫（含自動建 repo／空 repo 初始化）。
+
+    維持「publish 全程不丟例外」的對外合約：owner allowlist 護欄（set_repo_override／
+    remote_url／_ensure_repo）攔下違規目標時，轉成 ok=False 的 PublishResult 回報，
+    不外拋 ValueError。
+    """
+    try:
+        token = set_repo_override(repo) if repo else None
+    except ValueError as e:
+        return PublishResult(False, str(e), repo=repo)
     try:
         return await _publish_inner(cwd, session_id, requirement, make_pr=make_pr, merge=merge)
+    except ValueError as e:
+        return PublishResult(False, str(e), repo=current_repo())
     finally:
         if token is not None:
             reset_repo_override(token)

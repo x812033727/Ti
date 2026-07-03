@@ -12,6 +12,8 @@ def _configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "global/repo")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"global", "me", "other"}))
 
 
 def _ok_run(label="git"):
@@ -47,6 +49,7 @@ def test_current_repo_falls_back_to_global(_configured):
 def test_override_makes_publish_configured_without_global(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "")  # 全域未設
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"me"}))
     assert not publisher.is_configured()
     token = publisher.set_repo_override("me/product")
     try:

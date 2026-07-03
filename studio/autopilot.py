@@ -22,10 +22,13 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
-from urllib.parse import urlparse
 
 from . import backlog, config, deploy, history, publisher, runner
 from .orchestrator import StudioSession, parse_tasks
+
+# repo identity 正規化的單一真相（host-aware，同 path 非 GitHub host 視為不同）已抽至
+# repo_ident 模組；保留 `_repo_key` 名稱，既有守護測試與呼叫點不變。
+from .repo_ident import repo_key as _repo_key
 
 log = logging.getLogger("ti.autopilot")
 
@@ -67,32 +70,6 @@ def _self_sig() -> float:
 
 
 # --- working clone -------------------------------------------------------
-
-
-def _repo_key(value: str) -> str:
-    """把 GitHub repo 位置壓成不分大小寫的 github.com/owner/repo identity。"""
-    raw = (value or "").strip()
-    if not raw:
-        return ""
-    host = "github.com"
-    if "://" in raw:
-        parsed = urlparse(raw)
-        if (parsed.hostname or "").lower() != "github.com":
-            return ""
-        raw = parsed.path
-    elif "@" in raw and ":" in raw:
-        remote_host, raw = raw.rsplit(":", 1)
-        if (remote_host.rsplit("@", 1)[-1] or "").lower() != "github.com":
-            return ""
-    elif raw.startswith("github.com/"):
-        raw = raw[len("github.com/") :]
-    raw = raw.strip("/")
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    parts = [part for part in raw.split("/") if part]
-    if len(parts) == 2:
-        return f"{host}/{'/'.join(parts)}".lower()
-    return ""
 
 
 async def _prepare_clone() -> str:
@@ -263,6 +240,12 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         return False, (
             "PUBLISH_REPO 與 AUTOPILOT_REPO 指向不同 repo，為避免污染專案 repo，已中止推送"
         )
+    # owner allowlist 護欄：AUTOPILOT_REPO 的 owner 不在 allowlist（TI_PUBLISH_OWNER_ALLOWLIST）
+    # 內即中止，維持「違反不變式回 (False, reason)、不執行任何 push/PR/merge」的既有合約。
+    try:
+        publisher.assert_repo_allowed(repo)
+    except ValueError as e:
+        return False, str(e)
 
     token = publisher.set_repo_override(repo)
     try:

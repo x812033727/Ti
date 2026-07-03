@@ -107,6 +107,8 @@ def _no_subprocess(monkeypatch):
 def _base_cfg(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_REPO", "owner/repo")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"owner"}))
 
 
 def _assert_no_bare_force(argv):
