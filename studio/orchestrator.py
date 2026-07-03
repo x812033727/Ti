@@ -269,6 +269,11 @@ class StudioSession:
         self._dispatch_recent: list[str] = []
         self._dispatch_bindings: dict[str, str] = {}
         self._dispatch_factory = None
+        # 3-AI 表決狀態：本場已舉行的表決次數（受 config.VOTE_MAX 上限）。_vote_factory 供測試
+        # 注入一次性投票員 stub（簽名同 _recruit_factory：(role, cwd, provider)→expert）；
+        # None 時走 providers.make_expert。投票員不進 roster，用完即 stop。
+        self._votes_held = 0
+        self._vote_factory = None
         # 呼叫端顯式注入 experts（測試 stub／離線假專家）時，per-task 派工不換綁——絕不把
         # stub 換成真 provider 專家（與 _get_critic 的離線護欄同一道理）；注入 _dispatch_factory
         # 的測試除外。
@@ -1687,13 +1692,20 @@ class StudioSession:
                 "並用 `下一步: <key>` 指該新人；混合模式可選 "
                 "`provider: <claude|codex|minimax|antigravity>` 指定綁定（額度受限時系統會自動改綁），"
                 "另可加 `模型: <model>` 指定該 provider 的模型（非白名單值會被忽略）。\n"
-                "若已無需再推進，輸出一行 `下一步: 結束`。",
+                + self._vote_hint()
+                + "若已無需再推進，輸出一行 `下一步: 結束`。",
                 None,
             )
             decisions.append(decision)
             # 停滯：PM 連續輸出高相似決策（無實質進展）即收斂（重用既有偵測）。
             if flow.is_stalled(decisions, config.STALL_ROUNDS):
                 break
+            # 表決 hook（在 parse_next_step 之前攔截）：PM 無法決定、發起 `表決:` → 舉行
+            # 3-AI 表決，結果經 planning_note 注入下一 hop 的 PM prompt 脈絡，本 hop 消化完畢。
+            vote_note = await self._maybe_hold_vote(ctx, decision, None)
+            if vote_note:
+                planning.append(vote_note)
+                continue
             step = flow.parse_next_step(decision)
             if step["end"]:
                 break
@@ -1824,6 +1836,7 @@ class StudioSession:
         fallback = stage.get("fallback", "engineer")
         await self._refresh_quota_snapshot()  # 額度感知：供 PM 依額度挑追加把關者/招募
         decisions: list[str] = []
+        vote_note = ""  # 上一 hop 的表決結果，注入下一 hop 的 PM prompt 脈絡
         for _hop in range(max(budget, 0)):
             if self._stop or self._should_wind_down():
                 break
@@ -1835,17 +1848,24 @@ class StudioSession:
                 ctx,
                 "pm",
                 f"任務 #{task['id']}：{task['title']} 已通過標準審查。審查摘要：\n{review_section}\n\n"
+                + (f"{vote_note}\n\n" if vote_note else "")
                 + self._quota_note(ctx.experts)
                 + f"可追加把關的成員：\n{roster_desc}\n\n"
                 "若你認為還需要某位成員（或庫裡角色/現場招募新人）追加把關，輸出：\n"
                 "`下一步: <role_key>`\n`指示: <要他確認什麼>`\n"
                 "招募新人：加 `招募: <key> | <名稱> | <一句專長>`（可選 `provider: <名稱>`）。\n"
-                "若不需要追加、可放行，輸出 `下一步: 結束`。",
+                + self._vote_hint()
+                + "若不需要追加、可放行，輸出 `下一步: 結束`。",
                 tag,
             )
             decisions.append(decision)
             if flow.is_stalled(decisions, config.STALL_ROUNDS):
                 break
+            # 表決 hook（在 parse_next_step 之前攔截）：命中→舉行表決，結果注入下一 hop。
+            note = await self._maybe_hold_vote(ctx, decision, tag)
+            if note:
+                vote_note = note
+                continue
             step = flow.parse_next_step(decision)
             if step["end"]:
                 break
@@ -1865,6 +1885,130 @@ class StudioSession:
             if blocks:
                 return True, f"【追加把關（{ctx.experts[role].role.name}）退回理由】\n{opinion}"
         return False, ""
+
+    # --- 3-AI 表決（PM 無法決定時跨 provider 多數決）--------------------------
+    def _vote_hint(self) -> str:
+        """PM dynamic prompt 的表決提示行（表決關閉或達單場上限時回空字串、不誤導 PM）。"""
+        if not config.VOTE_ENABLED or self._votes_held >= config.VOTE_MAX:
+            return ""
+        return (
+            "若你無法決定，可發起表決：`表決: <議題> | <選項A> | <選項B>`"
+            "（系統將找兩位不同 provider 的 AI 與你多數決）。\n"
+        )
+
+    def _build_voter_role(self, provider: str) -> Role:
+        """表決投票員的輕量臨時 Role（比照 _build_liquid_role 範式：唯讀工具、不進 roster）。"""
+        from .roles import _COMMON
+
+        name = f"表決投票員（{provider}）"
+        body = (
+            f"你是{name}，負責就 PM 提出的議題獨立投票。請簡短說明理由，"
+            "最後一行輸出 `投票: <選項原文>`。"
+        )
+        return Role(
+            key=f"voter_{provider}",
+            name=name,
+            avatar="🗳️",
+            title="表決投票員",
+            model=config.MODEL_FAST,
+            allowed_tools=["Read", "Grep"],
+            permission_mode="default",
+            system_prompt=_COMMON + "\n" + body,
+            tags=["表決"],
+            description="一次性表決投票員",
+        )
+
+    async def _maybe_hold_vote(self, ctx: LaneContext, decision: str, tag: int | None) -> str:
+        """檢查 PM 決策是否發起表決（`表決:` 行）；命中則舉行並回「表決結果」脈絡字串。
+
+        呼叫端在 flow.parse_next_step 之前先呼叫本方法：回傳非空 → 該 hop 已由表決消化，
+        把回傳字串注入下一 hop 的 PM prompt 脈絡。未命中／VOTE_ENABLED 關閉 → 回空字串；
+        達 config.VOTE_MAX 單場上限 → 記 log、忽略表決請求（照樣回空字串，不卡流程）。
+        """
+        if not config.VOTE_ENABLED:
+            return ""
+        req = flow.parse_vote_request(decision)
+        if req is None:
+            return ""
+        if self._votes_held >= config.VOTE_MAX:
+            log.info("表決請求被忽略：已達單場上限 %d（議題：%s）", config.VOTE_MAX, req["topic"])
+            return ""
+        self._votes_held += 1
+        result = await self._hold_vote(ctx, req["topic"], req["options"], tag)
+        return f"表決結果：{result['winner']}（議題：{req['topic']}）"
+
+    async def _hold_vote(
+        self, ctx: LaneContext, topic: str, options: list[str], tag: int | None
+    ) -> dict:
+        """舉行一場 3-AI 表決：PM ＋ 兩位「不同 provider」的一次性投票員多數決。
+
+        副作用集中於此（查額度快照、建一次性投票員、發言、廣播 VOTE_RESULT）；決策是
+        flow 純函式（pick_vote_providers 挑投票員、parse_ballot 解票、tally_votes 計票）。
+        投票員以 _build_voter_role 液生（唯讀工具）＋（_vote_factory 或 providers.make_expert）
+        建立，不進 roster、finally 必 stop；單一投票員失敗＝棄權，絕不拖垮流程。
+
+        降級（degraded=True）：可用外部 provider 不足兩位、或無法安全建真投票員（呼叫端
+        顯式注入 experts 的測試/離線假專家、離線模式、無 cwd——比照 _dispatch_task_expert
+        的護欄，絕不把 stub 環境接上真 provider；注入 _vote_factory 的測試除外）→ 不建
+        投票員，winner 取 PM 自己的票（棄權則第一選項），照樣廣播。計票無多數（平手且
+        PM 棄權／全棄權）時同樣以「PM 的票，否則第一選項」兜底，保證回傳的 winner 非空、
+        流程永遠可續行。回 ``{winner, ballots, tie, degraded}``。
+        """
+        await self._refresh_quota_snapshot()
+        digest = provider_quota.digest(self._quota_snap) if self._quota_snap else {}
+        pm_expert = ctx.experts.get("pm")
+        pm_provider = (
+            self._role_provider_map({"pm": pm_expert}).get("pm", "") if pm_expert else ""
+        ) or "claude"
+        voters = flow.pick_vote_providers(digest, exclude=pm_provider, n=2)
+        can_build = self._vote_factory is not None or not (
+            self._experts_injected or ctx.cwd is None or config.OFFLINE_MODE
+        )
+        degraded = len(voters) < 2 or not can_build
+        opts_desc = "\n".join(f"- {o}" for o in options)
+        ballot_prompt = (
+            f"表決議題：{topic}\n可選選項：\n{opts_desc}\n\n"
+            f"脈絡（本場需求）：{self._requirement}\n\n"
+            "請獨立判斷並投票：簡短說明理由，最後一行輸出 `投票: <選項原文>`。"
+        )
+        ballots: list[dict] = []
+        pm_text = await self._speak(ctx, "pm", ballot_prompt, tag)
+        pm_choice = flow.parse_ballot(pm_text or "", options)
+        ballots.append({"voter": "pm", "provider": pm_provider, "choice": pm_choice})
+        if not degraded:
+            for prov in voters:
+                role = self._build_voter_role(prov)
+                expert = None
+                try:
+                    if self._vote_factory is not None:
+                        expert = self._vote_factory(role, ctx.cwd, prov)
+                    else:
+                        from .providers import make_expert
+
+                        expert = make_expert(
+                            role, f"{self.session_id}:vote:{prov}", ctx.cwd, provider=prov
+                        )
+                    async with self._llm_semaphore():
+                        text = await expert.speak(ballot_prompt, self._tagged_broadcast(tag))
+                    choice = flow.parse_ballot(text or "", options)
+                except Exception:  # noqa: BLE001 — 單一投票員失敗＝棄權，表決不得拖垮流程
+                    log.exception("表決投票員 %s 失敗，視為棄權（議題：%s）", prov, topic)
+                    choice = ""
+                finally:
+                    if expert is not None:
+                        try:
+                            await expert.stop()  # best-effort：一次性投票員不進 roster，用完即回收
+                        except Exception:  # noqa: BLE001
+                            log.warning("表決投票員 %s stop 失敗", prov, exc_info=True)
+                ballots.append({"voter": role.key, "provider": prov, "choice": choice})
+        tally = flow.tally_votes(ballots)
+        winner = tally["winner"] or pm_choice or options[0]  # 無多數→PM 票→第一選項兜底
+        await self._tagged_broadcast(tag)(
+            events.vote_result(
+                self.session_id, topic, options, ballots, winner, tally["tie"], degraded=degraded
+            )
+        )
+        return {"winner": winner, "ballots": ballots, "tie": tally["tie"], "degraded": degraded}
 
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:

@@ -59,6 +59,7 @@ if (typeof handleEvent !== "function") {
 // 2) payload 缺失 → 不應崩潰（依賴 ev.payload || {}）
 // 3) 新事件 huddle / critic_review（含 limitation/passed 兩種分支）→ 不應崩潰
 // 4) 額度感知派工 dispatch_decision（完整 payload／缺 model／無 payload）→ 不應崩潰
+// 5) 3-AI 表決 vote_result（完整／平手／降級＋棄權／無 payload）→ 不應崩潰
 const cases = [
   { type: "totally_unknown_event_xyz", session_id: "t", payload: { whatever: 1 } },
   { type: "another_future_event", session_id: "t" }, // 無 payload
@@ -69,6 +70,10 @@ const cases = [
   { type: "dispatch_decision", session_id: "t", payload: { task_id: 2, title: "登入頁", role: "engineer", provider: "codex", model: "gpt-5.5", reason: "codex 用量最低" } },
   { type: "dispatch_decision", session_id: "t", payload: { task_id: 3, role: "engineer", provider: "claude", model: "" } },
   { type: "dispatch_decision", session_id: "t" }, // 無 payload
+  { type: "vote_result", session_id: "t", payload: { topic: "儲存層用 SQLite 還是 JSON 檔", options: ["SQLite", "JSON 檔"], ballots: [{ voter: "pm", provider: "claude", choice: "SQLite" }, { voter: "voter_codex", provider: "codex", choice: "SQLite" }, { voter: "voter_minimax", provider: "minimax", choice: "JSON 檔" }], winner: "SQLite", tie: false, degraded: false } },
+  { type: "vote_result", session_id: "t", payload: { topic: "平手案", options: ["A", "B"], ballots: [{ voter: "pm", provider: "claude", choice: "A" }, { voter: "voter_codex", provider: "codex", choice: "B" }], winner: "A", tie: true, degraded: false } },
+  { type: "vote_result", session_id: "t", payload: { topic: "降級案", options: ["A", "B"], ballots: [{ voter: "pm", provider: "claude", choice: "" }], winner: "A", tie: false, degraded: true } },
+  { type: "vote_result", session_id: "t" }, // 無 payload
 ];
 
 try {

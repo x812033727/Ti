@@ -283,6 +283,12 @@ DYNAMIC_STEP_BUDGET = _env_int("TI_DYNAMIC_STEP_BUDGET", 3)
 # 動態招募：單場 PM 最多招募幾位新成員（庫已有角色＋液生 persona 共用此上限），防 roster 爆量。
 RECRUIT_MAX = _env_int("TI_RECRUIT_MAX", 3)
 
+# 3-AI 表決：PM 於 dynamic step 無法決定時可發起 `表決: <議題> | <選項A> | <選項B>`，系統找
+# 兩位「不同 provider」的一次性投票員與 PM 多數決（副作用集中在 orchestrator._hold_vote）。
+# VOTE_MAX＝單場 session 表決次數上限（防 PM 把所有決策外包給表決、燒額度），超過即忽略請求。
+VOTE_ENABLED = os.getenv("TI_VOTE_ENABLED", "1") not in ("0", "false", "False", "")
+VOTE_MAX = _env_int("TI_VOTE_MAX", 2)
+
 # 互動 session（WS，非 improve）未指定 workflow 時走的預設流程名。預設「動態優先」（dynamic-first）；
 # 設空字串＝退回內建安全骨架。autopilot／improver 不讀此值（直接 workflow=None）。
 DEFAULT_WORKFLOW = os.getenv("TI_DEFAULT_WORKFLOW", "動態優先").strip()
@@ -971,6 +977,7 @@ def reload() -> None:
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, CRITIC_MAX_REJECTS, NOTES_ENABLED, NOTES_MAX_CHARS
     global DYNAMIC_STEP_BUDGET, RECRUIT_MAX, DEFAULT_WORKFLOW
+    global VOTE_ENABLED, VOTE_MAX
     global LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT
@@ -1073,6 +1080,8 @@ def reload() -> None:
     CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
     DYNAMIC_STEP_BUDGET = _env_int("TI_DYNAMIC_STEP_BUDGET", 3)
     RECRUIT_MAX = _env_int("TI_RECRUIT_MAX", 3)
+    VOTE_ENABLED = os.getenv("TI_VOTE_ENABLED", "1") not in ("0", "false", "False", "")
+    VOTE_MAX = _env_int("TI_VOTE_MAX", 2)
     DEFAULT_WORKFLOW = os.getenv("TI_DEFAULT_WORKFLOW", "動態優先").strip()
     NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
     NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
