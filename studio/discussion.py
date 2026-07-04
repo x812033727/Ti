@@ -284,7 +284,9 @@ class DiscussionEngine:
                     lines.append(f"@{u.speaker}：{text}")
                 else:
                     compressed = flow.compress_segment(text, PREV_SEGMENT_MAX_CHARS)
-                    lines.append(f"以下為 @{u.speaker} 發言之摘要（結構化行為原文保留）\n{compressed}")
+                    lines.append(
+                        f"以下為 @{u.speaker} 發言之摘要（結構化行為原文保留）\n{compressed}"
+                    )
             parts.append("【上一輪全員發言】\n" + "\n\n".join(lines))
         if self._own_history_recent_n == 0:
             recent_own_history = []

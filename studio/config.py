@@ -474,6 +474,8 @@ SANDBOX_ALLOWED_DOMAINS = [
 
 def _sandbox_available() -> bool:
     """bwrap 是否存在（runner 的 Demo 層用來 fail-closed）。"""
+    if os.getenv("TI_SANDBOX_AVAILABLE") == "0":
+        return False
     return os.path.exists(SANDBOX_BWRAP)
 
 

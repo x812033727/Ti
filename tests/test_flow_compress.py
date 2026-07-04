@@ -284,6 +284,33 @@ def test_white_senior_approved_consistent_when_over_cap():
     assert flow.senior_approved(compressed) is True
 
 
+def test_white_senior_approved_inline_decision_consistent_when_over_cap():
+    """白樣本（行中裁決行）：裁決 marker 位於行中段（不錨定行首）。
+    斷言壓縮後該行原文保留，且 senior_approved 與原文解析結果完全一致。
+    """
+    narrative = _long_narrative(width=80, lines=6)
+    inline_line = "前情提要：先前紀錄為 決議: 退回 需重審"
+    text = (
+        narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + inline_line
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+    )
+    cap = 300
+    assert len(text) > cap
+
+    assert flow.senior_approved(text) is False
+    compressed = flow.compress_segment(text, cap)
+    assert inline_line in compressed, "行中裁決行必須原文保留"
+    assert flow.senior_approved(compressed) is False
+
+
 def test_white_senior_approved_fallback_branch_consistent_when_over_cap():
     """白樣本（後備分支）：全文**無** ``決議:`` 顯式 marker，只有後備關鍵詞行
     （含「退回」「必須修正」）。senior_approved 走 fallback（``re.search`` 全文）。

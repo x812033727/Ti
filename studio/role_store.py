@@ -132,6 +132,8 @@ class RoleFileModel(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("name 不可為空")
+        if "\n" in v or "\r" in v:
+            raise ValueError("name 不可包含換行字元")
         return v
 
     @field_validator("permission_mode")
