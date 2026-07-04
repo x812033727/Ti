@@ -43,6 +43,7 @@ from .discussion import DiscussionEngine, build_summary
 from .flow import (
     build_waves as build_waves,
     classify_failure_followups as classify_failure_followups,
+    compress_segment as compress_segment,
     critic_blocks as critic_blocks,
     is_stalled as is_stalled,
     parse_clarify as parse_clarify,
