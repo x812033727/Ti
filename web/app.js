@@ -192,7 +192,17 @@ function addDemo(p) {
   const el = document.createElement("div");
   el.className = "demo " + (p.passed ? "pass" : "fail");
   el.innerHTML = `<div class="demohead">${p.passed ? "▶️ Demo 執行成功" : "▶️ Demo 執行失敗"} <code></code></div>`;
-  el.querySelector("code").textContent = p.command + "  (exit " + p.exit_code + ")";
+  // 消毒重試（retried_cmd）時實際執行的是消毒後指令——結果行顯示它，原指令另附備註，
+  // 否則時間軸會把「原始壞指令」標成執行成功，稽核時對不上帳。
+  const ranCmd = p.retried_cmd || p.command;
+  el.querySelector("code").textContent = ranCmd + "  (exit " + p.exit_code + ")";
+  if (p.retried_cmd) {
+    const note = document.createElement("div");
+    note.className = "demoretry";
+    note.textContent =
+      "⚠️ 原指令帶無效參數已消毒重試：" + p.command + "（exit " + p.first_exit + "）";
+    el.appendChild(note);
+  }
   const pre = document.createElement("pre");
   pre.textContent = p.output || "（無輸出）";
   el.appendChild(pre);

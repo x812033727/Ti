@@ -83,16 +83,84 @@ def test_graceful_cleanup_does_not_override_finished_session(state_dir):
 
 def test_graceful_cleanup_single_step_failure_does_not_block_rest(state_dir, monkeypatch):
     """backlog 收尾炸掉也不得阻斷 history 標中斷與最終心跳（各步驟獨立容錯）。"""
+    task = backlog.add("實作某功能")
+    backlog.set_status(task["id"], "in_progress")
     history.start_session("ap-sig-3", "req")
 
     def boom(*_a, **_k):
         raise OSError("disk full")
 
     monkeypatch.setattr(autopilot.backlog, "set_status", boom)
-    autopilot._graceful_shutdown_cleanup(99, "ap-sig-3")
+    autopilot._graceful_shutdown_cleanup(task["id"], "ap-sig-3")
 
     assert history.get_meta("ap-sig-3")["status"] == "error"
     assert _read_status(state_dir)["state"] == "stopped"
+
+
+def test_graceful_cleanup_preserves_recorded_outcome(state_dir):
+    """冪等護欄：任務已寫下最終結果（如閘門放棄的 failed）→ 停機收尾不得把它復活成 pending。"""
+    task = backlog.add("已放棄的任務")
+    backlog.set_status(task["id"], "failed", note="[test] 連續 3 次未過，放棄")
+    history.start_session("ap-sig-4", "req")
+
+    autopilot._graceful_shutdown_cleanup(task["id"], "ap-sig-4")
+
+    assert backlog.list_tasks()[0]["status"] == "failed", "既定結果不得被停機收尾覆蓋"
+    assert history.get_meta("ap-sig-4")["status"] == "error"  # meta 收尾照做
+    assert _read_status(state_dir)["state"] == "stopped"
+
+
+def test_set_status_if_in_progress_guard(state_dir):
+    """_set_status_if_in_progress：只救 in_progress；pending/failed/缺席一律不寫。"""
+    t1 = backlog.add("進行中")
+    backlog.set_status(t1["id"], "in_progress")
+    assert autopilot._set_status_if_in_progress(t1["id"], "pending", note="n") is True
+    assert backlog.list_tasks()[0]["status"] == "pending"
+    # 已是 pending：再呼叫不寫（冪等、不疊 note）
+    assert autopilot._set_status_if_in_progress(t1["id"], "done") is False
+    assert backlog.list_tasks()[0]["status"] == "pending"
+    # 任務不存在
+    assert autopilot._set_status_if_in_progress(9999, "pending") is False
+
+
+# --- merge 感知的停機收尾（merge 後中斷收斂 done，不重跑）-----------------------
+
+
+def test_finalize_merged_task_converges_to_done(state_dir):
+    """merge 已成功後被停機打斷 → 收斂 done（帶追溯欄位），絕不退回 pending 重跑重開 PR。"""
+    task = backlog.add("已合併但沒收尾的任務")
+    backlog.set_status(task["id"], "in_progress", session_id="ap-mg-1")
+    history.start_session("ap-mg-1", "req")
+
+    autopilot._shutdown_finalize_task(
+        task["id"],
+        "ap-mg-1",
+        merged=True,
+        done_fields={"pr": 77, "merged_branch": "autopilot/task-x"},
+    )
+
+    t = backlog.list_tasks()[0]
+    assert t["status"] == "done"
+    assert t["pr"] == 77 and t["merged_branch"] == "autopilot/task-x"
+    assert "已進 main" in t.get("note", "")
+    assert history.get_meta("ap-mg-1")["status"] == "error"  # meta 標中斷（冪等）
+    assert _read_status(state_dir)["state"] == "stopped"
+
+
+def test_finalize_not_merged_requeues(state_dir):
+    """merge 尚未成功 → 走原退回 pending 語意。"""
+    task = backlog.add("跑到一半的任務")
+    backlog.set_status(task["id"], "in_progress")
+    autopilot._shutdown_finalize_task(task["id"], None, merged=False)
+    assert backlog.list_tasks()[0]["status"] == "pending"
+
+
+def test_finalize_merged_preserves_recorded_outcome(state_dir):
+    """merge 後重佈失敗已標 failed → 停機收斂不得把 failed 改寫成 done。"""
+    task = backlog.add("重佈失敗的任務")
+    backlog.set_status(task["id"], "failed", note="重佈失敗已自動回滾")
+    autopilot._shutdown_finalize_task(task["id"], None, merged=True, done_fields={"pr": 1})
+    assert backlog.list_tasks()[0]["status"] == "failed"
 
 
 async def test_cancelled_run_one_task_with_shutdown_flag_cleans_up(
@@ -286,3 +354,251 @@ def test_write_status_stopped_includes_last_activity_field(state_dir):
     status = _read_status(state_dir)
     assert status["state"] == "stopped"
     assert "last_activity_at" in status and status["last_activity_at"] is None
+
+
+# --- 審查修正（commit 3）：SIGTERM 競態三層防護、心跳例外隔離、execv 訊號安全 ----
+
+
+def test_read_status_bad_encoding_returns_empty(state_dir):
+    """#2 回歸：status.json 壞編碼（UnicodeDecodeError ∈ ValueError）不得外洩炸掉心跳。"""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "status.json").write_bytes(b"\xff\xfe\x00 broken")
+    assert autopilot._read_status() == {}
+
+
+def test_repeated_sigterm_reissues_cancel(monkeypatch):
+    """#1c 回歸：重複 SIGTERM 必須能再度 cancel（首次取消可能在競態中被吞）。"""
+    monkeypatch.setattr(autopilot, "_shutdown_requested", False)
+
+    class FakeTask:
+        def __init__(self):
+            self.cancels = 0
+
+        def done(self):
+            return False
+
+        def cancel(self):
+            self.cancels += 1
+
+    t = FakeTask()
+    autopilot._request_shutdown("SIGTERM", t)
+    autopilot._request_shutdown("SIGTERM", t)
+    assert t.cancels == 2, "重複訊號不得被去重吞掉"
+    assert autopilot._shutdown_requested is True
+
+
+async def test_main_loop_top_guard_exits_when_flag_set(state_dir, monkeypatch):
+    """#1b 回歸：旗標已立、取消卻被吞——迴圈頂端兜底立即走停機路徑，不再取新任務。"""
+    monkeypatch.setattr(autopilot, "_shutdown_requested", True)
+    monkeypatch.setattr(autopilot, "_install_signal_handlers", lambda: None)
+    monkeypatch.setattr(autopilot.backlog, "next_pending", lambda: pytest.fail("停機中不得取任務"))
+
+    await autopilot.main()  # 應乾淨返回（CancelledError 被 main 收斂），而非取任務
+
+    assert _read_status(state_dir)["state"] == "stopped"
+
+
+async def test_shutdown_cancel_eaten_at_heartbeat_join_still_shuts_down(
+    state_dir, monkeypatch, tmp_path
+):
+    """#1a 核心回歸（審查實測情境）：SIGTERM 的取消恰在 finally 的 `await heartbeat`
+    送達——與心跳自身的 CancelledError 無法區分而被吃掉。旗標＋cancelling() 兜底必須
+    補收尾並重新拋出取消，否則停機遺失、迴圈續跑到被 SIGKILL。"""
+    monkeypatch.setattr(autopilot, "_shutdown_requested", False)
+    clone = tmp_path / "clone"
+    clone.mkdir()
+
+    async def fake_prepare_clone():
+        return str(clone)
+
+    class QuickSession:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def run(self, _requirement):
+            # 立即返回 provider_unavailable：run_one_task 隨後全是同步碼，直到 finally 的
+            # await heartbeat 才有第一個（也是最後一個）可送達取消的 await 點。
+            return {"completed": False, "provider_unavailable": "codex"}
+
+    monkeypatch.setattr(autopilot, "_prepare_clone", fake_prepare_clone)
+    monkeypatch.setattr(autopilot, "StudioSession", QuickSession)
+    task = backlog.add("停機競態下的任務")
+
+    holder: dict = {}
+    real_set_status = backlog.set_status
+
+    def set_status_then_sigterm(task_id, status, **kw):
+        out = real_set_status(task_id, status, **kw)
+        if status == "pending":  # provider_unavailable 收尾點：模擬此刻收到 SIGTERM
+            autopilot._request_shutdown("SIGTERM", holder["task"])
+        return out
+
+    monkeypatch.setattr(autopilot.backlog, "set_status", set_status_then_sigterm)
+
+    runner_task = real_asyncio.create_task(autopilot.run_one_task(task))
+    holder["task"] = runner_task
+    with pytest.raises(real_asyncio.CancelledError):
+        await runner_task  # 取消不得被 heartbeat join 吞掉
+
+    assert backlog.list_tasks()[0]["status"] == "pending"  # 既定結果保留（護欄不覆蓋）
+    assert _read_status(state_dir)["state"] == "stopped"  # 停機收尾已補做
+
+
+async def test_heartbeat_crash_does_not_replace_task_outcome(state_dir, monkeypatch, tmp_path):
+    """#2 回歸：心跳背景任務炸掉（如壞編碼）→ 收尾 join 只 log 不外拋，任務結果不受影響。"""
+    clone = tmp_path / "clone"
+    clone.mkdir()
+
+    async def fake_prepare_clone():
+        return str(clone)
+
+    class QuickSession:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def run(self, _requirement):
+            return {"completed": False, "provider_unavailable": "codex"}
+
+    async def broken_heartbeat(_task_id, _sid):
+        raise RuntimeError("heartbeat 炸了")
+
+    monkeypatch.setattr(autopilot, "_prepare_clone", fake_prepare_clone)
+    monkeypatch.setattr(autopilot, "StudioSession", QuickSession)
+    monkeypatch.setattr(autopilot, "_task_heartbeat", broken_heartbeat)
+    task = backlog.add("心跳炸掉但任務正常的案例")
+
+    await autopilot.run_one_task(task)  # 不得把 RuntimeError 外拋成任務失敗
+
+    assert backlog.list_tasks()[0]["status"] == "pending"  # provider_unavailable 的正常收尾
+
+
+async def test_shutdown_during_gates_requeues(state_dir, monkeypatch, tmp_path):
+    """#4 回歸：SIGTERM 落在閘門階段（session.run 已結束）→ 仍要收尾退 pending，
+    不得留 in_progress 無聲重跑。"""
+    clone = tmp_path / "clone"
+    clone.mkdir()
+
+    async def fake_prepare_clone():
+        return str(clone)
+
+    class OkSession:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def run(self, _requirement):
+            return {"completed": True}
+
+    gate_started = real_asyncio.Event()
+
+    async def hanging_gate(_clone):
+        gate_started.set()
+        await real_asyncio.Event().wait()
+
+    monkeypatch.setattr(autopilot, "_prepare_clone", fake_prepare_clone)
+    monkeypatch.setattr(autopilot, "StudioSession", OkSession)
+    monkeypatch.setattr(autopilot, "_gate_lint", hanging_gate)
+    task = backlog.add("閘門中被停機的任務")
+
+    runner_task = real_asyncio.create_task(autopilot.run_one_task(task))
+    await gate_started.wait()
+    monkeypatch.setattr(autopilot, "_shutdown_requested", True)
+    runner_task.cancel()
+    with pytest.raises(real_asyncio.CancelledError):
+        await runner_task
+
+    assert backlog.list_tasks()[0]["status"] == "pending"
+    assert _read_status(state_dir)["state"] == "stopped"
+
+
+async def test_shutdown_after_merge_converges_done(state_dir, monkeypatch, tmp_path):
+    """#4 核心回歸：merge 已成功、重佈等待中被 SIGTERM → 收斂 done（帶追溯欄位），
+    絕不退回 pending 對同一份已合併成果重跑重開 PR。"""
+    clone = tmp_path / "clone"
+    clone.mkdir()
+
+    async def fake_prepare_clone():
+        return str(clone)
+
+    class OkSession:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def run(self, _requirement):
+            return {"completed": True}
+
+    async def gate_ok(_clone):
+        return True, "ok"
+
+    async def merge_ok(_clone, _task):
+        return autopilot.MergeResult(True, "已合併", pr_number=42, branch="autopilot/task-z")
+
+    idle_started = real_asyncio.Event()
+
+    async def hanging_idle(*_a, **_k):
+        idle_started.set()
+        await real_asyncio.Event().wait()
+
+    monkeypatch.setattr(autopilot, "_prepare_clone", fake_prepare_clone)
+    monkeypatch.setattr(autopilot, "StudioSession", OkSession)
+    monkeypatch.setattr(autopilot, "_gate_lint", gate_ok)
+    monkeypatch.setattr(autopilot, "_gate_collect_without_sdk", gate_ok)
+    monkeypatch.setattr(autopilot, "_gate_tests", gate_ok)
+    monkeypatch.setattr(autopilot, "_commit_push_merge", merge_ok)
+    monkeypatch.setattr(autopilot, "_wait_until_idle", hanging_idle)
+    task = backlog.add("merge 後被停機的任務")
+
+    runner_task = real_asyncio.create_task(autopilot.run_one_task(task))
+    await idle_started.wait()
+    monkeypatch.setattr(autopilot, "_shutdown_requested", True)
+    runner_task.cancel()
+    with pytest.raises(real_asyncio.CancelledError):
+        await runner_task
+
+    t = backlog.list_tasks()[0]
+    assert t["status"] == "done", "已合併的成果不得重跑（會重開 PR），應收斂 done"
+    assert t["pr"] == 42 and t["merged_branch"] == "autopilot/task-z"
+    assert _read_status(state_dir)["state"] == "stopped"
+
+
+async def test_prepare_execv_reload_removes_signal_handlers():
+    """#3 回歸：execv 前卸下 SIGTERM/SIGINT handler（回復預設處置）並讓出一個 tick。"""
+    import signal as signal_mod
+
+    loop = real_asyncio.get_running_loop()
+    loop.add_signal_handler(signal_mod.SIGTERM, lambda: None)
+    assert signal_mod.getsignal(signal_mod.SIGTERM) is not signal_mod.SIG_DFL
+
+    await autopilot._prepare_execv_reload()
+
+    assert signal_mod.getsignal(signal_mod.SIGTERM) is signal_mod.SIG_DFL, (
+        "execv 前必須回復預設訊號處置，晚到的 SIGTERM 才能直接終止行程"
+    )
+
+
+async def test_main_loop_reload_aborts_execv_on_shutdown(state_dir, monkeypatch):
+    """#3 回歸：已排入的停機請求要能中止 execv 路徑（prep 的讓步 tick 讓 cancel 先跑）。"""
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_GATE", False)
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
+    monkeypatch.setattr(autopilot, "_shutdown_requested", False)
+    monkeypatch.setattr(autopilot, "_install_signal_handlers", lambda: None)
+    sigs = iter([1.0, 2.0, 3.0])
+    monkeypatch.setattr(autopilot, "_self_sig", lambda: next(sigs))  # 觸發 reload 分支
+    backlog.add("跑一輪就好")
+
+    async def quick_run(_task):
+        return None
+
+    async def prep_with_queued_shutdown():
+        # 模擬「SIGTERM callback 已排入、於讓步 tick 執行」：設旗標並拋出取消。
+        autopilot._shutdown_requested = True
+        raise real_asyncio.CancelledError()
+
+    execved: list = []
+    monkeypatch.setattr(autopilot, "run_one_task", quick_run)
+    monkeypatch.setattr(autopilot, "_prepare_execv_reload", prep_with_queued_shutdown)
+    monkeypatch.setattr(autopilot.os, "execv", lambda *a: execved.append(a))
+
+    await autopilot.main()  # 取消被 main 收斂成優雅停機
+
+    assert execved == [], "停機請求已排入時不得 execv"
+    assert _read_status(state_dir)["state"] == "stopped"

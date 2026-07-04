@@ -1008,6 +1008,21 @@ async def run_one_task(task: dict) -> None:
     # 長任務誤判成死鎖。背景任務每分鐘刷新 updated_at＋last_activity_at，涵蓋整個
     # 任務生命週期（討論、閘門、合併、重佈），於本函式收尾時取消。
     heartbeat = asyncio.create_task(_task_heartbeat(task["id"], sid))
+    # merge 成敗追蹤：SIGTERM 打斷「已合併但尚未收尾」的任務時，停機收尾必須收斂成
+    # done（成果已進 main，退回 pending 重跑只會對同一份成果再開重複 PR），否則才退
+    # 回 pending 重排。merge_fields 抓合併當下的追溯欄位（pr/merged_branch）。
+    merge_done = False
+    merge_fields: dict = {}
+    finalized = False
+
+    def _finalize_shutdown() -> None:
+        # 停機收尾的單一入口（冪等）：外層 except 與 finally 兜底都可能走到，只做一次。
+        nonlocal finalized
+        if finalized:
+            return
+        finalized = True
+        _shutdown_finalize_task(task["id"], sid, merged=merge_done, done_fields=merge_fields)
+
     try:
         try:
             result = await asyncio.wait_for(
@@ -1018,17 +1033,9 @@ async def run_one_task(task: dict) -> None:
             raise TimeoutError(
                 f"autopilot task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s"
             ) from exc
-        except CancelledError:
-            # wait_for 逾時取消的是「內層」session.run（上方以 TimeoutError 呈現）；
-            # 整個 run_one_task 被取消只來自外部——以停機旗標區分 SIGTERM/SIGINT 優雅
-            # 停機（收尾後重排）與其他取消（照舊上拋）。
-            if _shutdown_requested:
-                _graceful_shutdown_cleanup(task["id"], sid)
-            raise
         finally:
-            # 優雅停機路徑不 finish_session：收尾由 _graceful_shutdown_cleanup 的
-            # mark_interrupted 處理（error＋停機註記）；這裡照跑會把 meta 先推成
-            # incomplete，蓋掉中斷標記。
+            # 優雅停機路徑不 finish_session：收尾由停機收斂的 mark_interrupted 處理
+            # （error＋停機註記）；這裡照跑會把 meta 先推成 incomplete，蓋掉中斷標記。
             if not _shutdown_requested:
                 history.finish_session(sid)
 
@@ -1102,6 +1109,8 @@ async def run_one_task(task: dict) -> None:
             "pr": getattr(merge_res, "pr_number", None),
             "merged_branch": getattr(merge_res, "branch", ""),
         }
+        # 自此成果已進 main：之後（重佈/收尾）被停機打斷要收斂 done，不得退回重跑。
+        merge_done, merge_fields = True, done_fields
 
         # 重佈（等手動討論結束才動,避免打斷使用者；deploy 會 fetch 最新 main,延後也會追上）
         if await _wait_until_idle():
@@ -1123,10 +1132,29 @@ async def run_one_task(task: dict) -> None:
         else:
             backlog.set_status(task["id"], "done", **done_fields)
         log.info("任務 #%s %s", task["id"], "帶已知限制完成" if shipped_with_limits else "完成")
+    except CancelledError:
+        # SIGTERM/SIGINT 優雅停機（以旗標區分；wait_for 任務逾時取消的是內層 session.run、
+        # 以 TimeoutError 呈現，不會落到這裡）。掛在最外層才涵蓋整個生命週期——閘門、
+        # merge/等 CI、重佈這些 20 分鐘級階段被打斷同樣要收尾，否則任務卡死 in_progress
+        # 無聲重跑；merge 後被打斷更必須收斂 done（見 _shutdown_finalize_task）。
+        if _shutdown_requested:
+            _finalize_shutdown()
+        raise
     finally:
         heartbeat.cancel()
-        with contextlib.suppress(CancelledError):
+        try:
             await heartbeat
+        except CancelledError:
+            pass  # 心跳自身的取消；外層停機取消若恰在此送達，由下方旗標檢查兜底
+        except Exception:  # noqa: BLE001 — 心跳殘留例外絕不可改寫任務結果
+            log.debug("心跳任務收尾時拋出例外（忽略，不影響任務結果）", exc_info=True)
+        # SIGTERM 競態兜底：停機取消若恰在上面 await 處送達，會與心跳自身的 CancelledError
+        # 無法區分而被吞掉；或停機發生在最後一段同步碼、根本沒有 await 可送達取消。
+        # 旗標＋cancelling()（取消已被要求）直接判定：補收尾並重新拋出取消，停機絕不遺失。
+        cur = asyncio.current_task()
+        if _shutdown_requested and cur is not None and cur.cancelling():
+            _finalize_shutdown()
+            raise CancelledError()
 
 
 def _pause(reason: str) -> None:
@@ -1188,24 +1216,29 @@ def _window_field(rl: dict, window: str, field: str) -> float | None:
 
 def _claude_accounts_usage(
     snap: dict,
-) -> tuple[dict[str, dict[str, float | None]], str | None]:
-    """從額度快照的 claude 區塊抽 ``(usages, active_label)``，餵給 pick_account。
+) -> tuple[dict[str, dict[str, float | None]], str | None, dict[str, str]]:
+    """從額度快照的 claude 區塊抽 ``(usages, active_label, errors)``，餵給 pick_account。
 
     usages＝``{label: {"five_hour": 用量%|None, "seven_day": 用量%|None,
     "five_hour_reset": epoch|None, "seven_day_reset": epoch|None}}``（兩窗用量與重置
     時間分開傳，負載＝兩窗取最大、重置優先的邏輯集中在 pick_account）；帳號額度查詢
     異常（error，含非在線帳號的 stale_label）→ 全欄位 None（pick_account 視為不可用、
-    不得切入）。無 claude 區塊或無多帳號標籤檔時回 ``({}, None)``。
+    不得切入），同時把原始錯誤種類記進 ``errors[label]``——呼叫端據此區分「暫時性查詢
+    失敗（unreachable，不該觸發切走）」與「授權壞損（unauthorized/token_missing，仍該
+    強制切走）」。無 claude 區塊或無多帳號標籤檔時回 ``({}, None, {})``。
     """
     entry = provider_quota._by_key(snap, "claude") or {}
     usages: dict[str, dict[str, float | None]] = {}
+    errors: dict[str, str] = {}
     active: str | None = None
     for acct in entry.get("accounts") or []:
         label = acct.get("label")
         if not isinstance(label, str) or not label:
             continue
         rl = acct.get("rate_limits") or {}
-        if rl.get("error"):
+        err = rl.get("error")
+        if err:
+            errors[label] = str(err)
             rl = {}  # 查詢異常 → 全欄位 None（不可用）
         usages[label] = {
             "five_hour": _window_field(rl, "five_hour", "used_percentage"),
@@ -1215,7 +1248,7 @@ def _claude_accounts_usage(
         }
         if acct.get("active"):
             active = label
-    return usages, active
+    return usages, active, errors
 
 
 def _rotate_log_detail(usages: dict, active: str | None, target: str) -> str:
@@ -1274,7 +1307,19 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
                 "帳號輪替：%.0f 秒前已排程重啟，跳過重複排程", time.time() - _rotate_scheduled_at
             )
             return None
-        usages, active = _claude_accounts_usage(snap)
+        usages, active, errors = _claude_accounts_usage(snap)
+        # 在線帳號額度「暫時性」查詢失敗（unreachable：429/斷網等）→ 本輪不輪替。
+        # 剛切換重啟後行程記憶體快取全失、上游限流可能仍熱：第一次查詢 429 時在線帳號
+        # 會映成全 None（不可用），若照舊強制切走就會來回互切＋重啟循環（flap）。下一輪
+        # 主迴圈自然重試；授權壞損（unauthorized/token_missing）不在此列，仍強制切走。
+        active_err = errors.get(active or "")
+        if active_err and active_err not in ("unauthorized", "token_missing"):
+            log.info(
+                "帳號輪替：在線帳號 %s 額度查詢暫時失敗（%s），本輪不切換、待下輪重查",
+                active,
+                active_err,
+            )
+            return None
         target = claude_accounts.pick_account(
             usages,
             active,
@@ -1357,11 +1402,16 @@ def _write_status(
 
 
 def _read_status() -> dict:
-    """讀回當前 status.json（供任務中心跳保留既有欄位）；讀不到或格式壞回空 dict。"""
+    """讀回當前 status.json（供任務中心跳保留既有欄位）；讀不到或格式壞回空 dict。
+
+    except 收 ValueError 而非只收 JSONDecodeError：read_text 對壞編碼會拋
+    UnicodeDecodeError（ValueError 子類）——心跳背景任務炸掉的例外會在任務收尾 join
+    時浮出，絕不可讓「讀個狀態檔」有機會改寫任務結果。
+    """
     try:
         data = json.loads((config.AUTOPILOT_STATE_DIR / "status.json").read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return {}
 
 
@@ -1400,10 +1450,12 @@ _shutdown_requested = False
 
 
 def _request_shutdown(sig_name: str, main_task: asyncio.Task | None) -> None:
-    """SIGTERM/SIGINT handler：設停機旗標後取消主迴圈任務，觸發優雅收尾。"""
+    """SIGTERM/SIGINT handler：設停機旗標後取消主迴圈任務，觸發優雅收尾。
+
+    重複訊號刻意「不去重」：首次取消在極端競態下可能被吞（恰於心跳 join 送達、或停機
+    落在無 await 的同步長路徑），重複的 systemd／人工訊號必須能再度 cancel 觸發停機。
+    """
     global _shutdown_requested
-    if _shutdown_requested:
-        return  # 重複訊號：已在停機路徑上
     _shutdown_requested = True
     log.warning("收到 %s，優雅停機：中斷當前工作、任務退回 pending 自動重排", sig_name)
     if main_task is not None and not main_task.done():
@@ -1430,17 +1482,32 @@ def _install_signal_handlers() -> None:
             )
 
 
-def _graceful_shutdown_cleanup(task_id: int | str, sid: str | None) -> None:
-    """優雅停機打斷 in-flight 任務時的收尾（全同步 IO，遠低於 systemd 預設 90s stop timeout）：
+def _set_status_if_in_progress(task_id: int | str, status: str, **fields) -> bool:
+    """僅當任務仍為 in_progress 才改寫狀態，回傳是否有寫。
 
-    - backlog：任務退回 pending（附註記）——服務重啟後自動重排，不再無聲從零重跑；
+    停機收尾的冪等護欄：任務可能在被打斷前已寫下最終結果（閘門重試的 pending、放棄的
+    failed、重佈失敗的 failed、正常完成的 done）——停機收尾絕不可覆蓋既定結果，只救
+    「還掛在 in_progress」的任務。
+    """
+    cur = next((t for t in backlog.list_tasks() if t.get("id") == task_id), None)
+    if cur is None or cur.get("status") != "in_progress":
+        return False
+    backlog.set_status(task_id, status, **fields)
+    return True
+
+
+def _graceful_shutdown_cleanup(task_id: int | str, sid: str | None) -> None:
+    """優雅停機打斷「尚未合併」任務時的收尾（全同步 IO，遠低於 systemd 預設 90s stop timeout）：
+
+    - backlog：仍在 in_progress 的任務退回 pending（附註記）——服務重啟後自動重排，
+      不再無聲從零重跑；已寫下最終結果者不動（_set_status_if_in_progress 護欄）；
     - history：running meta 標 error（mark_interrupted，冪等）——網站不再永遠顯示 ⏳ 執行中；
     - status.json：state="stopped"——供 /api/autopilot 與外部監控辨識「主動停機」而非死鎖。
-    各步驟獨立容錯，單步失敗不得阻斷其餘收尾。
+    各步驟獨立容錯，單步失敗不得阻斷其餘收尾；整體冪等，可安全重入。
     """
     note = "服務重啟中斷，自動重排"
     try:
-        backlog.set_status(task_id, "pending", note=note)
+        _set_status_if_in_progress(task_id, "pending", note=note)
     except Exception:  # noqa: BLE001 — 收尾單步失敗不得阻斷其餘步驟
         log.exception("停機收尾：任務 #%s 退回 pending 失敗", task_id)
     try:
@@ -1452,7 +1519,53 @@ def _graceful_shutdown_cleanup(task_id: int | str, sid: str | None) -> None:
     log.warning("停機收尾完成：任務 #%s 已退回 pending（session %s 標記中斷）", task_id, sid)
 
 
+def _shutdown_finalize_task(
+    task_id: int | str, sid: str | None, *, merged: bool, done_fields: dict | None = None
+) -> None:
+    """優雅停機打斷任務的收尾總入口（merge 感知、冪等）：
+
+    - merge 已成功（PR 已進 main）→ 收斂 done（帶 pr/merged_branch 追溯欄位）——絕不
+      退回 pending：成果已合併，重跑只會對同一份成果再開重複 PR、燒掉整輪額度；
+    - 尚未 merge → 退回 pending 自動重排（走 _graceful_shutdown_cleanup 原語意）。
+    兩路皆 mark_interrupted（冪等，只動 running meta）＋ status.json state="stopped"。
+    """
+    if not merged:
+        _graceful_shutdown_cleanup(task_id, sid)
+        return
+    note = "服務重啟中斷於合併後——成果已進 main，收斂為 done"
+    try:
+        if _set_status_if_in_progress(task_id, "done", note=note, **(done_fields or {})):
+            log.warning("停機收尾：任務 #%s 已合併，收斂為 done（不重跑）", task_id)
+    except Exception:  # noqa: BLE001 — 收尾單步失敗不得阻斷其餘步驟
+        log.exception("停機收尾：任務 #%s 收斂 done 失敗", task_id)
+    try:
+        if sid:
+            history.mark_interrupted(sid, note)
+    except Exception:  # noqa: BLE001
+        log.exception("停機收尾：session %s 標記中斷失敗", sid)
+    _write_status("stopped", task_id=task_id)
+
+
 # --- 主迴圈 --------------------------------------------------------------
+
+
+async def _prepare_execv_reload() -> None:
+    """os.execv 自我重載前的訊號安全準備。
+
+    execv 原地替換行程映像：事件迴圈裡「已排入但尚未執行」的 SIGTERM callback 會被無聲
+    丟棄——systemd 的停止請求消失，90 秒後被 SIGKILL 硬殺新映像。兩步防護：先卸下
+    SIGTERM/SIGINT handler（回復預設處置：晚到的訊號直接終止行程，正合 systemd 預期），
+    再讓出一個 tick 讓「已排入」的 _request_shutdown 跑完——其 cancel 會以 CancelledError
+    中止 execv 路徑，改走優雅停機。
+    """
+    # 區域 import 取真 asyncio：模組級 asyncio 可能被主迴圈測試 stub 掉。
+    import asyncio as aio
+
+    loop = aio.get_running_loop()
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+            loop.remove_signal_handler(signum)
+    await asyncio.sleep(0.1)
 
 
 async def main() -> None:
@@ -1476,6 +1589,10 @@ async def main() -> None:
 
 async def _main_loop(startup_sig: float) -> None:
     while True:
+        # 停機旗標兜底：取消若在某處被吞（競態）而迴圈還在轉，這裡立即補上停機路徑，
+        # 絕不再取新任務（否則要等 systemd 90s 後 SIGKILL 硬殺）。
+        if _shutdown_requested:
+            raise CancelledError()
         if config.autopilot_paused():
             await asyncio.sleep(10)
             continue
@@ -1550,6 +1667,7 @@ async def _main_loop(startup_sig: float) -> None:
         # 部署後若自身程式碼有更新 → 重載自己,避免跑舊邏輯
         if not config.AUTOPILOT_DRYRUN and _self_sig() != startup_sig:
             log.info("偵測到 autopilot 自身程式碼更新,os.execv 重載")
+            await _prepare_execv_reload()
             os.execv(sys.executable, [sys.executable, "-m", "studio.autopilot"])
 
         await asyncio.sleep(config.AUTOPILOT_COOLDOWN)

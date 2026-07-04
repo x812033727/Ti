@@ -468,7 +468,9 @@ def _has_unset_env_var(token: str) -> bool:
     return any(m.group(1) not in os.environ for m in _ENV_VAR_REF_RE.finditer(token))
 
 
-def sanitize_demo_command(cmd: str, exit_code: int, output: str) -> str | None:
+def sanitize_demo_command(
+    cmd: str, exit_code: int, output: str, protected_text: str = ""
+) -> str | None:
     """usage-error 型 demo 失敗的一次性消毒：剝掉 stderr 點名的違規參數，回傳消毒後指令。
 
     背景（#248）：PM 給的 demo 指令帶了目標工具不認得的參數（如 `pytest --cache-dir=…` →
@@ -478,6 +480,11 @@ def sanitize_demo_command(cmd: str, exit_code: int, output: str) -> str | None:
       - 剝掉 stderr 明確點名的 token（含其 `--opt=value` 同名 option 的變體）；
       - 剝掉引用「未設定環境變數」的 token（$VAR 展不開、必然是壞路徑片段）；
       - 指令含 shell 控制符（pipe／&&／重導向…）不動——token 化重組會破壞語法；
+      - **交付物護欄**：要剝的 token（或其 `--opt=value` 的底名）出現在
+        ``protected_text``（需求＋PM 計畫＋任務標題）中即回 None——「工具不認得
+        --fast-lane」可能正是本場要交付的新旗標壞掉，消毒重試會讓壞交付物假綠出貨；
+      - **展開語意護欄**：保留的 token 含 shell 展開字元（$VAR/glob/~）也回 None——
+        shlex.join 會把它引號化、無聲關掉展開，重試跑的已不是同一個指令；
       - 消毒後與原指令相同（無可剝除）或會剝成空指令時回 None。
     回 None＝不建議重試；呼叫端（orchestrator demo 階段）拿到非 None 才重試「一次」，
     絕不迴圈。
@@ -507,6 +514,21 @@ def sanitize_demo_command(cmd: str, exit_code: int, output: str) -> str | None:
             continue
         kept.append(t)
     if not kept or kept == tokens:
+        return None
+    # 交付物護欄：被剝掉的 token 若在需求/計畫/任務文字中被點名，代表它可能是「本場交付
+    # 的功能本身」——被工具拒絕更可能是實作壞了，不是指令寫錯；不重試，讓 demo_veto 誠實
+    # 擋下。底名（--opt=value → --opt）也比對，涵蓋「文字提旗標、指令帶值」的常態。
+    if protected_text:
+        kept_set = set(kept)
+        for t in tokens:
+            if t in kept_set:
+                continue
+            base = t.split("=", 1)[0]
+            if t in protected_text or (base != t and base in protected_text):
+                return None
+    # 展開語意護欄：shlex.join 會把含特殊字元的保留 token 引號化（'$TMPDIR/x' 變字面值），
+    # 使 $VAR/glob/~ 失去展開——重試語意與原指令不同，寧可不重試。
+    if any(shlex.quote(t) != t and re.search(r"[$*?~\[]", t) for t in kept):
         return None
     return shlex.join(kept)
 

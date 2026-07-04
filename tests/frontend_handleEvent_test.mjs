@@ -73,6 +73,7 @@ const known = [
   ev('board_update', { columns: { todo: [{ title: 'a' }], doing: [], review: [], done: [] } }),
   ev('run_result', { passed: true, detail: 'ok', log: 'log' }),
   ev('demo_result', { label: 'Demo', command: 'py', exit_code: 0, passed: true, output: 'out' }),
+  ev('demo_result', { label: 'Demo', command: 'py --bad', exit_code: 0, passed: true, output: 'out', retried_cmd: 'py', first_exit: 4 }),
   ev('git_commit', { message: 'm', hash: 'abc' }),
   ev('human_message', { text: 'hi' }),
   ev('clarify_request', { questions: [{ q: '目標平台？', assumption: '網頁版' }, { q: '要支援多人嗎？', assumption: '' }], timeout_s: 180 }),

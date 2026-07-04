@@ -3218,7 +3218,15 @@ class StudioSession:
             # （如 pytest --cache-dir → exit 4 unrecognized arguments）時，整場綠色成果
             # 會被 demo_veto 全數丟棄——指令寫壞不是產品壞。剝掉 stderr 點名的參數後
             # 重試「一次」（sanitize 回 None＝不重試），兩次嘗試都記進 demo_result 供稽核。
-            sanitized = runner.sanitize_demo_command(cmd, result.exit_code, result.output)
+            # protected_text＝需求＋PM 計畫＋任務標題：要剝的參數若正是本場交付的功能
+            # （如新增的 --fast-lane 旗標被拒），不得靠剝掉它讓壞交付物假綠出貨。
+            protected = "\n".join(
+                [self._requirement or "", self._pm_plan or ""]
+                + [str(t.get("title") or "") for t in self._tasks]
+            )
+            sanitized = runner.sanitize_demo_command(
+                cmd, result.exit_code, result.output, protected_text=protected
+            )
             if sanitized:
                 first_exit = result.exit_code
                 retried_cmd = sanitized

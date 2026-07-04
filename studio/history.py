@@ -333,7 +333,7 @@ def events_mtime(session_id: str) -> float | None:
 
 
 def sweep_stale_running(
-    active_sids: frozenset[str] | set[str] = frozenset(), stale_after_s: float = 3600
+    active_sids: frozenset[str] | set[str] = frozenset(), stale_after_s: float | None = None
 ) -> list[str]:
     """掃除卡在 running 的幽靈 meta：非活躍且久無活動者標 error（mark_interrupted），回傳掃到的 sid。
 
@@ -342,10 +342,14 @@ def sweep_stale_running(
     active_sids（呼叫端提供的活躍集合，如 busy_sessions）且最後活動（events 檔 mtime，
     取不到退回 meta 時間戳）超過 stale_after_s 秒」的 running meta 逐一標中斷。
 
-    stale_after_s 預設 3600：單一專家 turn 依 TURN_HARD_TIMEOUT（1800s）可合法靜默達
-    半小時，門檻取其兩倍才不會誤殺「討論很長但活著」的場次；mark_interrupted 冪等
-    （只動 running），重複掃無副作用。
+    stale_after_s 預設（None）＝max(3600, 2 × config.TURN_HARD_TIMEOUT)，每次呼叫即時
+    計算：安全不變量是「單一專家 turn 依 TURN_HARD_TIMEOUT 可合法靜默」的**兩倍**——
+    TI_TURN_TIMEOUT 是執行期可調（config.reload）的設定，門檻寫死 3600 會在 turn
+    timeout 調大後誤殺「討論很長但活著」的場次；3600 為下限地板（預設 1800×2）。
+    mark_interrupted 冪等（只動 running），重複掃無副作用。
     """
+    if stale_after_s is None:
+        stale_after_s = max(3600.0, 2 * float(config.TURN_HARD_TIMEOUT or 0))
     now = time.time()
     swept: list[str] = []
     for meta in list_sessions():

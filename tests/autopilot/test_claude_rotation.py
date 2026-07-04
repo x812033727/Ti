@@ -192,8 +192,9 @@ def test_claude_accounts_usage_extracts_windows_and_resets(rotate_env):
             _acct("B", None, active=True, error="stale_label"),
         ]
     )
-    usages, active = autopilot._claude_accounts_usage(snap)
+    usages, active, errors = autopilot._claude_accounts_usage(snap)
     assert active == "B"
+    assert errors == {"B": "stale_label"}
     assert usages["A"]["five_hour"] == 18.0 and usages["A"]["seven_day"] == 13.0
     assert usages["A"]["five_hour_reset"] == pytest.approx(t0 + 600)
     assert usages["A"]["seven_day_reset"] == pytest.approx(t0 + 86400)

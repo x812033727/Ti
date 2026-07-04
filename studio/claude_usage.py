@@ -111,7 +111,8 @@ def fetch_rate_limits(force: bool = False, cred_file: Path | None = None) -> dic
     暫時性失敗（連線錯誤／429／5xx／壞 JSON）優先回退 last-known-good：15 分鐘內
     查成功過就回舊值副本（加 ``stale: True``、保留原 fetched_at，error 維持 None），
     並照常存進 TTL 快取讓所有消費端看到同一份；無新鮮舊值才回 unreachable。
-    授權類失敗（401/403／token 缺失／已知過期）絕不回退——舊值掩蓋不了 token 壞掉。
+    授權類失敗（401/403／token 缺失／已知過期）絕不回退，且**作廢** last-known-good
+    ——權威的 token 壞損訊號之後，撤銷前的快照不得再被任何暫時性失敗還魂。
     """
     now = _now()
     path = _cred_path(cred_file)
@@ -132,13 +133,19 @@ def fetch_rate_limits(force: bool = False, cred_file: Path | None = None) -> dic
             return _store({**lg[1], "stale": True})
         return _store(_empty("unreachable", now))
 
+    def _auth_failure(error: str) -> dict:
+        # 授權類失敗是「權威訊號」：token 壞了/沒了，撤銷前的成功快照已不可信——一併作廢
+        # last-known-good，否則之後一次暫時性失敗（429）會把撤銷前的資料還魂、掩蓋死 token。
+        _last_good.pop(key, None)
+        return _store(_empty(error, now))
+
     token = _read_token(path)
     if not token:
-        return _store(_empty("token_missing", now))
+        return _auth_failure("token_missing")
 
     if _token_expired(now, path):
         # 已知過期：直接回 unauthorized，前端顯示「token 已過期，跑一次討論即恢復」。
-        return _store(_empty("unauthorized", now))
+        return _auth_failure("unauthorized")
 
     try:
         resp = httpx.get(
@@ -150,7 +157,7 @@ def fetch_rate_limits(force: bool = False, cred_file: Path | None = None) -> dic
         return _transient_failure()
 
     if resp.status_code in (401, 403):
-        return _store(_empty("unauthorized", now))
+        return _auth_failure("unauthorized")
     if resp.status_code >= 400:
         # 429/5xx/其他非授權 4xx 一律視為暫時性（保守：寧可用舊值也不誤殺帳號）。
         return _transient_failure()
