@@ -527,7 +527,7 @@ class StudioSession:
         """放行前的異議關卡。回傳 (是否放行, critic 文字)。
 
         刻意只餵標的與驗收標準、不餵當事人剛才的核可理由以降低錨定；停用或無 critic 時放行。
-        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        任務路徑傳入 tagged broadcast（帶 task_id）供前端分流與 token 歸因。
         """
         # 離線示範（OFFLINE_MODE）視為 demo 情境自動啟用，以展示「內部討論」事件。
         if not (config.CRITIC_ENABLED or config.OFFLINE_MODE) or self._stop:
@@ -662,7 +662,7 @@ class StudioSession:
         self, task: dict, status: str, broadcast: Broadcast | None = None
     ) -> None:
         task["status"] = status
-        # 並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        # 任務路徑傳入 tagged broadcast（帶 task_id）供前端分流與 token 歸因。
         # 看板是 session 全域快照（跨所有任務）→ 維持未標籤的 self.broadcast。
         bc = broadcast or self.broadcast
         await bc(events.task_status(self.session_id, task["id"], task["title"], status))
@@ -681,7 +681,7 @@ class StudioSession:
             # 並行 lane 的 commit 不動 self._last_commit，改由波次合併後以主分支 HEAD 更新。
             if ctx.branch is None:
                 self._last_commit = h
-            # 並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+            # 任務路徑傳入 tagged broadcast（帶 task_id）供前端分流與 token 歸因。
             bc = broadcast or self.broadcast
             await bc(events.git_commit(self.session_id, message, h))
 
@@ -2112,7 +2112,7 @@ class StudioSession:
         return self._llm_sem
 
     def _tagged_broadcast(self, task_id: int | None) -> Broadcast:
-        """包裝 broadcast：並行 lane 的事件補上 task_id 供前端分流；task_id=None 時原樣直送。"""
+        """包裝 broadcast：任務事件補上 task_id 供前端分流；task_id=None 時原樣直送。"""
         if task_id is None:
             return self.broadcast
 
@@ -2135,8 +2135,8 @@ class StudioSession:
                 raise
 
     def _lane_tag(self, ctx: LaneContext, task: dict) -> int | None:
-        """並行 lane（branch 不為 None）回 task id 供事件標籤；主 lane 回 None（行為不變）。"""
-        return task["id"] if ctx.branch is not None else None
+        """回 task id 供任務事件標籤；ctx 保留於簽名中，讓呼叫點明確帶 lane context。"""
+        return task["id"]
 
     async def _run_waves(self, plan_ctx: str) -> bool:
         """把任務分波執行：波次之間循序（尊重依賴），波次之內最多 PARALLEL_LANES 條支線並行。
@@ -2340,7 +2340,7 @@ class StudioSession:
 
     async def _run_task_in_lane(self, ctx: LaneContext, task: dict, plan_ctx: str) -> bool:
         """在指定 lane 跑單一任務（實作→驗證→審查→huddle），更新看板與 lane 知識緩衝。"""
-        # 並行 lane 的事件統一帶 task_id（供前端分流）；主 lane（tag=None）回原樣 self.broadcast。
+        # 任務事件統一帶 task_id（供前端分流與 token 歸因）。
         bc = self._tagged_broadcast(self._lane_tag(ctx, task))
         await bc(
             events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
@@ -2620,10 +2620,10 @@ class StudioSession:
         """
         # reviewer 集合（資料驅動，過濾在場）：預設 qa/senior＋security 在場才審，重現今日。
         reviewers = self._task_reviewers(ctx.experts)
-        tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。
+        tag = self._lane_tag(ctx, task)
         bc = self._tagged_broadcast(
             tag
-        )  # 本任務所有事件統一帶 task_id；主 lane 回原樣 self.broadcast。
+        )  # 本任務所有事件統一帶 task_id。
         feedback = seed_feedback
         # 輪數：huddle 重試顯式傳 max_rounds 優先；否則 review stage 的 max_rounds 覆寫，再否則 config。
         rounds = (
@@ -2906,7 +2906,7 @@ class StudioSession:
         """卡關升級：召集團隊 huddle 找替代方案 → 給 1 輪重試。
 
         重試仍失敗則把 task 標為「已知限制」（註記 + 事件），status 由呼叫端維持 review。
-        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        任務路徑傳入 tagged broadcast（帶 task_id）供前端分流與 token 歸因。
         """
         bc = broadcast or self.broadcast
         conclusion = await self._huddle(ctx, task, context, bc)
@@ -2937,7 +2937,7 @@ class StudioSession:
         """召集卡關討論：讓在場角色針對 blocker 提替代方案。回傳彙整結論。
 
         召集 PM＋架構師＋工程師＋高級工程師（取自該 lane 的專家團隊），缺席角色
-        （如 offline 無架構師）自動略過。並行 lane 傳入 tagged broadcast 供前端分流。
+        （如 offline 無架構師）自動略過。任務路徑傳入 tagged broadcast 供前端分流。
 
         發言調度依 config.DISCUSS_MODE：round_robin/parallel（預設）走 DiscussionEngine
         單輪（max_rounds=1，每人剛好一次）——parallel 即同輪並行（角色同時動工）；legacy
@@ -3046,7 +3046,7 @@ class StudioSession:
         """工程師交付前的確定性 smoke-run（在 lane 的 cwd 內執行），把完整 log 回報。
 
         回傳實際執行結果（供客觀閘門/自我精修判定）；無 cwd 或無可執行指令時回 None。
-        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        任務路徑傳入 tagged broadcast（帶 task_id）供前端分流與 token 歸因。
         """
         if not ctx.cwd:
             return None

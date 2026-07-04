@@ -55,6 +55,52 @@ def test_token_usage_event_shape():
     assert p["provider"] == "minimax" and p["model"] == "MiniMax-M3" and p["cost_usd"] == 0.1
 
 
+def test_token_usage_event_accepts_optional_task_id():
+    ev = events.token_usage(
+        "s",
+        "engineer",
+        "minimax",
+        "MiniMax-M3",
+        10,
+        5,
+        15,
+        cost_usd=0.1,
+        task_id=7,
+    )
+    assert ev.payload["task_id"] == 7
+
+    old_shape = events.token_usage("s", "engineer", "minimax", "MiniMax-M3", 10, 5, 15)
+    assert "task_id" not in old_shape.payload
+
+
+@pytest.mark.asyncio
+async def test_tagged_broadcast_injects_task_id_into_token_usage_payload():
+    from studio.orchestrator import LaneContext, StudioSession
+
+    bucket, sink = collect()
+    session = StudioSession("s", sink, cwd=None)
+    ctx = LaneContext("main", None, {})
+    tag = session._lane_tag(ctx, {"id": 42, "title": "序列任務"})
+    await session._tagged_broadcast(tag)(
+        events.token_usage("s", "engineer", "minimax", "MiniMax-M3", 10, 5, 15)
+    )
+
+    assert bucket[0].payload["task_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_tagged_broadcast_preserves_existing_token_usage_task_id():
+    from studio.orchestrator import StudioSession
+
+    bucket, sink = collect()
+    session = StudioSession("s", sink, cwd=None)
+    await session._tagged_broadcast(42)(
+        events.token_usage("s", "engineer", "minimax", "MiniMax-M3", 10, 5, 15, task_id=99)
+    )
+
+    assert bucket[0].payload["task_id"] == 99
+
+
 # --- history._derive_token_usage 聚合 ------------------------------------
 
 

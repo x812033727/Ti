@@ -137,21 +137,25 @@ def token_usage(
     cost_usd: float | None = None,
     cache_read: int = 0,
     cache_write: int = 0,
+    task_id: int | None = None,
 ) -> StudioEvent:
+    payload = {
+        "speaker": speaker_key,
+        "provider": provider,
+        "model": model,
+        "prompt_tokens": int(prompt_tokens or 0),
+        "completion_tokens": int(completion_tokens or 0),
+        "total_tokens": int(total_tokens or 0),
+        "cost_usd": cost_usd,
+        "cache_read": int(cache_read or 0),
+        "cache_write": int(cache_write or 0),
+    }
+    if task_id is not None:
+        payload["task_id"] = task_id
     return StudioEvent(
         EventType.TOKEN_USAGE,
         session_id,
-        {
-            "speaker": speaker_key,
-            "provider": provider,
-            "model": model,
-            "prompt_tokens": int(prompt_tokens or 0),
-            "completion_tokens": int(completion_tokens or 0),
-            "total_tokens": int(total_tokens or 0),
-            "cost_usd": cost_usd,
-            "cache_read": int(cache_read or 0),
-            "cache_write": int(cache_write or 0),
-        },
+        payload,
     )
 
 
