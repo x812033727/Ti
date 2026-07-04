@@ -1,13 +1,5 @@
-// 前端相容性 smoke：在 stub 過的 DOM 環境載入 web/app.js，
+// 前端相容性 smoke：先掛全域 DOM stub，再 import 真實 web/js/events-render.js，
 // 驗證 handleEvent 對「未知事件」與「新事件」都不會崩潰（依賴 switch 無 default）。
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const appPath = path.join(here, "..", "web", "app.js");
-const source = fs.readFileSync(appPath, "utf-8");
 
 // 一個「對任何屬性存取/呼叫都安全」的萬用 stub（支援鏈式：el.classList.toggle(...) 等）。
 const makeStub = () =>
@@ -28,7 +20,7 @@ const doc = {
   body: makeStub(),
 };
 
-const sandbox = {
+Object.assign(globalThis, {
   document: doc,
   window: { addEventListener: () => {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
   location: { protocol: "http:", host: "localhost", href: "" },
@@ -36,20 +28,10 @@ const sandbox = {
   fetch: () => Promise.resolve({ json: () => Promise.resolve({}), ok: true }),
   setTimeout: () => 0,
   clearTimeout: () => {},
-  console,
-  Promise,
-  JSON,
-  Date,
-  Object,
-  Array,
-  encodeURIComponent,
-};
-sandbox.globalThis = sandbox;
+});
+const mod = await import("../web/js/events-render.js");
 
-const ctx = vm.createContext(sandbox);
-vm.runInContext(source, ctx, { filename: "app.js" });
-
-const handleEvent = ctx.handleEvent;
+const handleEvent = mod.handleEvent;
 if (typeof handleEvent !== "function") {
   console.error("handleEvent 未定義");
   process.exit(1);

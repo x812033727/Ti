@@ -52,7 +52,8 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-APP_JS_PATH = REPO_ROOT / "web" / "app.js"
+# handleEvent 已拆到 web/js/events-render.js（ES module 化）
+APP_JS_PATH = REPO_ROOT / "web" / "js" / "events-render.js"
 E2E_PATH = REPO_ROOT / "tests" / "test_offline_agenda_e2e.py"
 
 

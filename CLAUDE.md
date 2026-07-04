@@ -80,7 +80,7 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
 4. 每個事件即時渲染並寫入 `history/<id>.jsonl`；前端可送 `{"type":"interject"}` 或 `{"type":"stop"}`。
 5. `done` 結束；歷史可從 `/api/history` 列出並重播。
 
-事件型別是前後端契約，定義集中在 `events.py`，前端在 `web/app.js` 的 `handleEvent()` 對應。詳見 `ARCHITECTURE.md`。
+事件型別是前後端契約，定義集中在 `events.py`，前端在 `web/js/events-render.js` 的 `handleEvent()` 對應（`web/app.js` 為 ES module 入口，模組拆分見 `ARCHITECTURE.md`「前端（web/）」）。
 
 ## 關鍵慣例（給 AI 的硬規則）
 
