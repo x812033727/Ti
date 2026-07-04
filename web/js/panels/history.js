@@ -5,6 +5,7 @@ import {
   handleEvent, addSystem, clearStream, clearBoard, setPhase, scrollStream,
 } from "../events-render.js";
 import { setRunning } from "./deck.js";
+import { openDrawer, closeDrawer } from "../components/drawer.js";
 
 export const STATUS_LABEL = {
   running: "⏳ 執行中", completed: "✅ 完成", incomplete: "⚠️ 未達標",
@@ -13,7 +14,7 @@ export const STATUS_LABEL = {
 
 export async function openHistory() {
   const historyList = $("#historyList");
-  $("#historyPanel").classList.remove("hidden");
+  openDrawer("#historyPanel");
   historyList.innerHTML = "<li class='muted'>載入中…</li>";
   try {
     const data = await (await fetch("/api/history")).json();
@@ -83,7 +84,7 @@ export async function cleanupCompleted() {
 
 export async function replaySession(sid) {
   if (state.replaying) return;
-  $("#historyPanel").classList.add("hidden");
+  closeDrawer("#historyPanel");
   if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.close();
   let events = [];
   let requirement = "";
@@ -106,4 +107,4 @@ export async function replaySession(sid) {
   scrollStream();
 }
 
-export function closeHistory() { $("#historyPanel").classList.add("hidden"); }
+export function closeHistory() { closeDrawer("#historyPanel"); }

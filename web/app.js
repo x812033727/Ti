@@ -6,6 +6,7 @@ import { downloadWorkspace, loadPublishConfig } from "./js/events-render.js";
 import { start, stop, sendInterject } from "./js/ws.js";
 import { loadHealth, checkAuth } from "./js/health.js";
 import { setMobileView, bindTabs } from "./js/components/tabs.js";
+import { bindDrawers } from "./js/components/drawer.js";
 import {
   setDeckCollapsed, loadProjects, loadWorkflows, updateStartLabel, onProjectChange,
 } from "./js/panels/deck.js";
@@ -73,6 +74,7 @@ $("#interjectInput").addEventListener("keydown", (e) => { if (e.key === "Enter")
 
 bindSettings();
 bindTabs();
+bindDrawers();
 setMobileView("discussion");
 
 async function init() {

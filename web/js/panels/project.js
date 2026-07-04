@@ -1,5 +1,7 @@
 // 專案面板（藍圖 + 改良待辦）與專案 CRUD（建立/刪除/目標 repo/中斷恢復）。
 import { $, toast } from "../dom.js";
+import { openFormModal } from "../components/modal.js";
+import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { loadProjects, onProjectChange } from "./deck.js";
 import { start } from "../ws.js";
 
@@ -7,9 +9,27 @@ export const PRIO_LABEL = ["P0", "P1", "P2"];
 export const TYPE_LABEL = { feature: "功能", bug: "缺陷", improvement: "改良" };
 
 export async function createProjectFlow() {
-  const name = (prompt("專案名稱（例如：無人機地面站）") || "").trim();
-  if (!name) { $("#projectSelect").value = ""; onProjectChange(); return; }
-  const vision = (prompt("一句話產品願景（選填，會持續提醒團隊方向）") || "").trim();
+  // 表單 modal 一次收齊（取代先前的連環 prompt）；目標 repo 選填、可日後再設。
+  const values = await openFormModal({
+    title: "新增專案",
+    hint: "長期專案：程式碼與改良任務跨場次累積；選「一次性討論」則每次從零開始。",
+    fields: [
+      { key: "name", label: "專案名稱", required: true, placeholder: "例如：無人機地面站" },
+      {
+        key: "vision", label: "一句話產品願景", type: "textarea", rows: 2,
+        placeholder: "（選填）會持續提醒團隊方向",
+      },
+      {
+        key: "repo", label: "目標 repo", placeholder: "（選填）owner/repo，可日後在專案面板設定",
+        hint: "工作基底＋發佈目標：下一場討論以該 repo 程式碼為基底，成果推分支開 PR；" +
+          "repo 不存在且 owner 是 token 使用者時會自動建立私有 repo",
+      },
+    ],
+    submitLabel: "建立專案",
+    onValidate: (v) => (v.name ? "" : "請輸入專案名稱"),
+  });
+  if (!values) { $("#projectSelect").value = ""; onProjectChange(); return; }
+  const { name, vision, repo } = values;
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
@@ -18,6 +38,19 @@ export async function createProjectFlow() {
     });
     const data = await res.json();
     if (!res.ok) { toast(data.error || "建立失敗", "err"); return; }
+    if (repo) {
+      // 同一張表單順手設定目標 repo；失敗不擋建立流程，提示可稍後再設。
+      try {
+        const r2 = await fetch(`/api/projects/${data.project.id}/publish-repo`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo }),
+        });
+        const d2 = await r2.json().catch(() => ({}));
+        if (!r2.ok) toast(d2.error || "目標 repo 設定失敗（可稍後在專案面板設定）", "err");
+        else if (d2.warning) toast(d2.warning, "err");
+      } catch (e) { toast("目標 repo 設定失敗（可稍後在專案面板設定）", "err"); }
+    }
     await loadProjects();
     $("#projectSelect").value = data.project.id;
     toast(`專案「${name}」已建立`, "ok");
@@ -28,11 +61,11 @@ export async function createProjectFlow() {
 export async function openProjectPanel() {
   const pid = $("#projectSelect").value;
   if (!pid || pid === "__new__") { toast("先在上方選擇一個專案", ""); return; }
-  $("#projectPanel").classList.remove("hidden");
+  openDrawer("#projectPanel");
   await refreshProjectPanel();
 }
 
-export function closeProjectPanel() { $("#projectPanel").classList.add("hidden"); }
+export function closeProjectPanel() { closeDrawer("#projectPanel"); }
 
 function projLine(text, cls) {
   const div = document.createElement("div");
@@ -174,39 +207,43 @@ export async function deleteProject(pid, name) {
 }
 
 export async function setProjectPublishRepo(pid, current) {
-  const v = prompt(
-    "目標 repo（owner/repo，留空＝清除）\n" +
-      "設定後：workspace 全新 → 下一場討論自動以該 repo 的程式碼為工作基底（專家改你的 repo，不另起爐灶）；" +
-      "每場開始會同步遠端 base；成果推分支並開 PR。\n" +
+  const values = await openFormModal({
+    title: "設定目標 repo",
+    hint: "設定後：workspace 全新 → 下一場討論自動以該 repo 的程式碼為工作基底" +
+      "（專家改你的 repo，不另起爐灶）；每場開始會同步遠端 base；成果推分支並開 PR。" +
       "repo 不存在且 owner 是你的 token 使用者時會自動建立私有 repo。",
-    current,
-  );
-  if (v === null) return; // 取消
+    fields: [
+      { key: "repo", label: "目標 repo", value: current, placeholder: "owner/repo（留空＝清除）" },
+    ],
+    submitLabel: "儲存",
+  });
+  if (values === null) return; // 取消
+  const v = values.repo;
   try {
     const res = await fetch(`/api/projects/${pid}/publish-repo`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repo: v.trim() }),
+      body: JSON.stringify({ repo: v }),
     });
     const d = await res.json();
     if (!res.ok) { toast(d.error || "設定失敗", "err"); return; }
     if (d.warning) {
       toast(d.warning, "err");
     } else {
-      toast(v.trim() ? `目標 repo 已設為 ${v.trim()}` : "已清除目標 repo");
+      toast(v ? `目標 repo 已設為 ${v}` : "已清除目標 repo");
     }
     await refreshProjectPanel();
     // 若該專案正選在啟動列，同步更新啟動列上的目標 repo 標籤
     if ($("#projectSelect").value === pid) {
       const repoTag = $("#projectRepo");
-      if (v.trim()) {
-        repoTag.textContent = `🎯 ${v.trim()}`;
+      if (v) {
+        repoTag.textContent = `🎯 ${v}`;
         repoTag.classList.remove("unset");
       } else {
         repoTag.textContent = "🎯 目標 repo 未設定（點此設定）";
         repoTag.classList.add("unset");
       }
-      repoTag.onclick = () => setProjectPublishRepo(pid, v.trim());
+      repoTag.onclick = () => setProjectPublishRepo(pid, v);
     }
   } catch (e) {
     toast("設定失敗：" + e.message, "err");

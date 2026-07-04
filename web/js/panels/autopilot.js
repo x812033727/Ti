@@ -1,5 +1,6 @@
 // Autopilot 自主迴圈面板：狀態列、backlog、額度迷你條、績效榜、動態 timeline。
 import { $, appendTextEl } from "../dom.js";
+import { openDrawer, closeDrawer } from "../components/drawer.js";
 
 // 迷你狀態：縮成一條狀態列（手機浮在分頁列上方、桌機右下小卡），輕量輪詢保持計數新鮮
 let apMiniTimer = null;
@@ -11,13 +12,13 @@ function clearApMini() {
 
 export async function openAutopilot() {
   clearApMini();
-  $("#autopilotPanel").classList.remove("hidden");
+  openDrawer("#autopilotPanel");
   await refreshAutopilot();
 }
 
 export function closeAutopilot() {
   clearApMini();
-  $("#autopilotPanel").classList.add("hidden");
+  closeDrawer("#autopilotPanel");
 }
 
 export function minimizeAutopilot() {

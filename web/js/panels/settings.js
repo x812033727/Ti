@@ -3,6 +3,7 @@
 import { $, toast, appendTextEl } from "../dom.js";
 import { loadHealth, checkAuth } from "../health.js";
 import { setMobileView } from "../components/tabs.js";
+import { openDrawer, closeDrawer } from "../components/drawer.js";
 
 // --- 重新部署重啟（設定面板常駐入口）---------------------------------
 // 拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。後端：POST /api/redeploy。
@@ -52,7 +53,7 @@ export function bindSettings() {
 export async function openSettings() {
   const settingsForm = $("#settingsForm");
   const settingsQuota = $("#settingsQuota");
-  $("#settingsPanel").classList.remove("hidden");
+  openDrawer("#settingsPanel");
   settingsForm.innerHTML = "<div class='muted'>載入中…</div>";
   if (settingsQuota) settingsQuota.innerHTML = "<div class='muted'>載入 provider 狀態與額度中…</div>";
   try {
@@ -112,7 +113,7 @@ export async function savePassword() {
 
 export function closeSettings() {
   settingsDirty = false; // 關閉＝放棄未存變更，之後重整不再提醒
-  $("#settingsPanel").classList.add("hidden");
+  closeDrawer("#settingsPanel");
   // 若是從手機底部「設定」分頁進來的，關閉後回到討論分頁，避免留下空白畫面
   if (document.body.dataset.mv === "settings") setMobileView("discussion");
 }

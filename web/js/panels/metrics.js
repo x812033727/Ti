@@ -1,12 +1,13 @@
 // 運維指標面板。
 import { $ } from "../dom.js";
+import { openDrawer, closeDrawer } from "../components/drawer.js";
 
 export async function openMetrics() {
-  $("#metricsPanel").classList.remove("hidden");
+  openDrawer("#metricsPanel");
   await refreshMetrics();
 }
 
-export function closeMetrics() { $("#metricsPanel").classList.add("hidden"); }
+export function closeMetrics() { closeDrawer("#metricsPanel"); }
 
 export async function refreshMetrics() {
   const body = $("#metricsBody");
