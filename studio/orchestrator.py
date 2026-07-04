@@ -2896,11 +2896,7 @@ class StudioSession:
             config.objective_gate_enabled()
             and ctx.cwd is not None
             and (
-                (
-                    smoke is not None
-                    and not smoke.ok
-                    and (own_cmd or config.objective_gate_strict())
-                )
+                (smoke is not None and not smoke.ok and (own_cmd or config.objective_gate_strict()))
                 or (smoke is None and config.objective_gate_strict())
             )
         )
@@ -2912,7 +2908,9 @@ class StudioSession:
                     f"執行紀錄：\n{smoke.output}"
                 )
             else:
-                gate_note = "【客觀閘門】嚴格模式：未宣告任何可執行的自測指令，無從客觀驗證，本輪強制退回。"
+                gate_note = (
+                    "【客觀閘門】嚴格模式：未宣告任何可執行的自測指令，無從客觀驗證，本輪強制退回。"
+                )
             review_note = f"\n\n{review_section}" if review_section else ""
             await bc(
                 events.phase_change(
