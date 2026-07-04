@@ -1072,6 +1072,62 @@ async def _evaluate_self(clone: str) -> int:
     return n
 
 
+# --- PM workflow 分診 -----------------------------------------------------
+
+_TRIAGE_SYSTEM = """你是 Ti 工作室的專案經理（PM），負責在任務開場前選擇本場討論的流程骨架。
+
+三個選項與判準：
+- 快速模式：單檔小修、文案/註解/設定調整、測試補強等低風險任務——動態分派→實作→QA 單審，省下三審輪次。
+- 動態優先：中等複雜度、需要 PM 運行時溝通與動態分派的任務。
+- 預設流程：跨子系統改動、orchestrator/autopilot 核心流程、安全敏感（auth/憑證/發佈）、
+  或任何你沒把握的任務——完整三審把關。拿不定主意一律選這個。
+
+只輸出兩行：
+理由: <一句話>
+流程: <快速模式|動態優先|預設流程>"""
+
+
+async def _select_workflow(task: dict, clone: str, sid: str) -> tuple[dict | None, str]:
+    """任務開場前的 PM workflow 分診：依任務性質選內建流程。
+
+    回 ``(workflow_dict | None, 一句話理由)``；None＝沿用 default_workflow（與現行為
+    bit-for-bit 等價）。護欄：
+    - 開關 ``config.AUTOPILOT_WORKFLOW_TRIAGE`` 預設關（不發呼叫、零成本）；
+    - 白名單只認兩個「內建工廠」（動態優先/快速模式）——刻意不走 workflow.get_workflow()，
+      檔案定義可蓋掉保留名，分診絕不能被 workflows.yaml 的同名檔案劫持；
+    - complete_once 永不 raise（逾時/離線/LLM 錯誤回空字串）＋本函式整體 try/except
+      兜底——任何失敗都收斂回預設流程，絕不影響任務執行。
+    """
+    if not config.AUTOPILOT_WORKFLOW_TRIAGE:
+        return None, ""
+    try:
+        from . import flow, providers, workflow as workflow_mod
+
+        user = task["title"] + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
+        text = await providers.complete_once(
+            _TRIAGE_SYSTEM,
+            user,
+            session_id=f"{sid}:triage",
+            cwd=Path(clone),
+            timeout=float(config.AUTOPILOT_TRIAGE_TIMEOUT),
+        )
+        if not text:
+            return None, ""
+        name = flow.parse_workflow_choice(text).strip().strip("「」\"'` ")
+        reason = flow.parse_triage_reason(text)
+        factories = {
+            workflow_mod.DYNAMIC_FIRST_NAME: workflow_mod.dynamic_first_workflow,
+            workflow_mod.FAST_TRACK_NAME: workflow_mod.fast_track_workflow,
+        }
+        factory = factories.get(name)
+        if factory is None:  # 「預設流程」或未命中白名單 → 走預設（None）
+            return None, reason
+        return factory(), reason
+    except Exception:  # noqa: BLE001 — 分診只是加值，失敗絕不可影響任務執行
+        log.exception("workflow 分診失敗（忽略，沿用預設流程）")
+        return None, ""
+
+
 # --- 單一任務 ------------------------------------------------------------
 
 
@@ -1125,11 +1181,32 @@ async def run_one_task(task: dict) -> None:
     async def broadcast(event):
         history.record_event(sid, event.to_dict())
 
+    # PM workflow 分診（TI_AUTOPILOT_WORKFLOW_TRIAGE，預設關）：小任務走快速模式省三審、
+    # 高風險走預設流程。wf=None＝沿用 default_workflow（現行為）；決策記 log＋session 事件
+    # ＋backlog note 三處供稽核（annotate 不動 attempts）。_select_workflow 自身永不 raise，
+    # 呼叫端仍兜一層——分診是加值不是依賴，任何失敗都不得擋任務執行（防禦深度）。
+    wf, wf_reason = None, ""
+    try:
+        wf, wf_reason = await _select_workflow(task, clone, sid)
+    except Exception:  # noqa: BLE001
+        log.exception("workflow 分診呼叫失敗（忽略，沿用預設流程）")
+    if wf is not None:
+        from . import events as events_mod
+
+        log.info("任務 #%s workflow 分診：%s（%s）", task["id"], wf["name"], wf_reason)
+        history.record_event(
+            sid,
+            events_mod.phase_change(sid, "workflow_triage", f"{wf['name']}｜{wf_reason}").to_dict(),
+        )
+        with contextlib.suppress(Exception):
+            backlog.annotate(task["id"], f"[workflow] {wf['name']}：{wf_reason}")
+
     session = StudioSession(
         sid,
         broadcast,
         cwd=Path(clone),
         repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
+        workflow=wf,
         # 軟性時間預算＝硬 timeout：session 會在其 SESSION_SOFT_DEADLINE_FRAC 比例處主動收斂、
         # 優雅出貨已完成成果，避免撞 wait_for 硬砍把整場(含已完成任務)全丟成 timeout failed。
         time_budget_s=config.AUTOPILOT_TASK_TIMEOUT or None,

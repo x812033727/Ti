@@ -257,6 +257,20 @@ def parse_help_request(text: str) -> str:
     return _last_match(text, r"求助\s*[:：]\s*(.+)") or ""
 
 
+def parse_workflow_choice(text: str) -> str:
+    """從 PM 分診輸出抽出 `流程: <名稱>`（autopilot 開場 workflow 分診用）；無標記回空字串。
+
+    只負責抽字串，不驗名稱合法性——白名單（限內建流程）是呼叫端 autopilot
+    `_select_workflow` 的職責，解析層不做政策判斷。
+    """
+    return _last_match(text, r"流程\s*[:：]\s*(.+)") or ""
+
+
+def parse_triage_reason(text: str) -> str:
+    """從 PM 分診輸出抽出 `理由: <一句話>`（workflow 分診的稽核註記用）；無標記回空字串。"""
+    return _last_match(text, r"理由\s*[:：]\s*(.+)") or ""
+
+
 # --- 結論彙整解析（共識／分歧／未決／行動） -------------------------------
 
 # 四前綴 → 結構化鍵；順序即輸出 dict 鍵順序。
