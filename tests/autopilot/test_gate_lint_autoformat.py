@@ -11,8 +11,8 @@
 3. TI_LINT_AUTOFORMAT=0（config.LINT_AUTOFORMAT False）→ 完全不跑寫回，直接退回（舊行為）。
 4. `ruff check`（語意 lint）紅 → 不受影響照退，且絕不觸發寫回（自動修復僅限純排版）。
 5. config 旋鈕：預設開啟、進 reload()、env 可關。
-6. 寫回落點守護：run_one_task 中 _gate_lint 先於 _commit_push_merge，且後者以 `git add -A`
-   兜底 commit——自動格式化的寫回會被後續 commit 自然帶上。
+6. 寫回落點守護：run_one_task 中 _gate_lint 先於 _commit_push_merge；寫回是否真的進
+   commit 由 test_qa_autoformat_writeback_committed.py 以真 git 路徑守護。
 """
 
 from __future__ import annotations
@@ -173,14 +173,14 @@ def test_knob_default_on_in_isolated_env(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 6) 寫回落點守護：gate 先於 commit，且 commit 以 git add -A 兜底
+# 6) 寫回落點守護：gate 先於 commit
 # ---------------------------------------------------------------------------
 
 
 def test_autoformat_writes_land_in_followup_commit():
-    """自動格式化的寫回必須被後續 commit 自然帶上：run_one_task 先呼叫 _gate_lint、後呼叫
-    _commit_push_merge，而 _commit_push_merge 以 `git add -A` 收攏工作區全部變更。
-    任一環節被重排（gate 移到 commit 後／add -A 被拿掉）此守護即紅。
+    """自動格式化的寫回必須發生在後續 commit 前：run_one_task 先呼叫 _gate_lint、後呼叫
+    _commit_push_merge。commit 是否收攏寫回檔由真 git 守護測試覆蓋，避免用字串斷言鎖死實作。
+    任一環節被重排（gate 移到 commit 後）此守護即紅。
     以 AST 抓「實際呼叫」順序（非字串比對，避免被註解/docstring 提及誤中）。"""
     src = inspect.getsource(autopilot.run_one_task)
     fn = ast.parse(src).body[0]
@@ -192,8 +192,6 @@ def test_autoformat_writes_land_in_followup_commit():
     assert call_lines["_gate_lint"] < call_lines["_commit_push_merge"], (
         f"lint 閘門必須先於 commit，自動格式化寫回才會被帶上：{call_lines}"
     )
-    commit_src = inspect.getsource(autopilot._commit_push_merge)
-    assert '"add", "-A"' in commit_src, "_commit_push_merge 需以 git add -A 兜底收攏寫回"
 
 
 def test_reformat_count_parses_both_sources():

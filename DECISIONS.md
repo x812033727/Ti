@@ -2230,3 +2230,43 @@
 - 否決方案：改用 event-driven 細粒度心跳（每 broadcast 事件即刷）——無法解「專家單則訊息之間根本不產事件」的盲區，子行程 CPU 取樣才是與事件粒度解耦的存活證據。
 - 移交待辦（本輪不含）：minimax.io CLOSE-WAIT / httpx 連線池洩漏（issue 建議 #3）——`studio/providers.py::_openai_chat` 每次新建 `AsyncOpenAI` 不 aclose，屬本檔既列的範圍外技術債，且非本次告警主因。
 
+## 本輪零生產程式碼改動；唯一新增產出為一個「autoformat 寫回經 `_commit_push_merge` 不掉檔」守護測試
+- 時間：2026-07-05 03:41
+- 理由：需求四項行為已由 PR #282 覆蓋且測試綠；唯一真缺口是 `git add -A` 兜底帶檔的隱式契約，用測試顯式化
+- 否決方案：重新實作或重構 lint 閘門——重造輪子且引入回歸風險
+
+## 新測試開獨立檔（如 `tests/autopilot/test_qa_autoformat_writeback_committed.py`），不放進 `test_qa_no_publish_pollution.py`
+- 時間：2026-07-05 03:41
+- 理由：高工核實該檔有 autouse `_forbid_real_subprocess` 全面封殺真 subprocess，新測試需跑真 git 必被炸；只複用其 `_base_config` 設定範式
+- 否決方案：沿用同檔＋monkeypatch 範式（我原案）——與 autouse fixture 直接衝突
+
+## 測試走全真 git 路線——本地 bare repo 當 origin → clone → 模擬 autoformat 寫回 → 設 `AUTOPILOT_DRYRUN=True` → 走真 `_commit_push_merge` → `git show HEAD` 斷言寫回檔在 commit 內
+- 時間：2026-07-05 03:41
+- 理由：dryrun 在 push 前 return，天然避開 GitHub 段；全真 git 零 stub，比 monkeypatch push/PR 段更不脆（工程師與高工獨立得出同一路線）
+- 否決方案：monkeypatch push/PR/merge 段（我原案）——多餘的 stub 面積，更脆
+
+## fixture 必須滿足入口 guard 與中段查詢——設 `AUTOPILOT_REPO`、owner allowlist，且 clone 需有 `origin/main` ref（否則 `rev-list origin/<branch>..HEAD` 先掛）
+- 時間：2026-07-05 03:41
+- 理由：否則測試在 guard 或 rev-list 短路，測不到 staging/commit 段
+
+## 斷言目標維持「寫回檔改動出現在 commit 內容」（行為契約），不斷言 `git add -A` 被呼叫
+- 時間：2026-07-05 03:41
+
+## 同步修正既有衝突——`test_gate_lint_autoformat.py` 中直接 assert `"add", "-A"` 的 AST 斷言段，改為（或由新測試取代後移除）commit 內容行為斷言
+- 時間：2026-07-05 03:41
+- 理由：工程師指出該 AST 斷言鎖實作，會卡死未來改選擇性 add；留著它，新行為測試形同虛設
+- 否決方案：只加新測試、保留舊 AST 斷言——兩者並存自相矛盾
+
+## 紅樣本自證為必要步驟，且結果同時記入 commit 訊息與測試 docstring
+- 時間：2026-07-05 03:41
+- 理由：高工建議——半年後讀測試檔即知驗過判別力，不用翻 git log
+
+## 範圍裁決維持——gate/CI ruff 版本 pin 對齊本輪不做列移交待辦；不引入 `ruff check --fix` 進閘門（明文防翻案）；orchestrator 不加 lint 檢查點
+- 時間：2026-07-05 03:41
+
+## #1/#2 為純核對輸出（對照表＋覆蓋確認）；收尾 #4 以 `git status` 乾淨為準，除新測試檔與上述 AST 斷言修正外零 diff
+- 時間：2026-07-05 03:41
+
+## 題目附帶的 lessons/vote 去重既有決策與本需求無關，本輪不觸碰
+- 時間：2026-07-05 03:41
+

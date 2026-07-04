@@ -1,76 +1,6 @@
 {
   "entries": [
     {
-      "decision": "分派硬驗證——合法集合＝本場實際出席角色 keys（experts dict）而非全域 BY_KEY；非法/缺漏 fallback 順序：`engineer` 若在出席集合，否則取第一個出席者（`fallback if fallback in available_keys else next(iter(available_keys))`），修正記錄入 log 與議程事件",
-      "rationale": "工程師與高工同點名 fallback 硬編 engineer 在自訂角色組合下自身就是非法 key；純函式不得依賴呼叫端保證",
-      "rejected": "fallback 永遠 engineer——engineer 缺席時 fallback 結果仍非法，硬驗證形同虛設",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391662
-    },
-    {
-      "decision": "assignee 消費端——逐子題討論階段由 orchestrator 讀取：該子題的提案方（先發言者）＝assignee 對應 expert，並在 topic 文字標明「主責: <角色名>」；同時隨 agenda_plan 事件持久化供重看",
-      "rationale": "高工正確指出無消費端就是死資料；先發言權是不改引擎介面下最小且有實效的消費方式",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391678
-    },
-    {
-      "decision": "持久化——events.py 新增 `EventType.AGENDA_PLAN` enum 成員＋`agenda_plan(session_id, agenda, tasks, assignments)` 建構子，經既有 broadcast→record_event 入 history；meta.json 與 history.py 不改；實作清單加一項：確認 web 前端對未知 event type 容錯忽略，會炸則補 default case",
-      "rationale": "工程師實跑確認 type 是 enum，只加函式不夠",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391693
-    },
-    {
-      "decision": "ADR 蒸餾收斂為一次——逐子題只跑討論、收集各子題結論串接成單一 design_note，討論全部結束後做一次蒸餾、一筆 adr.record、一次 commit",
-      "rationale": "工程師實測指出逐子題各帶蒸餾＋commit 會 ×N 成本，且後續子題 adr.context 吃到前面子題決策造成干擾；高工同問聚合方式——統一收斂為一次最便宜且語意正確",
-      "rejected": "每子題各自蒸餾＋commit——2–5 倍 token/時間成本、ADR 碎片化、子題間 context 互相污染",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.339171
-    },
-    {
-      "decision": "成本上界——解析端硬上限子題數 5（超出截斷並 log，prompt 的 2–5 只是建議不是防線）；多子題時每子題討論輪數走新 config `TI_AGENDA_ROUNDS`（預設 1），總成本上界＝5×1 輪可控",
-      "rationale": "高工指出 prompt 約束不可當防線；5 子題 × 既有 DEBATE_ROUNDS 會讓架構階段成本失控",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391728
-    },
-    {
-      "decision": "粒度守則入拆解 prompt——「子題 2–5 個、每任務一句可驗收、探索型允許單子題不硬拆」字面寫入，可 grep 驗證",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391738
-    },
-    {
-      "decision": "測試切分——flow 純函式單測（合法/非法 key、fallback 鏈含 engineer 缺席 case、標題含 `|`、單子題 fallback、超量截斷）＋8 角色 description 非空守門單測＋fake PM 腳本（含一合法一非法 key）流程測試＋#5 真實 server 冒煙特別驗證 PM 對疊加格式的遵循率，輸出回指輸入排除假綠",
-      "rationale": "工程師提醒拆解單次呼叫已產多種格式，再疊 `子題:`/`負責:` 格式負擔不小，fallback 路徑須在真實冒煙實測到",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.339175
-    },
-    {
-      "decision": "`parse_conclusion` 純函式置於 `flow.py`，沿用既有 `re.match(r\"^\\s*<標籤>\\s*[:：]\\s*(.+)$\", line)` 行前綴範式＋全形冒號容錯，解析 `共識:／分歧:／未決:／行動:` 四前綴，回傳 `{\"consensus\":[], \"disagreements\":[], \"open_questions\":[], \"actions\":[]}` 結構化 dict",
-      "rationale": "flow.py 已有 7 處同款 parser，Python `re` 直接複用零風險",
-      "rejected": "另起 JSON schema 或新解析範式——與既有慣例不一致、徒增負擔",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680376
-    },
-    {
-      "decision": "四前綴全缺時 `parse_conclusion` 回空骨架（四鍵皆空 list）而非拋例外，由呼叫端偵測空骨架走 fallback，對齊 `adr.parse_adr` 「失敗即降級」",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680462
-    },
-    {
-      "decision": "`discussion._build_summary` 既有三鍵 `consensus/disagreements/final_positions` 維持原扁平 `agree-disagree` set 邏輯完全不動，防回歸（驗收 #2）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680486
-    },
-    {
       "decision": "新增 `open_questions` 鍵採 **per-pair 末輪 stance 判定**：對每個 `(speaker,target)` 取最大 `Utterance.round` 的末態 stance，末態為「反對」者列入 open_questions；明確禁止沿用扁平 agree/disagree set 推「未轉同意收斂」",
       "rationale": "高工指出扁平 set 會讓「先同意後反對」末態仍反對者被 `disagree-agree` 誤排除、漏判未決；唯有取 per-pair 末輪 stance 才正確，這是設計合約層級漏洞，現在釘最便宜",
       "rejected": "工程師的純集合 `disagree-agree`——無法處理「先同意後反對」末態反對之 case，會漏判未決",
@@ -3499,6 +3429,76 @@
       "rejected": "",
       "session_id": "ap6f5b38c170",
       "created_at": 1783154154.6709807
+    },
+    {
+      "decision": "本輪零生產程式碼改動；唯一新增產出為一個「autoformat 寫回經 `_commit_push_merge` 不掉檔」守護測試",
+      "rationale": "需求四項行為已由 PR #282 覆蓋且測試綠；唯一真缺口是 `git add -A` 兜底帶檔的隱式契約，用測試顯式化",
+      "rejected": "重新實作或重構 lint 閘門——重造輪子且引入回歸風險",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5477903
+    },
+    {
+      "decision": "新測試開獨立檔（如 `tests/autopilot/test_qa_autoformat_writeback_committed.py`），不放進 `test_qa_no_publish_pollution.py`",
+      "rationale": "高工核實該檔有 autouse `_forbid_real_subprocess` 全面封殺真 subprocess，新測試需跑真 git 必被炸；只複用其 `_base_config` 設定範式",
+      "rejected": "沿用同檔＋monkeypatch 範式（我原案）——與 autouse fixture 直接衝突",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5477946
+    },
+    {
+      "decision": "測試走全真 git 路線——本地 bare repo 當 origin → clone → 模擬 autoformat 寫回 → 設 `AUTOPILOT_DRYRUN=True` → 走真 `_commit_push_merge` → `git show HEAD` 斷言寫回檔在 commit 內",
+      "rationale": "dryrun 在 push 前 return，天然避開 GitHub 段；全真 git 零 stub，比 monkeypatch push/PR 段更不脆（工程師與高工獨立得出同一路線）",
+      "rejected": "monkeypatch push/PR/merge 段（我原案）——多餘的 stub 面積，更脆",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.547796
+    },
+    {
+      "decision": "fixture 必須滿足入口 guard 與中段查詢——設 `AUTOPILOT_REPO`、owner allowlist，且 clone 需有 `origin/main` ref（否則 `rev-list origin/<branch>..HEAD` 先掛）",
+      "rationale": "否則測試在 guard 或 rev-list 短路，測不到 staging/commit 段",
+      "rejected": "",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5477972
+    },
+    {
+      "decision": "斷言目標維持「寫回檔改動出現在 commit 內容」（行為契約），不斷言 `git add -A` 被呼叫",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5477986
+    },
+    {
+      "decision": "同步修正既有衝突——`test_gate_lint_autoformat.py` 中直接 assert `\"add\", \"-A\"` 的 AST 斷言段，改為（或由新測試取代後移除）commit 內容行為斷言",
+      "rationale": "工程師指出該 AST 斷言鎖實作，會卡死未來改選擇性 add；留著它，新行為測試形同虛設",
+      "rejected": "只加新測試、保留舊 AST 斷言——兩者並存自相矛盾",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5477998
+    },
+    {
+      "decision": "紅樣本自證為必要步驟，且結果同時記入 commit 訊息與測試 docstring",
+      "rationale": "高工建議——半年後讀測試檔即知驗過判別力，不用翻 git log",
+      "rejected": "",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5478003
+    },
+    {
+      "decision": "範圍裁決維持——gate/CI ruff 版本 pin 對齊本輪不做列移交待辦；不引入 `ruff check --fix` 進閘門（明文防翻案）；orchestrator 不加 lint 檢查點",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.547801
+    },
+    {
+      "decision": "#1/#2 為純核對輸出（對照表＋覆蓋確認）；收尾 #4 以 `git status` 乾淨為準，除新測試檔與上述 AST 斷言修正外零 diff",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5478015
+    },
+    {
+      "decision": "題目附帶的 lessons/vote 去重既有決策與本需求無關，本輪不觸碰",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa87f3abce8",
+      "created_at": 1783194111.5478024
     }
   ]
 }
