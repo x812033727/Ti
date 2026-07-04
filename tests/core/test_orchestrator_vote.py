@@ -7,11 +7,18 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from studio import config, events
+from studio import config, events, lessons
 from studio.orchestrator import LaneContext, StudioSession
 from studio.roles import BY_KEY, Role
+
+
+@pytest.fixture(autouse=True)
+def _isolated_lessons_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "LESSONS_FILE", tmp_path / "lessons.json")
 
 
 class StubExpert:
@@ -165,6 +172,14 @@ async def test_dynamic_vote_full_cycle(monkeypatch):
     assert len(p["ballots"]) == 3
     assert p["ballots"][0] == {"voter": "pm", "provider": "claude", "choice": "SQLite"}
     assert {b["provider"] for b in p["ballots"]} == {"claude", "codex", "minimax"}
+    rows = lessons.all_lessons()
+    assert len(rows) == 1
+    assert rows[0]["text"] == "表決先例: 儲存方案 → JSON"
+    assert rows[0]["session_id"] == "t"
+    assert rows[0]["requirement"] == "做一個小工具"
+    assert rows[0]["scope"] == "global"
+    assert rows[0]["source"] == "vote"
+    assert rows[0]["use_count"] == 0
 
     # PM prompt 契約：hop0 含表決提示；投票 prompt 含議題與格式指示；下一 hop 注入表決結果。
     pm = experts["pm"]
@@ -187,6 +202,7 @@ async def test_dynamic_vote_tie_pm_ballot_decides(monkeypatch):
     p = _vote_events(bucket)[0].payload
     assert p["winner"] == "A" and p["tie"] is True
     assert "表決結果：A" in experts["pm"].prompts[2]
+    assert lessons.all_lessons() == []
 
 
 # --- 降級：可用外部 provider 不足兩位 ------------------------------------------
@@ -207,6 +223,7 @@ async def test_dynamic_vote_degraded_uses_pm_ballot(monkeypatch):
     assert p["winner"] == "B"  # PM 自己的票
     assert len(p["ballots"]) == 1 and p["ballots"][0]["voter"] == "pm"
     assert "表決結果：B" in experts["pm"].prompts[2]  # 照樣注入下一 hop、不卡死流程
+    assert lessons.all_lessons() == []
 
 
 @pytest.mark.asyncio
@@ -220,6 +237,45 @@ async def test_dynamic_vote_degraded_pm_abstains_falls_back_to_first_option(monk
     await s._stage_dynamic({"type": "dynamic", "budget": 5})
     p = _vote_events(bucket)[0].payload
     assert p["degraded"] is True and p["winner"] == "A"
+    assert lessons.all_lessons() == []
+
+
+def test_record_vote_lesson_uses_exact_only(monkeypatch):
+    calls = []
+    s, _, _ = _session(["下一步: 結束"])
+
+    def fake_add_many(texts, **kwargs):
+        calls.append((texts, kwargs))
+        return 1
+
+    monkeypatch.setattr(lessons, "add_many", fake_add_many)
+    s._record_vote_lesson(topic="UI 技術", winner="React", tie=False, degraded=False)
+
+    assert calls == [
+        (
+            ["表決先例: UI 技術 → React"],
+            {
+                "session_id": "t",
+                "requirement": "做一個小工具",
+                "source": "vote",
+                "exact_only": True,
+            },
+        )
+    ]
+
+
+def test_record_vote_lesson_failure_only_logs(monkeypatch, caplog):
+    s, _, _ = _session(["下一步: 結束"])
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(lessons, "add_many", boom)
+    caplog.set_level(logging.WARNING, logger="ti.orchestrator")
+
+    s._record_vote_lesson(topic="儲存方案", winner="JSON", tie=False, degraded=False)
+
+    assert "表決先例入庫失敗（議題：儲存方案）" in caplog.text
 
 
 # --- VOTE_MAX 上限與 TI_VOTE_ENABLED=0 ----------------------------------------
