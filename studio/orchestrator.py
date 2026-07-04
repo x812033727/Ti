@@ -2140,7 +2140,27 @@ class StudioSession:
                 self.session_id, topic, options, ballots, winner, tally["tie"], degraded=degraded
             )
         )
+        self._record_vote_lesson(topic=topic, winner=winner, tie=tally["tie"], degraded=degraded)
         return {"winner": winner, "ballots": ballots, "tie": tally["tie"], "degraded": degraded}
+
+    def _record_vote_lesson(self, *, topic: str, winner: str, tie: bool, degraded: bool) -> None:
+        """把高品質表決結果落入跨場次教訓庫；失敗不得影響主流程。"""
+        if tie or degraded:
+            return
+        topic = (topic or "").strip()
+        winner = (winner or "").strip()
+        if not topic or not winner:
+            return
+        try:
+            lessons.add_many(
+                [f"表決先例: {topic} → {winner}"],
+                session_id=self.session_id,
+                requirement=self._requirement,
+                source="vote",
+                exact_only=True,
+            )
+        except Exception:  # noqa: BLE001 — 教訓庫是旁路，表決事件流不得被阻斷
+            log.warning("表決先例入庫失敗（議題：%s）", topic, exc_info=True)
 
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
@@ -3411,6 +3431,23 @@ class StudioSession:
                     self.session_id, e["provider"], e["model"], e["role"], e["score"], e["comment"]
                 )
             )
+        if config.LESSONS_ENABLED:
+            appraisal_lessons = []
+            for r in rows:
+                score = r["score"]
+                comment = r.get("comment", "").strip()
+                if score <= 2 and comment:
+                    appraisal_lessons.append(f"考核教訓({score}分): {comment}")
+            if appraisal_lessons:
+                try:
+                    lessons.add_many(
+                        appraisal_lessons,
+                        session_id=self.session_id,
+                        requirement=self._requirement,
+                        source="appraisal",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning("考核教訓入庫失敗（略過，不影響收尾）", exc_info=True)
 
     async def _record_known_limitations(self, unmet: list[dict]) -> None:
         """帶已知限制出貨前：把未通過的次要任務寫進交付物 KNOWN_LIMITATIONS.md（隨發佈一起
