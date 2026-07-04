@@ -310,12 +310,60 @@ def _audit_path() -> Path:
     return config.AUTOPILOT_STATE_DIR / "audit.jsonl"
 
 
+# audit.jsonl 壓實門檻與保留天數：超過大小即把「保留期外」的舊紀錄搬到 audit.jsonl.old
+# （冷歸檔，append-only），現役檔只留近期——每日計數只看「UTC 當日」，保留 30 天遠大於
+# 計數窗口，壓實絕不影響熔斷口徑。收斂為純模組常數、不開 env override（對齊
+# AUTOPILOT_DEDUP_RATIO 慣例）；5MB ≈ 數萬筆，正常量級多年才會觸發。
+_AUDIT_MAX_BYTES = 5 * 1024 * 1024
+_AUDIT_KEEP_DAYS = 30
+
+
+def _maybe_compact_audit(path: Path) -> None:
+    """audit.jsonl 超過大小門檻時壓實：保留期外舊紀錄搬 .old、現役檔原子重寫。
+
+    壞行（解析不出 ts）視為舊紀錄一併歸檔，保證壓實後必縮小；全部都在保留期內
+    （極端高量）則不動——寧可讓檔案暫時超標，也不丟仍在計數窗口附近的紀錄。
+    單一 writer（autopilot 主迴圈）呼叫，無並寫競態。
+    """
+    if path.stat().st_size <= _AUDIT_MAX_BYTES:
+        return
+    cutoff = time.time() - _AUDIT_KEEP_DAYS * 86400
+    keep: list[str] = []
+    old: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ts = float(json.loads(line).get("ts", 0))
+        except (ValueError, TypeError):
+            ts = 0.0  # 壞行視為舊紀錄歸檔
+        (keep if ts >= cutoff else old).append(line)
+    if not old:
+        return  # 全在保留期內：不重寫（見 docstring）
+    archive = path.with_suffix(".jsonl.old")
+    if not archive.exists():
+        secure_write_root(archive, b"")
+    with archive.open("a", encoding="utf-8") as f:
+        f.write("\n".join(old) + "\n")
+    # 現役檔走 secure_write_root 原子重寫（tmp+rename，維持 root-owner 不變量）
+    body = ("\n".join(keep) + "\n") if keep else b""
+    secure_write_root(path, body.encode("utf-8") if isinstance(body, str) else body)
+    log.info(
+        "audit.jsonl 壓實：歸檔 %d 筆、保留 %d 筆（近 %d 天）",
+        len(old),
+        len(keep),
+        _AUDIT_KEEP_DAYS,
+    )
+
+
 def _append_audit(rec: dict) -> None:
     """append 一筆審計紀錄到 audit.jsonl。
 
     首次以 secure_write_root 建空檔（root owner，鏡射 history.record_event 範式，
-    維持 REQUIRE_CHOWN 不變量），之後 open("a") append；審計只是可觀測性，
-    任何寫入失敗都不得弄死主迴圈（僅留 debug log）。
+    維持 REQUIRE_CHOWN 不變量），之後 open("a") append；超過大小門檻順手壓實
+    （見 _maybe_compact_audit）。審計只是可觀測性，任何寫入失敗都不得弄死主迴圈
+    （僅留 debug log）。
     """
     try:
         path = _audit_path()
@@ -324,6 +372,7 @@ def _append_audit(rec: dict) -> None:
             secure_write_root(path, b"")
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        _maybe_compact_audit(path)
     except Exception:  # noqa: BLE001 — 審計失敗不影響主迴圈
         log.debug("audit.jsonl 寫入失敗（忽略，不影響主迴圈）", exc_info=True)
 
