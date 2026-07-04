@@ -3403,6 +3403,24 @@ class StudioSession:
                     self.session_id, e["provider"], e["model"], e["role"], e["score"], e["comment"]
                 )
             )
+        if config.LESSONS_ENABLED:
+            appraisal_lessons = []
+            for r in rows:
+                score = r["score"]
+                comment = r.get("comment", "").strip()
+                if score <= 2 and comment:
+                    appraisal_lessons.append(f"考核教訓({score}分): {comment}")
+            if appraisal_lessons:
+                try:
+                    lessons.add_many(
+                        appraisal_lessons,
+                        session_id=self.session_id,
+                        requirement=self._requirement,
+                        source="appraisal",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning("考核教訓入庫失敗（略過，不影響收尾）", exc_info=True)
+
 
     async def _record_known_limitations(self, unmet: list[dict]) -> None:
         """帶已知限制出貨前：把未通過的次要任務寫進交付物 KNOWN_LIMITATIONS.md（隨發佈一起

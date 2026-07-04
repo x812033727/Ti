@@ -122,3 +122,34 @@ async def test_loop_dormant_when_disabled(monkeypatch):
 
     experts2 = await _run_session("d2", pm_scripts=["任務: 實作", "決議: 完成", "檢討"])
     assert "跨場次教訓庫" not in experts2["pm"].prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_appraisal_lessons_e2e_flow(monkeypatch):
+    """考核教訓入庫 E2E：第 1 場低分考核落盤，第 2 場開場 PM 拆解 prompt 收到注入。"""
+    monkeypatch.setattr(config, "LESSONS_ENABLED", True)
+    monkeypatch.setattr(config, "APPRAISAL_ENABLED", True)
+
+    # 第 1 場：PM 檢討（第 3 次發言）吐出一條低分考核，沒有 retro 教訓
+    await _run_session(
+        "s1",
+        pm_scripts=[
+            "任務: 實作功能",
+            "決議: 完成",
+            "檢討：整體還行。\n考核: engineer 2 浮點數比較寫錯了，請用 math.isclose",
+        ],
+    )
+
+    # 落盤驗證
+    stored = [r["text"] for r in lessons.all_lessons()]
+    assert any("考核教訓(2分): 浮點數比較寫錯了，請用 math.isclose" in s for s in stored), f"考核教訓未落盤：{stored}"
+
+    # 第 2 場：開場 PM 拆解 prompt 應收到注入的考核教訓
+    experts2 = await _run_session(
+        "s2",
+        pm_scripts=["任務: 實作另一功能", "決議: 完成", "檢討：無"],
+    )
+    decompose_prompt = experts2["pm"].prompts[0]
+    assert "跨場次教訓庫" in decompose_prompt
+    assert "考核教訓(2分): 浮點數比較寫錯了，請用 math.isclose" in decompose_prompt
+
