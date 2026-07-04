@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import types
 from types import SimpleNamespace
@@ -46,6 +47,172 @@ def _resp(content=None, tool_calls=None, usage=None):
 
 def _tc(id, name, arguments):
     return SimpleNamespace(id=id, function=SimpleNamespace(name=name, arguments=arguments))
+
+
+_USAGE_FIELDS = (
+    "prompt",
+    "completion",
+    "total",
+    "calls",
+    "cache_read",
+    "cache_write",
+    "cost_usd",
+)
+_USAGE_GROUPS = ("by_provider", "by_model", "by_role")
+
+
+def _token_usage_shape_events(
+    *, sid: str = "shape-compat", task_ids: list[int] | None = None
+) -> list[dict]:
+    payloads = [
+        {
+            "speaker": "engineer",
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "prompt_tokens": 100,
+            "completion_tokens": 30,
+            "total_tokens": 130,
+            "cost_usd": 0.42,
+            "cache_read": 7,
+            "cache_write": 11,
+        },
+        {
+            "speaker": "engineer",
+            "provider": "openai",
+            "model": "gpt-5",
+            "prompt_tokens": 50,
+            "completion_tokens": 20,
+            "total_tokens": 70,
+            "cost_usd": 0.05,
+            "cache_read": 3,
+            "cache_write": 0,
+        },
+        {
+            "speaker": "pm",
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "prompt_tokens": 25,
+            "completion_tokens": 5,
+            "total_tokens": 30,
+            "cost_usd": None,
+            "cache_read": 0,
+            "cache_write": 2,
+        },
+    ]
+    events_ = []
+    for idx, payload in enumerate(payloads):
+        p = dict(payload)
+        if task_ids is not None:
+            p["task_id"] = task_ids[idx]
+        events_.append({"type": "token_usage", "session_id": sid, "payload": p})
+    return events_
+
+
+def _token_usage_shape_golden() -> dict:
+    return {
+        "total": {
+            "prompt": 175,
+            "completion": 55,
+            "total": 230,
+            "calls": 3,
+            "cache_read": 10,
+            "cache_write": 13,
+            "cost_usd": 0.47,
+        },
+        "by_provider": {
+            "minimax": {
+                "prompt": 125,
+                "completion": 35,
+                "total": 160,
+                "calls": 2,
+                "cache_read": 7,
+                "cache_write": 13,
+                "cost_usd": 0.42,
+            },
+            "openai": {
+                "prompt": 50,
+                "completion": 20,
+                "total": 70,
+                "calls": 1,
+                "cache_read": 3,
+                "cache_write": 0,
+                "cost_usd": 0.05,
+            },
+        },
+        "by_model": {
+            "MiniMax-M3": {
+                "prompt": 125,
+                "completion": 35,
+                "total": 160,
+                "calls": 2,
+                "cache_read": 7,
+                "cache_write": 13,
+                "cost_usd": 0.42,
+            },
+            "gpt-5": {
+                "prompt": 50,
+                "completion": 20,
+                "total": 70,
+                "calls": 1,
+                "cache_read": 3,
+                "cache_write": 0,
+                "cost_usd": 0.05,
+            },
+        },
+        "by_role": {
+            "engineer": {
+                "prompt": 150,
+                "completion": 50,
+                "total": 200,
+                "calls": 2,
+                "cache_read": 10,
+                "cache_write": 11,
+                "cost_usd": 0.47,
+            },
+            "pm": {
+                "prompt": 25,
+                "completion": 5,
+                "total": 30,
+                "calls": 1,
+                "cache_read": 0,
+                "cache_write": 2,
+                "cost_usd": 0.0,
+            },
+        },
+    }
+
+
+def _assert_usage_bucket(actual: dict, expected: dict) -> None:
+    assert set(actual) == set(_USAGE_FIELDS)
+    assert set(expected) == set(_USAGE_FIELDS)
+    for field in _USAGE_FIELDS:
+        if field == "cost_usd":
+            assert actual[field] == pytest.approx(expected[field])
+        else:
+            assert actual[field] == expected[field]
+
+
+def _assert_usage_matrix(actual: dict, expected: dict) -> None:
+    _assert_usage_bucket(actual["total"], expected["total"])
+    for group in _USAGE_GROUPS:
+        assert set(actual[group]) == set(expected[group])
+        for bucket_key in expected[group]:
+            _assert_usage_bucket(actual[group][bucket_key], expected[group][bucket_key])
+
+
+def _write_usage_history_session(root, sid: str, events_: list[dict]) -> None:
+    (root / f"{sid}.jsonl").write_text(
+        "\n".join(json.dumps(ev, ensure_ascii=False) for ev in events_) + "\n",
+        encoding="utf-8",
+    )
+    meta = {
+        "session_id": sid,
+        "requirement": "token usage fallback fixture",
+        "started_at": 1_700_000_000.0,
+        "status": "completed",
+        "n_events": len(events_),
+    }
+    (root / f"{sid}.meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
 
 # --- events 建構器 -------------------------------------------------------
@@ -224,6 +391,22 @@ def test_derive_token_usage_aggregates_by_group():
     assert tu["by_model"]["MiniMax-M3"]["prompt"] == 110
     assert tu["by_role"]["engineer"]["total"] == 134
     assert tu["by_role"]["pm"]["completion"] == 50
+
+
+def test_derive_token_usage_old_and_task_id_shapes_match_golden_matrix():
+    """任務 #2：同組 token_usage 舊/新形狀都等於手算 golden 矩陣。"""
+    old_events = _token_usage_shape_events()
+    new_events = _token_usage_shape_events(task_ids=[101, 102, 103])
+    assert all("task_id" not in ev["payload"] for ev in old_events)
+    assert [ev["payload"]["task_id"] for ev in new_events] == [101, 102, 103]
+
+    golden = _token_usage_shape_golden()
+    old_usage = history._derive_token_usage(old_events)
+    new_usage = history._derive_token_usage(new_events)
+
+    _assert_usage_matrix(old_usage, golden)
+    _assert_usage_matrix(new_usage, golden)
+    _assert_usage_matrix(old_usage, new_usage)
 
 
 def test_derive_token_usage_empty():
@@ -586,6 +769,34 @@ def test_usage_report_derives_from_events_when_meta_missing(monkeypatch):
     assert agg["sessions"] == 1 and agg["total"]["total"] == 15
 
 
+def test_usage_report_fallback_old_jsonl_matches_task_id_shape_full_columns(monkeypatch, tmp_path):
+    """任務 #3：meta 缺 token_usage 時，舊 jsonl fallback 彙總全 7 欄且等於新形狀。"""
+    from studio import config
+
+    sid = "fallback-shape-compat"
+    golden = _token_usage_shape_golden()
+    old_events = _token_usage_shape_events(sid=sid)
+    new_events = _token_usage_shape_events(sid=sid, task_ids=[201, 202, 203])
+    assert all("task_id" not in ev["payload"] for ev in old_events)
+
+    monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path)
+    monkeypatch.setattr(usage_report.config, "HISTORY_ROOT", tmp_path)
+    monkeypatch.setattr(history.config, "HISTORY_ROOT", tmp_path)
+
+    _write_usage_history_session(tmp_path, sid, old_events)
+    old_agg = usage_report.aggregate()
+    assert old_agg["sessions"] == 1
+    assert old_agg["est_extra_usd"] == pytest.approx(0.0)
+    _assert_usage_matrix(old_agg, golden)
+
+    _write_usage_history_session(tmp_path, sid, new_events)
+    new_agg = usage_report.aggregate()
+    assert new_agg["sessions"] == 1
+    assert new_agg["est_extra_usd"] == pytest.approx(0.0)
+    _assert_usage_matrix(new_agg, golden)
+    _assert_usage_matrix(old_agg, new_agg)
+
+
 def test_usage_report_skips_session_without_usage(monkeypatch):
     """meta 無 token_usage 且 derive 也無 calls → 該場跳過、不計入。"""
     empty = {"total": {"calls": 0}, "by_provider": {}, "by_model": {}, "by_role": {}}
@@ -749,15 +960,7 @@ async def test_counting_broadcast_malformed_payload_does_not_break_event_flow():
     assert perf["cost_source"] is None
 
 
-@pytest.mark.asyncio
-async def test_parallel_lanes_same_provider_token_attribution_no_cross_contamination():
-    """驗收標準 2：並行兩 lane(lane_id≠main)、同 provider 同時發 token_usage,
-    _task_perf[task_id] 各自歸因正確、絕不串戶。
-
-    黑白對照樣本：兩條 lane 各送一筆 token_usage(provider/minimax 相同,
-    task_id 不同),透過 _tagged_broadcast 標 task_id,並以 asyncio.gather 模擬
-    scheduler 同時派發;後續斷言 A 的數字只到 _task_perf[A]、B 只到 _task_perf[B]。
-    """
+async def _run_parallel_lane_token_sample(*, wrong_task_id: bool = False):
     sink_calls: list[events.StudioEvent] = []
 
     async def sink(ev):
@@ -765,29 +968,39 @@ async def test_parallel_lanes_same_provider_token_attribution_no_cross_contamina
 
     s = StudioSession("s-parallel", sink, cwd=None)
     s._main_ctx = LaneContext("main", None, {})
-    # 兩條並行 lane(lane_id 非 "main",以 _lane_tag 走 task_id 分流)
     lane_a = LaneContext("lane-s-a", None, {}, branch="lane-s-a")
     lane_b = LaneContext("lane-s-b", None, {}, branch="lane-s-b")
     s._lane_ctxs = [s._main_ctx, lane_a, lane_b]
 
     task_a = {"id": 100, "title": "並行任務A"}
     task_b = {"id": 200, "title": "並行任務B"}
-
     bc_a = s._tagged_broadcast(s._lane_tag(lane_a, task_a), token_usage_task_id=task_a["id"])
     bc_b = s._tagged_broadcast(s._lane_tag(lane_b, task_b), token_usage_task_id=task_b["id"])
 
-    # 同 provider(都是 minimax)、同時發：刻意做"兩 lane 數字差不一樣大"以便任何串戶都現形
     ev_a = events.token_usage(
         "s-parallel", "engineer", "minimax", "MiniMax-M3", 1000, 500, 1500, cost_usd=0.30
     )
+    ev_b_kwargs = {"task_id": 100} if wrong_task_id else {}
     ev_b = events.token_usage(
-        "s-parallel", "engineer", "minimax", "MiniMax-M3", 2000, 800, 2800, cost_usd=0.60
+        "s-parallel",
+        "engineer",
+        "minimax",
+        "MiniMax-M3",
+        2000,
+        800,
+        2800,
+        cost_usd=0.60,
+        **ev_b_kwargs,
     )
 
-    # 真正並發：scheduler 同時派發兩 lane 的 broadcast
     await asyncio.gather(bc_a(ev_a), bc_b(ev_b))
+    return s, sink_calls
 
-    # 黑白對照：A 的數字絕不跑到 B、B 的也不會跑到 A
+
+def _assert_parallel_lane_token_sample_isolated(
+    s: StudioSession, sink_calls: list[events.StudioEvent]
+) -> None:
+    assert {100, 200} <= set(s._task_perf)
     perf_a = s._task_perf[100]
     perf_b = s._task_perf[200]
 
@@ -803,14 +1016,37 @@ async def test_parallel_lanes_same_provider_token_attribution_no_cross_contamina
     assert perf_b["cost_usd"] == pytest.approx(0.60)
     assert perf_b["cost_source"] == "reported"
 
-    # session-wide 累計:兩者總和,不分屬
     assert s._tokens_used == 1500 + 2800
     assert s._usd_used == pytest.approx(0.90)
 
-    # sink 收到的兩個事件 payload 上的 task_id 各自正確(未互相污染)
     payloads = [e.payload for e in sink_calls if e.type == events.EventType.TOKEN_USAGE]
     assert {p["task_id"] for p in payloads} == {100, 200}
-    assert all(p["provider"] == "minimax" for p in payloads)  # 同 provider 同時發也未混
+    assert all(p["provider"] == "minimax" for p in payloads)
+
+
+@pytest.mark.asyncio
+async def test_parallel_lanes_same_provider_token_attribution_no_cross_contamination():
+    """任務 #4 白樣本：並行兩 lane(lane_id≠main)、同 provider 同時發 token_usage,
+    _task_perf[task_id] 各自歸因正確、絕不串戶。
+    """
+    s, sink_calls = await _run_parallel_lane_token_sample()
+    _assert_parallel_lane_token_sample_isolated(s, sink_calls)
+
+
+@pytest.mark.asyncio
+async def test_parallel_lanes_wrong_bound_task_id_red_sample_fails_guard():
+    """任務 #4 黑樣本：串戶形狀（B lane token_usage.task_id 錯綁 A）會被 guard 抓到。
+
+    紅樣本實跑結果（本測試以 pytest.raises 捕捉）：B 事件保留錯綁 task_id=100 後，
+    _task_perf 只剩 {100} 且 total_tokens=4300；共用 guard 第一個斷言會 FAIL：
+    AssertionError: assert {100, 200} <= {100}
+    """
+    s, sink_calls = await _run_parallel_lane_token_sample(wrong_task_id=True)
+
+    assert set(s._task_perf) == {100}
+    assert s._task_perf[100]["total_tokens"] == 1500 + 2800
+    with pytest.raises(AssertionError):
+        _assert_parallel_lane_token_sample_isolated(s, sink_calls)
 
 
 @pytest.mark.asyncio
@@ -947,8 +1183,6 @@ def test_legacy_jsonl_history_replay_usage_report_golden(monkeypatch, tmp_path):
       - cost_usd 用整數美分值（5、1 → 6.0）,避免浮點累加不穩;model 採 claude 系列
         （無 MiniMax 列價,est_extra_usd=0.0,黃金基準乾淨）。
     """
-    import json
-
     from studio import config
 
     sid = "legacy-replay-001"
