@@ -2140,7 +2140,27 @@ class StudioSession:
                 self.session_id, topic, options, ballots, winner, tally["tie"], degraded=degraded
             )
         )
+        self._record_vote_lesson(topic=topic, winner=winner, tie=tally["tie"], degraded=degraded)
         return {"winner": winner, "ballots": ballots, "tie": tally["tie"], "degraded": degraded}
+
+    def _record_vote_lesson(self, *, topic: str, winner: str, tie: bool, degraded: bool) -> None:
+        """把高品質表決結果落入跨場次教訓庫；失敗不得影響主流程。"""
+        if tie or degraded:
+            return
+        topic = (topic or "").strip()
+        winner = (winner or "").strip()
+        if not topic or not winner:
+            return
+        try:
+            lessons.add_many(
+                [f"表決先例: {topic} → {winner}"],
+                session_id=self.session_id,
+                requirement=self._requirement,
+                source="vote",
+                exact_only=True,
+            )
+        except Exception:  # noqa: BLE001 — 教訓庫是旁路，表決事件流不得被阻斷
+            log.warning("表決先例入庫失敗（議題：%s）", topic, exc_info=True)
 
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
@@ -3211,8 +3231,36 @@ class StudioSession:
         # 刻意保留 shell：同 _self_test，cmd 為 demo 指令（resolve_demo_command 動態解析），
         # 可能含 shell 語法，必須經 /bin/sh，無法 argv 化。
         result = await runner.run_command(self.cwd, cmd)  # nosec B602
+        retried_cmd: str | None = None
+        first_exit: int | None = None
+        if not result.ok:
+            # usage-error 消毒重試（#248）：PM 給的 demo 指令帶了工具不認得的參數
+            # （如 pytest --cache-dir → exit 4 unrecognized arguments）時，整場綠色成果
+            # 會被 demo_veto 全數丟棄——指令寫壞不是產品壞。剝掉 stderr 點名的參數後
+            # 重試「一次」（sanitize 回 None＝不重試），兩次嘗試都記進 demo_result 供稽核。
+            # protected_text＝需求＋PM 計畫＋任務標題：要剝的參數若正是本場交付的功能
+            # （如新增的 --fast-lane 旗標被拒），不得靠剝掉它讓壞交付物假綠出貨。
+            protected = "\n".join(
+                [self._requirement or "", self._pm_plan or ""]
+                + [str(t.get("title") or "") for t in self._tasks]
+            )
+            sanitized = runner.sanitize_demo_command(
+                cmd, result.exit_code, result.output, protected_text=protected
+            )
+            if sanitized:
+                first_exit = result.exit_code
+                retried_cmd = sanitized
+                result = await runner.run_command(self.cwd, sanitized)  # nosec B602
         await self.broadcast(
-            events.demo_result(self.session_id, cmd, result.exit_code, result.output, label="Demo")
+            events.demo_result(
+                self.session_id,
+                cmd,
+                result.exit_code,
+                result.output,
+                label="Demo",
+                retried_cmd=retried_cmd,
+                first_exit=first_exit,
+            )
         )
         return result
 
@@ -3383,6 +3431,23 @@ class StudioSession:
                     self.session_id, e["provider"], e["model"], e["role"], e["score"], e["comment"]
                 )
             )
+        if config.LESSONS_ENABLED:
+            appraisal_lessons = []
+            for r in rows:
+                score = r["score"]
+                comment = r.get("comment", "").strip()
+                if score <= 2 and comment:
+                    appraisal_lessons.append(f"考核教訓({score}分): {comment}")
+            if appraisal_lessons:
+                try:
+                    lessons.add_many(
+                        appraisal_lessons,
+                        session_id=self.session_id,
+                        requirement=self._requirement,
+                        source="appraisal",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning("考核教訓入庫失敗（略過，不影響收尾）", exc_info=True)
 
     async def _record_known_limitations(self, unmet: list[dict]) -> None:
         """帶已知限制出貨前：把未通過的次要任務寫進交付物 KNOWN_LIMITATIONS.md（隨發佈一起

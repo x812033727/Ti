@@ -232,6 +232,8 @@
 .demo.fail { border-left-color: var(--bad); }
 .demo .demohead { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .demo .demohead code { font-family: var(--font-mono); font-weight: 400; font-size: 11.5px; color: var(--muted); }
+/* 消毒重試備註：原始壞指令＋首次 exit code（稽核弱化顯示） */
+.demo .demoretry { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
 
 /* 發佈到 GitHub */
 .publish-cta { text-align: center; }

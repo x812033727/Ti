@@ -1,76 +1,6 @@
 {
   "entries": [
     {
-      "decision": "`/api/roles` CRUD 照 routes.py 既有 pydantic Body＋auth 依賴慣例；GET 每筆帶 `source ∈ {builtin, override, file}` 與 body 原文；POST/PUT 落檔（temp+rename 原子寫）後立即 reload；DELETE：file→刪檔、override→刪檔還原內建、純 builtin→409；key 格式 `^[a-z][a-z0-9_]{1,31}$`，**POST body 與 PUT/DELETE 路徑參數同套驗證**（防路徑穿越）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989968
-    },
-    {
-      "decision": "空殼 persona 驗證規則——對「角色專屬 body 原文（前置 _COMMON 之前）」檢查：去空白後非空，且至少一行匹配 Python re `(輸出|決議|驗證|格式|指令|決策)[:：]`；不符回 422 並指明缺出力格式段落；檔案載入路徑同規則（拒檔記 log）；內建 8 角色定義本身不經此路徑",
-      "rationale": "原 ERE 對內建 engineer（僅「執行指令:」）與 architect（「設計決策:」）body 不匹配，會卡死 override 編輯往返，故擴入「指令｜決策」；驗證在前置 _COMMON 之前，否則 _COMMON 自帶匹配行會讓驗證形同虛設",
-      "rejected": "規則只對非內建 key 強制（雙軌規則日後難維護，且新角色與 override 應同一標準）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.698998
-    },
-    {
-      "decision": "加一條守門單測：8 個內建角色 body 全數通過上述驗證規則——防未來改內建 prompt 時 override 往返回歸卡死",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989987
-    },
-    {
-      "decision": "Group 存單檔 `roles/groups.yaml`（`{name, role_keys[], mode}` 列表），邏輯併入 role_store.py；驗證三硬規則（key 存在於 BY_KEY、不重複、≥2 人）＋mode 白名單 `{round_robin, parallel}`，違反回 422；`/api/groups` CRUD 同 /api/roles 慣例",
-      "rationale": "",
-      "rejected": "mode 含 legacy（legacy 是無小組的舊路徑，組了小組即無 legacy 語意）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.699
-    },
-    {
-      "decision": "範例角色檔放 `roles/_example.md.sample`，載入器只掃 `*.md`，範例不被載入",
-      "rationale": "守住驗收 #1「不放角色檔時行為與現狀完全一致」",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990006
-    },
-    {
-      "decision": "測試三層——role_store 離線單測（覆蓋內建/壞檔被拒/未知欄位報錯/出力格式驗證/內建 8 body 守門）、API 層 TestClient（CRUD＋各 4xx 案）、冒煙照任務 #5 真實啟動 server 走全流程",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990013
-    },
-    {
-      "decision": "移交待辦（不入本輪）——moderator 依 description 自動選角（DyLAN 式）、角色檔 `{variable}` 插值、Web UI 角色編輯器",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990018
-    },
-    {
-      "decision": "技術選型——零新依賴，沿用行前綴 regex 解析（flow.py 慣例）、broadcast 事件持久化（history JSONL 既有管道），不引入 JSON schema 結構化輸出",
-      "rationale": "",
-      "rejected": "JSON schema 結構化輸出——與 codebase 行前綴慣例不一致，且既有條列 fallback 已驗證可用",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391583
-    },
-    {
-      "decision": "模組切分——`flow.parse_agenda` 與 `flow.validate_assignees` 為純函式（離線可測）；orchestrator 只改拆解 prompt 與討論階段呼叫端；discussion.py 與 `parse_tasks_with_deps` 完全不動",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391635
-    },
-    {
-      "decision": "介面——子題行 `子題: <標題> | <描述> | <成功準則>`，解析用 `split(\"|\", 2)` 固定最多三段（後段全歸 criteria），缺段允許空；`負責: <role_key>` 緊跟所屬子題行，找不到前置子題時忽略＋log；無 `子題:` 行 fallback 單一子題（原需求全文），零回歸",
-      "rationale": "高工指出標題含 `|` 會錯切，`split(\"|\", 2)` 一行解決，單測加此樣本",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391652
-    },
-    {
       "decision": "分派硬驗證——合法集合＝本場實際出席角色 keys（experts dict）而非全域 BY_KEY；非法/缺漏 fallback 順序：`engineer` 若在出席集合，否則取第一個出席者（`fallback if fallback in available_keys else next(iter(available_keys))`），修正記錄入 log 與議程事件",
       "rationale": "工程師與高工同點名 fallback 硬編 engineer 在自訂角色組合下自身就是非法 key；純函式不得依賴呼叫端保證",
       "rejected": "fallback 永遠 engineer——engineer 缺席時 fallback 結果仍非法，硬驗證形同虛設",
@@ -3499,6 +3429,76 @@
       "rejected": "",
       "session_id": "ap64ff5fc49f",
       "created_at": 1783126862.9361556
+    },
+    {
+      "decision": "不新建模組，全部擴充 `studio/lessons.py`＋`orchestrator.py` 兩處接線；`flow.py`、`events.py` 零改動",
+      "rationale": "vote_result 事件與注入管線既存，這是接線題不是造輪題；零新依賴。",
+      "rejected": "引入外部記憶框架（Mem0 等）或新建 memory 模組——500 筆純文字規模無收益，違反不隨意加依賴。",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709683
+    },
+    {
+      "decision": "`add_many` 加 keyword 參數 `source: str = \"retro\"`（枚舉 `vote`/`appraisal`/`retro`），只落檔不參與挑選；`distill()` 手動重建 item 處同步補 `source`；舊資料無 source 鍵以 `.get()` 容錯，零遷移",
+      "rationale": "預設值使既有 3284 呼叫端零改動；工程師抓到 distill 重建 item 會漏欄位，一併補。",
+      "rejected": "",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709735
+    },
+    {
+      "decision": "去重升級為雙模式——`add_many` 加 keyword 參數（如 `exact_only: bool = False`）：預設走「全文精確快速路徑＋`difflib.SequenceMatcher` 模糊比對」；vote 接線端傳精確模式，`表決先例:` 條目**只做全文精確比對、跳過模糊去重**",
+      "rationale": "高工指出的正確性漏洞——固定模板下同 topic 不同 winner 只差幾字，模糊比對會把新裁決默默擋掉、舊先例永遠勝出。用參數讓政策留在接線端，儲存層只提供機制，不做前綴嗅探。",
+      "rejected": "只靠閾值校準讓黑樣本通過——閾值是連續值賭注，模板前綴墊高相似度使安全區間過窄，機制性跳過才可靠。",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.670975
+    },
+    {
+      "decision": "模糊閾值由工程師以現有 lessons 資料實測校準，校準依據寫進註解；測試必含「同 topic 不同 winner 不得判重」黑樣本、「幾乎同文應判重」白樣本，以及 retro 路徑模糊判重的明確覆蓋（行為變更不得只是副作用）",
+      "rationale": "高工附帶約束 1、2 直接納入驗收。",
+      "rejected": "",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.670976
+    },
+    {
+      "decision": "品質閘門全放 orchestrator 接線端——vote：`tie` 或 `degraded` 不入庫；appraisal：僅 `score ≤ 2` 且 `comment.strip()` 非空入庫；lessons.py 不含任何來源特定判斷",
+      "rationale": "政策/儲存分離，閘門規則未來可改而不動儲存層。",
+      "rejected": "",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709769
+    },
+    {
+      "decision": "appraisal 接線復用 `_record_appraisals()` 已 parse 的 rows，不重 parse",
+      "rationale": "工程師建議，避免雙 parse 漂移。",
+      "rejected": "",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709776
+    },
+    {
+      "decision": "模板固定為 `表決先例: <topic> → <winner>` 與 `考核教訓(<score>分): <comment>`，格式字串以測試斷言鎖住，比照 marker 字串慣例",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709785
+    },
+    {
+      "decision": "本輪所有新條目 scope 維持 `global`；vote 先例可遷移性風險以品質閘門＋source 可追溯承擔",
+      "rationale": "注入點 1262 的 `context()` 不帶 scope，project scope 會斷閉環（驗收 #5）。",
+      "rejected": "vote 先例鎖 project scope——需同步改造注入點，超出本輪範圍。",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709793
+    },
+    {
+      "decision": "兩處接線失敗僅 `logger.warning`，不 raise、不阻斷 broadcast 與收尾；入庫走同步呼叫，沿用既有 3284 retro 模式（檔小鎖短）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709797
+    },
+    {
+      "decision": "移交待辦四項另開票——①use_count 結合後續低分的降權淘汰；②500 筆稀釋時高價值教訓保留策略；③同 topic 矛盾先例的仲裁/覆蓋機制；④`distill` 蒸餾會抹除 `source` 且可能改寫/合併表決先例，「可追溯」非長期保證",
+      "rationale": "高工附帶約束 3——別讓後人把可追溯當成蒸餾後仍成立的承諾。",
+      "rejected": "",
+      "session_id": "ap6f5b38c170",
+      "created_at": 1783154154.6709807
     }
   ]
 }

@@ -63,6 +63,7 @@ async def test_normal_distill_then_interval_blocks(store, monkeypatch):
     removed = await lessons.distill(session_id="s1")
     assert removed == 5  # 8 → 3
     assert _texts() == ["合併甲", "合併乙", "合併丙"]
+    assert {it["source"] for it in lessons.all_lessons()} == {"retro"}
     # meta.last_distill_at 已寫；緊接再呼叫（INTERVAL=86400）→ 不重跑
     assert await lessons.distill(session_id="s1") == 0
     assert len(lessons.all_lessons()) == 3
