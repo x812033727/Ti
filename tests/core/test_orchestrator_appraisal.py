@@ -109,6 +109,23 @@ async def test_work_task_collects_objective_metrics():
     assert perf["duration_s"] >= 0.0
 
 
+def test_collect_task_perf_initializes_missing_token_metrics_as_none():
+    s, _, _ = _session()
+    s._collect_task_perf(
+        s._main_ctx,
+        {"id": 1, "title": "甲", "status": "todo"},
+        "engineer",
+        0.01,
+    )
+
+    perf = s._task_perf[1]
+    assert perf["input_tokens"] is None
+    assert perf["output_tokens"] is None
+    assert perf["total_tokens"] is None
+    assert perf["cost_usd"] is None
+    assert perf["cost_source"] is None
+
+
 @pytest.mark.asyncio
 async def test_work_task_metrics_reflect_failed_reviews(monkeypatch):
     monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 2)

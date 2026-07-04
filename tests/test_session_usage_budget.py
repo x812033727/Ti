@@ -82,6 +82,52 @@ async def test_counting_broadcast_accumulates_tokens_and_cost():
     assert len(bucket) == 3
 
 
+@pytest.mark.asyncio
+async def test_counting_broadcast_aggregates_task_perf_by_task_id():
+    bucket, sink = collect()
+    s = StudioSession("t", sink, cwd=None)
+
+    await s.broadcast(
+        events.token_usage("t", "engineer", "claude", "m", 100, 20, 120, cost_usd=0.5, task_id=1)
+    )
+    await s.broadcast(
+        events.token_usage("t", "qa", "claude", "m", 10, 5, 15, cost_usd=0.1, task_id=2)
+    )
+    await s.broadcast(
+        events.token_usage("t", "engineer", "claude", "m", 30, 4, 34, cost_usd=0.2, task_id=1)
+    )
+    await s.broadcast(events.token_usage("t", "pm", "claude", "m", 999, 1, 1000))
+
+    assert s._task_perf[1]["input_tokens"] == 130
+    assert s._task_perf[1]["output_tokens"] == 24
+    assert s._task_perf[1]["total_tokens"] == 154
+    assert s._task_perf[1]["cost_usd"] == pytest.approx(0.7)
+    assert s._task_perf[1]["cost_source"] == "reported"
+
+    assert s._task_perf[2]["input_tokens"] == 10
+    assert s._task_perf[2]["output_tokens"] == 5
+    assert s._task_perf[2]["total_tokens"] == 15
+    assert s._task_perf[2]["cost_usd"] == pytest.approx(0.1)
+    assert s._task_perf[2]["cost_source"] == "reported"
+
+    assert set(s._task_perf) == {1, 2}
+    assert len(bucket) == 4
+
+
+@pytest.mark.asyncio
+async def test_counting_broadcast_keeps_unknown_task_cost_none():
+    _bucket, sink = collect()
+    s = StudioSession("t", sink, cwd=None)
+
+    await s.broadcast(events.token_usage("t", "engineer", "minimax", "m", 8, 2, 10, task_id=3))
+
+    assert s._task_perf[3]["input_tokens"] == 8
+    assert s._task_perf[3]["output_tokens"] == 2
+    assert s._task_perf[3]["total_tokens"] == 10
+    assert s._task_perf[3]["cost_usd"] is None
+    assert s._task_perf[3]["cost_source"] is None
+
+
 # --- _budget_exceeded 門檻邏輯 ------------------------------------------
 
 
