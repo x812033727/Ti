@@ -68,7 +68,10 @@ def test_redeploy_entry_in_settings_panel(app_js):
 
 def test_redeploy_block_has_styles(app_js):
     # 重新部署區塊有對應樣式（settings-redeploy / redeploy-status）
+    # styles.css 已拆為 @import 聚合檔：斷言對「聚合後的全部 CSS」成立即可
     styles = STYLES.read_text(encoding="utf-8")
+    for p in sorted((config.PROJECT_ROOT / "web" / "css").glob("*.css")):
+        styles += p.read_text(encoding="utf-8")
     assert ".settings-redeploy" in styles
     assert ".redeploy-status" in styles
 

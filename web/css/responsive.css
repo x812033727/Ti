@@ -1,0 +1,149 @@
+/* 響應式斷點（集中管理，**必須最後 @import**：媒體查詢不增加特異性，
+   要靠載入順序蓋過各面板的基準規則）：
+   - ≥901px 桌機：rail-tabs 看板/檔案切換、成員欄收合
+   - ≤900px 手機：單欄 + 底部分頁列 + drawer 改 bottom sheet + 設定整頁 */
+
+/* 桌面：rail-tabs 控制看板/檔案二擇一（手機由 body[data-mv] 接手，規則見媒體查詢） */
+@media (min-width: 901px) {
+  .side .files { display: none; }
+  .side[data-rv="files"] .board { display: none; }
+  .side[data-rv="files"] .files { display: flex; }
+
+  /* 成員欄收合：只剩頭像直排 */
+  body.experts-collapsed .layout { grid-template-columns: 64px minmax(0, 1fr) 380px; }
+  body.experts-collapsed .experts { padding: 14px 8px; }
+  body.experts-collapsed .experts .panel-head { justify-content: center; }
+  body.experts-collapsed .experts h2,
+  body.experts-collapsed .expert .meta,
+  body.experts-collapsed .expert .dot { display: none; }
+  body.experts-collapsed .expert { justify-content: center; padding: 4px; }
+  body.experts-collapsed .rail-toggle { transform: rotate(180deg); }
+}
+
+/* ---------- 手機底部分頁導覽列（桌機隱藏） ---------- */
+.mobiletabs { display: none; }
+
+/* ---------- 窄螢幕 / 手機版面 ---------- */
+@media (max-width: 900px) {
+  /* 頂欄堆疊：品牌+階段一列、工具列可橫向捲動一列 */
+  .app-header { flex-wrap: wrap; gap: 10px; padding: 10px 14px; }
+  .brand { font-size: 15px; }
+  .brand small { display: none; }
+  .phase { order: 2; margin-left: auto; min-width: 0; }
+  .toolbar {
+    order: 3; width: 100%; margin-left: 0;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  .toolbar button { flex: 0 0 auto; min-height: 42px; }
+
+  /* 單欄版面：一次只顯示一個分頁，底部保留分頁列空間 */
+  .layout { grid-template-columns: 1fr; padding: 10px; gap: 10px; padding-bottom: 86px; overflow: hidden; }
+  .experts, .discussion, .side { overflow-y: auto; min-height: 0; }
+  .rail-toggle { display: none; }
+
+  /* 啟動列直排、輸入框 16px 防 iOS focus 自動縮放 */
+  .command-deck input, .command-deck select { font-size: 16px; }
+  .deck-row { flex-direction: column; align-items: stretch; }
+  .deck-row .project-select { max-width: none; }
+  .deck-row .repo-input { min-width: 0; }
+  .interject input { font-size: 16px; }
+
+  /* 依 body[data-mv] 切換顯示的面板 */
+  body[data-mv="discussion"] .experts,
+  body[data-mv="discussion"] .side,
+  body[data-mv="experts"] .discussion,
+  body[data-mv="experts"] .side,
+  body[data-mv="board"] .experts,
+  body[data-mv="board"] .discussion,
+  body[data-mv="files"] .experts,
+  body[data-mv="files"] .discussion { display: none; }
+  /* 看板/檔案同住 .side：board 視圖顯示看板、files 視圖顯示檔案 */
+  body[data-mv="board"] .side .board { display: flex; }
+  body[data-mv="board"] .side .files { display: none; }
+  body[data-mv="files"] .side .files { display: flex; }
+  body[data-mv="files"] .side .board { display: none; }
+  /* rail-tabs 由底部分頁取代；下載鈕只在檔案視圖露出 */
+  .rail-tabs { display: none; }
+  .side-head { display: none; }
+  body[data-mv="files"] .side-head { display: flex; justify-content: flex-end; }
+
+  /* 底部分頁列：浮動玻璃膠囊 */
+  .mobiletabs {
+    display: flex;
+    position: fixed;
+    left: 12px; right: 12px;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    z-index: 40;
+    border-radius: 18px;
+    padding: 5px;
+    gap: 4px;
+    box-shadow: var(--shadow-2);
+  }
+  .mobiletabs button {
+    flex: 1;
+    min-height: 52px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 19px;
+    border-radius: 13px;
+  }
+  .mobiletabs button span { font-size: 11px; }
+  .mobiletabs button.active {
+    color: var(--accent-2);
+    background: rgba(124, 134, 255, .12);
+    box-shadow: inset 0 0 0 1px rgba(124, 134, 255, .25);
+  }
+
+  /* drawer 改全屏 sheet：由下往上 */
+  .drawer {
+    inset: auto 0 0 0;
+    width: auto;
+    max-height: 86vh;
+    border-radius: 18px 18px 0 0;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    transform: translateY(0);
+  }
+  .drawer.hidden { transform: translateY(105%); }
+
+  /* Autopilot 迷你列：浮在底部分頁列上方 */
+  #autopilotPanel.mini {
+    inset: auto 12px calc(68px + env(safe-area-inset-bottom, 0px)) 12px;
+    border-radius: var(--r-lg);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* 設定改為整頁：填滿畫面、底部留出分頁列空間 */
+  .settings-panel { padding: 0; align-items: stretch; bottom: 72px; }
+  .settings-card { width: 100%; height: 100%; max-height: none; border-radius: 0; border: none; overflow-y: auto; }
+  .settings-main { display: block; }
+  .settings-nav {
+    position: sticky;
+    top: 45px;
+    z-index: 1;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    overflow-x: auto;
+    background: rgba(18, 19, 26, .96);
+    padding: 8px 10px;
+  }
+  .settings-nav button { white-space: nowrap; }
+  .settings-content { overflow: visible; padding: 10px 12px 16px; }
+  .settings-toolbar { grid-template-columns: 1fr; }
+  .quota-head { align-items: stretch; flex-direction: column; }
+  .settings-grid { grid-template-columns: 1fr; }
+  /* 整頁捲動：內容不再內捲被壓扁；標題/儲存列 sticky 保持可達 */
+  .settings-form { flex: none; overflow: visible; }
+  .settings-head { position: sticky; top: 0; background: rgba(18, 19, 26, .96); z-index: 1; }
+  .settings-foot { position: sticky; bottom: 0; background: rgba(18, 19, 26, .96); z-index: 1; }
+
+  /* toast 抬高避開分頁列 */
+  #toast { bottom: 84px; }
+}

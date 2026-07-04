@@ -1,0 +1,199 @@
+/* 浮層 drawer 共通殼與各面板內文：歷史、Autopilot、指標/專案、動態流程編輯器。 */
+
+/* ---------- 浮層 drawer（歷史 / Autopilot / 專案 / 指標） ---------- */
+.drawer {
+  position: fixed;
+  top: 54px; right: 0; bottom: 0;  /* 從頂欄下緣滑出，工具列保持可點 */
+  width: 440px;
+  max-width: 100vw;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  border-bottom: none; border-right: none;
+  box-shadow: var(--shadow-3);
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform var(--t-slow) var(--ease-out), visibility var(--t-slow);
+}
+/* 蓋過全域 .hidden：用位移代替 display:none，才有滑入滑出動畫 */
+.drawer.hidden {
+  display: flex !important;
+  transform: translateX(calc(100% + 32px));
+  visibility: hidden;
+  pointer-events: none;
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.drawer-head h2 { margin: 0; font-size: 13px; color: var(--text); letter-spacing: .06em; }
+.drawer-head button { padding: 4px 10px; border-radius: var(--r-sm); }
+.drawer-actions { display: flex; align-items: center; gap: 8px; }
+.drawer-actions .danger { font-size: 12px; }
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.history-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  transition: border-color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
+}
+.history-list li:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-1); }
+.history-list li.muted { display: block; color: var(--muted); text-align: center; cursor: default; border-style: dashed; background: transparent; }
+.history-list li.muted:hover { border-color: var(--border); transform: none; box-shadow: none; }
+.h-main { flex: 1; min-width: 0; cursor: pointer; }
+.h-req { font-size: 13.5px; font-weight: 600; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-meta { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--muted); }
+/* 狀態膠囊 */
+.h-status { padding: 1px 9px; border: 1px solid; border-radius: var(--r-full); font-size: 11px; white-space: nowrap; }
+.status-completed { color: var(--good); background: var(--good-bg); border-color: rgba(45, 212, 167, .35); }
+.status-incomplete { color: var(--warn); background: var(--warn-bg); border-color: rgba(245, 184, 95, .35); }
+.status-stopped { color: var(--muted); background: var(--surface-2); border-color: var(--border); }
+.status-error { color: var(--bad); background: var(--bad-bg); border-color: rgba(255, 107, 107, .35); }
+.status-running { color: var(--accent); background: rgba(124, 134, 255, .1); border-color: rgba(124, 134, 255, .35); animation: pulse 1.6s ease-in-out infinite; }
+/* 單筆刪除鈕 */
+.h-del {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  font-size: 15px;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+}
+.history-list li:hover .h-del { opacity: .75; }
+.h-del:hover { opacity: 1 !important; color: var(--bad); background: var(--bad-bg); }
+/* 進行中場次的停止鈕：常駐可見（不像刪除鈕等 hover 才現身），執行中就該一眼看到能停 */
+.h-stop {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--bad);
+  cursor: pointer;
+  opacity: .75;
+  font-size: 15px;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+}
+.h-stop:hover { opacity: 1; background: var(--bad-bg); }
+
+/* Autopilot 面板 */
+.ap-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 0; }
+.ap-add { display: flex; gap: 8px; padding: 12px 16px 4px; }
+.ap-add input { flex: 1; min-width: 0; }
+.ap-add button {
+  padding: 9px 16px;
+  background: var(--grad-accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.ap-add button:hover:not(:disabled) { filter: brightness(1.12); }
+
+/* Autopilot：provider 額度迷你條（5h/7d 用量） */
+.ap-quota { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px 0; }
+.ap-quota-cell { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
+.ap-quota-name { font-weight: 600; }
+.ap-quota-win { color: var(--muted); }
+.ap-quota-bar {
+  width: 44px; height: 6px; border-radius: var(--r-full);
+  background: var(--surface-3); overflow: hidden;
+}
+.ap-quota-bar .fill { height: 100%; background: var(--good); border-radius: var(--r-full); }
+.ap-quota-bar.warn .fill { background: var(--warn); }
+.ap-quota-bar.crit .fill { background: var(--bad); }
+
+/* Autopilot：績效榜（AI 成員考核聚合，per provider 平均分/樣本/通過率） */
+.ap-appraisal { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 16px 0; font-size: 11px; }
+.ap-appraisal-row { color: var(--text-2); }
+
+/* Autopilot：工作室動態 timeline */
+.ap-timeline-head { padding: 12px 16px 0; font-size: 12px; }
+.ap-timeline {
+  list-style: none; margin: 4px 0 0; padding: 0 16px 8px;
+  max-height: 38vh; overflow-y: auto;
+}
+.ap-item { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.ap-item:last-child { border-bottom: none; }
+.ap-item-head { display: flex; align-items: baseline; gap: 6px; }
+.ap-item-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ap-item-time { font-size: 11px; white-space: nowrap; }
+.ap-item-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ap-chip {
+  font-size: 10.5px; padding: 1px 7px; border-radius: var(--r-full);
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
+}
+.ap-chip.prov { color: var(--accent-2); border-color: rgba(180, 157, 255, .35); }
+.ap-chip.ap-pr { color: var(--info); border-color: rgba(89, 183, 255, .35); text-decoration: none; }
+.ap-chip.ap-pr:hover { background: var(--surface-3); }
+.ap-item-note { margin-top: 3px; font-size: 11.5px; overflow-wrap: anywhere; }
+.ap-item-note.bad { color: var(--bad); }
+.ap-item-score { margin-top: 3px; font-size: 11.5px; }
+
+/* Autopilot 迷你狀態列：收起內容只留標題 + 計數，點標題列展開 */
+.ap-mini { font-size: 11.5px; font-weight: 400; letter-spacing: 0; margin-left: 6px; }
+#autopilotPanel.mini .ap-status,
+#autopilotPanel.mini .ap-add,
+#autopilotPanel.mini #apQuota,
+#autopilotPanel.mini .ap-timeline-head,
+#autopilotPanel.mini #apActivity,
+#autopilotPanel.mini #apBacklog { display: none; }
+#autopilotPanel.mini { top: auto; }  /* 桌面：縮成右下小卡 */
+#autopilotPanel.mini .drawer-head { cursor: pointer; border-bottom: none; }
+
+/* 指標 / 專案面板內文 */
+.metrics-body { padding: 12px 16px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.metric-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 13px; }
+.metric-k { color: var(--muted); white-space: nowrap; }
+.metric-v { color: var(--text); text-align: right; }
+
+.proj-name { font-weight: 700; font-size: 15px; }
+.proj-feature, .proj-task { font-size: 13px; display: flex; align-items: baseline; gap: 6px; line-height: 1.5; }
+.prio {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  flex: none;
+}
+.prio-0 { background: var(--bad-bg); color: #ff8a8a; border-color: rgba(255, 107, 107, .4); }
+.prio-1 { background: var(--warn-bg); color: var(--warn); border-color: rgba(245, 184, 95, .4); }
+.prio-2 { background: var(--surface-2); color: var(--muted); }
+.proj-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* --- 動態流程編輯器 --------------------------------------------------- */
+.wf-body { display: flex; flex-direction: column; gap: 10px; }
+.wf-row { display: flex; gap: 8px; align-items: center; }
+.wf-row #workflowList { flex: 1; min-width: 0; }
+.wf-stages-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.wf-textarea {
+  width: 100%; min-height: 280px; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.5; padding: 10px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.25); color: inherit;
+  white-space: pre; tab-size: 2;
+}
+.wf-actions { display: flex; align-items: center; gap: 10px; }
+.wf-help code { font-size: .85em; }

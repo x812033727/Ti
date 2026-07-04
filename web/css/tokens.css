@@ -1,0 +1,51 @@
+/* 設計 token（單一權威）：底色/文字/主色/語意色/字體/圓角/陰影/動態。
+   深色為預設；淺色主題日後以 [data-theme="light"] 覆寫同名 token。 */
+
+:root {
+  /* 底色層 */
+  --bg: #0a0a0f;
+  --bg-deep: #060609;
+  --surface-1: rgba(255, 255, 255, .035);
+  --surface-2: rgba(255, 255, 255, .06);
+  --surface-3: rgba(255, 255, 255, .09);
+  --surface-solid: #12131a;            /* pre/code 用實色保可讀性 */
+  --border: rgba(255, 255, 255, .08);
+  --border-strong: rgba(255, 255, 255, .16);
+
+  /* 文字 */
+  --text: #f4f5f9;
+  --text-2: #c2c7d4;
+  --muted: #868c9c;
+
+  /* 主色：靛→紫漸層 */
+  --accent: #7c86ff;
+  --accent-strong: #5e6ad2;
+  --accent-2: #b49dff;
+  --grad-accent: linear-gradient(135deg, #6e79ff 0%, #a78bfa 55%, #c084fc 100%);
+  --glow-accent: 0 0 0 1px rgba(124, 134, 255, .35), 0 4px 24px rgba(124, 134, 255, .22);
+
+  /* 語意色 */
+  --good: #2dd4a7;  --good-bg: rgba(45, 212, 167, .10);
+  --bad:  #ff6b6b;  --bad-bg:  rgba(255, 107, 107, .10);
+  --warn: #f5b85f;  --warn-bg: rgba(245, 184, 95, .10);
+  --info: #59b7ff;
+
+  /* 字體（不掛 CDN webfont：離線示範模式也要能跑） */
+  --font-sans: "Inter", -apple-system, "SF Pro Text", "Segoe UI",
+               "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+               Menlo, Consolas, monospace;
+
+  /* 圓角 / 陰影 / 動態 */
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-full: 999px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, .45);
+  --shadow-3: 0 16px 48px rgba(0, 0, 0, .6);
+  --t-fast: 120ms; --t-med: 200ms; --t-slow: 320ms;
+  --ease: cubic-bezier(.25, .8, .25, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+
+  /* 相容別名：避免任何殘留舊規則拿不到顏色 */
+  --panel: var(--surface-1);
+  --panel-2: var(--surface-2);
+}
