@@ -1,8 +1,6 @@
-// WS 斷線重連純邏輯驗證：載入真實 web/app.js，驗 computeReconnectDelay 的退避/封頂、
-// trackSocketEvent 的計數起算與收尾判定、attach_ok 校準（bindSocket 路徑）、
-// onclose 的重連分流（進行中→排程重連；正常收尾→不重連）。
-import fs from 'node:fs';
-import vm from 'node:vm';
+// WS 斷線重連純邏輯驗證：先掛全域 stub 再 import 真實 web/js/ws.js（ES module），
+// 驗 computeReconnectDelay 的退避/封頂、trackSocketEvent 的計數起算與收尾判定、
+// attach_ok 校準（bindSocket 路徑）、onclose 的重連分流（進行中→排程重連；收尾→不重連）。
 
 // --- 記錄式 DOM（同 frontend_project_recover_test 範式）---
 class RecEl {
@@ -38,13 +36,8 @@ const sockets = [];
 function WebSocket() { const s = new RecEl('ws'); s.sent = []; s.send = (m) => s.sent.push(m); sockets.push(s); return s; }
 WebSocket.OPEN = 1;
 
-const windowObj = {
-  addEventListener: noop,
-  matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
-  location: { protocol: 'http:', host: 'x', href: '' },
-};
-
-const ctx = vm.createContext({
+const realSetTimeout = globalThis.setTimeout;
+Object.assign(globalThis, {
   document: {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
@@ -52,16 +45,24 @@ const ctx = vm.createContext({
     createTextNode: () => new RecEl('text'),
     getElementById: () => new RecEl('div'),
     body: new RecEl('body'),
+    documentElement: new RecEl('html'),
   },
-  window: windowObj, location: windowObj.location, WebSocket,
+  window: {
+    addEventListener: noop,
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    location: { protocol: 'http:', host: 'x', href: '' },
+  },
+  location: { protocol: 'http:', host: 'x', href: '' },
+  WebSocket,
   fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
-  console,
+  localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
   setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-  clearTimeout: noop, setInterval: noop, clearInterval: noop,
+  clearTimeout: noop,
 });
 
-const src = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-vm.runInContext(src, ctx, { filename: 'app.js' });
+const ws = await import('../web/js/ws.js');
+const { state } = await import('../web/js/state.js');
+globalThis.setTimeout = realSetTimeout; // 之後的非重連計時不再攔截
 
 function expect(cond, msg) {
   if (!cond) { console.error('FAIL: ' + msg); process.exit(1); }
@@ -71,38 +72,38 @@ function expect(cond, msg) {
 for (let n = 0; n < 12; n++) {
   const base = Math.min(1000 * 2 ** n, 15000);
   for (let i = 0; i < 20; i++) {
-    const d = ctx.computeReconnectDelay(n);
+    const d = ws.computeReconnectDelay(n);
     expect(d >= base / 2 && d <= base, `delay(${n}) 應落在 [${base / 2}, ${base}]，實得 ${d}`);
   }
 }
-expect(ctx.computeReconnectDelay(10) <= 15000, '大 n 應封頂 15s');
 
 // --- trackSocketEvent：session_started 起算、逐筆計數、done 判 terminal ---
-expect(ctx.getReconnectState().counting === false, '初始不起算');
-expect(ctx.trackSocketEvent({ type: 'phase_change', payload: {} }) === false, '起算前事件非 terminal');
-expect(ctx.getReconnectState().eventCount === 0, '起算前不計數（未入檔的準備事件）');
+expect(ws.getReconnectState().counting === false, '初始不起算');
+expect(ws.trackSocketEvent({ type: 'phase_change', payload: {} }) === false, '起算前事件非 terminal');
+expect(ws.getReconnectState().eventCount === 0, '起算前不計數（未入檔的準備事件）');
 
-expect(ctx.trackSocketEvent({ type: 'session_started', payload: {} }) === false, 'session_started 非 terminal');
-expect(ctx.getReconnectState().counting === true, 'session_started 後起算');
-expect(ctx.getReconnectState().eventCount === 1, 'session_started 本身計 1（入檔第一筆）');
-ctx.trackSocketEvent({ type: 'expert_message', payload: {} });
-ctx.trackSocketEvent({ type: 'tool_use', payload: {} });
-expect(ctx.getReconnectState().eventCount === 3, '之後逐筆累加');
-expect(ctx.trackSocketEvent({ type: 'done', payload: { completed: true } }) === true, 'done 為 terminal（非 improve 模式）');
+expect(ws.trackSocketEvent({ type: 'session_started', payload: {} }) === false, 'session_started 非 terminal');
+expect(ws.getReconnectState().counting === true, 'session_started 後起算');
+expect(ws.getReconnectState().eventCount === 1, 'session_started 本身計 1（入檔第一筆）');
+ws.trackSocketEvent({ type: 'expert_message', payload: {} });
+ws.trackSocketEvent({ type: 'tool_use', payload: {} });
+expect(ws.getReconnectState().eventCount === 3, '之後逐筆累加');
+expect(ws.trackSocketEvent({ type: 'done', payload: { completed: true } }) === true, 'done 為 terminal（非 improve 模式）');
 
 // --- bindSocket：attach_ok 校準計數、onclose 分流 ---
 const sock = new WebSocket();
-ctx.bindSocket(sock);
+ws.bindSocket(sock);
 sock.onmessage({ data: JSON.stringify({ type: 'attach_ok', payload: { session_id: 's1', cursor: 42 } }) });
-expect(ctx.getReconnectState().eventCount === 42, 'attach_ok 應以伺服器權威計數校準 eventCount');
-expect(ctx.getReconnectState().reconnectAttempts === 0, 'attach_ok 應歸零重試計數');
+expect(ws.getReconnectState().eventCount === 42, 'attach_ok 應以伺服器權威計數校準 eventCount');
+expect(ws.getReconnectState().reconnectAttempts === 0, 'attach_ok 應歸零重試計數');
 
 // 進行中斷線 → 排程重連（sessionId 由 handleEvent 設定：餵一筆帶 session_id 的事件）
+globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
 sock.onmessage({ data: JSON.stringify({ type: 'phase_change', session_id: 's1', payload: { phase: 'x' } }) });
 const before = timers.length;
 sock.onclose();
 expect(timers.length === before + 1, '進行中（counting 且未 done）斷線應排程重連');
-expect(ctx.getReconnectState().reconnectAttempts === 1, '重連次數 +1');
+expect(ws.getReconnectState().reconnectAttempts === 1, '重連次數 +1');
 
 // 排程觸發 → 開新 socket 並送 attach 首訊息
 const nSockets = sockets.length;
@@ -113,6 +114,7 @@ re.onopen();
 const first = JSON.parse(re.sent[0]);
 expect(first.attach === 's1', '重連首訊息應帶 attach=sessionId');
 expect(typeof first.cursor === 'number', '重連首訊息應帶 cursor 計數');
+expect(state.ws === re, '重連後 state.ws 指向新 socket（插話/停止走新連線）');
 
 // 正常收尾（done）後 onclose 不重連
 re.onmessage({ data: JSON.stringify({ type: 'done', session_id: 's1', payload: { completed: true } }) });
@@ -120,8 +122,15 @@ const before2 = timers.length;
 re.onclose();
 expect(timers.length === before2, '收尾 done 後斷線不應再排程重連');
 
+// stopReconnect：主動導航（重播）後 onclose 不重連
+ws.trackSocketEvent({ type: 'session_started', payload: {} }); // 重新起算模擬進行中
+ws.stopReconnect();
+const before3 = timers.length;
+sock.onclose();
+expect(timers.length === before3, 'stopReconnect 後斷線不應排程重連');
+
 // 未知事件型別不崩
-ctx.trackSocketEvent({ type: 'no_such_type' });
+ws.trackSocketEvent({ type: 'no_such_type' });
 
 console.log('OK: 重連延遲、計數起算/校準、onclose 分流皆正常');
 process.exit(0);

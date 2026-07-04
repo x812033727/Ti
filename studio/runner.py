@@ -438,6 +438,101 @@ def resolve_demo_command(cwd: Path | str, declared: str | None) -> str | None:
     return f"python3 {entry}" if entry else None
 
 
+# Demo 指令 usage-error 消毒：偵測「參數寫壞」的特徵與 stderr 點名的違規 token。
+# unrecognized arguments＝argparse/pytest 慣例、no such option＝click/optparse 慣例。
+_USAGE_ERROR_TOKENS_RE = re.compile(
+    r"(?:unrecognized arguments|no such option)\s*[:：]?\s*(.+)", re.IGNORECASE
+)
+# shell 控制符（pipe／&&／;／重導向／反引號／$( ）：token 化重組會把它們引號化而破壞語法，
+# 這類指令一律不消毒。單獨的 $VAR 不在此列（僅作未設變數偵測）。
+_SHELL_CONTROL_RE = re.compile(r"[|&;<>`]|\$\(")
+_ENV_VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+
+
+def _looks_like_usage_error(exit_code: int, output: str) -> bool:
+    """demo 指令失敗是否為「參數寫壞」型 usage error（而非產品真的壞）。
+
+    - stderr 出現 unrecognized arguments / no such option（工具明確點名違規參數）；
+    - exit 4＝pytest 的 usage error 慣例；
+    - exit 2 且輸出帶 argparse 慣例的 usage:/error: 樣式。
+    """
+    if _USAGE_ERROR_TOKENS_RE.search(output):
+        return True
+    if exit_code == 4:
+        return True
+    return exit_code == 2 and bool(re.search(r"(?im)^\s*usage:|\berror:", output))
+
+
+def _has_unset_env_var(token: str) -> bool:
+    """token 是否引用了未設定的環境變數（$VAR／${VAR} 且 VAR 不在 os.environ）。"""
+    return any(m.group(1) not in os.environ for m in _ENV_VAR_REF_RE.finditer(token))
+
+
+def sanitize_demo_command(
+    cmd: str, exit_code: int, output: str, protected_text: str = ""
+) -> str | None:
+    """usage-error 型 demo 失敗的一次性消毒：剝掉 stderr 點名的違規參數，回傳消毒後指令。
+
+    背景（#248）：PM 給的 demo 指令帶了目標工具不認得的參數（如 `pytest --cache-dir=…` →
+    exit 4「unrecognized arguments」），數小時綠色成果被 demo_veto 全數丟棄——指令寫壞
+    不等於產品壞。此函式為純函式，只在「像 usage error」時動作（_looks_like_usage_error），
+    消毒規則刻意保守：
+      - 剝掉 stderr 明確點名的 token（含其 `--opt=value` 同名 option 的變體）；
+      - 剝掉引用「未設定環境變數」的 token（$VAR 展不開、必然是壞路徑片段）；
+      - 指令含 shell 控制符（pipe／&&／重導向…）不動——token 化重組會破壞語法；
+      - **交付物護欄**：要剝的 token（或其 `--opt=value` 的底名）出現在
+        ``protected_text``（需求＋PM 計畫＋任務標題）中即回 None——「工具不認得
+        --fast-lane」可能正是本場要交付的新旗標壞掉，消毒重試會讓壞交付物假綠出貨；
+      - **展開語意護欄**：保留的 token 含 shell 展開字元（$VAR/glob/~）也回 None——
+        shlex.join 會把它引號化、無聲關掉展開，重試跑的已不是同一個指令；
+      - 消毒後與原指令相同（無可剝除）或會剝成空指令時回 None。
+    回 None＝不建議重試；呼叫端（orchestrator demo 階段）拿到非 None 才重試「一次」，
+    絕不迴圈。
+    """
+    if not _looks_like_usage_error(exit_code, output):
+        return None
+    if _SHELL_CONTROL_RE.search(cmd):
+        return None
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return None
+    # stderr 點名的違規 token（同一行內以空白分隔，可能含 option 與其值兩個 token）。
+    bad: set[str] = set()
+    for m in _USAGE_ERROR_TOKENS_RE.finditer(output):
+        with contextlib.suppress(ValueError):
+            bad.update(shlex.split(m.group(1).strip()))
+    # 同名 option 變體：點名 `--opt` 也剝 `--opt=value`；點名 `--opt=value` 也剝其他 `--opt=…`。
+    bad_opts = {t.split("=", 1)[0] for t in bad if t.startswith("-")}
+    kept: list[str] = []
+    for t in tokens:
+        if t in bad:
+            continue
+        if t.startswith("-") and t.split("=", 1)[0] in bad_opts:
+            continue
+        if "$" in t and _has_unset_env_var(t):
+            continue
+        kept.append(t)
+    if not kept or kept == tokens:
+        return None
+    # 交付物護欄：被剝掉的 token 若在需求/計畫/任務文字中被點名，代表它可能是「本場交付
+    # 的功能本身」——被工具拒絕更可能是實作壞了，不是指令寫錯；不重試，讓 demo_veto 誠實
+    # 擋下。底名（--opt=value → --opt）也比對，涵蓋「文字提旗標、指令帶值」的常態。
+    if protected_text:
+        kept_set = set(kept)
+        for t in tokens:
+            if t in kept_set:
+                continue
+            base = t.split("=", 1)[0]
+            if t in protected_text or (base != t and base in protected_text):
+                return None
+    # 展開語意護欄：shlex.join 會把含特殊字元的保留 token 引號化（'$TMPDIR/x' 變字面值），
+    # 使 $VAR/glob/~ 失去展開——重試語意與原指令不同，寧可不重試。
+    if any(shlex.quote(t) != t and re.search(r"[$*?~\[]", t) for t in kept):
+        return None
+    return shlex.join(kept)
+
+
 def parse_demo_url(text: str) -> str | None:
     """從專家文字解析 `Demo 網址: http://localhost:<port>/...`。
 

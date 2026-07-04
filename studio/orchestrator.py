@@ -49,6 +49,7 @@ from .flow import (
     parse_core_changes as parse_core_changes,
     parse_followups as parse_followups,
     parse_followups_meta as parse_followups_meta,
+    parse_help_request as parse_help_request,
     parse_lessons as parse_lessons,
     parse_structured_tasks as parse_structured_tasks,
     parse_tasks as parse_tasks,
@@ -2140,7 +2141,27 @@ class StudioSession:
                 self.session_id, topic, options, ballots, winner, tally["tie"], degraded=degraded
             )
         )
+        self._record_vote_lesson(topic=topic, winner=winner, tie=tally["tie"], degraded=degraded)
         return {"winner": winner, "ballots": ballots, "tie": tally["tie"], "degraded": degraded}
+
+    def _record_vote_lesson(self, *, topic: str, winner: str, tie: bool, degraded: bool) -> None:
+        """把高品質表決結果落入跨場次教訓庫；失敗不得影響主流程。"""
+        if tie or degraded:
+            return
+        topic = (topic or "").strip()
+        winner = (winner or "").strip()
+        if not topic or not winner:
+            return
+        try:
+            lessons.add_many(
+                [f"表決先例: {topic} → {winner}"],
+                session_id=self.session_id,
+                requirement=self._requirement,
+                source="vote",
+                exact_only=True,
+            )
+        except Exception:  # noqa: BLE001 — 教訓庫是旁路，表決事件流不得被阻斷
+            log.warning("表決先例入庫失敗（議題：%s）", topic, exc_info=True)
 
     # --- 波次排程（並行支線）------------------------------------------
     def _min_lane_concurrency(self) -> int:
@@ -2718,6 +2739,7 @@ class StudioSession:
             else (self._task_max_rounds() or config.TASK_MAX_ROUNDS)
         )
         critic_rejects = 0  # 客觀全綠下 critic 退回次數，達 CRITIC_MAX_REJECTS 即收斂放行
+        help_used = 0  # 中途求助 PM 次數（「每任務」上限 TASK_HELP_MAX，防多輪 × 多次燒 token）
         impl_history: list[str] = []  # 各輪工程師發言，供停滯偵測
         prev_commit = ctx.last_commit
         for rnd in range(1, rounds + 1):
@@ -2729,12 +2751,24 @@ class StudioSession:
             human = await self._lane_human_prefix(ctx)
 
             # --- 實作 ---
+            # 中途求助提示：只在開關開、額度未用盡且 PM 在場時告知 marker——
+            # 承諾了卻無人接（PM 缺席）比不承諾更糟，故條件含在場檢查。
+            help_hint = (
+                "\n若中途卡關，可輸出一行 `求助: <一句話說明卡點>`，PM 會即時給指示後你再續作。"
+                if (
+                    config.TASK_HELP_ENABLED
+                    and help_used < config.TASK_HELP_MAX
+                    and "pm" in ctx.experts
+                )
+                else ""
+            )
             if not feedback:
                 impl_prompt = (
                     f"{human}{self._notes_context(ctx)}"
                     f"目前要完成的任務 #{task['id']}：{task['title']}\n\n"
                     f"整體計畫供參考：\n{pm_plan}\n\n"
                     "請在工作目錄裡實作，並在交付前自己跑過一次確認能執行。"
+                    f"{help_hint}"
                 )
             else:
                 # (A) 反思記憶：注入本任務更早輪次蒸餾的反思（最新一輪原文已在 feedback 內，故
@@ -2750,10 +2784,50 @@ class StudioSession:
                     f"任務 #{task['id']}：{task['title']} 尚未通過，"
                     f"請根據以下意見逐項修正（第 {rnd} 輪）：\n\n{feedback}\n\n"
                     "修正後請自己再跑一次確認。"
+                    f"{help_hint}"
                 )
             impl_text = await self._speak(
                 ctx, impl_role, impl_prompt, tag, token_usage_task_id=task["id"]
             )
+
+            # --- 中途求助 PM：工程師輸出 `求助: <問題>` 時就地問 PM 拿指示、續作後覆蓋 impl_text ---
+            # 每任務至多 TASK_HELP_MAX 次（help_used 跨輪累計）；續作再含標記由上限自然擋下。
+            # rnd 不變、impl_history 每外輪仍只 append 最終一筆、commit 仍每輪一次 → 不影響停滯
+            # 偵測與輪數（同 self-refine 慣例）。輪內輕量通道，與跑滿輪數才觸發的 huddle 互補。
+            while (
+                config.TASK_HELP_ENABLED
+                and help_used < config.TASK_HELP_MAX
+                and "pm" in ctx.experts
+                and not self._stop
+            ):
+                question = parse_help_request(impl_text)
+                if not question:
+                    break
+                help_used += 1
+                await bc(
+                    events.phase_change(
+                        self.session_id,
+                        "求助PM",
+                        f"任務 #{task['id']} 工程師中途求助（{help_used}/{config.TASK_HELP_MAX}）",
+                    )
+                )
+                pm_reply = await self._speak(
+                    ctx,
+                    "pm",
+                    f"{human}工程師實作任務 #{task['id']}：{task['title']} 時中途卡關求助：\n"
+                    f"{question}\n\n整體計畫供參考：\n{pm_plan}\n\n"
+                    "請給一段簡短、可立即執行的指示（必要時允許簡化範圍），別展開長篇討論。",
+                    tag,
+                    token_usage_task_id=task["id"],
+                )
+                impl_text = await self._speak(
+                    ctx,
+                    impl_role,
+                    f"{human}PM 對你的求助給出指示：\n{pm_reply}\n\n"
+                    "請依指示繼續完成本任務，完成後照常總結交付（含 `執行指令:`）。",
+                    tag,
+                    token_usage_task_id=task["id"],
+                )
 
             # --- 交付前自測（確定性 smoke-run）---
             smoke = await self._self_test(ctx, impl_text, bc)
@@ -3211,8 +3285,36 @@ class StudioSession:
         # 刻意保留 shell：同 _self_test，cmd 為 demo 指令（resolve_demo_command 動態解析），
         # 可能含 shell 語法，必須經 /bin/sh，無法 argv 化。
         result = await runner.run_command(self.cwd, cmd)  # nosec B602
+        retried_cmd: str | None = None
+        first_exit: int | None = None
+        if not result.ok:
+            # usage-error 消毒重試（#248）：PM 給的 demo 指令帶了工具不認得的參數
+            # （如 pytest --cache-dir → exit 4 unrecognized arguments）時，整場綠色成果
+            # 會被 demo_veto 全數丟棄——指令寫壞不是產品壞。剝掉 stderr 點名的參數後
+            # 重試「一次」（sanitize 回 None＝不重試），兩次嘗試都記進 demo_result 供稽核。
+            # protected_text＝需求＋PM 計畫＋任務標題：要剝的參數若正是本場交付的功能
+            # （如新增的 --fast-lane 旗標被拒），不得靠剝掉它讓壞交付物假綠出貨。
+            protected = "\n".join(
+                [self._requirement or "", self._pm_plan or ""]
+                + [str(t.get("title") or "") for t in self._tasks]
+            )
+            sanitized = runner.sanitize_demo_command(
+                cmd, result.exit_code, result.output, protected_text=protected
+            )
+            if sanitized:
+                first_exit = result.exit_code
+                retried_cmd = sanitized
+                result = await runner.run_command(self.cwd, sanitized)  # nosec B602
         await self.broadcast(
-            events.demo_result(self.session_id, cmd, result.exit_code, result.output, label="Demo")
+            events.demo_result(
+                self.session_id,
+                cmd,
+                result.exit_code,
+                result.output,
+                label="Demo",
+                retried_cmd=retried_cmd,
+                first_exit=first_exit,
+            )
         )
         return result
 
@@ -3383,6 +3485,23 @@ class StudioSession:
                     self.session_id, e["provider"], e["model"], e["role"], e["score"], e["comment"]
                 )
             )
+        if config.LESSONS_ENABLED:
+            appraisal_lessons = []
+            for r in rows:
+                score = r["score"]
+                comment = r.get("comment", "").strip()
+                if score <= 2 and comment:
+                    appraisal_lessons.append(f"考核教訓({score}分): {comment}")
+            if appraisal_lessons:
+                try:
+                    lessons.add_many(
+                        appraisal_lessons,
+                        session_id=self.session_id,
+                        requirement=self._requirement,
+                        source="appraisal",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning("考核教訓入庫失敗（略過，不影響收尾）", exc_info=True)
 
     async def _record_known_limitations(self, unmet: list[dict]) -> None:
         """帶已知限制出貨前：把未通過的次要任務寫進交付物 KNOWN_LIMITATIONS.md（隨發佈一起

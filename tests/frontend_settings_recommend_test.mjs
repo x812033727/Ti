@@ -1,8 +1,6 @@
-// 推薦模型前端驗證：載入真實 web/app.js，驗證 renderSettings() 對帶 recommended
-// 的 select 加「（推薦）」尾綴與 data-recommended，且 applyRecommendedSettings()
-// 一鍵把這些欄位填成推薦值（不動沒有推薦值的欄位）、更新 hint。
-import fs from 'node:fs';
-import vm from 'node:vm';
+// 推薦模型前端驗證：先掛全域 stub 再 import 真實 web/js/panels/settings.js，驗證
+// renderSettings() 對帶 recommended 的 select 加「（推薦）」尾綴與 data-recommended，
+// 且 applyRecommendedSettings() 一鍵把這些欄位填成推薦值（不動沒有推薦值的欄位）、更新 hint。
 
 class RecEl {
   constructor(tag) {
@@ -53,7 +51,7 @@ const noop = () => {};
 const windowObj = { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } };
 function WebSocket() { return new RecEl('ws'); }
 
-const ctx = vm.createContext({
+Object.assign(globalThis, {
   document: {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
@@ -64,11 +62,10 @@ const ctx = vm.createContext({
   },
   window: windowObj, location: windowObj.location, WebSocket,
   fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
-  console, setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
+  setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
 });
 
-const src = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-vm.runInContext(src, ctx, { filename: 'app.js' });
+const ctx = await import('../web/js/panels/settings.js');
 
 const FIELDS = [
   {

@@ -1,11 +1,11 @@
-// 任務 #2 前端驗證：載入真實 web/app.js 的 renderSettings()，用記錄式 DOM
-// 實際渲染欄位，驗證 token／API key 欄位 → password 型態、不預填明文、
-// 未設定時 placeholder 用 f.placeholder、已設定秘密欄位顯示「已設定（留空＝不變更）」。
+// 任務 #2 前端驗證：先掛全域 stub 再 import 真實 web/js/panels/settings.js 的
+// renderSettings()，用記錄式 DOM 實際渲染欄位，驗證 token／API key 欄位 →
+// password 型態、不預填明文、未設定時 placeholder 用 f.placeholder、
+// 已設定秘密欄位顯示「已設定（留空＝不變更）」。
 //
 // 用法：node frontend_settings_render_test.mjs <fields.json>
 // fields.json 為後端 /api/settings 回傳的 fields 陣列（真實資料）。
 import fs from 'node:fs';
-import vm from 'node:vm';
 
 const fieldsPath = process.argv[2];
 const fields = JSON.parse(fs.readFileSync(fieldsPath, 'utf8'));
@@ -61,16 +61,15 @@ const noop = () => {};
 const windowObj = { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } };
 function WebSocket() { return new RecEl('ws'); }
 
-const ctx = vm.createContext({
+Object.assign(globalThis, {
   document, window: windowObj, location: windowObj.location, WebSocket,
   fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
-  console, setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
+  setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
 });
 
-const src = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-vm.runInContext(src, ctx, { filename: 'app.js' });
+const ctx = await import('../web/js/panels/settings.js');
 
-// renderSettings 是 function 宣告 → 已掛到 context 全域；FORM 是它寫入的目標
+// renderSettings 是模組具名匯出；FORM 是它寫入的目標
 ctx.renderSettings(fields);
 
 // 收集渲染後的 input/select 列（依 data-env 對應回欄位）

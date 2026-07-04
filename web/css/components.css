@@ -1,0 +1,187 @@
+/* 共用元件：toast 通知、登入頁卡片。 */
+
+/* ---------- Toast 通知 ---------- */
+#toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+  align-items: center;
+}
+.toast {
+  position: relative;
+  padding: 11px 18px;
+  border-radius: var(--r-md);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--overlay-bg);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+  animation: toastin var(--t-med) var(--ease-out);
+}
+.toast::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--grad-accent);
+  transform-origin: left;
+  animation: toastbar 4s linear forwards; /* 與 app.js 的 4000ms 移除對齊 */
+}
+.toast.err { border-color: rgba(255, 107, 107, .45); color: var(--bad); }
+.toast.err::after { background: var(--bad); }
+.toast.ok { border-color: rgba(45, 212, 167, .45); }
+.toast.ok::after { background: var(--good); }
+@keyframes toastin { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
+@keyframes toastbar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* ---------- 登入頁 ---------- */
+.login-body { align-items: center; justify-content: center; }
+.login-body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(600px 360px at 50% 38%, var(--glow-login), transparent 70%);
+  pointer-events: none;
+}
+.login-card {
+  margin: auto;
+  width: 340px;
+  max-width: 90vw;
+  padding: 36px 30px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  box-shadow: var(--shadow-3);
+  text-align: center;
+  position: relative;
+  animation: cardin .4s var(--ease-out);
+}
+@keyframes cardin { from { opacity: 0; transform: translateY(14px); } }
+.login-brand {
+  font-size: 23px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.login-brand .logo { filter: drop-shadow(0 2px 10px rgba(124, 134, 255, .5)); }
+.login-sub { color: var(--muted); font-size: 13px; margin: 8px 0 24px; }
+.login-form { display: flex; flex-direction: column; gap: 12px; }
+.login-form input { padding: 11px 14px; }
+.login-form button {
+  padding: 11px;
+  background: var(--grad-accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 2px 12px rgba(110, 121, 255, .35);
+}
+.login-form button:hover:not(:disabled) { filter: brightness(1.12); box-shadow: var(--glow-accent); }
+.login-error { color: var(--bad); font-size: 13px; animation: shake .3s var(--ease); }
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+/* 通用表單 modal（components/modal.js）：原生 <dialog> */
+.form-modal {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface-solid);
+  color: var(--text);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+.form-modal::backdrop {
+  background: rgba(4, 4, 8, .6);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.form-modal form { display: flex; flex-direction: column; max-height: inherit; }
+.form-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.form-modal-head h2 { margin: 0; font-size: 13px; color: var(--text); letter-spacing: .06em; }
+.form-modal-head button { padding: 4px 10px; border-radius: var(--r-sm); }
+.form-modal-hint { margin: 10px 16px 0; font-size: 12.5px; line-height: 1.55; }
+.form-modal-body {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+.form-modal-row { display: flex; flex-direction: column; gap: 5px; }
+.form-modal-label { font-size: 12.5px; color: var(--text-2); }
+.form-modal-row input[type="text"], .form-modal-row textarea, .form-modal-row select {
+  font-family: inherit;
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13.5px;
+}
+.form-modal-row textarea { resize: vertical; line-height: 1.5; }
+.form-modal-field-hint { font-size: 11.5px; line-height: 1.5; }
+.form-modal-choices { display: flex; flex-direction: column; gap: 6px; }
+.form-modal-choices[role="radiogroup"] { flex-direction: row; gap: 12px; flex-wrap: wrap; }
+.form-modal-choice {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 13px; cursor: pointer;
+  padding: 4px 6px; border-radius: var(--r-sm);
+}
+.form-modal-choice:hover { background: var(--surface-2); }
+.form-modal-choice input { accent-color: var(--accent); margin: 0; flex: none; }
+.form-modal-error { color: var(--bad); font-size: 12.5px; padding: 0 16px; min-height: 0; }
+.form-modal-error:empty { display: none; }
+.form-modal-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+.form-modal-submit {
+  padding: 9px 20px;
+  background: var(--grad-accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.form-modal-submit:hover:not(:disabled) { filter: brightness(1.12); }
+@media (max-width: 600px) {
+  .form-modal { width: calc(100vw - 20px); }
+}
+
+/* 確認對話框（openConfirmModal）：沿用 form-modal 殼 */
+.confirm-modal { width: min(440px, calc(100vw - 32px)); }
+.confirm-modal-msg {
+  margin: 14px 16px 4px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-2);
+  white-space: pre-line; /* 保留訊息內的換行 */
+}
+.form-modal-submit.danger {
+  background: var(--bad);
+  color: #fff;
+  box-shadow: none;
+}
+.form-modal-submit.danger:hover:not(:disabled) { filter: brightness(1.08); }

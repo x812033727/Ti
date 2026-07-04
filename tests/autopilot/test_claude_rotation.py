@@ -1,11 +1,11 @@
 """Claude 訂閱雙帳號負載平衡：_maybe_rotate_claude_account 的防護與副作用、主迴圈接線。
 
-決策純函式 pick_account（優先序：95% 安全上限 > 重置時間「早重置多吃」> 負載平均
-分配＋margin 遲滯）的規則矩陣在 tests/test_claude_accounts.py；本檔只驗 autopilot 執行
-點的合約：claude 訂閱模式才輪替、兩窗（5h/7d）用量與 reset_at 正確餵進決策、有討論進行
-中不切、switch → 排程重啟的呼叫順序、切換失敗不炸主迴圈、主迴圈在 gate 睡眠判斷「之前」
-輪替並寫 rotate_restart 心跳（含 rotated_to）。全部合成快照＋monkeypatch，不打外網、
-不動真憑證、不起真重啟。
+決策純函式 pick_account（v4 優先序：95% 安全上限 > 7d 早重置多吃 > 5h 早重置多吃 >
+負載平均分配＋margin 遲滯）的規則矩陣在 tests/test_claude_accounts.py；本檔只驗 autopilot
+執行點的合約：claude 訂閱模式才輪替、兩窗（5h/7d）用量與 reset_at 正確餵進決策、有討論
+進行中不切、switch → 排程重啟的呼叫順序、重複排程防護（180s 窗內不排第二次）、切換失敗
+不炸主迴圈、主迴圈在 gate 睡眠判斷「之前」輪替並寫 rotate_restart 心跳（含 rotated_to）。
+全部合成快照＋monkeypatch，不打外網、不動真憑證、不起真重啟。
 """
 
 from __future__ import annotations
@@ -66,9 +66,12 @@ def rotate_env(monkeypatch):
     monkeypatch.setattr(config, "CLAUDE_ROTATE_THRESHOLD", 95.0)
     monkeypatch.setattr(config, "CLAUDE_ROTATE_MARGIN", 10.0)
     monkeypatch.setattr(config, "CLAUDE_ROTATE_RESET_EDGE", 900.0)
+    monkeypatch.setattr(config, "CLAUDE_ROTATE_RESET_EDGE_7D", 21600.0)
     monkeypatch.setattr(config, "PROVIDER", "claude")
     monkeypatch.setattr(config, "has_api_key", lambda: False)
     monkeypatch.setattr(config, "claude_cli_logged_in", lambda: True)
+    # 重複排程防護的模組級旗標歸零，避免測試間洩漏（正式行程由重啟自然歸零）。
+    monkeypatch.setattr(autopilot, "_rotate_scheduled_at", None)
     monkeypatch.setattr(autopilot.history, "busy_sessions", lambda _stale: [])
     monkeypatch.setattr(
         autopilot.claude_accounts, "switch", lambda label: calls.append(("switch", label))
@@ -90,26 +93,86 @@ def test_rotate_switches_then_schedules_restart_in_order(rotate_env):
 
 
 def test_rotate_balances_on_margin_gap_with_log(rotate_env, caplog):
-    """平均分配案（重置差 <edge）：B 負載 40、A 18（差 ≥margin）→ 切 A；log 為「帳號分配」樣式。"""
+    """平均分配案（兩窗重置差皆 <edge）：B 負載 40、A 18（差 ≥margin）→ 切 A；log 為「帳號分配」樣式。"""
     t0 = time.time() + 3600
-    snap = _snap([_acct("A", 18.0, fhr=t0), _acct("B", 40.0, active=True, fhr=t0)])
+    sdr = t0 + 86400  # 兩帳號 7d 重置相同 → 7d 規則不觸發（差 0 <edge_7d）
+    snap = _snap(
+        [_acct("A", 18.0, fhr=t0, sdr=sdr), _acct("B", 40.0, active=True, fhr=t0, sdr=sdr)]
+    )
     with caplog.at_level("INFO", logger="ti.autopilot"):
         assert autopilot._maybe_rotate_claude_account(snap) == "A"
     assert rotate_env == [("switch", "A"), ("restart",)]
     hhmm = time.strftime("%H:%M", time.localtime(t0))
-    assert f"Claude 帳號分配：切至 A（5h 重置 {hhmm}；負載 A 18/B 40）" in caplog.text
+    md_hm = time.strftime("%m/%d %H:%M", time.localtime(sdr))
+    assert (
+        f"Claude 帳號分配：切至 A（5h 重置 {hhmm}；7d 重置 {md_hm}；負載 A 18/B 40）" in caplog.text
+    )
 
 
 def test_rotate_prefers_earlier_reset_with_log(rotate_env, caplog):
-    """重置優先案：A 比在線 B 早 42 分（≥edge）→ 即使 A 負載較高也切；log 含「較 B 早 42 分」。"""
+    """5h 重置優先案：A 比在線 B 早 42 分（≥edge）→ 即使 A 負載較高也切；log 含「較 B 早 42 分」。"""
     ra = time.time() + 3600
     rt = ra - 42 * 60
-    snap = _snap([_acct("A", 30.0, fhr=rt), _acct("B", 26.0, active=True, fhr=ra)])
+    sdr = ra + 86400  # 兩帳號 7d 重置相同 → 7d 規則不觸發，由 5h 規則決策
+    snap = _snap(
+        [_acct("A", 30.0, fhr=rt, sdr=sdr), _acct("B", 26.0, active=True, fhr=ra, sdr=sdr)]
+    )
     with caplog.at_level("INFO", logger="ti.autopilot"):
         assert autopilot._maybe_rotate_claude_account(snap) == "A"
     assert rotate_env == [("switch", "A"), ("restart",)]
     hhmm = time.strftime("%H:%M", time.localtime(rt))
-    assert f"切至 A（5h 重置 {hhmm}，較 B 早 42 分；負載 A 30/B 26）" in caplog.text
+    md_hm = time.strftime("%m/%d %H:%M", time.localtime(sdr))
+    assert (
+        f"切至 A（5h 重置 {hhmm}，較 B 早 42 分；7d 重置 {md_hm}；負載 A 30/B 26）" in caplog.text
+    )
+
+
+def test_rotate_prefers_7d_earlier_reset(rotate_env, caplog):
+    """7d 優先案（2026-07-04 晨間實案縮影）：A 5h 較早（5h 規則會留 A），但 B 的 7d 早
+    ~123h ≥edge_7d → 在線 A 應切到 B；log 含 B 的 7d 重置時間。"""
+    now = time.time()
+    b_sdr = now + 40.7 * 3600
+    snap = _snap(
+        [
+            _acct("A", 53.0, active=True, fhr=now + 2.7 * 3600, sdr=now + 163.7 * 3600),
+            _acct("B", 15.0, fhr=now + 3.9 * 3600, sdr=b_sdr),
+        ]
+    )
+    with caplog.at_level("INFO", logger="ti.autopilot"):
+        assert autopilot._maybe_rotate_claude_account(snap) == "B"
+    assert rotate_env == [("switch", "B"), ("restart",)]
+    assert f"7d 重置 {time.strftime('%m/%d %H:%M', time.localtime(b_sdr))}" in caplog.text
+
+
+def test_rotate_stays_when_active_has_earlier_7d(rotate_env):
+    """在線即 7d 最早重置者 → 留在線多吃，不因 5h/負載規則亂切。"""
+    now = time.time()
+    snap = _snap(
+        [
+            _acct("A", 53.0, fhr=now + 2.7 * 3600, sdr=now + 163.7 * 3600),
+            _acct("B", 15.0, active=True, fhr=now + 3.9 * 3600, sdr=now + 40.7 * 3600),
+        ]
+    )
+    assert autopilot._maybe_rotate_claude_account(snap) is None
+    assert rotate_env == []
+
+
+def test_rotate_reschedule_guard_blocks_double_schedule(rotate_env, monkeypatch):
+    """重複排程防護：已排程重啟未滿 180s → 第二次呼叫不再 switch/排程（曾 30 秒排兩次）。"""
+    snap = _snap([_acct("A", 10.0), _acct("B", 96.0, active=True)])
+    assert autopilot._maybe_rotate_claude_account(snap) == "A"
+    assert autopilot._maybe_rotate_claude_account(snap) is None  # 30 秒內第二次 → 擋下
+    assert rotate_env == [("switch", "A"), ("restart",)]  # 只切/排程一次
+
+
+def test_rotate_reschedule_guard_expires(rotate_env, monkeypatch):
+    """防護窗過期（>180s）後恢復正常輪替（非 systemd 環境重啟不會來，不得永久卡死）。"""
+    monkeypatch.setattr(
+        autopilot, "_rotate_scheduled_at", time.time() - autopilot._ROTATE_RESCHEDULE_GUARD_S - 1
+    )
+    snap = _snap([_acct("A", 10.0), _acct("B", 96.0, active=True)])
+    assert autopilot._maybe_rotate_claude_account(snap) == "A"
+    assert rotate_env == [("switch", "A"), ("restart",)]
 
 
 def test_rotate_reset_gap_below_edge_uses_load_rule(rotate_env):
@@ -129,8 +192,9 @@ def test_claude_accounts_usage_extracts_windows_and_resets(rotate_env):
             _acct("B", None, active=True, error="stale_label"),
         ]
     )
-    usages, active = autopilot._claude_accounts_usage(snap)
+    usages, active, errors = autopilot._claude_accounts_usage(snap)
     assert active == "B"
+    assert errors == {"B": "stale_label"}
     assert usages["A"]["five_hour"] == 18.0 and usages["A"]["seven_day"] == 13.0
     assert usages["A"]["five_hour_reset"] == pytest.approx(t0 + 600)
     assert usages["A"]["seven_day_reset"] == pytest.approx(t0 + 86400)
@@ -222,7 +286,8 @@ def test_config_rotate_defaults():
     assert config.CLAUDE_ACCOUNT_PREFERRED == "B"
     assert config.CLAUDE_ROTATE_THRESHOLD == 95.0  # 安全上限
     assert config.CLAUDE_ROTATE_MARGIN == 10.0  # 平均分配遲滯
-    assert config.CLAUDE_ROTATE_RESET_EDGE == 900.0  # 重置時間優先的最小差距（秒）
+    assert config.CLAUDE_ROTATE_RESET_EDGE == 900.0  # 5h 早重置優先的最小差距（秒）
+    assert config.CLAUDE_ROTATE_RESET_EDGE_7D == 21600.0  # 7d 早重置優先的最小差距（秒，6h）
 
 
 def test_config_reload_reads_rotate_env(monkeypatch):
@@ -231,6 +296,7 @@ def test_config_reload_reads_rotate_env(monkeypatch):
     monkeypatch.setenv("TI_CLAUDE_ROTATE_THRESHOLD", "80")
     monkeypatch.setenv("TI_CLAUDE_ROTATE_MARGIN", "5")
     monkeypatch.setenv("TI_CLAUDE_ROTATE_RESET_EDGE", "300")
+    monkeypatch.setenv("TI_CLAUDE_ROTATE_RESET_EDGE_7D", "7200")
     try:
         config.reload()
         assert config.CLAUDE_ROTATE is False
@@ -238,6 +304,7 @@ def test_config_reload_reads_rotate_env(monkeypatch):
         assert config.CLAUDE_ROTATE_THRESHOLD == 80.0
         assert config.CLAUDE_ROTATE_MARGIN == 5.0
         assert config.CLAUDE_ROTATE_RESET_EDGE == 300.0
+        assert config.CLAUDE_ROTATE_RESET_EDGE_7D == 7200.0
     finally:
         monkeypatch.undo()
         config.reload()

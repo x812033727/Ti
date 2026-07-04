@@ -152,7 +152,7 @@ def test_claude_snapshot_survives_sync_failure(monkeypatch):
 
 def test_frontend_rl_errors_has_stale_label_message():
     """前後端契約：後端新 error 碼 stale_label 在前端 RL_ERRORS 有對應訊息。"""
-    src = (REPO_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "web" / "js" / "panels" / "settings.js").read_text(encoding="utf-8")
     start = src.index("const RL_ERRORS")
     end = src.index("};", start)
     table = src[start:end]
@@ -408,9 +408,9 @@ def test_quota_stale_max_env_reload(monkeypatch):
 
 def test_frontend_renders_stale_hint():
     """前後端契約：settings 面板讀到 stale=true 時顯示「額度更新中」muted 提示。"""
-    src = (REPO_ROOT / "web" / "app.js").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "web" / "js" / "panels" / "settings.js").read_text(encoding="utf-8")
     start = src.index("function renderProviderQuota")
-    end = src.index("\nfunction ", start + 1)
+    end = src.index("export async function refreshProviderQuota", start + 1)
     body = src[start:end]
     assert "data.stale" in body
     assert "額度更新中" in body

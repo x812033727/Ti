@@ -150,10 +150,10 @@ async def test_maybe_publish_broadcasts_outcome_in_event(monkeypatch, outcome):
 
 
 def _frontend_badge_keys() -> set[str]:
-    app_js = REPO_ROOT / "web" / "app.js"
+    app_js = REPO_ROOT / "web" / "js" / "events-render.js"
     text = app_js.read_text(encoding="utf-8")
     m = re.search(r"OUTCOME_BADGE\s*=\s*\{(.*?)\}", text, re.S)
-    assert m, "web/app.js 找不到 OUTCOME_BADGE"
+    assert m, "web/js/events-render.js 找不到 OUTCOME_BADGE"
     return set(re.findall(r"(\w+)\s*:", m.group(1)))
 
 
