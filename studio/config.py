@@ -688,15 +688,17 @@ CLAUDE_CREDENTIALS_FILE = Path(
 # autopilot 主迴圈）。ROTATE=0 整段停用；PREFERRED 為主帳號 label（負載同分時優先）。
 # 策略為「負載平均分配」：帳號負載＝5h/7d 兩額度窗用量取最大，主動把用量攤平到各帳號——
 # 在線帳號比最低負載帳號高出 MARGIN（遲滯，%，避免頻繁重啟）即切換；THRESHOLD 為
-# 安全上限（%）：在線帳號負載達此值一律強制切到仍低於上限的帳號。另納入重置時間：
-# 候選中「最早 5h 重置」者比次早者早 ≥ RESET_EDGE（秒）時優先切給它多吃（其用量很快
-# 歸還；晚重置的要背久）——優先序：安全上限 > 重置時間 > 負載平衡。五者皆納入 reload()
-# （UI 改 .env 後即時生效）。
+# 安全上限（%）：在線帳號負載達此值一律強制切到仍低於上限的帳號。另納入重置時間（早重置
+# 多吃：早歸還的額度先吃掉才不浪費；晚重置的要背久）：候選中「最早 7d 重置」者比次早者早
+# ≥ RESET_EDGE_7D（秒，預設 6h）優先切給它——7d 窗是週尺度的稀缺資源，優先於「最早 5h
+# 重置」早 ≥ RESET_EDGE（秒）的日內節奏規則。優先序：安全上限 > 7d 早重置 > 5h 早重置 >
+# 負載平衡（v4，SSOT 見 pick_account docstring）。六者皆納入 reload()（UI 改 .env 後即時生效）。
 CLAUDE_ROTATE = os.getenv("TI_CLAUDE_ROTATE", "1") not in ("0", "false", "False", "")
 CLAUDE_ACCOUNT_PREFERRED = os.getenv("TI_CLAUDE_ACCOUNT_PREFERRED", "B")
 CLAUDE_ROTATE_THRESHOLD = _env_float("TI_CLAUDE_ROTATE_THRESHOLD", 95.0)
 CLAUDE_ROTATE_MARGIN = _env_float("TI_CLAUDE_ROTATE_MARGIN", 10.0)
 CLAUDE_ROTATE_RESET_EDGE = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE", 900.0)
+CLAUDE_ROTATE_RESET_EDGE_7D = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE_7D", 21600.0)
 
 # Antigravity（agy）的 OAuth token 檔（agy 登入後寫入、執行時刷新；antigravity_usage 讀其
 # token.access_token 查 Google Code Assist 配額）。預設 ~/.gemini/antigravity-cli/...；可 env 覆寫。
@@ -1022,7 +1024,7 @@ def reload() -> None:
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP, QUOTA_STALE_MAX
     global LINT_AUTOFORMAT
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
-    global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE
+    global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     AUTOPILOT_NORTH_STAR = os.getenv(
         "TI_AUTOPILOT_NORTH_STAR",
@@ -1172,3 +1174,4 @@ def reload() -> None:
     CLAUDE_ROTATE_THRESHOLD = _env_float("TI_CLAUDE_ROTATE_THRESHOLD", 95.0)
     CLAUDE_ROTATE_MARGIN = _env_float("TI_CLAUDE_ROTATE_MARGIN", 10.0)
     CLAUDE_ROTATE_RESET_EDGE = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE", 900.0)
+    CLAUDE_ROTATE_RESET_EDGE_7D = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE_7D", 21600.0)

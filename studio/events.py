@@ -177,19 +177,31 @@ def run_result(session_id: str, passed: bool, detail: str, log: str = "") -> Stu
 
 
 def demo_result(
-    session_id: str, command: str, exit_code: int, output: str, *, label: str = "Demo"
+    session_id: str,
+    command: str,
+    exit_code: int,
+    output: str,
+    *,
+    label: str = "Demo",
+    retried_cmd: str | None = None,
+    first_exit: int | None = None,
 ) -> StudioEvent:
-    return StudioEvent(
-        EventType.DEMO_RESULT,
-        session_id,
-        {
-            "label": label,
-            "command": command,
-            "exit_code": exit_code,
-            "passed": exit_code == 0,
-            "output": output,
-        },
-    )
+    """Demo 執行結果事件。``retried_cmd``／``first_exit``：demo 指令 usage error 消毒重試
+
+    （runner.sanitize_demo_command）有發生時，記錄重試用的消毒指令與首次 exit code——
+    exit_code/passed/output 為「最終一次」執行的結果，兩次嘗試皆可稽核。未重試時不帶欄位。
+    """
+    payload = {
+        "label": label,
+        "command": command,
+        "exit_code": exit_code,
+        "passed": exit_code == 0,
+        "output": output,
+    }
+    if retried_cmd is not None:
+        payload["retried_cmd"] = retried_cmd
+        payload["first_exit"] = first_exit
+    return StudioEvent(EventType.DEMO_RESULT, session_id, payload)
 
 
 def dispatch_decision(

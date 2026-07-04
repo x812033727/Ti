@@ -83,6 +83,10 @@ const cases = [
   { type: "token_usage", session_id: "t", payload: { speaker: "engineer", provider: "claude", model: "claude-3-5-sonnet", prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000, cost_usd: 0.0036, cache_read: 0, cache_write: 0, task_id: 1 } },
   { type: "token_usage", session_id: "t", payload: { speaker: "pm", provider: "codex", model: "gpt-5.5", prompt_tokens: 500, completion_tokens: 100, total_tokens: 600, cost_usd: null, cache_read: 0, cache_write: 0 } }, // 向後相容：無 task_id
   { type: "token_usage", session_id: "t" }, // 無 payload
+  // demo_result 消毒重試欄位（retried_cmd/first_exit）：有無皆不崩潰
+  { type: "demo_result", session_id: "t", payload: { label: "Demo", command: "pytest -q --cache-dir=/x", exit_code: 0, passed: true, output: "ok", retried_cmd: "pytest -q", first_exit: 4 } },
+  { type: "demo_result", session_id: "t", payload: { label: "Demo", command: "pytest -q", exit_code: 0, passed: true, output: "ok" } }, // 向後相容：無重試欄位
+  { type: "demo_result", session_id: "t" }, // 無 payload
 ];
 
 try {

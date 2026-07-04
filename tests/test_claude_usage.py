@@ -35,13 +35,15 @@ class FakeResp:
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
-    """每測試清空模組快取，並把憑證指向 tmp（預設寫入一份有效 token）。"""
+    """每測試清空模組快取（TTL 快取＋last-known-good），並把憑證指向 tmp（預設寫入一份有效 token）。"""
     claude_usage._cache.clear()
+    claude_usage._last_good.clear()
     cred = tmp_path / ".credentials.json"
     cred.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok-abc"}}), encoding="utf-8")
     monkeypatch.setattr(config, "CLAUDE_CREDENTIALS_FILE", cred)
     yield
     claude_usage._cache.clear()
+    claude_usage._last_good.clear()
 
 
 def _patch_get(monkeypatch, resp_or_exc, counter=None):
@@ -175,3 +177,68 @@ def test_window_handles_none_and_missing_util():
     assert (
         claude_usage._window({"resets_at": "2026-06-19T05:49:59+00:00"})["used_percentage"] is None
     )
+
+
+# --- 暫時性失敗的 last-known-good 回退（429 不得誤殺帳號）---------------------
+
+
+def _fetch_success_then(monkeypatch, resp_or_exc):
+    """先成功一次（填 last-known-good），再把上游換成指定失敗，並繞過 TTL 快取重查。"""
+    _patch_get(monkeypatch, FakeResp())
+    good = claude_usage.fetch_rate_limits()
+    assert good["error"] is None
+    _patch_get(monkeypatch, resp_or_exc)
+    return good, claude_usage.fetch_rate_limits(force=True)
+
+
+def test_429_falls_back_to_last_good_as_stale(monkeypatch):
+    """成功後遇 429（實案：10:44 usage 端點 Too Many Requests）→ 回舊值副本：
+    stale=True、error 維持 None、保留原 fetched_at——帳號輪替不得因此判帳號不可用。"""
+    good, r = _fetch_success_then(monkeypatch, FakeResp(status_code=429))
+    assert r["error"] is None
+    assert r["stale"] is True
+    assert r["fetched_at"] == good["fetched_at"]  # 保留舊快照的取得時間
+    assert r["five_hour"]["used_percentage"] == 3.0  # 額度數字沿用舊值
+    assert "stale" not in good  # 原成功快照不受污染（回退是副本）
+
+
+def test_429_stale_copy_is_cached_for_ttl(monkeypatch):
+    """回退結果照常進 TTL 快取：後續 60s 內的消費端看到同一份 stale 快照、不再打上游。"""
+    _, stale = _fetch_success_then(monkeypatch, FakeResp(status_code=429))
+    _patch_get(monkeypatch, AssertionError("TTL 內不得再打上游"))
+    assert claude_usage.fetch_rate_limits() is stale
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [FakeResp(status_code=500), FakeResp(raise_json=True), httpx.HTTPError("boom")],
+)
+def test_transient_failures_fall_back_to_last_good(monkeypatch, failure):
+    """5xx／壞 JSON／連線錯誤同樣回退舊值（與 429 同類的暫時性失敗）。"""
+    _, r = _fetch_success_then(monkeypatch, failure)
+    assert r["error"] is None and r["stale"] is True
+
+
+def test_429_without_last_good_is_unreachable(monkeypatch):
+    """從未成功過（無 last-known-good）→ 維持既有 unreachable 行為。"""
+    _patch_get(monkeypatch, FakeResp(status_code=429))
+    assert claude_usage.fetch_rate_limits()["error"] == "unreachable"
+
+
+def test_401_not_masked_by_last_good(monkeypatch):
+    """授權失敗（401）不得被舊值掩蓋：token 壞了就該回 unauthorized。"""
+    _, r = _fetch_success_then(monkeypatch, FakeResp(status_code=401))
+    assert r["error"] == "unauthorized"
+    assert "stale" not in r
+
+
+def test_last_good_older_than_max_age_is_unreachable(monkeypatch):
+    """last-known-good 超過 900s → 不回退（過舊的額度資訊已不可信）。"""
+    t0 = claude_usage._now()
+    monkeypatch.setattr(claude_usage, "_now", lambda: t0)
+    _patch_get(monkeypatch, FakeResp())
+    assert claude_usage.fetch_rate_limits()["error"] is None
+    # 時間快轉 901s：TTL 快取也已過期，重查遇 429 → 舊值過齡，回 unreachable
+    monkeypatch.setattr(claude_usage, "_now", lambda: t0 + claude_usage._LAST_GOOD_MAX_AGE + 1)
+    _patch_get(monkeypatch, FakeResp(status_code=429))
+    assert claude_usage.fetch_rate_limits()["error"] == "unreachable"
