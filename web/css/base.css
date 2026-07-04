@@ -105,3 +105,20 @@ input:focus-visible, select:focus-visible { outline: none; }
     transition-duration: .01ms !important;
   }
 }
+
+/* 鍵盤跳轉連結：平時藏在畫面外，Tab 聚焦時滑入 */
+.skip-link {
+  position: fixed;
+  left: 10px; top: -52px;
+  z-index: 200;
+  padding: 9px 16px;
+  background: var(--surface-solid);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  font-size: 13px;
+  text-decoration: none;
+  transition: top var(--t-fast) var(--ease);
+}
+.skip-link:focus { top: 10px; }

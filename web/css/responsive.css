@@ -20,6 +20,20 @@
   body.experts-collapsed .rail-toggle { transform: rotate(180deg); }
 }
 
+/* ---------- 平板（901–1180px）：成員欄固定收合成頭像直排、右欄收窄 ---------- */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .layout { grid-template-columns: 64px minmax(0, 1fr) 320px; }
+  .experts { padding: 14px 8px; }
+  .experts .panel-head { justify-content: center; }
+  .experts h2,
+  .expert .meta,
+  .expert .dot { display: none; }
+  .expert { justify-content: center; padding: 4px; }
+  .rail-toggle { display: none; } /* 平板固定收合，不提供展開切換 */
+  .toolbar button { padding: 7px 9px; font-size: 12.5px; }
+  .toolbar-sep { margin: 0 2px; }
+}
+
 /* ---------- 手機底部分頁導覽列（桌機隱藏） ---------- */
 .mobiletabs { display: none; }
 

@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
+  <a class="skip-link" href="#stream">跳到討論串</a>
   <header class="app-header glass">
     <div class="brand">
       <svg class="logo" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
@@ -41,11 +42,11 @@
       <button id="themeBtn" class="ghost" title="主題：跟隨系統" aria-label="主題：跟隨系統">🌗</button>
       <button id="logoutBtn" class="ghost hidden" title="登出">登出</button>
     </nav>
-    <div id="phase" class="phase">待命中</div>
+    <div id="phase" class="phase" aria-live="polite">待命中</div>
   </header>
 
   <!-- 設定（API key / provider / 模型 / GitHub token） -->
-  <div id="settingsPanel" class="settings-panel hidden">
+  <div id="settingsPanel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-label="設定">
     <div class="settings-card glass">
       <div class="settings-head">
         <h2>設定</h2>
@@ -110,7 +111,7 @@
   </div>
 
   <!-- 歷史存檔 / 重播 -->
-  <div id="historyPanel" class="drawer glass hidden">
+  <div id="historyPanel" class="drawer glass hidden" role="dialog" aria-label="歷史 session">
     <div class="drawer-head">
       <h2>📜 歷史 session</h2>
       <div class="drawer-actions">
@@ -122,7 +123,7 @@
   </div>
 
   <!-- Autopilot 自主自我改善迴圈 -->
-  <div id="autopilotPanel" class="drawer glass hidden">
+  <div id="autopilotPanel" class="drawer glass hidden" role="dialog" aria-label="Autopilot 自主迴圈">
     <div class="drawer-head" id="autopilotHead">
       <h2>🤖 Autopilot <span id="apMini" class="ap-mini muted hidden"></span></h2>
       <div class="drawer-actions">
@@ -147,7 +148,7 @@
   </div>
 
   <!-- 專案藍圖與改良待辦 -->
-  <div id="projectPanel" class="drawer glass hidden">
+  <div id="projectPanel" class="drawer glass hidden" role="dialog" aria-label="專案藍圖與改良待辦">
     <div class="drawer-head">
       <h2>📦 專案</h2>
       <div class="drawer-actions">
@@ -159,7 +160,7 @@
   </div>
 
   <!-- 動態流程編排 -->
-  <div id="workflowPanel" class="drawer glass hidden">
+  <div id="workflowPanel" class="drawer glass hidden" role="dialog" aria-label="動態流程編排">
     <div class="drawer-head">
       <h2>🧭 動態流程</h2>
       <div class="drawer-actions">
@@ -197,7 +198,7 @@
   </div>
 
   <!-- 團隊（角色與討論小組管理） -->
-  <div id="teamPanel" class="drawer glass hidden">
+  <div id="teamPanel" class="drawer glass hidden" role="dialog" aria-label="團隊管理">
     <div class="drawer-head">
       <h2>👥 團隊</h2>
       <div class="drawer-actions">
@@ -228,7 +229,7 @@
   </div>
 
   <!-- 運維指標 -->
-  <div id="metricsPanel" class="drawer glass hidden">
+  <div id="metricsPanel" class="drawer glass hidden" role="dialog" aria-label="運維指標">
     <div class="drawer-head">
       <h2>📊 運維指標</h2>
       <div class="drawer-actions">
@@ -253,11 +254,13 @@
     <section class="discussion">
       <div class="command-deck glass">
         <!-- 收合後的精簡列：點擊展開；執行中保留停止鈕 -->
-        <button id="deckBar" class="deck-bar" type="button">
-          <span class="deck-caret">▾</span>
-          <span id="deckSummary" class="deck-summary muted"></span>
-          <span id="deckStop" class="deck-stop hidden" role="button">⏹ 停止</span>
-        </button>
+        <div class="deck-bar-wrap">
+          <button id="deckBar" class="deck-bar" type="button" title="展開啟動列">
+            <span class="deck-caret" aria-hidden="true">▾</span>
+            <span id="deckSummary" class="deck-summary muted"></span>
+          </button>
+          <button id="deckStop" class="deck-stop hidden" type="button">⏹ 停止</button>
+        </div>
         <!-- 第一層：需求 + 主鍵；第二層：情境（專案/repo/流程/小組/持續改良） -->
         <div class="deck-main">
           <input id="requirement" type="text" class="req-input"
@@ -290,7 +293,7 @@
         </div>
       </div>
       <h2>即時討論</h2>
-      <div id="stream" class="stream">
+      <div id="stream" class="stream" role="log" aria-live="polite" aria-label="即時討論">
         <div class="placeholder">輸入需求並按「開始討論」，專家們就會開工。</div>
       </div>
       <div class="interject">
@@ -303,18 +306,18 @@
     <!-- 右：看板 / 檔案（桌面用分頁切換） -->
     <aside class="side">
       <div class="side-head">
-        <div class="rail-tabs">
-          <button class="active" data-rt="board">📋 看板</button>
-          <button data-rt="files">📁 檔案</button>
+        <div class="rail-tabs" role="tablist" aria-label="右欄分頁">
+          <button class="active" data-rt="board" role="tab" aria-selected="true">📋 看板</button>
+          <button data-rt="files" role="tab" aria-selected="false">📁 檔案</button>
         </div>
         <button id="downloadBtn" class="download-btn hidden" title="把目前 session 的產出打包下載">⬇️ 下載成果</button>
       </div>
       <div class="board">
         <div class="columns">
-          <div class="col" data-col="todo"><h3>待辦 <small class="col-count"></small></h3><div class="cards"></div></div>
-          <div class="col" data-col="doing"><h3>進行中 <small class="col-count"></small></h3><div class="cards"></div></div>
-          <div class="col" data-col="review"><h3>審查 <small class="col-count"></small></h3><div class="cards"></div></div>
-          <div class="col" data-col="done"><h3>完成 <small class="col-count"></small></h3><div class="cards"></div></div>
+          <div class="col" data-col="todo"><h3 id="col-todo">待辦 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-todo"></div></div>
+          <div class="col" data-col="doing"><h3 id="col-doing">進行中 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-doing"></div></div>
+          <div class="col" data-col="review"><h3 id="col-review">審查 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-review"></div></div>
+          <div class="col" data-col="done"><h3 id="col-done">完成 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-done"></div></div>
         </div>
       </div>
       <div class="files">
@@ -327,15 +330,15 @@
   </main>
 
   <!-- 手機底部分頁導覽（桌機隱藏） -->
-  <nav class="mobiletabs glass">
-    <button data-mv="discussion">💬<span>討論</span></button>
-    <button data-mv="experts">👥<span>成員</span></button>
-    <button data-mv="board">📋<span>看板</span></button>
-    <button data-mv="files">📁<span>檔案</span></button>
-    <button data-mv="settings">⚙️<span>設定</span></button>
+  <nav class="mobiletabs glass" role="tablist" aria-label="主要分頁">
+    <button data-mv="discussion" role="tab" aria-selected="true">💬<span>討論</span></button>
+    <button data-mv="experts" role="tab" aria-selected="false">👥<span>成員</span></button>
+    <button data-mv="board" role="tab" aria-selected="false">📋<span>看板</span></button>
+    <button data-mv="files" role="tab" aria-selected="false">📁<span>檔案</span></button>
+    <button data-mv="settings" role="tab" aria-selected="false">⚙️<span>設定</span></button>
   </nav>
 
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 
   <script type="module" src="/static/app.js"></script>
 </body>

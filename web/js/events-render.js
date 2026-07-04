@@ -50,6 +50,9 @@ export function clearBoard() {
   document.querySelectorAll(".col .cards").forEach((c) => (c.innerHTML = ""));
 }
 
+// 專家狀態的無障礙文字（狀態點顏色的等價語意）
+const EXPERT_STATUS_LABEL = { idle: "待命", thinking: "思考中", working: "工作中" };
+
 export function renderRoster(roster) {
   const expertList = $("#expertList");
   expertList.innerHTML = "";
@@ -58,6 +61,7 @@ export function renderRoster(roster) {
     el.className = "expert";
     el.dataset.key = r.key;
     el.dataset.status = "idle";
+    el.setAttribute("aria-label", `${r.name}（${EXPERT_STATUS_LABEL.idle}）`);
     el.innerHTML = `
       <div class="av">${r.avatar}</div>
       <div class="meta"><div class="nm">${r.name}</div><div class="tt">${r.title}${r.provider ? " · " + r.provider : ""}</div></div>
@@ -74,6 +78,7 @@ export function addRosterMember(r) {
   el.className = "expert";
   el.dataset.key = r.key;
   el.dataset.status = "idle";
+  el.setAttribute("aria-label", `${r.name || r.key}（${EXPERT_STATUS_LABEL.idle}）`);
   el.innerHTML = `
       <div class="av">${r.avatar || "🆕"}</div>
       <div class="meta"><div class="nm">${r.name || r.key}</div><div class="tt">${r.title || ""}${r.provider ? " · " + r.provider : ""}</div></div>
@@ -86,6 +91,11 @@ export function setExpertStatus(key, status) {
   const el = expertList.querySelector(`.expert[data-key="${key}"]`);
   if (!el) return;
   el.dataset.status = status;
+  const nm = el.querySelector(".nm");
+  el.setAttribute(
+    "aria-label",
+    `${(nm && nm.textContent) || key}（${EXPERT_STATUS_LABEL[status] || status}）`,
+  );
   expertList.querySelectorAll(".expert").forEach((e) => e.classList.remove("active"));
   if (status !== "idle") el.classList.add("active");
 }
@@ -204,6 +214,7 @@ export function renderBoard(columns) {
     for (const it of items) {
       const c = document.createElement("div");
       c.className = "card";
+      c.setAttribute("role", "listitem");
       c.textContent = it.title;
       wrap.appendChild(c);
     }
@@ -222,9 +233,14 @@ export async function refreshFiles() {
     const list = $("#fileList");
     list.innerHTML = "";
     for (const f of data.files) {
+      // 真按鈕：鍵盤可聚焦/Enter 可開，不再用 li.onclick
       const li = document.createElement("li");
-      li.textContent = f;
-      li.onclick = () => viewFile(f);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "file-open";
+      btn.textContent = f;
+      btn.onclick = () => viewFile(f);
+      li.appendChild(btn);
       list.appendChild(li);
     }
     const btn = $("#downloadBtn");

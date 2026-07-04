@@ -32,13 +32,13 @@ export function renderHistory(sessions) {
     const li = document.createElement("li");
     const when = s.started_at ? new Date(s.started_at * 1000).toLocaleString() : "";
     li.innerHTML = `
-      <div class="h-main">
+      <button class="h-main" type="button" title="重播這場 session">
         <div class="h-req"></div>
         <div class="h-meta"><span class="h-status status-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>
           <span>${s.n_events || 0} 事件</span><span>${when}</span></div>
-      </div>
-      ${s.status === "running" ? '<button class="h-stop" title="停止這場進行中的討論（在安全點收尾）">⏹</button>' : ""}
-      <button class="h-del" title="刪除此 session（含產出檔案）">🗑</button>`;
+      </button>
+      ${s.status === "running" ? '<button class="h-stop" type="button" title="停止這場進行中的討論（在安全點收尾）">⏹</button>' : ""}
+      <button class="h-del" type="button" title="刪除此 session（含產出檔案）">🗑</button>`;
     li.querySelector(".h-req").textContent = s.requirement || "(無需求)";
     li.querySelector(".h-main").onclick = () => replaySession(s.session_id);
     const stopB = li.querySelector(".h-stop");

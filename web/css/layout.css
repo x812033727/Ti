@@ -230,7 +230,8 @@
 #stopBtn.ghost:not(:disabled) { color: var(--bad); border-color: rgba(255, 107, 107, .45); }
 #stopBtn.ghost:not(:disabled):hover { background: var(--bad-bg); }
 
-/* 收合後的啟動列：單列摘要 + 點擊展開 + 停止鈕 */
+/* 收合後的啟動列：單列摘要（按鈕）＋獨立停止鈕（同列 sibling，不再巢狀） */
+.deck-bar-wrap { display: flex; align-items: center; gap: 8px; }
 .deck-bar {
   display: flex;
   align-items: center;
@@ -251,6 +252,8 @@
   font-size: 13px;
 }
 .deck-stop {
+  flex: none;
+  background: none;
   color: var(--bad);
   border: 1px solid rgba(255, 107, 107, .45);
   border-radius: var(--r-full);
@@ -258,7 +261,8 @@
   font-size: 13px;
   white-space: nowrap;
 }
+.deck-stop:hover { background: var(--bad-bg); }
 .deck-stop.hidden { display: none; }
 .command-deck.collapsed { padding: 8px 12px; gap: 0; }
 .command-deck.collapsed .deck-main, .command-deck.collapsed .deck-row { display: none; }
-.command-deck:not(.collapsed) .deck-bar { display: none; }
+.command-deck:not(.collapsed) .deck-bar-wrap { display: none; }
