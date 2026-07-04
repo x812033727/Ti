@@ -20,7 +20,6 @@ from __future__ import annotations
 import ast
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 from _repo import REPO_ROOT
@@ -103,7 +102,9 @@ def test_pause_file_writers_whitelisted():
         for call in _find_pause_writers(tree):
             found.add((path.name, _enclosing_function(tree, call)))
     unexpected = found - _PAUSE_WRITERS_ALLOWED
-    assert not unexpected, f"發現白名單外的 PAUSE_FILE 寫入點（外置 kill switch 假設被破壞）：{unexpected}"
+    assert not unexpected, (
+        f"發現白名單外的 PAUSE_FILE 寫入點（外置 kill switch 假設被破壞）：{unexpected}"
+    )
     assert found == _PAUSE_WRITERS_ALLOWED, f"白名單過時，請同步：實際 {found}"
 
 
@@ -121,7 +122,9 @@ def test_guarded_constants_not_aliased_by_import():
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module and "config" in node.module:
                 aliased = {a.name for a in node.names} & set(_GUARDED)
-                assert not aliased, f"{path.name} 以 import 別名引用受守護常數 {aliased}，請改走 config.X"
+                assert not aliased, (
+                    f"{path.name} 以 import 別名引用受守護常數 {aliased}，請改走 config.X"
+                )
 
 
 def test_guarded_constants_reference_whitelist():
@@ -173,7 +176,9 @@ def _script_code_lines() -> list[str]:
 def test_watchdog_files_exist_and_external():
     assert WATCHDOG.is_file() and SERVICE.is_file() and TIMER.is_file()
     code = "\n".join(_script_code_lines())
-    assert code.startswith("set -u") or WATCHDOG.read_text(encoding="utf-8").startswith("#!/bin/bash")
+    assert code.startswith("set -u") or WATCHDOG.read_text(encoding="utf-8").startswith(
+        "#!/bin/bash"
+    )
     assert "curl" in code and "PAUSE_FILE" in code
     # 外置契約：有效行不得依賴被監控 runtime（python/studio），設定不得經 config.py
     assert "python" not in code.lower(), "watchdog 不得依賴被監控對象的 runtime"
