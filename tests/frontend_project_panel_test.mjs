@@ -1,7 +1,6 @@
-// 專案面板前端驗證：載入真實 web/app.js 的 refreshProjectPanel()，用記錄式 DOM
-// 實際渲染，驗證藍圖功能按 P0→P2 排序、優先級徽章、backlog 列含類型/來源。
-import fs from 'node:fs';
-import vm from 'node:vm';
+// 專案面板前端驗證：先掛全域 stub 再 import 真實 web/js/panels/project.js 的
+// refreshProjectPanel()，用記錄式 DOM 實際渲染，驗證藍圖功能按 P0→P2 排序、
+// 優先級徽章、backlog 列含類型/來源。
 
 // --- 記錄式 DOM（同 frontend_settings_render_test 範式）---
 class RecEl {
@@ -51,7 +50,7 @@ const noop = () => {};
 const windowObj = { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } };
 function WebSocket() { return new RecEl('ws'); }
 
-const ctx = vm.createContext({
+Object.assign(globalThis, {
   document: {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
@@ -66,11 +65,10 @@ const ctx = vm.createContext({
       ok: true,
       json: () => Promise.resolve(String(url).includes('/api/projects/p1') ? FIXTURE : {}),
     }),
-  console, setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
+  setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
 });
 
-const src = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-vm.runInContext(src, ctx, { filename: 'app.js' });
+const ctx = await import('../web/js/panels/project.js');
 
 $('#projectSelect').value = 'p1';
 await ctx.refreshProjectPanel();

@@ -1,13 +1,5 @@
-// 前端相容性 smoke：在 stub 過的 DOM 環境載入 web/app.js，
+// 前端相容性 smoke：先掛全域 DOM stub，再 import 真實 web/js/events-render.js，
 // 驗證 handleEvent 對「未知事件」與「新事件」都不會崩潰（依賴 switch 無 default）。
-import fs from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
-import { fileURLToPath } from "node:url";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const appPath = path.join(here, "..", "web", "app.js");
-const source = fs.readFileSync(appPath, "utf-8");
 
 // 一個「對任何屬性存取/呼叫都安全」的萬用 stub（支援鏈式：el.classList.toggle(...) 等）。
 const makeStub = () =>
@@ -28,7 +20,7 @@ const doc = {
   body: makeStub(),
 };
 
-const sandbox = {
+Object.assign(globalThis, {
   document: doc,
   window: { addEventListener: () => {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
   location: { protocol: "http:", host: "localhost", href: "" },
@@ -36,20 +28,10 @@ const sandbox = {
   fetch: () => Promise.resolve({ json: () => Promise.resolve({}), ok: true }),
   setTimeout: () => 0,
   clearTimeout: () => {},
-  console,
-  Promise,
-  JSON,
-  Date,
-  Object,
-  Array,
-  encodeURIComponent,
-};
-sandbox.globalThis = sandbox;
+});
+const mod = await import("../web/js/events-render.js");
 
-const ctx = vm.createContext(sandbox);
-vm.runInContext(source, ctx, { filename: "app.js" });
-
-const handleEvent = ctx.handleEvent;
+const handleEvent = mod.handleEvent;
 if (typeof handleEvent !== "function") {
   console.error("handleEvent 未定義");
   process.exit(1);
@@ -83,6 +65,10 @@ const cases = [
   { type: "token_usage", session_id: "t", payload: { speaker: "engineer", provider: "claude", model: "claude-3-5-sonnet", prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000, cost_usd: 0.0036, cache_read: 0, cache_write: 0, task_id: 1 } },
   { type: "token_usage", session_id: "t", payload: { speaker: "pm", provider: "codex", model: "gpt-5.5", prompt_tokens: 500, completion_tokens: 100, total_tokens: 600, cost_usd: null, cache_read: 0, cache_write: 0 } }, // 向後相容：無 task_id
   { type: "token_usage", session_id: "t" }, // 無 payload
+  // demo_result 消毒重試欄位（retried_cmd/first_exit）：有無皆不崩潰
+  { type: "demo_result", session_id: "t", payload: { label: "Demo", command: "pytest -q --cache-dir=/x", exit_code: 0, passed: true, output: "ok", retried_cmd: "pytest -q", first_exit: 4 } },
+  { type: "demo_result", session_id: "t", payload: { label: "Demo", command: "pytest -q", exit_code: 0, passed: true, output: "ok" } }, // 向後相容：無重試欄位
+  { type: "demo_result", session_id: "t" }, // 無 payload
 ];
 
 try {

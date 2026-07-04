@@ -1,8 +1,6 @@
-// 動態流程編輯器前端驗證：載入真實 web/app.js，用記錄式 DOM + 攔截 fetch，驗證
-// loadWorkflowPanel 渲染清單、renderWorkflowSelection 帶出 stages、saveWorkflow 對既有
-// 流程走 PUT、對新流程走 POST，且預設流程唯讀。
-import fs from 'node:fs';
-import vm from 'node:vm';
+// 動態流程編輯器前端驗證：先掛全域 stub 再 import 真實 web/js/panels/workflow.js，
+// 用記錄式 DOM + 攔截 fetch，驗證 loadWorkflowPanel 渲染清單、renderWorkflowSelection
+// 帶出 stages、saveWorkflow 對既有流程走 PUT、對新流程走 POST，且預設流程唯讀。
 
 class RecEl {
   constructor(tag) {
@@ -51,7 +49,7 @@ const noop = () => {};
 const windowObj = { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } };
 function WebSocket() { return new RecEl('ws'); }
 
-const ctx = vm.createContext({
+Object.assign(globalThis, {
   document: {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
@@ -63,11 +61,10 @@ const ctx = vm.createContext({
   window: windowObj, location: windowObj.location, WebSocket,
   fetch: fetchStub,
   confirm: () => true,
-  console, setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
+  setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
 });
 
-const src = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-vm.runInContext(src, ctx, { filename: 'app.js' });
+const ctx = await import('../web/js/panels/workflow.js');
 
 function expect(cond, msg) {
   if (!cond) { console.error('FAIL: ' + msg); process.exit(1); }

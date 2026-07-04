@@ -19,7 +19,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "uat-settings-checklist.md"
-APP_JS = ROOT / "web" / "app.js"
+# 設定面板前端已拆為 ES module：字串一致性斷言對準 settings 面板模組
+APP_JS = ROOT / "web" / "js" / "panels" / "settings.js"
 HEADER = ["#", "功能區塊", "操作步驟", "預期結果", "實際結果", "Pass/Fail", "備註"]
 
 

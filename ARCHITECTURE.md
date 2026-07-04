@@ -431,10 +431,23 @@ autopilot 在 drain 的那份佇列。autopilot 在
 
 ## 前端（web/）
 
-免建置、無框架：
+免建置、無框架，原生 ES modules（`<script type="module">`，無 npm/build 流程）：
 
-- `index.html` / `app.js` / `styles.css`：工作室主頁（討論串、看板、檔案、歷史、重播、設定面板、
-  GitHub repo 網址輸入）。`app.js` 載入時先打 `/api/auth/status`，門禁啟用且未登入則導向 `/login`。
+- `index.html`：工作室主頁骨架（三欄 grid＋六個 drawer＋手機分頁列）；`<head>` 內含
+  防 FOUC 的主題 inline script。`styles.css` 為 `@import` 聚合檔，實際規則拆在
+  `web/css/*.css`（tokens 雙主題／base／layout／stream／board／drawers／settings／
+  components／responsive——responsive 收全部斷點且必須最後載入）。
+- `app.js`：唯一入口 module——import 各模組、集中事件綁定、init()（先打
+  `/api/auth/status`，門禁啟用且未登入則導向 `/login`）。
+- `web/js/`：**非入口模組頂層不查 DOM、不留副作用**（Node 測試「先掛 globalThis stub
+  → import 模組」依賴此鐵則）；跨模組可變狀態集中 `state.js`。
+  - `dom.js`（$/toast）、`state.js`、`ws.js`（start/stop/插話）、
+    `events-render.js`（**handleEvent 事件中樞**＋討論串/看板/檔案渲染）、
+    `theme.js`（深/淺/跟隨系統）、`health.js`（health＋門禁檢查）。
+  - `panels/`：deck（啟動列）、history、autopilot、project、metrics、workflow
+    （含結構化 stage 卡片編輯器，textarea JSON 為單一真相）、roles、groups、team、
+    settings。
+  - `components/`：modal（`<dialog>` 表單）、drawer（統一開關/Esc/焦點管理）、tabs。
 - `login.html` / `login.js`：登入頁，送 `/api/login` 後導回 `/`。
 
 ## 資料夾

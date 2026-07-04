@@ -52,6 +52,21 @@ async def _lifespan(app: FastAPI):
         history.enforce_retention()
     except Exception:  # noqa: BLE001
         logging.getLogger("ti.history").warning("啟動回收失敗（略過，不影響啟動）", exc_info=True)
+    # 啟動時掃一次卡在 running 的幽靈 meta：服務／autopilot 被 restart 殺掉時
+    # finish_session 沒跑到，meta 永遠停在 running（網站無限顯示 ⏳ 執行中）。保守雙保險，
+    # 絕不掃到 autopilot 正在跑的 live session：active_sids 帶 busy_sessions（近期有活動的
+    # running 場次），且 sweep 本身只動「超過 1 小時無任何事件」者。失敗絕不可擋住啟動。
+    try:
+        active = frozenset(
+            str(m.get("session_id"))
+            for m in history.busy_sessions(config.DEPLOY_STALE_AFTER)
+            if m.get("session_id")
+        )
+        history.sweep_stale_running(active_sids=active)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("ti.history").warning(
+            "啟動幽靈 session 掃除失敗（略過，不影響啟動）", exc_info=True
+        )
     # 未設 TI_AUTH_SECRET（用臨時隨機密鑰）時於啟動發告警：重啟即失效所有登入、多實例無法共用 session。
     if config.AUTH_SECRET_IS_EPHEMERAL:
         logging.getLogger("ti.config").warning(
