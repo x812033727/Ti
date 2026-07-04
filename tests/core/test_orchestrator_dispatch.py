@@ -272,6 +272,7 @@ async def test_stage_decompose_without_dispatch_lines_keeps_empty_hints(monkeypa
 @pytest.mark.asyncio
 async def test_work_task_restores_even_when_broadcast_cancelled(monkeypatch):
     import asyncio
+
     monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
     s, experts, bucket = _session()
 
