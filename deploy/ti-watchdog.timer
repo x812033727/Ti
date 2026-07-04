@@ -1,0 +1,17 @@
+[Unit]
+Description=Ti autopilot 外置 kill switch 定時器（每 5 分鐘健康檢查一次）
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+# 安裝：
+#   cp /opt/ti/deploy/ti-watchdog.{service,timer} /etc/systemd/system/
+#   chmod +x /opt/ti/deploy/ti-watchdog.sh
+#   systemctl daemon-reload && systemctl enable --now ti-watchdog.timer
+# 觀察：journalctl -u ti-watchdog.service
+# 恢復（kill switch 觸發後）：rm /opt/ti/AUTOPILOT_PAUSED

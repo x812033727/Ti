@@ -22,6 +22,9 @@
 # 沙箱 ro-bind 測試的 host 探針檔（test_qa_ro_bind_reject_qa.py，正常即時清理；防誤 commit）
 # 跨場次教訓庫（LESSONS_FILE，預設 PROJECT_ROOT/lessons.json）+ 其鎖檔，屬執行期狀態，不進版控。
 # 錨定 repo 根：原 `autopilot/`（無錨定）會誤殺 tests/autopilot/ 測試目錄，
+# 任務過程產物（盤點 hits／task 收尾報告／驗證證據），不進版控；
+# 若日後有證據文件需刻意入庫，請用 `!` 反白名單逐檔放行。
+*-EVIDENCE.md
 *.db
 *.db-shm
 *.db-wal
@@ -56,9 +59,13 @@
 .vscode
 .zprofile
 .zshrc
+*_hits*.txt
 /autopilot/
 /body.md
+BASELINE_task*.md
+CLOSURE_task*.md
 ENV/
+VERIFICATION_REPORT_*.md
 __pycache__/
 adr.lock
 appraisals.json

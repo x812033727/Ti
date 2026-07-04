@@ -7,6 +7,8 @@ import {
 import { setRunning } from "./deck.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal } from "../components/modal.js";
+// 循環引用（ws.js ↔ history.js）安全：兩邊都只在執行期呼叫函式匯出，ESM 可解析。
+import { stopReconnect } from "../ws.js";
 
 export const STATUS_LABEL = {
   running: "⏳ 執行中", completed: "✅ 完成", incomplete: "⚠️ 未達標",
@@ -96,6 +98,7 @@ export async function cleanupCompleted() {
 export async function replaySession(sid) {
   if (state.replaying) return;
   closeDrawer("#historyPanel");
+  stopReconnect(); // 主動導向重播＝放棄重掛，別讓 onclose 又觸發重連
   if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.close();
   let events = [];
   let requirement = "";

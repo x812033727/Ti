@@ -763,6 +763,10 @@ AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3
 # 上限秒數（防 reset 資訊異常導致睡過頭，醒來會重查快照再決定）。
 AUTOPILOT_QUOTA_GATE = os.getenv("TI_AUTOPILOT_QUOTA_GATE", "1") not in ("0", "false", "False", "")
 AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+# 每日 PR 成本熔斷：UTC 當日 autopilot 實際開出的 PR 數（audit.jsonl 中 pr 非空的紀錄）達
+# 上限即停止接新任務，睡到跨日自動恢復（不寫 pause 檔、免人工 resume）。0＝不限制（預設，
+# 行為不變）。防幻覺任務迴圈在單日燒光 PR/CI/LLM 成本。
+AUTOPILOT_DAILY_PR_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_PR_BUDGET", "0"))
 # provider 額度快照 SWR（stale-while-revalidate）：provider_quota.snapshot() 的模組級快取
 # 過期後，只要舊快照年齡未超過此秒數，就立即回舊快照（附 stale=true）並由背景執行緒刷新，
 # 讓設定面板、orchestrator 派工與 autopilot 額度閘門等關鍵路徑不必同步等最慢 provider。
@@ -1029,6 +1033,7 @@ def reload() -> None:
     global APPRAISAL_ENABLED, APPRAISAL_MAX_STORE
     global ROLES_DIR, AUTOPILOT_NORTH_STAR
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP, QUOTA_STALE_MAX
+    global AUTOPILOT_DAILY_PR_BUDGET
     global LINT_AUTOFORMAT
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
@@ -1173,6 +1178,8 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+    # 每日 PR 成本熔斷（預設值須與檔頂宣告一致）
+    AUTOPILOT_DAILY_PR_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_PR_BUDGET", "0"))
     # lint 閘門自動格式化（預設值須與檔頂宣告一致）
     LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）

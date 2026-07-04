@@ -1,0 +1,11 @@
+[Unit]
+Description=Ti autopilot 外置 kill switch — 健康檢查連續失敗即落 PAUSE 檔
+# 刻意不掛 After=ti.service：watchdog 的獨立性不依賴被監控服務的生命週期。
+
+[Service]
+Type=oneshot
+User=root
+# 設定走 TI_WATCHDOG_*（不經 studio/config.py——外置契約，見 ti-watchdog.sh 註解）。
+# 需覆寫時用 /etc/default/ti-watchdog（EnvironmentFile，缺檔不報錯）。
+EnvironmentFile=-/etc/default/ti-watchdog
+ExecStart=/opt/ti/deploy/ti-watchdog.sh
