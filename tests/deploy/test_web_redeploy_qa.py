@@ -20,9 +20,18 @@ STYLES = config.PROJECT_ROOT / "web" / "styles.css"
 INDEX = config.PROJECT_ROOT / "web" / "index.html"
 
 
+def _frontend_js_source() -> str:
+    """前端 JS 聚合原始碼：入口 app.js + web/js/ 全部模組（ES module 拆分後，
+    字串斷言對「整個前端」成立即可，不綁死單一檔案）。"""
+    parts = [APP_JS.read_text(encoding="utf-8")]
+    for p in sorted((config.PROJECT_ROOT / "web" / "js").rglob("*.js")):
+        parts.append(p.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 @pytest.fixture
 def app_js():
-    return APP_JS.read_text(encoding="utf-8")
+    return _frontend_js_source()
 
 
 # --- A. 前端結構斷言 ------------------------------------------------
