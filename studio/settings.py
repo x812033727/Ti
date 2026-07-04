@@ -378,6 +378,20 @@ FIELDS: tuple[Field, ...] = (
         group="進階",
     ),
     Field(
+        "TI_TASK_HELP",
+        "中途求助 PM（工程師實作卡關時輸出 `求助:` 即時要指示，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_TASK_HELP_MAX",
+        "中途求助次數上限（每任務，空／非法＝1）",
+        placeholder="1",
+        group="進階",
+    ),
+    Field(
         "TI_TURN_IDLE_TIMEOUT",
         "發言閒置逾時秒數（串流多久無進展即中止該輪發言，0 關）",
         placeholder="240",
@@ -473,7 +487,7 @@ FIELDS: tuple[Field, ...] = (
         "互動 session 預設動態流程（未在啟動列指定時走此流程；空＝退回安全骨架；"
         "autopilot／改良迴圈不受影響）",
         kind="combo",
-        options=("動態優先", "預設流程"),
+        options=("動態優先", "預設流程", "快速模式"),
         default="動態優先",
         group="進階",
     ),

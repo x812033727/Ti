@@ -98,8 +98,9 @@ VERDICTS: dict[str, object] = {
 # 內建 workflow 的保留名稱：get_workflow 命中不到時回對應內建定義；不可被同名檔案覆蓋。
 DEFAULT_WORKFLOW_NAME = "預設流程"  # 等價現有寫死骨架
 DYNAMIC_FIRST_NAME = "動態優先"  # dynamic-first：PM 運行時溝通/分派/招募為主（互動預設）
+FAST_TRACK_NAME = "快速模式"  # fast-track：動態討論分派→實作→QA 單審，砍三審與任務級 critic 求速度
 # 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
-RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME)
+RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME)
 
 WORKFLOWS_FILENAME = "workflows.yaml"
 
@@ -379,10 +380,47 @@ def dynamic_first_workflow() -> dict:
     }
 
 
+def fast_track_workflow() -> dict:
+    """fast-track 內建流程：討論完直接交工程師實作，任務級只留 QA 單審。
+
+    與「動態優先」的差異：review gate 從 qa/senior/security 三審縮成 qa 單審（QA 有 Bash
+    能實際跑測試，輸出 `驗證: PASS/FAIL`）；task_pipeline 不放 gate/dynamic → 任務級 critic
+    與 PM 追加把關整關跳過；research/integrate 也不佔固定 stage（需要時 PM 可在 dynamic
+    階段招募 researcher/devops）。「有問題問 PM」由 session 級 dynamic（PM 逐 hop 溝通/
+    分派）覆蓋，任務級另有引擎級中途求助（工程師輸出 `求助: <問題>` 即時問 PM，
+    `TI_TASK_HELP` 控制）；「PM 驗收」由 wrap_up 的 PM 最終驗收（引擎路徑）滿足。客觀閘門（交付前
+    自測 exit code 硬否決）、停滯守門、demo 實跑驗證為引擎不變式，照常生效。
+    客製者若要任務級改由 PM 驗收，可把 gate 換成 {role: pm, verdict: pm_done}（generic
+    審查 prompt 路徑已支援）。不存檔、保留名、不可被覆寫。
+    """
+    return {
+        "name": FAST_TRACK_NAME,
+        "description": (
+            "快速模式：PM 動態討論與分派後直接交工程師實作，單一驗收（QA 實測），收尾仍由 PM 驗收"
+        ),
+        "stages": [
+            {"type": "clarify"},
+            {"type": "decompose"},
+            {"type": "dynamic", "name": "快速討論與分派", "budget": 3, "fallback": "engineer"},
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                    {"type": "review", "gate": [{"role": "qa", "verdict": "qa_passed"}]},
+                ],
+            },
+            {"type": "demo"},
+            {"type": "wrap_up"},
+            {"type": "publish"},
+        ],
+    }
+
+
 # 保留名 → 內建定義工廠（get_workflow／list_workflows 用）。
 _BUILTIN_WORKFLOWS = {
     DEFAULT_WORKFLOW_NAME: default_workflow,
     DYNAMIC_FIRST_NAME: dynamic_first_workflow,
+    FAST_TRACK_NAME: fast_track_workflow,
 }
 
 

@@ -316,6 +316,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_REFLEXION` / `TI_REFLEXION_MAX` | 任務級反思記憶（補「只帶上一輪原文」缺口）：失敗輪把 QA/高工意見蒸餾成反思存 per-session JSONL，後續輪/huddle 重試 prepend 回工程師 context／`MAX` 為注入筆數。進階開關（env 或設定面板「進階」組） | 開啟 / 5 |
 | `TI_OBJECTIVE_GATE` | 客觀驗收閘門：交付前自測「實際執行」失敗 → 該輪強制退回，不讓 QA/高工的文字裁決推翻真實 exit code（守住反 reward-hacking）。`1`=工程師本輪宣告的自測指令實敗才否決（fallback 整體指令只回報不硬退）；`strict`=fallback 失敗與「未宣告執行指令」皆視為未通過 | 1（開啟） |
 | `TI_SELF_REFINE_ITERS` | 單輪內自我精修：自測未過時讓同一工程師就地依執行紀錄再修一次（交付驗證前），上限 N 次 | 1（開啟） |
+| `TI_TASK_HELP` / `TI_TASK_HELP_MAX` | 中途求助 PM：工程師實作卡關時輸出一行 `求助: <問題>`，PM 即時給指示後續作再交付（輪內輕量通道，與跑滿輪數才觸發的 huddle 互補）；`MAX` 為每任務上限 | 1（開啟） / 1 |
 | `TI_RLIMITS` / `TI_RLIMIT_MEM_MB` / `TI_RLIMIT_CPU_S` / `TI_RLIMIT_FSIZE_MB` | 子進程資源上限：runner 執行指令時套 RLIMIT，補 bwrap 沒有的記憶體/CPU/檔案大小防線（各上限 0=略過該項） | 1 / 4096 / 300 / 512 |
 | `TI_DEMO_TIMEOUT` / `TI_DEMO_MAX_OUTPUT` | 自測/Demo 的逾時秒數與輸出字數上限 | 60 / 8000 |
 | `TI_ENABLE_GIT` | 是否在 workspace 內做階段性 commit | 1 |
