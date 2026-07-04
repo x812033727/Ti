@@ -1281,7 +1281,7 @@ async function refreshMetrics() {
 // --- 動態流程編輯器 ----------------------------------------------------
 const workflowPanel = $("#workflowPanel");
 const WF_DEFAULT_NAME = "預設流程"; // 「載入預設範本」用的內建預設名
-const WF_RESERVED = ["預設流程", "動態優先"]; // 內建保留流程（唯讀，不可改名/刪除）
+const WF_RESERVED = ["預設流程", "動態優先", "快速模式"]; // 內建保留流程（唯讀，不可改名/刪除）
 let wfCache = [];
 
 async function openWorkflowPanel() {

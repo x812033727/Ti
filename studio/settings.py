@@ -473,7 +473,7 @@ FIELDS: tuple[Field, ...] = (
         "互動 session 預設動態流程（未在啟動列指定時走此流程；空＝退回安全骨架；"
         "autopilot／改良迴圈不受影響）",
         kind="combo",
-        options=("動態優先", "預設流程"),
+        options=("動態優先", "預設流程", "快速模式"),
         default="動態優先",
         group="進階",
     ),

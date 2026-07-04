@@ -230,6 +230,24 @@ def test_dynamic_first_validates_and_resolvable(roles_dir):
     assert any(s["type"] == "dynamic" for s in wf["stages"])
 
 
+def test_fast_track_validates_and_resolvable(roles_dir):
+    wf = workflow.fast_track_workflow()
+    assert wf["name"] == workflow.FAST_TRACK_NAME
+    assert workflow.FAST_TRACK_NAME in workflow.RESERVED_NAMES
+    # 自洽：重新 validate 等於自身（gate verdict 過白名單）。
+    assert workflow.validate_workflow(wf["name"], wf["description"], wf["stages"]) == wf
+    # 保留名（無同名檔案）→ get_workflow 回內建定義。
+    assert workflow.get_workflow(workflow.FAST_TRACK_NAME) == wf
+    # 核心形狀：含 dynamic（討論＋問 PM）、不佔 discuss/research/integrate 固定 stage。
+    types = [s["type"] for s in wf["stages"]]
+    assert "dynamic" in types
+    assert not {"discuss", "research", "integrate"} & set(types)
+    # 任務級只有 implement→review（無 gate/dynamic → 砍三審與任務級 critic）。
+    build = next(s for s in wf["stages"] if s["type"] == "build")
+    assert [t["type"] for t in build["task_pipeline"]] == ["implement", "review"]
+    assert build["task_pipeline"][1]["gate"] == [{"role": "qa", "verdict": "qa_passed"}]
+
+
 def test_default_workflow_config_resolves(roles_dir):
     # 互動預設名（config.DEFAULT_WORKFLOW）能解析成內建動態優先流程。
     from studio import config

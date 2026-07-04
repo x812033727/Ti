@@ -18,7 +18,7 @@ stage 序列」驅動。讓全流程（架構討論→任務波次→整合→De
 
 | 來源 | 怎麼用 |
 |---|---|
-| 內建保留流程 | 「預設流程」（等價現有寫死骨架）與「動態優先」（dynamic-first，PM 運行時溝通/分派/招募為主）兩個內建定義，永遠可選、不可被同名檔案覆蓋 |
+| 內建保留流程 | 「預設流程」（等價現有寫死骨架）、「動態優先」（dynamic-first，PM 運行時溝通/分派/招募為主）與「快速模式」（fast-track，動態討論分派→實作→QA 單審→PM 收尾驗收，砍三審與任務級 critic）三個內建定義，永遠可選、不可被同名檔案覆蓋 |
 | 互動預設 | **互動 session（WS，非 improve）未指定時走 `TI_DEFAULT_WORKFLOW`（預設「動態優先」）**；autopilot／improver 不受影響（維持安全骨架） |
 | 網頁編輯器 | 頂列「🧭 流程」開編輯器：列出/新增/編輯（stages 為 JSON）/刪除，可「載入預設範本」當起點，儲存即經 `/api/workflows` 後端驗證 |
 | API / 檔案 | `GET/POST/PUT/DELETE /api/workflows` 或直接編 `workflows.yaml`；寫入走 `require_admin` |
@@ -118,6 +118,28 @@ stages:
   - {type: demo}
   - {type: wrap_up}
 ```
+
+### 內建「快速模式」（`fast_track_workflow()`）
+```yaml
+name: 快速模式
+stages:
+  - {type: clarify}
+  - {type: decompose}
+  - {type: dynamic, name: 快速討論與分派, budget: 3, fallback: engineer}
+  - type: build
+    task_pipeline:
+      - {type: implement, assignee: engineer}
+      - type: review
+        gate: [{role: qa, verdict: qa_passed}]
+  - {type: demo}
+  - {type: wrap_up}
+  - {type: publish}
+```
+
+設計取捨：任務級驗收單留 qa 而非 pm，因為 PM 的最終驗收本來就在 `wrap_up`（引擎路徑），
+而 QA 有 Bash 能實際跑測試、輸出 `驗證: PASS/FAIL`，是唯一能給執行面證據的驗收角色。
+客製者若要任務級改由 PM 驗收，把 gate 換成 `{role: pm, verdict: pm_done}` 即可
+（generic 審查 prompt 會指示輸出 `決議: 完成/未完成`）。
 
 ## 動態 step（`dynamic`）
 
