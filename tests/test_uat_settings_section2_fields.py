@@ -4,8 +4,8 @@
 - 每欄至少涵蓋 正常值／空值／邊界值／非法值（高風險欄全展開）。
 - select 欄須有「非法選項」案例。
 - 須含「超長輸入不撐破版面」案例。
-- 案例對齊實際欄位（38 個 select：4 基本＋2 Claude 模型＋8 角色模型＋2 Codex 控制＋2 Antigravity 控制＋8 每角色 provider＋12 進階組、
-  8 combo、6 文字、4 秘密）。
+- 案例對齊實際欄位（39 個 select：4 基本＋2 Claude 模型＋8 角色模型＋2 Codex 控制＋2 Antigravity 控制＋8 每角色 provider＋13 進階組、
+  8 combo、7 文字、4 秘密）。
 - 文件宣稱的「後端擋下非法 select」「秘密留空不變更」須為**真實行為**——
   以實際呼叫 settings.update() 佐證。
 """
@@ -141,6 +141,7 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_PUBLISH_MERGE": ["TI_PUBLISH_MERGE", "自動合併"],
         "TI_CLARIFY": ["TI_CLARIFY"],
         "TI_HUDDLE": ["TI_HUDDLE"],
+        "TI_TASK_HELP": ["TI_TASK_HELP", "中途求助"],
         "TI_CRITIC": ["TI_CRITIC"],
         "TI_NOTES": ["TI_NOTES"],
         "TI_LESSONS": ["TI_LESSONS"],

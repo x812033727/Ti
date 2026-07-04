@@ -264,6 +264,12 @@ AGENDA_ROUNDS = _agenda_rounds()
 # 換得失敗被明示——預設開啟（要省可關）。
 HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
 
+# 中途求助：工程師實作中輸出 `求助: <一句問題>` 時，就地讓 PM 給一次指示後續作（輪內輕量
+# 通道，與跑滿輪數才觸發的 huddle 互補）。marker 為 opt-in 觸發——工程師不求助即零行為差；
+# TASK_HELP_MAX 為「每任務」上限（非每輪），防多輪 × 多次求助燒 token。
+TASK_HELP_ENABLED = os.getenv("TI_TASK_HELP", "1") not in ("0", "false", "False", "")
+TASK_HELP_MAX = _env_int("TI_TASK_HELP_MAX", 1)
+
 # 異議檢查（critic）：放行前由獨立 critic 專挑「為何還不算完成」，提出實質反對才退回。
 # 採「換人」原則保獨立性（任務審查用 pm 視角、最終驗收用 senior 視角）。
 # 唯一在「成功路徑」上加成本的學習開關（每個通過任務都多一次獨立呼叫）且有誤退回風險，
@@ -1004,6 +1010,7 @@ def reload() -> None:
     global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
     global HUDDLE_ENABLED, CRITIC_ENABLED, CRITIC_MAX_REJECTS, NOTES_ENABLED, NOTES_MAX_CHARS
+    global TASK_HELP_ENABLED, TASK_HELP_MAX
     global DYNAMIC_STEP_BUDGET, RECRUIT_MAX, DEFAULT_WORKFLOW
     global VOTE_ENABLED, VOTE_MAX
     global LESSONS_ENABLED
@@ -1107,6 +1114,8 @@ def reload() -> None:
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
     # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
     HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
+    TASK_HELP_ENABLED = os.getenv("TI_TASK_HELP", "1") not in ("0", "false", "False", "")
+    TASK_HELP_MAX = _env_int("TI_TASK_HELP_MAX", 1)
     CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
     CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
     DYNAMIC_STEP_BUDGET = _env_int("TI_DYNAMIC_STEP_BUDGET", 3)

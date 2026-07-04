@@ -139,7 +139,9 @@ stages:
 設計取捨：任務級驗收單留 qa 而非 pm，因為 PM 的最終驗收本來就在 `wrap_up`（引擎路徑），
 而 QA 有 Bash 能實際跑測試、輸出 `驗證: PASS/FAIL`，是唯一能給執行面證據的驗收角色。
 客製者若要任務級改由 PM 驗收，把 gate 換成 `{role: pm, verdict: pm_done}` 即可
-（generic 審查 prompt 會指示輸出 `決議: 完成/未完成`）。
+（generic 審查 prompt 會指示輸出 `決議: 完成/未完成`）。實作中卡關則由引擎級「中途求助」
+承接（工程師輸出一行 `求助: <問題>`，PM 即時給指示後續作；`TI_TASK_HELP`／
+`TI_TASK_HELP_MAX` 控制）——「有問題問 PM」在任務內也成立，不只在 dynamic 分派階段。
 
 ## 動態 step（`dynamic`）
 

@@ -252,6 +252,11 @@ def parse_vision(text: str) -> str:
     return _last_match(text, r"願景\s*[:：]\s*(.+)") or ""
 
 
+def parse_help_request(text: str) -> str:
+    """從工程師發言抽出 `求助: <一句問題>`（實作中途卡關即時求助 PM 用）；無標記回空字串。"""
+    return _last_match(text, r"求助\s*[:：]\s*(.+)") or ""
+
+
 # --- 結論彙整解析（共識／分歧／未決／行動） -------------------------------
 
 # 四前綴 → 結構化鍵；順序即輸出 dict 鍵順序。

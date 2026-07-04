@@ -387,7 +387,8 @@ def fast_track_workflow() -> dict:
     能實際跑測試，輸出 `驗證: PASS/FAIL`）；task_pipeline 不放 gate/dynamic → 任務級 critic
     與 PM 追加把關整關跳過；research/integrate 也不佔固定 stage（需要時 PM 可在 dynamic
     階段招募 researcher/devops）。「有問題問 PM」由 session 級 dynamic（PM 逐 hop 溝通/
-    分派）覆蓋；「PM 驗收」由 wrap_up 的 PM 最終驗收（引擎路徑）滿足。客觀閘門（交付前
+    分派）覆蓋，任務級另有引擎級中途求助（工程師輸出 `求助: <問題>` 即時問 PM，
+    `TI_TASK_HELP` 控制）；「PM 驗收」由 wrap_up 的 PM 最終驗收（引擎路徑）滿足。客觀閘門（交付前
     自測 exit code 硬否決）、停滯守門、demo 實跑驗證為引擎不變式，照常生效。
     客製者若要任務級改由 PM 驗收，可把 gate 換成 {role: pm, verdict: pm_done}（generic
     審查 prompt 路徑已支援）。不存檔、保留名、不可被覆寫。

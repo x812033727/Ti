@@ -378,6 +378,20 @@ FIELDS: tuple[Field, ...] = (
         group="進階",
     ),
     Field(
+        "TI_TASK_HELP",
+        "中途求助 PM（工程師實作卡關時輸出 `求助:` 即時要指示，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_TASK_HELP_MAX",
+        "中途求助次數上限（每任務，空／非法＝1）",
+        placeholder="1",
+        group="進階",
+    ),
+    Field(
         "TI_TURN_IDLE_TIMEOUT",
         "發言閒置逾時秒數（串流多久無進展即中止該輪發言，0 關）",
         placeholder="240",
