@@ -206,10 +206,9 @@ def test_own_history_recent_kept_segments_still_clipped():
     section = _own_history_section(prompt)
 
     assert "old-round" not in section
-    assert "SHOULD_BE_CLIPPED" not in section
-    assert "…（前段截斷）" in section
-    assert "TAIL" in section
-    _assert_ordered(section, ["TAIL", "mid-round", "new-round"])
+    assert "以下為 @甲 發言之摘要（結構化行為原文保留）" in section
+    assert "……〔中間省去" in section
+    _assert_ordered(section, ["以下為 @甲 發言之摘要", "mid-round", "new-round"])
 
 
 @pytest.mark.parametrize("mode", ["round_robin", "parallel"])
