@@ -267,3 +267,31 @@ async def test_stage_decompose_without_dispatch_lines_keeps_empty_hints(monkeypa
     s, experts, _ = _session(pm_scripts=["任務: #1 甲"])
     await s._stage_decompose({"type": "decompose"})
     assert s._dispatch_hints == {}
+
+
+@pytest.mark.asyncio
+async def test_work_task_restores_even_when_broadcast_cancelled(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
+    s, experts, bucket = _session()
+
+    original_broadcast = s.broadcast
+
+    async def cancel_on_task_result(ev):
+        if ev.type == events.EventType.TASK_RESULT:
+            raise asyncio.CancelledError()
+        await original_broadcast(ev)
+
+    s.broadcast = cancel_on_task_result
+
+    recruited: list = []
+    s._dispatch_factory = _recording_factory(recruited)
+    s._dispatch_hints = {1: {"provider": "codex", "model": ""}}
+
+    with pytest.raises(asyncio.CancelledError):
+        await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+
+    assert s._main_ctx.experts["engineer"] is experts["engineer"]
+    assert recruited[0]["expert"].stopped is True
+    assert "engineer" not in s._dispatch_bindings

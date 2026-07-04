@@ -280,8 +280,9 @@ class StudioSession:
         # 的測試除外。
         self._experts_injected = experts is not None
         # 考核（Appraisal）暫存：本場 per-task 客觀指標（task_id → {qa_rounds, qa_passed,
-        # senior_approved, provider, model, duration_s, role}）。qa_* 由 _work_task_rounds
+        # senior_approved, provider, model, duration_s, role, token/cost fields}）。qa_* 由 _work_task_rounds
         # 逐輪寫入、provider/model 由 per-task 派工換綁與 _collect_task_perf 補齊，
+        # token/cost 由 _counting_broadcast 依 token_usage.task_id 聚合，
         # _wrap_up 時與 PM 的 `考核:` 主觀評分合併寫入 studio/appraisal 考核庫。
         self._task_perf: dict[int, dict] = {}
 
@@ -313,10 +314,31 @@ class StudioSession:
         if getattr(ev, "type", None) == events.EventType.TOKEN_USAGE:
             p = getattr(ev, "payload", None) or {}
             try:
-                self._tokens_used += int(p.get("total_tokens") or 0)
+                input_tokens = int(p.get("prompt_tokens") or 0)
+                output_tokens = int(p.get("completion_tokens") or 0)
+                total_tokens = int(p.get("total_tokens") or 0) or input_tokens + output_tokens
+                self._tokens_used += total_tokens
                 cost = p.get("cost_usd")
-                if cost:
-                    self._usd_used += float(cost)
+                cost_value = None
+                if cost is not None:
+                    try:
+                        cost_value = float(cost)
+                    except (TypeError, ValueError):
+                        cost_value = None
+                if cost_value is not None:
+                    self._usd_used += cost_value
+                task_id = p.get("task_id")
+                if task_id is not None:
+                    perf = self._task_perf.setdefault(int(task_id), {})
+                    perf["input_tokens"] = (perf.get("input_tokens") or 0) + input_tokens
+                    perf["output_tokens"] = (perf.get("output_tokens") or 0) + output_tokens
+                    perf["total_tokens"] = (perf.get("total_tokens") or 0) + total_tokens
+                    perf.setdefault("cost_usd", None)
+                    perf.setdefault("cost_source", None)
+                    if cost_value is not None:
+                        perf["cost_usd"] = (perf.get("cost_usd") or 0.0) + cost_value
+                        src = perf.get("cost_source")
+                        perf["cost_source"] = "reported" if src in (None, "reported") else "mixed"
             except (TypeError, ValueError):
                 pass
         await self._broadcast_sink(ev)
@@ -527,7 +549,7 @@ class StudioSession:
         """放行前的異議關卡。回傳 (是否放行, critic 文字)。
 
         刻意只餵標的與驗收標準、不餵當事人剛才的核可理由以降低錨定；停用或無 critic 時放行。
-        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        任務路徑傳入 tagged broadcast；主 lane 只標 token_usage，並行 lane 才標全部任務事件。
         """
         # 離線示範（OFFLINE_MODE）視為 demo 情境自動啟用，以展示「內部討論」事件。
         if not (config.CRITIC_ENABLED or config.OFFLINE_MODE) or self._stop:
@@ -662,7 +684,7 @@ class StudioSession:
         self, task: dict, status: str, broadcast: Broadcast | None = None
     ) -> None:
         task["status"] = status
-        # 並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        # 任務路徑傳入 tagged broadcast：主 lane 只標 token_usage，並行 lane 才標全部任務事件。
         # 看板是 session 全域快照（跨所有任務）→ 維持未標籤的 self.broadcast。
         bc = broadcast or self.broadcast
         await bc(events.task_status(self.session_id, task["id"], task["title"], status))
@@ -681,7 +703,7 @@ class StudioSession:
             # 並行 lane 的 commit 不動 self._last_commit，改由波次合併後以主分支 HEAD 更新。
             if ctx.branch is None:
                 self._last_commit = h
-            # 並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+            # 任務路徑傳入 tagged broadcast：主 lane 只標 token_usage，並行 lane 才標全部任務事件。
             bc = broadcast or self.broadcast
             await bc(events.git_commit(self.session_id, message, h))
 
@@ -1498,6 +1520,11 @@ class StudioSession:
             perf.setdefault("qa_passed", None)
             perf.setdefault("senior_approved", None)
             perf.setdefault("model", None)
+            perf.setdefault("input_tokens", None)
+            perf.setdefault("output_tokens", None)
+            perf.setdefault("total_tokens", None)
+            perf.setdefault("cost_usd", None)
+            perf.setdefault("cost_source", None)
             perf["role"] = impl_role
             expert = ctx.experts.get(impl_role)
             provider = ""
@@ -1940,12 +1967,13 @@ class StudioSession:
                 + self._vote_hint()
                 + "若不需要追加、可放行，輸出 `下一步: 結束`。",
                 tag,
+                token_usage_task_id=task["id"],
             )
             decisions.append(decision)
             if flow.is_stalled(decisions, config.STALL_ROUNDS):
                 break
             # 表決 hook（在 parse_next_step 之前攔截）：命中→舉行表決，結果注入下一 hop。
-            note = await self._maybe_hold_vote(ctx, decision, tag)
+            note = await self._maybe_hold_vote(ctx, decision, tag, token_usage_task_id=task["id"])
             if note:
                 vote_note = note
                 continue
@@ -1962,6 +1990,7 @@ class StudioSession:
                 f"{instruction}\n\n若發現會阻擋交付的實質問題，最後一行輸出 `異議: 成立` 並說明；"
                 "否則輸出 `異議: 不成立`。",
                 tag,
+                token_usage_task_id=task["id"],
             )
             blocks = critic_blocks(opinion)
             await bc(events.critic_review(self.session_id, role, not blocks, opinion))
@@ -2001,7 +2030,14 @@ class StudioSession:
             description="一次性表決投票員",
         )
 
-    async def _maybe_hold_vote(self, ctx: LaneContext, decision: str, tag: int | None) -> str:
+    async def _maybe_hold_vote(
+        self,
+        ctx: LaneContext,
+        decision: str,
+        tag: int | None,
+        *,
+        token_usage_task_id: int | None = None,
+    ) -> str:
         """檢查 PM 決策是否發起表決（`表決:` 行）；命中則舉行並回「表決結果」脈絡字串。
 
         呼叫端在 flow.parse_next_step 之前先呼叫本方法：回傳非空 → 該 hop 已由表決消化，
@@ -2017,11 +2053,19 @@ class StudioSession:
             log.info("表決請求被忽略：已達單場上限 %d（議題：%s）", config.VOTE_MAX, req["topic"])
             return ""
         self._votes_held += 1
-        result = await self._hold_vote(ctx, req["topic"], req["options"], tag)
+        result = await self._hold_vote(
+            ctx, req["topic"], req["options"], tag, token_usage_task_id=token_usage_task_id
+        )
         return f"表決結果：{result['winner']}（議題：{req['topic']}）"
 
     async def _hold_vote(
-        self, ctx: LaneContext, topic: str, options: list[str], tag: int | None
+        self,
+        ctx: LaneContext,
+        topic: str,
+        options: list[str],
+        tag: int | None,
+        *,
+        token_usage_task_id: int | None = None,
     ) -> dict:
         """舉行一場 3-AI 表決：PM ＋ 兩位「不同 provider」的一次性投票員多數決。
 
@@ -2055,7 +2099,9 @@ class StudioSession:
             "請獨立判斷並投票：簡短說明理由，最後一行輸出 `投票: <選項原文>`。"
         )
         ballots: list[dict] = []
-        pm_text = await self._speak(ctx, "pm", ballot_prompt, tag)
+        pm_text = await self._speak(
+            ctx, "pm", ballot_prompt, tag, token_usage_task_id=token_usage_task_id
+        )
         pm_choice = flow.parse_ballot(pm_text or "", options)
         ballots.append({"voter": "pm", "provider": pm_provider, "choice": pm_choice})
         if not degraded:
@@ -2072,7 +2118,10 @@ class StudioSession:
                             role, f"{self.session_id}:vote:{prov}", ctx.cwd, provider=prov
                         )
                     async with self._llm_semaphore():
-                        text = await expert.speak(ballot_prompt, self._tagged_broadcast(tag))
+                        text = await expert.speak(
+                            ballot_prompt,
+                            self._tagged_broadcast(tag, token_usage_task_id=token_usage_task_id),
+                        )
                     choice = flow.parse_ballot(text or "", options)
                 except Exception:  # noqa: BLE001 — 單一投票員失敗＝棄權，表決不得拖垮流程
                     log.exception("表決投票員 %s 失敗，視為棄權（議題：%s）", prov, topic)
@@ -2086,7 +2135,7 @@ class StudioSession:
                 ballots.append({"voter": role.key, "provider": prov, "choice": choice})
         tally = flow.tally_votes(ballots)
         winner = tally["winner"] or pm_choice or options[0]  # 無多數→PM 票→第一選項兜底
-        await self._tagged_broadcast(tag)(
+        await self._tagged_broadcast(tag, token_usage_task_id=token_usage_task_id)(
             events.vote_result(
                 self.session_id, topic, options, ballots, winner, tally["tie"], degraded=degraded
             )
@@ -2111,32 +2160,48 @@ class StudioSession:
             )
         return self._llm_sem
 
-    def _tagged_broadcast(self, task_id: int | None) -> Broadcast:
-        """包裝 broadcast：並行 lane 的事件補上 task_id 供前端分流；task_id=None 時原樣直送。"""
-        if task_id is None:
+    def _tagged_broadcast(
+        self, task_id: int | None, *, token_usage_task_id: int | None = None
+    ) -> Broadcast:
+        """包裝 broadcast：lane 事件可分流；token_usage 可單獨補任務歸因。"""
+        if task_id is None and token_usage_task_id is None:
             return self.broadcast
 
         async def _bc(ev: events.StudioEvent) -> None:
-            ev.payload.setdefault("task_id", task_id)
+            if task_id is not None:
+                ev.payload.setdefault("task_id", task_id)
+            elif ev.type == events.EventType.TOKEN_USAGE:
+                ev.payload.setdefault("task_id", token_usage_task_id)
             await self.broadcast(ev)
 
         return _bc
 
     async def _speak(
-        self, ctx: LaneContext, role_key: str, prompt: str, task_id: int | None
+        self,
+        ctx: LaneContext,
+        role_key: str,
+        prompt: str,
+        task_id: int | None,
+        *,
+        token_usage_task_id: int | None = None,
     ) -> str:
         """經號誌節流 + 標籤化 broadcast 呼叫某 lane 的專家發言。"""
         async with self._llm_semaphore():
             try:
-                return await ctx.experts[role_key].speak(prompt, self._tagged_broadcast(task_id))
+                return await ctx.experts[role_key].speak(
+                    prompt,
+                    self._tagged_broadcast(task_id, token_usage_task_id=token_usage_task_id),
+                )
             except Exception as exc:  # noqa: BLE001 — provider-unavailable 要穿透，其餘維持既有路徑
                 if getattr(exc, "provider", ""):
                     self._stop = True
                 raise
 
     def _lane_tag(self, ctx: LaneContext, task: dict) -> int | None:
-        """並行 lane（branch 不為 None）回 task id 供事件標籤；主 lane 回 None（行為不變）。"""
-        return task["id"] if ctx.branch is not None else None
+        """只有並行 lane 事件需要 task_id 分流；main lane 維持原主時間軸。"""
+        if ctx.lane_id == "main":
+            return None
+        return task["id"]
 
     async def _run_waves(self, plan_ctx: str) -> bool:
         """把任務分波執行：波次之間循序（尊重依賴），波次之內最多 PARALLEL_LANES 條支線並行。
@@ -2340,8 +2405,8 @@ class StudioSession:
 
     async def _run_task_in_lane(self, ctx: LaneContext, task: dict, plan_ctx: str) -> bool:
         """在指定 lane 跑單一任務（實作→驗證→審查→huddle），更新看板與 lane 知識緩衝。"""
-        # 並行 lane 的事件統一帶 task_id（供前端分流）；主 lane（tag=None）回原樣 self.broadcast。
-        bc = self._tagged_broadcast(self._lane_tag(ctx, task))
+        # 並行 lane 事件帶 task_id 供前端分流；主 lane 僅 token_usage 補 task_id 做歸因。
+        bc = self._tagged_broadcast(self._lane_tag(ctx, task), token_usage_task_id=task["id"])
         await bc(
             events.phase_change(self.session_id, "實作", f"任務 #{task['id']}：{task['title']}")
         )
@@ -2598,7 +2663,30 @@ class StudioSession:
             # 考核客觀指標：於還原換綁「前」收集（此時 _dispatch_bindings 仍指向本任務
             # 實際綁定），提供 _wrap_up 與 PM 主觀評分合併入考核庫。永不 raise。
             self._collect_task_perf(ctx, task, impl_role, time.monotonic() - t0)
-            await restore()
+            perf = self._task_perf.get(task["id"])
+            try:
+                if perf:
+                    try:
+                        await self.broadcast(
+                            events.task_result(
+                                self.session_id,
+                                task["id"],
+                                role=perf.get("role") or impl_role,
+                                provider=perf.get("provider") or "",
+                                model=perf.get("model"),
+                                duration_s=perf.get("duration_s"),
+                                qa_rounds=perf.get("qa_rounds"),
+                                input_tokens=perf.get("input_tokens"),
+                                output_tokens=perf.get("output_tokens"),
+                                total_tokens=perf.get("total_tokens"),
+                                cost_usd=perf.get("cost_usd"),
+                                cost_source=perf.get("cost_source"),
+                            )
+                        )
+                    except Exception:  # noqa: BLE001
+                        log.warning("廣播 task_result 事件失敗（略過）", exc_info=True)
+            finally:
+                await restore()
 
     async def _work_task_rounds(
         self,
@@ -2620,10 +2708,8 @@ class StudioSession:
         """
         # reviewer 集合（資料驅動，過濾在場）：預設 qa/senior＋security 在場才審，重現今日。
         reviewers = self._task_reviewers(ctx.experts)
-        tag = self._lane_tag(ctx, task)  # 並行 lane 標 task id 供前端分流；主 lane 為 None。
-        bc = self._tagged_broadcast(
-            tag
-        )  # 本任務所有事件統一帶 task_id；主 lane 回原樣 self.broadcast。
+        tag = self._lane_tag(ctx, task)
+        bc = self._tagged_broadcast(tag, token_usage_task_id=task["id"])
         feedback = seed_feedback
         # 輪數：huddle 重試顯式傳 max_rounds 優先；否則 review stage 的 max_rounds 覆寫，再否則 config。
         rounds = (
@@ -2665,7 +2751,9 @@ class StudioSession:
                     f"請根據以下意見逐項修正（第 {rnd} 輪）：\n\n{feedback}\n\n"
                     "修正後請自己再跑一次確認。"
                 )
-            impl_text = await self._speak(ctx, impl_role, impl_prompt, tag)
+            impl_text = await self._speak(
+                ctx, impl_role, impl_prompt, tag, token_usage_task_id=task["id"]
+            )
 
             # --- 交付前自測（確定性 smoke-run）---
             smoke = await self._self_test(ctx, impl_text, bc)
@@ -2698,7 +2786,13 @@ class StudioSession:
                         f"自測指令 `{smoke.command}` 實際執行未通過，紀錄如下：\n{smoke.output}\n\n"
                         "請直接修正程式碼讓它能跑過，修好後簡述改了什麼即可。"
                     )
-                    impl_text = await self._speak(ctx, impl_role, refine_prompt, tag)
+                    impl_text = await self._speak(
+                        ctx,
+                        impl_role,
+                        refine_prompt,
+                        tag,
+                        token_usage_task_id=task["id"],
+                    )
                     smoke = await self._self_test(ctx, impl_text, bc)
                     if smoke is None or smoke.ok:
                         break
@@ -2757,7 +2851,13 @@ class StudioSession:
             # reviewer 資料驅動：依 workflow review gate（過濾在場）並行發言。預設 qa/senior(+security
             # 在場) 用專屬 prompt → 與重構前逐字等價；客製可增刪 reviewer（含非核心角色＋verdict）。
             review_calls = [
-                self._speak(ctx, rk, self._review_prompt(rk, vn, task, pm_plan), tag)
+                self._speak(
+                    ctx,
+                    rk,
+                    self._review_prompt(rk, vn, task, pm_plan),
+                    tag,
+                    token_usage_task_id=task["id"],
+                )
                 for rk, vn in reviewers
             ]
             texts = await asyncio.gather(*review_calls)
@@ -2906,7 +3006,7 @@ class StudioSession:
         """卡關升級：召集團隊 huddle 找替代方案 → 給 1 輪重試。
 
         重試仍失敗則把 task 標為「已知限制」（註記 + 事件），status 由呼叫端維持 review。
-        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        任務路徑傳入 tagged broadcast；主 lane 只標 token_usage，並行 lane 才標全部任務事件。
         """
         bc = broadcast or self.broadcast
         conclusion = await self._huddle(ctx, task, context, bc)
@@ -2937,7 +3037,7 @@ class StudioSession:
         """召集卡關討論：讓在場角色針對 blocker 提替代方案。回傳彙整結論。
 
         召集 PM＋架構師＋工程師＋高級工程師（取自該 lane 的專家團隊），缺席角色
-        （如 offline 無架構師）自動略過。並行 lane 傳入 tagged broadcast 供前端分流。
+        （如 offline 無架構師）自動略過。任務路徑傳入 tagged broadcast 供前端分流。
 
         發言調度依 config.DISCUSS_MODE：round_robin/parallel（預設）走 DiscussionEngine
         單輪（max_rounds=1，每人剛好一次）——parallel 即同輪並行（角色同時動工）；legacy
@@ -2974,7 +3074,7 @@ class StudioSession:
                 mode=config.DISCUSS_MODE,
                 max_rounds=1,
                 semaphore=self._llm_semaphore(),
-                broadcast=self._tagged_broadcast(tag),
+                broadcast=self._tagged_broadcast(tag, token_usage_task_id=task["id"]),
                 should_stop=lambda: self._stop,
             )
             result = await engine.run(blocker + ask)
@@ -2987,7 +3087,13 @@ class StudioSession:
             notes = []
             for key, ex in present:
                 prior = ("\n團隊目前的討論：\n" + "\n".join(notes)) if notes else ""
-                view = await self._speak(ctx, key, blocker + ask + prior, tag)
+                view = await self._speak(
+                    ctx,
+                    key,
+                    blocker + ask + prior,
+                    tag,
+                    token_usage_task_id=task["id"],
+                )
                 notes.append(f"【{ex.role.name}】{view}")
         conclusion = "\n".join(notes)
         await self.broadcast(
@@ -3046,7 +3152,7 @@ class StudioSession:
         """工程師交付前的確定性 smoke-run（在 lane 的 cwd 內執行），把完整 log 回報。
 
         回傳實際執行結果（供客觀閘門/自我精修判定）；無 cwd 或無可執行指令時回 None。
-        並行 lane 傳入 tagged broadcast（帶 task_id）供前端分流；主 lane / 循序傳 None＝行為不變。
+        任務路徑傳入 tagged broadcast；主 lane 只標 token_usage，並行 lane 才標全部任務事件。
         """
         if not ctx.cwd:
             return None
@@ -3236,6 +3342,14 @@ class StudioSession:
             ]
             durations = [m["duration_s"] for _, m in matched if m.get("duration_s") is not None]
             models = [m["model"] for _, m in matched if m.get("model")]
+            token_vals = [
+                m["total_tokens"] for _, m in matched if m.get("total_tokens") is not None
+            ]
+            cost_vals = [m["cost_usd"] for _, m in matched if m.get("cost_usd") is not None]
+            source_vals = [m["cost_source"] for _, m in matched if m.get("cost_source") is not None]
+            cost_source = None
+            if source_vals:
+                cost_source = source_vals[0] if len(set(source_vals)) == 1 else "mixed"
             entries.append(
                 {
                     "session_id": self.session_id,
@@ -3252,6 +3366,9 @@ class StudioSession:
                         "qa_passed": all(qa_vals) if qa_vals else None,
                         "senior_approved": all(senior_vals) if senior_vals else None,
                         "duration_s": round(sum(durations), 1) if durations else None,
+                        "total_tokens": sum(token_vals) if token_vals else None,
+                        "cost_usd": sum(cost_vals) if cost_vals else None,
+                        "cost_source": cost_source,
                     },
                     "created_at": now,
                 }

@@ -1,97 +1,6 @@
 {
   "entries": [
     {
-      "decision": "`_debate()` 分流——`config.DISCUSS_MODE ∈ {round_robin, parallel}` 時組 participants 走 DiscussionEngine；未設或 `legacy` 時原路徑一行不動",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879884
-    },
-    {
-      "decision": "ADR 蒸餾接縫明確規格——engine 路徑結束後，蒸餾 prompt 餵 `summary.final_positions` 串接＋末輪 transcript（取代舊 proposal/critique 兩變數），沿用同一蒸餾指令與 `adr.record` 落盤；比照 test_adr.py 加一條離線測試",
-      "rationale": "不寫明則實作各寫各的，蒸餾品質不可控",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879899
-    },
-    {
-      "decision": "config——`DISCUSS_MODE = os.getenv(\"TI_DISCUSS_MODE\", \"legacy\")` 白名單 `{legacy, round_robin, parallel}` 非法值 fallback legacy；`DISCUSS_MAX_ROUNDS` 預設取 `DEBATE_ROUNDS`；**兩欄位必須加入 config.py 的 reload global 區塊**；settings.py 白名單、`.env.example`、ARCHITECTURE.md 同步補",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879906
-    },
-    {
-      "decision": "測試隔離——`tests/conftest.py` 統一 `delenv(\"TI_DISCUSS_MODE\")` 防開發機 env 殘留翻轉測試路徑；新測試一律 `monkeypatch.setattr(config, \"DISCUSS_MODE\", ...)` 不用 setenv",
-      "rationale": "config 是 import 時讀 env，殘留 env 會讓全部既有測試默默改道",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879915
-    },
-    {
-      "decision": "broadcast 不加 per-speaker 標籤——既有 `expert_message` 事件已帶 speaker_key/name，並行交錯下身分不丟",
-      "rationale": "",
-      "rejected": "仿 `_tagged_broadcast` 加 speaker 標籤層",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879927
-    },
-    {
-      "decision": "實作前置檢查——確認前端按 speaker_key 聚合 streaming token；若否，parallel 模式下 expert 關 streaming 只發 final",
-      "rationale": "並行 streaming 的 token 級交錯會讓「按最後一筆拼接」的前端花掉",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879937
-    },
-    {
-      "decision": "移交待辦（不入 P0）——`discussion_round` 事件標籤供前端按輪分組、滾動摘要舊輪次、主持人 LLM 摘要與裁決、真實 LLM API 面驗證",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj1e65b46e5b",
-      "created_at": 1781283541.7879956
-    },
-    {
-      "decision": "角色檔格式採 Markdown＋YAML frontmatter、一檔一角色（`roles/<key>.md`）；frontmatter 欄位＝現有 Role 欄位（name/avatar/title/model/allowed_tools/permission_mode/tags，key 由檔名推導、寫明則須一致）＋新增 `description`（給未來 moderator 選人）；body 為角色專屬 prompt，載入時自動前置 `_COMMON`",
-      "rationale": "長文 prompt 放 body 最自然、git diff 友善、與 Claude Code subagents 慣例一致；自動前置 _COMMON 免每個自建角色手抄共通守則",
-      "rejected": "單一大 YAML 檔（多行 prompt 醜、diff 差）；body 含完整 prompt 不前置 _COMMON（漏抄即行為不一致）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989834
-    },
-    {
-      "decision": "解析用 PyYAML `safe_load`＋pydantic BaseModel 驗證（`extra=\"forbid\"` 使未知欄位明確報錯），通過後轉 frozen Role；選填預設——model→`config.MODEL_FAST`、allowed_tools→`[\"Read\",\"Grep\"]`、permission_mode→`\"default\"`（白名單 `{default, acceptEdits}`）；零新依賴（PyYAML 6.0.3、pydantic 隨 fastapi 已在環境）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989892
-    },
-    {
-      "decision": "新增 `studio/role_store.py` 收納載入/驗證/落檔/組隊邏輯，roles.py 僅留內建定義與接面；`role_store.reload()` 為**純同步函式**：先完整 build 好新資料，再於無 await 的同步區塊一次原地變異——`ROSTER[:] =`、`BY_KEY.clear()+update()`、`CORE_ROLES[:] =`，且對被覆蓋的內建 key 一併 `setattr(roles, \"PM\"/\"SENIOR\"/...)` 更新具名常數",
-      "rationale": "orchestrator.py:45 等模組級綁定靠原地變異保活；improver.py:308、autopilot.py:387 用具名常數（函式內 import），不 setattr 會出現「同一角色兩種行為」；同步一次變異杜絕並發讀到 clear/update 空窗",
-      "rejected": "重新賦值模組屬性（既有 import 綁定全失效）；reload 做成 async（引入空窗與重入問題）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989908
-    },
-    {
-      "decision": "合併規則明定兩層——`BY_KEY` 含「全部內建（含被 OPTIONAL_ROLES 過濾者）＋全部合法檔案角色」，維持 BY_KEY ⊇ ROSTER 不對稱；`ROSTER` 為內建（同 key 檔案覆蓋後、沿用 OPTIONAL_ROLES 過濾）＋全部新 key 檔案角色；壞檔逐檔拒絕並 log 原因，不影響其他檔與內建",
-      "rationale": "improver.py:386 靠 `key not in BY_KEY` 判斷，BY_KEY 若縮成只含 ROSTER 會默默改變其行為",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989925
-    },
-    {
-      "decision": "reload 語意明寫入文件——進行中 session 已快照 Role 物件，reload 只影響之後建立的 expert，不熱換進行中討論",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.698994
-    },
-    {
-      "decision": "新增 `config.ROLES_DIR = os.getenv(\"TI_ROLES_DIR\", \"<repo>/roles\")`，加入 config.py reload global 區塊、settings.py FIELDS 白名單、`.env.example` 同步；測試一律 monkeypatch ROLES_DIR 指向 tmp_path，conftest.py 加 `delenv(\"TI_ROLES_DIR\")` 防環境殘留",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989958
-    },
-    {
       "decision": "`/api/roles` CRUD 照 routes.py 既有 pydantic Body＋auth 依賴慣例；GET 每筆帶 `source ∈ {builtin, override, file}` 與 body 原文；POST/PUT 落檔（temp+rename 原子寫）後立即 reload；DELETE：file→刪檔、override→刪檔還原內建、純 builtin→409；key 格式 `^[a-z][a-z0-9_]{1,31}$`，**POST body 與 PUT/DELETE 路徑參數同套驗證**（防路徑穿越）",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3408,97 @@
       "rejected": "",
       "session_id": "ap84ebad8d0f",
       "created_at": 1783099934.742879
+    },
+    {
+      "decision": "技術選型——零新依賴；不引 OTel SDK、不綁 experimental semconv schema，僅在新增面（`task_result` payload、`_task_perf`、考核 objective）採 OTel 命名 `input_tokens`/`output_tokens`/`total_tokens`/`cost_usd`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361331
+    },
+    {
+      "decision": "既有 `token_usage` 事件的 `prompt_tokens`/`completion_tokens` 欄位名零改動，OTel 命名只用於新面",
+      "rationale": "硬改舊欄位會牽動 history 回放、report、既有測試三個相容面，收益只有命名一致；join 層做一次 mapping 成本極低",
+      "rejected": "本輪將 token_usage 事件欄位改名或加別名雙寫（雙寫會讓兩個鍵名並存成為永久債）",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.93614
+    },
+    {
+      "decision": "task_id 注入沿用既有 `_tagged_broadcast`/`_speak` 鏈路，禁止新建平行包裝器；本輪新增僅三件：`events.token_usage` 選填 `task_id` 參數、`_counting_broadcast` 聚合分支、`task_result` 事件",
+      "rationale": "機制去重——兩個做同一件事的包裝器，半年後接手者分不清權威；既有 tagged（外）→ counting（內）層次天然正確",
+      "rejected": "原設計的「任務迴圈內新建 closure 包裝器」（與 `_tagged_broadcast` 功能重複）",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361415
+    },
+    {
+      "decision": "`_tagged_broadcast` 的 task_id 一律取自任務工作迴圈的 `task[\"id\"]`，與 lane 身分脫鉤——循序模式（main lane）必須同樣標記，補「循序單 lane 也正確歸因」的黑白測試",
+      "rationale": "工程師查核發現 `_lane_tag()` 主 lane 回 None，若歸因綁 lane 身分，循序模式全漏算",
+      "rejected": "只有並行 lane 才標 task_id 的現狀語意",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.936143
+    },
+    {
+      "decision": "契約測試鎖 `setdefault` 語意（不覆蓋既有 task_id），並同時覆蓋「factory 傳入」與「wrapper setdefault 補入」兩條路徑產出相同鍵名",
+      "rationale": "巢狀包裝時外層不得改寫內層歸因；events.py 仍是鍵名 SSOT，但實務寫入多走 wrapper",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361444
+    },
+    {
+      "decision": "per-task 聚合放 `_counting_broadcast` 新增分支——讀 `p.get(\"task_id\")` 累進 `_task_perf[task_id]`（input/output/total_tokens、cost_usd、cost_source），沿用既有「異常忽略、永不阻斷事件流」容錯；huddle 重試沿用 duration_s 的累加模式",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361463
+    },
+    {
+      "decision": "cost_source 契約定義三值枚舉 `reported`/`estimated`/`mixed`，但本輪只產出 `reported`（provider 實報 cost_usd 存在時）；cost 缺時 `cost_usd=None`、`cost_source=None`——估算器列移交待辦、獨立開票",
+      "rationale": "工程師指出 OpenAI-compatible 多半無 cost，「估算在哪裡補」未定義前，estimated 只是空承諾；先鎖契約形狀、不塞半成品邏輯，可逆",
+      "rejected": "本輪同步實作估算器（擴散到 providers 計價表，範圍爆炸）",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.936148
+    },
+    {
+      "decision": "新增事件型別 `task_result`（payload: task_id、role、provider、model、duration_s、qa_rounds、input/output/total_tokens、cost_usd、cost_source），於 `_collect_task_perf` 後廣播；`dispatch_decision` payload 與語意零改動，消費端以 task_id join",
+      "rationale": "決策快照與結果的時序語意乾淨（決策當下結果不存在）、舊 history 回放零風險",
+      "rejected": "把結果欄位塞回 dispatch_decision（污染既有契約、回放風險）",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361496
+    },
+    {
+      "decision": "討論階段（澄清/架構/檢討）token 不歸因、task_id 維持 None，不發明偽任務 id；實作前必須確認任務範圍內所有 LLM 呼叫（含 huddle 走 `discussion.py` 自有 `_broadcast` 的路徑）是否都經 `_speak`——有例外即列為已知缺口，寫進測試註解與移交待辦，不默默漏",
+      "rationale": "高工指出 discussion.py 用自己的 broadcast，可能繞過 tagged 鏈路；缺口要顯式化",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.936151
+    },
+    {
+      "decision": "考核 objective 匯出（orchestrator.py:3230 附近）每任務併入 `total_tokens`/`cost_usd`/`cost_source`（缺資料＝None 不拋錯，沿用考核旁路永不 raise）；PM 考核提示中 qa_rounds 與 token 分開呈現、不重複懲罰",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.936152
+    },
+    {
+      "decision": "向後相容雙向守護——舊 jsonl（無 task_id）經 `_derive_token_usage`/`usage_report` 輸出 bit-for-bit 不變；另補「新格式事件（含 task_id 鍵）餵舊聚合」樣本證明無感",
+      "rationale": "相容是雙向的：舊資料進新碼、新資料進舊消費端，只測一向會漏",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361534
+    },
+    {
+      "decision": "實作分三小步依序落地：①`events.token_usage(task_id=None)` + `_counting_broadcast` 聚合分支 → ②`task_result` 事件 + objective 併入 → ③前端 smoke 與文件；每步獨立可驗收",
+      "rationale": "工程師建議避免一次改爆相容面；與 PM 任務依賴序（#1→#2→#3）一致",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361546
+    },
+    {
+      "decision": "`flow.py` 本輪零改動（無新解析需求）；前端 `handleEvent()` 對 `task_result` 僅做「未知事件不崩潰」最小處理，UI 呈現不在本輪範圍",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap64ff5fc49f",
+      "created_at": 1783126862.9361556
     }
   ]
 }
