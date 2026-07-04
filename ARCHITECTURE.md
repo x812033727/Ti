@@ -77,6 +77,11 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 `cost_source`），可用於與 `dispatch_decision` 事件進行 `task_id` 的 join。
 （註：若任務因重試等原因重複執行，同一個 `task_id` 可能廣播多次 `task_result`，指標為該次執行之累計值。消費端 join 時應以最後一筆為準。）
 
+`token_usage` 事件為每筆 LLM 呼叫的用量／費用事件；本波新增選填欄位 `task_id`
+（由 lane context 注入，循序主 lane 也同樣標記），供 per-task token／成本聚合、
+與 `dispatch_decision`／`task_result` 以 `task_id` join 用。`task_id` 缺席時代表
+該次呼叫不歸因到任何任務（例如討論／架構階段、未帶 lane context 的發言），消費端
+必須容忍鍵不存在——舊 history JSONL 沒有此欄位，重放行為與重構前一致。
 
 ## 需求澄清（選配，`TI_CLARIFY`）
 
