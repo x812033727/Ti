@@ -1,7 +1,8 @@
 """GET /api/autopilot 併入 autopilot 心跳（<state dir>/status.json）。
 
-契約：檔案存在且合法 → 原樣併入 `heartbeat` 欄位；不存在或壞損 → null；
-既有欄位（paused/counts/dryrun/repo）不受影響。
+契約：檔案存在且合法 → 原樣併入 `heartbeat` 欄位（含巢狀 workers 子行程活性欄，
+routes 不需特別處理即原樣 passthrough）；不存在或壞損 → null；既有欄位
+（paused/counts/dryrun/repo）不受影響。
 """
 
 from __future__ import annotations
@@ -49,3 +50,19 @@ def test_autopilot_status_corrupt_heartbeat_is_null(client, tmp_path):
     (tmp_path / "status.json").write_text("{壞掉的 json", encoding="utf-8")
     data = client.get("/api/autopilot").json()
     assert data["heartbeat"] is None
+
+
+def test_autopilot_status_exposes_workers(client, tmp_path):
+    """巢狀 workers（子行程活性）原樣 passthrough——鎖住「routes 無需改動」契約。"""
+    hb = {
+        "state": "running",
+        "task_id": 42,
+        "sleep_until": None,
+        "updated_at": 1000.0,
+        "quota": {"claude": 12},
+        "last_activity_at": 1783140425.0,
+        "workers": {"count": 5, "cpu_active": True},
+    }
+    (tmp_path / "status.json").write_text(json.dumps(hb, ensure_ascii=False), encoding="utf-8")
+    data = client.get("/api/autopilot").json()
+    assert data["heartbeat"]["workers"] == {"count": 5, "cpu_active": True}

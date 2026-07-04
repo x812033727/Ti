@@ -7,7 +7,8 @@
 2. 任務級 wait_for timeout 被標 failed 死路，無人分診。→ 主迴圈 TimeoutError 分支改標
    parked（需拆分或縮小範圍），backlog 分診看得見。
 3. status.json 只在任務揀起時寫一次，長任務被外部監控誤判死鎖。→ _task_heartbeat 每
-   ~60s 刷新 updated_at＋last_activity_at（session events 檔 mtime）。
+   ~60s 刷新 updated_at＋last_activity_at（session events 檔 mtime）＋workers.cpu_active
+   （子行程 CPU 取樣，補足 events mtime 在長 inter-message 間隔會凍結的盲區）。
 
 停機收尾測 helper 本身（不發真訊號）；timeout→parked 走 main() 主迴圈（沿用
 test_quota_gate 的 stub asyncio 模式）。
@@ -324,6 +325,7 @@ async def test_task_heartbeat_refreshes_status_and_keeps_fields(state_dir, monke
     assert status["last_activity_at"] == pytest.approx(history.events_mtime("ap-hb-1"), abs=1), (
         "last_activity_at 應為 session events 檔 mtime"
     )
+    assert "workers" in status, "workers 欄位須恆存在（契約）"
 
 
 async def test_task_heartbeat_no_events_file_reports_none(state_dir, monkeypatch):
@@ -337,6 +339,59 @@ async def test_task_heartbeat_no_events_file_reports_none(state_dir, monkeypatch
     status = _read_status(state_dir)
     assert status["task_id"] == 3
     assert status["last_activity_at"] is None
+
+
+async def _run_heartbeat_ticks(monkeypatch, sid, snapshot_fn):
+    """跑心跳到 snapshot 被呼叫 ≥2 次（保證有前後兩快照可比 delta）後取消，回最終 status。"""
+    monkeypatch.setattr(autopilot, "_HEARTBEAT_INTERVAL_S", 0.01)
+    calls = {"n": 0}
+
+    def counted(*a, **k):
+        calls["n"] += 1
+        return snapshot_fn(calls["n"])
+
+    monkeypatch.setattr(autopilot, "_proc_descendant_cpu", counted)
+    hb = real_asyncio.create_task(autopilot._task_heartbeat(9, sid))
+    for _ in range(200):  # 上限兜底，避免異常時卡死
+        await real_asyncio.sleep(0.01)
+        if calls["n"] >= 2:
+            break
+    hb.cancel()
+    with contextlib.suppress(real_asyncio.CancelledError):
+        await hb
+    return calls
+
+
+async def test_task_heartbeat_writes_workers_cpu_active_true(state_dir, monkeypatch):
+    # 每 tick 回增長的 CPU tick → 第二 tick 起 delta 前進 → cpu_active True。
+    await _run_heartbeat_ticks(monkeypatch, "ap-wk-true", lambda n: {111: 100 * n})
+    status = _read_status(state_dir)
+    assert status["workers"] == {"count": 1, "cpu_active": True}
+
+
+async def test_task_heartbeat_writes_workers_cpu_active_false(state_dir, monkeypatch):
+    # 每 tick 回相同 CPU tick → 無前進 → cpu_active False（存活但閒置）。
+    await _run_heartbeat_ticks(monkeypatch, "ap-wk-false", lambda _n: {111: 100})
+    status = _read_status(state_dir)
+    assert status["workers"] == {"count": 1, "cpu_active": False}
+
+
+async def test_task_heartbeat_proc_unavailable_workers_none_no_crash(state_dir, monkeypatch):
+    # /proc 不可用（helper 回 None）→ workers 三態全 None，但 updated_at 仍須刷新、不得崩。
+    autopilot._write_status("running", task_id=9)
+    before = _read_status(state_dir)
+    await real_asyncio.sleep(0.01)  # 確保 time.time() 前進，避免同秒等值誤判
+    await _run_heartbeat_ticks(monkeypatch, "ap-wk-none", lambda _n: None)
+    status = _read_status(state_dir)
+    assert status["workers"] == {"count": None, "cpu_active": None}
+    assert status["updated_at"] > before["updated_at"], "取樣失敗不得停掉 updated_at 刷新"
+
+
+def test_write_status_workers_defaults_none_for_non_task_states(state_dir):
+    # 非任務狀態（idle/quota_sleep…）不傳 workers → 欄位恆存在且為 None（鏡射 last_activity 契約）。
+    autopilot._write_status("idle")
+    status = _read_status(state_dir)
+    assert status["workers"] is None
 
 
 def test_status_helpers_roundtrip(state_dir):
