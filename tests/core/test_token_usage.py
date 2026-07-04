@@ -81,11 +81,63 @@ async def test_tagged_broadcast_injects_task_id_into_token_usage_payload():
     session = StudioSession("s", sink, cwd=None)
     ctx = LaneContext("main", None, {})
     tag = session._lane_tag(ctx, {"id": 42, "title": "序列任務"})
-    await session._tagged_broadcast(tag)(
+    await session._tagged_broadcast(tag, token_usage_task_id=42)(
         events.token_usage("s", "engineer", "minimax", "MiniMax-M3", 10, 5, 15)
     )
 
     assert bucket[0].payload["task_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_tagged_broadcast_does_not_inject_main_lane_task_id_into_non_token_events():
+    from studio.orchestrator import LaneContext, StudioSession
+
+    bucket, sink = collect()
+    session = StudioSession("s", sink, cwd=None)
+    ctx = LaneContext("main", None, {})
+    tag = session._lane_tag(ctx, {"id": 42, "title": "序列任務"})
+    await session._tagged_broadcast(tag, token_usage_task_id=42)(
+        events.expert_message("s", "engineer", "工程師", "E", "done")
+    )
+
+    assert "task_id" not in bucket[0].payload
+
+
+@pytest.mark.asyncio
+async def test_tagged_broadcast_keeps_parallel_lane_task_id_on_non_token_events():
+    from studio.orchestrator import LaneContext, StudioSession
+
+    bucket, sink = collect()
+    session = StudioSession("s", sink, cwd=None)
+    ctx = LaneContext("lane-s-42", None, {})
+    tag = session._lane_tag(ctx, {"id": 42, "title": "並行任務"})
+    await session._tagged_broadcast(tag, token_usage_task_id=42)(
+        events.expert_message("s", "engineer", "工程師", "E", "done")
+    )
+
+    assert bucket[0].payload["task_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_speak_in_main_lane_injects_task_id_only_into_token_usage():
+    from studio.orchestrator import LaneContext, StudioSession
+
+    class FakeExpert:
+        async def speak(self, _prompt, broadcast):
+            await broadcast(events.expert_message("s", "engineer", "工程師", "E", "done"))
+            await broadcast(events.token_usage("s", "engineer", "minimax", "MiniMax-M3", 1, 2, 3))
+            return "ok"
+
+    bucket, sink = collect()
+    session = StudioSession("s", sink, experts={"engineer": FakeExpert()}, cwd=None)
+    task = {"id": 42, "title": "序列任務"}
+    ctx = LaneContext("main", None, session._get_experts())
+    tag = session._lane_tag(ctx, task)
+
+    await session._speak(ctx, "engineer", "prompt", tag, token_usage_task_id=task["id"])
+
+    assert "task_id" not in bucket[0].payload
+    assert bucket[1].payload["task_id"] == 42
 
 
 @pytest.mark.asyncio
