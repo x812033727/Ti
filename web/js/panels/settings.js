@@ -4,13 +4,19 @@ import { $, toast, appendTextEl } from "../dom.js";
 import { loadHealth, checkAuth } from "../health.js";
 import { setMobileView } from "../components/tabs.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { openConfirmModal } from "../components/modal.js";
 
 // --- 重新部署重啟（設定面板常駐入口）---------------------------------
 // 拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。後端：POST /api/redeploy。
 export async function redeployNow() {
   const btn = $("#redeployBtn");
   const status = $("#redeployStatus");
-  if (!confirm("確定重新部署？服務會重啟，進行中的工作與連線會中斷。")) return;
+  if (!(await openConfirmModal({
+    title: "重新部署",
+    message: "確定重新部署？服務會重啟，進行中的工作與連線會中斷。",
+    confirmLabel: "重新部署",
+    danger: true,
+  }))) return;
   btn.disabled = true;
   const prev = btn.textContent;
   btn.textContent = "重新部署中…";
@@ -391,11 +397,14 @@ function claudeAccountsBlock(accounts) {
 
 export async function switchClaudeAccount(label, btn) {
   if (
-    !confirm(
-      `切換到帳號 ${label}？\n\n` +
+    !(await openConfirmModal({
+      title: "切換 Claude 帳號",
+      message:
+        `切換到帳號 ${label}？\n\n` +
         "這會重啟後端服務：本面板會短暫斷線後自動重連。\n" +
         "若有互動討論或 autopilot 任務正在進行，會被擋下、不會切換。",
-    )
+      confirmLabel: "切換",
+    }))
   )
     return;
   if (btn) {

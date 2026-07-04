@@ -2,7 +2,7 @@
 // 後端契約（studio/routes.py RoleBody）：key/name/system_prompt 必填語意、
 // PUT 為整筆替換（表單以 GET 現值全量預填）、錯誤形狀 {ok:false, detail}。
 import { $, toast, appendTextEl } from "../dom.js";
-import { openFormModal } from "../components/modal.js";
+import { openFormModal, openConfirmModal } from "../components/modal.js";
 
 // 角色快取：小組面板的成員選項、以及編輯時的現值預填都吃這份。
 let rolesCache = [];
@@ -160,10 +160,16 @@ async function roleEditor(existing) {
 }
 
 async function deleteRole(r) {
-  const msg = r.source === "override"
+  const isOverride = r.source === "override";
+  const msg = isOverride
     ? `還原內建角色「${r.name}」？其覆蓋檔（roles/${r.key}.md）會被刪除。`
     : `刪除自建角色「${r.name}」？（roles/${r.key}.md 會被刪除，無法復原）`;
-  if (!confirm(msg)) return;
+  if (!(await openConfirmModal({
+    title: isOverride ? "還原內建角色" : "刪除角色",
+    message: msg,
+    confirmLabel: isOverride ? "還原內建" : "刪除",
+    danger: !isOverride,
+  }))) return;
   try {
     const res = await fetch(`/api/roles/${encodeURIComponent(r.key)}`, { method: "DELETE" });
     const d = await res.json().catch(() => ({}));

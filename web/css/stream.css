@@ -106,6 +106,27 @@
   overflow-wrap: anywhere;
 }
 
+/* 階段切換分隔線：前後 hairline 漸層線，一眼可辨流程推進 */
+.sys.phase {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  opacity: 1;
+  padding: 4px 0;
+}
+.sys.phase::before,
+.sys.phase::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong));
+}
+.sys.phase::after {
+  background: linear-gradient(90deg, var(--border-strong), transparent);
+}
+
 .result {
   align-self: center;
   max-width: 92%;

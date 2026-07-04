@@ -33,6 +33,9 @@ export function closeDrawer(sel) {
 export function bindDrawers() {
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !stack.length) return;
+    // modal <dialog> 開啟時，Esc 屬於 dialog（原生 cancel 關 modal）——
+    // keydown 仍會冒泡到 document，這裡必須讓步，否則一次 Esc 連底下面板一起關。
+    if (document.querySelector("dialog[open]")) return;
     closeDrawer(stack[stack.length - 1].sel);
   });
 }

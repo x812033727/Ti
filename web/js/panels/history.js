@@ -6,6 +6,7 @@ import {
 } from "../events-render.js";
 import { setRunning } from "./deck.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { openConfirmModal } from "../components/modal.js";
 
 export const STATUS_LABEL = {
   running: "⏳ 執行中", completed: "✅ 完成", incomplete: "⚠️ 未達標",
@@ -64,7 +65,12 @@ export async function stopSession(sid) {
 
 export async function deleteSession(sid, status) {
   if (status === "running") { toast("執行中的 session 無法刪除", "err"); return; }
-  if (!confirm("刪除此 session？產出檔案（workspace）也會一併刪除，無法復原。")) return;
+  if (!(await openConfirmModal({
+    title: "刪除 session",
+    message: "刪除此 session？產出檔案（workspace）也會一併刪除，無法復原。",
+    confirmLabel: "刪除",
+    danger: true,
+  }))) return;
   try {
     const r = await fetch(`/api/history/${sid}`, { method: "DELETE" });
     if (r.ok) { toast("已刪除", "ok"); openHistory(); }
@@ -73,7 +79,12 @@ export async function deleteSession(sid, status) {
 }
 
 export async function cleanupCompleted() {
-  if (!confirm("清除所有「✅ 已完成」的 session？產出檔案也會一併刪除，無法復原。")) return;
+  if (!(await openConfirmModal({
+    title: "清除已完成",
+    message: "清除所有「✅ 已完成」的 session？產出檔案也會一併刪除，無法復原。",
+    confirmLabel: "清除",
+    danger: true,
+  }))) return;
   try {
     const r = await fetch("/api/history/cleanup/completed", { method: "POST" });
     const d = await r.json().catch(() => ({}));

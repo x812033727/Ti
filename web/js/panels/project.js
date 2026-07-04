@@ -1,6 +1,6 @@
 // 專案面板（藍圖 + 改良待辦）與專案 CRUD（建立/刪除/目標 repo/中斷恢復）。
 import { $, toast } from "../dom.js";
-import { openFormModal } from "../components/modal.js";
+import { openFormModal, openConfirmModal } from "../components/modal.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { loadProjects, onProjectChange } from "./deck.js";
 import { start } from "../ws.js";
@@ -189,11 +189,15 @@ export async function stopProject(pid) {
 }
 
 export async function deleteProject(pid, name) {
-  if (!confirm(
-    `刪除專案「${name}」？\n` +
-    "專案 meta、改良待辦、藍圖與 workspace 程式碼會一併刪除，無法復原。\n" +
-    "（歷史紀錄保留，可在歷史面板個別刪除）"
-  )) return;
+  if (!(await openConfirmModal({
+    title: "刪除專案",
+    message:
+      `刪除專案「${name}」？\n` +
+      "專案 meta、改良待辦、藍圖與 workspace 程式碼會一併刪除，無法復原。\n" +
+      "（歷史紀錄保留，可在歷史面板個別刪除）",
+    confirmLabel: "刪除專案",
+    danger: true,
+  }))) return;
   try {
     const res = await fetch(`/api/projects/${pid}`, { method: "DELETE" });
     const d = await res.json().catch(() => ({}));

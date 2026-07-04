@@ -57,7 +57,10 @@
 - 深／淺／跟隨系統三態主題切換（token 雙主題化、localStorage 持久化、防 FOUC）。
 - 動態流程「結構化 stage 卡片編輯器」（增刪/排序/角色多選/閘門/巢狀 task_pipeline），
   保留「{} JSON」進階原文模式；textarea 維持單一真相，儲存管線不變。
-- 通用表單 modal（原生 `<dialog>`）取代建立專案／目標 repo 的原生 `prompt()`。
+- 通用表單 modal（原生 `<dialog>`）取代建立專案／目標 repo 的原生 `prompt()`；
+  確認對話框 `openConfirmModal`（alertdialog、取消為預設焦點、danger 紅鈕）取代
+  全部 8 處原生 `confirm()`（刪 session/專案/流程/角色/小組、清歷史、重新部署、切換帳號），
+  訊息文字逐字保留。
 - 無障礙：skip-link、drawer dialog 語意＋Esc/焦點管理、tablist 方向鍵導航、
   動態列表真按鈕化、看板/專家卡 aria；新增平板（901–1180px）響應式斷點。
 
@@ -67,7 +70,8 @@
   events-render/theme/panels/*/components/*），`styles.css` 拆為 `web/css/*` 九檔
   ＋@import 聚合；免建置、URL 面不變（`/static/app.js`、`/static/styles.css`）。
 - header 工具列分組（主操作/觀測/系統）、command-deck 兩層化、看板欄計數 badge、
-  drawer 加寬至 `min(480px, 100vw)`、補品牌 SVG favicon。
+  drawer 加寬至 `min(480px, 100vw)`、補品牌 SVG favicon；討論串階段切換改 hairline
+  分隔線樣式；平板工具列溢出時可橫向捲動。
 - 前端測試載入機制由 `vm.runInContext` 改「掛 globalThis stub → import ES module」；
   新增 import-graph／主題 token 完整性靜態守護（`tests/test_frontend_modules.py`）。
 

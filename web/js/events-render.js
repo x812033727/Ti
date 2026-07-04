@@ -120,9 +120,9 @@ export function addTool(p) {
   scrollStream();
 }
 
-export function addSystem(text) {
+export function addSystem(text, cls) {
   const el = document.createElement("div");
-  el.className = "sys";
+  el.className = "sys" + (cls ? " " + cls : "");
   el.textContent = text;
   stream().appendChild(el);
   scrollStream();
@@ -281,7 +281,7 @@ export function handleEvent(ev) {
       break;
     case "phase_change":
       setPhase(p.phase);
-      addSystem(`— ${p.phase}${p.detail ? "：" + p.detail : ""} —`);
+      addSystem(`— ${p.phase}${p.detail ? "：" + p.detail : ""} —`, "phase");
       break;
     case "expert_status":
       setExpertStatus(p.speaker, p.status);

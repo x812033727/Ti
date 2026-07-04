@@ -1,6 +1,7 @@
 // 動態流程編輯器面板。
 import { $, toast } from "../dom.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { openConfirmModal } from "../components/modal.js";
 import { loadWorkflows } from "./deck.js";
 
 export const WF_DEFAULT_NAME = "預設流程"; // 「載入預設範本」用的內建預設名
@@ -413,7 +414,12 @@ export async function saveWorkflow() {
 export async function deleteWorkflow() {
   const name = $("#workflowList").value;
   if (!name || WF_RESERVED.includes(name)) return;
-  if (!confirm(`確定刪除流程「${name}」？`)) return;
+  if (!(await openConfirmModal({
+    title: "刪除流程",
+    message: `確定刪除流程「${name}」？`,
+    confirmLabel: "刪除",
+    danger: true,
+  }))) return;
   try {
     const res = await fetch(`/api/workflows/${encodeURIComponent(name)}`, { method: "DELETE" });
     if (!res.ok) { toast(`刪除失敗（${res.status}）`, "err"); return; }

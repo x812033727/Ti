@@ -30,8 +30,10 @@
   .expert .dot { display: none; }
   .expert { justify-content: center; padding: 4px; }
   .rail-toggle { display: none; } /* 平板固定收合，不提供展開切換 */
-  .toolbar button { padding: 7px 9px; font-size: 12.5px; }
-  .toolbar-sep { margin: 0 2px; }
+  .toolbar button { padding: 7px 9px; font-size: 12.5px; flex: none; }
+  .toolbar-sep { margin: 0 2px; flex: none; }
+  /* 按鈕仍溢出時可橫向捲動（比照手機），不擠壓 brand/phase */
+  .toolbar { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 
 /* ---------- 手機底部分頁導覽列（桌機隱藏） ---------- */

@@ -94,5 +94,28 @@ await p4;
 const toasts = $('#toast').children.map((c) => c.textContent);
 expect(toasts.some((t) => t.includes('後端擋下')), `422 detail 應顯示為 toast，實為 ${JSON.stringify(toasts)}`);
 
-console.log('OK: 角色列表徽章/builtin 保護/POST payload/persona 先驗/422 顯示 皆正常');
+// 5) 刪除流走自訂確認 modal（已汰除原生 confirm）：取消不發 DELETE、確認才發
+await mod.loadRoles();
+const fileItem = $('#roleList').children[2]; // designer（source=file）
+const delBtn = fileItem._descendants().find((c) => c.tag === 'button' && c.textContent === '刪除');
+// 5a) 取消
+fetchCalls.length = 0;
+let dp = delBtn.onclick();
+await new Promise((r) => setImmediate(r));
+let cdlg = body.children.filter((c) => c.tag === 'dialog').at(-1);
+expect(cdlg && cdlg._attrs.role === 'alertdialog', '刪除應開 alertdialog 確認框');
+cdlg._descendants().find((c) => c.tag === 'button' && c.textContent === '取消').onclick();
+await dp;
+expect(!fetchCalls.some((c) => c.method === 'DELETE'), '取消不應發 DELETE');
+// 5b) 確認
+fetchCalls.length = 0;
+dp = delBtn.onclick();
+await new Promise((r) => setImmediate(r));
+cdlg = body.children.filter((c) => c.tag === 'dialog').at(-1);
+cdlg._descendants().find((c) => c.tag === 'button' && c.className.includes('form-modal-submit')).onclick();
+await dp;
+const del = fetchCalls.find((c) => c.method === 'DELETE');
+expect(del && del.url === '/api/roles/designer', `確認後應 DELETE /api/roles/designer，實為 ${JSON.stringify(fetchCalls)}`);
+
+console.log('OK: 角色列表徽章/builtin 保護/POST payload/persona 先驗/422 顯示/刪除確認流 皆正常');
 process.exit(0);

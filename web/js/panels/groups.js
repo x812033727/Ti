@@ -2,7 +2,7 @@
 // 後端契約（studio/routes.py GroupBody）：成員 ≥2、key 須存在、mode ∈
 // {round_robin, parallel}、PUT 不可改名且 role_keys/mode 皆必填；錯誤形狀 {error}。
 import { $, toast, appendTextEl } from "../dom.js";
-import { openFormModal } from "../components/modal.js";
+import { openFormModal, openConfirmModal } from "../components/modal.js";
 import { getRolesCache } from "./roles.js";
 
 const MODE_LABEL = { round_robin: "輪流發言", parallel: "並行" };
@@ -119,7 +119,12 @@ async function groupEditor(existing) {
 }
 
 async function deleteGroup(g) {
-  if (!confirm(`刪除小組「${g.name}」？（角色本身不受影響）`)) return;
+  if (!(await openConfirmModal({
+    title: "刪除小組",
+    message: `刪除小組「${g.name}」？（角色本身不受影響）`,
+    confirmLabel: "刪除",
+    danger: true,
+  }))) return;
   try {
     const res = await fetch(`/api/groups/${encodeURIComponent(g.name)}`, { method: "DELETE" });
     if (!res.ok) { toast(`刪除失敗（${res.status}）`, "err"); return; }

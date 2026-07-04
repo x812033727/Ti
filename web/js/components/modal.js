@@ -92,6 +92,63 @@ export function openFormModal({ title, hint, fields, submitLabel = "確定", onV
   });
 }
 
+// 確認對話框（取代原生 confirm）：Esc/backdrop/取消 → false，確認 → true。
+// message 支援多行（\n 保留換行）；danger 時確認鈕紅色。
+export function openConfirmModal({ title, message, confirmLabel = "確定", danger = false }) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement("dialog");
+    dlg.className = "form-modal confirm-modal glass";
+    dlg.setAttribute("role", "alertdialog");
+    dlg.setAttribute("aria-label", title || "確認");
+
+    const head = document.createElement("div");
+    head.className = "form-modal-head";
+    const h = document.createElement("h2");
+    h.textContent = title || "確認";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "ghost";
+    closeBtn.textContent = "✕";
+    closeBtn.setAttribute("aria-label", "取消並關閉");
+    head.appendChild(h); head.appendChild(closeBtn);
+    dlg.appendChild(head);
+
+    const body = document.createElement("p");
+    body.className = "confirm-modal-msg";
+    body.textContent = message || "";
+    dlg.appendChild(body);
+
+    const foot = document.createElement("div");
+    foot.className = "form-modal-foot";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "ghost";
+    cancel.textContent = "取消";
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "form-modal-submit" + (danger ? " danger" : "");
+    ok.textContent = confirmLabel;
+    foot.appendChild(cancel); foot.appendChild(ok);
+    dlg.appendChild(foot);
+
+    const finish = (val) => {
+      if (dlg.close) dlg.close();
+      dlg.remove();
+      resolve(val);
+    };
+    closeBtn.onclick = () => finish(false);
+    cancel.onclick = () => finish(false);
+    ok.onclick = () => finish(true);
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); finish(false); });
+    dlg.addEventListener("click", (e) => { if (e.target === dlg) finish(false); });
+
+    document.body.appendChild(dlg);
+    if (dlg.showModal) dlg.showModal();
+    // 預設焦點在「取消」：破壞性操作不該一個 Enter 就過
+    if (cancel.focus) cancel.focus();
+  });
+}
+
 function buildField(f, getters) {
   const row = document.createElement("label");
   row.className = "form-modal-row";

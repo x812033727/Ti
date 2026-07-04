@@ -169,3 +169,19 @@
 @media (max-width: 600px) {
   .form-modal { width: calc(100vw - 20px); }
 }
+
+/* 確認對話框（openConfirmModal）：沿用 form-modal 殼 */
+.confirm-modal { width: min(440px, calc(100vw - 32px)); }
+.confirm-modal-msg {
+  margin: 14px 16px 4px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-2);
+  white-space: pre-line; /* 保留訊息內的換行 */
+}
+.form-modal-submit.danger {
+  background: var(--bad);
+  color: #fff;
+  box-shadow: none;
+}
+.form-modal-submit.danger:hover:not(:disabled) { filter: brightness(1.08); }
