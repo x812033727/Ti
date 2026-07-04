@@ -69,7 +69,12 @@ export function bindSocket(sock) {
       const p = ev.payload || {};
       eventCount = p.cursor || 0;
       reconnectAttempts = 0;
-      addSystem("🔌 已重新連上進行中的討論");
+      // live_only＝improve 迴圈重掛：無單一 JSONL 可補放，只接續即時事件。
+      addSystem(
+        p.live_only
+          ? "🔌 已重新連上改良迴圈（接續即時事件；斷線期間的過程可從各輪歷史查看）"
+          : "🔌 已重新連上進行中的討論"
+      );
       setPhase("已重新連上");
       return;
     }
@@ -83,10 +88,10 @@ export function bindSocket(sock) {
     handleEvent(ev);
   };
   sock.onerror = () => { addSystem("⚠️ 連線發生錯誤"); toast("WebSocket 連線錯誤", "err"); };
-  // 連線關閉＝後端收尾（done 已送）或斷線：討論進行中即自動重連（背景仍在跑），
-  // 正常收尾/重播/持續改良模式維持原行為。
+  // 連線關閉＝後端收尾（done 已送）或斷線：討論進行中即自動重連（背景仍在跑）——
+  // 含 improve 迴圈（後端以 live-only hub 承接，無補放）；正常收尾/重播維持原行為。
   sock.onclose = () => {
-    if (state.replaying || state.improveMode || !state.sessionId || !counting || sawDone) {
+    if (state.replaying || !state.sessionId || !counting || sawDone) {
       setRunning(false);
       return;
     }
