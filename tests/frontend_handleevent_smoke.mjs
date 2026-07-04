@@ -80,6 +80,9 @@ const cases = [
   { type: "appraisal", session_id: "t" }, // 無 payload
   { type: "task_result", session_id: "t", payload: { task_id: 1, role: "engineer", provider: "claude", model: "claude-3-5-sonnet", duration_s: 15.2, qa_rounds: 1, input_tokens: 1200, output_tokens: 300, total_tokens: 1500, cost_usd: 0.0054, cost_source: "reported" } },
   { type: "task_result", session_id: "t" }, // 無 payload
+  { type: "token_usage", session_id: "t", payload: { speaker: "engineer", provider: "claude", model: "claude-3-5-sonnet", prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000, cost_usd: 0.0036, cache_read: 0, cache_write: 0, task_id: 1 } },
+  { type: "token_usage", session_id: "t", payload: { speaker: "pm", provider: "codex", model: "gpt-5.5", prompt_tokens: 500, completion_tokens: 100, total_tokens: 600, cost_usd: null, cache_read: 0, cache_write: 0 } }, // 向後相容：無 task_id
+  { type: "token_usage", session_id: "t" }, // 無 payload
 ];
 
 try {
