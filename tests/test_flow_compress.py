@@ -24,7 +24,6 @@ import pytest
 
 from studio import discussion, flow, orchestrator
 
-
 # ===== 守護測試（re-export + 標頭/標記乾淨 + allowlist 全覆蓋）=============
 
 
@@ -49,7 +48,7 @@ def test_guard_omitted_line_template_is_marker_clean():
     assert not marker_re.search(rendered), (
         f"OMITTED_LINE_TEMPLATE 命中 marker pattern: {rendered!r}"
     )
-    for marker_re_, fallback_re in flow._FALLBACK_VERDICTS:
+    for _, fallback_re in flow._FALLBACK_VERDICTS:
         assert not fallback_re.search(rendered), (
             f"OMITTED_LINE_TEMPLATE 命中後備關鍵詞 {fallback_re.pattern!r}: {rendered!r}"
         )
@@ -70,33 +69,33 @@ def test_guard_marker_allowlist_covers_all_parsers():
     allowlist_joined = "|".join(flow.MARKER_ALLOWLIST)
     # flow.py parser 對應的標籤（鏡射 _MARKER_LABELS 與守護註解的對應表）
     expected_labels = [
-        "驗證",      # qa_passed
-        "決議",      # senior_approved / security_approved / pm_done
-        "異議",      # critic_blocks
-        "任務",      # parse_tasks / parse_tasks_with_deps / _RE_TAGGED_TASK
-        "依賴",      # parse_tasks_with_deps
-        "問題",      # parse_clarify
-        "假設",      # parse_clarify
-        "澄清",      # parse_clarify
+        "驗證",  # qa_passed
+        "決議",  # senior_approved / security_approved / pm_done
+        "異議",  # critic_blocks
+        "任務",  # parse_tasks / parse_tasks_with_deps / _RE_TAGGED_TASK
+        "依賴",  # parse_tasks_with_deps
+        "問題",  # parse_clarify
+        "假設",  # parse_clarify
+        "澄清",  # parse_clarify
         "後續任務",  # _RE_TAGGED_FOLLOWUP / parse_followups_meta
         "核心改動",  # _RE_CORE_CHANGE / parse_core_changes
-        "教訓",      # parse_lessons
-        "願景",      # parse_vision
-        "共識",      # parse_conclusion
-        "分歧",      # parse_conclusion
-        "未決",      # parse_conclusion
-        "行動",      # parse_conclusion
-        "子題",      # parse_agenda
-        "負責",      # parse_agenda
-        "下一步",    # parse_next_step
-        "指示",      # parse_next_step
-        "招募",      # parse_next_step
+        "教訓",  # parse_lessons
+        "願景",  # parse_vision
+        "共識",  # parse_conclusion
+        "分歧",  # parse_conclusion
+        "未決",  # parse_conclusion
+        "行動",  # parse_conclusion
+        "子題",  # parse_agenda
+        "負責",  # parse_agenda
+        "下一步",  # parse_next_step
+        "指示",  # parse_next_step
+        "招募",  # parse_next_step
         "provider",  # parse_next_step
-        "模型",      # parse_next_step
-        "派工",      # parse_dispatch
-        "表決",      # parse_vote_request
-        "投票",      # parse_ballot
-        "考核",      # parse_appraisals
+        "模型",  # parse_next_step
+        "派工",  # parse_dispatch
+        "表決",  # parse_vote_request
+        "投票",  # parse_ballot
+        "考核",  # parse_appraisals
     ]
     for label in expected_labels:
         assert label in allowlist_joined, (
@@ -130,12 +129,7 @@ def _long_narrative(width: int = 80, lines: int = 6) -> str:
 
 def test_white_short_text_returns_bit_for_bit():
     """白樣本（防壓縮悖論）：``len(text) <= cap`` 時 bit-for-bit 原樣返回。"""
-    text = (
-        "驗證: PASS\n"
-        "決議: 核可\n"
-        "核心改動: [P0/bug] 修波次死結\n"
-        "回應 @高級工程師: 同意 ＋同意\n"
-    )
+    text = "驗證: PASS\n決議: 核可\n核心改動: [P0/bug] 修波次死結\n回應 @高級工程師: 同意 ＋同意\n"
     assert len(text) <= 1000
     assert flow.compress_segment(text, 1000) == text
     # cap 等於長度也算「不壓」
@@ -148,13 +142,17 @@ def test_white_all_marker_lines_preserved_bit_for_bit():
     narrative = _long_narrative(width=80, lines=6)
     text = (
         "驗證: PASS\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
         + "決議: 核可\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
         + "核心改動: [P0/bug] 修波次死結\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
         + "回應 @高級工程師: 同意 ＋同意\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
     )
     cap = 400
     assert len(text) > cap
@@ -181,12 +179,17 @@ def test_white_qa_passed_consistent_when_over_cap():
     翻轉裁決。"""
     narrative = _long_narrative(width=80, lines=6)
     text = (
-        narrative + "\n"
-        + narrative + "\n"
+        narrative
+        + "\n"
+        + narrative
+        + "\n"
         + "驗證: PASS\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
     )
     cap = 300
     assert len(text) > cap
@@ -201,12 +204,17 @@ def test_white_senior_approved_consistent_when_over_cap():
     """白樣本：含 ``決議: 核可`` 在中段；敘述不含 senior 後備關鍵詞。"""
     narrative = _long_narrative(width=80, lines=6)
     text = (
-        narrative + "\n"
-        + narrative + "\n"
+        narrative
+        + "\n"
+        + narrative
+        + "\n"
         + "決議: 核可\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
     )
     cap = 300
     assert len(text) > cap
@@ -229,10 +237,14 @@ def test_white_senior_approved_fallback_branch_consistent_when_over_cap():
     # 後備機制保留；若 allowlist 沒帶 _FALLBACK_VERDICTS 防護，敘述行被丟、關鍵詞行
     # 也被當敘述丟，senior_approved 會從 False 翻 True（假放行）。
     text = (
-        _long_narrative(width=80, lines=3) + "\n"
-        + _pad("這段結論必須退回修正，依規走退回流程", 80) + "\n"  # 後備命中「退回」「必須修正」
-        + _long_narrative(width=80, lines=5) + "\n"
-        + _pad("結尾備註：仍建議退回", 80) + "\n"  # 後備命中「退回」
+        _long_narrative(width=80, lines=3)
+        + "\n"
+        + _pad("這段結論必須退回修正，依規走退回流程", 80)
+        + "\n"  # 後備命中「退回」「必須修正」
+        + _long_narrative(width=80, lines=5)
+        + "\n"
+        + _pad("結尾備註：仍建議退回", 80)
+        + "\n"  # 後備命中「退回」
     )
     cap = 300
     assert len(text) > cap
@@ -253,23 +265,27 @@ def test_white_parse_mentions_consistent_when_over_cap_with_inline():
     participants = ("工程師", "高級工程師", "架構師")
     narrative = _long_narrative(width=100, lines=8)
     text = (
-        narrative + "\n"
+        narrative
+        + "\n"
         + "回應 @架構師: 同意 ＋理由A\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
         + "回應 @高級工程師: 反對 ＋理由B\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
         + "行中測試：根據上下文需要再補充「回應 @工程師: 同意 ＋理由C」這類引用。\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
     )
     cap = 500
     assert len(text) > cap
 
     orig = discussion.parse_mentions("主持人", text, participants)
-    compressed = discussion.parse_mentions(
-        "主持人", flow.compress_segment(text, cap), participants
-    )
+    compressed = discussion.parse_mentions("主持人", flow.compress_segment(text, cap), participants)
     assert len(orig) == len(compressed) == 3
     assert orig == compressed  # 完整 dataclass list 相等（speaker / target / stance）
     targets = [(m.target, m.stance) for m in compressed]
@@ -283,16 +299,23 @@ def test_white_parse_core_changes_consistent_when_over_cap():
     priority、type 與順序完全一致。"""
     narrative = _long_narrative(width=100, lines=6)
     text = (
-        narrative + "\n"
-        + narrative + "\n"
+        narrative
+        + "\n"
+        + narrative
+        + "\n"
         + "核心改動: [P0/bug] 修 orchestrator 波次死結\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
         + "核心改動: [feature] runner 加沙箱白名單\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
         + "核心改動: [P2] 美化發佈訊息\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
     )
     cap = 500
     assert len(text) > cap
@@ -324,6 +347,48 @@ def _tail_clip_break(text: str, cap: int) -> str:
     return "…（前段截斷）" + text[-cap:]
 
 
+def _assert_parsers_consistent_with_current_compressor(
+    text: str,
+    cap: int,
+    participants: tuple[str, ...],
+) -> None:
+    """經由 flow.compress_segment 屬性呼叫，讓 monkeypatch 一定打得到。"""
+    compressed = flow.compress_segment(text, cap)
+    assert flow.qa_passed(compressed) == flow.qa_passed(text)
+    assert flow.senior_approved(compressed) == flow.senior_approved(text)
+    assert discussion.parse_mentions("主持人", compressed, participants) == (
+        discussion.parse_mentions("主持人", text, participants)
+    )
+    assert flow.parse_core_changes(compressed) == flow.parse_core_changes(text)
+
+
+def test_black_monkeypatch_breaks_white_sample(monkeypatch):
+    """黑樣本（monkeypatch）：把 flow.compress_segment 換成會吃裁決行的破壞版，
+    同一組白樣本解析一致性斷言必須失敗，避免「直呼對照組」被誤判為假綠。"""
+    participants = ("工程師", "高級工程師", "架構師")
+    narrative = _long_narrative(width=100, lines=10)
+    text = (
+        "驗證: PASS\n"
+        "決議: 核可\n"
+        "回應 @架構師: 同意 ＋理由A\n"
+        "核心改動: [P0/bug] 修 monkeypatch 黑樣本\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + _pad("尾段紀錄 failed 且必須退回修正", 100)
+        + "\n"
+    )
+    cap = 250
+    assert len(text) > cap
+
+    _assert_parsers_consistent_with_current_compressor(text, cap, participants)
+
+    monkeypatch.setattr(flow, "compress_segment", _tail_clip_break)
+    with pytest.raises(AssertionError):
+        _assert_parsers_consistent_with_current_compressor(text, cap, participants)
+
+
 def test_black_tail_clip_drops_decision_line_must_be_caught():
     """黑樣本（senior_approved）：``決議: 核可`` 放開頭（會被尾截吃）、結尾保留
     一行含後備關鍵詞「退回」「必須修正」。
@@ -336,14 +401,22 @@ def test_black_tail_clip_drops_decision_line_must_be_caught():
     narrative = _long_narrative(width=80, lines=6)
     text = (
         "決議: 核可\n"  # 開頭 marker → 尾截會吃
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + _pad("這段必須退回修正", 80) + "\n"  # 結尾保留後備關鍵詞行
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + _pad("這段必須退回修正", 80)
+        + "\n"  # 結尾保留後備關鍵詞行
     )
     cap = 250
     assert len(text) > cap
@@ -370,14 +443,22 @@ def test_black_tail_clip_drops_qa_marker_must_be_caught():
     narrative = _long_narrative(width=80, lines=6)
     text = (
         "驗證: PASS\n"  # 開頭 marker → 尾截會吃
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + _pad("此測試紀錄為 failed 狀態", 80) + "\n"  # 結尾含「failed」
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + _pad("此測試紀錄為 failed 狀態", 80)
+        + "\n"  # 結尾含「failed」
     )
     cap = 250
     assert len(text) > cap
@@ -401,13 +482,20 @@ def test_black_tail_clip_drops_mention_must_be_caught():
     narrative = _long_narrative(width=80, lines=6)
     text = (
         "回應 @架構師: 同意 ＋理由A\n"  # 開頭 → 尾截會吃
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
         + "回應 @高級工程師: 反對 ＋理由B\n"  # 結尾 → 尾截會保留
     )
     cap = 250
@@ -420,9 +508,7 @@ def test_black_tail_clip_drops_mention_must_be_caught():
     assert len(broken) == 1, "破壞版少一筆結構化引用（開頭 mention 被吃）"
     assert broken[0].target == "高級工程師"
 
-    compressed = discussion.parse_mentions(
-        "主持人", flow.compress_segment(text, cap), participants
-    )
+    compressed = discussion.parse_mentions("主持人", flow.compress_segment(text, cap), participants)
     assert len(compressed) == 2, "compress_segment 應保留全部結構化引用"
     assert compressed == orig
 
@@ -434,13 +520,20 @@ def test_black_tail_clip_drops_core_change_must_be_caught():
     narrative = _long_narrative(width=80, lines=6)
     text = (
         "核心改動: [P0/bug] 修 orchestrator 波次死結\n"  # 開頭 → 尾截會吃
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
-        + narrative + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
+        + narrative
+        + "\n"
         + "核心改動: [feature] runner 加沙箱白名單\n"  # 結尾 → 尾截會保留
     )
     cap = 250
