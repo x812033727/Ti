@@ -280,8 +280,9 @@ class StudioSession:
         # 的測試除外。
         self._experts_injected = experts is not None
         # 考核（Appraisal）暫存：本場 per-task 客觀指標（task_id → {qa_rounds, qa_passed,
-        # senior_approved, provider, model, duration_s, role}）。qa_* 由 _work_task_rounds
+        # senior_approved, provider, model, duration_s, role, token/cost fields}）。qa_* 由 _work_task_rounds
         # 逐輪寫入、provider/model 由 per-task 派工換綁與 _collect_task_perf 補齊，
+        # token/cost 由 _counting_broadcast 依 token_usage.task_id 聚合，
         # _wrap_up 時與 PM 的 `考核:` 主觀評分合併寫入 studio/appraisal 考核庫。
         self._task_perf: dict[int, dict] = {}
 
@@ -313,10 +314,31 @@ class StudioSession:
         if getattr(ev, "type", None) == events.EventType.TOKEN_USAGE:
             p = getattr(ev, "payload", None) or {}
             try:
-                self._tokens_used += int(p.get("total_tokens") or 0)
+                input_tokens = int(p.get("prompt_tokens") or 0)
+                output_tokens = int(p.get("completion_tokens") or 0)
+                total_tokens = int(p.get("total_tokens") or 0) or input_tokens + output_tokens
+                self._tokens_used += total_tokens
                 cost = p.get("cost_usd")
-                if cost:
-                    self._usd_used += float(cost)
+                cost_value = None
+                if cost is not None:
+                    try:
+                        cost_value = float(cost)
+                    except (TypeError, ValueError):
+                        cost_value = None
+                if cost_value is not None:
+                    self._usd_used += cost_value
+                task_id = p.get("task_id")
+                if task_id is not None:
+                    perf = self._task_perf.setdefault(int(task_id), {})
+                    perf["input_tokens"] = (perf.get("input_tokens") or 0) + input_tokens
+                    perf["output_tokens"] = (perf.get("output_tokens") or 0) + output_tokens
+                    perf["total_tokens"] = (perf.get("total_tokens") or 0) + total_tokens
+                    perf.setdefault("cost_usd", None)
+                    perf.setdefault("cost_source", None)
+                    if cost_value is not None:
+                        perf["cost_usd"] = (perf.get("cost_usd") or 0.0) + cost_value
+                        src = perf.get("cost_source")
+                        perf["cost_source"] = "reported" if src in (None, "reported") else "mixed"
             except (TypeError, ValueError):
                 pass
         await self._broadcast_sink(ev)
@@ -1498,6 +1520,11 @@ class StudioSession:
             perf.setdefault("qa_passed", None)
             perf.setdefault("senior_approved", None)
             perf.setdefault("model", None)
+            perf.setdefault("input_tokens", None)
+            perf.setdefault("output_tokens", None)
+            perf.setdefault("total_tokens", None)
+            perf.setdefault("cost_usd", None)
+            perf.setdefault("cost_source", None)
             perf["role"] = impl_role
             expert = ctx.experts.get(impl_role)
             provider = ""
