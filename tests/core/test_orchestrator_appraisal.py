@@ -373,3 +373,39 @@ async def test_dispatch_summary_failure_tolerated(monkeypatch):
     ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
     assert ok is True
     assert recruited and recruited[0]["provider"] == "codex"  # 純額度分派：用量最低者
+
+
+@pytest.mark.asyncio
+async def test_wrap_up_appraisal_lessons_wiring(tmp_path, monkeypatch):
+    """考核教訓入庫接線：僅 score <= 2 且 comment 非空者以特定格式與 source=appraisal 入庫。"""
+    monkeypatch.setattr(config, "LESSONS_FILE", tmp_path / "lessons.json")
+    monkeypatch.setattr(config, "LESSONS_ENABLED", True)
+    monkeypatch.setattr(config, "APPRAISAL_ENABLED", True)
+
+    pm_retro = (
+        "檢討：整體順利。\n"
+        "考核: claude 2 寫程式太囉嗦了\n"
+        "考核: engineer 5 完美執行\n"
+        "考核: qa 1 漏測了邊界條件\n"
+        "考核: senior 3 還算可以\n"
+        "考核: codex 2 \n"  # 空評語
+    )
+    s, experts, bucket = _session(pm_scripts=["決議: 完成", pm_retro])
+    done = await s._wrap_up(experts["pm"], all_ok=True)
+    assert done is True
+
+    from studio import lessons
+    all_stored = lessons.all_lessons()
+
+    texts = [r["text"] for r in all_stored]
+    assert "考核教訓(2分): 寫程式太囉嗦了" in texts
+    assert "考核教訓(1分): 漏測了邊界條件" in texts
+    assert not any("5分" in t for t in texts)
+    assert not any("3分" in t for t in texts)
+    assert not any("codex" in t for t in texts)  # 空評語不入庫
+
+    for r in all_stored:
+        assert r["source"] == "appraisal"
+        assert r["session_id"] == "t"
+        assert r["requirement"] == "做一個小工具"
+
