@@ -178,10 +178,33 @@ def _load(windows: dict[str, float | None] | None) -> float | None:
     return max(vals) if vals else None
 
 
-def _reset_of(windows: dict[str, float | None] | None) -> float:
-    """帳號 5 小時窗的重置時間（epoch 秒）；查不到（None）視為 +inf（最晚重置）。"""
-    r = (windows or {}).get("five_hour_reset")
+def _reset_of(windows: dict[str, float | None] | None, key: str = "five_hour_reset") -> float:
+    """帳號額度窗的重置時間（epoch 秒）；``key`` 選窗（five_hour_reset／seven_day_reset），
+    查不到（None）視為 +inf（最晚重置）。"""
+    r = (windows or {}).get(key)
     return float(r) if isinstance(r, (int, float)) else float("inf")
+
+
+def _earlier_reset_target(
+    usages: dict[str, dict[str, float | None]],
+    candidates: dict[str, float],
+    key: str,
+    edge: float,
+) -> str | None:
+    """「早重置多吃」單一窗的判定：候選中最早重置者比次早者早 ≥ ``edge`` 秒時回其 label；
+    規則不成立（差距不足）或任一方重置未知回 None（交給下一層）。
+
+    **兩者的重置時間都必須已知（finite）**才判定——v3 曾把未知視為 +inf 直接比較，
+    ``inf - earliest >= edge`` 恆真，在線又恰是「唯一已知重置者」時會永遠回「留在線」、
+    絕不下沉到負載平衡（黏著 bug）；資訊不完整時本層不該有意見。
+    """
+    by_reset = sorted(candidates, key=lambda lb: _reset_of(usages.get(lb), key))
+    earliest, second = by_reset[0], by_reset[1]
+    earliest_reset = _reset_of(usages.get(earliest), key)
+    second_reset = _reset_of(usages.get(second), key)
+    if earliest_reset == float("inf") or second_reset == float("inf"):
+        return None
+    return earliest if second_reset - earliest_reset >= edge else None
 
 
 def pick_account(
@@ -191,24 +214,30 @@ def pick_account(
     threshold: float,
     margin: float,
     reset_edge: float,
+    reset_edge_7d: float,
 ) -> str | None:
-    """雙（多）帳號分配的純決策（v3）：回「應切換到的 label」，不需切換回 None。
+    """雙（多）帳號分配的純決策（v4）：回「應切換到的 label」，不需切換回 None。
 
     ``usages`` 為 ``{label: {"five_hour": %|None, "seven_day": %|None,
     "five_hour_reset": epoch|None, "seven_day_reset": epoch|None}}``；每帳號**負載＝
     5h/7d 兩用量窗取最大**（None 窗忽略；兩窗皆 None＝額度查不到→不可用，不得作為
-    切換目標；在線帳號不可用則視為需要切走）。三層優先序：**安全上限 > 重置時間 >
-    負載平衡**：
+    切換目標；在線帳號不可用則視為需要切走）。四層優先序：**安全上限 > 7d 早重置 >
+    5h 早重置 > 負載平衡**：
 
     1. 安全上限：候選＝負載 < ``threshold``（預設 95%）的帳號——負載達上限者即使最早
        重置也**不得**為切換目標；無候選 → None（交給既有 quota gate 睡到額度重置）；
        在線不在候選（達上限或不可用）→ 強制切到下述 target（不受 margin 遲滯限制）。
-    2. 重置時間（**早重置多吃**）：取各候選的 ``five_hour_reset``（None 視為 +inf），
-       若最早重置者比次早者早 ≥ ``reset_edge``（秒）→ target＝最早重置者——它的用量
-       很快歸還，多吃划算；晚重置的要背久。edge 差距本身就是遲滯：由此規則選出且
-       target ≠ 在線即切；target＝在線 → None（留在線多吃，**不**退回負載平衡）。
-    3. 負載平衡（同 v2）：重置差 < edge 或候選重置皆查不到時退回——target＝負載最低者
-       （同分 tie-break：``preferred`` 優先、再字母序）；在線在候選時須「在線負載 −
+    2a. 7d 早重置多吃：候選的 ``seven_day_reset`` **兩者皆已知**且最早者比次早者早
+        ≥ ``reset_edge_7d``（秒）→ target＝最早重置者。7d 窗優先於 5h 窗：7d 是
+        「週尺度的稀缺資源」，早歸還的額度不先吃掉就是白白浪費一整週的配額；5h 窗
+        每天循環多次、只是節奏問題，錯過下一輪就補回來。
+    2b. 5h 早重置多吃：同規則、比 ``five_hour_reset``、門檻 ``reset_edge``（秒）。
+        **兩者重置皆已知才判定**（v3 把未知當 +inf，單邊已知時 ``inf ≥ edge`` 恆真，
+        會卡死「留在線」永不下沉——黏著 bug，已修）；否則下沉到負載平衡。
+        2a/2b 的 edge 差距本身就是遲滯：由重置規則選出且 target ≠ 在線即切；
+        target＝在線 → None（留在線多吃，**不**再下沉）。
+    3. 負載平衡（同 v2）：重置規則皆不成立時退回——target＝負載最低者（同分
+       tie-break：``preferred`` 優先、再字母序）；在線在候選時須「在線負載 −
        target 負載 ≥ ``margin``」（遲滯，避免頻繁互切重啟）才切，否則 None。
 
     在線 label 未知（``active is None``）一律回 None——不知道現在是誰就不動作，寧可
@@ -220,17 +249,13 @@ def pick_account(
     candidates = {label: ld for label, ld in loads.items() if ld is not None and ld < threshold}
     if not candidates:
         return None  # 全部達安全上限／查不到 → 交給 quota gate
-    # 第 2 層：重置時間——最早 5h 重置者比次早者早 ≥ reset_edge → 它多吃
+    # 第 2 層：早重置多吃——7d 窗（稀缺資源）優先於 5h 窗（節奏）；規則成立即定案。
     if len(candidates) >= 2:
-        by_reset = sorted(candidates, key=lambda lb: _reset_of(usages.get(lb)))
-        earliest, second = by_reset[0], by_reset[1]
-        earliest_reset = _reset_of(usages.get(earliest))
-        if (
-            earliest_reset != float("inf")
-            and _reset_of(usages.get(second)) - earliest_reset >= reset_edge
-        ):
-            # edge 差距即遲滯：非在線就切（含在線不在候選的強制切）；在線即最早者 → 留著多吃
-            return earliest if earliest != active else None
+        for key, edge in (("seven_day_reset", reset_edge_7d), ("five_hour_reset", reset_edge)):
+            target = _earlier_reset_target(usages, candidates, key, edge)
+            if target is not None:
+                # 非在線就切（含在線不在候選的強制切）；在線即最早者 → 留著多吃
+                return target if target != active else None
     # 第 3 層：負載平衡（同 v2）——負載最低者；同分 preferred 優先（False < True）、再字母序
     best = min(candidates, key=lambda lb: (candidates[lb], lb != preferred, lb))
     active_load = candidates.get(active)
