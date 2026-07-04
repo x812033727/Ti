@@ -277,9 +277,14 @@ class DiscussionEngine:
             f"你是 {name}，正在與 {others} 進行第 {round_no} 輪討論。",
         ]
         if prev_round:
-            lines = [
-                f"@{u.speaker}：{self._clip(u.text, PREV_SEGMENT_MAX_CHARS)}" for u in prev_round
-            ]
+            lines = []
+            for u in prev_round:
+                text = (u.text or "").strip()
+                if len(text) <= PREV_SEGMENT_MAX_CHARS:
+                    lines.append(f"@{u.speaker}：{text}")
+                else:
+                    compressed = flow.compress_segment(text, PREV_SEGMENT_MAX_CHARS)
+                    lines.append(f"以下為 @{u.speaker} 發言之摘要（結構化行為原文保留）\n{compressed}")
             parts.append("【上一輪全員發言】\n" + "\n\n".join(lines))
         if self._own_history_recent_n == 0:
             recent_own_history = []
@@ -288,10 +293,14 @@ class DiscussionEngine:
         else:
             recent_own_history = own_history[-self._own_history_recent_n :]
         if recent_own_history:
-            lines = [
-                f"第 {u.round} 輪：{self._clip(u.text, SELF_SEGMENT_MAX_CHARS)}"
-                for u in recent_own_history
-            ]
+            lines = []
+            for u in recent_own_history:
+                text = (u.text or "").strip()
+                if len(text) <= SELF_SEGMENT_MAX_CHARS:
+                    lines.append(f"第 {u.round} 輪：{text}")
+                else:
+                    compressed = flow.compress_segment(text, SELF_SEGMENT_MAX_CHARS)
+                    lines.append(f"以下為 @{name} 發言之摘要（結構化行為原文保留）\n{compressed}")
             parts.append("【你先前的發言】\n" + "\n\n".join(lines))
         parts.append(
             "請針對議題發表本輪意見，精簡聚焦。"
