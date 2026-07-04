@@ -339,7 +339,9 @@ def dynamic_first_workflow() -> dict:
     與預設骨架的差異：把固定的架構辯論（discuss）換成 session 級 `dynamic`（PM 動態溝通、依
     額度分派、可招募新人），並在任務 pipeline 末加 task 級 `dynamic`（PM 動態追加把關）。
     保留全部安全閘門（review／critic／客觀閘門／demo 驗證／wrap_up 檢討＝改善計畫）。
-    不存檔、保留名、不可被覆寫；autopilot／improver 不走此流程（維持安全骨架）。
+    不存檔、保留名、不可被覆寫；autopilot／improver 預設不走此流程（維持安全骨架），
+    但 `TI_AUTOPILOT_WORKFLOW_TRIAGE` 開啟時 autopilot 可由 PM 開場分診選用
+    （autopilot._select_workflow，白名單直取本工廠、不經 get_workflow 的檔案覆寫路徑）。
     """
     return {
         "name": DYNAMIC_FIRST_NAME,
