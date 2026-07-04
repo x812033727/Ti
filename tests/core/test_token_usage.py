@@ -212,9 +212,7 @@ def _write_usage_history_session(root, sid: str, events_: list[dict]) -> None:
         "status": "completed",
         "n_events": len(events_),
     }
-    (root / f"{sid}.meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
-    )
+    (root / f"{sid}.meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
 
 # --- events 建構器 -------------------------------------------------------
@@ -771,9 +769,7 @@ def test_usage_report_derives_from_events_when_meta_missing(monkeypatch):
     assert agg["sessions"] == 1 and agg["total"]["total"] == 15
 
 
-def test_usage_report_fallback_old_jsonl_matches_task_id_shape_full_columns(
-    monkeypatch, tmp_path
-):
+def test_usage_report_fallback_old_jsonl_matches_task_id_shape_full_columns(monkeypatch, tmp_path):
     """任務 #3：meta 缺 token_usage 時，舊 jsonl fallback 彙總全 7 欄且等於新形狀。"""
     from studio import config
 
