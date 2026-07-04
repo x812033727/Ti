@@ -27,7 +27,7 @@ export function openFormModal({ title, hint, fields, submitLabel = "確定", onV
     closeBtn.className = "ghost";
     closeBtn.textContent = "✕";
     closeBtn.setAttribute("aria-label", "取消並關閉");
-    head.append(h, closeBtn);
+    head.appendChild(h); head.appendChild(closeBtn);
     form.appendChild(head);
 
     if (hint) {
@@ -62,7 +62,7 @@ export function openFormModal({ title, hint, fields, submitLabel = "確定", onV
     submit.type = "submit";
     submit.className = "form-modal-submit";
     submit.textContent = submitLabel;
-    foot.append(cancel, submit);
+    foot.appendChild(cancel); foot.appendChild(submit);
     form.appendChild(foot);
     dlg.appendChild(form);
 
@@ -139,7 +139,7 @@ function buildField(f, getters) {
       else input.checked = Array.isArray(f.value) && f.value.includes(o.value);
       const text = document.createElement("span");
       text.textContent = o.label ?? o.value;
-      item.append(input, text);
+      item.appendChild(input); item.appendChild(text);
       if (o.hint) {
         const small = document.createElement("small");
         small.className = "muted";

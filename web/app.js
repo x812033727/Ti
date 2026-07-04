@@ -22,7 +22,7 @@ import { loadGroupOptions } from "./js/panels/groups.js";
 import { openMetrics, closeMetrics, refreshMetrics } from "./js/panels/metrics.js";
 import {
   openWorkflowPanel, closeWorkflowPanel, loadWorkflowPanel, renderWorkflowSelection,
-  newWorkflow, loadWorkflowTemplate, saveWorkflow, deleteWorkflow,
+  newWorkflow, loadWorkflowTemplate, saveWorkflow, deleteWorkflow, bindWorkflowEditor,
 } from "./js/panels/workflow.js";
 import {
   bindSettings, openSettings, closeSettings, saveSettings, applyRecommendedSettings,
@@ -80,6 +80,7 @@ bindSettings();
 bindTabs();
 bindDrawers();
 bindTeam();
+bindWorkflowEditor();
 initTheme();
 setMobileView("discussion");
 

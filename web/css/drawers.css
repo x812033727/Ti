@@ -272,3 +272,65 @@
 .team-sub { font-size: 11.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .team-actions { display: flex; gap: 6px; flex: none; }
 .team-actions button { font-size: 12px; padding: 4px 10px; }
+
+/* 動態流程：結構化 stage 卡片編輯器（textarea 為單一真相，卡片即時序列化回原文） */
+#workflowPanel .wf-textarea { display: none; }
+#workflowPanel.wf-json-mode .wf-textarea { display: block; }
+#workflowPanel.wf-json-mode .wf-cards { display: none; }
+.wf-stages-tools { display: flex; gap: 6px; }
+.wf-cards {
+  display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto; min-height: 0;
+}
+.wf-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  padding: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.wf-card.task { background: var(--surface-2); }
+.wf-card-head { display: flex; align-items: center; gap: 8px; }
+.wf-card-idx {
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent-2); flex: none; min-width: 52px;
+}
+.wf-card-head select { flex: 1; min-width: 0; padding: 6px 28px 6px 10px; font-size: 12.5px; }
+.wf-card-tools { display: flex; gap: 4px; flex: none; }
+.wf-card-tools button { padding: 3px 8px; font-size: 12px; }
+.wf-card-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 10px;
+}
+.wf-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wf-field > span { font-size: 11px; color: var(--muted); }
+.wf-field input, .wf-field select { padding: 6px 8px; font-size: 12.5px; border-radius: var(--r-sm); }
+.wf-field select { padding-right: 26px; }
+.wf-check { flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.wf-check input { accent-color: var(--accent); margin: 0; }
+.wf-cap { font-size: 11px; width: 100%; }
+.wf-roles { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.wf-role-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text-2); cursor: pointer;
+  padding: 3px 9px; border-radius: var(--r-full);
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.wf-role-chip:hover { border-color: var(--border-strong); }
+.wf-role-chip:has(input:checked) {
+  color: var(--accent-2); border-color: rgba(124, 134, 255, .4);
+  background: rgba(124, 134, 255, .1);
+}
+.wf-role-chip input { accent-color: var(--accent); margin: 0; }
+.wf-gates { display: flex; flex-direction: column; gap: 5px; }
+.wf-gate-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wf-gate-row select { padding: 5px 26px 5px 8px; font-size: 12px; }
+.wf-gate-row button { padding: 3px 8px; font-size: 12px; }
+.wf-subpipeline {
+  display: flex; flex-direction: column; gap: 6px;
+  border-left: 2px solid rgba(124, 134, 255, .35);
+  padding-left: 10px;
+}
+.wf-add { align-self: flex-start; font-size: 12px; padding: 5px 12px; }
+.wf-json-error { color: var(--warn); font-size: 12.5px; padding: 8px 10px; border: 1px dashed rgba(245, 184, 95, .4); border-radius: var(--r-sm); }

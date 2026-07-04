@@ -174,9 +174,14 @@
       <label class="set-row"><span class="set-label">描述</span>
         <input id="workflowDesc" type="text" placeholder="（選填）一句說明" autocomplete="off" /></label>
       <div class="wf-stages-head">
-        <span class="set-label">stages（JSON 陣列）</span>
-        <button id="workflowTemplate" class="ghost" type="button" title="以內建預設流程當起點">載入預設範本</button>
+        <span class="set-label">stages（階段序列）</span>
+        <div class="wf-stages-tools">
+          <button id="workflowTemplate" class="ghost" type="button" title="以內建預設流程當起點">載入預設範本</button>
+          <button id="wfModeToggle" class="ghost" type="button"
+                  title="在結構化卡片與 JSON 原文之間切換（進階：JSON 可直接編輯）">{} JSON</button>
+        </div>
       </div>
+      <div id="wfStageCards" class="wf-cards" aria-label="階段卡片編輯器"></div>
       <textarea id="workflowStages" class="wf-textarea" spellcheck="false"
                 placeholder='[{"type":"decompose"},{"type":"build","task_pipeline":[{"type":"implement","assignee":"engineer"}]},{"type":"demo"}]'></textarea>
       <div class="wf-actions">
