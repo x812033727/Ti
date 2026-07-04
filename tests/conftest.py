@@ -36,8 +36,11 @@ dotenv.load_dotenv = lambda *args, **kwargs: False
 #    它們描述「主機沙箱能力」而非行為偏好，是 CI sandbox-test job 刻意注入的
 #    （ci.yml 設 TI_SANDBOX=1、TI_SANDBOX_NET=1；NET 預設 0，被清掉會讓 bwrap 走
 #    --unshare-net，在 GitHub runner 觸發 RTM_NEWADDR EPERM → 沙箱測試全紅）。
-for _k in [k for k in os.environ if k.startswith("TI_") and not k.startswith("TI_SANDBOX")]:
+for _k in [k for k in os.environ if k.startswith("TI_") and not k.startswith("TI_SANDBOX") and not k.startswith("TI_ANTIGRAVITY")]:
     os.environ.pop(_k, None)
+
+for _proxy in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"]:
+    os.environ.pop(_proxy, None)
 
 # state 安全寫入（secure_write_root）預設 strict＝寫入後驗證 owner 為 root（uid 0）。測試
 # 環境（CI runner、本機）多以非 root 跑，strict 會讓 history/backlog 的每次寫入因 fchown
@@ -142,4 +145,7 @@ if not _check_bwrap_actually_works():
         RuntimeWarning,
         stacklevel=2,
     )
+    os.environ["TI_SANDBOX_AVAILABLE"] = "0"
+    os.environ["TI_SANDBOX"] = "0"
     _config._sandbox_available = lambda: False
+    _config.SANDBOX_ENABLED = False
