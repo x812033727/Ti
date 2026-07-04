@@ -7,6 +7,7 @@
   <title>Ti Studio — AI 專家討論工作室</title>
   <!-- 防 FOUC：在樣式載入前套用主題初值（localStorage 優先，否則跟隨系統） -->
   <script>try{var t=localStorage.getItem("ti-theme");if(t==="light"||((!t||t==="system")&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.theme="light";}catch(e){}</script>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236e79ff'/%3E%3Cstop offset='.55' stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%23c084fc'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='24' height='24' rx='7' fill='url(%23g)'/%3E%3Cpath d='M7.5 9.2h11M13 9.2v8.4' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -27,13 +28,16 @@
       <span id="offlineBadge" class="badge-offline hidden">離線示範</span>
     </div>
     <nav class="toolbar">
-      <button id="settingsBtn" class="ghost" title="設定">⚙️ 設定</button>
+      <!-- 主操作（編排工作室）→ 觀測（回顧與監控）→ 系統（設定/主題/登出），以分隔線分組 -->
       <button id="teamBtn" class="ghost" title="團隊：管理角色與討論小組">👥 團隊</button>
-      <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在啟動列選擇專案）">📦 專案</button>
-      <button id="historyBtn" class="ghost" title="歷史 session">📜 歷史</button>
-      <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
       <button id="workflowBtn" class="ghost" title="動態流程編排">🧭 流程</button>
+      <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在啟動列選擇專案）">📦 專案</button>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <button id="historyBtn" class="ghost" title="歷史 session">📜 歷史</button>
       <button id="metricsBtn" class="ghost" title="運維指標">📊 指標</button>
+      <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <button id="settingsBtn" class="ghost" title="設定">⚙️ 設定</button>
       <button id="themeBtn" class="ghost" title="主題：跟隨系統" aria-label="主題：跟隨系統">🌗</button>
       <button id="logoutBtn" class="ghost hidden" title="登出">登出</button>
     </nav>
@@ -254,8 +258,13 @@
           <span id="deckSummary" class="deck-summary muted"></span>
           <span id="deckStop" class="deck-stop hidden" role="button">⏹ 停止</span>
         </button>
-        <input id="requirement" type="text" class="req-input"
-               placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
+        <!-- 第一層：需求 + 主鍵；第二層：情境（專案/repo/流程/小組/持續改良） -->
+        <div class="deck-main">
+          <input id="requirement" type="text" class="req-input"
+                 placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
+          <button id="startBtn">開始討論</button>
+          <button id="stopBtn" class="ghost" disabled>停止</button>
+        </div>
         <div class="deck-row">
           <select id="projectSelect" class="project-select"
                   title="長期專案：程式碼與改良任務跨場次累積；選「一次性討論」則每次從零開始">
@@ -276,8 +285,6 @@
           <label class="improve-toggle" title="選定專案後勾選：團隊自動消化改良任務、找問題、一直改良，直到你按停止">
             <input id="improveChk" type="checkbox" /> ♻️ 持續改良
           </label>
-          <button id="startBtn">開始討論</button>
-          <button id="stopBtn" class="ghost" disabled>停止</button>
           <button id="deckDeleteProject" class="ghost danger hidden"
                   title="刪除目前選取的專案（meta／改良待辦／藍圖／workspace 程式碼，歷史保留）">🗑 刪除專案</button>
         </div>
@@ -304,10 +311,10 @@
       </div>
       <div class="board">
         <div class="columns">
-          <div class="col" data-col="todo"><h3>待辦</h3><div class="cards"></div></div>
-          <div class="col" data-col="doing"><h3>進行中</h3><div class="cards"></div></div>
-          <div class="col" data-col="review"><h3>審查</h3><div class="cards"></div></div>
-          <div class="col" data-col="done"><h3>完成</h3><div class="cards"></div></div>
+          <div class="col" data-col="todo"><h3>待辦 <small class="col-count"></small></h3><div class="cards"></div></div>
+          <div class="col" data-col="doing"><h3>進行中 <small class="col-count"></small></h3><div class="cards"></div></div>
+          <div class="col" data-col="review"><h3>審查 <small class="col-count"></small></h3><div class="cards"></div></div>
+          <div class="col" data-col="done"><h3>完成 <small class="col-count"></small></h3><div class="cards"></div></div>
         </div>
       </div>
       <div class="files">

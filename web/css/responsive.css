@@ -43,6 +43,9 @@
 
   /* 啟動列直排、輸入框 16px 防 iOS focus 自動縮放 */
   .command-deck input, .command-deck select { font-size: 16px; }
+  .deck-main { flex-wrap: wrap; }
+  .deck-main .req-input { flex: 1 1 100%; }
+  .deck-main button { flex: 1; }
   .deck-row { flex-direction: column; align-items: stretch; }
   .deck-row .project-select { max-width: none; }
   .deck-row .repo-input { min-width: 0; }

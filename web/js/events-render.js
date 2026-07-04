@@ -207,6 +207,9 @@ export function renderBoard(columns) {
       c.textContent = it.title;
       wrap.appendChild(c);
     }
+    // 欄計數 badge（欄空時留白不顯示 0）
+    const badge = document.querySelector(`.col[data-col="${col}"] .col-count`);
+    if (badge) badge.textContent = items.length ? String(items.length) : "";
   }
 }
 
