@@ -197,3 +197,78 @@
 }
 .wf-actions { display: flex; align-items: center; gap: 10px; }
 .wf-help code { font-size: .85em; }
+
+/* 團隊面板（角色/小組管理） */
+.team-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 10px 16px 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  padding: 3px;
+  flex: none;
+}
+.team-tabs button {
+  flex: 1;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--muted);
+}
+.team-tabs button:hover { color: var(--text-2); }
+.team-tabs button.active {
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(124, 134, 255, .35);
+}
+.team-body { gap: 0; }
+.team-list-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 2px 0 8px;
+}
+.team-list-head .muted { font-size: 12px; }
+.team-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.team-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.team-item:hover { border-color: var(--border-strong); box-shadow: var(--shadow-1); }
+.team-item.off-roster { opacity: .62; }
+.team-item.muted { display: block; text-align: center; border-style: dashed; background: transparent; }
+.team-av {
+  width: 34px; height: 34px; flex: none;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px;
+}
+.team-av.group {
+  width: auto; min-width: 34px; padding: 0 8px;
+  border-radius: var(--r-full);
+  font-size: 13px; letter-spacing: 2px;
+}
+.team-meta { flex: 1; min-width: 0; }
+.team-name-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.team-name-row strong { font-size: 13.5px; }
+.team-badge {
+  font-size: 10.5px; padding: 1px 8px; border-radius: var(--r-full);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+  white-space: nowrap;
+}
+.team-badge.src-builtin { color: var(--muted); }
+.team-badge.src-override { color: var(--warn); border-color: rgba(245, 184, 95, .4); background: var(--warn-bg); }
+.team-badge.src-file { color: var(--accent-2); border-color: rgba(180, 157, 255, .35); }
+.team-badge.off { color: var(--muted); border-style: dashed; }
+.team-sub { font-size: 11.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.team-actions { display: flex; gap: 6px; flex: none; }
+.team-actions button { font-size: 12px; padding: 4px 10px; }

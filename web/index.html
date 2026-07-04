@@ -28,6 +28,7 @@
     </div>
     <nav class="toolbar">
       <button id="settingsBtn" class="ghost" title="設定">⚙️ 設定</button>
+      <button id="teamBtn" class="ghost" title="團隊：管理角色與討論小組">👥 團隊</button>
       <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在啟動列選擇專案）">📦 專案</button>
       <button id="historyBtn" class="ghost" title="歷史 session">📜 歷史</button>
       <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
@@ -186,6 +187,37 @@
     </div>
   </div>
 
+  <!-- 團隊（角色與討論小組管理） -->
+  <div id="teamPanel" class="drawer glass hidden">
+    <div class="drawer-head">
+      <h2>👥 團隊</h2>
+      <div class="drawer-actions">
+        <button id="teamRefresh" class="ghost" title="重新整理">🔄</button>
+        <button id="teamClose" class="ghost">✕</button>
+      </div>
+    </div>
+    <div class="team-tabs" role="tablist" aria-label="團隊管理分頁">
+      <button id="teamTabRoles" class="active" data-tt="roles" role="tab" aria-selected="true">🎭 角色</button>
+      <button id="teamTabGroups" data-tt="groups" role="tab" aria-selected="false">👥 小組</button>
+    </div>
+    <div class="metrics-body team-body">
+      <div id="teamRoles">
+        <div class="team-list-head">
+          <span class="muted">全部角色（內建＋自建；自建與覆蓋會落檔 roles/&lt;key&gt;.md）</span>
+          <button id="roleNew" class="ghost" type="button">＋ 新角色</button>
+        </div>
+        <ul id="roleList" class="team-list"><li class="muted">載入中…</li></ul>
+      </div>
+      <div id="teamGroups" class="hidden">
+        <div class="team-list-head">
+          <span class="muted">討論小組（開場時可在啟動列指定，限定本場參與角色）</span>
+          <button id="groupNew" class="ghost" type="button">＋ 新小組</button>
+        </div>
+        <ul id="groupList" class="team-list"><li class="muted">載入中…</li></ul>
+      </div>
+    </div>
+  </div>
+
   <!-- 運維指標 -->
   <div id="metricsPanel" class="drawer glass hidden">
     <div class="drawer-head">
@@ -229,6 +261,10 @@
           <select id="workflowSelect" class="project-select"
                   title="動態流程：選擇本場要走的流程骨架（階段順序／參與者／閘門）；預設為內建完整流程">
             <option value="">（預設：動態優先）</option>
+          </select>
+          <select id="groupSelect" class="project-select"
+                  title="討論小組：限定本場參與討論的角色組合（在「👥 團隊」面板管理）；預設用完整編制">
+            <option value="">（預設編制）</option>
           </select>
           <button id="projectRepo" type="button" class="project-repo hidden"
                   title="此專案的目標 repo（工作基底＋發佈目標）。點擊設定。"></button>

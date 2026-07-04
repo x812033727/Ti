@@ -17,6 +17,8 @@ import {
   toggleAutopilot, addAutopilotTask,
 } from "./js/panels/autopilot.js";
 import { openProjectPanel, closeProjectPanel, refreshProjectPanel } from "./js/panels/project.js";
+import { bindTeam } from "./js/panels/team.js";
+import { loadGroupOptions } from "./js/panels/groups.js";
 import { openMetrics, closeMetrics, refreshMetrics } from "./js/panels/metrics.js";
 import {
   openWorkflowPanel, closeWorkflowPanel, loadWorkflowPanel, renderWorkflowSelection,
@@ -77,6 +79,7 @@ $("#interjectInput").addEventListener("keydown", (e) => { if (e.key === "Enter")
 bindSettings();
 bindTabs();
 bindDrawers();
+bindTeam();
 initTheme();
 setMobileView("discussion");
 
@@ -86,6 +89,7 @@ async function init() {
   loadHealth();
   loadProjects();
   loadWorkflows();
+  loadGroupOptions();
 }
 
 init();

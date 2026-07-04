@@ -26,6 +26,9 @@ export function start() {
   if (improve) payload.mode = "improve";
   const workflowName = ($("#workflowSelect") || {}).value || "";
   if (workflowName) payload.workflow = workflowName;
+  // 討論小組：限定本場參與角色（後端 ws.py 已支援 group 參數，找不到會回 error 事件）
+  const groupName = ($("#groupSelect") || {}).value || "";
+  if (groupName) payload.group = groupName;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   state.ws = new WebSocket(`${proto}://${location.host}/ws`);
   state.ws.onopen = () => state.ws.send(JSON.stringify(payload));
