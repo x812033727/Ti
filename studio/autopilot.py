@@ -7,10 +7,10 @@
 
 長跑不間斷：迴圈頂端有額度閘門（provider_quota.gate）——全部 provider 額度受限時睡到
 最早重置再重查，而非空轉燒失敗；provider 中途不可用只把任務退回 pending（不寫 pause 檔）。
-Claude 訂閱雙帳號會自動分配（決策在 claude_accounts.pick_account，優先序：95% 安全上限
-> 重置時間「早重置多吃」（最早 5h 重置者比次早者早 ≥ reset_edge 即切給它）> 負載平均分配
-（負載＝5h/7d 兩窗取最大，差 ≥ margin 即切換攤平），全部達上限交給 quota gate），切換後
-排程重啟服務使新憑證生效。
+Claude 訂閱雙帳號會自動分配（決策在 claude_accounts.pick_account，v4 優先序：95% 安全上限
+> 7d 早重置多吃（差 ≥ reset_edge_7d；7d 窗是週尺度稀缺資源，早歸還的先吃掉才不浪費）
+> 5h 早重置多吃（差 ≥ reset_edge；日內節奏）> 負載平均分配（負載＝5h/7d 兩窗取最大，
+差 ≥ margin 即切換攤平），全部達上限交給 quota gate），切換後排程重啟服務使新憑證生效。
 每輪把 {state, task_id, sleep_until, quota…} 心跳寫進 <state dir>/status.json 供 /api/autopilot 觀測；
 任務執行中另有背景任務每分鐘刷新心跳（updated_at＋last_activity_at），長任務不再被外部監控
 誤判死鎖。SIGTERM/SIGINT 走優雅停機：in-flight 任務退回 pending 自動重排、session 標中斷，
@@ -1172,6 +1172,11 @@ def _recover_stale_in_progress() -> None:
 # 本程序會在睡眠中被殺掉重啟；非 systemd 環境重啟不會來，醒來後照常續跑下一輪。
 _ROTATE_RESTART_SLEEP = 30.0
 
+# 重複排程防護：已排程輪替重啟後，這段秒數內不再切換/排程（曾發生同一重啟 30 秒內被
+# 排兩次）。旗標存行程記憶體——重啟本來就會殺掉本行程，自然歸零，無須持久化。
+_ROTATE_RESCHEDULE_GUARD_S = 180.0
+_rotate_scheduled_at: float | None = None
+
 
 def _window_field(rl: dict, window: str, field: str) -> float | None:
     """從帳號 rate_limits 抽單一額度窗（five_hour/seven_day）的數值欄位
@@ -1214,16 +1219,20 @@ def _claude_accounts_usage(
 
 
 def _rotate_log_detail(usages: dict, active: str | None, target: str) -> str:
-    """切換 log 的括號內文：``5h 重置 14:30，較 B 早 42 分；負載 A 26/B 30``。
+    """切換 log 的括號內文：``5h 重置 14:30，較 B 早 42 分；7d 重置 07/06 03:00；負載 A 26/B 30``。
 
     重置時間取目標帳號的 5h 窗（本地 HH:MM）；在線帳號重置較晚時附「較 <在線> 早 N 分」
-    （重置優先切換的可讀依據）。查不到的欄位顯示 ?，不因缺資料炸 log。
+    （重置優先切換的可讀依據）；目標的 7d 窗重置已知時另附「7d 重置 月/日 時:分」
+    （7d 早重置優先切換的可讀依據）。查不到的欄位顯示 ?，不因缺資料炸 log。
     """
     t, a = usages.get(target) or {}, usages.get(active or "") or {}
     rt, ra = t.get("five_hour_reset"), a.get("five_hour_reset")
     reset_txt = f"5h 重置 {time.strftime('%H:%M', time.localtime(rt))}" if rt else "5h 重置 ?"
     if rt and ra and ra - rt >= 60:  # 不足 1 分鐘不標，避免「早 0 分」噪音
         reset_txt += f"，較 {active} 早 {round((ra - rt) / 60)} 分"
+    rt7 = t.get("seven_day_reset")
+    if rt7:
+        reset_txt += f"；7d 重置 {time.strftime('%m/%d %H:%M', time.localtime(rt7))}"
 
     def f(v: float | None) -> str:
         return "?" if v is None else f"{v:.0f}"
@@ -1235,13 +1244,15 @@ def _rotate_log_detail(usages: dict, active: str | None, target: str) -> str:
 def _maybe_rotate_claude_account(snap: dict) -> str | None:
     """Claude 訂閱雙帳號自動輪替：需要切換時換帳號＋排程服務重啟，回目標 label；否則 None。
 
-    決策純函式在 ``claude_accounts.pick_account``（優先序：95% 安全上限 > 重置時間
-    「早重置多吃」（差 ≥ reset_edge 秒）> 負載平均分配（差 ≥ margin）；帳號負載＝5h/7d
-    兩窗取最大，全部達上限交給 quota gate——規則見其 docstring）；本函式只負責前置防護
-    與副作用：
+    決策純函式在 ``claude_accounts.pick_account``（v4 優先序：95% 安全上限 > 7d 早重置
+    多吃（差 ≥ reset_edge_7d 秒）> 5h 早重置多吃（差 ≥ reset_edge 秒）> 負載平均分配
+    （差 ≥ margin）；帳號負載＝5h/7d 兩窗取最大，全部達上限交給 quota gate——規則 SSOT
+    見其 docstring）；本函式只負責前置防護與副作用：
 
     - ``config.CLAUDE_ROTATE`` 關閉、或非「claude 訂閱模式」（provider 非 claude／走
       API key／CLI 未登入）→ 直接不輪替；
+    - 已排程輪替重啟未滿 ``_ROTATE_RESCHEDULE_GUARD_S`` 秒 → 不重複切換/排程（同一
+      重啟曾被排兩次；重啟殺掉本行程後旗標自然歸零）；
     - 有「真正進行中」的討論不切——重啟會中斷討論，busy 判定鏡射 ti-autodeploy 的
       ``history.busy_sessions(config.DEPLOY_STALE_AFTER)``（stale 的死 session 不算）；
     - 命中 → ``claude_accounts.switch(target)`` 後以 ``deploy.schedule_service_restart()``
@@ -1249,10 +1260,19 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
       載入記憶體，換檔後須重啟才生效）；
     - 任何失敗只留 log，絕不炸 autopilot 主迴圈。
     """
+    global _rotate_scheduled_at
     try:
         if not config.CLAUDE_ROTATE:
             return None
         if config.PROVIDER != "claude" or config.has_api_key() or not config.claude_cli_logged_in():
+            return None
+        if (
+            _rotate_scheduled_at is not None
+            and time.time() - _rotate_scheduled_at < _ROTATE_RESCHEDULE_GUARD_S
+        ):
+            log.debug(
+                "帳號輪替：%.0f 秒前已排程重啟，跳過重複排程", time.time() - _rotate_scheduled_at
+            )
             return None
         usages, active = _claude_accounts_usage(snap)
         target = claude_accounts.pick_account(
@@ -1262,6 +1282,7 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
             config.CLAUDE_ROTATE_THRESHOLD,
             config.CLAUDE_ROTATE_MARGIN,
             config.CLAUDE_ROTATE_RESET_EDGE,
+            config.CLAUDE_ROTATE_RESET_EDGE_7D,
         )
         if not target:
             return None
@@ -1271,14 +1292,16 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
             return None
         claude_accounts.switch(target)
         deploy.schedule_service_restart()
+        _rotate_scheduled_at = time.time()
         log.info(
-            "Claude 帳號分配：切至 %s（%s），上限 %.0f%%／負載遲滯 %.0f%%／重置優先 %.0f 秒，"
-            "已排程重啟服務使新憑證生效",
+            "Claude 帳號分配：切至 %s（%s），上限 %.0f%%／負載遲滯 %.0f%%／重置優先 5h %.0f 秒"
+            "／7d %.0f 秒，已排程重啟服務使新憑證生效",
             target,
             _rotate_log_detail(usages, active, target),
             config.CLAUDE_ROTATE_THRESHOLD,
             config.CLAUDE_ROTATE_MARGIN,
             config.CLAUDE_ROTATE_RESET_EDGE,
+            config.CLAUDE_ROTATE_RESET_EDGE_7D,
         )
         return target
     except Exception:  # noqa: BLE001 — 輪替只是額度優化，失敗不得弄死主迴圈

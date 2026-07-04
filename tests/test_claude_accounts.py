@@ -139,7 +139,7 @@ def test_switch_rejects_unknown_and_illegal_label(_isolate):
 
 
 # --- pick_account：雙帳號分配的純決策（無 I/O，不碰檔案）--------------------
-# v3 優先序：安全上限 > 重置時間（早重置多吃）> 負載平均分配。
+# v4 優先序：安全上限 > 7d 早重置多吃 > 5h 早重置多吃 > 負載平均分配。
 
 
 def _w(
@@ -152,8 +152,18 @@ def _w(
     return {"five_hour": fh, "seven_day": sd, "five_hour_reset": fhr, "seven_day_reset": sdr}
 
 
-def _pick(usages, active, preferred="B", threshold=95.0, margin=10.0, reset_edge=900.0):
-    return claude_accounts.pick_account(usages, active, preferred, threshold, margin, reset_edge)
+def _pick(
+    usages,
+    active,
+    preferred="B",
+    threshold=95.0,
+    margin=10.0,
+    reset_edge=900.0,
+    reset_edge_7d=21600.0,
+):
+    return claude_accounts.pick_account(
+        usages, active, preferred, threshold, margin, reset_edge, reset_edge_7d
+    )
 
 
 def test_pick_account_balances_when_gap_reaches_margin():
@@ -235,7 +245,7 @@ def test_pick_account_unknown_active_none():
     assert _pick({"A": _w(10.0), "B": _w(20.0)}, None) is None
 
 
-# --- pick_account v3：重置時間優先（早重置多吃）-----------------------------
+# --- pick_account：5h 早重置多吃（v4 第 2b 層；7d 皆未知時的日內節奏規則）----
 
 _T = 1_800_000_000.0  # 固定 epoch 基準：決策只比較相對差，避免測試依賴當下時間
 
@@ -263,11 +273,18 @@ def test_pick_account_reset_edge_exact_boundary():
 
 
 def test_pick_account_reset_none_falls_back_to_load():
-    """候選重置皆查不到（None）→ 退回負載平衡；單邊 None 視為 +inf（已知者即最早）。"""
+    """重置未知（None）→ 5h 規則不判定、下沉負載平衡：兩者重置**皆已知**才比較。
+
+    v3 黏著 bug（已修）：單邊 None 被視為 +inf 直接比較，``inf - earliest >= edge``
+    恆真——在線恰是唯一已知重置者時會恆回「留在線」，永不下沉到負載平衡。
+    """
     assert _pick({"A": _w(18.0), "B": _w(40.0)}, "B") == "A"  # 皆 None → 純負載規則
-    assert _pick({"A": _w(18.0, fhr=_T + 600), "B": _w(40.0)}, "B") == "A"  # A 已知 → 差 inf ≥edge
-    # 在線 B 已知重置、A 未知：B 即「最早重置者」→ 留在線多吃（不退回負載規則）
-    assert _pick({"A": _w(18.0), "B": _w(40.0, fhr=_T + 600)}, "B") is None
+    # A 已知、B 未知 → 非皆已知，下沉負載規則：差 22 ≥margin → 切 A（結論同 v3、理由不同）
+    assert _pick({"A": _w(18.0, fhr=_T + 600), "B": _w(40.0)}, "B") == "A"
+    # 在線 B 已知、A 未知：v3 會判 B「最早重置」黏死在線；v4 下沉負載規則 → 差 ≥margin 切 A
+    assert _pick({"A": _w(18.0), "B": _w(40.0, fhr=_T + 600)}, "B") == "A"
+    # 同上但負載差 <margin → 下沉後遲滯擋下，不切（黏著修正不會反向造成亂切）
+    assert _pick({"A": _w(35.0), "B": _w(40.0, fhr=_T + 600)}, "B") is None
 
 
 def test_pick_account_earliest_reset_is_active_stays():
@@ -294,3 +311,62 @@ def test_pick_account_forced_switch_prefers_earlier_reset():
         "C": _w(20.0, fhr=_T + 3600),
     }
     assert _pick(usages, "B") == "A"  # 負載規則會選 C；A 比 C 早 3000 秒 → 重置優先勝出
+
+
+# --- pick_account v4：7d 早重置優先於 5h（週尺度稀缺資源先吃）-----------------
+
+
+def test_pick_account_7d_priority_beats_5h_rule():
+    """7d 早重置 ≥edge_7d → 切給它，即使 5h 規則會選另一邊（實案：B 的 7d 早 ~123h）。
+
+    2026-07-04 晨間實測數據縮影：A 5h 較早重置（5h 規則會留 A），但 B 的 7d 窗早
+    ~123 小時歸還——週尺度配額不先吃掉就是浪費，7d 規則必須壓過 5h。
+    """
+    usages = {
+        "A": _w(53.0, 15.0, fhr=_T + 2.7 * 3600, sdr=_T + 163.7 * 3600),
+        "B": _w(15.0, 13.0, fhr=_T + 3.9 * 3600, sdr=_T + 40.7 * 3600),
+    }
+    assert _pick(usages, "A") == "B"  # 5h 規則會判 A 最早（早 1.2h ≥edge）→ 7d 優先切 B
+
+
+def test_pick_account_7d_earliest_is_active_stays():
+    """7d 最早重置者＝在線 → 留在線多吃（None），不再下沉 5h／負載規則。"""
+    usages = {
+        "A": _w(53.0, 15.0, fhr=_T + 2.7 * 3600, sdr=_T + 163.7 * 3600),
+        "B": _w(15.0, 13.0, fhr=_T + 3.9 * 3600, sdr=_T + 40.7 * 3600),
+    }
+    assert _pick(usages, "B") is None
+
+
+def test_pick_account_7d_edge_exact_boundary():
+    """edge_7d 遲滯精確邊界：7d 差恰等於 edge_7d 即觸發（≥ 語意）、差 edge_7d−1 下沉 5h。"""
+    at_edge = {
+        "A": _w(30.0, sdr=_T + 100, fhr=_T + 7200),
+        "B": _w(30.0, sdr=_T + 100 + 21600, fhr=_T + 600),
+    }
+    # 負載同分（負載規則不切）、5h 規則會選 B（早 6600 ≥edge）→ 證明由 7d 規則選 A
+    assert _pick(at_edge, "B") == "A"
+    below_edge = {
+        "A": _w(30.0, sdr=_T + 100, fhr=_T + 7200),
+        "B": _w(30.0, sdr=_T + 100 + 21599, fhr=_T + 600),
+    }
+    assert _pick(below_edge, "B") is None  # 7d 差不足 → 下沉 5h：最早＝在線 B → 留著多吃
+
+
+def test_pick_account_7d_one_side_none_falls_to_5h():
+    """7d 單邊未知 → 7d 規則不判定（皆已知才比較），下沉 5h 規則決策。"""
+    usages = {
+        "A": _w(30.0, sdr=_T + 3600, fhr=_T + 600),
+        "B": _w(30.0, fhr=_T + 7200),  # 7d 未知
+    }
+    assert _pick(usages, "B") == "A"  # 5h：A 早 6600 ≥edge → 切 A（7d 資訊不全不擋路）
+
+
+def test_pick_account_7d_respects_threshold():
+    """7d 最早重置但負載 ≥threshold → 不在候選，7d 規則在剩餘候選中運作（上限優先不變）。"""
+    usages = {
+        "A": _w(96.0, sdr=_T + 3600, fhr=_T + 600),  # 7d 全場最早但已達上限
+        "B": _w(50.0, sdr=_T + 90 * 3600, fhr=_T + 7200),  # 在線
+        "C": _w(40.0, sdr=_T + 40 * 3600, fhr=_T + 9000),  # 候選中 7d 最早（早 50h ≥edge_7d）
+    }
+    assert _pick(usages, "B") == "C"
