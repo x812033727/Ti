@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import time
 from pathlib import Path
@@ -280,19 +281,133 @@ def _derive_parallel(events: list[dict]) -> dict:
     return {}
 
 
+# meta 檔快取：絕對路徑 -> (mtime_ns, size, meta)。所有 meta 寫入都走 _write_meta →
+# secure_write_root（tmp+rename 必刷 mtime），故 (mtime_ns, size) 雙鍵足以判定失效；
+# 以絕對路徑為 key，測試切換 HISTORY_ROOT（tmp_path）天然隔離、互不污染。
+_meta_cache: dict[str, tuple[int, int, dict]] = {}
+
+
+def _reset_meta_cache() -> None:
+    """清空 meta 快取（測試兜底用）。"""
+    _meta_cache.clear()
+
+
+def _read_meta_file(path: Path) -> dict | None:
+    """讀單一 meta 檔；壞檔回 None（獨立成函式供快取測試 spy）。"""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def list_sessions() -> list[dict]:
-    """回傳所有 session 的 meta，依開始時間新到舊。"""
+    """回傳所有 session 的 meta，依開始時間新到舊。
+
+    每檔以 (mtime_ns, size) 快取，未變動不重讀 JSON；回傳的 meta dict 為快取共享物件，
+    呼叫端不得就地修改（需要改動請自行 copy）。
+    """
     root = config.HISTORY_ROOT
     if not root.exists():
         return []
     metas: list[dict] = []
+    seen: set[str] = set()
     for p in root.glob("*.meta.json"):
+        key = str(p)
         try:
-            metas.append(json.loads(p.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
+            st = p.stat()
+        except OSError:  # glob 到 stat 前被刪：跳過
             continue
+        stamp = (st.st_mtime_ns, st.st_size)
+        cached = _meta_cache.get(key)
+        if cached is not None and (cached[0], cached[1]) == stamp:
+            meta = cached[2]
+        else:
+            meta = _read_meta_file(p)
+            if meta is None:
+                # 壞檔不入快取（避免快取成殭屍），下次仍會重試
+                _meta_cache.pop(key, None)
+                continue
+            _meta_cache[key] = (stamp[0], stamp[1], meta)
+        seen.add(key)
+        metas.append(meta)
+    # 修剪：本輪沒見到的檔（已刪除或壞檔）逐出，防快取無限增長；prefix 帶分隔符
+    # 避免誤傷同前綴的兄弟目錄（如 .../history 與 .../history2）
+    prefix = str(root) + os.sep
+    for stale in [k for k in _meta_cache if k.startswith(prefix) and k not in seen]:
+        _meta_cache.pop(stale, None)
     metas.sort(key=lambda m: m.get("started_at", 0), reverse=True)
     return metas
+
+
+def aggregate_scorecard(sessions: list[dict]) -> dict:
+    """跨 session 聚合成果記分卡：成功率、平均輪數、一次過率、退回原因，與近期趨勢。
+
+    趨勢取「最近 10 場 vs 再前 10 場」（sessions 已新→舊排序）——這是『工作室有沒有
+    越做越進步』的直接量測：成功率升、平均輪數降＝在進步。
+    （自 routes.py 平移至此：history 是 scorecard 推導 SSOT，改良迴圈也要複用聚合。）
+    """
+    rows = [
+        (m, m["scorecard"])
+        for m in sessions
+        if m.get("status") != "running" and isinstance(m.get("scorecard"), dict)
+    ]
+    if not rows:
+        return {
+            "n": 0,
+            "qa_pass_rate": None,
+            "critic_pass_rate": None,
+            "demo_pass_rate": None,
+        }
+
+    def _slice_stats(part: list[tuple[dict, dict]]) -> dict:
+        if not part:
+            return {"n": 0}
+        done = sum(1 for m, _ in part if m.get("status") == "completed")
+        rounds = [s["avg_rounds"] for _, s in part if s.get("avg_rounds")]
+        return {
+            "n": len(part),
+            "completed_rate": round(done / len(part), 2),
+            "avg_rounds": round(sum(rounds) / len(rounds), 2) if rounds else None,
+        }
+
+    rejects = {"qa_fail": 0, "smoke_fail": 0, "gate_veto": 0, "critic": 0, "stall": 0}
+    tasks_total = tasks_done = first_try = 0
+    qa_total = qa_pass = 0
+    critic_total = critic_pass = 0
+    demo_total = demo_pass = 0
+    for _, s in rows:
+        for k in rejects:
+            rejects[k] += (s.get("rejects") or {}).get(k, 0)
+        tasks_total += s.get("tasks_total", 0)
+        tasks_done += s.get("tasks_done", 0)
+        first_try += s.get("first_try_done", 0)
+        qa_total += s.get("qa_total", 0)
+        qa_pass += s.get("qa_pass", 0)
+        critic_total += s.get("critic_total", 0)
+        critic_pass += s.get("critic_pass", 0)
+        demo = s.get("demo_passed")
+        if demo is not None:
+            demo_total += 1
+            if demo is True:
+                demo_pass += 1
+
+    def _rate(passed: int, total: int) -> float | None:
+        return round(passed / total, 2) if total else None
+
+    return {
+        **_slice_stats(rows),
+        "qa_pass_rate": _rate(qa_pass, qa_total),
+        "critic_pass_rate": _rate(critic_pass, critic_total),
+        "demo_pass_rate": _rate(demo_pass, demo_total),
+        "tasks": {
+            "total": tasks_total,
+            "done": tasks_done,
+            "first_try_done": first_try,
+            "first_try_rate": round(first_try / tasks_done, 2) if tasks_done else None,
+        },
+        "rejects": rejects,
+        "trend": {"recent": _slice_stats(rows[:10]), "previous": _slice_stats(rows[10:20])},
+    }
 
 
 def _last_activity_ts(meta: dict) -> float:
