@@ -75,6 +75,8 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 任務結束時會發送 `task_result` 事件（payload：`task_id`、`role`、`provider`、`model`、
 `duration_s`、`qa_rounds`、`input_tokens`、`output_tokens`、`total_tokens`、`cost_usd`、
 `cost_source`），可用於與 `dispatch_decision` 事件進行 `task_id` 的 join。
+（註：若任務因重試等原因重複執行，同一個 `task_id` 可能廣播多次 `task_result`，指標為該次執行之累計值。消費端 join 時應以最後一筆為準。）
+
 
 ## 需求澄清（選配，`TI_CLARIFY`）
 

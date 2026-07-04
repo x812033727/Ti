@@ -409,6 +409,7 @@ def appraisal(
 def task_result(
     session_id: str,
     task_id: int,
+    *,
     role: str,
     provider: str,
     model: str | None,

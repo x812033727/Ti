@@ -2664,27 +2664,29 @@ class StudioSession:
             # 實際綁定），提供 _wrap_up 與 PM 主觀評分合併入考核庫。永不 raise。
             self._collect_task_perf(ctx, task, impl_role, time.monotonic() - t0)
             perf = self._task_perf.get(task["id"])
-            if perf:
-                try:
-                    await self.broadcast(
-                        events.task_result(
-                            self.session_id,
-                            task["id"],
-                            perf.get("role") or impl_role,
-                            perf.get("provider") or "",
-                            perf.get("model"),
-                            perf.get("duration_s"),
-                            perf.get("qa_rounds"),
-                            perf.get("input_tokens"),
-                            perf.get("output_tokens"),
-                            perf.get("total_tokens"),
-                            perf.get("cost_usd"),
-                            perf.get("cost_source"),
+            try:
+                if perf:
+                    try:
+                        await self.broadcast(
+                            events.task_result(
+                                self.session_id,
+                                task["id"],
+                                role=perf.get("role") or impl_role,
+                                provider=perf.get("provider") or "",
+                                model=perf.get("model"),
+                                duration_s=perf.get("duration_s"),
+                                qa_rounds=perf.get("qa_rounds"),
+                                input_tokens=perf.get("input_tokens"),
+                                output_tokens=perf.get("output_tokens"),
+                                total_tokens=perf.get("total_tokens"),
+                                cost_usd=perf.get("cost_usd"),
+                                cost_source=perf.get("cost_source"),
+                            )
                         )
-                    )
-                except Exception:  # noqa: BLE001
-                    log.warning("廣播 task_result 事件失敗（略過）", exc_info=True)
-            await restore()
+                    except Exception:  # noqa: BLE001
+                        log.warning("廣播 task_result 事件失敗（略過）", exc_info=True)
+            finally:
+                await restore()
 
     async def _work_task_rounds(
         self,
