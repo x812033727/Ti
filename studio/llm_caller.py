@@ -264,6 +264,27 @@ _PROVIDER_UNAVAILABLE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, str]], .
         ("auth", "provider authentication required"),
     ),
     (
+        # 裸 CLI 限流文字（無 HTTP 前綴/JSON error token 的 Codex/Antigravity 輸出）：
+        # rate limit 必須與動詞（exceeded/reached/hit）相鄰（雙向），防專家正常
+        # 討論 rate limit 設計時被誤殺——Antigravity 的 detail 含 stdout 成功輸出。
+        re.compile(
+            r"\brate[\s_-]?limits?\s+(?:exceeded|reached|hit)\b"
+            r"|\b(?:exceeded|hit|reached)\s+(?:the\s+|your\s+|a\s+)?rate[\s_-]?limits?\b",
+            re.I,
+        ),
+        ("rate_limit", "rate limit reached"),
+    ),
+    (
+        # HTTP 429 慣用語：獨立成行（裸 CLI 典型輸出），或 80 字內帶 429/error/http/retry 錨。
+        re.compile(
+            r"(?m)^\s*too\s+many\s+requests\.?\s*$"
+            r"|\b(?:429|error|http)\b.{0,80}\btoo\s+many\s+requests\b"
+            r"|\btoo\s+many\s+requests\b.{0,80}\b(?:429|retry)\b",
+            re.I,
+        ),
+        ("rate_limit", "rate limit reached"),
+    ),
+    (
         re.compile(r"\b(?:chat|request|provider)\s+timeout\b|\btimed\s+out\b", re.I),
         ("timeout", "provider request timed out"),
     ),

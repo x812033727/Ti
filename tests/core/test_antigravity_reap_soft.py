@@ -142,10 +142,24 @@ async def test_wait_process_exit_idle_timeout_reason():
         ("Error: timed out waiting for response", "soft"),  # 暫態：逾時 → 軟失敗
         ("You are not signed in. Please sign in.", "pause"),  # 硬：未登入 → 暫停
         ("not signed in", "pause"),  # 硬：未登入 → 暫停
+        ("rate limit exceeded, retry later", "soft"),  # 暫態：裸 CLI 限流 → 軟失敗
+        ("Too Many Requests", "soft"),  # 暫態：整行 429 慣用語 → 軟失敗
+        ("建議替 API 加上 rate limit 設計", None),  # 白樣本：討論限流不誤殺
     ],
 )
 def test_antigravity_pause_or_soft(detail, expected):
     assert providers._antigravity_pause_or_soft(detail) == expected
+
+
+@pytest.mark.parametrize(
+    "detail,expected",
+    [
+        ("rate limit exceeded", "soft"),  # 暫態：裸 CLI 限流 → 軟失敗，不 pause 整場
+        ("正常審查輸出，順帶討論 rate limit 概念", None),  # 白樣本
+    ],
+)
+def test_codex_pause_or_soft_rate_limit(detail, expected):
+    assert providers._codex_pause_or_soft(detail) == expected
 
 
 # --- AntigravityExpert 整合（假 agy 腳本，沙箱關閉直接執行）-----------------
