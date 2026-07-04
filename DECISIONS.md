@@ -2221,3 +2221,12 @@
 - 時間：2026-07-04 16:35
 - 理由：高工附帶約束 3——別讓後人把可追溯當成蒸餾後仍成立的承諾。
 
+## autopilot 心跳新增 `workers` 子行程活性欄（issue #285）：以掃 `/proc/[0-9]*/stat` 建 ppid→children map 展開 os.getpid() 後裔子樹、取 utime+stime，跨兩次心跳 tick 比 delta 得 `cpu_active`
+- 時間：2026-07-04
+- 理由：長輪多專家討論的 inter-message 間隔（單一長工具呼叫/長 thinking/單則超長串流）期間無事件產出，`last_activity_at`(=events mtime) 凍結 30-90 分鐘被外部監控誤判死鎖並 restart（同日兩次、丟失數小時進度）。把人工診斷用的「對 claude 子行程做兩次 /proc utime/stime 取樣」自動化寫進 status.json，讓監控能肯定判定「有 worker 燒 CPU＝非死鎖」。
+- 選型：掃 ppid map 而非 `/proc/<pid>/task/<tid>/children`——後者依賴內核 `CONFIG_PROC_CHILDREN` 且並發下不保證完整；ppid 是任何 /proc 恆有的欄位，可攜性最高，且同趟就地取 utime/stime 免二次讀檔。
+- 不引 psutil：守「不隨意新增依賴」鐵則，純標準庫 `os` 讀 /proc 文字檔即可；delta 只比大小不換算秒，故不需 `SC_CLK_TCK`。
+- None 三態語義：`_proc_descendant_cpu` 回 `dict`（`{}`＝明確零 worker）／`None`（/proc 不可用或解析失敗，絕不拋例外）；`workers.cpu_active` 另有首 tick=None（尚無前次快照可比）。監控見 `cpu_active == null` 時須退回 `last_activity_at` 判斷，不得單憑 null restart。
+- 否決方案：改用 event-driven 細粒度心跳（每 broadcast 事件即刷）——無法解「專家單則訊息之間根本不產事件」的盲區，子行程 CPU 取樣才是與事件粒度解耦的存活證據。
+- 移交待辦（本輪不含）：minimax.io CLOSE-WAIT / httpx 連線池洩漏（issue 建議 #3）——`studio/providers.py::_openai_chat` 每次新建 `AsyncOpenAI` 不 aclose，屬本檔既列的範圍外技術債，且非本次告警主因。
+
