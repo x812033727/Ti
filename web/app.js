@@ -2,6 +2,7 @@
 // 職責分工見 web/js/：dom.js（工具）、state.js（跨模組狀態）、events-render.js
 //（事件渲染中樞 handleEvent）、ws.js（連線）、panels/*（各面板）、components/*（共用元件）。
 import { $ } from "./js/dom.js";
+import { initTheme, toggleTheme } from "./js/theme.js";
 import { downloadWorkspace, loadPublishConfig } from "./js/events-render.js";
 import { start, stop, sendInterject } from "./js/ws.js";
 import { loadHealth, checkAuth } from "./js/health.js";
@@ -53,6 +54,7 @@ $("#apToggle").onclick = toggleAutopilot;
 $("#apAddBtn").onclick = addAutopilotTask;
 $("#deckBar").onclick = () => setDeckCollapsed(false);
 $("#deckStop").onclick = (e) => { e.stopPropagation(); stop(); };
+$("#themeBtn").onclick = toggleTheme;
 $("#metricsBtn").onclick = openMetrics;
 $("#metricsClose").onclick = closeMetrics;
 $("#metricsRefresh").onclick = refreshMetrics;
@@ -75,6 +77,7 @@ $("#interjectInput").addEventListener("keydown", (e) => { if (e.key === "Enter")
 bindSettings();
 bindTabs();
 bindDrawers();
+initTheme();
 setMobileView("discussion");
 
 async function init() {

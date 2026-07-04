@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
   <title>登入 — Ti Studio</title>
+  <!-- 防 FOUC：在樣式載入前套用主題初值（與 index.html 同一段） -->
+  <script>try{var t=localStorage.getItem("ti-theme");if(t==="light"||((!t||t==="system")&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.theme="light";}catch(e){}</script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body class="login-body">

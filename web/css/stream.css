@@ -126,7 +126,7 @@
   line-height: 1.55;
   overflow: auto;
   max-height: 220px;
-  color: #c9d1d9;
+  color: var(--code-text);
   margin: 6px 0 0;
 }
 

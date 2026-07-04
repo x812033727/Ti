@@ -139,7 +139,7 @@
 .expert .meta { flex: 1; min-width: 0; }
 .expert .nm { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .expert .tt { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.expert .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a4150; flex: none; }
+.expert .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-idle); flex: none; }
 .expert[data-status="idle"] .dot { background: var(--good); }
 .expert[data-status="thinking"] .dot { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
 .expert[data-status="working"] .dot { background: var(--accent); animation: pulse .6s ease-in-out infinite; }

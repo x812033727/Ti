@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
   <title>Ti Studio — AI 專家討論工作室</title>
+  <!-- 防 FOUC：在樣式載入前套用主題初值（localStorage 優先，否則跟隨系統） -->
+  <script>try{var t=localStorage.getItem("ti-theme");if(t==="light"||((!t||t==="system")&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.theme="light";}catch(e){}</script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -30,6 +33,7 @@
       <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
       <button id="workflowBtn" class="ghost" title="動態流程編排">🧭 流程</button>
       <button id="metricsBtn" class="ghost" title="運維指標">📊 指標</button>
+      <button id="themeBtn" class="ghost" title="主題：跟隨系統" aria-label="主題：跟隨系統">🌗</button>
       <button id="logoutBtn" class="ghost hidden" title="登出">登出</button>
     </nav>
     <div id="phase" class="phase">待命中</div>

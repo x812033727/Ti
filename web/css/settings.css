@@ -23,7 +23,7 @@
 .settings-card {
   width: min(1180px, 100%);
   max-height: calc(100vh - 48px);
-  background: rgba(18, 19, 26, .92);
+  background: var(--card-bg);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   display: flex;
@@ -68,7 +68,7 @@
 .settings-nav button:hover,
 .settings-nav button.active {
   color: var(--text);
-  background: rgba(255,255,255,.06);
+  background: var(--surface-2);
   border-color: var(--border);
 }
 .settings-content {
@@ -105,7 +105,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 12px;
-  background: rgba(255,255,255,.035);
+  background: var(--surface-1);
   margin-bottom: 12px;
 }
 .quota-head {
@@ -135,7 +135,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 10px;
-  background: rgba(0,0,0,.16);
+  background: var(--inset-bg);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -187,7 +187,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 8px;
-  background: rgba(0,0,0,.12);
+  background: var(--inset-bg);
   display: flex;
   flex-direction: column;
   gap: 4px;

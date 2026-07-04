@@ -45,7 +45,7 @@
   min-height: 110px;
 }
 .col h3 { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.col h3::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #5a6072; flex: none; }
+.col h3::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dot-muted); flex: none; }
 .col[data-col="doing"] h3::before { background: var(--accent); box-shadow: 0 0 6px rgba(124, 134, 255, .7); }
 .col[data-col="review"] h3::before { background: var(--warn); }
 .col[data-col="done"] h3::before { background: var(--good); }
@@ -112,6 +112,6 @@
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.6;
-  color: #c9d1d9;
+  color: var(--code-text);
   margin: 0;
 }

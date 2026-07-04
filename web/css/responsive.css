@@ -131,7 +131,7 @@
     border-bottom: 1px solid var(--border);
     flex-direction: row;
     overflow-x: auto;
-    background: rgba(18, 19, 26, .96);
+    background: var(--card-bg-solid);
     padding: 8px 10px;
   }
   .settings-nav button { white-space: nowrap; }
@@ -141,8 +141,8 @@
   .settings-grid { grid-template-columns: 1fr; }
   /* 整頁捲動：內容不再內捲被壓扁；標題/儲存列 sticky 保持可達 */
   .settings-form { flex: none; overflow: visible; }
-  .settings-head { position: sticky; top: 0; background: rgba(18, 19, 26, .96); z-index: 1; }
-  .settings-foot { position: sticky; bottom: 0; background: rgba(18, 19, 26, .96); z-index: 1; }
+  .settings-head { position: sticky; top: 0; background: var(--card-bg-solid); z-index: 1; }
+  .settings-foot { position: sticky; bottom: 0; background: var(--card-bg-solid); z-index: 1; }
 
   /* toast 抬高避開分頁列 */
   #toast { bottom: 84px; }
