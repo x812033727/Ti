@@ -2751,83 +2751,32 @@ class StudioSession:
             human = await self._lane_human_prefix(ctx)
 
             # --- 實作 ---
-            # 中途求助提示：只在開關開、額度未用盡且 PM 在場時告知 marker——
-            # 承諾了卻無人接（PM 缺席）比不承諾更糟，故條件含在場檢查。
-            help_hint = (
-                "\n若中途卡關，可輸出一行 `求助: <一句話說明卡點>`，PM 會即時給指示後你再續作。"
-                if (
-                    config.TASK_HELP_ENABLED
-                    and help_used < config.TASK_HELP_MAX
-                    and "pm" in ctx.experts
-                )
-                else ""
+            impl_prompt = self._build_impl_prompt(
+                ctx,
+                task,
+                pm_plan,
+                rnd=rnd,
+                feedback=feedback,
+                seed_feedback=seed_feedback,
+                help_used=help_used,
+                human=human,
             )
-            if not feedback:
-                impl_prompt = (
-                    f"{human}{self._notes_context(ctx)}"
-                    f"目前要完成的任務 #{task['id']}：{task['title']}\n\n"
-                    f"整體計畫供參考：\n{pm_plan}\n\n"
-                    "請在工作目錄裡實作，並在交付前自己跑過一次確認能執行。"
-                    f"{help_hint}"
-                )
-            else:
-                # (A) 反思記憶：注入本任務更早輪次蒸餾的反思（最新一輪原文已在 feedback 內，故
-                # exclude_latest；huddle seed＝rnd==1 且 seed_feedback，為結論非上一輪報告 → 全帶）。
-                is_seed = rnd == 1 and bool(seed_feedback)
-                reflections_ctx = (
-                    memory.build_context(self.session_id, task["id"], exclude_latest=not is_seed)
-                    if config.REFLEXION_ENABLED
-                    else ""
-                )
-                impl_prompt = (
-                    f"{human}{reflections_ctx}"
-                    f"任務 #{task['id']}：{task['title']} 尚未通過，"
-                    f"請根據以下意見逐項修正（第 {rnd} 輪）：\n\n{feedback}\n\n"
-                    "修正後請自己再跑一次確認。"
-                    f"{help_hint}"
-                )
             impl_text = await self._speak(
                 ctx, impl_role, impl_prompt, tag, token_usage_task_id=task["id"]
             )
 
             # --- 中途求助 PM：工程師輸出 `求助: <問題>` 時就地問 PM 拿指示、續作後覆蓋 impl_text ---
-            # 每任務至多 TASK_HELP_MAX 次（help_used 跨輪累計）；續作再含標記由上限自然擋下。
-            # rnd 不變、impl_history 每外輪仍只 append 最終一筆、commit 仍每輪一次 → 不影響停滯
-            # 偵測與輪數（同 self-refine 慣例）。輪內輕量通道，與跑滿輪數才觸發的 huddle 互補。
-            while (
-                config.TASK_HELP_ENABLED
-                and help_used < config.TASK_HELP_MAX
-                and "pm" in ctx.experts
-                and not self._stop
-            ):
-                question = parse_help_request(impl_text)
-                if not question:
-                    break
-                help_used += 1
-                await bc(
-                    events.phase_change(
-                        self.session_id,
-                        "求助PM",
-                        f"任務 #{task['id']} 工程師中途求助（{help_used}/{config.TASK_HELP_MAX}）",
-                    )
-                )
-                pm_reply = await self._speak(
-                    ctx,
-                    "pm",
-                    f"{human}工程師實作任務 #{task['id']}：{task['title']} 時中途卡關求助：\n"
-                    f"{question}\n\n整體計畫供參考：\n{pm_plan}\n\n"
-                    "請給一段簡短、可立即執行的指示（必要時允許簡化範圍），別展開長篇討論。",
-                    tag,
-                    token_usage_task_id=task["id"],
-                )
-                impl_text = await self._speak(
-                    ctx,
-                    impl_role,
-                    f"{human}PM 對你的求助給出指示：\n{pm_reply}\n\n"
-                    "請依指示繼續完成本任務，完成後照常總結交付（含 `執行指令:`）。",
-                    tag,
-                    token_usage_task_id=task["id"],
-                )
+            impl_text, help_used = await self._mid_task_help(
+                ctx,
+                task,
+                pm_plan,
+                impl_role,
+                impl_text,
+                help_used=help_used,
+                human=human,
+                tag=tag,
+                bc=bc,
+            )
 
             # --- 交付前自測（確定性 smoke-run）---
             smoke = await self._self_test(ctx, impl_text, bc)
@@ -2836,40 +2785,17 @@ class StudioSession:
             # 多任務場景下整體指令在前期任務本來就跑不起來，硬退回會誤殺（strict 模式除外）。
             own_cmd = runner.parse_run_command(impl_text) is not None
             # --- (D) 單輪內自我精修：自測「實際執行」未通過時，讓同一工程師就地依執行紀錄再修 ---
-            # 訊號是 runner 的確定性 exit code（非 LLM 自評），裁決權仍在 QA/高工/客觀閘門；同一
-            # engineer 是有狀態對話，續一則帶 log 的訊息即可。rnd 不變、impl_history 每外輪仍只
-            # append 最終一筆、commit 仍每輪一次 → 不影響停滯偵測與輪數。
-            if (
-                config.SELF_REFINE_ITERS > 0
-                and smoke is not None
-                and not smoke.ok
-                and own_cmd
-                and not self._stop
-            ):
-                for i in range(1, config.SELF_REFINE_ITERS + 1):
-                    await bc(
-                        events.phase_change(
-                            self.session_id,
-                            "自我精修",
-                            f"任務 #{task['id']} 交付前自測未通過，工程師就地修正"
-                            f"（{i}/{config.SELF_REFINE_ITERS}）",
-                        )
-                    )
-                    refine_prompt = (
-                        f"{human}【交付前自測未通過——請先就地修正再交付】\n"
-                        f"自測指令 `{smoke.command}` 實際執行未通過，紀錄如下：\n{smoke.output}\n\n"
-                        "請直接修正程式碼讓它能跑過，修好後簡述改了什麼即可。"
-                    )
-                    impl_text = await self._speak(
-                        ctx,
-                        impl_role,
-                        refine_prompt,
-                        tag,
-                        token_usage_task_id=task["id"],
-                    )
-                    smoke = await self._self_test(ctx, impl_text, bc)
-                    if smoke is None or smoke.ok:
-                        break
+            impl_text, smoke = await self._self_refine(
+                ctx,
+                task,
+                impl_role,
+                impl_text,
+                smoke,
+                own_cmd=own_cmd,
+                human=human,
+                tag=tag,
+                bc=bc,
+            )
             await self._commit(ctx, f"任務#{task['id']} 第{rnd}輪：{task['title']}", bc)
 
             # --- 停滯守門：連續多輪只重述且無檔案變動 → 提早收斂，不再燒後續 token ---
@@ -2914,54 +2840,8 @@ class StudioSession:
                 return False
 
             # --- 驗證 + 審查 + 資安：三者都評同一份已 commit 的實作、互相獨立 → 並行省時 ---
-            await bc(
-                events.phase_change(
-                    self.session_id,
-                    "驗證與審查",
-                    f"任務 #{task['id']} 並行驗證/審查/資安（第 {rnd} 輪）",
-                )
-            )
-            await self._set_task_status(task, "review", bc)
-            # reviewer 資料驅動：依 workflow review gate（過濾在場）並行發言。預設 qa/senior(+security
-            # 在場) 用專屬 prompt → 與重構前逐字等價；客製可增刪 reviewer（含非核心角色＋verdict）。
-            review_calls = [
-                self._speak(
-                    ctx,
-                    rk,
-                    self._review_prompt(rk, vn, task, pm_plan),
-                    tag,
-                    token_usage_task_id=task["id"],
-                )
-                for rk, vn in reviewers
-            ]
-            texts = await asyncio.gather(*review_calls)
-            # 每個 reviewer 的裁決＋feedback 區段標籤（未知角色用其顯示名）；裁決函式取自白名單。
-            reviews = [
-                {
-                    "role": rk,
-                    "ok": workflow_mod.VERDICTS[vn](txt),
-                    "text": txt,
-                    "label": _REVIEW_LABELS.get(rk, f"{ctx.experts[rk].role.name}意見"),
-                }
-                for (rk, vn), txt in zip(reviewers, texts, strict=True)
-            ]
-            all_review_ok = all(r["ok"] for r in reviews)
-            # 客觀閘門退回 / 改進回饋共用的 reviewer 區段文字（保預設逐字：依序 \n\n 分隔各標籤段）。
-            review_section = "\n\n".join(
-                f"【{r['label']}】\n{r['text']}" for r in reviews if r["text"]
-            )
-            # run_result 顯示燈以 qa_passed 裁決的 reviewer 為準（預設 qa）；無則用整體裁決。
-            qa_review = next((r for r in reviews if r["role"] == "qa"), None)
-            qa_ok = qa_review["ok"] if qa_review else all_review_ok
-            # 考核客觀指標：逐輪累計 QA 輪數、逐輪覆寫裁決（以最後一輪為準；對應 reviewer
-            # 缺席＝None）。與記分卡（history._derive_scorecard）互不依賴，供 _wrap_up 合併。
-            senior_review = next((r for r in reviews if r["role"] == "senior"), None)
-            perf = self._task_perf.setdefault(task["id"], {})
-            perf["qa_rounds"] = (perf.get("qa_rounds") or 0) + 1
-            perf["qa_passed"] = qa_review["ok"] if qa_review else None
-            perf["senior_approved"] = senior_review["ok"] if senior_review else None
-            await bc(
-                events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過")
+            all_review_ok, review_section = await self._run_reviews(
+                ctx, task, pm_plan, reviewers, rnd=rnd, tag=tag, bc=bc
             )
 
             # --- (B) 客觀閘門（硬性否決）：交付前自測「實際執行」未通過 → 本輪強制退回，
@@ -3073,6 +2953,230 @@ class StudioSession:
             )
             await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
         return False
+
+    def _build_impl_prompt(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        pm_plan: str,
+        *,
+        rnd: int,
+        feedback: str,
+        seed_feedback: str,
+        help_used: int,
+        human: str,
+    ) -> str:
+        """組本輪實作 prompt（首輪 vs 改進輪；含求助提示與反思記憶注入）。純組裝、無副作用。
+
+        human 由呼叫端每輪恰好取一次（_lane_human_prefix 會 drain 插話佇列）後傳入。
+        """
+        # 中途求助提示：只在開關開、額度未用盡且 PM 在場時告知 marker——
+        # 承諾了卻無人接（PM 缺席）比不承諾更糟，故條件含在場檢查。
+        help_hint = (
+            "\n若中途卡關，可輸出一行 `求助: <一句話說明卡點>`，PM 會即時給指示後你再續作。"
+            if (
+                config.TASK_HELP_ENABLED
+                and help_used < config.TASK_HELP_MAX
+                and "pm" in ctx.experts
+            )
+            else ""
+        )
+        if not feedback:
+            return (
+                f"{human}{self._notes_context(ctx)}"
+                f"目前要完成的任務 #{task['id']}：{task['title']}\n\n"
+                f"整體計畫供參考：\n{pm_plan}\n\n"
+                "請在工作目錄裡實作，並在交付前自己跑過一次確認能執行。"
+                f"{help_hint}"
+            )
+        # (A) 反思記憶：注入本任務更早輪次蒸餾的反思（最新一輪原文已在 feedback 內，故
+        # exclude_latest；huddle seed＝rnd==1 且 seed_feedback，為結論非上一輪報告 → 全帶）。
+        is_seed = rnd == 1 and bool(seed_feedback)
+        reflections_ctx = (
+            memory.build_context(self.session_id, task["id"], exclude_latest=not is_seed)
+            if config.REFLEXION_ENABLED
+            else ""
+        )
+        return (
+            f"{human}{reflections_ctx}"
+            f"任務 #{task['id']}：{task['title']} 尚未通過，"
+            f"請根據以下意見逐項修正（第 {rnd} 輪）：\n\n{feedback}\n\n"
+            "修正後請自己再跑一次確認。"
+            f"{help_hint}"
+        )
+
+    async def _mid_task_help(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        pm_plan: str,
+        impl_role: str,
+        impl_text: str,
+        *,
+        help_used: int,
+        human: str,
+        tag: int | None,
+        bc: Broadcast,
+    ) -> tuple[str, int]:
+        """中途求助 PM 迴圈：解析 `求助:` 標記 → 問 PM → 續作覆蓋 impl_text。
+
+        每任務至多 TASK_HELP_MAX 次（help_used 跨輪累計）；續作再含標記由上限自然擋下。
+        rnd 不變、impl_history 每外輪仍只 append 最終一筆、commit 仍每輪一次 → 不影響停滯
+        偵測與輪數（同 self-refine 慣例）。輪內輕量通道，與跑滿輪數才觸發的 huddle 互補。
+        回傳（可能被覆蓋的 impl_text、更新後 help_used）。
+        """
+        while (
+            config.TASK_HELP_ENABLED
+            and help_used < config.TASK_HELP_MAX
+            and "pm" in ctx.experts
+            and not self._stop
+        ):
+            question = parse_help_request(impl_text)
+            if not question:
+                break
+            help_used += 1
+            await bc(
+                events.phase_change(
+                    self.session_id,
+                    "求助PM",
+                    f"任務 #{task['id']} 工程師中途求助（{help_used}/{config.TASK_HELP_MAX}）",
+                )
+            )
+            pm_reply = await self._speak(
+                ctx,
+                "pm",
+                f"{human}工程師實作任務 #{task['id']}：{task['title']} 時中途卡關求助：\n"
+                f"{question}\n\n整體計畫供參考：\n{pm_plan}\n\n"
+                "請給一段簡短、可立即執行的指示（必要時允許簡化範圍），別展開長篇討論。",
+                tag,
+                token_usage_task_id=task["id"],
+            )
+            impl_text = await self._speak(
+                ctx,
+                impl_role,
+                f"{human}PM 對你的求助給出指示：\n{pm_reply}\n\n"
+                "請依指示繼續完成本任務，完成後照常總結交付（含 `執行指令:`）。",
+                tag,
+                token_usage_task_id=task["id"],
+            )
+        return impl_text, help_used
+
+    async def _self_refine(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        impl_role: str,
+        impl_text: str,
+        smoke: runner.RunOutput | None,
+        *,
+        own_cmd: bool,
+        human: str,
+        tag: int | None,
+        bc: Broadcast,
+    ) -> tuple[str, runner.RunOutput | None]:
+        """(D) 單輪內自我精修：自測「實際執行」未通過時，讓同一工程師就地依執行紀錄再修。
+
+        訊號是 runner 的確定性 exit code（非 LLM 自評），裁決權仍在 QA/高工/客觀閘門；同一
+        engineer 是有狀態對話，續一則帶 log 的訊息即可。rnd 不變、impl_history 每外輪仍只
+        append 最終一筆、commit 仍每輪一次 → 不影響停滯偵測與輪數。
+        觸發條件不成立時原樣回傳（impl_text, smoke），與未精修行為等價。
+        """
+        if (
+            config.SELF_REFINE_ITERS > 0
+            and smoke is not None
+            and not smoke.ok
+            and own_cmd
+            and not self._stop
+        ):
+            for i in range(1, config.SELF_REFINE_ITERS + 1):
+                await bc(
+                    events.phase_change(
+                        self.session_id,
+                        "自我精修",
+                        f"任務 #{task['id']} 交付前自測未通過，工程師就地修正"
+                        f"（{i}/{config.SELF_REFINE_ITERS}）",
+                    )
+                )
+                refine_prompt = (
+                    f"{human}【交付前自測未通過——請先就地修正再交付】\n"
+                    f"自測指令 `{smoke.command}` 實際執行未通過，紀錄如下：\n{smoke.output}\n\n"
+                    "請直接修正程式碼讓它能跑過，修好後簡述改了什麼即可。"
+                )
+                impl_text = await self._speak(
+                    ctx,
+                    impl_role,
+                    refine_prompt,
+                    tag,
+                    token_usage_task_id=task["id"],
+                )
+                smoke = await self._self_test(ctx, impl_text, bc)
+                if smoke is None or smoke.ok:
+                    break
+        return impl_text, smoke
+
+    async def _run_reviews(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        pm_plan: str,
+        reviewers: list[tuple[str, str]],
+        *,
+        rnd: int,
+        tag: int | None,
+        bc: Broadcast,
+    ) -> tuple[bool, str]:
+        """本輪三審 fan-out＋彙整：並行驗證/審查/資安 → (整體是否全過, reviewer 區段文字)。
+
+        reviewers 由呼叫端於迴圈前算一次傳入（保「算一次」語意，不在此重算）。
+        考核 perf 寫入與 run_result 廣播的先後順序原樣保留在本段內
+        （tests/core/test_orchestrator_appraisal.py 直接驗證此處語意）。
+        """
+        await bc(
+            events.phase_change(
+                self.session_id,
+                "驗證與審查",
+                f"任務 #{task['id']} 並行驗證/審查/資安（第 {rnd} 輪）",
+            )
+        )
+        await self._set_task_status(task, "review", bc)
+        # reviewer 資料驅動：依 workflow review gate（過濾在場）並行發言。預設 qa/senior(+security
+        # 在場) 用專屬 prompt → 與重構前逐字等價；客製可增刪 reviewer（含非核心角色＋verdict）。
+        review_calls = [
+            self._speak(
+                ctx,
+                rk,
+                self._review_prompt(rk, vn, task, pm_plan),
+                tag,
+                token_usage_task_id=task["id"],
+            )
+            for rk, vn in reviewers
+        ]
+        texts = await asyncio.gather(*review_calls)
+        # 每個 reviewer 的裁決＋feedback 區段標籤（未知角色用其顯示名）；裁決函式取自白名單。
+        reviews = [
+            {
+                "role": rk,
+                "ok": workflow_mod.VERDICTS[vn](txt),
+                "text": txt,
+                "label": _REVIEW_LABELS.get(rk, f"{ctx.experts[rk].role.name}意見"),
+            }
+            for (rk, vn), txt in zip(reviewers, texts, strict=True)
+        ]
+        all_review_ok = all(r["ok"] for r in reviews)
+        # 客觀閘門退回 / 改進回饋共用的 reviewer 區段文字（保預設逐字：依序 \n\n 分隔各標籤段）。
+        review_section = "\n\n".join(f"【{r['label']}】\n{r['text']}" for r in reviews if r["text"])
+        # run_result 顯示燈以 qa_passed 裁決的 reviewer 為準（預設 qa）；無則用整體裁決。
+        qa_review = next((r for r in reviews if r["role"] == "qa"), None)
+        qa_ok = qa_review["ok"] if qa_review else all_review_ok
+        # 考核客觀指標：逐輪累計 QA 輪數、逐輪覆寫裁決（以最後一輪為準；對應 reviewer
+        # 缺席＝None）。與記分卡（history._derive_scorecard）互不依賴，供 _wrap_up 合併。
+        senior_review = next((r for r in reviews if r["role"] == "senior"), None)
+        perf = self._task_perf.setdefault(task["id"], {})
+        perf["qa_rounds"] = (perf.get("qa_rounds") or 0) + 1
+        perf["qa_passed"] = qa_review["ok"] if qa_review else None
+        perf["senior_approved"] = senior_review["ok"] if senior_review else None
+        await bc(events.run_result(self.session_id, qa_ok, "驗證通過" if qa_ok else "驗證未通過"))
+        return all_review_ok, review_section
 
     async def _huddle_and_retry(
         self, ctx: LaneContext, task: dict, context: str, broadcast: Broadcast | None = None
