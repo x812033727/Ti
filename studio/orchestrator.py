@@ -2844,115 +2844,148 @@ class StudioSession:
                 ctx, task, pm_plan, reviewers, rnd=rnd, tag=tag, bc=bc
             )
 
-            # --- (B) 客觀閘門（硬性否決）：交付前自測「實際執行」未通過 → 本輪強制退回，
-            # QA/高工的文字裁決推翻不了真實 exit code（守住反 reward-hacking）。只在「工程師
-            # 本輪自己宣告的自測指令」真的有跑且失敗時否決——fallback 到整體執行指令的失敗
-            # 只回報、不硬退（前期任務整體指令本來就跑不起來）；strict 模式維持全面嚴格：
-            # fallback 失敗與「未宣告自測指令」皆視為未通過。評審照常並行跑（評同一 commit、
-            # 文字仍是修正素材），附在閘門結論之後。---
-            gate_veto = (
-                config.objective_gate_enabled()
-                and ctx.cwd is not None
-                and (
-                    (
-                        smoke is not None
-                        and not smoke.ok
-                        and (own_cmd or config.objective_gate_strict())
-                    )
-                    or (smoke is None and config.objective_gate_strict())
-                )
+            # --- 放行判定：客觀閘門 → critic 異議 → dynamic consult ---
+            passed, feedback, critic_rejects = await self._release_verdict(
+                ctx,
+                task,
+                pm_plan,
+                rnd=rnd,
+                smoke=smoke,
+                own_cmd=own_cmd,
+                all_review_ok=all_review_ok,
+                review_section=review_section,
+                critic_rejects=critic_rejects,
+                tag=tag,
+                bc=bc,
             )
-            if gate_veto:
-                if smoke is not None:
-                    gate_note = (
-                        f"【客觀閘門】交付前自測「{smoke.command}」實際執行未通過"
-                        f"（exit={smoke.exit_code}{'，逾時' if smoke.timed_out else ''}），本輪強制退回。\n"
-                        f"執行紀錄：\n{smoke.output}"
-                    )
-                else:
-                    gate_note = "【客觀閘門】嚴格模式：未宣告任何可執行的自測指令，無從客觀驗證，本輪強制退回。"
-                review_note = f"\n\n{review_section}" if review_section else ""
-                feedback = gate_note + review_note
-                await bc(
-                    events.phase_change(
-                        self.session_id,
-                        "客觀閘門",
-                        f"任務 #{task['id']} 交付前自測實際執行未通過，第 {rnd} 輪強制退回",
-                    )
-                )
-                self._note(ctx, f"## 客觀閘門退回 任務 #{task['id']}：{task['title']}")
-                await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
-                continue
+            if passed:
+                return True
+            # 所有退回路徑統一收尾：把本輪教訓蒸餾成反思，帶 feedback 進下一輪。
+            await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
+        return False
 
-            if all_review_ok:
-                # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
-                # workflow 省略 gate stage 時整關跳過（視為放行）；預設含 gate stage→沿用今日，
-                # 實際是否發 critic 仍由 _critic_gate 內的 config.CRITIC_ENABLED 決定。
-                subject = f"任務 #{task['id']}：{task['title']}"
-                if self._task_critic_enabled():
-                    critic_ok, critic_text = await self._critic_gate(
-                        ctx, "pm", subject, pm_plan, bc
-                    )
-                else:
-                    critic_ok, critic_text = True, ""
-                if critic_ok:
-                    # task 級 dynamic consult：PM 動態追加把關（task_pipeline 無 dynamic stage 時
-                    # 直接放行＝零行為變更）。被追加專家提出阻擋異議 → 退回再修。
-                    blocked, dyn_feedback = await self._task_dynamic_consult(
-                        ctx, task, review_section, tag, bc
-                    )
-                    if not blocked:
-                        return True
-                    feedback = dyn_feedback
-                    await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
-                    continue
-                # 收斂預算：此處已過 qa/senior/security/客觀閘門（gate_veto 早 continue），即「客觀全綠」，
-                # critic 僅剩語意異議。達 CRITIC_MAX_REJECTS 次仍提不出可重現紅點 → 客觀證據優先，以
-                # 已知限制放行，並把殘留疑慮記成後續任務（不靜默丟），避免無限退回燒滿輪數後整場判失敗。
-                critic_rejects += 1
-                if config.CRITIC_MAX_REJECTS > 0 and critic_rejects >= config.CRITIC_MAX_REJECTS:
-                    self._followups.append(
-                        f"覆查 critic 對「{task['title']}」的殘留疑慮"
-                        f"（客觀閘門全綠、{critic_rejects} 次退回均無可重現紅點）：{critic_text[:160]}"
-                    )
-                    self._note(
-                        ctx,
-                        f"## critic 收斂放行 任務 #{task['id']}：{task['title']}"
-                        f"（客觀全綠、critic 連退 {critic_rejects} 次無可重現紅點，以已知限制放行）\n{critic_text}",
-                    )
-                    await bc(
-                        events.phase_change(
-                            self.session_id,
-                            "critic 收斂",
-                            f"任務 #{task['id']} 客觀閘門全綠、critic 退回達上限"
-                            f"（{critic_rejects} 次），以已知限制放行",
-                        )
-                    )
-                    return True
-                # 異議成立 → 退回再修，把反對理由帶進下一輪並記入知識庫。
-                feedback = f"【異議檢查（critic）退回理由】\n{critic_text}"
-                self._note(ctx, f"## 異議退回 任務 #{task['id']}：{task['title']}\n{critic_text}")
-                await bc(
-                    events.phase_change(
-                        self.session_id,
-                        "異議退回",
-                        f"任務 #{task['id']} 表面通過但 critic 提出實質反對，退回修正",
-                    )
-                )
-                await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
-                continue
+    async def _release_verdict(
+        self,
+        ctx: LaneContext,
+        task: dict,
+        pm_plan: str,
+        *,
+        rnd: int,
+        smoke: runner.RunOutput | None,
+        own_cmd: bool,
+        all_review_ok: bool,
+        review_section: str,
+        critic_rejects: int,
+        tag: int | None,
+        bc: Broadcast,
+    ) -> tuple[bool, str, int]:
+        """本輪放行判定：客觀閘門（硬性否決）→ critic 異議 → dynamic consult。
 
-            # --- 帶意見回饋，準備下一輪 ---
-            feedback = review_section
+        回傳 (是否放行, 退回 feedback, 更新後 critic_rejects)。放行時 feedback 為空字串
+        （呼叫端不使用）；退回時呼叫端統一以 feedback 蒸餾反思並進下一輪——原各退回
+        路徑的最後一步都是 _store_reflection，故可安全上提，順序不變。
+        控制流以旗標 dispatch：return True/continue 的決策權留在外層迴圈。
+        """
+        # --- (B) 客觀閘門（硬性否決）：交付前自測「實際執行」未通過 → 本輪強制退回，
+        # QA/高工的文字裁決推翻不了真實 exit code（守住反 reward-hacking）。只在「工程師
+        # 本輪自己宣告的自測指令」真的有跑且失敗時否決——fallback 到整體執行指令的失敗
+        # 只回報、不硬退（前期任務整體指令本來就跑不起來）；strict 模式維持全面嚴格：
+        # fallback 失敗與「未宣告自測指令」皆視為未通過。評審照常並行跑（評同一 commit、
+        # 文字仍是修正素材），附在閘門結論之後。---
+        gate_veto = (
+            config.objective_gate_enabled()
+            and ctx.cwd is not None
+            and (
+                (
+                    smoke is not None
+                    and not smoke.ok
+                    and (own_cmd or config.objective_gate_strict())
+                )
+                or (smoke is None and config.objective_gate_strict())
+            )
+        )
+        if gate_veto:
+            if smoke is not None:
+                gate_note = (
+                    f"【客觀閘門】交付前自測「{smoke.command}」實際執行未通過"
+                    f"（exit={smoke.exit_code}{'，逾時' if smoke.timed_out else ''}），本輪強制退回。\n"
+                    f"執行紀錄：\n{smoke.output}"
+                )
+            else:
+                gate_note = "【客觀閘門】嚴格模式：未宣告任何可執行的自測指令，無從客觀驗證，本輪強制退回。"
+            review_note = f"\n\n{review_section}" if review_section else ""
             await bc(
                 events.phase_change(
                     self.session_id,
-                    "改進討論",
-                    f"任務 #{task['id']} 第 {rnd} 輪未通過，工程師將依意見修正",
+                    "客觀閘門",
+                    f"任務 #{task['id']} 交付前自測實際執行未通過，第 {rnd} 輪強制退回",
                 )
             )
-            await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
-        return False
+            self._note(ctx, f"## 客觀閘門退回 任務 #{task['id']}：{task['title']}")
+            return False, gate_note + review_note, critic_rejects
+
+        if all_review_ok:
+            # 放行前異議關卡：用 pm 視角（避開剛審查表態的 senior）獨立挑錯。
+            # workflow 省略 gate stage 時整關跳過（視為放行）；預設含 gate stage→沿用今日，
+            # 實際是否發 critic 仍由 _critic_gate 內的 config.CRITIC_ENABLED 決定。
+            subject = f"任務 #{task['id']}：{task['title']}"
+            if self._task_critic_enabled():
+                critic_ok, critic_text = await self._critic_gate(ctx, "pm", subject, pm_plan, bc)
+            else:
+                critic_ok, critic_text = True, ""
+            if critic_ok:
+                # task 級 dynamic consult：PM 動態追加把關（task_pipeline 無 dynamic stage 時
+                # 直接放行＝零行為變更）。被追加專家提出阻擋異議 → 退回再修。
+                blocked, dyn_feedback = await self._task_dynamic_consult(
+                    ctx, task, review_section, tag, bc
+                )
+                if not blocked:
+                    return True, "", critic_rejects
+                return False, dyn_feedback, critic_rejects
+            # 收斂預算：此處已過 qa/senior/security/客觀閘門（gate_veto 已先退回），即「客觀全綠」，
+            # critic 僅剩語意異議。達 CRITIC_MAX_REJECTS 次仍提不出可重現紅點 → 客觀證據優先，以
+            # 已知限制放行，並把殘留疑慮記成後續任務（不靜默丟），避免無限退回燒滿輪數後整場判失敗。
+            critic_rejects += 1
+            if config.CRITIC_MAX_REJECTS > 0 and critic_rejects >= config.CRITIC_MAX_REJECTS:
+                self._followups.append(
+                    f"覆查 critic 對「{task['title']}」的殘留疑慮"
+                    f"（客觀閘門全綠、{critic_rejects} 次退回均無可重現紅點）：{critic_text[:160]}"
+                )
+                self._note(
+                    ctx,
+                    f"## critic 收斂放行 任務 #{task['id']}：{task['title']}"
+                    f"（客觀全綠、critic 連退 {critic_rejects} 次無可重現紅點，以已知限制放行）\n{critic_text}",
+                )
+                await bc(
+                    events.phase_change(
+                        self.session_id,
+                        "critic 收斂",
+                        f"任務 #{task['id']} 客觀閘門全綠、critic 退回達上限"
+                        f"（{critic_rejects} 次），以已知限制放行",
+                    )
+                )
+                return True, "", critic_rejects
+            # 異議成立 → 退回再修，把反對理由帶進下一輪並記入知識庫。
+            feedback = f"【異議檢查（critic）退回理由】\n{critic_text}"
+            self._note(ctx, f"## 異議退回 任務 #{task['id']}：{task['title']}\n{critic_text}")
+            await bc(
+                events.phase_change(
+                    self.session_id,
+                    "異議退回",
+                    f"任務 #{task['id']} 表面通過但 critic 提出實質反對，退回修正",
+                )
+            )
+            return False, feedback, critic_rejects
+
+        # --- 審查未全過：帶意見回饋，準備下一輪 ---
+        await bc(
+            events.phase_change(
+                self.session_id,
+                "改進討論",
+                f"任務 #{task['id']} 第 {rnd} 輪未通過，工程師將依意見修正",
+            )
+        )
+        return False, review_section, critic_rejects
 
     def _build_impl_prompt(
         self,
