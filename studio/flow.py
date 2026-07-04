@@ -830,9 +830,40 @@ MARKER_ALLOWLIST: tuple[str, ...] = tuple(
 # IGNORECASE 只為 `provider:`（parse_next_step 帶 re.I）；CJK 標籤不受影響。
 _MARKER_RE = re.compile("|".join(f"(?:{p})" for p in MARKER_ALLOWLIST), re.IGNORECASE)
 
+# 後備裁決豁免：qa_passed／senior_approved／security_approved／critic_blocks／pm_done
+# 在**無顯式 marker 時**走全文關鍵詞後備掃描（本檔上方各裁決函式的 fallback 分支），這些
+# 關鍵詞不在 MARKER_ALLOWLIST——若整段文字缺該類顯式 marker，後備關鍵詞行被壓掉會翻轉
+# 裁決（審查實測方向為**假放行**：「必須修正」被壓掉→核可、「異議成立」被壓掉→放行）。
+# 故逐類判定：該類顯式 marker 不存在時，命中後備關鍵詞的行也整行原文保留；marker 存在時
+# 不啟用（後備分支根本不會執行，且避免 QA 敘述常見的「錯誤/失敗」讓壓縮率歸零）。
+# pattern 逐字鏡射各裁決函式的 marker／fallback regex（含 flags），改動裁決函式時同步此表。
+_FALLBACK_VERDICTS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
+    (  # qa_passed
+        re.compile(r"驗證\s*[:：]\s*(?:PASS|FAIL)"),
+        re.compile(r"\b(fail|failed|error|錯誤|失敗)\b", re.I),
+    ),
+    (  # senior_approved
+        re.compile(r"決議\s*[:：]\s*(?:核可|退回)"),
+        re.compile(r"(退回|需修改|必須修正)"),
+    ),
+    (  # security_approved
+        re.compile(r"決議\s*[:：]\s*(?:安全核可|安全退回)"),
+        re.compile(r"(安全退回|高風險|不安全|漏洞|injection)", re.I),
+    ),
+    (  # critic_blocks
+        re.compile(r"異議\s*[:：]\s*(?:成立|不成立)"),
+        re.compile(r"(異議成立|不應通過|尚未完成|還不算完成)"),
+    ),
+    (  # pm_done
+        re.compile(r"決議\s*[:：]\s*(?:完成|未完成)"),
+        re.compile(r"(已完成|達成|符合驗收)"),
+    ),
+)
+
 # 省略標記行模板：措辭須①不含任何 marker 子串（無「標籤+冒號」、無「回應 @」）
-# ②不碰撞 fake_experts 的 action_marker（「任務 #」「撰寫並執行測試」）——兩者由守護測試鎖住。
-OMITTED_LINE_TEMPLATE = "……〔中間已省略 {n} 行非結構化敘述〕\n"
+# ②不含 _FALLBACK_VERDICTS 任何後備關鍵詞 ③不碰撞 fake_experts 的 action_marker
+# （「任務 #」「撰寫並執行測試」）——三者由守護測試鎖住。
+OMITTED_LINE_TEMPLATE = "……〔中間省去 {n} 行非結構化敘述〕\n"
 
 
 def compress_segment(text: str, cap: int) -> str:
@@ -844,14 +875,22 @@ def compress_segment(text: str, cap: int) -> str:
     - ``len(text) <= cap`` → bit-for-bit 原樣返回（不壓縮、防壓縮悖論）。
     - 只做**整行取捨**：命中 :data:`MARKER_ALLOWLIST`（行內 search）的行逐字元原文保留
       且相對順序不變——`_last_match` 取最後一筆，順序改變＝判定翻盤；禁止跨行合併與行內改寫。
-    - 非 marker 行按剩餘預算保頭保尾，中段以單一 :data:`OMITTED_LINE_TEMPLATE` 行取代。
-    - marker 行總量超過 cap 時輸出允許超出 cap、裁決行全保——裁決不丟失是硬不變式，
+    - **後備裁決保護**：某類裁決的顯式 marker 不存在於全文時，該類後備關鍵詞行
+      （:data:`_FALLBACK_VERDICTS`）也整行原文保留——確保 qa_passed／senior_approved／
+      security_approved／critic_blocks／pm_done 的**後備分支**對壓縮前後回傳一致，
+      不因壓縮假放行；marker 存在時不啟用（後備分支不執行，壓縮率不受敘述關鍵詞拖累）。
+    - 非保留行按剩餘預算保頭保尾，中段以單一 :data:`OMITTED_LINE_TEMPLATE` 行取代。
+    - 保留行總量超過 cap 時輸出允許超出 cap、裁決行全保——裁決不丟失是硬不變式，
       優先於預算嚴格性（裁決行爆量屬上游異常，不由壓縮器靜默吞）。
     """
     if not text or len(text) <= cap:
         return text
     lines = text.splitlines(keepends=True)
-    is_marker = [bool(_MARKER_RE.search(line)) for line in lines]
+    # 該類顯式 marker 缺席 → 啟用該類後備關鍵詞豁免（鏡射裁決函式「先 marker 後 fallback」）。
+    fallbacks = [fb for marker, fb in _FALLBACK_VERDICTS if not marker.search(text)]
+    is_marker = [
+        bool(_MARKER_RE.search(line)) or any(fb.search(line) for fb in fallbacks) for line in lines
+    ]
     narrative_idx = [i for i, m in enumerate(is_marker) if not m]
     marker_chars = sum(len(lines[i]) for i in range(len(lines)) if is_marker[i])
 
