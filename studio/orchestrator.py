@@ -2663,6 +2663,27 @@ class StudioSession:
             # 考核客觀指標：於還原換綁「前」收集（此時 _dispatch_bindings 仍指向本任務
             # 實際綁定），提供 _wrap_up 與 PM 主觀評分合併入考核庫。永不 raise。
             self._collect_task_perf(ctx, task, impl_role, time.monotonic() - t0)
+            perf = self._task_perf.get(task["id"])
+            if perf:
+                try:
+                    await self.broadcast(
+                        events.task_result(
+                            self.session_id,
+                            task["id"],
+                            perf.get("role") or impl_role,
+                            perf.get("provider") or "",
+                            perf.get("model"),
+                            perf.get("duration_s"),
+                            perf.get("qa_rounds"),
+                            perf.get("input_tokens"),
+                            perf.get("output_tokens"),
+                            perf.get("total_tokens"),
+                            perf.get("cost_usd"),
+                            perf.get("cost_source"),
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning("廣播 task_result 事件失敗（略過）", exc_info=True)
             await restore()
 
     async def _work_task_rounds(
@@ -3319,6 +3340,14 @@ class StudioSession:
             ]
             durations = [m["duration_s"] for _, m in matched if m.get("duration_s") is not None]
             models = [m["model"] for _, m in matched if m.get("model")]
+            token_vals = [
+                m["total_tokens"] for _, m in matched if m.get("total_tokens") is not None
+            ]
+            cost_vals = [m["cost_usd"] for _, m in matched if m.get("cost_usd") is not None]
+            source_vals = [m["cost_source"] for _, m in matched if m.get("cost_source") is not None]
+            cost_source = None
+            if source_vals:
+                cost_source = source_vals[0] if len(set(source_vals)) == 1 else "mixed"
             entries.append(
                 {
                     "session_id": self.session_id,
@@ -3335,6 +3364,9 @@ class StudioSession:
                         "qa_passed": all(qa_vals) if qa_vals else None,
                         "senior_approved": all(senior_vals) if senior_vals else None,
                         "duration_s": round(sum(durations), 1) if durations else None,
+                        "total_tokens": sum(token_vals) if token_vals else None,
+                        "cost_usd": sum(cost_vals) if cost_vals else None,
+                        "cost_source": cost_source,
                     },
                     "created_at": now,
                 }

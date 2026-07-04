@@ -642,7 +642,9 @@ async def test_counting_broadcast_aggregates_single_task_id():
     # 主 lane task: _tagged_broadcast 透過 token_usage_task_id 補 task_id
     bc = s._tagged_broadcast(s._lane_tag(s._main_ctx, {"id": 7}), token_usage_task_id=7)
     await bc(
-        events.token_usage("s-aggr", "engineer", "minimax", "MiniMax-M3", 100, 20, 120, cost_usd=0.1)
+        events.token_usage(
+            "s-aggr", "engineer", "minimax", "MiniMax-M3", 100, 20, 120, cost_usd=0.1
+        )
     )
     await bc(
         events.token_usage("s-aggr", "engineer", "minimax", "MiniMax-M3", 50, 30, 80, cost_usd=0.2)
@@ -673,7 +675,9 @@ async def test_counting_broadcast_event_without_task_id_does_not_pollute_perf():
 
     # 直接送 token_usage(走 self.broadcast = self._counting_broadcast),不透過 _tagged_broadcast
     await s.broadcast(
-        events.token_usage("s-legacy", "engineer", "minimax", "MiniMax-M3", 100, 50, 150, cost_usd=0.0)
+        events.token_usage(
+            "s-legacy", "engineer", "minimax", "MiniMax-M3", 100, 50, 150, cost_usd=0.0
+        )
     )
 
     assert s._task_perf == {}  # 無 task_id → 不寫入任何 per-task entry
@@ -694,9 +698,7 @@ async def test_counting_broadcast_event_without_cost_keeps_perf_cost_none():
     bc = s._tagged_broadcast(s._lane_tag(s._main_ctx, {"id": 11}), token_usage_task_id=11)
 
     # cost_usd 預設為 None(不傳)
-    await bc(
-        events.token_usage("s-nocost", "engineer", "openai", "gpt-5", 50, 10, 60)
-    )
+    await bc(events.token_usage("s-nocost", "engineer", "openai", "gpt-5", 50, 10, 60))
     perf = s._task_perf[11]
     assert perf["input_tokens"] == 50 and perf["output_tokens"] == 10 and perf["total_tokens"] == 60
     assert perf["cost_usd"] is None  # 缺成本資料=考核旁路永不 raise
@@ -771,12 +773,8 @@ async def test_parallel_lanes_same_provider_token_attribution_no_cross_contamina
     task_a = {"id": 100, "title": "並行任務A"}
     task_b = {"id": 200, "title": "並行任務B"}
 
-    bc_a = s._tagged_broadcast(
-        s._lane_tag(lane_a, task_a), token_usage_task_id=task_a["id"]
-    )
-    bc_b = s._tagged_broadcast(
-        s._lane_tag(lane_b, task_b), token_usage_task_id=task_b["id"]
-    )
+    bc_a = s._tagged_broadcast(s._lane_tag(lane_a, task_a), token_usage_task_id=task_a["id"])
+    bc_b = s._tagged_broadcast(s._lane_tag(lane_b, task_b), token_usage_task_id=task_b["id"])
 
     # 同 provider(都是 minimax)、同時發：刻意做"兩 lane 數字差不一樣大"以便任何串戶都現形
     ev_a = events.token_usage(
@@ -810,9 +808,7 @@ async def test_parallel_lanes_same_provider_token_attribution_no_cross_contamina
     assert s._usd_used == pytest.approx(0.90)
 
     # sink 收到的兩個事件 payload 上的 task_id 各自正確(未互相污染)
-    payloads = [
-        e.payload for e in sink_calls if e.type == events.EventType.TOKEN_USAGE
-    ]
+    payloads = [e.payload for e in sink_calls if e.type == events.EventType.TOKEN_USAGE]
     assert {p["task_id"] for p in payloads} == {100, 200}
     assert all(p["provider"] == "minimax" for p in payloads)  # 同 provider 同時發也未混
 
@@ -854,8 +850,14 @@ async def test_parallel_lanes_interleaved_aggregation_still_correct():
         coros.append(
             bcs[tid](
                 events.token_usage(
-                    "s-interleave", "engineer", "minimax", "MiniMax-M3",
-                    inp, out, tot, cost_usd=cost,
+                    "s-interleave",
+                    "engineer",
+                    "minimax",
+                    "MiniMax-M3",
+                    inp,
+                    out,
+                    tot,
+                    cost_usd=cost,
                 )
             )
         )

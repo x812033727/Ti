@@ -58,7 +58,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 2. `ws.py` 建立 workspace、開始錄製歷史，啟動 `StudioSession.run()`。
 3. orchestrator 依階段推進，透過 `broadcast()` 送出 `StudioEvent`（見 `events.py`）：
    `session_started` / `phase_change` / `expert_message` / `tool_use` /
-   `board_update` / `run_result` / `git_commit` / `demo_result` / `done` …
+   `board_update` / `run_result` / `git_commit` / `demo_result` / `task_result` / `done` …
 4. 每個事件即時送往前端渲染，同時寫入 `history/<id>.jsonl`。
 5. 執行中前端可送 `{"type":"interject", text}` 或 `{"type":"stop"}`，由
    `_pump_interventions` 注入 session。
@@ -71,6 +71,10 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 〔title/description/criteria/assignee，assignee 已過硬驗證〕、`tasks` 任務清單、
 `edges` 依賴邊、`assignments` 分派表〔index 1-based〕、`corrections` 分派修正紀錄
 〔index 0-based〕），隨事件流入 `history/<id>.jsonl`，供事後重看與重播。
+
+任務結束時會發送 `task_result` 事件（payload：`task_id`、`role`、`provider`、`model`、
+`duration_s`、`qa_rounds`、`input_tokens`、`output_tokens`、`total_tokens`、`cost_usd`、
+`cost_source`），可用於與 `dispatch_decision` 事件進行 `task_id` 的 join。
 
 ## 需求澄清（選配，`TI_CLARIFY`）
 

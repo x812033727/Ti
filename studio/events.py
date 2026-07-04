@@ -36,6 +36,7 @@ class EventType(str, Enum):
     ERROR = "error"  # 錯誤
     VOTE_RESULT = "vote_result"  # 3-AI 表決結果（PM 無法決定時跨 provider 多數決）
     APPRAISAL = "appraisal"  # 考核：收尾檢討時 PM 對參與 AI 的績效評分（1–5 分＋評語）
+    TASK_RESULT = "task_result"  # 任務收尾結果事件
 
 
 @dataclass
@@ -401,5 +402,42 @@ def appraisal(
             "role": role,
             "score": int(score),
             "comment": comment,
+        },
+    )
+
+
+def task_result(
+    session_id: str,
+    task_id: int,
+    role: str,
+    provider: str,
+    model: str | None,
+    duration_s: float | None,
+    qa_rounds: int | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    total_tokens: int | None,
+    cost_usd: float | None,
+    cost_source: str | None,
+) -> StudioEvent:
+    """單一任務執行結果：包含耗時、QA 輪數、LLM token 及費用等。
+
+    消費端可用 task_id 與 dispatch_decision 進行 join。
+    """
+    return StudioEvent(
+        EventType.TASK_RESULT,
+        session_id,
+        {
+            "task_id": task_id,
+            "role": role,
+            "provider": provider,
+            "model": model,
+            "duration_s": duration_s,
+            "qa_rounds": qa_rounds,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": cost_usd,
+            "cost_source": cost_source,
         },
     )

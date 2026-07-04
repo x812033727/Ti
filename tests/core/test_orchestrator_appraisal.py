@@ -127,6 +127,25 @@ def test_collect_task_perf_initializes_missing_token_metrics_as_none():
 
 
 @pytest.mark.asyncio
+async def test_work_task_broadcasts_task_result():
+    s, experts, bucket = _session()
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+
+    res_evs = [e for e in bucket if e.type == events.EventType.TASK_RESULT]
+    assert len(res_evs) == 1
+    payload = res_evs[0].payload
+    assert payload["task_id"] == 1
+    assert payload["role"] == "engineer"
+    assert payload["provider"] == "claude"
+    assert payload["duration_s"] >= 0.0
+    assert payload["qa_rounds"] == 1
+    assert payload["total_tokens"] is None
+    assert payload["cost_usd"] is None
+    assert payload["cost_source"] is None
+
+
+@pytest.mark.asyncio
 async def test_work_task_metrics_reflect_failed_reviews(monkeypatch):
     monkeypatch.setattr(config, "TASK_MAX_ROUNDS", 2)
     s, experts, _ = _session(qa_scripts=["驗證: FAIL"], senior_scripts=["決議: 退回"])
@@ -187,6 +206,9 @@ async def test_wrap_up_merges_objective_metrics_into_entries(monkeypatch):
             "model": "gpt-5.5",
             "duration_s": 12.5,
             "role": "engineer",
+            "total_tokens": 1500,
+            "cost_usd": 0.0045,
+            "cost_source": "reported",
         }
     }
 
@@ -200,6 +222,9 @@ async def test_wrap_up_merges_objective_metrics_into_entries(monkeypatch):
         "qa_passed": True,
         "senior_approved": True,
         "duration_s": 12.5,
+        "total_tokens": 1500,
+        "cost_usd": 0.0045,
+        "cost_source": "reported",
     }
     # 沒做過任務的 provider：客觀欄位全 None、不虛構。
     minimax = by_provider["minimax"]
@@ -209,6 +234,9 @@ async def test_wrap_up_merges_objective_metrics_into_entries(monkeypatch):
         "qa_passed": None,
         "senior_approved": None,
         "duration_s": None,
+        "total_tokens": None,
+        "cost_usd": None,
+        "cost_source": None,
     }
 
 
