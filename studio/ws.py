@@ -58,8 +58,8 @@ def _unregister_running(*keys: str) -> None:
 #
 # 原 broadcast 是綁死單一 socket 的閉包；hub 讓「第二條 WS」能訂閱同一場討論的
 # 事件流（先補放 history JSONL 已錯過事件、再無縫接 live），並把 interject/stop
-# 餵回既有 controller。只在單場 StudioSession 路徑註冊；improve umbrella 各輪
-# 獨立記錄、不註冊（attach 一律回 attach_unavailable，行為明確）。
+# 餵回既有 controller。單場 StudioSession 走完整快照補放；improve umbrella 無單一
+# JSONL（各輪各自入檔），以 live_only hub 註冊——attach 只接續即時事件、不補放。
 
 # 單場 attach 旁聽連線上限（attach 不占 MAX_CONCURRENT_SESSIONS slot——slot 護的是
 # 專家子程序/LLM 重資源；若計入，滿載時斷線重連會自我封鎖。此上限防濫用）。
@@ -83,13 +83,24 @@ class _SessionHub:
     的 interject 注入也經 hub.loop（session 所在迴圈）回拋。
     """
 
-    def __init__(self, session_id: str, controller: object, queue: asyncio.Queue[str]) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        controller: object,
+        queue: asyncio.Queue[str],
+        *,
+        live_only: bool = False,
+    ) -> None:
         self.session_id = session_id
         self.controller = controller  # StudioSession：broadcast（插話回顯）/ request_stop
         self.queue = queue  # intervention queue（attach 端 interject 注入點）
         self.loop = asyncio.get_running_loop()  # session 所在迴圈（interject 回拋目標）
         self.seq = 0
         self.listeners: dict[asyncio.Queue, asyncio.AbstractEventLoop] = {}
+        # live_only：improve umbrella 沒有單一 JSONL（各輪各自入檔），無快照可補放——
+        # attach 只接「從現在起」的即時事件，seq==JSONL 行數不變式不適用（也不需要：
+        # 無補放即無去重問題）。
+        self.live_only = live_only
 
     def subscribe(self, q: asyncio.Queue) -> None:
         self.listeners[q] = asyncio.get_running_loop()
@@ -147,6 +158,13 @@ async def _attach_session(websocket: WebSocket, data: dict) -> None:
         cursor = 0
     hub = _hubs.get(sid)
     if hub is None:
+        # improve 模式：前端記到的 session_id 是「當前這一輪」的 record sid，hub 只以
+        # umbrella id 註冊——退而比對 controller._record_sid（同 stop_running 慣例）。
+        hub = next(
+            (h for h in _hubs.values() if getattr(h.controller, "_record_sid", None) == sid),
+            None,
+        )
+    if hub is None:
         await websocket.send_json(
             {
                 "type": "error",
@@ -171,14 +189,27 @@ async def _attach_session(websocket: WebSocket, data: dict) -> None:
     q: asyncio.Queue = asyncio.Queue()
     hub.subscribe(q)  # 先訂閱（開始緩衝）……
     try:
-        past = history.load_events(sid)  # ……後拍快照：快照必涵蓋訂閱前全部事件
-        for d in past[cursor:]:
-            await websocket.send_json(d)
-        sent = len(past)
+        if hub.live_only:
+            # improve umbrella 無單一 JSONL：不補放、只接即時事件（cursor 忽略、sent=0
+            # 讓佇列事件全數通過）。斷線期間的事件可從各輪歷史查看。
+            past: list[dict] = []
+            sent = 0
+        else:
+            past = history.load_events(sid)  # ……後拍快照：快照必涵蓋訂閱前全部事件
+            for d in past[cursor:]:
+                await websocket.send_json(d)
+            sent = len(past)
         # attach_ok 是 ws 層訊息（沿既有 raw error dict 先例），不進 events.py 契約；
         # cursor 回傳權威計數，讓前端事件計數器與伺服器校準。
         await websocket.send_json(
-            {"type": "attach_ok", "payload": {"session_id": sid, "cursor": sent}}
+            {
+                "type": "attach_ok",
+                "payload": {
+                    "session_id": hub.session_id,
+                    "cursor": sent,
+                    "live_only": hub.live_only,
+                },
+            }
         )
 
         async def _sender() -> None:
@@ -311,6 +342,10 @@ async def ws(websocket: WebSocket) -> None:
             # record 與 publish 之間不得插入 await（_SessionHub 的 seq==JSONL 行數不變式）。
             if hub is not None:
                 hub.publish(d)
+        elif hub is not None and hub.live_only:
+            # improve umbrella：外層不開錄（各輪各自入檔），live-only hub 仍要 fan-out
+            # 給 attach 的重連端（無補放故無 seq==JSONL 不變式需求）。
+            hub.publish(d)
         # 客戶端可能在討論進行中斷線（關分頁／網路斷）。連線已關後若再 send_json
         # 會丟 RuntimeError("websocket.send after close")。一旦偵測到關閉就停止再送，
         # 歷史仍照常記錄，事件不會遺失。
@@ -480,7 +515,16 @@ async def ws(websocket: WebSocket) -> None:
             if requirement:
                 backlog.add(requirement, source="user", state_dir=sdir)
             improver = ProjectImprover(project, broadcast, intervention_queue=queue)
+            # improve 也可重掛：live-only hub（無單一 JSONL 可補放，只接續即時事件）。
+            hub = _SessionHub(improver.session_id, improver, queue, live_only=True)
+            _hubs[improver.session_id] = hub
+
+            def _close_improve_hub(_t: asyncio.Task) -> None:
+                _hubs.pop(improver.session_id, None)
+                hub.close()
+
             run_task = asyncio.create_task(improver.run())
+            run_task.add_done_callback(_close_improve_hub)
             run_task.add_done_callback(lambda _t: _release_session_slot())
             run_task.add_done_callback(lambda _t: _active_projects.discard(project["id"]))
             stop_keys = (improver.session_id, project["id"])
