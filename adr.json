@@ -1,76 +1,6 @@
 {
   "entries": [
     {
-      "decision": "`/api/roles` CRUD 照 routes.py 既有 pydantic Body＋auth 依賴慣例；GET 每筆帶 `source ∈ {builtin, override, file}` 與 body 原文；POST/PUT 落檔（temp+rename 原子寫）後立即 reload；DELETE：file→刪檔、override→刪檔還原內建、純 builtin→409；key 格式 `^[a-z][a-z0-9_]{1,31}$`，**POST body 與 PUT/DELETE 路徑參數同套驗證**（防路徑穿越）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989968
-    },
-    {
-      "decision": "空殼 persona 驗證規則——對「角色專屬 body 原文（前置 _COMMON 之前）」檢查：去空白後非空，且至少一行匹配 Python re `(輸出|決議|驗證|格式|指令|決策)[:：]`；不符回 422 並指明缺出力格式段落；檔案載入路徑同規則（拒檔記 log）；內建 8 角色定義本身不經此路徑",
-      "rationale": "原 ERE 對內建 engineer（僅「執行指令:」）與 architect（「設計決策:」）body 不匹配，會卡死 override 編輯往返，故擴入「指令｜決策」；驗證在前置 _COMMON 之前，否則 _COMMON 自帶匹配行會讓驗證形同虛設",
-      "rejected": "規則只對非內建 key 強制（雙軌規則日後難維護，且新角色與 override 應同一標準）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.698998
-    },
-    {
-      "decision": "加一條守門單測：8 個內建角色 body 全數通過上述驗證規則——防未來改內建 prompt 時 override 往返回歸卡死",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6989987
-    },
-    {
-      "decision": "Group 存單檔 `roles/groups.yaml`（`{name, role_keys[], mode}` 列表），邏輯併入 role_store.py；驗證三硬規則（key 存在於 BY_KEY、不重複、≥2 人）＋mode 白名單 `{round_robin, parallel}`，違反回 422；`/api/groups` CRUD 同 /api/roles 慣例",
-      "rationale": "",
-      "rejected": "mode 含 legacy（legacy 是無小組的舊路徑，組了小組即無 legacy 語意）",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.699
-    },
-    {
-      "decision": "範例角色檔放 `roles/_example.md.sample`，載入器只掃 `*.md`，範例不被載入",
-      "rationale": "守住驗收 #1「不放角色檔時行為與現狀完全一致」",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990006
-    },
-    {
-      "decision": "測試三層——role_store 離線單測（覆蓋內建/壞檔被拒/未知欄位報錯/出力格式驗證/內建 8 body 守門）、API 層 TestClient（CRUD＋各 4xx 案）、冒煙照任務 #5 真實啟動 server 走全流程",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990013
-    },
-    {
-      "decision": "移交待辦（不入本輪）——moderator 依 description 自動選角（DyLAN 式）、角色檔 `{variable}` 插值、Web UI 角色編輯器",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fe0fdce47",
-      "created_at": 1781292400.6990018
-    },
-    {
-      "decision": "技術選型——零新依賴，沿用行前綴 regex 解析（flow.py 慣例）、broadcast 事件持久化（history JSONL 既有管道），不引入 JSON schema 結構化輸出",
-      "rationale": "",
-      "rejected": "JSON schema 結構化輸出——與 codebase 行前綴慣例不一致，且既有條列 fallback 已驗證可用",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391583
-    },
-    {
-      "decision": "模組切分——`flow.parse_agenda` 與 `flow.validate_assignees` 為純函式（離線可測）；orchestrator 只改拆解 prompt 與討論階段呼叫端；discussion.py 與 `parse_tasks_with_deps` 完全不動",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391635
-    },
-    {
-      "decision": "介面——子題行 `子題: <標題> | <描述> | <成功準則>`，解析用 `split(\"|\", 2)` 固定最多三段（後段全歸 criteria），缺段允許空；`負責: <role_key>` 緊跟所屬子題行，找不到前置子題時忽略＋log；無 `子題:` 行 fallback 單一子題（原需求全文），零回歸",
-      "rationale": "高工指出標題含 `|` 會錯切，`split(\"|\", 2)` 一行解決，單測加此樣本",
-      "rejected": "",
-      "session_id": "pj2fdafbac98",
-      "created_at": 1781301525.3391652
-    },
-    {
       "decision": "分派硬驗證——合法集合＝本場實際出席角色 keys（experts dict）而非全域 BY_KEY；非法/缺漏 fallback 順序：`engineer` 若在出席集合，否則取第一個出席者（`fallback if fallback in available_keys else next(iter(available_keys))`），修正記錄入 log 與議程事件",
       "rationale": "工程師與高工同點名 fallback 硬編 engineer 在自訂角色組合下自身就是非法 key；純函式不得依賴呼叫端保證",
       "rejected": "fallback 永遠 engineer——engineer 缺席時 fallback 結果仍非法，硬驗證形同虛設",
@@ -3499,6 +3429,76 @@
       "rejected": "",
       "session_id": "ap64ff5fc49f",
       "created_at": 1783126862.9361556
+    },
+    {
+      "decision": "技術選型——零新依賴、零 LLM 的規則式逐行壓縮；LLM 摘要 fallback 明列移交待辦、獨立開票不實作",
+      "rationale": "離線不可驗的品質量測不進本輪；研究員 cascade 結論支持規則層先行",
+      "rejected": "引入 LangChain/AutoGen/LLMLingua——棄用中 API、截關鍵行實錘坑、輸出不可讀，皆與「裁決行原文保留」硬需求衝突",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5145843
+    },
+    {
+      "decision": "`flow.py` 新增模組級常數 `MARKER_ALLOWLIST` 為豁免清單唯一 SSOT（含 `回應 @` pattern），緊鄰既有 parser regex 放置",
+      "rationale": "單一清單 + 守護測試鎖漂移，優於 pattern 分居兩檔",
+      "rejected": "allowlist 依 parser 所在檔分放 flow/discussion 兩份——兩處 SSOT 必然漂移",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5145934
+    },
+    {
+      "decision": "`MARKER_ALLOWLIST` 命中語意為**行內 search、不錨定行首**；pattern 鏡射各 parser 實際錨定行為（裁決類 `驗證:`/`決議:`/`異議:`/`願景:` 與 `回應 @` 皆全文掃描，任務類雖行首錨定但一律以行內 search 收斂為單一語意）",
+      "rationale": "高工查核證實 `_last_match`/`parse_mentions` 無 `^` 無 `re.M`，行中裁決會命中；若 allowlist 錨定行首，行中裁決被丟進省略段可致判定翻盤",
+      "rejected": "行首錨定 match——原設計的錯誤前提，寧可過保（誤保少數敘述行）不可漏保裁決行",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5145948
+    },
+    {
+      "decision": "`compress_segment(text, cap)` 為 `flow.py` 無狀態純函式；`len(text)<=cap` 時 bit-for-bit 原樣返回；用 `splitlines(keepends=True)` 逐行處理；orchestrator 照既有模式 re-export（僅供 autopilot/外部 monkeypatch 慣例，非 discussion 消費路徑）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5145957
+    },
+    {
+      "decision": "壓縮只做「整行取捨」——命中 allowlist 的行逐字元原文保留且相對順序不變，非 marker 行保頭保尾、中段以單一省略標記行取代；禁止跨行合併與行內改寫",
+      "rationale": "`_last_match` 取最後一筆，marker 行相對順序改變＝判定翻盤；整行取捨最小化語意風險",
+      "rejected": "",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5145974
+    },
+    {
+      "decision": "marker 行總量超過 cap 時允許輸出超出 cap，裁決行全保",
+      "rationale": "裁決不丟失是硬不變式，優先於預算嚴格性；裁決行爆量是上游異常，不由壓縮器靜默吞",
+      "rejected": "嚴格預算下丟棄較早 marker 行——會翻轉 `_last_match` 語意",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.514599
+    },
+    {
+      "decision": "接線點唯一——`discussion.py::_build_prompt` 的 prev_round/own_history 兩處改為**直接呼叫 `flow.compress_segment`**（各沿用 `PREV_SEGMENT_MAX_CHARS`/`SELF_SEGMENT_MAX_CHARS`）；`DiscussionEngine._clip` 保留不刪，回滾即切回",
+      "rationale": "`discussion.py` 明確禁止 import orchestrator（工程師查核）；測試 monkeypatch 打 `studio.flow.compress_segment`",
+      "rejected": "經 `orchestrator.compress_segment` 消費——違反既有依賴方向禁令",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5146003
+    },
+    {
+      "decision": "摘要注入前置固定標頭「以下為 @<角色> 發言之摘要（結構化行為原文保留）」；標頭與省略標記的措辭須經兩項驗證——①`fake_experts.py` 觸發關鍵字零碰撞 ②本身不含任何 marker 子串",
+      "rationale": "「行首錨定天然安全」論證已失效（裁決 regex 行中可命中），安全性改由顯式不變式保證",
+      "rejected": "",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5146012
+    },
+    {
+      "decision": "守護測試四層——①allowlist 與 flow/discussion 全部 parser 一一對應防漂移 ②白樣本斷言壓縮後 `qa_passed`/`senior_approved`/`parse_mentions`/`parse_core_changes` 結果與原文一致，**樣本必含行中裁決行與行中 `回應 @`** ③黑樣本以破壞版壓縮器 monkeypatch `studio.flow.compress_segment` 證明測試具真判別力 ④不變式測試：標頭與省略標記行餵全部 parser + `parse_mentions` 斷言零命中",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.5146024
+    },
+    {
+      "decision": "本輪不動 `events.py`、不動 history 格式、不動任何既有 marker 字串；`flow.py` 以外不新增決策邏輯；不做語意去重與行內改寫",
+      "rationale": "全部改動集中一個純函式＋一個接線點，回滾成本趨近零；可逆性優先",
+      "rejected": "",
+      "session_id": "apbb72894bb1",
+      "created_at": 1783133495.514603
     }
   ]
 }

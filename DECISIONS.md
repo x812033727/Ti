@@ -2180,3 +2180,46 @@
 ## `flow.py` 本輪零改動（無新解析需求）；前端 `handleEvent()` 對 `task_result` 僅做「未知事件不崩潰」最小處理，UI 呈現不在本輪範圍
 - 時間：2026-07-04 09:01
 
+## 技術選型——零新依賴、零 LLM 的規則式逐行壓縮；LLM 摘要 fallback 明列移交待辦、獨立開票不實作
+- 時間：2026-07-04 10:51
+- 理由：離線不可驗的品質量測不進本輪；研究員 cascade 結論支持規則層先行
+- 否決方案：引入 LangChain/AutoGen/LLMLingua——棄用中 API、截關鍵行實錘坑、輸出不可讀，皆與「裁決行原文保留」硬需求衝突
+
+## `flow.py` 新增模組級常數 `MARKER_ALLOWLIST` 為豁免清單唯一 SSOT（含 `回應 @` pattern），緊鄰既有 parser regex 放置
+- 時間：2026-07-04 10:51
+- 理由：單一清單 + 守護測試鎖漂移，優於 pattern 分居兩檔
+- 否決方案：allowlist 依 parser 所在檔分放 flow/discussion 兩份——兩處 SSOT 必然漂移
+
+## `MARKER_ALLOWLIST` 命中語意為**行內 search、不錨定行首**；pattern 鏡射各 parser 實際錨定行為（裁決類 `驗證:`/`決議:`/`異議:`/`願景:` 與 `回應 @` 皆全文掃描，任務類雖行首錨定但一律以行內 search 收斂為單一語意）
+- 時間：2026-07-04 10:51
+- 理由：高工查核證實 `_last_match`/`parse_mentions` 無 `^` 無 `re.M`，行中裁決會命中；若 allowlist 錨定行首，行中裁決被丟進省略段可致判定翻盤
+- 否決方案：行首錨定 match——原設計的錯誤前提，寧可過保（誤保少數敘述行）不可漏保裁決行
+
+## `compress_segment(text, cap)` 為 `flow.py` 無狀態純函式；`len(text)<=cap` 時 bit-for-bit 原樣返回；用 `splitlines(keepends=True)` 逐行處理；orchestrator 照既有模式 re-export（僅供 autopilot/外部 monkeypatch 慣例，非 discussion 消費路徑）
+- 時間：2026-07-04 10:51
+
+## 壓縮只做「整行取捨」——命中 allowlist 的行逐字元原文保留且相對順序不變，非 marker 行保頭保尾、中段以單一省略標記行取代；禁止跨行合併與行內改寫
+- 時間：2026-07-04 10:51
+- 理由：`_last_match` 取最後一筆，marker 行相對順序改變＝判定翻盤；整行取捨最小化語意風險
+
+## marker 行總量超過 cap 時允許輸出超出 cap，裁決行全保
+- 時間：2026-07-04 10:51
+- 理由：裁決不丟失是硬不變式，優先於預算嚴格性；裁決行爆量是上游異常，不由壓縮器靜默吞
+- 否決方案：嚴格預算下丟棄較早 marker 行——會翻轉 `_last_match` 語意
+
+## 接線點唯一——`discussion.py::_build_prompt` 的 prev_round/own_history 兩處改為**直接呼叫 `flow.compress_segment`**（各沿用 `PREV_SEGMENT_MAX_CHARS`/`SELF_SEGMENT_MAX_CHARS`）；`DiscussionEngine._clip` 保留不刪，回滾即切回
+- 時間：2026-07-04 10:51
+- 理由：`discussion.py` 明確禁止 import orchestrator（工程師查核）；測試 monkeypatch 打 `studio.flow.compress_segment`
+- 否決方案：經 `orchestrator.compress_segment` 消費——違反既有依賴方向禁令
+
+## 摘要注入前置固定標頭「以下為 @<角色> 發言之摘要（結構化行為原文保留）」；標頭與省略標記的措辭須經兩項驗證——①`fake_experts.py` 觸發關鍵字零碰撞 ②本身不含任何 marker 子串
+- 時間：2026-07-04 10:51
+- 理由：「行首錨定天然安全」論證已失效（裁決 regex 行中可命中），安全性改由顯式不變式保證
+
+## 守護測試四層——①allowlist 與 flow/discussion 全部 parser 一一對應防漂移 ②白樣本斷言壓縮後 `qa_passed`/`senior_approved`/`parse_mentions`/`parse_core_changes` 結果與原文一致，**樣本必含行中裁決行與行中 `回應 @`** ③黑樣本以破壞版壓縮器 monkeypatch `studio.flow.compress_segment` 證明測試具真判別力 ④不變式測試：標頭與省略標記行餵全部 parser + `parse_mentions` 斷言零命中
+- 時間：2026-07-04 10:51
+
+## 本輪不動 `events.py`、不動 history 格式、不動任何既有 marker 字串；`flow.py` 以外不新增決策邏輯；不做語意去重與行內改寫
+- 時間：2026-07-04 10:51
+- 理由：全部改動集中一個純函式＋一個接線點，回滾成本趨近零；可逆性優先
+
