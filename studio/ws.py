@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -51,6 +52,182 @@ def _register_running(controller: object, *keys: str) -> None:
 def _unregister_running(*keys: str) -> None:
     for k in keys:
         _running.pop(k, None)
+
+
+# --- 斷線重掛（attach）：進行中 session 的事件 fan-out -----------------------
+#
+# 原 broadcast 是綁死單一 socket 的閉包；hub 讓「第二條 WS」能訂閱同一場討論的
+# 事件流（先補放 history JSONL 已錯過事件、再無縫接 live），並把 interject/stop
+# 餵回既有 controller。只在單場 StudioSession 路徑註冊；improve umbrella 各輪
+# 獨立記錄、不註冊（attach 一律回 attach_unavailable，行為明確）。
+
+# 單場 attach 旁聽連線上限（attach 不占 MAX_CONCURRENT_SESSIONS slot——slot 護的是
+# 專家子程序/LLM 重資源；若計入，滿載時斷線重連會自我封鎖。此上限防濫用）。
+_MAX_ATTACH_LISTENERS = 16
+
+
+# attach listener 佇列的積壓上限：超過即視為慢消費者踢除（client 帶 cursor 重掛自癒）。
+_LISTENER_BACKLOG_MAX = 2048
+
+
+class _SessionHub:
+    """單場討論的事件樞紐。
+
+    不變式：`seq` == history JSONL 已寫入行數——publish 只能緊跟在
+    `history.record_event` 之後同步呼叫（兩者間不得插入 await），attach 端才能用
+    「快照行數」對佇列事件做計數去重（seq <= 快照長度 ⇒ 快照已含、跳過）。
+
+    loop-safe：生產環境（uvicorn）全部連線共用一個事件迴圈，但 TestClient 每條 WS
+    各開一個迴圈——跨迴圈對 asyncio.Queue 直接 put_nowait 不會喚醒對方迴圈的等待者。
+    故 listener 記 (queue, 其所屬 loop)，投遞一律走 call_soon_threadsafe；attach 端
+    的 interject 注入也經 hub.loop（session 所在迴圈）回拋。
+    """
+
+    def __init__(self, session_id: str, controller: object, queue: asyncio.Queue[str]) -> None:
+        self.session_id = session_id
+        self.controller = controller  # StudioSession：broadcast（插話回顯）/ request_stop
+        self.queue = queue  # intervention queue（attach 端 interject 注入點）
+        self.loop = asyncio.get_running_loop()  # session 所在迴圈（interject 回拋目標）
+        self.seq = 0
+        self.listeners: dict[asyncio.Queue, asyncio.AbstractEventLoop] = {}
+
+    def subscribe(self, q: asyncio.Queue) -> None:
+        self.listeners[q] = asyncio.get_running_loop()
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        self.listeners.pop(q, None)
+
+    def _deliver(self, item: object) -> None:
+        for q, loop in tuple(self.listeners.items()):
+            if q.qsize() >= _LISTENER_BACKLOG_MAX:
+                self.listeners.pop(q, None)  # 慢消費者踢除，不拖慢討論主迴圈
+                continue
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, item)
+            except RuntimeError:  # listener 的迴圈已關（連線已死）
+                self.listeners.pop(q, None)
+
+    def publish(self, d: dict) -> None:
+        self.seq += 1
+        self._deliver((self.seq, d))
+
+    def close(self) -> None:
+        """session 結束：對所有 listener 發結束哨兵並清空（done 事件已先 publish）。"""
+        self._deliver(None)
+        self.listeners.clear()
+
+    def inject_interjection(self, text: str) -> None:
+        """把 attach 端插話回拋到 session 所在迴圈（雙端回顯＋queue 注入）。
+
+        順序刻意「先回顯、後注入」：回顯 task 會先於被喚醒的等待者執行到 record+publish
+        （同一 ready queue 的先後），確保插話在 JSONL 與 fan-out 中先於專家對它的回應——
+        注入先行時，等待中的專家可能瞬間跑完收尾，回顯反而落在 hub 關閉之後而遺失。
+        """
+        try:
+            # 回顯走 controller.broadcast（入檔＋fan-out）；用 run_coroutine_threadsafe
+            # 排回 session 迴圈執行，不在 attach 迴圈直接 await（跨迴圈 send 不安全）。
+            asyncio.run_coroutine_threadsafe(
+                self.controller.broadcast(events.human_message(self.session_id, text)),
+                self.loop,
+            )
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, text)
+        except RuntimeError:
+            pass  # session 迴圈已關（正在收尾）：插話已無意義，靜默略過
+
+
+_hubs: dict[str, _SessionHub] = {}
+
+
+async def _attach_session(websocket: WebSocket, data: dict) -> None:
+    """把這條 WS 掛上進行中的 session：補放已錯過事件 → 接 live → 代收 interject/stop。"""
+    sid = str(data.get("attach") or "").strip()
+    try:
+        cursor = max(0, int(data.get("cursor") or 0))
+    except (TypeError, ValueError):
+        cursor = 0
+    hub = _hubs.get(sid)
+    if hub is None:
+        await websocket.send_json(
+            {
+                "type": "error",
+                "payload": {
+                    "code": "attach_unavailable",
+                    "message": "該場討論不在進行中（已結束或服務已重啟），請從歷史重播",
+                },
+            }
+        )
+        await websocket.close()
+        return
+    if len(hub.listeners) >= _MAX_ATTACH_LISTENERS:
+        await websocket.send_json(
+            {
+                "type": "error",
+                "payload": {"code": "attach_unavailable", "message": "該場的旁聽連線已達上限"},
+            }
+        )
+        await websocket.close()
+        return
+
+    q: asyncio.Queue = asyncio.Queue()
+    hub.subscribe(q)  # 先訂閱（開始緩衝）……
+    try:
+        past = history.load_events(sid)  # ……後拍快照：快照必涵蓋訂閱前全部事件
+        for d in past[cursor:]:
+            await websocket.send_json(d)
+        sent = len(past)
+        # attach_ok 是 ws 層訊息（沿既有 raw error dict 先例），不進 events.py 契約；
+        # cursor 回傳權威計數，讓前端事件計數器與伺服器校準。
+        await websocket.send_json(
+            {"type": "attach_ok", "payload": {"session_id": sid, "cursor": sent}}
+        )
+
+        async def _sender() -> None:
+            nonlocal sent
+            while True:
+                item = await q.get()
+                if item is None:
+                    return  # session 已結束（done 已送）
+                seq, d = item
+                if seq <= sent:
+                    continue  # 快照已含（訂閱先於快照造成的重疊），計數去重
+                try:
+                    await websocket.send_json(d)
+                except (RuntimeError, WebSocketDisconnect):
+                    return
+                sent = seq
+
+        sender = asyncio.create_task(_sender())
+        try:
+            # 與 _pump_interventions 同款：邊送邊收，interject/stop 餵回既有 controller。
+            while not sender.done():
+                recv = asyncio.ensure_future(websocket.receive_json())
+                done, _pending = await asyncio.wait(
+                    {recv, sender}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if recv not in done:
+                    recv.cancel()
+                    break
+                try:
+                    msg = recv.result()
+                except WebSocketDisconnect:
+                    break
+                kind = msg.get("type")
+                if kind == "interject":
+                    text = (msg.get("text") or "").strip()
+                    if text:
+                        # 注入＋回顯（入檔、原 socket 與所有 attach socket 都看得到）
+                        # 統一經 hub 回拋 session 迴圈，跨迴圈安全。
+                        hub.inject_interjection(text)
+                elif kind == "stop":
+                    hub.controller.request_stop()  # 純旗標，跨執行緒安全
+        finally:
+            sender.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sender
+    finally:
+        hub.unsubscribe(q)
+        with contextlib.suppress(RuntimeError):
+            await websocket.close()
 
 
 def stop_running(target_id: str) -> bool:
@@ -124,12 +301,16 @@ async def ws(websocket: WebSocket) -> None:
     slot_held = False
     project_held = False
     run_task: asyncio.Task | None = None
+    hub: _SessionHub | None = None  # 單場路徑建 session 後掛上（attach fan-out）
 
     async def broadcast(event: StudioEvent) -> None:
         nonlocal connected
         d = event.to_dict()
         if recording:
             history.record_event(session_id, d)
+            # record 與 publish 之間不得插入 await（_SessionHub 的 seq==JSONL 行數不變式）。
+            if hub is not None:
+                hub.publish(d)
         # 客戶端可能在討論進行中斷線（關分頁／網路斷）。連線已關後若再 send_json
         # 會丟 RuntimeError("websocket.send after close")。一旦偵測到關閉就停止再送，
         # 歷史仍照常記錄，事件不會遺失。
@@ -145,6 +326,10 @@ async def ws(websocket: WebSocket) -> None:
         # project_id：在該專案的固定 workspace 上工作（程式碼跨場次累積）。
         # mode="improve"：啟動持續改良迴圈（需搭配 project_id；requirement 選填＝先排進 backlog）。
         data = await websocket.receive_json()
+        # 斷線重掛：首訊息帶 attach 即訂閱既有進行中 session（不開新場、不占 slot）。
+        if data.get("attach"):
+            await _attach_session(websocket, data)
+            return
         requirement = (data.get("requirement") or "").strip()
         repo_url = (data.get("repo_url") or "").strip()
         repo_branch = (data.get("repo_branch") or "").strip() or None
@@ -385,7 +570,17 @@ async def ws(websocket: WebSocket) -> None:
             if project is not None
             else _run_plain_session(session, requirement)
         )
+        # attach fan-out 樞紐：在 run_task 之前建好（recording=True 後至此無 broadcast，
+        # 不會漏事件——第一個入檔事件是 run() 內的 session_started）。
+        hub = _SessionHub(session_id, session, queue)
+        _hubs[session_id] = hub
+
+        def _close_hub(_t: asyncio.Task) -> None:
+            _hubs.pop(session_id, None)
+            hub.close()
+
         run_task = asyncio.create_task(run_coro)
+        run_task.add_done_callback(_close_hub)
         # slot 隨 run_task 完成釋放（無論是否 detach、是否斷線），一次性、不重複。
         run_task.add_done_callback(lambda _t: _release_session_slot())
         if project is not None:
