@@ -1025,28 +1025,44 @@ def test_legacy_jsonl_history_replay_usage_report_golden(monkeypatch, tmp_path):
         },
         "by_provider": {
             "claude": {
-                "prompt": 120, "completion": 60, "total": 180,
-                "cost_usd": 6.0, "calls": 2,
-                "cache_read": 0, "cache_write": 0,
+                "prompt": 120,
+                "completion": 60,
+                "total": 180,
+                "cost_usd": 6.0,
+                "calls": 2,
+                "cache_read": 0,
+                "cache_write": 0,
             },
         },
         "by_model": {
             "claude-sonnet-4-7": {
-                "prompt": 120, "completion": 60, "total": 180,
-                "cost_usd": 6.0, "calls": 2,
-                "cache_read": 0, "cache_write": 0,
+                "prompt": 120,
+                "completion": 60,
+                "total": 180,
+                "cost_usd": 6.0,
+                "calls": 2,
+                "cache_read": 0,
+                "cache_write": 0,
             },
         },
         "by_role": {
             "engineer": {
-                "prompt": 100, "completion": 50, "total": 150,
-                "cost_usd": 5.0, "calls": 1,
-                "cache_read": 0, "cache_write": 0,
+                "prompt": 100,
+                "completion": 50,
+                "total": 150,
+                "cost_usd": 5.0,
+                "calls": 1,
+                "cache_read": 0,
+                "cache_write": 0,
             },
             "pm": {
-                "prompt": 20, "completion": 10, "total": 30,
-                "cost_usd": 1.0, "calls": 1,
-                "cache_read": 0, "cache_write": 0,
+                "prompt": 20,
+                "completion": 10,
+                "total": 30,
+                "cost_usd": 1.0,
+                "calls": 1,
+                "cache_read": 0,
+                "cache_write": 0,
             },
         },
         "est_extra_usd": 0.0,
@@ -1061,7 +1077,7 @@ def test_legacy_jsonl_history_replay_usage_report_golden(monkeypatch, tmp_path):
     augmented_events = []
     for ev in legacy_events:
         new_ev = json.loads(json.dumps(ev))  # 深拷貝
-        new_ev["payload"]["task_id"] = 7     # 補 task_id,模擬新版事件形狀
+        new_ev["payload"]["task_id"] = 7  # 補 task_id,模擬新版事件形狀
         augmented_events.append(new_ev)
     jsonl.write_text(
         "\n".join(json.dumps(ev, ensure_ascii=False) for ev in augmented_events) + "\n",
@@ -1074,8 +1090,7 @@ def test_legacy_jsonl_history_replay_usage_report_golden(monkeypatch, tmp_path):
 
     agg_with_task_id = usage_report.aggregate()
     assert agg_with_task_id == golden, (
-        f"補 task_id 後輸出漂移（task_id 不應污染 provider/model/role 彙總）:\n"
-        f"{agg_with_task_id}"
+        f"補 task_id 後輸出漂移（task_id 不應污染 provider/model/role 彙總）:\n{agg_with_task_id}"
     )
     # 額外顯式斷言兩輪結果彼此相等（防黃金基準寫錯時雙方一起錯過）
     assert agg_legacy == agg_with_task_id
