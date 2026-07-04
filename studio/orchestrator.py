@@ -319,7 +319,12 @@ class StudioSession:
                 total_tokens = int(p.get("total_tokens") or 0) or input_tokens + output_tokens
                 self._tokens_used += total_tokens
                 cost = p.get("cost_usd")
-                cost_value = float(cost) if cost is not None else None
+                cost_value = None
+                if cost is not None:
+                    try:
+                        cost_value = float(cost)
+                    except (TypeError, ValueError):
+                        cost_value = None
                 if cost_value is not None:
                     self._usd_used += cost_value
                 task_id = p.get("task_id")
