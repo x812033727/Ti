@@ -546,6 +546,10 @@ PUBLISH_MERGE = os.getenv("TI_PUBLISH_MERGE", "0") not in ("0", "false", "False"
 PUBLISH_CI_TIMEOUT = int(os.getenv("TI_PUBLISH_CI_TIMEOUT", "600"))
 PUBLISH_CI_INTERVAL = int(os.getenv("TI_PUBLISH_CI_INTERVAL", "10"))
 PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
+# 合併時 PR 落後 base（mergeable_state=behind，分支保護要求與 base 同步→PUT merge 回 405）
+# 的自動修復輪數：update-branch 把 base 併進來 → 等新 head 的 CI → 重試合併。
+# 0＝停用（恢復舊行為：behind 直接判 CONFLICT 退回）；上限防止 base 高頻前進時無限追趕。
+MERGE_BEHIND_RETRIES = int(os.getenv("TI_MERGE_BEHIND_RETRIES", "2"))
 # 發佈後 CI 失敗時，讓團隊修正重推、再驗合併的最多輪數；以及每輪等新 commit 的 check
 # 註冊出現的寬限秒數（避免「尚未註冊」被誤判為無 CI 而提前合併）。
 PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
@@ -995,6 +999,7 @@ def reload() -> None:
     global GITHUB_TOKEN, PUBLISH_REPO, PUBLISH_BASE, PUBLISH_AUTO, PUBLISH_MERGE
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE, PUBLISH_OWNER_ALLOWLIST
+    global MERGE_BEHIND_RETRIES
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
@@ -1096,6 +1101,7 @@ def reload() -> None:
     PUBLISH_CI_TIMEOUT = int(os.getenv("TI_PUBLISH_CI_TIMEOUT", "600"))
     PUBLISH_CI_INTERVAL = int(os.getenv("TI_PUBLISH_CI_INTERVAL", "10"))
     PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
+    MERGE_BEHIND_RETRIES = int(os.getenv("TI_MERGE_BEHIND_RETRIES", "2"))
     PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
     PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
