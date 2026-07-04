@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from . import config, memory, secure_write, workspace
@@ -507,25 +508,34 @@ def mark_interrupted(session_id: str, note: str = "") -> bool:
     meta["finished_at"] = time.time()
     if note:
         meta["note"] = note
-    meta["n_events"] = len(load_events(session_id))
+    # 只需計數：走 iter_events 逐筆數，不物化整個 list（長 session O(1) 記憶體）。
+    meta["n_events"] = sum(1 for _ in iter_events(session_id))
     _write_meta(session_id, meta)
     return True
 
 
-def load_events(session_id: str) -> list[dict]:
+def iter_events(session_id: str) -> Iterator[dict]:
+    """逐筆疊代 session 事件（惰性讀檔，不一次載入全檔）。
+
+    語義與 load_events 完全一致：檔案不存在→空、空行/壞 JSON 行跳過。
+    只需計數或串流掃描時用本函式（O(1) 記憶體）；需要整個 list 用 load_events。
+    """
     path = _events_path(session_id)
     if not path.is_file():
-        return []
-    events: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
+        return
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def load_events(session_id: str) -> list[dict]:
+    return list(iter_events(session_id))
 
 
 def delete_session(session_id: str) -> bool:
