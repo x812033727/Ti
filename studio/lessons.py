@@ -109,9 +109,7 @@ def add_many(
     with _locked():
         data = _load()
         existing_texts = [
-            text
-            for item in data["lessons"]
-            if (text := item.get("text", "").strip())
+            text for item in data["lessons"] if (text := item.get("text", "").strip())
         ]
         existing = set(existing_texts)
         n = 0

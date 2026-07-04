@@ -395,6 +395,7 @@ async def test_wrap_up_appraisal_lessons_wiring(tmp_path, monkeypatch):
     assert done is True
 
     from studio import lessons
+
     all_stored = lessons.all_lessons()
 
     texts = [r["text"] for r in all_stored]
@@ -408,4 +409,3 @@ async def test_wrap_up_appraisal_lessons_wiring(tmp_path, monkeypatch):
         assert r["source"] == "appraisal"
         assert r["session_id"] == "t"
         assert r["requirement"] == "做一個小工具"
-

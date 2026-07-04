@@ -3421,7 +3421,6 @@ class StudioSession:
                 except Exception:  # noqa: BLE001
                     log.warning("考核教訓入庫失敗（略過，不影響收尾）", exc_info=True)
 
-
     async def _record_known_limitations(self, unmet: list[dict]) -> None:
         """帶已知限制出貨前：把未通過的次要任務寫進交付物 KNOWN_LIMITATIONS.md（隨發佈一起
         commit,讓收件方一眼看到尚未滿足之處）,並回填 followups（持續改良迴圈下次續做）。"""
