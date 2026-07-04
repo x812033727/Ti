@@ -805,6 +805,11 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 #   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
 #   0 = 停用（還原成無狀態評估）。
 AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
+# LINT_AUTOFORMAT：lint 閘門遇 `ruff format --check` 失敗時，先在同一工作區 `ruff format`
+#   寫回再重驗一次，重驗綠即視同通過（純格式漂移是機器可修的確定性問題，不值得把整場
+#   1-2 小時的討論退回重試；見任務 #249 連續三輪卡格式牆）。重驗仍紅、或 `ruff check`
+#   （語意 lint）失敗，維持原退回行為。預設開啟；設 0 恢復舊行為（format 一紅即退）。
+LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
 
 # AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用詞集 Jaccard 相似度（autopilot._token_set_similarity，
 #   ASCII 片段整段 + CJK 逐字，純 stdlib 無新依賴）對每個提案與目前 pending/in_progress 標題算相似度，
@@ -1010,6 +1015,7 @@ def reload() -> None:
     global APPRAISAL_ENABLED, APPRAISAL_MAX_STORE
     global ROLES_DIR, AUTOPILOT_NORTH_STAR
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP, QUOTA_STALE_MAX
+    global LINT_AUTOFORMAT
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
@@ -1150,6 +1156,8 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+    # lint 閘門自動格式化（預設值須與檔頂宣告一致）
+    LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
     # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）

@@ -135,12 +135,55 @@ async def _gate_tests(clone: str) -> tuple[bool, str]:
     return result.ok, prefix + result.output[-(1500 - len(prefix)) :]
 
 
+def _reformat_count(fmt_output: str, check_output: str) -> int:
+    """解析被重排的檔數（僅供 log 顯示）：優先取 `ruff format` 寫回輸出的
+    「N file(s) reformatted」，取不到再數 `--check` 輸出的「Would reformat」行數，
+    都沒有回 0（只影響 log 數字，不影響閘門判定）。"""
+    m = re.search(r"(\d+)\s+files?\s+reformatted", fmt_output)
+    if m:
+        return int(m.group(1))
+    return len(re.findall(r"(?mi)^would reformat", check_output))
+
+
+async def _autoformat_recheck(clone: str, check_output: str) -> runner.RunOutput:
+    """`ruff format --check` 紅時的自動修復：同一工作區 `ruff format` 寫回後重跑 `--check`。
+
+    背景（#249）：專家寫完碼、pytest 全綠，卻因純格式漂移（如 studio/appraisal.py 需
+    reformat）被 lint 閘門整場退回，連續三輪各燒 1-2 小時只為空格。格式是機器可修的
+    確定性問題，這裡直接修掉再重驗：重驗綠 → 視同通過（寫回的檔案由 run_one_task 後續
+    _commit_push_merge 的 `git add -A` 兜底 commit 自然帶上）；重驗仍紅（ruff 版本漂移等
+    罕見情況）→ 回傳重驗結果，由呼叫端維持原退回行為。`ruff check`（語意 lint）不在此列，
+    照舊直接退回——自動修復僅限純排版，絕不動程式邏輯。
+    """
+    fmt = await runner.run_command_exec(
+        clone,
+        [sys.executable, "-m", "ruff", "format", "."],
+        timeout=120,
+        sandbox=True,
+        label="ruff format",
+    )
+    recheck = await runner.run_command_exec(
+        clone,
+        [sys.executable, "-m", "ruff", "format", "--check", "."],
+        timeout=120,
+        sandbox=True,
+        label="ruff format --check",
+    )
+    if recheck.ok:
+        log.info("格式已自動修正 %d 檔", _reformat_count(fmt.output, check_output))
+    return recheck
+
+
 async def _gate_lint(clone: str) -> tuple[bool, str]:
     """對齊 CI lint job：ruff check + ruff format --check。
 
     討論／pytest 閘門都不跑 ruff，lint 問題（未用 import、格式漂移等）會一路綠燈進
     main 卻在 GitHub CI 紅。此閘門補上。ruff 未安裝時 fail-open（只記警告不擋），避免
     部署環境缺 ruff 害死所有任務；裝了 ruff 才硬性把關。
+
+    `ruff format --check` 紅時（config.LINT_AUTOFORMAT 開啟，預設開）先 `ruff format`
+    寫回再重驗一次，綠了視同通過——純格式漂移不再退回整場討論（見 _autoformat_recheck）；
+    `ruff check`（語意 lint）行為完全不變，紅了照舊退回。
     """
     probe = await runner.run_command_exec(
         clone,
@@ -157,6 +200,9 @@ async def _gate_lint(clone: str) -> tuple[bool, str]:
         ([sys.executable, "-m", "ruff", "format", "--check", "."], "ruff format --check"),
     ):
         r = await runner.run_command_exec(clone, argv, timeout=120, sandbox=True, label=name)
+        if not r.ok and name == "ruff format --check" and config.LINT_AUTOFORMAT:
+            # 純格式漂移是機器可修的：寫回排版重驗，綠了就不退回（詳見 _autoformat_recheck）。
+            r = await _autoformat_recheck(clone, r.output)
         if not r.ok:
             # 標籤計入截尾預算（與 _gate_tests/_gate_collect 一致，總長維持 ≤1200）。
             prefix = f"[lint] {name} 未過：\n"
