@@ -320,6 +320,50 @@ def busy_sessions(stale_after_s: float) -> list[dict]:
     ]
 
 
+def events_mtime(session_id: str) -> float | None:
+    """events 檔 mtime（無檔或讀不到回 None）——代表 session 的最後活動時間。
+
+    供 autopilot 任務中心跳把 last_activity_at 寫進 status.json（外部監控據此
+    分辨「長任務仍在動」與「真的卡死」）。
+    """
+    try:
+        return _events_path(session_id).stat().st_mtime
+    except OSError:
+        return None
+
+
+def sweep_stale_running(
+    active_sids: frozenset[str] | set[str] = frozenset(), stale_after_s: float = 3600
+) -> list[str]:
+    """掃除卡在 running 的幽靈 meta：非活躍且久無活動者標 error（mark_interrupted），回傳掃到的 sid。
+
+    autopilot／服務被 restart 殺掉時 finish_session 沒跑到，meta 永遠停在 running——
+    網站無限顯示 ⏳ 執行中、enforce_retention 也永不回收。此函式挑出「sid 不在
+    active_sids（呼叫端提供的活躍集合，如 busy_sessions）且最後活動（events 檔 mtime，
+    取不到退回 meta 時間戳）超過 stale_after_s 秒」的 running meta 逐一標中斷。
+
+    stale_after_s 預設 3600：單一專家 turn 依 TURN_HARD_TIMEOUT（1800s）可合法靜默達
+    半小時，門檻取其兩倍才不會誤殺「討論很長但活著」的場次；mark_interrupted 冪等
+    （只動 running），重複掃無副作用。
+    """
+    now = time.time()
+    swept: list[str] = []
+    for meta in list_sessions():
+        if meta.get("status") != "running":
+            continue
+        sid = meta.get("session_id") or ""
+        if not sid or sid in active_sids:
+            continue
+        if now - _last_activity_ts(meta) <= stale_after_s:
+            continue
+        note = f"stale-running 掃除：無活躍程序且超過 {int(stale_after_s)}s 無活動，標記中斷"
+        if mark_interrupted(sid, note):
+            swept.append(sid)
+    if swept:
+        log.info("stale-running 掃除 %d 個幽靈 session：%s", len(swept), "、".join(swept))
+    return swept
+
+
 def get_meta(session_id: str) -> dict | None:
     path = _meta_path(session_id)
     if not path.is_file():

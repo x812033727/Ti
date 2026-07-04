@@ -3211,8 +3211,28 @@ class StudioSession:
         # 刻意保留 shell：同 _self_test，cmd 為 demo 指令（resolve_demo_command 動態解析），
         # 可能含 shell 語法，必須經 /bin/sh，無法 argv 化。
         result = await runner.run_command(self.cwd, cmd)  # nosec B602
+        retried_cmd: str | None = None
+        first_exit: int | None = None
+        if not result.ok:
+            # usage-error 消毒重試（#248）：PM 給的 demo 指令帶了工具不認得的參數
+            # （如 pytest --cache-dir → exit 4 unrecognized arguments）時，整場綠色成果
+            # 會被 demo_veto 全數丟棄——指令寫壞不是產品壞。剝掉 stderr 點名的參數後
+            # 重試「一次」（sanitize 回 None＝不重試），兩次嘗試都記進 demo_result 供稽核。
+            sanitized = runner.sanitize_demo_command(cmd, result.exit_code, result.output)
+            if sanitized:
+                first_exit = result.exit_code
+                retried_cmd = sanitized
+                result = await runner.run_command(self.cwd, sanitized)  # nosec B602
         await self.broadcast(
-            events.demo_result(self.session_id, cmd, result.exit_code, result.output, label="Demo")
+            events.demo_result(
+                self.session_id,
+                cmd,
+                result.exit_code,
+                result.output,
+                label="Demo",
+                retried_cmd=retried_cmd,
+                first_exit=first_exit,
+            )
         )
         return result
 
