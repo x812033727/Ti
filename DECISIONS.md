@@ -2127,3 +2127,56 @@
 - 時間：2026-07-04 01:32
 - 理由：高工確認這些檔案當前不影響 git 狀態；若本輪清理反而引入 diff，破壞零改動自證。
 
+## 技術選型——零新依賴；不引 OTel SDK、不綁 experimental semconv schema，僅在新增面（`task_result` payload、`_task_perf`、考核 objective）採 OTel 命名 `input_tokens`/`output_tokens`/`total_tokens`/`cost_usd`
+- 時間：2026-07-04 09:01
+
+## 既有 `token_usage` 事件的 `prompt_tokens`/`completion_tokens` 欄位名零改動，OTel 命名只用於新面
+- 時間：2026-07-04 09:01
+- 理由：硬改舊欄位會牽動 history 回放、report、既有測試三個相容面，收益只有命名一致；join 層做一次 mapping 成本極低
+- 否決方案：本輪將 token_usage 事件欄位改名或加別名雙寫（雙寫會讓兩個鍵名並存成為永久債）
+
+## task_id 注入沿用既有 `_tagged_broadcast`/`_speak` 鏈路，禁止新建平行包裝器；本輪新增僅三件：`events.token_usage` 選填 `task_id` 參數、`_counting_broadcast` 聚合分支、`task_result` 事件
+- 時間：2026-07-04 09:01
+- 理由：機制去重——兩個做同一件事的包裝器，半年後接手者分不清權威；既有 tagged（外）→ counting（內）層次天然正確
+- 否決方案：原設計的「任務迴圈內新建 closure 包裝器」（與 `_tagged_broadcast` 功能重複）
+
+## `_tagged_broadcast` 的 task_id 一律取自任務工作迴圈的 `task["id"]`，與 lane 身分脫鉤——循序模式（main lane）必須同樣標記，補「循序單 lane 也正確歸因」的黑白測試
+- 時間：2026-07-04 09:01
+- 理由：工程師查核發現 `_lane_tag()` 主 lane 回 None，若歸因綁 lane 身分，循序模式全漏算
+- 否決方案：只有並行 lane 才標 task_id 的現狀語意
+
+## 契約測試鎖 `setdefault` 語意（不覆蓋既有 task_id），並同時覆蓋「factory 傳入」與「wrapper setdefault 補入」兩條路徑產出相同鍵名
+- 時間：2026-07-04 09:01
+- 理由：巢狀包裝時外層不得改寫內層歸因；events.py 仍是鍵名 SSOT，但實務寫入多走 wrapper
+
+## per-task 聚合放 `_counting_broadcast` 新增分支——讀 `p.get("task_id")` 累進 `_task_perf[task_id]`（input/output/total_tokens、cost_usd、cost_source），沿用既有「異常忽略、永不阻斷事件流」容錯；huddle 重試沿用 duration_s 的累加模式
+- 時間：2026-07-04 09:01
+
+## cost_source 契約定義三值枚舉 `reported`/`estimated`/`mixed`，但本輪只產出 `reported`（provider 實報 cost_usd 存在時）；cost 缺時 `cost_usd=None`、`cost_source=None`——估算器列移交待辦、獨立開票
+- 時間：2026-07-04 09:01
+- 理由：工程師指出 OpenAI-compatible 多半無 cost，「估算在哪裡補」未定義前，estimated 只是空承諾；先鎖契約形狀、不塞半成品邏輯，可逆
+- 否決方案：本輪同步實作估算器（擴散到 providers 計價表，範圍爆炸）
+
+## 新增事件型別 `task_result`（payload: task_id、role、provider、model、duration_s、qa_rounds、input/output/total_tokens、cost_usd、cost_source），於 `_collect_task_perf` 後廣播；`dispatch_decision` payload 與語意零改動，消費端以 task_id join
+- 時間：2026-07-04 09:01
+- 理由：決策快照與結果的時序語意乾淨（決策當下結果不存在）、舊 history 回放零風險
+- 否決方案：把結果欄位塞回 dispatch_decision（污染既有契約、回放風險）
+
+## 討論階段（澄清/架構/檢討）token 不歸因、task_id 維持 None，不發明偽任務 id；實作前必須確認任務範圍內所有 LLM 呼叫（含 huddle 走 `discussion.py` 自有 `_broadcast` 的路徑）是否都經 `_speak`——有例外即列為已知缺口，寫進測試註解與移交待辦，不默默漏
+- 時間：2026-07-04 09:01
+- 理由：高工指出 discussion.py 用自己的 broadcast，可能繞過 tagged 鏈路；缺口要顯式化
+
+## 考核 objective 匯出（orchestrator.py:3230 附近）每任務併入 `total_tokens`/`cost_usd`/`cost_source`（缺資料＝None 不拋錯，沿用考核旁路永不 raise）；PM 考核提示中 qa_rounds 與 token 分開呈現、不重複懲罰
+- 時間：2026-07-04 09:01
+
+## 向後相容雙向守護——舊 jsonl（無 task_id）經 `_derive_token_usage`/`usage_report` 輸出 bit-for-bit 不變；另補「新格式事件（含 task_id 鍵）餵舊聚合」樣本證明無感
+- 時間：2026-07-04 09:01
+- 理由：相容是雙向的：舊資料進新碼、新資料進舊消費端，只測一向會漏
+
+## 實作分三小步依序落地：①`events.token_usage(task_id=None)` + `_counting_broadcast` 聚合分支 → ②`task_result` 事件 + objective 併入 → ③前端 smoke 與文件；每步獨立可驗收
+- 時間：2026-07-04 09:01
+- 理由：工程師建議避免一次改爆相容面；與 PM 任務依賴序（#1→#2→#3）一致
+
+## `flow.py` 本輪零改動（無新解析需求）；前端 `handleEvent()` 對 `task_result` 僅做「未知事件不崩潰」最小處理，UI 呈現不在本輪範圍
+- 時間：2026-07-04 09:01
+
