@@ -289,6 +289,9 @@ class ProjectImprover:
         bp_ctx = blueprint.context(self.project["id"])
         if bp_ctx:
             parts.append(bp_ctx.rstrip())
+        sc_ctx = self._scorecard_context()
+        if sc_ctx:
+            parts.append(sc_ctx.rstrip())
         parts.append(f"本輪改良任務：{task['title']}")
         if task.get("detail"):
             parts.append(f"細節：{task['detail']}")
@@ -453,6 +456,7 @@ class ProjectImprover:
         head = (
             autopilot.north_star_context()
             + self._recent_outcomes_context()
+            + self._scorecard_context()
             + (
                 f"你正在審視長期產品專案「{name}」（程式碼就在你的工作目錄）。\n"
                 + (f"產品願景：{vision}\n" if vision else "")
@@ -500,6 +504,7 @@ class ProjectImprover:
         generic = (
             autopilot.north_star_context()
             + self._recent_outcomes_context()
+            + self._scorecard_context()
             + f"你正在審視長期產品專案「{self.project.get('name', '')}」。"
             "請從你的專業視角找出最值得改良的 3~5 點，每點獨立一行，"
             "格式固定為 `任務: [P0/bug] <動詞開頭的具體任務>`（標籤可省，視為 P1）；"
@@ -585,3 +590,57 @@ class ProjectImprover:
                 note = (t.get("note") or "").strip()
                 lines.append(f"- {t['title'].strip()}" + (f" — {note}" if note else ""))
         return "\n".join(lines) + "\n\n"
+
+    # 退回原因 key → 繁中描述（scorecard.rejects 的欄位契約見 history._derive_scorecard）
+    _REJECT_LABELS = {
+        "qa_fail": "QA 驗證失敗",
+        "smoke_fail": "自測失敗",
+        "gate_veto": "客觀閘門退回",
+        "critic": "異議退回",
+        "stall": "停滯收斂",
+    }
+
+    def _scorecard_context(self) -> str:
+        """本專案近 N 場的量化成績單摘要（roadmap 階段三：記分卡回饋進流程）。
+
+        取專案 meta 的 sessions 尾 N 場（N＝AUTOPILOT_EVAL_MEMORY）→ history meta →
+        aggregate_scorecard 聚合成一~三行繁中提示。無資料或任何失敗一律回空字串——
+        回饋只是優化，絕不擋改良迴圈；輸出不得含 `任務:`/`核心改動:` 等 marker 字樣。
+        """
+        try:
+            limit = config.AUTOPILOT_EVAL_MEMORY
+            if limit <= 0:
+                return ""
+            recorded = (projects.get(self.project["id"]) or {}).get("sessions") or []
+            metas = []
+            for row in recorded[-limit:]:
+                meta = history.get_meta(row.get("session_id", ""))
+                if meta and isinstance(meta.get("scorecard"), dict):
+                    metas.append(meta)
+            if not metas:
+                return ""
+            metas.sort(key=lambda m: m.get("started_at", 0), reverse=True)  # 聚合契約：新→舊
+            agg = history.aggregate_scorecard(metas)
+            if not agg.get("n"):
+                return ""
+
+            def _pct(v: float | None) -> str:
+                return f"{round(v * 100)}%" if v is not None else "—"
+
+            line1 = (
+                f"【本專案近 {agg['n']} 場量化成績單】完成率 {_pct(agg.get('completed_rate'))}、"
+                f"QA 通過率 {_pct(agg.get('qa_pass_rate'))}"
+            )
+            if agg.get("avg_rounds") is not None:
+                line1 += f"、平均輪數 {agg['avg_rounds']}"
+            lines = [line1 + "。"]
+            rejects = [
+                f"{self._REJECT_LABELS[k]} {v} 次"
+                for k, v in (agg.get("rejects") or {}).items()
+                if v and k in self._REJECT_LABELS
+            ]
+            if rejects:
+                lines.append(f"退回主因：{'、'.join(rejects)}。找問題請優先對準上述弱項。")
+            return "\n".join(lines)[:300] + "\n\n"
+        except Exception:  # noqa: BLE001 — 記分卡回饋失敗不得擋改良迴圈
+            return ""

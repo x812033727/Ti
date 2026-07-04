@@ -87,74 +87,9 @@ async def metrics() -> JSONResponse:
     )
 
 
-def _aggregate_scorecard(sessions: list[dict]) -> dict:
-    """跨 session 聚合成果記分卡：成功率、平均輪數、一次過率、退回原因，與近期趨勢。
-
-    趨勢取「最近 10 場 vs 再前 10 場」（sessions 已新→舊排序）——這是『工作室有沒有
-    越做越進步』的直接量測：成功率升、平均輪數降＝在進步。
-    """
-    rows = [
-        (m, m["scorecard"])
-        for m in sessions
-        if m.get("status") != "running" and isinstance(m.get("scorecard"), dict)
-    ]
-    if not rows:
-        return {
-            "n": 0,
-            "qa_pass_rate": None,
-            "critic_pass_rate": None,
-            "demo_pass_rate": None,
-        }
-
-    def _slice_stats(part: list[tuple[dict, dict]]) -> dict:
-        if not part:
-            return {"n": 0}
-        done = sum(1 for m, _ in part if m.get("status") == "completed")
-        rounds = [s["avg_rounds"] for _, s in part if s.get("avg_rounds")]
-        return {
-            "n": len(part),
-            "completed_rate": round(done / len(part), 2),
-            "avg_rounds": round(sum(rounds) / len(rounds), 2) if rounds else None,
-        }
-
-    rejects = {"qa_fail": 0, "smoke_fail": 0, "gate_veto": 0, "critic": 0, "stall": 0}
-    tasks_total = tasks_done = first_try = 0
-    qa_total = qa_pass = 0
-    critic_total = critic_pass = 0
-    demo_total = demo_pass = 0
-    for _, s in rows:
-        for k in rejects:
-            rejects[k] += (s.get("rejects") or {}).get(k, 0)
-        tasks_total += s.get("tasks_total", 0)
-        tasks_done += s.get("tasks_done", 0)
-        first_try += s.get("first_try_done", 0)
-        qa_total += s.get("qa_total", 0)
-        qa_pass += s.get("qa_pass", 0)
-        critic_total += s.get("critic_total", 0)
-        critic_pass += s.get("critic_pass", 0)
-        demo = s.get("demo_passed")
-        if demo is not None:
-            demo_total += 1
-            if demo is True:
-                demo_pass += 1
-
-    def _rate(passed: int, total: int) -> float | None:
-        return round(passed / total, 2) if total else None
-
-    return {
-        **_slice_stats(rows),
-        "qa_pass_rate": _rate(qa_pass, qa_total),
-        "critic_pass_rate": _rate(critic_pass, critic_total),
-        "demo_pass_rate": _rate(demo_pass, demo_total),
-        "tasks": {
-            "total": tasks_total,
-            "done": tasks_done,
-            "first_try_done": first_try,
-            "first_try_rate": round(first_try / tasks_done, 2) if tasks_done else None,
-        },
-        "rejects": rejects,
-        "trend": {"recent": _slice_stats(rows[:10]), "previous": _slice_stats(rows[10:20])},
-    }
+# 聚合邏輯平移至 history.aggregate_scorecard（history 為 scorecard SSOT、改良迴圈共用）；
+# 保留原名 alias 讓既有測試與呼叫端不受影響。
+_aggregate_scorecard = history.aggregate_scorecard
 
 
 def _aggregate_parallel(sessions: list[dict]) -> dict:
