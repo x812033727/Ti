@@ -78,6 +78,8 @@ const cases = [
   { type: "appraisal", session_id: "t", payload: { provider: "claude", model: "claude-opus-4-8", role: "engineer", score: 4, comment: "穩定高質量" } },
   { type: "appraisal", session_id: "t", payload: { provider: "", model: "", role: "qa", score: 5, comment: "" } },
   { type: "appraisal", session_id: "t" }, // 無 payload
+  { type: "task_result", session_id: "t", payload: { task_id: 1, role: "engineer", provider: "claude", model: "claude-3-5-sonnet", duration_s: 15.2, qa_rounds: 1, input_tokens: 1200, output_tokens: 300, total_tokens: 1500, cost_usd: 0.0054, cost_source: "reported" } },
+  { type: "task_result", session_id: "t" }, // 無 payload
 ];
 
 try {
