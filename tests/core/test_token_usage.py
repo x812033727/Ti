@@ -909,3 +909,171 @@ def test_collect_task_perf_initializes_token_fields_as_none_even_for_dispatch_bo
 
 async def _noop_sink(ev):
     return None
+
+
+# --- 任務 #4 — 檔案級舊 jsonl 回放守護（ADR 2172 雙向）------------------
+
+
+def test_legacy_jsonl_history_replay_usage_report_golden(monkeypatch, tmp_path):
+    """任務 #4 — 檔案級舊 jsonl 回放守護（ADR 2172 雙向）。
+
+    場景：早期版本（引入 task_id 歸因前）的歷史 session jsonl 仍躺在 HISTORY_ROOT，
+    需保證新版 pipeline（history.load_events → _derive_token_usage → usage_report.aggregate）
+    仍能完整重算並彙總,行為與「補上 task_id」後的新版事件 bit-for-bit 一致。
+
+    向一（舊→新相容）：舊格式 jsonl（payload 無 task_id、無 cache_* 等新欄位）→
+        真實 history 載入 → _derive_token_usage → usage_report.aggregate() 全鏈路，
+        輸出等於固定字面值黃金 dict。
+    向二（新→舊相容）：同份 jsonl 每筆 token_usage payload 補上 task_id 後重跑同一條鏈，
+        輸出仍等於同一個黃金 dict（task_id 是 per-task 維度,不污染 provider/model/role 彙總）。
+
+    黃金 dict 採字面值（非快照檔），契約可讀、diff 可審。
+
+    範圍守門（任務 #4 其餘驗收已由既有測試覆蓋,本測試只守「檔案級舊 jsonl 端到端回放」）：
+      - 並行雙 lane 同 provider 不串戶 → test_parallel_lanes_same_provider_token_attribution_no_cross_contamination
+      - 三 lane 交錯加總       → test_parallel_lanes_interleaved_aggregation_still_correct
+      - 舊事件無 task_id 不污染 _task_perf → test_counting_broadcast_event_without_task_id_does_not_pollute_perf
+      - usage_report meta 缺 token_usage 時回讀 events fallback
+        → test_usage_report_derives_from_events_when_meta_missing
+      - meta 完全無 session_id 跳過       → test_usage_report_skips_meta_without_session_id
+
+    實作重點：
+      - HISTORY_ROOT → tmp_path（兩處引用同一個 config 屬性,設一次即可,雙設為保險）。
+      - 不 monkeypatch history.list_sessions / load_events / _derive_token_usage,走真實檔案 IO。
+      - meta.json 不含 token_usage 區塊 → 強迫 _usage_for 走 fallback 分支,才能測到
+        「load_events → _derive_token_usage」這條讀取鏈（含了會走 meta 短路,測不到）。
+      - cost_usd 用整數美分值（5、1 → 6.0）,避免浮點累加不穩;model 採 claude 系列
+        （無 MiniMax 列價,est_extra_usd=0.0,黃金基準乾淨）。
+    """
+    import json
+
+    from studio import config
+
+    sid = "legacy-replay-001"
+    started_at = 1_700_000_000.0  # 固定時間,避免 aggregate(since=...) 漂移
+
+    # 舊格式 token_usage payload：故意不帶 task_id、不帶 cache_* 等新欄位,
+    # 模擬「引入 task_id 歸因前」的真實歷史場次。
+    legacy_events = [
+        {
+            "type": "token_usage",
+            "session_id": sid,
+            "payload": {
+                "speaker": "engineer",
+                "provider": "claude",
+                "model": "claude-sonnet-4-7",
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+                "cost_usd": 5,  # 整數美分值,避免浮點累加誤差
+            },
+        },
+        {
+            "type": "token_usage",
+            "session_id": sid,
+            "payload": {
+                "speaker": "pm",
+                "provider": "claude",
+                "model": "claude-sonnet-4-7",
+                "prompt_tokens": 20,
+                "completion_tokens": 10,
+                "total_tokens": 30,
+                "cost_usd": 1,
+            },
+        },
+    ]
+
+    jsonl = tmp_path / f"{sid}.jsonl"
+    jsonl.write_text(
+        "\n".join(json.dumps(ev, ensure_ascii=False) for ev in legacy_events) + "\n",
+        encoding="utf-8",
+    )
+
+    # meta.json 不含 token_usage 區塊：強迫 _usage_for 走「回讀 events 即時重算」分支,
+    # 才能測到 history.load_events → _derive_token_usage → aggregate 整條 fallback 鏈。
+    meta = {
+        "session_id": sid,
+        "requirement": "任務#4 舊格式 jsonl 回放守護",
+        "started_at": started_at,
+        "status": "completed",
+        "n_events": len(legacy_events),
+    }
+    (tmp_path / f"{sid}.meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+
+    # 真實 HISTORY_ROOT 指向 tmp_path；list_sessions/load_events/_derive_token_usage
+    # 都不 monkeypatch,走真正的檔案 IO 全鏈路。
+    monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path)
+    # 雙設保險：usage_report 與 history 內部都 from . import config,實為同一屬性,
+    # 但顯式兩處設可避免將來 import 結構變更後單點失效。
+    monkeypatch.setattr(usage_report.config, "HISTORY_ROOT", tmp_path)
+    monkeypatch.setattr(history.config, "HISTORY_ROOT", tmp_path)
+
+    golden = {
+        "sessions": 1,
+        "total": {
+            "prompt": 120,
+            "completion": 60,
+            "total": 180,
+            "cost_usd": 6.0,
+            "calls": 2,
+            "cache_read": 0,
+            "cache_write": 0,
+        },
+        "by_provider": {
+            "claude": {
+                "prompt": 120, "completion": 60, "total": 180,
+                "cost_usd": 6.0, "calls": 2,
+                "cache_read": 0, "cache_write": 0,
+            },
+        },
+        "by_model": {
+            "claude-sonnet-4-7": {
+                "prompt": 120, "completion": 60, "total": 180,
+                "cost_usd": 6.0, "calls": 2,
+                "cache_read": 0, "cache_write": 0,
+            },
+        },
+        "by_role": {
+            "engineer": {
+                "prompt": 100, "completion": 50, "total": 150,
+                "cost_usd": 5.0, "calls": 1,
+                "cache_read": 0, "cache_write": 0,
+            },
+            "pm": {
+                "prompt": 20, "completion": 10, "total": 30,
+                "cost_usd": 1.0, "calls": 1,
+                "cache_read": 0, "cache_write": 0,
+            },
+        },
+        "est_extra_usd": 0.0,
+    }
+
+    # ── 向一：舊事件（無 task_id）────────────────────────────────────
+    agg_legacy = usage_report.aggregate()
+    assert agg_legacy == golden, f"舊格式 jsonl 回放輸出與黃金基準不一致:\n{agg_legacy}"
+
+    # ── 向二：補上 task_id 後重跑同一條鏈,輸出必須仍等於同一個黃金 dict
+    #          （task_id 是 per-task 維度,不應影響 provider/model/role 彙總）。
+    augmented_events = []
+    for ev in legacy_events:
+        new_ev = json.loads(json.dumps(ev))  # 深拷貝
+        new_ev["payload"]["task_id"] = 7     # 補 task_id,模擬新版事件形狀
+        augmented_events.append(new_ev)
+    jsonl.write_text(
+        "\n".join(json.dumps(ev, ensure_ascii=False) for ev in augmented_events) + "\n",
+        encoding="utf-8",
+    )
+    meta["n_events"] = len(augmented_events)
+    (tmp_path / f"{sid}.meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+
+    agg_with_task_id = usage_report.aggregate()
+    assert agg_with_task_id == golden, (
+        f"補 task_id 後輸出漂移（task_id 不應污染 provider/model/role 彙總）:\n"
+        f"{agg_with_task_id}"
+    )
+    # 額外顯式斷言兩輪結果彼此相等（防黃金基準寫錯時雙方一起錯過）
+    assert agg_legacy == agg_with_task_id
