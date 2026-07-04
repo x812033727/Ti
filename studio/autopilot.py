@@ -1326,6 +1326,38 @@ def _pause(reason: str) -> None:
     log.warning("已暫停 autopilot：%s", reason)
 
 
+# failed 自動分診的頻率護欄：triage_failed 全量掃 backlog（檔案鎖 + 讀寫整份 JSON），
+# 每輪迴圈都跑屬多餘 IO；15 分鐘一次已足夠讓基礎設施型失敗及時復活。行程記憶體即可
+# （重啟歸零＝重啟後第一輪就跑一次，正合「重啟常因環境修好」的場景）。
+_TRIAGE_INTERVAL_S = 900.0
+_last_triage_at = 0.0
+
+
+def _maybe_triage_failed() -> None:
+    """每 _TRIAGE_INTERVAL_S 跑一次確定性 failed 分診（backlog.triage_failed）。
+
+    基礎設施型失敗（provider 掛掉／額度 429／網路）的任務原本永遠躺在 failed，
+    要人工打 POST /api/autopilot/triage 才復活——主迴圈自動跑，讓環境恢復後任務
+    自然回到佇列；陳年失敗同時歸檔 parked。分診只是自癒輔助，失敗不得影響主迴圈。
+    """
+    global _last_triage_at
+    now = time.time()
+    if now - _last_triage_at < _TRIAGE_INTERVAL_S:
+        return
+    _last_triage_at = now
+    try:
+        stats = backlog.triage_failed()
+    except Exception:  # noqa: BLE001 — 分診只是自癒輔助，失敗不得影響主迴圈
+        log.exception("failed 自動分診失敗（忽略，不影響主迴圈）")
+        return
+    if stats.get("retried") or stats.get("parked"):
+        log.info(
+            "failed 自動分診：%d 筆基礎設施型失敗退回 pending，%d 筆陳年失敗歸檔 parked",
+            stats.get("retried", 0),
+            stats.get("parked", 0),
+        )
+
+
 def _recover_stale_in_progress() -> None:
     """把沒有活躍 history session 的 in_progress 任務放回 pending，並掃除幽靈 running meta。
 
@@ -1814,6 +1846,7 @@ async def _main_loop(startup_sig: float) -> None:
             await asyncio.sleep(sleep_s)
             continue
 
+        _maybe_triage_failed()
         _recover_stale_in_progress()
         task = backlog.next_pending()
         if task is None:
