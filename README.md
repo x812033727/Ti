@@ -328,6 +328,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_PUBLISH_MERGE` | push／開 PR 後是否自動合併（先等 CI 通過才合併） | 0 |
 | `TI_PUBLISH_CI_TIMEOUT` / `TI_PUBLISH_CI_INTERVAL` | 自動合併前等待 CI 的最長秒數 / 輪詢間隔 | 600 / 10 |
 | `TI_PUBLISH_MERGE_RETRIES` | 對 stale／`Base branch was modified`（409）的重試次數 | 3 |
+| `TI_MERGE_BEHIND_RETRIES` | PR 落後 base（`behind`→merge 405）時自動 update-branch→等 CI→重試合併的最多輪數；0＝停用（behind 直接退回） | 2 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
 | `TI_PROVIDER` | 後端 provider：`claude`、`openai`、`minimax`、`gemini`、`codex` 或 `antigravity` | claude |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 金鑰 / 相容端點（可指向本地模型） | 未設定 |

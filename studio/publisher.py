@@ -7,6 +7,10 @@
 合併不再「不等 CI 直接 PUT」：先等 CI（`_wait_for_ci`），再合併（`_merge_pr` + `_merge_flow`
 重試）。四／六種結局（MERGED / CI_FAILED / BLOCKED / CONFLICT / TIMEOUT / ERROR）皆寫進
 `PublishResult.outcome` 與 detail，全程不丟例外，杜絕 silent failed。
+
+機械性 BEHIND 自動修復：分支保護要求「與 base 同步」時，落後 base 的 PR 直接 PUT merge
+會回 405（不可重試）。`_merge_flow` 對此不再直接退回，而是 update-branch 把 base 併進來、
+等新 head 的 CI 綠後重試合併，最多 `TI_MERGE_BEHIND_RETRIES` 輪（0＝停用，恢復舊行為）。
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +26,8 @@ from enum import Enum
 
 from . import config, runner
 from .repo_ident import repo_key, repo_owner
+
+log = logging.getLogger("ti.publisher")
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
 
@@ -644,13 +651,20 @@ async def _merge_flow(
         - 其餘暫時性錯誤（409 race／5xx／網路）→ 純指數 backoff 重試，不做多餘的 update-branch
           （避免製造多餘 merge commit 與整輪 CI 重跑）。
       超過次數才放棄並回報。
+    - 機械性 BEHIND 修復（不可重試的 405）：分支保護開「與 base 同步」時，落後的 PR 直接
+      PUT merge 會回 405（retryable=False），舊行為在此終局退回、整場任務被丟棄重跑
+      （生產案例：任務 #250 兩小時討論產出 PR #283，因討論期間 main 前進而整場退回）。
+      改為：重查即時狀態，確為 `behind` 且還有額度 → update-branch → 重等新 head 的 CI →
+      重試合併；最多 `TI_MERGE_BEHIND_RETRIES` 輪（0＝停用，恢復舊行為），與一般重試
+      各自計數。update 後 CI 紅或 `dirty`（真衝突）維持原退回行為；其餘失敗路徑不變。
     """
     if await_registration:
         grace = config.PUBLISH_CI_GRACE if registration_grace is None else registration_grace
         await _await_checks_registered(number, grace, sleep=sleep)
 
-    last_outcome, last_detail = MergeOutcome.ERROR, "未知錯誤"
-    for attempt in range(retries + 1):
+    attempt = 0  # 一般（可重試錯誤）的合併嘗試輪數；behind 自動更新輪數獨立計數
+    behind_rounds = 0
+    while True:
         status = await _get_pr_status(number, sleep=sleep)
         if status is None:
             return MergeOutcome.ERROR, "無法取得 PR 狀態（API／網路錯誤）"
@@ -673,10 +687,31 @@ async def _merge_flow(
             if ci_state == "infra_fail":
                 detail = f"已繞過基礎設施/帳務 CI 失敗合併（{ci_detail}）；merge sha={detail}"
             return outcome, detail
-        last_outcome, last_detail = outcome, detail
 
         exhausted = attempt >= retries
         if not retryable or exhausted:
+            # 機械性 BEHIND 自動修復：405（不可重試）時重查一次即時狀態——等 CI 期間
+            # base 可能才剛前進，此刻 PR 其實是 behind。確為 behind 且還有自動更新額度
+            # → update-branch 把 base 併進來，回迴圈頂端重抓新 head、重等 CI 再試合併。
+            # 額度用盡或 update 失敗 → fall through 走原終局分類退回（不無限追趕）。
+            if not retryable and behind_rounds < config.MERGE_BEHIND_RETRIES:
+                refreshed = await _get_pr_status(number, sleep=sleep)
+                if refreshed is not None:
+                    status = refreshed
+                if (status.get("mergeable_state") or "") == "behind":
+                    behind_rounds += 1
+                    log.info(
+                        "PR #%s 落後 base，自動更新分支後重試合併（第 %d/%d 輪）",
+                        number,
+                        behind_rounds,
+                        config.MERGE_BEHIND_RETRIES,
+                    )
+                    if await _update_branch(number):
+                        # 給 GitHub 一點時間產生 update commit 並重算 mergeable；
+                        # 迴圈頂端會重抓（新）head sha 並重等該 sha 的 CI。
+                        await sleep(ci_interval)
+                        continue
+                    detail = f"{detail}（update-branch 失敗，無法自動更新分支）"
             # 用結構化狀態精準分類卡關原因（CI 已過卻 BLOCKED → 多半是缺審核／保護規則）。
             refined = classify_merge_state(status)
             if refined in (MergeOutcome.BLOCKED, MergeOutcome.CONFLICT):
@@ -686,14 +721,15 @@ async def _merge_flow(
                 outcome = refined
             if retryable and exhausted:
                 detail = f"{detail}（已達重試上限 {retries} 次）"
+            elif behind_rounds and (status.get("mergeable_state") or "") == "behind":
+                detail = f"{detail}（已自動更新分支 {behind_rounds} 輪仍落後 base，放棄追趕）"
             return outcome, detail
 
         # 可重試：只有 stale（behind）才 update-branch 真正修分支；其餘暫時性錯誤純退避重試。
         if (status.get("mergeable_state") or "") == "behind":
             await _update_branch(number)
         await sleep(_backoff(attempt, ci_interval))
-
-    return last_outcome, last_detail
+        attempt += 1
 
 
 async def publish(

@@ -478,7 +478,11 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
                 pr_number=pr_number,
                 branch=branch,
             )
-        # 非綠/未合併：關閉 PR 並刪分支，避免留下孤兒 PR
+        # 非綠/未合併：關閉 PR 並刪分支，避免留下孤兒 PR。
+        # 注意：機械性 BEHIND（落後 base）已在 _merge_flow 內自動 update-branch→等 CI→
+        # 重試合併（TI_MERGE_BEHIND_RETRIES 輪），不會走到這裡；至此仍失敗＝額度用盡／
+        # 真衝突／CI 紅等實質問題。維持關閉＋刪分支：任務退回重跑會開同名分支，
+        # 殘留舊分支反而會撞上前面的 ls-remote 防覆寫中止。
         await _run(
             [*_GH, "pr", "close", "-R", repo, branch, "--delete-branch"],
             cwd=clone,
