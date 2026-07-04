@@ -63,6 +63,64 @@ def test_guard_omitted_line_template_is_marker_clean():
     assert flow.parse_core_changes(rendered) == []
 
 
+def _assert_clean_parser_defaults(case: str) -> None:
+    """摘要標頭/省略行不可觸發任何 parser；允許 parser 自身的無命中預設值。"""
+    assert flow.qa_passed(case) is True
+    assert flow.senior_approved(case) is True
+    assert flow.security_approved(case) is True
+    assert flow.critic_blocks(case) is False
+    assert flow.pm_done(case) is False
+
+    assert flow.parse_tasks(case) == ["實作需求"]
+    assert flow.parse_clarify(case) == []
+    assert flow.parse_structured_tasks(case) == [
+        {"title": "實作需求", "priority": 1, "type": "improvement"}
+    ]
+    assert flow.parse_followups(case) == []
+    assert flow.parse_followups_meta(case) == []
+    assert flow.parse_core_changes(case) == []
+    assert flow.parse_lessons(case) == []
+    assert flow.parse_agenda(case) == [
+        {"title": case.strip(), "description": "", "criteria": "", "assignee": ""}
+    ]
+    assert flow.parse_appraisals(case) == []
+
+    assert flow.parse_next_step(case) == {
+        "role": "",
+        "instruction": "",
+        "end": False,
+        "recruit": None,
+        "provider": "",
+        "model": "",
+    }
+    assert flow.parse_dispatch(case) == {}
+    assert all(len(v) == 0 for v in flow.parse_conclusion(case).values())
+    assert flow.parse_vision(case) == ""
+    assert flow.parse_ballot(case, ["A", "B"]) == ""
+    tasks, deps = flow.parse_tasks_with_deps(case)
+    assert tasks == [{"id": 1, "title": "實作需求", "status": "todo"}]
+    assert deps == []
+    assert flow.parse_vote_request(case) is None
+    assert discussion.parse_mentions("qa", case, ["qa", "engineer", "senior", "pm"]) == []
+
+
+def test_guard_summary_header_and_omitted_line_are_parser_clean():
+    """摘要標頭與省略標記都不得被任何 parser 誤認為結構化裁決。"""
+    cases = [
+        "以下為 @qa 發言之摘要（結構化行為原文保留）",
+        "以下為 @engineer 發言之摘要（結構化行為原文保留）",
+        "以下為 @senior 發言之摘要（結構化行為原文保留）",
+        "以下為 @pm 發言之摘要（結構化行為原文保留）",
+        flow.OMITTED_LINE_TEMPLATE.format(n=1),
+        flow.OMITTED_LINE_TEMPLATE.format(n=5),
+    ]
+    for case in cases:
+        assert not flow._MARKER_RE.search(case)
+        for _, fallback_re in flow._FALLBACK_VERDICTS:
+            assert not fallback_re.search(case)
+        _assert_clean_parser_defaults(case)
+
+
 def test_guard_marker_allowlist_covers_all_parsers():
     """MARKER_ALLOWLIST 與 flow.py / discussion.py 全部 parser 一一對應防漂移。
     漏一個 marker → 該 marker 行在壓縮時被當敘述 → 裁決可能被吞。"""
@@ -97,6 +155,7 @@ def test_guard_marker_allowlist_covers_all_parsers():
         "投票",  # parse_ballot
         "考核",  # parse_appraisals
     ]
+    assert set(flow._MARKER_LABELS) == set(expected_labels)
     for label in expected_labels:
         assert label in allowlist_joined, (
             f"MARKER_ALLOWLIST 漏掉 parser 標籤 {label!r}（該 parser 的行會被當敘述壓掉）"

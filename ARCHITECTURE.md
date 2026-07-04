@@ -169,6 +169,10 @@ Ti 主核心 repo（雙軌路由）」），或再加 `mode: "improve"` 啟動**
   發言；ADR 開啟時由高工沿用既有蒸餾指令把 final_positions＋末輪發言收斂成決策落盤。
 - **依賴方向**：discussion.py 只依賴 stdlib＋`flow.py`＋`config.py`，semaphore／broadcast／
   should_stop 由 orchestrator 建構時注入（嚴禁反向 import，防循環依賴）。
+- **討論片段規則式壓縮**：為了控制 context 預算並防範 token 膨脹，`DiscussionEngine` 進行 prompt 組裝時，對 `prev_round`（超 `PREV_SEGMENT_MAX_CHARS`）與 `own_history`（超 `SELF_SEGMENT_MAX_CHARS`）改採 `flow.compress_segment` 進行規則式逐行壓縮。
+  - **整行取捨與原文保留**：命中 `MARKER_ALLOWLIST` 的結構化裁決行（如 `驗證:`、`決議:`、`回應 @` 等）逐字元原文保留且相對順序不變，非結構化行保頭保尾、中段以單一 `OMITTED_LINE_TEMPLATE` 取代。當 marker 行爆量時，優先保證裁決不丟失，故容許輸出超出預算上限。
+  - **後備裁決保護**：若全文缺少某類顯式 marker，則啟用對應的 `_FALLBACK_VERDICTS` 關鍵詞行原文保留，避免壓縮導致判定翻盤。
+  - **來源與壓縮標示**：短輸出 bit-for-bit 原文注入以防壓縮悖論；超閾值壓縮後，前置注入固定標頭「以下為 @<角色> 發言之摘要（結構化行為原文保留）」，標頭與省略標記行皆保證不觸發任何既有 parser。
 
 ## 自訂角色與討論小組（`role_store.py`、`/api/roles`、`/api/groups`）
 
