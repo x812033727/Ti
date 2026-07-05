@@ -886,11 +886,15 @@ def _activity_snapshot(limit: int) -> dict:
             usage = meta.get("token_usage") or {}
             if usage:
                 # 只帶 timeline 會用到的維度（total + per-provider/model），不整包塞給前端。
-                row["token_usage"] = {
+                token_usage = {
                     "total": usage.get("total"),
                     "by_provider": usage.get("by_provider") or {},
                     "by_model": usage.get("by_model") or {},
                 }
+                ttft_s = usage.get("ttft_s")
+                if ttft_s is not None:
+                    token_usage["ttft_s"] = ttft_s
+                row["token_usage"] = token_usage
         rows.append(row)
     return {"tasks": rows, "total": len(tasks)}
 
