@@ -115,6 +115,16 @@ FIELDS: tuple[Field, ...] = (
         default="claude-sonnet-4-6",  # 與 config.MODEL_FAST 預設一致
         group="Claude",
     ),
+    # PM 釘選模型：PM 是分派/檢驗/表決的最終決策者，模型固定不隨派工漂移（config.PM_PIN_MODEL）。
+    # 預設 fable-5、可改 opus-4.8 等；嚴格白名單，改了下一場 session 生效。
+    Field(
+        "TI_PM_PIN_MODEL",
+        "PM 釘選模型（分派/檢驗/表決決策者）",
+        kind="select",
+        options=CLAUDE_MODELS,
+        default="claude-fable-5",  # 與 config.PM_PIN_MODEL 預設一致
+        group="Claude",
+    ),
     # 每個角色可分開覆寫模型（auto＝沿用上面主力/快速的二分法；僅 Claude provider 適用）。
     # 推薦值＝品質優先（全員 claude-fable-5），前端「✨ 套用推薦模型」一鍵填入。
     *(

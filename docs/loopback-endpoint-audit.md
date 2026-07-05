@@ -27,6 +27,7 @@
 | POST | `/api/settings` | admin（auth｜fail-safe loopback） | ✅ | 改 .env 設定（含 `OPENAI_BASE_URL` 等），可致金鑰外洩/RCE 風險 |
 | POST | `/api/autopilot/pause` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈，遠端可癱瘓（DoS） |
 | POST | `/api/autopilot/resume` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈狀態 |
+| POST | `/api/autopilot/dispatch-mode` | admin（auth｜fail-safe loopback） | ✅ | 切換派工模式哨兵檔（auto＝PM 全權派工/manual），影響後續 session 的 provider/模型分配 |
 | POST | `/api/autopilot/task` | admin（auth｜fail-safe loopback） | ✅ | 向會自主執行 bash 的 autopilot 注入任務 |
 | POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
 | POST | `/api/roles` | admin（auth｜fail-safe loopback） | ✅ | 寫入角色檔 `roles/<key>.md` 並 reload 角色表（system_prompt 注入面） |

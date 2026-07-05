@@ -269,6 +269,152 @@ async def test_stage_decompose_without_dispatch_lines_keeps_empty_hints(monkeypa
     assert s._dispatch_hints == {}
 
 
+# --- auto 派工模式（PM 全權：兩家子集、門檻 95、模型直通） ----------------------
+
+
+def _auto_snapshot():
+    """合成快照：minimax 就緒且用量最低（1%）——驗證 auto 模式仍不選子集外的家。"""
+    return {
+        "ok": True,
+        "updated_at": 1000.0,
+        "providers": [
+            {
+                "key": "claude",
+                "ready": True,
+                "rate_limits": {"five_hour": {"used_percentage": 30, "reset_at": None}},
+            },
+            {
+                "key": "codex",
+                "ready": True,
+                "rate_limits": {"five_hour": {"used_percentage": 5, "reset_at": None}},
+            },
+            {
+                "key": "minimax",
+                "ready": True,
+                "rate_limits": {"five_hour": {"used_percentage": 1, "reset_at": None}},
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_passes_arbitrary_model_to_factory(monkeypatch):
+    """auto 派工：PM 指定的任意模型 ID 直通 factory，不查白名單。"""
+    monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
+    s, experts, bucket = _session()
+    s._dispatch_auto = True
+    recruited: list = []
+    s._dispatch_factory = _recording_factory(recruited)
+    s._dispatch_hints = {1: {"provider": "codex", "model": "gpt-brand-new-6"}}
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+    assert recruited and recruited[0]["provider"] == "codex"
+    assert recruited[0]["model"] == "gpt-brand-new-6"
+    p = _dispatch_events(bucket)[0].payload
+    assert p["mode"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_never_picks_outside_subset(monkeypatch):
+    """auto 派工：即使 minimax 就緒且用量最低，候選也夾在 claude/codex 兩家內。"""
+    monkeypatch.setattr(provider_quota, "snapshot", _auto_snapshot)
+    s, experts, bucket = _session()
+    s._dispatch_auto = True
+    recruited: list = []
+    s._dispatch_factory = _recording_factory(recruited)
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+    assert recruited and recruited[0]["provider"] == "codex"  # 子集中用量最低，非 minimax
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_adopts_hint_at_92_percent(monkeypatch):
+    """auto 派工門檻 95：hint 家 92% 照派（手動模式 90 門檻會改派——權力下放的差異點）。"""
+
+    def snap():
+        return {
+            "ok": True,
+            "updated_at": 1000.0,
+            "providers": [
+                {
+                    "key": "claude",
+                    "ready": True,
+                    "rate_limits": {"five_hour": {"used_percentage": 5, "reset_at": None}},
+                },
+                {
+                    "key": "codex",
+                    "ready": True,
+                    "rate_limits": {"five_hour": {"used_percentage": 92, "reset_at": None}},
+                },
+            ],
+        }
+
+    monkeypatch.setattr(provider_quota, "snapshot", snap)
+    s, experts, bucket = _session()
+    s._dispatch_auto = True
+    recruited: list = []
+    s._dispatch_factory = _recording_factory(recruited)
+    s._dispatch_hints = {1: {"provider": "codex", "model": ""}}
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+    assert recruited and recruited[0]["provider"] == "codex"  # 92% < 95 → 尊重 PM
+
+
+@pytest.mark.asyncio
+async def test_stage_decompose_auto_mode_prompt(monkeypatch):
+    """auto 模式拆解 prompt：全權說明、provider 只列兩家、額度摘要不出現子集外的家。"""
+    monkeypatch.setattr(provider_quota, "snapshot", _auto_snapshot)
+    monkeypatch.setattr(config, "dispatch_auto", lambda: True)
+    s, experts, _ = _session(pm_scripts=["任務: #1 甲\n派工: #1 codex gpt-5.5"])
+    await s._stage_decompose({"type": "decompose"})
+    assert s._dispatch_auto is True
+    prompt = experts["pm"].prompts[0]
+    assert "auto 派工模式" in prompt and "全權" in prompt
+    assert "派工: #<id> <provider> <model>" in prompt
+    assert "claude、codex" in prompt
+    assert "minimax" not in prompt  # 額度摘要與 provider 清單都不得誘導子集外派工
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_never_rebinds_pm(monkeypatch):
+    """auto 派工只換綁實作者——PM 專家不經 per-task 派工，釘選（fable-5）不受 auto 模式影響。"""
+    monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
+    s, experts, bucket = _session()
+    s._dispatch_auto = True
+    recruited: list = []
+    s._dispatch_factory = _recording_factory(recruited)
+    s._dispatch_hints = {1: {"provider": "codex", "model": "gpt-brand-new-6"}}
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+    assert all(r["role"] != "pm" for r in recruited)  # 換綁對象只有實作者
+    assert s._main_ctx.experts["pm"] is experts["pm"]  # PM 專家原封不動
+
+
+@pytest.mark.asyncio
+async def test_task_result_model_backfilled_from_expert(monkeypatch):
+    """模型可見性：未經派工指定模型時，task_result 的 model 取實作專家的 effective_model()。"""
+    monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
+    s, experts, bucket = _session()
+    experts["engineer"].effective_model = lambda: "claude-fable-5"  # StubExpert 動態掛上
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+    res = [e for e in bucket if e.type is events.EventType.TASK_RESULT]
+    assert res and res[0].payload["model"] == "claude-fable-5"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_decision_event_mode_manual(monkeypatch):
+    """手動模式的 dispatch_decision 事件帶 mode=manual（向後相容欄位）。"""
+    monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
+    s, experts, bucket = _session()
+    recruited: list = []
+    s._dispatch_factory = _recording_factory(recruited)
+    s._dispatch_hints = {1: {"provider": "codex", "model": ""}}
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+    assert _dispatch_events(bucket)[0].payload["mode"] == "manual"
+
+
 @pytest.mark.asyncio
 async def test_work_task_restores_even_when_broadcast_cancelled(monkeypatch):
     import asyncio
