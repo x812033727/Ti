@@ -429,6 +429,10 @@ class Expert:
         self._client = self._new_client()
         self._connected = False
 
+    def effective_model(self) -> str:
+        """實際生效的模型（覆寫優先，否則角色模型槽）——供任務結果（task_result）顯示。"""
+        return self._model or _model_for(self.role)
+
     def _new_client(self):
         """建 client（含逾時斷線後重建）。
 

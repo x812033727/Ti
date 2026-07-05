@@ -258,3 +258,25 @@ async def test_build_client_wires_pretooluse_fs_guard_bound_to_cwd(tmp_path, mon
     assert not _deny(
         await guard({"tool_name": "Write", "tool_input": {"file_path": "ok.py"}}, "id", None)
     )
+
+
+# --- effective_model：任務結果的模型可見性 --------------------------------------
+
+
+def test_expert_effective_model(monkeypatch):
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd, model="": object())
+    monkeypatch.setattr(config, "MODEL_FAST", "claude-sonnet-4-6")
+    monkeypatch.setattr(config, "ROLE_MODELS", {})
+    # 無覆寫 → 角色模型槽（engineer 非 LEAD → FAST）；有覆寫 → 覆寫優先。
+    assert (
+        experts.Expert(BY_KEY["engineer"], "s", "/tmp/x").effective_model() == "claude-sonnet-4-6"
+    )
+    assert (
+        experts.Expert(
+            BY_KEY["engineer"], "s", "/tmp/x", model="claude-haiku-4-5"
+        ).effective_model()
+        == "claude-haiku-4-5"
+    )
+    # PM 釘選最優先。
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "claude-fable-5")
+    assert experts.Expert(BY_KEY["pm"], "s", "/tmp/x").effective_model() == "claude-fable-5"

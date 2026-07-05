@@ -1190,3 +1190,33 @@ async def test_codex_turn_timeout_soft_fails_without_pause(monkeypatch, tmp_path
     assert result.startswith("【系統】") and "逾時" in result
     # 最後狀態回 idle（speak 的 finally 有廣播）。
     assert bucket[-1].payload["status"] == "idle"
+
+
+# --- effective_model：任務結果的模型可見性（task_result 顯示實際生效模型）--------
+
+
+def test_codex_expert_effective_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "CODEX_MODEL_LEAD", "gpt-5.5")
+    # 覆寫優先；無覆寫沿用角色模型槽（engineer 非 LEAD → FAST 槽）；FAST 空＝CLI 預設。
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "")
+    assert (
+        providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path, model="gpt-x").effective_model()
+        == "gpt-x"
+    )
+    assert providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path).effective_model() == ""
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "gpt-5.4-mini")
+    assert (
+        providers.CodexExpert(BY_KEY["engineer"], "t", tmp_path).effective_model() == "gpt-5.4-mini"
+    )
+
+
+def test_antigravity_expert_effective_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "ANTIGRAVITY_MODEL_FAST", "Gemini 3.5 Flash (Low)")
+    assert (
+        providers.AntigravityExpert(BY_KEY["engineer"], "t", tmp_path).effective_model()
+        == "Gemini 3.5 Flash (Low)"
+    )
+    assert (
+        providers.AntigravityExpert(BY_KEY["engineer"], "t", tmp_path, model="G3").effective_model()
+        == "G3"
+    )

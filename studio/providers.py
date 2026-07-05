@@ -177,6 +177,10 @@ class CodexExpert:
         self._proc = None
         self._stop_lock = asyncio.Lock()
 
+    def effective_model(self) -> str:
+        """實際生效的模型；空字串＝沿用 Codex CLI 自身設定——供任務結果（task_result）顯示。"""
+        return self._model_override or codex_model_for(self.role)
+
     async def speak(self, prompt: str, broadcast) -> str:
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
@@ -576,6 +580,10 @@ class AntigravityExpert:
         self._proc = None
         self._stop_lock = asyncio.Lock()
 
+    def effective_model(self) -> str:
+        """實際生效的模型；空字串＝沿用 Antigravity CLI 自身設定——供任務結果顯示。"""
+        return self._model_override or antigravity_model_for(self.role)
+
     async def speak(self, prompt: str, broadcast) -> str:
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
@@ -848,6 +856,10 @@ class OpenAIExpert:
         # per-speak 去重快取：speak() 入口會換上新實例（防跨 speak 結果洩漏）。此處先建一份，
         # 避免有人新增旁路呼叫路徑時踩 AttributeError（架構決策）。
         self._dedup_cache = tools.DedupCache()
+
+    def effective_model(self) -> str:
+        """實際生效的模型（建構時已解析為具體模型 ID）——供任務結果（task_result）顯示。"""
+        return self._model
 
     def _pauses_on_provider_failure(self) -> bool:
         """OpenAI-compatible 第三方 provider 失敗時暫停任務；保留 openai 既有 fallback 契約。"""

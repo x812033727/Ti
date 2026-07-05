@@ -1571,6 +1571,12 @@ class StudioSession:
             provider = ""
             if expert is not None:
                 provider = self._role_provider_map({impl_role: expert}).get(impl_role, "")
+                # 模型可見性：未經 per-task 派工顯式指定時，改問實際綁定的專家「生效模型」
+                # （各 Expert 類的 effective_model()；測試 stub 無此方法＝維持 None）。
+                if not perf.get("model"):
+                    fn = getattr(expert, "effective_model", None)
+                    if callable(fn):
+                        perf["model"] = fn() or None
             perf["provider"] = provider or perf.get("provider") or ""
             perf["duration_s"] = round((perf.get("duration_s") or 0.0) + duration_s, 1)
         except Exception:  # noqa: BLE001 — 考核收集失敗不得拖垮任務

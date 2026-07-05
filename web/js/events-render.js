@@ -417,9 +417,17 @@ export function handleEvent(ev) {
     case "token_usage":
       // 統計事件由後端 history/meta 聚合，前端即時串流不用顯示。
       break;
-    case "task_result":
-      // 任務執行結果事件，前端不崩潰。
+    case "task_result": {
+      // 任務結果 log-line：顯示實際用的 provider/模型與耗時/QA/費用（缺欄位一律省略不崩潰）。
+      const who = (p.role || "") + "@" + (p.provider || "?") + (p.model ? "/" + p.model : "");
+      const bits = [];
+      if (p.duration_s != null) bits.push(`耗時 ${p.duration_s}s`);
+      if (p.qa_rounds != null) bits.push(`QA ${p.qa_rounds} 輪`);
+      if (p.total_tokens != null) bits.push(`${p.total_tokens} tokens`);
+      if (p.cost_usd != null) bits.push(`$${p.cost_usd}`);
+      addSystem(`📊 任務 #${p.task_id ?? "?"} 結果 ▸ ${who}${bits.length ? `（${bits.join("・")}）` : ""}`);
       break;
+    }
     case "done":
       // 持續改良模式：迴圈內每輪討論的 done 只是「一輪結束」，迴圈總結（帶 improve）才收尾。
       if (state.improveMode && !p.improve) {
