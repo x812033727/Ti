@@ -2625,3 +2625,43 @@
 ## 驗收指令補入新檔 `test_qa_body_pinning_evidence.py`，與既有三支守護測試一併為收斂閘
 - 時間：2026-07-06 03:14
 
+## 不引入任何外部模糊比對庫（RapidFuzz／thefuzz），複用 repo 內既有 `_token_set_similarity`（詞集 Jaccard）
+- 時間：2026-07-06 04:25
+- 理由：GPL 授權污染、Levenshtein 對 CJK 逐字不適配、額外分詞依賴三點皆不划算；輪子已在 autopilot.py
+- 否決方案：引入 RapidFuzz（MIT）或 stdlib difflib.SequenceMatcher——前者仍需配 jieba 分詞，後者字元序列比對不如既有 token-Jaccard 適合中英混排標題
+
+## 從 `_filter_pending_duplicates` 第一道相似度層外提共用 helper `_first_similar_title(title, corpus) -> str | None`，回傳命中標題供 debug log，pending 與 done 兩處共用
+- 時間：2026-07-06 04:25
+- 理由：零行為變更的直接外提（autopilot.py:1002-1009），杜絕第二套實作漂移
+- 否決方案：抽成 `_is_semantically_dup(...) -> bool`——回傳 bool 會丟失「近似哪一筆」的 log 資訊
+
+## 共用 helper 只抽「相似度層」，不含「子系統廣度」第二道防線——done-list 去重僅套相似度，廣度防線維持 pending 專屬
+- 時間：2026-07-06 04:25
+- 理由：子系統廣度是針對 pending 過載語意，套到 done 會語意污染
+
+## `_first_similar_title` 簽章收 `Iterable[str]`（不限死 list），維持 corpus 迭代順序、「第一個命中即短路」不變，且 helper 內不對 corpus 排序
+- 時間：2026-07-06 04:25
+- 理由：pending 逐位不變是 #1 硬線；done 的 `done_titles` 為 set 無序，多重命中回傳哪一筆不確定，但只影響 log 不影響 `is None` 過濾判定，可接受；排序是無收益擾動
+
+## 共用 helper 及 dedup 家族一律留在 `studio/autopilot.py`，不搬遷至 `flow.py`
+- 時間：2026-07-06 04:25
+- 理由：`_normalize/_tokenize/_token_set_similarity/_filter_pending_duplicates` 家族已定居 autopilot.py，`improver` 沿用既有 `autopilot._xxx` 呼叫慣例；搬遷可逆但無收益、且碎裂內聚
+
+## done 相似層門檻沿用既有 `config.AUTOPILOT_DEDUP_RATIO`，不新增 done 專屬門檻或開關，遵守 config SSOT
+- 時間：2026-07-06 04:25
+- 理由：兩防線真正同構；附帶提醒該常數在 config.py:879 為硬寫非 env，本輪範圍外不動
+
+## done 相似層開關沿用既有 `config.AUTOPILOT_EVAL_MEMORY`——`=0` 時 `recent_done_titles` 回空 corpus 使 helper 全回 None，與舊精確比對 `=0` 逐位等價，向後相容不加分支
+- 時間：2026-07-06 04:25
+
+## `improver._discover` line 414 **只**替換後半段 `not in done_titles` 為 `autopilot._first_similar_title(...) is None`，前半段 `t["title"].strip()` 真值守衛必須保留
+- 時間：2026-07-06 04:25
+- 理由：空標題應由真值檢查擋掉，不讓空字串流進 helper 靠 `_token_set_similarity` 回 0.0 兜底——語意上空標題本就該丟
+
+## done 過濾維持就地縮減 `items`，`dropped = raw_n - len(items)` 自動涵蓋 done-相似層新擋下項，不加額外計數（驗收 #6）
+- 時間：2026-07-06 04:25
+
+## 測試補三組即足——pending 回歸（逐位不變，以既有 dedup 測試為閘）、done `EVAL_MEMORY=0` 改寫版放行、done `EVAL_MEMORY>0` 改寫版被擋
+- 時間：2026-07-06 04:25
+- 理由：`=0`／`>0` 成對黑白樣本同時證「開關有效」與「相似度非精確」，是關鍵驗收閘；走離線假專家、不打外部 API
+
