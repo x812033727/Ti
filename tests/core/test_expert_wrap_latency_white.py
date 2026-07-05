@@ -26,7 +26,7 @@ from studio.roles import BY_KEY
 _INJECTED_KEYS: tuple[str, ...] = ("duration_s", "provider", "model", "role")
 
 
-# --- 共用 stub：monotonic 耗盡後停在最後值，避免 teardown 干擾 ------------------
+# --- 共用 stub：與黑樣本同款，monotonic 耗盡後停在最後值，避免 teardown 干擾 ----
 
 
 def _controlled_clock(monkeypatch: pytest.MonkeyPatch, values: list[float]) -> None:
@@ -202,7 +202,7 @@ def test_last_duration_recorded_even_when_speak_raises(monkeypatch):
         provider="fake-provider",
         model="fake-model",
     )
-    # started 在 speak 入口；finally 時再取一次；兩次落差即 elapsed。
+    # started 在 speak 入口；finally 時再取一次；兩次 monotonic 落差即 elapsed。
     _controlled_clock(monkeypatch, [2.0, 5.0])
 
     with pytest.raises(RuntimeError, match="backend blew up"):
