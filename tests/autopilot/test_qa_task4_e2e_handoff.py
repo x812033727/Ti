@@ -141,3 +141,35 @@ def test_handoff_cross_references_pretag_guard(handoff_text):
     assert "test_qa_task4_pretag_breaking_outlets.py" in handoff_text, (
         "AC#5.3：未勾稽 pretag 守護測試檔，無法界定已閉環邊界"
     )
+
+
+# 文件以「函式名」而非「行號」勾稽（行號會隨被引檔增刪漂移且無護欄）。
+# 這裡把每個被引函式名綁到其所在檔，並實際驗證該符號仍存在——引用一漂移即翻紅。
+_REFERENCED_SYMBOLS = {
+    "tests/autopilot/test_qa_task4_pretag_breaking_outlets.py": (
+        "test_pretag_outlet_carries_block",
+        "test_pretag_effective_version_matches_pyproject_in_both_outlets",
+        "test_black_sample_missing_block_pairs_red",
+        "test_black_sample_missing_each_element_pairs_red",
+        "test_black_sample_stale_effective_version_pairs_red",
+    ),
+    "tests/autopilot/_release_check.py": ("version_matches_effective",),
+    "tests/autopilot/test_qa_task4_release_docs_dod.py": (
+        "test_task4_commit_does_not_alter_release_smoke_trigger",
+    ),
+}
+
+
+@pytest.mark.parametrize("rel_path, symbols", _REFERENCED_SYMBOLS.items())
+def test_handoff_symbol_references_are_live(handoff_text, rel_path, symbols):
+    """文件引用的函式名必須：(1) 真的出現在文件內 (2) 真的存在於被引檔案。
+
+    這是把行號式漂移源換成有護欄的函式名引用後的守衛——任一被引函式改名／刪除，
+    或文件與被引檔失聯，此測試即翻紅，杜絕文件靜默爛掉。
+    """
+    src = (ROOT / rel_path).read_text(encoding="utf-8")
+    for sym in symbols:
+        assert sym in handoff_text, f"移交文件未引用函式名 `{sym}`（已閉環邊界失聯）"
+        assert f"def {sym}" in src, (
+            f"引用漂移：`{sym}` 已不存在於 {rel_path}（函式改名／刪除）"
+        )

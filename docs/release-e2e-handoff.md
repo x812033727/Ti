@@ -17,13 +17,13 @@
 
 | 環節 | 狀態 | 依據（具名勾稽） |
 |---|---|---|
-| 推 tag「前」兩出口皆帶 `## ⚠️ Breaking Changes` heading + 四要素 | ✅ 已閉環（守護測試） | `tests/autopilot/test_qa_task4_pretag_breaking_outlets.py:62-68`（`test_pretag_outlet_carries_block`，`OUTLETS` 兩出口 parametrize） |
-| ④ 生效版本逐字對應 pyproject 當前版本（0.2.0），非任意版本假綠 | ✅ 已閉環（守護測試） | `test_qa_task4_pretag_breaking_outlets.py:71-78`（`test_pretag_effective_version_matches_pyproject_in_both_outlets`）；尺規 `tests/autopilot/_release_check.py:56-67`（`version_matches_effective`） |
-| 缺區塊／缺任一要素／版本改舊版 → 兩出口翻紅（黑樣本成對自證） | ✅ 已閉環（守護測試） | `test_qa_task4_pretag_breaking_outlets.py:88-100`、`107-131`、`134-158` |
-| 發佈文件契約（GH_PAT 四項／DoD／半閉環聲明／403 runbook）在 `CLAUDE.md` | ✅ 已閉環（守護測試） | `tests/autopilot/test_qa_task4_release_docs_dod.py`（35 項全綠含黑樣本 mutation） |
+| 推 tag「前」兩出口皆帶 `## ⚠️ Breaking Changes` heading + 四要素 | ✅ 已閉環（守護測試） | `tests/autopilot/test_qa_task4_pretag_breaking_outlets.py::test_pretag_outlet_carries_block`（`OUTLETS` 兩出口 parametrize） |
+| ④ 生效版本逐字對應 pyproject 當前版本（0.2.0），非任意版本假綠 | ✅ 已閉環（守護測試） | `test_qa_task4_pretag_breaking_outlets.py::test_pretag_effective_version_matches_pyproject_in_both_outlets`；尺規 `tests/autopilot/_release_check.py::version_matches_effective` |
+| 缺區塊／缺任一要素／版本改舊版 → 兩出口翻紅（黑樣本成對自證） | ✅ 已閉環（守護測試） | `test_qa_task4_pretag_breaking_outlets.py` 的 `test_black_sample_missing_block_pairs_red`、`test_black_sample_missing_each_element_pairs_red`、`test_black_sample_stale_effective_version_pairs_red` |
+| 發佈文件契約（GH_PAT 四項／DoD／半閉環聲明／403 runbook）在 `CLAUDE.md` | ✅ 已閉環（守護測試） | `tests/autopilot/test_qa_task4_release_docs_dod.py`（全數綠，含黑樣本 mutation 自證判別力） |
 | CI `test` job 於每次 push 跑 `pytest`，在 `v*` tag 推出前即攔截 | ✅ 已閉環 | `.github/workflows/ci.yml` 的 `test` job；閘門在 push 觸發，早於任何 `v*` tag-push |
 | **真實 `v*` tag-push → GitHub release 頁實際 body 頂部 Breaking 置頂** | ❌ **未閉環（半閉環）** | 無自動化證據；只能由下方人工步驟在**發 release 後**核對 |
-| **`release: published` 事件實際觸發 `release-smoke.yml`** | ❌ **未閉環（半閉環）** | 觸發契約結構已驗（`test_qa_task4_release_docs_dod.py:450-473`），但生產是否真觸發須人工確認 |
+| **`release: published` 事件實際觸發 `release-smoke.yml`** | ❌ **未閉環（半閉環）** | 觸發契約結構已驗（`test_qa_task4_release_docs_dod.py::test_task4_commit_does_not_alter_release_smoke_trigger`），但生產是否真觸發須人工確認 |
 
 ## 發佈後人工核對步驟（具名、可逐項打勾）
 
