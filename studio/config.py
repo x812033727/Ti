@@ -748,6 +748,13 @@ AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
 AUTOPILOT_TASK_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TASK_TIMEOUT", "3600"))
+# 任務執行中「活動停滯」自癒門檻（秒）：連續此秒數「無進展」（events 檔 mtime 未前進 **且**
+# worker 子程序零 CPU 活性）＝疑似子程序死鎖（非任務太大），autopilot 就地取消該場並標 failed
+# 交分診自動重試，無需外部監控/重啟。以 events＋CPU 雙訊號判活（events 在長 inter-message 間隔
+# 會凍結，CPU 兜底）。不變量：須 > TURN_HARD_TIMEOUT（單一 turn 可合法靜默的上限，預設 1800），
+# 否則會誤殺慢但活著的 turn。預設 2400（40min）＝ TURN_HARD_TIMEOUT 之上留 600s headroom，
+# 且 < AUTOPILOT_TASK_TIMEOUT(3600) 以更早自癒。0＝停用（退回僅硬牆逾時）。
+AUTOPILOT_STALL_TIMEOUT = int(os.getenv("TI_AUTOPILOT_STALL_TIMEOUT", "2400"))
 # 本工作室長期目標（北極星）：注入 autopilot 自評與 improver「找問題」的 discovery prompt，
 # 讓自主提案可追溯到一致的長期方向（單一真相在此，消費端一律讀 config）。空字串＝不注入。
 AUTOPILOT_NORTH_STAR = os.getenv(
@@ -1032,7 +1039,7 @@ def reload() -> None:
     global VOTE_ENABLED, VOTE_MAX
     global LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
-    global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT
+    global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT, AUTOPILOT_STALL_TIMEOUT
     global EXPERT_RATE_LIMIT_RETRIES, EXPERT_RATE_LIMIT_BACKOFF, EXPERT_RATE_LIMIT_BACKOFF_CAP
     global EXPERT_RATE_LIMIT_BACKOFF_JITTER
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
@@ -1156,6 +1163,8 @@ def reload() -> None:
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
     TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
     TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
+    # 與 TURN_* 同組重載，使停滯門檻執行期可調（須維持 > TURN_HARD_TIMEOUT 的不變量）。
+    AUTOPILOT_STALL_TIMEOUT = int(os.getenv("TI_AUTOPILOT_STALL_TIMEOUT", "2400"))
     EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
     EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)
     EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)

@@ -328,6 +328,156 @@ async def test_task_heartbeat_refreshes_status_and_keeps_fields(state_dir, monke
     assert "workers" in status, "workers 欄位須恆存在（契約）"
 
 
+# --- 執行中活動停滯 supervisor（issue #286：死鎖就地自癒）------------------------
+
+
+def _record(sid, i):
+    """寫一則 session event（更新 events 檔 mtime＝supervisor 的活動訊號）。"""
+    history.record_event(
+        sid, {"type": "expert_message", "session_id": sid, "ts": 0, "payload": {"text": f"e{i}"}}
+    )
+
+
+def _fake_cpu(active):
+    """stateful 的 _proc_descendant_cpu 替身：active=True 每次呼叫 tick 前進（模擬 worker
+    燒 CPU → cpu_active=True）；active=False 回 {}（無 worker → cpu_active=False）。讓
+    supervisor 的 CPU 判活訊號在測試中確定，不依賴測試行程真實子程序樹。"""
+    ticks = {"n": 0}
+
+    def _sample(*_a, **_k):
+        if not active:
+            return {}
+        ticks["n"] += 5
+        return {111: ticks["n"]}
+
+    return _sample
+
+
+def _fast_supervisor(monkeypatch, *, stall, task_timeout, reclaim=0.5, poll=0.02, cpu_active=False):
+    monkeypatch.setattr(autopilot, "_LIVENESS_POLL_S", poll)
+    monkeypatch.setattr(autopilot, "_STALL_RECLAIM_S", reclaim)
+    monkeypatch.setattr(config, "AUTOPILOT_STALL_TIMEOUT", stall)
+    monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", task_timeout)
+    # 預設無 worker CPU 活性：純靠 events 訊號，讓「events 凍結」測試確定觸發停滯。
+    monkeypatch.setattr(autopilot, "_proc_descendant_cpu", _fake_cpu(cpu_active))
+
+
+async def test_supervisor_detects_stall_raises_stalled(state_dir, monkeypatch):
+    """黑樣本（死鎖）：session 產一則事件後 mtime 凍結 → 逾停滯門檻 → 拋 AutopilotTaskStalled，
+    且內層 run task 被取消回收（不外洩、不拖死主迴圈）。"""
+    _fast_supervisor(monkeypatch, stall=0.1, task_timeout=100)
+    sid = "ap-stall-1"
+    history.start_session(sid, "req")
+    hold = real_asyncio.Event()
+    ran: dict = {}
+
+    class StallingSession:
+        async def run(self, requirement):
+            _record(sid, 0)  # 唯一一次活動；此後 mtime 凍結
+            ran["task"] = real_asyncio.current_task()
+            await hold.wait()  # 永不觸發 → 模擬子程序死鎖
+            return {"completed": True}  # pragma: no cover
+
+    with pytest.raises(autopilot.AutopilotTaskStalled) as ei:
+        await real_asyncio.wait_for(
+            autopilot._run_session_supervised(StallingSession(), "req", sid), timeout=3
+        )
+    assert "逾時" in str(ei.value)
+    assert ran["task"].cancelled(), "偵測停滯後內層 session.run 應被取消回收"
+
+
+async def test_supervisor_lets_active_session_complete(state_dir, monkeypatch):
+    """白樣本（合法長任務）：持續產生事件（mtime 不斷前進）的長任務即使總時長超過停滯門檻，
+    也不得被誤殺——supervisor 正常回傳其結果。"""
+    _fast_supervisor(monkeypatch, stall=0.15, task_timeout=100, poll=0.02)
+    sid = "ap-active-1"
+    history.start_session(sid, "req")
+
+    class ActiveSession:
+        async def run(self, requirement):
+            # 每 0.03s 產一則事件、共 ~0.45s（> stall 0.15）→ 全程持續有活動。
+            for i in range(15):
+                _record(sid, i)
+                await real_asyncio.sleep(0.03)
+            return {"completed": True, "followups": []}
+
+    result = await real_asyncio.wait_for(
+        autopilot._run_session_supervised(ActiveSession(), "req", sid), timeout=5
+    )
+    assert result == {"completed": True, "followups": []}
+
+
+async def test_supervisor_no_kill_when_workers_cpu_active(state_dir, monkeypatch):
+    """白樣本（CPU 忙碌但事件凍結）：events mtime 凍結（工具長跑沒吐串流訊息），但 worker
+    子程序持續燒 CPU（cpu_active=True）→ 不得誤判死鎖。即使總時長超過停滯門檻，supervisor
+    仍正常回傳結果——這正是純 events 會誤殺、CPU 訊號救回的關鍵情境（issue #286 的反面）。"""
+    _fast_supervisor(monkeypatch, stall=0.1, task_timeout=100, cpu_active=True)
+    sid = "ap-cpu-1"
+    history.start_session(sid, "req")
+
+    class CpuBusySilentSession:
+        async def run(self, requirement):
+            _record(sid, 0)  # 唯一事件；此後 mtime 凍結，僅剩 CPU 訊號判活
+            await real_asyncio.sleep(0.4)  # > stall 0.1；期間全靠 worker CPU 活性維持
+            return {"completed": True}
+
+    result = await real_asyncio.wait_for(
+        autopilot._run_session_supervised(CpuBusySilentSession(), "req", sid), timeout=5
+    )
+    assert result == {"completed": True}
+
+
+async def test_supervisor_hard_timeout_still_parks(state_dir, monkeypatch):
+    """回歸護欄：停滯停用（=0）時，靜默 session 撞硬牆須拋純 TimeoutError（非 stalled），
+    落主迴圈的 parked 分支——既有「任務太大→parked」語義不受本次改動影響。"""
+    _fast_supervisor(monkeypatch, stall=0, task_timeout=0.1)
+    sid = "ap-hard-1"
+    history.start_session(sid, "req")
+    hold = real_asyncio.Event()
+
+    class SilentSession:
+        async def run(self, requirement):
+            await hold.wait()  # 全程靜默、無事件
+            return {"completed": True}  # pragma: no cover
+
+    with pytest.raises(TimeoutError) as ei:
+        await real_asyncio.wait_for(
+            autopilot._run_session_supervised(SilentSession(), "req", sid), timeout=3
+        )
+    assert "task timeout after" in str(ei.value)
+    assert not isinstance(ei.value, autopilot.AutopilotTaskStalled)
+
+
+async def test_main_loop_stall_marks_failed_and_triage_retries(state_dir, monkeypatch):
+    """黑樣本（主迴圈半）：run_one_task 拋 AutopilotTaskStalled → 標 failed 且 note 含「逾時」，
+    再經 triage_failed 自動翻回 pending（attempts 歸零）＝證明自癒重試，不再依賴人工重啟。"""
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_GATE", False)
+    monkeypatch.setattr(autopilot, "_shutdown_requested", False)
+    monkeypatch.setattr(autopilot, "_install_signal_handlers", lambda: None)
+    task = backlog.add("卡住的任務")
+
+    async def stalled_run(_task):
+        raise autopilot.AutopilotTaskStalled("no activity for 999s（逾時，疑似子程序死鎖）")
+
+    monkeypatch.setattr(autopilot, "run_one_task", stalled_run)
+    _stub_asyncio(monkeypatch, [])
+
+    with pytest.raises(_Stop):
+        await autopilot.main()
+
+    t = backlog.list_tasks()[0]
+    assert t["status"] == "failed", "執行中停滯應標 failed（非 parked 死路）"
+    assert "逾時" in t.get("note", "")
+    assert task["id"] == t["id"]
+
+    # 下一輪頂端的 _maybe_triage_failed 等效：基礎設施型失敗（note 含「逾時」）自動退回 pending 重試。
+    stats = backlog.triage_failed()
+    assert stats["retried"] == 1
+    t2 = backlog.list_tasks()[0]
+    assert t2["status"] == "pending", "停滯 failed 應由分診自動重試（翻回 pending）"
+    assert int(t2.get("attempts") or 0) == 0
+
+
 async def test_task_heartbeat_no_events_file_reports_none(state_dir, monkeypatch):
     monkeypatch.setattr(autopilot, "_HEARTBEAT_INTERVAL_S", 0.01)
     hb = real_asyncio.create_task(autopilot._task_heartbeat(3, "no-such-session"))

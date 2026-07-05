@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 
+# interrupt()/disconnect() 在疑似 wedged 的 stdio 控制通道上的硬上限（秒）。這兩個呼叫
+# 都走可能已死鎖的控制通道；未加逾時時，一旦通道卡住，發言層 watchdog 的回收（_abort_turn）
+# 與 session.run 收尾（orchestrator finally → Expert.stop）都會永久卡死，連外層任務逾時
+# 取消都無法收斂（見 issue #286）。統一以此上限圈住，逾時即改走 best-effort SIGKILL＋重建。
+_CTRL_TIMEOUT = 30.0
+
 
 class ExpertTurnTimeout(Exception):
     """專家發言逾時（idle＝串流久無進展；hard＝總時長超過上限）。
@@ -441,9 +447,32 @@ class Expert:
     async def stop(self) -> None:
         if self._connected:
             try:
-                await self._client.disconnect()
+                # disconnect() 走 stdio 控制通道；通道 wedged 時未加逾時會永久卡死，
+                # 且此呼叫落在 session.run 收尾（orchestrator finally）與外層任務逾時
+                # 取消的清理路徑上——卡住即拖垮整個 wait_for 取消（issue #286 根因）。
+                await asyncio.wait_for(self._client.disconnect(), _CTRL_TIMEOUT)
+            except Exception:  # noqa: BLE001 — 含 TimeoutError；斷線卡死不得拖垮回收
+                self._best_effort_kill_subprocess()
             finally:
                 self._connected = False
+
+    def _best_effort_kill_subprocess(self) -> None:
+        """disconnect() 逾時後的兜底：盡力對 SDK 內部子程序送 SIGKILL（整個 process group）。
+
+        純 best-effort——任何 claude_agent_sdk 版本差異（`_transport`／`_process` 形狀改變、
+        取不到 pid）都被 except 吞掉，退化成「殘留一個 idle 子程序」而非崩潰。迴圈活性由
+        呼叫端『丟棄 client 參考並重建』保證（子程序卡在 ep_poll 零 CPU，殘留成本有限），
+        此處只是回收資源，絕不 load-bearing。
+        """
+        try:
+            from . import runner
+
+            transport = getattr(self._client, "_transport", None)
+            proc = getattr(transport, "_process", None)
+            if proc is not None and getattr(proc, "pid", None) is not None:
+                runner.kill_process_group(proc)
+        except Exception:  # noqa: BLE001 — 兜底殺程序失敗不得影響回收流程
+            logger.debug("best-effort 殺 SDK 子程序失敗（忽略）", exc_info=True)
 
     async def speak(self, prompt: str, broadcast: Broadcast) -> str:
         """送出 prompt，串流回應為事件，回傳完整文字。
@@ -589,19 +618,22 @@ class Expert:
         try:
             from claude_agent_sdk import ResultMessage
 
-            await self._client.interrupt()
+            # interrupt()／drain 都走 stdio 控制通道；通道 wedged 時未加逾時會永久卡死，
+            # 使本回收路徑（發言層 watchdog 觸發後的收斂）自己也死鎖。以 _CTRL_TIMEOUT 圈住
+            # interrupt()；其 TimeoutError 為 Exception 子類，會自然落到下方斷線/重建分支。
+            await asyncio.wait_for(self._client.interrupt(), _CTRL_TIMEOUT)
 
             async def _drain() -> None:
                 async for msg in self._client.receive_response():
                     if isinstance(msg, ResultMessage):
                         return
 
-            await asyncio.wait_for(_drain(), 30)
+            await asyncio.wait_for(_drain(), _CTRL_TIMEOUT)
         except Exception:
             try:
-                await self._client.disconnect()
-            except Exception:
-                pass
+                await asyncio.wait_for(self._client.disconnect(), _CTRL_TIMEOUT)
+            except Exception:  # noqa: BLE001 — 含 TimeoutError；斷線也卡就 SIGKILL 兜底
+                self._best_effort_kill_subprocess()
             self._connected = False
             self._client = self._new_client()  # 重建沿用同一模型覆寫（若有）
             note += "（會話無法中斷，已重建；此前脈絡遺失）"
