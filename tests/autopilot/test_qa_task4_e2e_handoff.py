@@ -121,8 +121,10 @@ def test_mutation_drop_escape_hatch_turns_red():
 def test_mutation_drop_breaking_top_check_turns_red():
     """反向 mutation：拿掉『Breaking 置頂』核對點 → 守護必翻紅。"""
     text = HANDOFF_MD.read_text(encoding="utf-8")
-    mutated = text.replace("置頂", "somewhere").replace("頂部", "somewhere").replace(
-        "最上方", "somewhere"
+    mutated = (
+        text.replace("置頂", "somewhere")
+        .replace("頂部", "somewhere")
+        .replace("最上方", "somewhere")
     )
     assert mutated != text, "mutation 無效：未替換到置頂字樣"
     problems = check_post_release_runbook(mutated)
@@ -170,6 +172,4 @@ def test_handoff_symbol_references_are_live(handoff_text, rel_path, symbols):
     src = (ROOT / rel_path).read_text(encoding="utf-8")
     for sym in symbols:
         assert sym in handoff_text, f"移交文件未引用函式名 `{sym}`（已閉環邊界失聯）"
-        assert f"def {sym}" in src, (
-            f"引用漂移：`{sym}` 已不存在於 {rel_path}（函式改名／刪除）"
-        )
+        assert f"def {sym}" in src, f"引用漂移：`{sym}` 已不存在於 {rel_path}（函式改名／刪除）"

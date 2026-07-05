@@ -59,11 +59,7 @@ def version_matches_effective(body: str, version: str) -> bool:
     補 `FOUR_ELEMENTS[3]` 只驗「有生效版本語意」但不敏感於版本值的缺口；
     必須錨定 ④ 那句，不能用 `version in body`，避免 heading/footer 的版本字串造成假綠。
     """
-    pattern = (
-        r"(?m)^.*④\s*生效版本[^\n]*自\s*`?"
-        + re.escape(version)
-        + r"`?\s*起[^\n]*$"
-    )
+    pattern = r"(?m)^.*④\s*生效版本[^\n]*自\s*`?" + re.escape(version) + r"`?\s*起[^\n]*$"
     return re.search(pattern, body) is not None
 
 

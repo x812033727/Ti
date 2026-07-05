@@ -131,9 +131,7 @@ def test_black_sample_missing_each_element_pairs_red(
 
 
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
-def test_black_sample_stale_effective_version_pairs_red(
-    outlet_name, renderer, changelog, version
-):
+def test_black_sample_stale_effective_version_pairs_red(outlet_name, renderer, changelog, version):
     """只把 ④ 生效版本改成舊版 → 兩出口版本對應斷言必翻紅。"""
     old_version = "0.1.9" if version != "0.1.9" else "0.1.8"
 
@@ -143,9 +141,7 @@ def test_black_sample_stale_effective_version_pairs_red(
     )
 
     polluted = re.sub(
-        r"(?m)(^.*④\s*生效版本[^\n]*自\s*`?)"
-        + re.escape(version)
-        + r"(`?\s*起[^\n]*$)",
+        r"(?m)(^.*④\s*生效版本[^\n]*自\s*`?)" + re.escape(version) + r"(`?\s*起[^\n]*$)",
         rf"\g<1>{old_version}\2",
         changelog,
         count=1,
