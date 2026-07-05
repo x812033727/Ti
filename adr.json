@@ -1,90 +1,6 @@
 {
   "entries": [
     {
-      "decision": "Claude provider 路徑的 retry gap 以 `核心改動: Claude provider 路徑缺乏 per-speak 去重保護，retry 時寫入型工具仍可重跑` 記入 backlog，本次不動 Claude path",
-      "rationale": "口頭「已知限制」無追蹤機制，六個月後會消失；進 backlog 才有人負責",
-      "rejected": "本次一併補 Claude path — 超出任務範圍，且 Claude path retry 機制需獨立確認，不能假設結構對稱",
-      "session_id": "ap11140d0b24",
-      "created_at": 1781463604.0585387
-    },
-    {
-      "decision": "`run_bash` 一律歸 non-idempotent，不解析命令內容判斷冪等性",
-      "rationale": "",
-      "rejected": "靜態分析 bash 命令 — LLM 可輕易繞過任何規則，且 false negative（漏防）比 false positive 風險高出數個量級",
-      "session_id": "ap11140d0b24",
-      "created_at": 1781463604.0585406
-    },
-    {
-      "decision": "`write_file` 歸冪等、不入去重；已知殘留風險（LLM 重放改內容）列為 #6 黑樣本測試化，不阻擋動工",
-      "rationale": "覆寫語意下同 args 重跑結果相同；納管後 args hash 不同時去重也攔不住，多一道邏輯卻無實際保護",
-      "rejected": "",
-      "session_id": "ap11140d0b24",
-      "created_at": 1781463604.0585418
-    },
-    {
-      "decision": "整輪工具迴圈打包為單一 `_attempt` 函式，由 `run_with_retries` 統一控制退避邊界（providers.py:86–124）",
-      "rationale": "退避邏輯集中一處，接手人立即定位；分散在迴圈內的多點重試難以審計控制流。",
-      "rejected": "在 `_chat` 呼叫點逐次包 try/retry——導致工具執行與 LLM 呼叫的重試層次交錯，副作用計數不可控。",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.887017
-    },
-    {
-      "decision": "`on_api_error` / `on_rate_limit_exhausted` 兩接點均回 `\"\"`，不 re-raise、不含核可關鍵詞（providers.py:137–148）",
-      "rationale": "下游核可判定靠關鍵詞，空字串是唯一不污染判定的安全回退值。",
-      "rejected": "回傳 partial 累積文字——partial 可能含核可關鍵詞，下游誤判風險不可接受。",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870199
-    },
-    {
-      "decision": "`partial` 參數在兩個回退 callback 內刻意丟棄，並加行內註解 `# partial 刻意丟棄：回 \"\" 是設計，見設計決策` 防後人誤補",
-      "rationale": "無說明的丟棄會被「好心」填回去，一行註解消滅維護成本（高工審查意見）。",
-      "rejected": "靜默丟棄不加說明——已被高工指出為潛在維護地雷，拒絕。",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870208
-    },
-    {
-      "decision": "`idle` 廣播置於 `finally`，覆蓋成功／限流耗盡／api_error／未知例外四路徑（providers.py:166–167）",
-      "rationale": "finally 是唯一能保證四路徑不漏廣播的位置；分支內各自 broadcast 在加入新分支時容易漏。",
-      "rejected": "各 return 點前各自 broadcast——路徑增加時必漏，靠 code review 攔不住。",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870218
-    },
-    {
-      "decision": "per-speak `_dedup_cache` 在 `speak()` 入口重建，`new_attempt()` 只重置序號、保留結果快取（providers.py:84/90）",
-      "rationale": "序號重置確保 retry 重放時同位置呼叫命中同一 key；結果快取保留確保副作用只執行一次。",
-      "rejected": "每次 `_attempt` 清空整個快取——retry 重放時無快取可命中，非冪等工具副作用重跑，保護報廢。",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870225
-    },
-    {
-      "decision": "重試重放時 `execute_deduped` 跳過副作用後，`broadcast(tool_use(...))` 仍觸發，列為下迭代 UX 待辦，本場不阻擋",
-      "rationale": "正確性無影響；過早修 UX 會讓本場範圍失控，且改動點（迴圈 L106–110）需獨立測試覆蓋（高工審查意見）。",
-      "rejected": "",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870237
-    },
-    {
-      "decision": "`metrics.outcome not in (\"success\", \"\")` 中 `\"\"` 代表「回退路徑（耗盡／api_error）已被 callback 吸收、骨幹以空字串結案」，加行內註解說明（providers.py:163）",
-      "rationale": "無說明的 `\"\"` 看起來像防禦性寫法卻無法自解，半年後會被懷疑是 bug（高工審查意見）。",
-      "rejected": "",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870246
-    },
-    {
-      "decision": "`complete_once` 不加第二層 `run_with_retries`，限流退避職責完全歸 `speak()` 層",
-      "rationale": "雙層退避疊加成語意不清的指數退避；兩端（Claude / OpenAI）已各自在 speak 層收斂，冒泡到本層的限流例外理論上不存在。",
-      "rejected": "complete_once 自套退避——與 speak 內退避疊加，退避次數與延遲語意混濁，難以調參。",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870254
-    },
-    {
-      "decision": "Claude provider 路徑的 per-speak 去重缺口不在本場補，已進核心 backlog（DECISIONS.md:573 / adr.json:998）",
-      "rationale": "口頭「已知限制」六個月後消失；進 backlog 才有人負責，本場範圍不擴張。",
-      "rejected": "順手補 Claude path 對稱保護——需改 experts.py 且無對應測試，屬本場範圍外的鍍金，拒絕。",
-      "session_id": "ap3c7b3166d8",
-      "created_at": 1781468103.8870258
-    },
-    {
       "decision": "`studio/__init__.py` 在 `__version__` 行之後插入 `from . import secure_write`，全檔其他內容不動。",
       "rationale": "讓 `from studio import secure_write` 的語意由「隱性 submodule lookup」變為「顯式套件匯出」，消除測試執行順序對 collection 的影響，且是業界標準做法。",
       "rejected": "補 `__all__`——會把現有未宣告的 submodule 全部屏蔽，範圍遠超本場需求；否決在 `secure_write.py` 改動 import 鏈——問題根源在 `__init__.py`，不應改 production logic。",
@@ -3499,6 +3415,90 @@
       "rejected": "",
       "session_id": "ap6a0b9b40e6",
       "created_at": 1783283104.2823517
+    },
+    {
+      "decision": "本輪只做觀測層——量測 `ttft_s` + 真 API A/B 驗證命中 + 記錄 prefix 失效清單；不換 SDK、不加手動 cache_control",
+      "rationale": "需求字面「加 caching」的前提已被研究員與程式碼證偽——此路徑快取已自動運作，可做的是量測與驗證",
+      "rejected": "改走原生 anthropic SDK 手動注入 cache_control（需重寫整個工具迴圈、鎖死未來、不可逆，列另案）",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.855664
+    },
+    {
+      "decision": "技術選型維持 `claude_agent_sdk`（ClaudeSDKClient/ClaudeAgentOptions），不引入原生 anthropic SDK、不新增依賴，prompt caching 依賴 Agent SDK 自動 breakpoint",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.855673
+    },
+    {
+      "decision": "`ttft_s` 埋點放 `experts.stream_to_events` 串流迴圈，分母 = 進迴圈首個 `__anext__` 前的 `loop.time()`（共用既有單調鐘），分子 = 首個含內容訊息到達時刻",
+      "rationale": "單點內聚、零跨層改動；共用 :424 既有 `loop` 零成本",
+      "rejected": "追到 speak 層 `client.query()` 精確送出時戳（需跨層傳時間戳、汙染簽章）",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556745
+    },
+    {
+      "decision": "ttft 落點必須在 `collected.append(text)`（:469）之後，而非 `text` 一非空即記；ToolUseBlock 當首內容則直接算",
+      "rationale": "首個 TextBlock 會先過 `_classify_api_text`，命中即 raise（限流/overload）——埋在 append 後才不會把「其實是錯誤文字」誤記為首 token，語意乾淨",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556757
+    },
+    {
+      "decision": "判斷「首個含內容訊息」用保守 helper，不硬依賴 SDK class 名稱——TextBlock 需非空文字、ToolUseBlock 直接算內容",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556764
+    },
+    {
+      "decision": "`ttft_s` 型別為 `float`（秒），與既有 `duration_api_ms`/`duration_ms`（int 毫秒）並存不取代，語意正交（整段 API 時延 vs 首 token 延遲）；PR 描述須一句點明型別/單位刻意不同，防後人誤「統一」",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556774
+    },
+    {
+      "decision": "介面沿用既有縫——`_emit_claude_token_usage` 新增 `ttft_s: float | None` 參數，`events.token_usage` 新增 `ttft_s: float | None = None` 關鍵字參數，比照 `duration_ms`/`task_id` 僅「非 None 時寫入 payload」，不動既有欄位名；同步更新所有呼叫點與測試",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556778
+    },
+    {
+      "decision": "向後相容——history 重播、`/api/metrics` 聚合、前端 `events-render.js` 一律以 `.get(\"ttft_s\")` null-safe 讀取；聚合層本輪不對 ttft 做平均/統計（屬另案），只保證舊 JSONL 不報錯",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556788
+    },
+    {
+      "decision": "模組邊界為純觀測——不碰 `flow.py`（無新 marker 解析）、不碰 config SSOT；A/B 用既有 `DISABLE_PROMPT_CACHING` 環境變數做 before/after，不新增 `TI_*` 旋鈕",
+      "rationale": "",
+      "rejected": "為 A/B 新增專屬 config 開關（既有 env 已足，新增即違反 config SSOT 且增維護面）",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556798
+    },
+    {
+      "decision": "A/B 實驗以 `DISABLE_PROMPT_CACHING=1`（before）vs 預設（after）為唯一乾淨對照，量測期固定 model/effort/system_prompt/CLI 版本鎖住 prefix；命中證據為 after 的 `cache_read_input_tokens > 0`，且報告須確認該 env 確被 Agent SDK 吃到",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556807
+    },
+    {
+      "decision": "報告誠實標示——`ttft_s` 絕對值含「query→進迴圈」固定 offset，不可宣稱為真 TTFT，僅 before/after delta 有效（offset 相減抵消）；真 API 端到端屬半閉環，須標示離線 vs 真 API",
+      "rationale": "分母設在 stream_to_events 進入點、早於 speak 層 query 送出，若 query 非惰性則絕對值系統性少算固定量，但 A/B delta 不受影響",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556812
+    },
+    {
+      "decision": "三個測試為核可前提（非另案），走離線假專家沿用既有注入縫——① 有內容訊息 → `ttft_s` 為正 float 且進 payload；② 只有 ResultMessage 全程無內容 → `ttft_s` 留 None → payload 不含該鍵；③ 舊 JSONL（無 ttft_s）重播 + `/api/metrics` 聚合 null-safe 斷言",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apd337e27107",
+      "created_at": 1783286240.8556821
     }
   ]
 }

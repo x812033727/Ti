@@ -2665,3 +2665,46 @@
 - 時間：2026-07-06 04:25
 - 理由：`=0`／`>0` 成對黑白樣本同時證「開關有效」與「相似度非精確」，是關鍵驗收閘；走離線假專家、不打外部 API
 
+## 本輪只做觀測層——量測 `ttft_s` + 真 API A/B 驗證命中 + 記錄 prefix 失效清單；不換 SDK、不加手動 cache_control
+- 時間：2026-07-06 05:17
+- 理由：需求字面「加 caching」的前提已被研究員與程式碼證偽——此路徑快取已自動運作，可做的是量測與驗證
+- 否決方案：改走原生 anthropic SDK 手動注入 cache_control（需重寫整個工具迴圈、鎖死未來、不可逆，列另案）
+
+## 技術選型維持 `claude_agent_sdk`（ClaudeSDKClient/ClaudeAgentOptions），不引入原生 anthropic SDK、不新增依賴，prompt caching 依賴 Agent SDK 自動 breakpoint
+- 時間：2026-07-06 05:17
+
+## `ttft_s` 埋點放 `experts.stream_to_events` 串流迴圈，分母 = 進迴圈首個 `__anext__` 前的 `loop.time()`（共用既有單調鐘），分子 = 首個含內容訊息到達時刻
+- 時間：2026-07-06 05:17
+- 理由：單點內聚、零跨層改動；共用 :424 既有 `loop` 零成本
+- 否決方案：追到 speak 層 `client.query()` 精確送出時戳（需跨層傳時間戳、汙染簽章）
+
+## ttft 落點必須在 `collected.append(text)`（:469）之後，而非 `text` 一非空即記；ToolUseBlock 當首內容則直接算
+- 時間：2026-07-06 05:17
+- 理由：首個 TextBlock 會先過 `_classify_api_text`，命中即 raise（限流/overload）——埋在 append 後才不會把「其實是錯誤文字」誤記為首 token，語意乾淨
+
+## 判斷「首個含內容訊息」用保守 helper，不硬依賴 SDK class 名稱——TextBlock 需非空文字、ToolUseBlock 直接算內容
+- 時間：2026-07-06 05:17
+
+## `ttft_s` 型別為 `float`（秒），與既有 `duration_api_ms`/`duration_ms`（int 毫秒）並存不取代，語意正交（整段 API 時延 vs 首 token 延遲）；PR 描述須一句點明型別/單位刻意不同，防後人誤「統一」
+- 時間：2026-07-06 05:17
+
+## 介面沿用既有縫——`_emit_claude_token_usage` 新增 `ttft_s: float | None` 參數，`events.token_usage` 新增 `ttft_s: float | None = None` 關鍵字參數，比照 `duration_ms`/`task_id` 僅「非 None 時寫入 payload」，不動既有欄位名；同步更新所有呼叫點與測試
+- 時間：2026-07-06 05:17
+
+## 向後相容——history 重播、`/api/metrics` 聚合、前端 `events-render.js` 一律以 `.get("ttft_s")` null-safe 讀取；聚合層本輪不對 ttft 做平均/統計（屬另案），只保證舊 JSONL 不報錯
+- 時間：2026-07-06 05:17
+
+## 模組邊界為純觀測——不碰 `flow.py`（無新 marker 解析）、不碰 config SSOT；A/B 用既有 `DISABLE_PROMPT_CACHING` 環境變數做 before/after，不新增 `TI_*` 旋鈕
+- 時間：2026-07-06 05:17
+- 否決方案：為 A/B 新增專屬 config 開關（既有 env 已足，新增即違反 config SSOT 且增維護面）
+
+## A/B 實驗以 `DISABLE_PROMPT_CACHING=1`（before）vs 預設（after）為唯一乾淨對照，量測期固定 model/effort/system_prompt/CLI 版本鎖住 prefix；命中證據為 after 的 `cache_read_input_tokens > 0`，且報告須確認該 env 確被 Agent SDK 吃到
+- 時間：2026-07-06 05:17
+
+## 報告誠實標示——`ttft_s` 絕對值含「query→進迴圈」固定 offset，不可宣稱為真 TTFT，僅 before/after delta 有效（offset 相減抵消）；真 API 端到端屬半閉環，須標示離線 vs 真 API
+- 時間：2026-07-06 05:17
+- 理由：分母設在 stream_to_events 進入點、早於 speak 層 query 送出，若 query 非惰性則絕對值系統性少算固定量，但 A/B delta 不受影響
+
+## 三個測試為核可前提（非另案），走離線假專家沿用既有注入縫——① 有內容訊息 → `ttft_s` 為正 float 且進 payload；② 只有 ResultMessage 全程無內容 → `ttft_s` 留 None → payload 不含該鍵；③ 舊 JSONL（無 ttft_s）重播 + `/api/metrics` 聚合 null-safe 斷言
+- 時間：2026-07-06 05:17
+
