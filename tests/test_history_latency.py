@@ -1,4 +1,4 @@
-"""任務 #5 驗收：_derive_latency 四桶聚合＋事件 payload 形狀＋finish_session 整合。
+"""任務 #1 驗收：_derive_latency 四桶聚合＋事件 payload 形狀＋finish_session 整合。
 
 對應驗收標準：
   - 標準 #1（事件形狀）：events.token_usage(...) 不傳 duration_ms 時 payload 無此鍵、
@@ -93,9 +93,13 @@ def test_derive_latency_aggregates_four_buckets_across_providers_models_speakers
     # 取整除：total 1600/4=400 整除；engineer 1300/3=433（不整除）刻意驗 floor 行為。
     evs = [
         _token_usage_event(provider="openai", model="gpt-5", speaker="engineer", duration_ms=500),
-        _token_usage_event(provider="openai", model="gpt-5", speaker="pm",       duration_ms=300),
-        _token_usage_event(provider="claude", model="claude-opus", speaker="engineer", duration_ms=700),
-        _token_usage_event(provider="claude", model="claude-opus", speaker="engineer", duration_ms=100),
+        _token_usage_event(provider="openai", model="gpt-5", speaker="pm", duration_ms=300),
+        _token_usage_event(
+            provider="claude", model="claude-opus", speaker="engineer", duration_ms=700
+        ),
+        _token_usage_event(
+            provider="claude", model="claude-opus", speaker="engineer", duration_ms=100
+        ),
     ]
 
     lat = history._derive_latency(evs)
@@ -103,8 +107,8 @@ def test_derive_latency_aggregates_four_buckets_across_providers_models_speakers
     # 形狀：四桶齊全 + 子桶齊全
     assert set(lat) == {"total", "by_provider", "by_model", "by_role"}
     assert set(lat["by_provider"]) == {"openai", "claude"}
-    assert set(lat["by_model"])    == {"gpt-5", "claude-opus"}
-    assert set(lat["by_role"])     == {"engineer", "pm"}
+    assert set(lat["by_model"]) == {"gpt-5", "claude-opus"}
+    assert set(lat["by_role"]) == {"engineer", "pm"}
 
     # total: 4 筆、1600ms、最大 700、avg 400
     _assert_latency_bucket(lat["total"], count=4, sum_ms=1600, max_ms=700)
@@ -112,11 +116,11 @@ def test_derive_latency_aggregates_four_buckets_across_providers_models_speakers
     _assert_latency_bucket(lat["by_provider"]["openai"], count=2, sum_ms=800, max_ms=500)
     _assert_latency_bucket(lat["by_provider"]["claude"], count=2, sum_ms=800, max_ms=700)
     # by_model
-    _assert_latency_bucket(lat["by_model"]["gpt-5"],        count=2, sum_ms=800, max_ms=500)
+    _assert_latency_bucket(lat["by_model"]["gpt-5"], count=2, sum_ms=800, max_ms=500)
     _assert_latency_bucket(lat["by_model"]["claude-opus"], count=2, sum_ms=800, max_ms=700)
     # by_role（engineer 故意不整除，驗 avg_ms = 1300 // 3 = 433，非四捨五入 433.33）
     _assert_latency_bucket(lat["by_role"]["engineer"], count=3, sum_ms=1300, max_ms=700)
-    _assert_latency_bucket(lat["by_role"]["pm"],       count=1, sum_ms=300,  max_ms=300)
+    _assert_latency_bucket(lat["by_role"]["pm"], count=1, sum_ms=300, max_ms=300)
 
 
 def test_derive_latency_empty_input_returns_zero_buckets():
@@ -132,10 +136,10 @@ def test_derive_latency_empty_input_returns_zero_buckets():
     assert lat["by_role"] == {}
 
 
-def test_derive_latency_skips_zero_and_negative_duration_with_value_fallback():
-    """邊界：duration_ms=0 合法計入（count+1、sum/max 不變）；負數/字串經 _int_ms 歸 0 仍計入。
+def test_derive_latency_skips_zero_and_invalid_duration_with_value_fallback():
+    """邊界：duration_ms=0 合法計入（count+1、sum/max 不變）；字串等無效值經 _int_ms 歸 0 仍計入。
 
-    目的：守住 _int_ms 的容錯行為——回溯舊檔案若有人塞了 -1 或 None，行為可預期
+    目的：守住 _int_ms 的容錯行為——回溯舊檔案若有人塞了字串，行為可預期
     （count 仍 +1，但 sum/max 不變），不丟例外、不靜默丟事件。
     """
     evs = [
@@ -155,7 +159,7 @@ def test_derive_latency_skips_zero_and_negative_duration_with_value_fallback():
         },
     ]
     lat = history._derive_latency(evs)
-    # 3 筆皆計入 count；sum=500（後兩筆加 0）；max=500；avg=166（500//3 整除）
+    # 3 筆皆計入 count；sum=500（後兩筆加 0）；max=500；avg=166（500//3）
     _assert_latency_bucket(lat["total"], count=3, sum_ms=500, max_ms=500)
     _assert_latency_bucket(lat["by_role"]["engineer"], count=3, sum_ms=500, max_ms=500)
 
@@ -173,21 +177,41 @@ def test_legacy_events_without_duration_ms_excluded_from_latency_but_kept_in_tok
     evs = [
         # 含 duration_ms 的新事件（2 筆）
         _token_usage_event(
-            provider="openai", model="gpt-5", speaker="engineer", duration_ms=400,
-            prompt_tokens=100, completion_tokens=20, total_tokens=120,
+            provider="openai",
+            model="gpt-5",
+            speaker="engineer",
+            duration_ms=400,
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
         ),
         _token_usage_event(
-            provider="claude", model="claude-opus", speaker="pm", duration_ms=200,
-            prompt_tokens=50, completion_tokens=10, total_tokens=60,
+            provider="claude",
+            model="claude-opus",
+            speaker="pm",
+            duration_ms=200,
+            prompt_tokens=50,
+            completion_tokens=10,
+            total_tokens=60,
         ),
         # 不含 duration_ms 的舊事件（2 筆）：應完全不計入 latency
         _token_usage_event(
-            provider="openai", model="gpt-5", speaker="engineer", duration_ms=None,
-            prompt_tokens=70, completion_tokens=30, total_tokens=100,
+            provider="openai",
+            model="gpt-5",
+            speaker="engineer",
+            duration_ms=None,
+            prompt_tokens=70,
+            completion_tokens=30,
+            total_tokens=100,
         ),
         _token_usage_event(
-            provider="claude", model="claude-opus", speaker="engineer", duration_ms=None,
-            prompt_tokens=30, completion_tokens=5, total_tokens=35,
+            provider="claude",
+            model="claude-opus",
+            speaker="engineer",
+            duration_ms=None,
+            prompt_tokens=30,
+            completion_tokens=5,
+            total_tokens=35,
         ),
     ]
 
@@ -226,28 +250,29 @@ def test_events_token_usage_omits_duration_ms_when_not_provided():
     這是回溯相容的寫入端對應：舊讀者只認得「有此鍵才視為有 latency」，不要讓 None 漏成
     payload["duration_ms"] = None 混淆下游。
     """
-    ev = events.token_usage(
-        "s", "engineer", "openai", "gpt-5", 10, 5, 15, cost_usd=0.01
-    )
+    ev = events.token_usage("s", "engineer", "openai", "gpt-5", 10, 5, 15, cost_usd=0.01)
     assert ev.type == events.EventType.TOKEN_USAGE
     payload = ev.to_dict()["payload"]
-    assert "duration_ms" not in payload, (
-        f"未傳 duration_ms 時 payload 不應含此鍵，got: {payload!r}"
-    )
+    assert "duration_ms" not in payload, f"未傳 duration_ms 時 payload 不應含此鍵，got: {payload!r}"
 
 
 def test_events_token_usage_keeps_explicit_duration_ms_value():
     """events.token_usage(..., duration_ms=1234) → payload["duration_ms"] == 1234（值精確）。"""
     ev = events.token_usage(
-        "s", "engineer", "openai", "gpt-5", 10, 5, 15,
-        cost_usd=0.01, duration_ms=1234,
+        "s",
+        "engineer",
+        "openai",
+        "gpt-5",
+        10,
+        5,
+        15,
+        cost_usd=0.01,
+        duration_ms=1234,
     )
     assert ev.to_dict()["payload"]["duration_ms"] == 1234
 
     # 額外：傳 None 視同不傳（與上一測試同語義）
-    ev_none = events.token_usage(
-        "s", "engineer", "openai", "gpt-5", 10, 5, 15, duration_ms=None
-    )
+    ev_none = events.token_usage("s", "engineer", "openai", "gpt-5", 10, 5, 15, duration_ms=None)
     assert "duration_ms" not in ev_none.to_dict()["payload"]
 
 
@@ -268,9 +293,13 @@ def test_finish_session_meta_has_top_level_token_usage_and_latency_keys():
         sid,
         _token_usage_event(
             sid=sid,
-            provider="openai", model="gpt-5", speaker="engineer",
+            provider="openai",
+            model="gpt-5",
+            speaker="engineer",
             duration_ms=250,
-            prompt_tokens=10, completion_tokens=5, total_tokens=15,
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
         ),
     )
     # 一筆無 duration_ms 的舊事件
@@ -278,9 +307,13 @@ def test_finish_session_meta_has_top_level_token_usage_and_latency_keys():
         sid,
         _token_usage_event(
             sid=sid,
-            provider="claude", model="claude-opus", speaker="pm",
+            provider="claude",
+            model="claude-opus",
+            speaker="pm",
             duration_ms=None,
-            prompt_tokens=20, completion_tokens=10, total_tokens=30,
+            prompt_tokens=20,
+            completion_tokens=10,
+            total_tokens=30,
         ),
     )
     # 收尾事件（finish_session 仰賴 type=done 推 status）
@@ -297,7 +330,7 @@ def test_finish_session_meta_has_top_level_token_usage_and_latency_keys():
     # token_usage：兩筆都算入
     assert meta["token_usage"]["total"]["calls"] == 2
     assert meta["token_usage"]["total"]["prompt"] == 30  # 10+20
-    assert meta["token_usage"]["total"]["total"] == 45   # 15+30
+    assert meta["token_usage"]["total"]["total"] == 45  # 15+30
 
     # latency：僅 1 筆含 duration_ms（250ms），但 latency 鍵仍存在且 by_* 不為空
     assert meta["latency"]["total"]["count"] == 1
@@ -320,8 +353,14 @@ def test_finish_session_meta_latency_present_even_when_all_events_legacy():
     history.record_event(
         sid,
         _token_usage_event(
-            sid=sid, provider="openai", model="gpt-5", speaker="engineer",
-            duration_ms=None, prompt_tokens=5, completion_tokens=2, total_tokens=7,
+            sid=sid,
+            provider="openai",
+            model="gpt-5",
+            speaker="engineer",
+            duration_ms=None,
+            prompt_tokens=5,
+            completion_tokens=2,
+            total_tokens=7,
         ),
     )
     history.record_event(
