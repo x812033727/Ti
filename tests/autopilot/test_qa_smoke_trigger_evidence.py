@@ -188,9 +188,7 @@ def test_black_sample_tampered_runid_turns_red(evidence, handoff_text):
     """
     tampered = "deadbeef-not-a-run-id"
     assert tampered != EXPECTED_RUN_ID, "黑樣本竄改值不得與 EXPECTED_RUN_ID 相同"
-    assert tampered != evidence.get("run_id"), (
-        "黑樣本竄改值與證據 baseline run_id 撞值，喪失判別力"
-    )
+    assert tampered != evidence.get("run_id"), "黑樣本竄改值與證據 baseline run_id 撞值，喪失判別力"
     mutated = copy.deepcopy(evidence)
     mutated["run_id"] = tampered
     problems = check_gate(mutated, handoff_text) + check_evidence(mutated)
