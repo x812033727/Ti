@@ -1,97 +1,6 @@
 {
   "entries": [
     {
-      "decision": "orchestrator 接線於 `_discuss_agenda` 討論全部結束後、ADR 蒸餾同階段，依序 summarize→record→commit（訊息「結論彙整：產出 CONCLUSION.md」）→broadcast CONCLUSION 事件，單一接點不散落",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.968065
-    },
-    {
-      "decision": "落盤 commit 沿用既有 `self._commit` 慣例，不引入 `fcntl` 鎖",
-      "rationale": "單檔每場覆寫一次、無同檔跨程序併發，鎖為過度設計（adr.py 的鎖是為 read-modify-write 累積＋跨場併發）",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680665
-    },
-    {
-      "decision": "移除原設計「ERE 可攜性」措辭——此處為 Python `re` 非 shell grep fallback，CLAUDE.md 的 lookbehind/PCRE 教訓不適用，`[:：]` 全形容錯沿用既有 parser 即可",
-      "rationale": "高工澄清，避免把掃描腳本的可攜性顧慮誤套到 Python 解析",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680676
-    },
-    {
-      "decision": "測試切分——`parse_conclusion` 四段正常解析／全形冒號／漏標回空骨架純函式測試；`_build_summary` 新鍵（含 per-pair 末輪 stance、self-mention 排除、零-mention 黑樣本、部分-mention 灰樣本）stance 路徑測試；離線 e2e 驗證跑完 workspace 根產出 CONCLUSION.md 四段且至少一條回指 transcript（自證對應、排除假綠）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.968069
-    },
-    {
-      "decision": "任務#1 第④條自我校驗指令插入 `build_prompt` 的 159 行（硬指令③）與 160 行（「盡量帶 (round, speaker) 錨點」提示）之間",
-      "rationale": "經兩位親查核實該位置不動四鍵前綴格式，`flow.parse_conclusion` 解析不破壞（驗收#1）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799076
-    },
-    {
-      "decision": "任務#1 第④條措辭須與 160 行「盡量帶錨點」語意對齊不打架——統一為「能對應骨架錨點者帶上，自檢確認每條都有骨架依據，查無依據者刪除」，避免 LLM 將「盡量帶」與「無依據即刪」理解成衝突",
-      "rationale": "工程師指出兩行語氣若對立會擾動 LLM 輸出；收斂為同一條「有依據才留、留則帶錨」的一致敘事",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.379911
-    },
-    {
-      "decision": "任務#2 護欄套用範圍以「是否走 `_anchored_from_summary` 回填」為判別，凡未被回填的 LLM 自產非空鍵一律過護欄，明確涵蓋 `actions` 鍵",
-      "rationale": "工程師指出 `actions` 永遠走 LLM 原文、不在部分漏標回填範圍內，若護欄只列 consensus/disagreements/open_questions 則幻覺 action 漏網",
-      "rejected": "寫死鍵名清單套護欄——會遺漏 actions，且與「回填條目不重複處理」的判別邏輯不一致",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799124
-    },
-    {
-      "decision": "任務#2 護欄 `_guard_anchor` 採「抽 `(R<n> <speaker>)` token + 驗 speaker 存在性」保守判別，抽不到或 speaker 不存在於 transcript 才加 `（未錨定）`",
-      "rationale": "LLM 自由文字無法用規則層 `f\"{s} {verb} {t}\"` 精確重建，保守策略寧漏標不誤傷真錨點；`re` 限 ERE 等價、不用 PCRE 符合 CLAUDE.md 可攜性鐵則",
-      "rejected": "規則層精確重建比對——僅適用規則條目，套到 LLM 自由文字會大量誤標真來源條目",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799133
-    },
-    {
-      "decision": "任務#2 須在程式註解與 #5 交付說明標明護欄判別力上限為「只驗 speaker 出現、不驗 round 與論點對應」的盡力而為，非幻覺攔截保證，列為已知待辦",
-      "rationale": "高工指出「真 speaker＋幻覺論點」仍會漏標；須避免驗收#2 被誤解為護欄能保證攔幻覺，誠實暴露限制（CLAUDE.md 元認知鐵則）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799143
-    },
-    {
-      "decision": "任務#3 `record` 雙寫採「md 主檔先寫保底、sidecar best-effort 後寫」語義——`conclusion.json` 寫入包 try，失敗降級為只保留 `CONCLUSION.md` ＋ log warning，不拋例外、不拖垮人讀主檔與既有 record→commit→broadcast 時序",
-      "rationale": "高工指出 `_record_conclusion` 無 try，sidecar 拋例外會中斷 commit/broadcast 且 md 已落卻未入 git；md 為驗收核心（#3/#5/#6）必落保底，sidecar 為 M2 前瞻附屬可降級",
-      "rejected": "工程師「sidecar 先寫、md 後寫代表整組就緒」——順序技巧仍需包 try 才安全，且讓附屬檔擋在主檔前不符主檔優先級；改以「主檔先落＋附屬 best-effort」更穩",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799152
-    },
-    {
-      "decision": "任務#3 sidecar 寫入失敗的降級路徑須清理殘留 `.json.tmp`，收尾以 `git status` 確認 workspace 無未追蹤殘檔",
-      "rationale": "高工提醒 tmp-replace 失敗可能殘留 `.json.tmp`，沿用 `adr.py` 範式並符合 CLAUDE.md「臨時檔不落被掃描目錄、收尾 git status 驗無殘留」鐵則",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799162
-    },
-    {
-      "decision": "任務#3 sidecar schema 為 `{\"version\": 1, \"session_id\", \"rounds\", \"consensus\", \"disagreements\", \"open_questions\", \"actions\"}`，`record` 加 `rounds: int = 0` keyword-only 參數承載輪數，回傳值維持 `CONCLUSION.md` path 不變",
-      "rationale": "`version` 欄供 M2 演進辨識；回傳不變則 broadcast CONCLUSION 事件零影響；`cwd is None` 時兩檔皆不落、回 None（驗收#3）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799171
-    },
-    {
-      "decision": "任務#4 orchestrator `_record_conclusion` 僅改一行——`conclusion.record(...)` 傳 `rounds=max((u.round for u in transcript), default=0)`，commit 範圍不需改動",
-      "rationale": "高工驗實 `git_commit` 為 `git add -A`（runner.py 605），sidecar 在 commit 前由 record 寫出即同 commit 入 git，#4 零接線假設成立（驗收#4）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799176
-    },
-    {
       "decision": "任務#4 維持既有 record→commit→broadcast 時序與單一接點不變，sidecar 僅為 record 內多寫一檔，不新增接點、不散落",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3408,97 @@
       "rejected": "",
       "session_id": "ap0663af6735",
       "created_at": 1783223697.8122935
+    },
+    {
+      "decision": "分散式去同步統計測試直接 import `studio.llm_caller.backoff_delay` 純函式驗證，不經 experts/config/orchestrator，測試依賴方向單向 `tests → llm_caller`",
+      "rationale": "backoff_delay 為純函式且已有 rand 注入縫（llm_caller.py:436），最低層驗證分佈最穩、零 mock，退避未來重構時測試是獨立事實來源",
+      "rejected": "端到端經 experts/config 驗證統計——experts 僅平鋪傳 config 值，該線用盤點證明即可，跑統計不值得",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841424
+    },
+    {
+      "decision": "N 客戶端模擬採「同一 (attempt, retry_after) 呼叫 N≥50 次 + 注入序列化 rand（預生成確定序列，如 i/N）」，禁用真 random",
+      "rationale": "統計斷言配真 random 必 flaky；序列化 rand 確保 CI 可重現",
+      "rejected": "真 random.random 抽樣",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.584148
+    },
+    {
+      "decision": "429 路徑測試選 retry_after 明顯低於 cap（如 10/60），529 路徑避免 attempt 已打到 cap",
+      "rationale": "上界被 cap 夾住會壓縮分散度使 jitter 區間失真，選值避開 cap 夾擠才驗得出去同步",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841494
+    },
+    {
+      "decision": "429 斷言落點 ∈ [nominal, nominal·(1+j)] 且下界嚴格 = nominal；529 斷言落點 ∈ [nominal·(1-j), nominal]；兩路徑各補「非全等 + stdev>0」",
+      "rationale": "下界嚴格 = nominal 守驗收#6（jitter 不早於伺服器 retry-after）；非全等 + stdev>0 證去同步",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841503
+    },
+    {
+      "decision": "除 N≥50 統計案例外，各路徑另補確定性邊界案例——429 用 rand→1.0（含 cap 夾擠 llm_caller.py:443）與 rand→0.0 驗上下端點，529 用 rand→接近1 驗最深退避不穿透",
+      "rationale": "統計案例證分佈、邊界案例證公式端點，兩者互補鎖死上下界，比純抽樣更硬",
+      "rejected": "只靠 N=50 抽樣驗端點",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841508
+    },
+    {
+      "decision": "黑樣本斷言 jitter=0 時同 attempt 延遲全等，與白樣本同檔對照",
+      "rationale": "llm_caller.py:441/446 兩路徑 j==0 皆 early-return 確定值，黑樣本嚴格全等，證白樣本非假綠",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841517
+    },
+    {
+      "decision": "測試檔頂註明 N 值與統計門檻（stdev>0、len(set)>1）的選定理由",
+      "rationale": "防日後有人調小 N 破壞判別力而不自知",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841525
+    },
+    {
+      "decision": "新增前先去重既有 jitter/backoff 守門測試與文件，新增範圍控制在「小型統計測試 + 文件盤點修正」",
+      "rationale": "現況已有不少相關守門測試與文件，避免測試重複堆疊",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841532
+    },
+    {
+      "decision": "任務#1 呼叫端盤點為文件產物（檔名:行號 + 狀態），證明唯一退避入口 make_retry_config→backoff_delay、jitter 實際值 = config.EXPERT_RATE_LIMIT_BACKOFF_JITTER，不引入程式依賴；行號須更新為實際值（如 _build_client 註解在 experts.py:373-378）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841548
+    },
+    {
+      "decision": "單層退避盤點對兩條 provider 路徑一律採「證據式」措辭而非「風險」——`providers.py:1167 max_retries=0（已解除疊乘）` 與 `experts.py:373-378（Claude 路徑無旋鈕、天然單層）` 並列",
+      "rationale": "OpenAI 疊乘已落實解除，寫成「風險」會誤導接手者去「修」一個已修好的東西",
+      "rejected": "將 OpenAI SDK max_retries 疊乘寫成未處理隱患",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841558
+    },
+    {
+      "decision": "SDK 疊乘（#4）以文件+盤點建構點行號佐證，不強制加守門測試",
+      "rationale": "這是常數性事實（max_retries=0、Claude 無旋鈕）非條件邏輯，守門測試保護不到會退化的東西",
+      "rejected": "一律為 SDK 不疊乘加守門測試",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841565
+    },
+    {
+      "decision": "禁止為方便測試而修改 backoff_delay 簽章、marker 字串或 config 預設；所有產出 additive（新測試檔 + DECISIONS/註解），保持可逆與退避 SSOT 唯一",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.584157
+    },
+    {
+      "decision": "不引入 tenacity/backoff 等第三方套件，沿用自研退避骨幹為唯一 SSOT",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap98849bf8ec",
+      "created_at": 1783261717.5841577
     }
   ]
 }

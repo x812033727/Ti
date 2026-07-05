@@ -2312,3 +2312,77 @@
 ## 明文不做——不引入 wrapt/OTel SDK、不動 retry 內部、不做 per-attempt 粒度、不改 marker 字串、不修 final 旗標語義、不做 perf_counter 翻案；未來細粒度需求以新 optional 欄位擴充，不改 duration_s 既定語義
 - 時間：2026-07-05 11:54
 
+## 分散式去同步統計測試直接 import `studio.llm_caller.backoff_delay` 純函式驗證，不經 experts/config/orchestrator，測試依賴方向單向 `tests → llm_caller`
+- 時間：2026-07-05 22:28
+- 理由：backoff_delay 為純函式且已有 rand 注入縫（llm_caller.py:436），最低層驗證分佈最穩、零 mock，退避未來重構時測試是獨立事實來源
+- 否決方案：端到端經 experts/config 驗證統計——experts 僅平鋪傳 config 值，該線用盤點證明即可，跑統計不值得
+
+## N 客戶端模擬採「同一 (attempt, retry_after) 呼叫 N≥50 次 + 注入序列化 rand（預生成確定序列，如 i/N）」，禁用真 random
+- 時間：2026-07-05 22:28
+- 理由：統計斷言配真 random 必 flaky；序列化 rand 確保 CI 可重現
+- 否決方案：真 random.random 抽樣
+
+## 429 路徑測試選 retry_after 明顯低於 cap（如 10/60），529 路徑避免 attempt 已打到 cap
+- 時間：2026-07-05 22:28
+- 理由：上界被 cap 夾住會壓縮分散度使 jitter 區間失真，選值避開 cap 夾擠才驗得出去同步
+
+## 429 斷言落點 ∈ [nominal, nominal·(1+j)] 且下界嚴格 = nominal；529 斷言落點 ∈ [nominal·(1-j), nominal]；兩路徑各補「非全等 + stdev>0」
+- 時間：2026-07-05 22:28
+- 理由：下界嚴格 = nominal 守驗收#6（jitter 不早於伺服器 retry-after）；非全等 + stdev>0 證去同步
+
+## 除 N≥50 統計案例外，各路徑另補確定性邊界案例——429 用 rand→1.0（含 cap 夾擠 llm_caller.py:443）與 rand→0.0 驗上下端點，529 用 rand→接近1 驗最深退避不穿透
+- 時間：2026-07-05 22:28
+- 理由：統計案例證分佈、邊界案例證公式端點，兩者互補鎖死上下界，比純抽樣更硬
+- 否決方案：只靠 N=50 抽樣驗端點
+
+## 黑樣本斷言 jitter=0 時同 attempt 延遲全等，與白樣本同檔對照
+- 時間：2026-07-05 22:28
+- 理由：llm_caller.py:441/446 兩路徑 j==0 皆 early-return 確定值，黑樣本嚴格全等，證白樣本非假綠
+
+## 測試檔頂註明 N 值與統計門檻（stdev>0、len(set)>1）的選定理由
+- 時間：2026-07-05 22:28
+- 理由：防日後有人調小 N 破壞判別力而不自知
+
+## 新增前先去重既有 jitter/backoff 守門測試與文件，新增範圍控制在「小型統計測試 + 文件盤點修正」
+- 時間：2026-07-05 22:28
+- 理由：現況已有不少相關守門測試與文件，避免測試重複堆疊
+
+## 任務#1 呼叫端盤點為文件產物（檔名:行號 + 狀態），證明唯一退避入口 make_retry_config→backoff_delay、jitter 實際值 = config.EXPERT_RATE_LIMIT_BACKOFF_JITTER，不引入程式依賴；行號須更新為實際值（如 _build_client 註解在 experts.py:373-378）
+- 時間：2026-07-05 22:28
+
+## 單層退避盤點對兩條 provider 路徑一律採「證據式」措辭而非「風險」——`providers.py:1167 max_retries=0（已解除疊乘）` 與 `experts.py:373-378（Claude 路徑無旋鈕、天然單層）` 並列
+- 時間：2026-07-05 22:28
+- 理由：OpenAI 疊乘已落實解除，寫成「風險」會誤導接手者去「修」一個已修好的東西
+- 否決方案：將 OpenAI SDK max_retries 疊乘寫成未處理隱患
+
+## SDK 疊乘（#4）以文件+盤點建構點行號佐證，不強制加守門測試
+- 時間：2026-07-05 22:28
+- 理由：這是常數性事實（max_retries=0、Claude 無旋鈕）非條件邏輯，守門測試保護不到會退化的東西
+- 否決方案：一律為 SDK 不疊乘加守門測試
+
+## 禁止為方便測試而修改 backoff_delay 簽章、marker 字串或 config 預設；所有產出 additive（新測試檔 + DECISIONS/註解），保持可逆與退避 SSOT 唯一
+- 時間：2026-07-05 22:28
+
+## 不引入 tenacity/backoff 等第三方套件，沿用自研退避骨幹為唯一 SSOT
+- 時間：2026-07-05 22:28
+
+## 【任務#4 查核結論】Claude Agent SDK retry 查核：已知邊界與現有防護
+- 時間：2026-07-05
+- 可控層已確認（Python SDK 原始碼）：`ClaudeAgentOptions.__init__`（參數列含 max_turns/model 等，無 max_retries）與 `ClaudeSDKClient.__init__`（只有 options/transport）均不含 retry 旋鈕；`query.py` / `subprocess_cli.py` 原始碼全文 grep 確認無 429/529 retry 邏輯。**Python SDK 可控層為單層退避。**
+  - 建構點①（Claude 路徑）：`experts.py:373-381` — `_build_client` docstring 明文可控層邊界，保留「ClaudeSDKClient 本身不做額外退避，避免雙層疊乘」
+  - 建構點②（OpenAI 路徑）：`providers.py:1167` — `openai.AsyncOpenAI(max_retries=0)` 顯式設 0；MiniMax/Gemini 共用同路徑，一次到位
+- 已知邊界（CLI subprocess 層）：`claude_agent_sdk` 是 Claude Code CLI（Node.js）的 subprocess wrapper。CLI 最終確實透傳 API 429/529（`types.py:api_error_status`），但 CLI 在透傳前是否做內部 retry 不可從 Python SDK 原始碼驗證。若 CLI 有內部 retry，Ti 的 `run_with_retries` 加上去仍是疊乘——差別是 CLI 層有個未知上界，且最終錯誤必然浮出。此為已知邊界，非已知確認安全。
+- 回歸守門：`tests/core/test_claude_no_double_backoff_task3_qa.py`（AST 確認 Python 層無 retry 旋鈕；三測試：書面結論、無 retry kwarg、speak 路徑唯一退避權威）
+- 不加額外守門測試的理由：CLI 內部行為不在 Python SDK 可測範圍，AST 守門已封住「在 Python client 層再加旋鈕」這條退化路徑；CLI 層風險屬架構邊界，非可用測試守護的條件邏輯
+
+
+## 【任務#5 收尾記錄】jitter 消費端 default-on＝0.5 與去同步黑白樣本測法
+- 時間：2026-07-05
+- **jitter 消費端 default-on＝0.5（非未接線）**：`config.EXPERT_RATE_LIMIT_BACKOFF_JITTER = _env_float("TI_RATELIMIT_BACKOFF_JITTER", 0.5)`（`studio/config.py:443`，`reload()` 於 `config.py:1203` 同鍵複寫）。`llm_caller.DEFAULT_BACKOFF_JITTER=0.0` 僅為**函式庫層預設關閉**，消費端 `experts.make_retry_config()` 已覆寫為 0.5（`experts.py:132`）並 lazy-read（`experts.py:96`）。→ 本需求**九成已落地**，本場重心為「補分散式去同步統計驗證＋封口串流無旁路退避」，非從零開啟 jitter。
+- **無旁路盤點（任務#1）**：`studio/docs/jitter_backoff_inventory.md` 逐一標出 orchestrator/experts 串流路徑所有退避呼叫點（C1/C2/O1/O2/Orc1–Orc4，含 `complete_once` wrapper），證明唯一退避入口＝`make_retry_config`→`backoff_delay`，無第二條繞過 jitter 的退避。
+- **去同步驗證黑白樣本測法（任務#2/#3）**：`tests/core/test_backoff_desync_task2_qa.py`，N=64 客戶端同 attempt、注入序列化 rand（`i/(N-1)`，禁真 random 保 CI 可重現）。
+  - 白樣本（jitter=0.5）：429（有 retry-after）向上散、529（無 retry-after）向下散，各斷言 (a) 非全等 `len(set)>1`、(b) `pstdev>0`、(c) 全落理論帶內（429∈`[nominal, nominal·(1+j)]` 且下界嚴格＝nominal 守驗收#6；529∈`[nominal·(1-j), nominal]`）。
+  - 黑樣本（jitter=0，同檔對照）：同 attempt 延遲**退化全等** `len(set)==1`、`pstdev==0`、值＝nominal，證白樣本「非全等」非假綠。
+  - RetryConfig 層另有 jitter=0 確定值黑樣本於 `tests/core/test_retry_config_task4_qa.py`。
+- **SDK 不疊乘（任務#4）**：Python SDK 可控層無 retry 旋鈕（`experts.py:373-381`、`providers.py:1167 max_retries=0`），守門 `tests/core/test_claude_no_double_backoff_task3_qa.py`；CLI subprocess 層是否內部 retry 屬已知邊界（見上方任務#4 查核結論）。
+- **收尾驗證**：`.venv/bin/python -m pytest -q` 全綠、`.venv/bin/python -m ruff check .` 無錯（新測試在其中）。
