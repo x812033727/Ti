@@ -2521,3 +2521,58 @@
 ## 全部產出 additive／可逆／零 production code 變更，`BREAKING_HEADING` 常數與版本字面值不動，查出漂移一律改 `CHANGELOG.md`，不加 `--verify-tag`（沿用既有決策）
 - 時間：2026-07-06 01:42
 
+## 新增 `docs/evidence/release-smoke-v0.2.0-trigger.json` 為 smoke 觸發證據唯一 SSOT，比照既有 `docs/evidence/release-v0.2.0-online-body.json` 的欄位風格（雙路命令＋關鍵欄位快照）
+- 時間：2026-07-06 02:23
+
+## evidence 採最小固定 schema——`verification_status`、`success_run`、`superseded_failure_run`、`gh_run_view`、`rest_run`、`cross_checks`，不抽泛用 validator
+- 時間：2026-07-06 02:23
+- 理由：一次性封口證據，泛用框架的複雜度自證不了，YAGNI
+- 否決方案：先做泛用 evidence schema validator
+
+## evidence `verification_status: verified|pending` 為狀態 gate；handoff 翻 ✅ 條件蘊含其為 `verified` 且 `event=release`／`conclusion=success`，由守門測試強制此關係
+- 時間：2026-07-06 02:23
+- 理由：把誠實性編成測試約束，不靠人自律，假綠在測試層擋死
+- 否決方案：靠 codex 自律「別手抄」
+
+## run-id `27905531397`/`27905351284` 不得預先寫死為既成事實；evidence 的 run-id 欄僅在本 session 真實 `gh` 擷取後填入，並附 provenance（擷取命令＋時點）
+- 時間：2026-07-06 02:23
+- 理由：高工退回點——「跑不了就 pending」與「把 success run-id 當事實」不能並存，未實證的 success 數字正是本任務要擋的假綠
+- 否決方案：把兩個 run-id 當調研既成事實直接寫入設計/證據
+
+## 未完成 `gh` 實跑擷取時，evidence 一律 `verification_status: pending`、不得出現任何 success run-id、handoff 維持 ❌、標「待有權限者核對」
+- 時間：2026-07-06 02:23
+- 理由：沙箱網路白名單無 GH auth，實跑很可能受限；此為誠實性 fallback
+
+## 證據雙來源＝`gh run view <id> --json databaseId,event,status,conclusion,headBranch,url,createdAt` 與 REST `gh api repos/x812033727/Ti/actions/runs/<id>`，兩路關鍵欄位須相等並記入 `cross_checks`
+- 時間：2026-07-06 02:23
+
+## smoke 證據綁定對象為 `release-smoke.yml` 的 workflow run 本身（其 `databaseId`／`createdAt`／`conclusion`），不得沿用 release 物件的 `id=342528036`／`created_at=13:15:15`
+- 時間：2026-07-06 02:23
+- 理由：高工退回點——release 物件與 workflow run 是不同 artifact，貼 release 物件 id 到 smoke 證據即資料錯誤
+
+## evidence 同時記 success run 與被取代的 failure run（`superseded_failure_run`），兩者標 `event=release` 並註明 failure 為同 tag 早期 release 被取代重建，論證觸發可靠雙重確認而非反證
+- 時間：2026-07-06 02:23
+- 理由：把僥倖說清楚（跨場次硬規則），只報 success 藏 failure 是不誠實
+
+## 頂部半閉環聲明改版本限定收斂——「v0.2.0 此鏈已生產閉環；後續版本仍為半閉環、尚待逐版生產驗證」，措辭須完整保留 `真實/tag-push/端到端/生產驗證/半閉環/尚待` 關鍵詞
+- 時間：2026-07-06 02:23
+- 理由：既有 `check_half_closed` 與 `test_mutation_soften...` 為全域字串 replace，保留關鍵詞即零改動繼續綠，保護既有護欄依賴方向
+- 否決方案：一刀切改「已完整驗證」——會打爆既有守門測試
+
+## 範圍擴至「body 置頂」那條一併翻 ✅，依據引用既有 `release-v0.2.0-online-body.json`（不新增證據），使頂部聲明宣稱 v0.2.0 全鏈閉環時文件自洽；PM 未定前措辭浮動，fallback 為逐環標註不宣稱全閉環，收斂時實跑 `check_half_closed` 相關測試確認關鍵詞未軟化
+- 時間：2026-07-06 02:23
+- 理由：只翻 smoke 留 body 置頂 ❌ 會與「全鏈閉環」聲明自相矛盾；既有 online-body evidence 已足
+- 否決方案：PM「範圍極簡只封 smoke 一條」（暫留為 fallback，待 @pm 拍板）
+
+## 守門測試新建獨立檔 `tests/autopilot/test_qa_smoke_trigger_evidence.py`，只驗 JSON snapshot 內兩路欄位一致與 handoff run-id／✅／❌ 對 JSON gate 一致，不重跑 `gh`、不打網路，錨定新證據節不整份逐字比對
+- 時間：2026-07-06 02:23
+
+## 守門測試成對黑樣本任一須翻紅——竄改 run-id／✅ 改回 ❌／抽掉 `event` 欄／抽掉 failure run 記載／`verification_status` 退回 pending 但 ✅ 未退
+- 時間：2026-07-06 02:23
+
+## 改 handoff L26 時保留 `test_task4_commit_does_not_alter_release_smoke_trigger` symbol 引用，避免既有 `test_handoff_symbol_references_are_live` 翻紅
+- 時間：2026-07-06 02:23
+
+## 全部產出 additive／可逆／零 production code 變更，`BREAKING_HEADING` 常數與版本字面值不動、不加 `--verify-tag`
+- 時間：2026-07-06 02:23
+

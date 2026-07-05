@@ -1,104 +1,6 @@
 {
   "entries": [
     {
-      "decision": "`RetryConfig` 新增三 field：`base: float = DEFAULT_BACKOFF_BASE`、`cap: float = DEFAULT_BACKOFF_CAP`、`jitter: float = DEFAULT_BACKOFF_JITTER`，`backoff` 改為 `Callable | None = None`；欄位順序：`max_retries`（唯一必填）→ `base/cap/jitter/backoff/sleep`（均有預設值）。",
-      "rationale": "dataclass 必填在前、選填在後，無重排衝突；現有唯一生產呼叫點（`experts.py:116`）全程 keyword，grep 已確認零位置參數地雷。",
-      "rejected": "`kw_only=True`——Python 3.10+ 限定，且現有已全 keyword，多此加限制。",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.3342419
-    },
-    {
-      "decision": "`__post_init__` 對非法輸入先 `warnings.warn`（`stacklevel=2`）再 silent clamp，不拋例外；四條防線：`cap <= 0 → DEFAULT_BACKOFF_CAP`、`base <= 0 → DEFAULT_BACKOFF_BASE`、`max_retries < 0 → 0`、`jitter` 超 [0,1] → `max(0.0, min(1.0, ...))`。",
-      "rationale": "高工要求至少 `warnings.warn`——讓呼叫方錯誤輸入在 log 留跡，但不破壞執行路徑；`base=0` 對 529 路徑產出 0 延遲（thundering herd），納入防線。",
-      "rejected": "`raise ValueError`——破壞「不拋例外」的既有合約語意，且 clamp 已保安全；否決 pure silent clamp——高工指出生產環境 debug 代價太高。",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.3342443
-    },
-    {
-      "decision": "`__post_init__` 自動生成 backoff 時，先取本地變數再捕捉，**不捕捉 `self`**：`_b, _c, _j = self.base, self.cap, self.jitter`，再 `lambda ra, att: backoff_delay(ra, att, base=_b, cap=_c, jitter=_j)`。",
-      "rationale": "捕捉 `self` 會讓事後 mutate 屬性靜默改變退避行為；本地變數捕捉在 clamp 完成後固化，語意清晰且無副作用。",
-      "rejected": "`frozen=True`——`__post_init__` 內 `self.backoff = ...` 需改 `object.__setattr__` 繞過凍結，程式碼可讀性損失大於收益；否決文件標註「視為不可變」但不修閉包——未消除工程師指出的真實風險。",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.3342454
-    },
-    {
-      "decision": "`RetryConfig` 加 docstring 一行：「`base/cap/jitter` 於建構後視為不可變——更改屬性不影響已生成的 `backoff` callback。」",
-      "rationale": "技術上仍可 mutate（不加 frozen），故需文件警語守住語意邊界，防止未來維護者誤用。",
-      "rejected": "",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.3342462
-    },
-    {
-      "decision": "`__post_init__` 末尾才判斷 `if self.backoff is None`（clamp 全部完成後），`backoff` 顯式傳入時跳過生成，不覆蓋。",
-      "rationale": "此路徑服務 `experts.make_retry_config`（傳 `backoff=_backoff_delay`）——顯式注入優先是設計契約，wiring 測試 L176 以 `is experts._backoff_delay` 斷言守門。",
-      "rejected": "",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.334247
-    },
-    {
-      "decision": "`experts.make_retry_config` 不遷移，繼續傳 `backoff=_backoff_delay, sleep=_sleep`；`_backoff_delay` 保留為 lazy config-read 錨點。",
-      "rationale": "遷移會讓 `test_make_retry_config_wiring_qa.py:176` 的 `is _backoff_delay` 斷言失守；且 lazy read（retry 時才讀 config）語意優於 construction-time 快照——兩路並行，各有適用場景。",
-      "rejected": "",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.3342495
-    },
-    {
-      "decision": "`as_kwargs()` 不修改，繼續 export `{max_retries, backoff, sleep}`；`__post_init__` 後 `backoff` 保證非 None，無需 None guard。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.33425
-    },
-    {
-      "decision": "測試補強五條——① `jitter=0` 黑樣本（`rand=lambda:1.0`，確定值不受隨機源影響）；② `jitter=0.25, rand=lambda:1.0` 白樣本（429 路徑不早於 retry_after、529 路徑抖動到下界）；③ clamp 邊界四條（`cap=0`、`base=0`、`max_retries=-1`、`jitter=1.5`）各加 `pytest.warns` 確認 warning 有發；④ 顯式 `backoff=<fn>` 注入後 `__post_init__` 不覆蓋；⑤ 既有 `_backoff_delay` 測試（L407–438）零修改即綠。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.3342507
-    },
-    {
-      "decision": "零新外部依賴、零新 env 變數；`llm_caller.py` 模組邊界不讀 config（新欄位預設值來自模組級 `DEFAULT_*` 常量，非 config 模組）。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd07cb2cd7d",
-      "created_at": 1781445030.3342514
-    },
-    {
-      "decision": "`_pending_awareness_context()` 只回傳資料（pending + in_progress 標題的 bullet 清單），不內嵌任何硬指令。",
-      "rationale": "函式若同時輸出資料與指令，重用時指令會帶著走，語意邊界模糊；分離後可單獨測試「清單內容」而非「整段提示文字」。",
-      "rejected": "把「不得提出與現有 pending 實質重疊」等硬指令寫進此函式——Senior 已標為設計異味，雖不阻擋本輪，本次直接避開比留技術債好。",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9180906
-    },
-    {
-      "decision": "兩條硬指令（「不得提出與上列任何項目實質重疊者」、「每點須來自不同子系統，優先覆蓋近期未碰過的模組」）移至 `_evaluate_self` 的 prompt 組裝層，緊接 `_pending_awareness_context()` 輸出之後，明確為上層決策。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9180946
-    },
-    {
-      "decision": "`_pending_awareness_context()` 與 `_filter_pending_duplicates()` 的清單來源統一為 `list_tasks(\"pending\") + list_tasks(\"in_progress\")`，兩者對齊，prompt 禁止清單與 pre-filter 擋截範圍完全一致。",
-      "rationale": "prompt 注入了 in_progress 任務要求不重疊，若 pre-filter 不擋 in_progress，「措辭滑溜的 in_progress 重複」仍可漏網——兩層防線的覆蓋範圍必須對齊。",
-      "rejected": "pending_titles 只含 pending——Engineer 與 Senior 均已指出此遺漏。",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9180963
-    },
-    {
-      "decision": "`AUTOPILOT_DEDUP_RATIO` 以 `float(os.getenv(\"AUTOPILOT_DEDUP_RATIO\", \"0.75\"))` 初始化為模組頂層常數，支援免改碼的運行期調整。",
-      "rationale": "0.75 是初始估值，中文字元級比對在同義改寫場景（「修復」vs「修正」）效果有限，上線後大概率需要調整；env override 讓調閾值的成本降為零，不需發版。",
-      "rejected": "硬編碼純常數——Engineer 明確指出這閾值之後大概率要調，不留出口是自縛手腳。",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9180975
-    },
-    {
-      "decision": "`_filter_pending_duplicates(proposals, existing_titles)` 比對前對雙方執行 normalize（`.strip().lower()`，去除首尾標點），以緩解長短句 ratio 被長度差稀釋的問題；normalize 邏輯獨立為內部 helper，方便日後替換。",
-      "rationale": "proposals 是完整句子，existing_titles 是標題，不 normalize 直接比對時 SequenceMatcher.ratio() 會被長度差稀釋，0.75 實際攔截率低於預期。",
-      "rejected": "",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9180984
-    },
-    {
       "decision": "PR 必須附 3–5 組中文邊界測試案例，記錄實測 ratio 值，涵蓋：同義詞替換（「修復」/「修正」）、縮寫（「單測」/「單元測試」）、英中混排（「retry/重試」）、完全不同主題（應為低 ratio 黑樣本）；測試案例本身成為閾值選取的溯源依據。",
       "rationale": "0.75 目前是憑感覺拍的數字，無邊界案例則日後漏報時無從溯源；Senior 已明確列為核可條件。",
       "rejected": "",
@@ -3499,6 +3401,104 @@
       "rejected": "",
       "session_id": "ap324766b8a8",
       "created_at": 1783273349.4758286
+    },
+    {
+      "decision": "新增 `docs/evidence/release-smoke-v0.2.0-trigger.json` 為 smoke 觸發證據唯一 SSOT，比照既有 `docs/evidence/release-v0.2.0-online-body.json` 的欄位風格（雙路命令＋關鍵欄位快照）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069618
+    },
+    {
+      "decision": "evidence 採最小固定 schema——`verification_status`、`success_run`、`superseded_failure_run`、`gh_run_view`、`rest_run`、`cross_checks`，不抽泛用 validator",
+      "rationale": "一次性封口證據，泛用框架的複雜度自證不了，YAGNI",
+      "rejected": "先做泛用 evidence schema validator",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.006967
+    },
+    {
+      "decision": "evidence `verification_status: verified|pending` 為狀態 gate；handoff 翻 ✅ 條件蘊含其為 `verified` 且 `event=release`／`conclusion=success`，由守門測試強制此關係",
+      "rationale": "把誠實性編成測試約束，不靠人自律，假綠在測試層擋死",
+      "rejected": "靠 codex 自律「別手抄」",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069683
+    },
+    {
+      "decision": "run-id `27905531397`/`27905351284` 不得預先寫死為既成事實；evidence 的 run-id 欄僅在本 session 真實 `gh` 擷取後填入，並附 provenance（擷取命令＋時點）",
+      "rationale": "高工退回點——「跑不了就 pending」與「把 success run-id 當事實」不能並存，未實證的 success 數字正是本任務要擋的假綠",
+      "rejected": "把兩個 run-id 當調研既成事實直接寫入設計/證據",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069695
+    },
+    {
+      "decision": "未完成 `gh` 實跑擷取時，evidence 一律 `verification_status: pending`、不得出現任何 success run-id、handoff 維持 ❌、標「待有權限者核對」",
+      "rationale": "沙箱網路白名單無 GH auth，實跑很可能受限；此為誠實性 fallback",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069704
+    },
+    {
+      "decision": "證據雙來源＝`gh run view <id> --json databaseId,event,status,conclusion,headBranch,url,createdAt` 與 REST `gh api repos/x812033727/Ti/actions/runs/<id>`，兩路關鍵欄位須相等並記入 `cross_checks`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069716
+    },
+    {
+      "decision": "smoke 證據綁定對象為 `release-smoke.yml` 的 workflow run 本身（其 `databaseId`／`createdAt`／`conclusion`），不得沿用 release 物件的 `id=342528036`／`created_at=13:15:15`",
+      "rationale": "高工退回點——release 物件與 workflow run 是不同 artifact，貼 release 物件 id 到 smoke 證據即資料錯誤",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069723
+    },
+    {
+      "decision": "evidence 同時記 success run 與被取代的 failure run（`superseded_failure_run`），兩者標 `event=release` 並註明 failure 為同 tag 早期 release 被取代重建，論證觸發可靠雙重確認而非反證",
+      "rationale": "把僥倖說清楚（跨場次硬規則），只報 success 藏 failure 是不誠實",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069735
+    },
+    {
+      "decision": "頂部半閉環聲明改版本限定收斂——「v0.2.0 此鏈已生產閉環；後續版本仍為半閉環、尚待逐版生產驗證」，措辭須完整保留 `真實/tag-push/端到端/生產驗證/半閉環/尚待` 關鍵詞",
+      "rationale": "既有 `check_half_closed` 與 `test_mutation_soften...` 為全域字串 replace，保留關鍵詞即零改動繼續綠，保護既有護欄依賴方向",
+      "rejected": "一刀切改「已完整驗證」——會打爆既有守門測試",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069745
+    },
+    {
+      "decision": "範圍擴至「body 置頂」那條一併翻 ✅，依據引用既有 `release-v0.2.0-online-body.json`（不新增證據），使頂部聲明宣稱 v0.2.0 全鏈閉環時文件自洽；PM 未定前措辭浮動，fallback 為逐環標註不宣稱全閉環，收斂時實跑 `check_half_closed` 相關測試確認關鍵詞未軟化",
+      "rationale": "只翻 smoke 留 body 置頂 ❌ 會與「全鏈閉環」聲明自相矛盾；既有 online-body evidence 已足",
+      "rejected": "PM「範圍極簡只封 smoke 一條」（暫留為 fallback，待 @pm 拍板）",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069754
+    },
+    {
+      "decision": "守門測試新建獨立檔 `tests/autopilot/test_qa_smoke_trigger_evidence.py`，只驗 JSON snapshot 內兩路欄位一致與 handoff run-id／✅／❌ 對 JSON gate 一致，不重跑 `gh`、不打網路，錨定新證據節不整份逐字比對",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069764
+    },
+    {
+      "decision": "守門測試成對黑樣本任一須翻紅——竄改 run-id／✅ 改回 ❌／抽掉 `event` 欄／抽掉 failure run 記載／`verification_status` 退回 pending 但 ✅ 未退",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.006977
+    },
+    {
+      "decision": "改 handoff L26 時保留 `test_task4_commit_does_not_alter_release_smoke_trigger` symbol 引用，避免既有 `test_handoff_symbol_references_are_live` 翻紅",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069778
+    },
+    {
+      "decision": "全部產出 additive／可逆／零 production code 變更，`BREAKING_HEADING` 常數與版本字面值不動、不加 `--verify-tag`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apced8255483",
+      "created_at": 1783275822.0069788
     }
   ]
 }
