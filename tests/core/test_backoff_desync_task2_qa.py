@@ -1,8 +1,8 @@
 """Distributed desync coverage for retry jitter.
 
 N=64 simulates many clients hitting the same attempt at once.  Each test injects
-a deterministic serialized rand stream, then requires len(set)>1, pstdev>0, and
-all samples inside the exact jitter band.
+a deterministic serialized rand stream.  White samples require len(set)>1,
+pstdev>0, and all samples inside the exact jitter band.
 
 白/黑樣本對照（任務 #2/#3）：
 - 白樣本（jitter=0.5）：同 attempt 的 N 客戶端延遲**去同步**——非全等、pstdev>0、落在理論帶內。
@@ -76,16 +76,20 @@ def test_desync_jitter_529_without_retry_after_spreads_downward() -> None:
     assert max(delays) == nominal
 
 
-# --- 黑樣本：jitter=0 → 同 attempt 延遲全等（退化），證白樣本非假綠 -----------------
+def _assert_collapsed_delay(delays: list[float], *, nominal: float) -> None:
+    assert len(delays) >= 50
+    assert len(set(delays)) == 1
+    assert pstdev(delays) == 0.0
+    assert delays[0] == nominal
 
 
-def test_black_sample_jitter_zero_429_path_all_equal() -> None:
-    """429 路徑 jitter=0：即使餵入去同步的序列化 rand，N 客戶端延遲仍全等 = nominal。"""
+def test_black_sample_jitter_zero_collapses_to_constant_delay() -> None:
+    """jitter=0 時，429 與 529 都退化為同 attempt 延遲全等。"""
     retry_after = 10.0
     attempt = 3
-    nominal = min(retry_after, CAP)
+    nominal_429 = min(retry_after, CAP)
 
-    delays = [
+    delays_429 = [
         backoff_delay(
             retry_after,
             attempt,
@@ -96,19 +100,12 @@ def test_black_sample_jitter_zero_429_path_all_equal() -> None:
         )
         for value in _serialized_rand_values()
     ]
+    _assert_collapsed_delay(delays_429, nominal=nominal_429)
 
-    assert len(delays) >= 50
-    assert len(set(delays)) == 1  # 退化：完全同步，無去同步
-    assert pstdev(delays) == 0.0
-    assert delays[0] == nominal
-
-
-def test_black_sample_jitter_zero_529_path_all_equal() -> None:
-    """529 路徑 jitter=0：無 retry-after 時 N 客戶端延遲仍全等 = 最深退避 nominal。"""
     attempt = 2
-    nominal = min(BASE * (2**attempt), CAP)
+    nominal_529 = min(BASE * (2**attempt), CAP)
 
-    delays = [
+    delays_529 = [
         backoff_delay(
             None,
             attempt,
@@ -119,8 +116,4 @@ def test_black_sample_jitter_zero_529_path_all_equal() -> None:
         )
         for value in _serialized_rand_values()
     ]
-
-    assert len(delays) >= 50
-    assert len(set(delays)) == 1  # 退化：完全同步，無去同步
-    assert pstdev(delays) == 0.0
-    assert delays[0] == nominal
+    _assert_collapsed_delay(delays_529, nominal=nominal_529)
