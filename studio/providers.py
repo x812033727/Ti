@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 from . import config, events, llm_caller, runner, tools
+from .expert_wrap import with_timing
 from .experts import _make_retry_observer as make_retry_observer, make_retry_config
 from .roles import Role, effective_tools
 
@@ -1179,11 +1180,11 @@ def make_expert(
     """
     prov = provider or effective_provider(role)
     if prov == "codex":
-        return CodexExpert(role, session_id, cwd, model=model or "")
-    if prov == "antigravity":
-        return AntigravityExpert(role, session_id, cwd, model=model or "")
-    if prov in ("openai", "minimax", "gemini"):
-        return OpenAIExpert(
+        expert = CodexExpert(role, session_id, cwd, model=model or "")
+    elif prov == "antigravity":
+        expert = AntigravityExpert(role, session_id, cwd, model=model or "")
+    elif prov in ("openai", "minimax", "gemini"):
+        expert = OpenAIExpert(
             role,
             session_id,
             cwd,
@@ -1191,10 +1192,12 @@ def make_expert(
             model=model or openai_model_for(role, prov),
             provider=prov,
         )
-    # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
-    from .experts import Expert
+    else:
+        # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
+        from .experts import Expert
 
-    return Expert(role, session_id, cwd, model=model or "")
+        expert = Expert(role, session_id, cwd, model=model or "")
+    return with_timing(expert, provider=prov)
 
 
 async def complete_once(
