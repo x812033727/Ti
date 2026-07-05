@@ -124,7 +124,7 @@ def main() -> int:
     evidence = json.loads(EVIDENCE.read_text(encoding="utf-8"))
     version = pyproject_version()
 
-    print(f"== v0.2.0 線上 body 結構斷言核對 ==")
+    print("== v0.2.0 線上 body 結構斷言核對 ==")
     print(f"證據檔：{EVIDENCE.relative_to(ROOT)}")
     print(f"pyproject 版本（SSOT）：{version}")
     print(f"Breaking heading 常數：{BREAKING_HEADING!r}")
