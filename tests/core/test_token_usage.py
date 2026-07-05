@@ -476,6 +476,27 @@ async def test_stream_to_events_emits_token_usage(fake_sdk):
 
 
 @pytest.mark.asyncio
+async def test_stream_to_events_uses_explicit_model_in_token_usage(fake_sdk):
+    role = BY_KEY["engineer"]
+    msgs = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("結論")]),
+        fake_sdk.ResultMessage(usage={"input_tokens": 10, "output_tokens": 2}),
+    ]
+    bucket, broadcast = collect()
+    await experts.stream_to_events(
+        _agen(msgs),
+        "s",
+        role,
+        broadcast,
+        model="claude-sonnet-4-6",
+    )
+
+    tu = [e for e in bucket if e.type == EventType.TOKEN_USAGE]
+    assert len(tu) == 1
+    assert tu[0].payload["model"] == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
 async def test_stream_to_events_no_usage_no_event(fake_sdk):
     """ResultMessage 無 usage（如既有測試的裸 ResultMessage）不得 emit、不得拋錯。"""
     role = BY_KEY["pm"]

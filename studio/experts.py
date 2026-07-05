@@ -343,6 +343,7 @@ async def _emit_claude_token_usage(
     broadcast: Broadcast,
     *,
     ttft_s: float | None = None,
+    model: str | None = None,
 ) -> None:
     usage = getattr(msg, "usage", None)
     if usage is None:
@@ -359,7 +360,7 @@ async def _emit_claude_token_usage(
             session_id,
             role.key,
             "claude",
-            _model_for(role),
+            model or _model_for(role),
             prompt,
             completion,
             total,
@@ -417,6 +418,7 @@ async def stream_to_events(
     *,
     idle_timeout: float | None = None,
     hard_timeout: float | None = None,
+    model: str | None = None,
 ) -> str:
     """把 SDK 串流訊息翻譯成 StudioEvent，回傳整段發言文字。
 
@@ -500,7 +502,9 @@ async def stream_to_events(
                         )
                     )
         elif isinstance(msg, ResultMessage):
-            await _emit_claude_token_usage(msg, session_id, role, broadcast, ttft_s=ttft_s)
+            await _emit_claude_token_usage(
+                msg, session_id, role, broadcast, ttft_s=ttft_s, model=model
+            )
             break
     return "\n".join(collected)
 
@@ -622,6 +626,7 @@ class Expert:
                 broadcast,
                 idle_timeout=config.TURN_IDLE_TIMEOUT or None,
                 hard_timeout=config.TURN_HARD_TIMEOUT or None,
+                model=self.effective_model(),
             )
 
         async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:

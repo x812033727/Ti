@@ -3499,6 +3499,13 @@
       "rejected": "",
       "session_id": "apd337e27107",
       "created_at": 1783286240.8556821
+    },
+    {
+      "decision": "Claude provider 路徑缺乏 per-speak 去重保護，retry 時寫入型工具仍可重跑；此缺口記入 backlog，本場不動 Claude path",
+      "rationale": "Claude path 經 Claude Agent SDK 工具迴圈，retry/工具重放語意需獨立確認；本場只追蹤缺口，不順手改 experts.py。",
+      "rejected": "本場一併補 Claude path 對稱去重保護——超出既定範圍且需新測試矩陣，列 backlog 另案。",
+      "session_id": "apd337e27107",
+      "created_at": 1783287200.0
     }
   ]
 }
