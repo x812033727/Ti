@@ -168,6 +168,11 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
 - 驗證邊界必須明講：單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證。換句話說：
   真實 tag-push 端到端尚待生產驗證；第一次正式打 `v*` tag 後，需確認
   `publish-release -> release-smoke` 生產鏈實際通過。
+- 移交待辦：真實 `v*` tag-push 生產 E2E 仍是半閉環，正式發 release 時要先人工確認 `body.md`：
+  1. 先跑 `python3 scripts/publish_release.py` 產出 `body.md`。
+  2. 開 `body.md`，確認頂部就是 `## ⚠️ Breaking Changes`，沒有被放到其他章節後面。
+  3. 確認該區塊內仍有四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙。
+  4. 再做 `gh release create "$TAG" -F body.md`，並在 GitHub release 頁核對 body 與本機一致。
 - 本輪不加 `--verify-tag`：現有觸發條件已由 `push.tags: v*` 保證 tag 存在，且 workflow 另有
   `github.ref_name == v{pyproject_version()}` fail-fast。若未來新增 `workflow_dispatch` 手動發佈，需重審此決策。
 - 任務 #3 最小硬化決策：已將 `publish-release.yml` 的 workflow-level `permissions.contents` 下修為
