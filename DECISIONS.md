@@ -2366,3 +2366,12 @@
 ## 不引入 tenacity/backoff 等第三方套件，沿用自研退避骨幹為唯一 SSOT
 - 時間：2026-07-05 22:28
 
+## 【任務#4 查核結論】Claude Agent SDK retry 查核：已知邊界與現有防護
+- 時間：2026-07-05
+- 可控層已確認（Python SDK 原始碼）：`ClaudeAgentOptions.__init__`（參數列含 max_turns/model 等，無 max_retries）與 `ClaudeSDKClient.__init__`（只有 options/transport）均不含 retry 旋鈕；`query.py` / `subprocess_cli.py` 原始碼全文 grep 確認無 429/529 retry 邏輯。**Python SDK 可控層為單層退避。**
+  - 建構點①（Claude 路徑）：`experts.py:373-381` — `_build_client` docstring 明文可控層邊界，保留「ClaudeSDKClient 本身不做額外退避，避免雙層疊乘」
+  - 建構點②（OpenAI 路徑）：`providers.py:1167` — `openai.AsyncOpenAI(max_retries=0)` 顯式設 0；MiniMax/Gemini 共用同路徑，一次到位
+- 已知邊界（CLI subprocess 層）：`claude_agent_sdk` 是 Claude Code CLI（Node.js）的 subprocess wrapper。CLI 最終確實透傳 API 429/529（`types.py:api_error_status`），但 CLI 在透傳前是否做內部 retry 不可從 Python SDK 原始碼驗證。若 CLI 有內部 retry，Ti 的 `run_with_retries` 加上去仍是疊乘——差別是 CLI 層有個未知上界，且最終錯誤必然浮出。此為已知邊界，非已知確認安全。
+- 回歸守門：`tests/core/test_claude_no_double_backoff_task3_qa.py`（AST 確認 Python 層無 retry 旋鈕；三測試：書面結論、無 retry kwarg、speak 路徑唯一退避權威）
+- 不加額外守門測試的理由：CLI 內部行為不在 Python SDK 可測範圍，AST 守門已封住「在 Python client 層再加旋鈕」這條退化路徑；CLI 層風險屬架構邊界，非可用測試守護的條件邏輯
+

@@ -371,9 +371,12 @@ def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
     （per-task 派工／招募指定模型）；空＝缺省行為不變。
 
     # 重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，避免雙層疊乘。
-    # ClaudeAgentOptions 不暴露 max_retries 旋鈕（與 OpenAI SDK 不同），故無需也無從顯式設 0——
-    # Claude 路徑天然即為單層退避；切勿在此 client 層另加任何重試/退避旋鈕，否則會與外層
-    # run_with_retries 疊乘。對比 OpenAI 路徑：openai SDK 內建 max_retries（預設 2），須在
+    # ClaudeAgentOptions 不暴露 max_retries 旋鈕（與 OpenAI SDK 不同），故無需也無從顯式設 0。
+    # 【可控層邊界】Python SDK 層（query.py／subprocess_cli.py）原始碼確認無 429/529 retry 邏輯；
+    # CLI subprocess（Node.js 層）是否對 API 429/529 做內部 retry 不可從 Python SDK 原始碼驗證，
+    # 為已知邊界——types.py:api_error_status 顯示 CLI 最終確實透傳 429/529，但透傳前的嘗試次數未知。
+    # 切勿在此 client 層另加任何重試/退避旋鈕，否則會與外層 run_with_retries 疊乘。
+    # 對比 OpenAI 路徑：openai SDK 內建 max_retries（預設 2），須在
     # providers.py 的 AsyncOpenAI(...) 另行顯式設 max_retries=0 才能達到同等的「單層退避」語意
     # （該對應義務由 OpenAI 路徑各自落實）。
     """
