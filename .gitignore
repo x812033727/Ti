@@ -49,9 +49,11 @@
 .pc-cache-qa/
 .profile
 .pytest_cache/
+.qa-tmp/
 .qa-tmp-nopath/
 .qa-venv/
 .qa_venv/
+.run/
 .ripgreprc
 .ti_ro_bind_probe_*.txt
 .venv-ruff/
@@ -62,6 +64,7 @@
 *_hits*.txt
 /autopilot/
 /body.md
+/pytest_full.log
 BASELINE_task*.md
 CLOSURE_task*.md
 ENV/
