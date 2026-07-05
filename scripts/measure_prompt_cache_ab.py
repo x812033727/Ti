@@ -217,6 +217,13 @@ def _write_outputs(report_path: Path, raw_path: Path, payload: dict[str, Any]) -
     raw_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
+
+
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
     role = BY_KEY[args.role]
     prompt = _load_prompt(args.prompt_file, args.prompt)
@@ -284,7 +291,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-file")
     parser.add_argument("--cwd", default=str(DEFAULT_WORKDIR))
     parser.add_argument("--session-id", default="prompt-cache-ab")
-    parser.add_argument("--after-attempts", type=int, default=2)
+    parser.add_argument("--after-attempts", type=_positive_int, default=2)
     parser.add_argument("--turn-timeout", type=float, default=45.0)
     parser.add_argument("--max-turns", type=int, default=2)
     parser.add_argument("--report", default=str(DEFAULT_REPORT))
