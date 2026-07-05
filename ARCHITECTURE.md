@@ -163,6 +163,12 @@ Ti 主核心 repo（雙軌路由）」），或再加 `mode: "improve"` 啟動**
 - **互相回應／反諂媚**：prompt 硬指令要求 `回應 @角色名: 同意|反對 ＋理由` 結構化引用、
   每輪至少指出一個可挑戰點；`parse_mentions()` 以 participants 白名單交替 regex 防禦式
   解析（格式不符整段視為無引用，不錯位）。
+- **討論脈絡的壓縮注入**：`DiscussionEngine._build_prompt()` 注入上一輪全員發言與自身歷史時，
+  會透過 `studio/discussion.py::DiscussionEngine._clip` 壓縮片段；未超 cap 時只 `strip()` 後保留
+  原文，超過 cap 時丟棄前段、保留尾段並加上 `…（前段截斷）`。上一輪片段 cap 為
+  `PREV_SEGMENT_MAX_CHARS=2000`，自身歷史片段 cap 為 `SELF_SEGMENT_MAX_CHARS=1200`。契約是尾段
+  marker 行不可被壓掉，包含 `驗證:`、`決議:`、`核心改動:`、`回應 @…` 等下游 parser 依賴的訊號；
+  守護測試見 [`tests/test_clip_marker_equivalence.py`](tests/test_clip_marker_equivalence.py)。
 - **收斂**：`TI_DISCUSS_MAX_ROUNDS` 硬上限（未設＝`TI_DEBATE_ROUNDS`）＋ `flow.is_stalled`
   相似度提前停止；`stop_reason ∈ {max_rounds, stalled, cancelled}` 落入 `DiscussionResult`。
 - **小結**：規則式零 LLM——共識/分歧由 mentions 統計推導、`final_positions` 取各角色末輪
