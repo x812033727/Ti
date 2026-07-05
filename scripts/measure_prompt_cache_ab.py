@@ -190,6 +190,7 @@ def _build_markdown(payload: dict[str, Any]) -> str:
         return _build_fail_markdown(payload)
 
     mode = payload.get("mode", "real")
+    synthetic = mode == "dry_run"
     before = payload["before"]
     after = payload["after"]
     delta = None
@@ -197,9 +198,10 @@ def _build_markdown(payload: dict[str, Any]) -> str:
         delta = after["ttft_s"] - before["ttft_s"]
     cache_hit = after["cache_read_input_tokens"] > 0
 
-    if mode == "dry_run":
+    if synthetic:
         real_api_line = (
-            "- 真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema）"
+            "- 真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema；"
+            "真 API 端到端未實測）"
         )
     elif payload.get("real_api"):
         real_api_line = "- 真實 API：是（Claude Agent SDK 正式 `Expert.speak()` 路徑）"
@@ -209,6 +211,24 @@ def _build_markdown(payload: dict[str, Any]) -> str:
             "- 真實 API：否（run 完成但 `cost_usd<=0` 或無 `token_usage`，"
             "推測走 fallback／離線路徑；A/B 數字不視為真實 API 對比）"
         )
+    if synthetic:
+        cache_hit_line = (
+            "- after 命中證據：N/A（dry-run 為合成數據，非真實命中，PASS/FAIL 不適用；"
+            f"`cache_read_input_tokens={after['cache_read_input_tokens']}` 僅為合成佔位值）"
+        )
+        ttft_header = "ttft_s（合成佔位）"
+        before_ttft_label = "before ttft_s（合成佔位）"
+        after_ttft_label = "after ttft_s（合成佔位）"
+        delta_label = "after - before（合成佔位）"
+    else:
+        cache_hit_line = (
+            f"- after 命中證據：{'PASS' if cache_hit else 'FAIL'} "
+            f"(`cache_read_input_tokens={after['cache_read_input_tokens']}`)"
+        )
+        ttft_header = "ttft_s"
+        before_ttft_label = "before ttft_s"
+        after_ttft_label = "after ttft_s"
+        delta_label = "after - before"
     lines = [
         "# Prompt Cache A/B Report",
         "",
@@ -220,10 +240,10 @@ def _build_markdown(payload: dict[str, Any]) -> str:
         f"- allowed_tools：`{', '.join(payload['allowed_tools'])}`",
         f"- cwd：`{payload['cwd']}`",
         f"- prompt sha256：`{payload['prompt_sha256']}`",
-        f"- after 命中證據：{'PASS' if cache_hit else 'FAIL'} "
-        f"(`cache_read_input_tokens={after['cache_read_input_tokens']}`)",
+        cache_hit_line,
         "",
-        "| 組別 | DISABLE_PROMPT_CACHING | ttft_s | cache_read_input_tokens | "
+        "| 組別 | DISABLE_PROMPT_CACHING | "
+        f"{ttft_header} | cache_read_input_tokens | "
         "cache_creation_input_tokens | duration_ms | prompt_tokens | completion_tokens |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
@@ -243,11 +263,26 @@ def _build_markdown(payload: dict[str, Any]) -> str:
             "",
             "## Before/After 對比",
             "",
-            f"- before ttft_s：`{_format_num(before['ttft_s'])}`",
-            f"- after ttft_s：`{_format_num(after['ttft_s'])}`",
-            f"- after - before：`{_format_num(delta)}` 秒",
+            f"- {before_ttft_label}：`{_format_num(before['ttft_s'])}`",
+            f"- {after_ttft_label}：`{_format_num(after['ttft_s'])}`",
+            f"- {delta_label}：`{_format_num(delta)}` 秒",
             f"- before cache_read_input_tokens：`{before['cache_read_input_tokens']}`",
             f"- after cache_read_input_tokens：`{after['cache_read_input_tokens']}`",
+            "",
+            "## 補驗方式",
+            "",
+            "- 這份報告若非真 API，先把憑證準備好再重跑同一腳本。",
+            "- `dry_run` 只驗腳本流程與報告 schema；表格與 `ttft_s` 數字為合成佔位值，"
+            "不作快取命中結論。",
+            "- 建議做法：設定 `ANTHROPIC_API_KEY`，保留同一組 `model` / `effort` / "
+            "`system_prompt`，取消 `--dry-run` 後重執行。",
+            "- 參考指令：",
+            "  ```bash",
+            "  timeout 90 .venv/bin/python scripts/measure_prompt_cache_ab.py \\",
+            "      --after-attempts 2 --turn-timeout 30",
+            "  ```",
+            "- 真 API 端到端驗收以 `after` 的 `cache_read_input_tokens > 0` 為命中證據，"
+            "再核對 `ttft_s` before/after 差異。",
             "",
             "註：`ttft_s` 是本專案串流包裝層量到的首個內容事件時間，適合看同路徑 A/B delta；"
             "絕對值不宣稱等同 provider 原生 TTFT。",
@@ -405,6 +440,8 @@ def _build_dry_run_payload(prompt: str, cwd: Path) -> dict[str, Any]:
     after_cold = _result("after", False, payload_after_cold)
     after_warm = _result("after_read_2", False, payload_after_warm)
     return {
+        "real_api": False,
+        "mode": "dry_run",
         "before": asdict(before),
         "after": asdict(after_warm),
         "after_runs": [asdict(after_cold), asdict(after_warm)],

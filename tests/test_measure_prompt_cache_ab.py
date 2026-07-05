@@ -114,6 +114,38 @@ async def test_prompt_cache_ab_success_path_writes_two_numeric_rows(tmp_path, mo
     assert {call["model"] for call in calls} == {"claude-sonnet-4-6"}
 
 
+async def test_prompt_cache_ab_dry_run_marks_mode_and_recovery_hint(tmp_path):
+    args = argparse.Namespace(
+        role="engineer",
+        model="claude-sonnet-4-6",
+        prompt="固定同段需求",
+        prompt_file=None,
+        cwd=str(tmp_path / "workdir"),
+        session_id="prompt-cache-ab-dry-run",
+        after_attempts=2,
+        turn_timeout=1.0,
+        max_turns=1,
+        dry_run=True,
+    )
+
+    payload = await ab._run(args)
+    markdown = ab._build_markdown(payload)
+
+    assert payload["real_api"] is False
+    assert payload["mode"] == "dry_run"
+    assert (
+        "真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema；"
+        "真 API 端到端未實測）"
+        in markdown
+    )
+    assert "after 命中證據：N/A（dry-run 為合成數據，非真實命中，PASS/FAIL 不適用；`cache_read_input_tokens=90` 僅為合成佔位值）" in markdown
+    assert "| 組別 | DISABLE_PROMPT_CACHING | ttft_s（合成佔位） | cache_read_input_tokens |" in markdown
+    assert "before ttft_s（合成佔位）：`0.123`" in markdown
+    assert "after ttft_s（合成佔位）：`0.123`" in markdown
+    assert "after - before（合成佔位）：`0.000` 秒" in markdown
+    assert "## 補驗方式" in markdown
+
+
 def test_prompt_cache_ab_rejects_zero_after_attempts():
     with pytest.raises(SystemExit):
         ab._parser().parse_args(["--after-attempts", "0"])
