@@ -799,6 +799,7 @@ async def autopilot_status() -> JSONResponse:
             "dryrun": config.AUTOPILOT_DRYRUN,
             "repo": config.AUTOPILOT_REPO,
             "heartbeat": heartbeat,
+            "dispatch_mode": "auto" if config.dispatch_auto() else "manual",
         }
     )
 
@@ -818,6 +819,25 @@ async def autopilot_pause() -> JSONResponse:
 async def autopilot_resume() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.unlink(missing_ok=True)
     return JSONResponse({"ok": True, "paused": config.autopilot_paused()})
+
+
+class DispatchModeBody(BaseModel):
+    mode: str = ""
+
+
+@router.post("/api/autopilot/dispatch-mode", dependencies=WRITE_DEPS)
+async def autopilot_dispatch_mode(body: DispatchModeBody) -> JSONResponse:
+    """切換派工模式哨兵檔：auto＝PM 全權派工、manual＝現行規則裁決（下一場 session 生效）。"""
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("auto", "manual"):
+        return JSONResponse({"ok": False, "detail": "mode 須為 auto 或 manual"}, status_code=400)
+    if mode == "auto":
+        config.DISPATCH_AUTO_FILE.write_text("auto via UI\n", encoding="utf-8")
+    else:
+        config.DISPATCH_AUTO_FILE.unlink(missing_ok=True)
+    return JSONResponse(
+        {"ok": True, "dispatch_mode": "auto" if config.dispatch_auto() else "manual"}
+    )
 
 
 @router.post("/api/autopilot/task", dependencies=WRITE_DEPS)

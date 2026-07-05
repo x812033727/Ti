@@ -167,6 +167,61 @@ def test_choose_empty_digest_returns_empty():
     assert out["provider"] == "" and out["model"] == ""
 
 
+# --- choose_dispatch：auto 派工模式（model_free＋兩家子集＋門檻 95）------------
+
+
+def test_choose_model_free_passes_arbitrary_model():
+    # auto 派工：hint 就緒未受限 → 任意模型 ID 原樣直通，不查白名單。
+    dig = _digest(claude=10, codex=30)
+    out = flow.choose_dispatch(
+        dig,
+        {"id": 1},
+        {"provider": "claude", "model": "claude-brand-new-6"},
+        _MODELS,
+        [],
+        model_free=True,
+    )
+    assert out["provider"] == "claude" and out["model"] == "claude-brand-new-6"
+
+
+def test_choose_model_free_dropped_when_provider_rebound():
+    # auto 派工但 hint 家受限被改派 → 模型丟空（A 家模型 ID 不直通 B 家），改用該家預設槽。
+    dig = _digest(claude=10, codex=96)
+    out = flow.choose_dispatch(
+        dig,
+        {"id": 1},
+        {"provider": "codex", "model": "gpt-custom-x"},
+        _MODELS,
+        [],
+        threshold=95.0,
+        model_free=True,
+    )
+    assert out["provider"] == "claude" and out["model"] == ""
+
+
+def test_choose_threshold_95_boundary():
+    # 門檻 95：94.9% 照派、95.0% 改派（達門檻即受限）。
+    dig_ok = _digest(claude=94.9, codex=10)
+    ok = flow.choose_dispatch(
+        dig_ok, {"id": 1}, {"provider": "claude"}, _MODELS, [], threshold=95.0
+    )
+    assert ok["provider"] == "claude"
+    dig_over = _digest(claude=95.0, codex=10)
+    over = flow.choose_dispatch(
+        dig_over, {"id": 1}, {"provider": "claude"}, _MODELS, [], threshold=95.0
+    )
+    assert over["provider"] == "codex"
+
+
+def test_choose_subset_digest_clamps_offlimit_hint():
+    # auto 派工的兩家子集 digest：PM 違規指定 minimax（不在 digest）→ 落到子集中用量最低者。
+    dig = _digest(claude=40, codex=20)
+    out = flow.choose_dispatch(
+        dig, {"id": 1}, {"provider": "minimax", "model": "MiniMax-M2"}, _MODELS, [], model_free=True
+    )
+    assert out["provider"] == "codex" and out["model"] == ""
+
+
 # --- parse_next_step 的 `模型:` 行 --------------------------------------------
 
 

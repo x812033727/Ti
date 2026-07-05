@@ -92,6 +92,20 @@ def _reset_require_chown_after_test():
         _config.REQUIRE_CHOWN = "off"
 
 
+# --- 派工模式哨兵檔隔離：部署機殘留的 DISPATCH_AUTO 不得翻轉測試裡的派工行為 ------
+# config.dispatch_auto() 讀 PROJECT_ROOT/DISPATCH_AUTO——在已切到 auto 模式的部署機上
+# 跑測試（autodeploy sandbox pytest）時，殘留哨兵檔會讓所有「手動模式」既有測試默默
+# 改道。每個測試一律指向 tmp（不存在＝手動基準）；auto 模式測試自行寫檔或 monkeypatch。
+@pytest.fixture(autouse=True)
+def _isolate_dispatch_auto_file(tmp_path):
+    from studio import config as _config
+
+    orig = _config.DISPATCH_AUTO_FILE
+    _config.DISPATCH_AUTO_FILE = tmp_path / "DISPATCH_AUTO"
+    yield
+    _config.DISPATCH_AUTO_FILE = orig
+
+
 # --- 防 provider_quota SWR 快取跨測試洩漏 ---------------------------------------
 # provider_quota.snapshot() 有模組級 SWR 快取（_cache）＋背景刷新單飛執行緒。若不重置，
 # 測試 A 佈置的假額度會被 60s TTL 快取住，測試 B 再呼叫 snapshot() 就拿到 A 的殘留快照

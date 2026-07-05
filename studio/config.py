@@ -79,6 +79,11 @@ ROLE_MODELS = _role_models()
 # 合法的 provider 名單；per-role 覆寫只接受其一，其餘（含 auto／空）＝不覆寫。
 PROVIDERS = ("claude", "minimax", "codex", "antigravity")
 
+# auto 派工模式（dispatch_auto()）下 PM 全權派工的 provider 子集與受限門檻：
+# PM 只能在這兩家之間分配、模型 ID 直通不查白名單；僅當指定家不可用或用量達門檻才兜底改派。
+AUTO_DISPATCH_PROVIDERS = ("claude", "codex")
+AUTO_DISPATCH_THRESHOLD = 95.0
+
 
 def _role_providers() -> dict[str, str]:
     """每個角色可單獨指定 provider（TI_PROVIDER_<角色KEY大寫>），達成 Claude／MiniMax 混用。
@@ -799,6 +804,9 @@ DEPLOY_STALE_AFTER = int(os.getenv("TI_DEPLOY_STALE_AFTER", "1800"))
 AUTOPILOT_PAUSE_FILE = Path(
     os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED"))
 )
+# auto 派工模式哨兵檔：存在＝auto（PM 全權派工）、不存在＝手動（現行規則裁決）。
+# 與 pause 檔同機制——web 端點寫/刪、orchestrator 每場 session 開頭重讀，跨程序免重啟生效。
+DISPATCH_AUTO_FILE = Path(os.getenv("TI_DISPATCH_AUTO_FILE", str(PROJECT_ROOT / "DISPATCH_AUTO")))
 AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "False", "")
 # 推送/合併安全旗標（預設皆取安全側）：
 # AUTOPILOT_FORCE_PUSH：預設非強制推送；遠端已存在同名分支會中止。設 1 才略過中止並改用
@@ -953,6 +961,13 @@ def autopilot_paused() -> bool:
     if os.getenv("TI_AUTOPILOT_PAUSED", "0") not in ("0", "false", "False", ""):
         return True
     return AUTOPILOT_PAUSE_FILE.exists()
+
+
+def dispatch_auto() -> bool:
+    """auto 派工模式開關：哨兵檔存在、或 env TI_DISPATCH_AUTO 為真＝auto（PM 全權派工）。"""
+    if os.getenv("TI_DISPATCH_AUTO", "0") not in ("0", "false", "False", ""):
+        return True
+    return DISPATCH_AUTO_FILE.exists()
 
 
 def has_api_key() -> bool:

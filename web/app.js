@@ -14,7 +14,7 @@ import {
 import { openHistory, closeHistory, cleanupCompleted } from "./js/panels/history.js";
 import {
   openAutopilot, closeAutopilot, minimizeAutopilot, expandAutopilot,
-  toggleAutopilot, addAutopilotTask,
+  toggleAutopilot, addAutopilotTask, toggleDispatchMode,
 } from "./js/panels/autopilot.js";
 import { openProjectPanel, closeProjectPanel, refreshProjectPanel } from "./js/panels/project.js";
 import { bindTeam } from "./js/panels/team.js";
@@ -53,6 +53,7 @@ $("#autopilotHead").onclick = () => {
   if ($("#autopilotPanel").classList.contains("mini")) expandAutopilot();
 };
 $("#apToggle").onclick = toggleAutopilot;
+$("#apDispatchMode").onclick = toggleDispatchMode;
 $("#apAddBtn").onclick = addAutopilotTask;
 $("#deckBar").onclick = () => setDeckCollapsed(false);
 $("#deckStop").onclick = (e) => { e.stopPropagation(); stop(); };

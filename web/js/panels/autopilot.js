@@ -56,6 +56,10 @@ export async function refreshAutopilot() {
       `${st.dryrun ? "　(dryrun)" : ""}${hb}`;
     $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
     $("#apToggle").dataset.paused = st.paused ? "1" : "0";
+    // 派工模式雙態鈕（舊後端無 dispatch_mode 欄位時容錯視為手動）。
+    const dm = st.dispatch_mode === "auto" ? "auto" : "manual";
+    $("#apDispatchMode").textContent = dm === "auto" ? "派工：auto" : "派工：手動";
+    $("#apDispatchMode").dataset.mode = dm;
     $("#apMini").textContent = `${st.paused ? "⏸" : "▶"} 待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}`;
     const list = await (await fetch("/api/autopilot/backlog")).json();
     const ul = $("#apBacklog");
@@ -216,6 +220,16 @@ export async function refreshApActivity() {
 export async function toggleAutopilot() {
   const paused = $("#apToggle").dataset.paused === "1";
   await fetch(paused ? "/api/autopilot/resume" : "/api/autopilot/pause", { method: "POST" });
+  await refreshAutopilot();
+}
+
+export async function toggleDispatchMode() {
+  const next = $("#apDispatchMode").dataset.mode === "auto" ? "manual" : "auto";
+  await fetch("/api/autopilot/dispatch-mode", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: next }),
+  });
   await refreshAutopilot();
 }
 
