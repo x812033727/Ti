@@ -65,6 +65,7 @@
 /autopilot/
 /body.md
 /pytest_full.log
+*.pid
 BASELINE_task*.md
 CLOSURE_task*.md
 ENV/
