@@ -771,6 +771,35 @@ async def test_codex_jsonl_error_zero_exit_uses_core_unavailable_classification(
 
 
 @pytest.mark.asyncio
+async def test_codex_agent_message_usage_credits_raises_provider_unavailable(monkeypatch, tmp_path):
+    """Codex 若把額度耗盡包成 agent_message，也不能被當正常專家交付。"""
+    expert = providers.CodexExpert(BY_KEY["qa"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+    proc.stdout = LinesPipe(
+        [
+            '{"type":"item.completed","item":{"type":"agent_message",'
+            '"text":"You\\u0027re out of usage credits · resets Jul 11, 7am (Asia/Taipei)"}}\n'
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        proc.finish(0)
+        return proc
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(providers.ProviderUnavailable) as seen:
+        await expert._run_codex("請驗證", broadcast)
+
+    assert seen.value.provider == "codex"
+    assert "usage credits" in seen.value.detail
+    assert bucket == []
+
+
+@pytest.mark.asyncio
 async def test_codex_jsonl_rate_limit_zero_exit_is_soft_note(monkeypatch, tmp_path):
     """Codex JSONL 暫態 rate limit 由核心分類後維持本輪 soft note，不暫停整個 provider。"""
     expert = providers.CodexExpert(BY_KEY["qa"], "t", tmp_path)

@@ -401,6 +401,13 @@ async def stream_to_events(
                             if hit[0] == "overloaded":
                                 raise ExpertOverloaded(str(hit[1]), text[:300], partial)
                             raise ExpertAPIError(str(hit[1]), text[:300], partial)
+                        unavailable = llm_caller.provider_unavailable_kind(text)
+                        if unavailable is not None and unavailable[0] in {
+                            "usage_limit",
+                            "quota",
+                            "billing",
+                        }:
+                            raise ExpertAPIError(unavailable[0], text[:300], "\n".join(collected))
                         collected.append(text)
                         await broadcast(
                             events.expert_message(
