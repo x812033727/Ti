@@ -39,6 +39,7 @@ import uuid
 # sleep/to_thread），except 子句經 stub 取屬性會 AttributeError；直接 import 名稱免疫。
 from asyncio import CancelledError
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import (
@@ -981,6 +982,21 @@ def _token_set_similarity(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+def _first_similar_title(title: str, corpus: Iterable[str]) -> str | None:
+    """相似度去重的共用判定：回傳 corpus 中第一個與 title 詞集 Jaccard 相似度
+    ≥ `AUTOPILOT_DEDUP_RATIO` 的標題（供 debug log 指出「近似哪一筆」），皆不相似回 None。
+
+    done（`improver._discover`）與 pending（`_filter_pending_duplicates`）兩條防線共用此單一來源，
+    杜絕第二套實作漂移。corpus 收 `Iterable[str]`（不限死 list）並維持其迭代順序、第一個命中即短路；
+    helper 內不對 corpus 排序（排序是無收益擾動）。corpus 為空時自然回 None——`AUTOPILOT_EVAL_MEMORY=0`
+    使 done corpus 為空，與舊精確比對關閉行為逐位等價，向後相容不加分支。
+    """
+    return next(
+        (e for e in corpus if _token_set_similarity(title, e) >= config.AUTOPILOT_DEDUP_RATIO),
+        None,
+    )
+
+
 def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
     """進場 pre-filter：兩道互補防線，皆只作用於本次提案進場，皆不回溯刪改 backlog、不動
     `backlog._is_duplicate` 的字串等值去重契約。第一道相似度用 `_token_set_similarity`
@@ -999,14 +1015,7 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
         return proposals
     kept: list[str] = []
     for p in proposals:
-        hit = next(
-            (
-                e
-                for e in existing_titles
-                if _token_set_similarity(p, e) >= config.AUTOPILOT_DEDUP_RATIO
-            ),
-            None,
-        )
+        hit = _first_similar_title(p, existing_titles)
         if hit is not None:
             log.debug("pre-filter 丟棄與排隊任務高相似的提案：%r（近似 %r）", p, hit)
             continue
