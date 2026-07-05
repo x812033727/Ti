@@ -131,21 +131,32 @@
         <button id="autopilotClose" class="ghost">✕</button>
       </div>
     </div>
-    <div class="ap-status">
-      <span id="apState" class="muted">載入中…</span>
-      <button id="apToggle" class="ghost">暫停 / 恢復</button>
-      <button id="apDispatchMode" class="ghost" title="auto＝PM 全權派工（限 claude/codex、模型自由）；手動＝系統規則裁決">派工：手動</button>
+    <div class="ap-body">
+      <div class="ap-status">
+        <span id="apState" class="muted">載入中…</span>
+        <div class="ap-status-actions">
+          <button id="apToggle" class="ghost">暫停 / 恢復</button>
+          <button id="apDispatchMode" class="ghost" title="auto＝PM 全權派工（限 claude/codex、模型自由）；手動＝系統規則裁決">派工：手動</button>
+        </div>
+      </div>
+      <section class="ap-section">
+        <div class="ap-section-head">📊 provider 額度</div>
+        <div id="apQuota" class="ap-quota"></div>
+      </section>
+      <section class="ap-section">
+        <div class="ap-section-head">📋 績效榜</div>
+        <div id="apAppraisal" class="ap-appraisal"></div>
+      </section>
+      <div class="ap-add">
+        <input id="apTaskTitle" type="text" placeholder="新增一個自我改善任務（標題）" />
+        <button id="apAddBtn">加任務</button>
+      </div>
+      <section class="ap-section">
+        <div class="ap-section-head">📈 工作室動態</div>
+        <ul id="apActivity" class="ap-timeline"></ul>
+        <ul id="apBacklog" class="history-list"></ul>
+      </section>
     </div>
-    <div id="apQuota" class="ap-quota"></div>
-    <div class="ap-timeline-head muted">📋 績效榜</div>
-    <div id="apAppraisal" class="ap-appraisal"></div>
-    <div class="ap-add">
-      <input id="apTaskTitle" type="text" placeholder="新增一個自我改善任務（標題）" />
-      <button id="apAddBtn">加任務</button>
-    </div>
-    <div class="ap-timeline-head muted">📈 工作室動態</div>
-    <ul id="apActivity" class="ap-timeline"></ul>
-    <ul id="apBacklog" class="history-list"></ul>
   </div>
 
   <!-- 專案藍圖與改良待辦 -->
