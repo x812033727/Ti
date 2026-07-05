@@ -8,6 +8,8 @@ import pathlib
 import re
 import subprocess
 
+from _scope_guard import collect_changed_files, find_scope_violations
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARCH = ROOT / "ARCHITECTURE.md"
 
@@ -192,11 +194,7 @@ def test_no_py_changed():
     ).stdout.strip()
     if not base:
         pytest.skip("取不到 origin/main 基準，略過 .py 變更護欄（避免假綠）")
-    out = subprocess.run(
-        ["git", "diff", "--name-only", base, "HEAD", "--", "*.py"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    changed = [line for line in out.stdout.splitlines() if line.strip()]
+    changed_files = collect_changed_files(ROOT, base)
+    outside_py_scope = set(find_scope_violations(changed_files, ["*.py"]))
+    changed = [path for path in changed_files if path not in outside_py_scope]
     assert not changed, f"不應有 .py 被改動，卻動了：{changed}"
