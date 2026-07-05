@@ -2312,3 +2312,57 @@
 ## 明文不做——不引入 wrapt/OTel SDK、不動 retry 內部、不做 per-attempt 粒度、不改 marker 字串、不修 final 旗標語義、不做 perf_counter 翻案；未來細粒度需求以新 optional 欄位擴充，不改 duration_s 既定語義
 - 時間：2026-07-05 11:54
 
+## 分散式去同步統計測試直接 import `studio.llm_caller.backoff_delay` 純函式驗證，不經 experts/config/orchestrator，測試依賴方向單向 `tests → llm_caller`
+- 時間：2026-07-05 22:28
+- 理由：backoff_delay 為純函式且已有 rand 注入縫（llm_caller.py:436），最低層驗證分佈最穩、零 mock，退避未來重構時測試是獨立事實來源
+- 否決方案：端到端經 experts/config 驗證統計——experts 僅平鋪傳 config 值，該線用盤點證明即可，跑統計不值得
+
+## N 客戶端模擬採「同一 (attempt, retry_after) 呼叫 N≥50 次 + 注入序列化 rand（預生成確定序列，如 i/N）」，禁用真 random
+- 時間：2026-07-05 22:28
+- 理由：統計斷言配真 random 必 flaky；序列化 rand 確保 CI 可重現
+- 否決方案：真 random.random 抽樣
+
+## 429 路徑測試選 retry_after 明顯低於 cap（如 10/60），529 路徑避免 attempt 已打到 cap
+- 時間：2026-07-05 22:28
+- 理由：上界被 cap 夾住會壓縮分散度使 jitter 區間失真，選值避開 cap 夾擠才驗得出去同步
+
+## 429 斷言落點 ∈ [nominal, nominal·(1+j)] 且下界嚴格 = nominal；529 斷言落點 ∈ [nominal·(1-j), nominal]；兩路徑各補「非全等 + stdev>0」
+- 時間：2026-07-05 22:28
+- 理由：下界嚴格 = nominal 守驗收#6（jitter 不早於伺服器 retry-after）；非全等 + stdev>0 證去同步
+
+## 除 N≥50 統計案例外，各路徑另補確定性邊界案例——429 用 rand→1.0（含 cap 夾擠 llm_caller.py:443）與 rand→0.0 驗上下端點，529 用 rand→接近1 驗最深退避不穿透
+- 時間：2026-07-05 22:28
+- 理由：統計案例證分佈、邊界案例證公式端點，兩者互補鎖死上下界，比純抽樣更硬
+- 否決方案：只靠 N=50 抽樣驗端點
+
+## 黑樣本斷言 jitter=0 時同 attempt 延遲全等，與白樣本同檔對照
+- 時間：2026-07-05 22:28
+- 理由：llm_caller.py:441/446 兩路徑 j==0 皆 early-return 確定值，黑樣本嚴格全等，證白樣本非假綠
+
+## 測試檔頂註明 N 值與統計門檻（stdev>0、len(set)>1）的選定理由
+- 時間：2026-07-05 22:28
+- 理由：防日後有人調小 N 破壞判別力而不自知
+
+## 新增前先去重既有 jitter/backoff 守門測試與文件，新增範圍控制在「小型統計測試 + 文件盤點修正」
+- 時間：2026-07-05 22:28
+- 理由：現況已有不少相關守門測試與文件，避免測試重複堆疊
+
+## 任務#1 呼叫端盤點為文件產物（檔名:行號 + 狀態），證明唯一退避入口 make_retry_config→backoff_delay、jitter 實際值 = config.EXPERT_RATE_LIMIT_BACKOFF_JITTER，不引入程式依賴；行號須更新為實際值（如 _build_client 註解在 experts.py:373-378）
+- 時間：2026-07-05 22:28
+
+## 單層退避盤點對兩條 provider 路徑一律採「證據式」措辭而非「風險」——`providers.py:1167 max_retries=0（已解除疊乘）` 與 `experts.py:373-378（Claude 路徑無旋鈕、天然單層）` 並列
+- 時間：2026-07-05 22:28
+- 理由：OpenAI 疊乘已落實解除，寫成「風險」會誤導接手者去「修」一個已修好的東西
+- 否決方案：將 OpenAI SDK max_retries 疊乘寫成未處理隱患
+
+## SDK 疊乘（#4）以文件+盤點建構點行號佐證，不強制加守門測試
+- 時間：2026-07-05 22:28
+- 理由：這是常數性事實（max_retries=0、Claude 無旋鈕）非條件邏輯，守門測試保護不到會退化的東西
+- 否決方案：一律為 SDK 不疊乘加守門測試
+
+## 禁止為方便測試而修改 backoff_delay 簽章、marker 字串或 config 預設；所有產出 additive（新測試檔 + DECISIONS/註解），保持可逆與退避 SSOT 唯一
+- 時間：2026-07-05 22:28
+
+## 不引入 tenacity/backoff 等第三方套件，沿用自研退避骨幹為唯一 SSOT
+- 時間：2026-07-05 22:28
+
