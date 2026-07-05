@@ -280,3 +280,60 @@ def test_expert_effective_model(monkeypatch):
     # PM 釘選最優先。
     monkeypatch.setattr(config, "PM_PIN_MODEL", "claude-fable-5")
     assert experts.Expert(BY_KEY["pm"], "s", "/tmp/x").effective_model() == "claude-fable-5"
+
+
+# --- _emit_claude_token_usage：duration_api_ms 接點覆蓋（任務 #2）----------
+# 守門意圖：若 SDK 改欄位名（例如 duration_api_ms → api_duration_ms），getattr 會靜默回
+# None，整條 latency 功能無聲失效。以下兩測驗在「正路徑帶值」與「缺屬性→不落地」兩端各釘
+# 一根，確保任何此類迴歸都能立即被 CI 抓住，不需靠運氣。
+
+
+async def test_emit_claude_token_usage_with_duration_api_ms():
+    """msg 帶 duration_api_ms=1234 → payload["duration_ms"] == 1234（正路徑自證對應）。"""
+    usage = types.SimpleNamespace(
+        input_tokens=100,
+        output_tokens=20,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    msg = types.SimpleNamespace(
+        usage=usage,
+        duration_api_ms=1234,
+        total_cost_usd=0.01,
+    )
+    bucket, broadcast = collect()
+    await experts._emit_claude_token_usage(msg, "sid", BY_KEY["engineer"], broadcast)
+
+    assert len(bucket) == 1, f"應發出 1 個事件，got {len(bucket)}"
+    payload = bucket[0].to_dict()["payload"]
+    assert payload["duration_ms"] == 1234, (
+        f"duration_api_ms=1234 應映射為 duration_ms=1234，got {payload.get('duration_ms')!r}"
+    )
+    # 附帶確認 provider/model/speaker 等基本欄位在場
+    assert payload["provider"] == "claude"
+    assert payload["speaker"] == "engineer"
+    assert payload["prompt_tokens"] == 100
+    assert payload["completion_tokens"] == 20
+
+
+async def test_emit_claude_token_usage_without_duration_api_ms():
+    """msg 無 duration_api_ms 屬性 → payload 不含 duration_ms 鍵（None 不落地）。"""
+    usage = types.SimpleNamespace(
+        input_tokens=50,
+        output_tokens=10,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    # 故意不設 duration_api_ms 屬性，模擬舊版 SDK 或回傳不含時延的 ResultMessage
+    msg = types.SimpleNamespace(
+        usage=usage,
+        total_cost_usd=0.005,
+    )
+    bucket, broadcast = collect()
+    await experts._emit_claude_token_usage(msg, "sid", BY_KEY["engineer"], broadcast)
+
+    assert len(bucket) == 1, f"應發出 1 個事件，got {len(bucket)}"
+    payload = bucket[0].to_dict()["payload"]
+    assert "duration_ms" not in payload, (
+        f"無 duration_api_ms 時 payload 不應含 duration_ms 鍵，got payload={payload!r}"
+    )

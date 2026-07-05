@@ -529,6 +529,39 @@ async def test_speak_sums_usage_over_tool_loop_emits_once(tmp_path):
     # 兩輪累加：100+30 / 0+20 / 100+50
     assert (p["prompt_tokens"], p["completion_tokens"], p["total_tokens"]) == (130, 20, 150)
     assert p["model"] == "MiniMax-M3"
+    assert isinstance(p["duration_ms"], int)
+    assert p["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_speak_timeout_token_usage_includes_duration_ms(tmp_path, monkeypatch):
+    monkeypatch.setattr(providers.config, "TURN_IDLE_TIMEOUT", 5.0)
+    monkeypatch.setattr(providers.config, "TURN_HARD_TIMEOUT", 0.05)
+    monkeypatch.setattr(providers.config, "OPENAI_MAX_STEPS", 10)
+
+    calls = {"n": 0}
+
+    async def chat(_messages, _tools, _model):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _resp(
+                tool_calls=[_tc("1", "read_file", '{"path": "missing.txt"}')],
+                usage=_usage(1, 2, 3),
+            )
+        await asyncio.sleep(60)
+        return _resp(content="late", usage=_usage(4, 5, 9))
+
+    expert = providers.OpenAIExpert(BY_KEY["engineer"], "t", tmp_path, chat=chat, model="m")
+    bucket, broadcast = collect()
+    out = await expert.speak("做事", broadcast)
+
+    tu = [e for e in bucket if e.type == EventType.TOKEN_USAGE]
+    assert len(tu) == 1
+    p = tu[0].payload
+    assert p["total_tokens"] == 3
+    assert isinstance(p["duration_ms"], int)
+    assert p["duration_ms"] >= 0
+    assert "逾時" in out
 
 
 @pytest.mark.asyncio

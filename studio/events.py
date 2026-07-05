@@ -149,6 +149,7 @@ def token_usage(
     total_tokens: int,
     *,
     cost_usd: float | None = None,
+    duration_ms: int | None = None,
     cache_read: int = 0,
     cache_write: int = 0,
     task_id: int | None = None,
@@ -164,6 +165,8 @@ def token_usage(
         "cache_read": int(cache_read or 0),
         "cache_write": int(cache_write or 0),
     }
+    if duration_ms is not None:
+        payload["duration_ms"] = duration_ms
     if task_id is not None:
         payload["task_id"] = task_id
     return StudioEvent(
