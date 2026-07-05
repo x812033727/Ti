@@ -6,9 +6,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 
-def find_scope_violations(
-    changed: Iterable[str], allowed_globs: Iterable[str] = ()
-) -> list[str]:
+def find_scope_violations(changed: Iterable[str], allowed_globs: Iterable[str] = ()) -> list[str]:
     """Return changed Python files that are outside the allowed path globs."""
     allowed = tuple(allowed_globs)
     return sorted(
