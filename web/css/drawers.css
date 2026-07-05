@@ -162,6 +162,7 @@
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
 }
 .ap-chip.prov { color: var(--accent-2); border-color: rgba(180, 157, 255, .35); }
+.ap-chip.ttft { color: var(--good); border-color: rgba(45, 212, 167, .35); }
 .ap-chip.ap-pr { color: var(--info); border-color: rgba(89, 183, 255, .35); text-decoration: none; }
 .ap-chip.ap-pr:hover { background: var(--surface-3); }
 .ap-item-note { margin-top: 3px; font-size: 11.5px; overflow-wrap: anywhere; }

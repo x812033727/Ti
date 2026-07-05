@@ -8,6 +8,7 @@ experts._build_client。沿用 test_orchestrator.py 的 collect() 慣例。
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 
@@ -31,6 +32,12 @@ def collect():
 
 async def _agen(items):
     for it in items:
+        yield it
+
+
+async def _delayed_agen(items, delay_s: float = 0.01):
+    for it in items:
+        await asyncio.sleep(delay_s)
         yield it
 
 
@@ -92,7 +99,13 @@ def fake_sdk(monkeypatch):
             self.content = content
 
     class ResultMessage:
-        pass
+        def __init__(self, usage=None, total_cost_usd=None, duration_api_ms=None):
+            if usage is not None:
+                self.usage = usage
+            if total_cost_usd is not None:
+                self.total_cost_usd = total_cost_usd
+            if duration_api_ms is not None:
+                self.duration_api_ms = duration_api_ms
 
     class TextBlock:
         def __init__(self, text):
@@ -145,6 +158,69 @@ async def test_stream_to_events_emits_message_and_tool_events(fake_sdk):
     assert bucket[2].payload["tool"] == "Write"
     assert bucket[2].payload["summary"] == "寫入 main.py"
     assert bucket[3].payload["text"] == "完成"
+
+
+async def test_stream_to_events_records_ttft_s_on_first_text_content(fake_sdk):
+    role = BY_KEY["engineer"]
+    msgs = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("  首段內容  ")]),
+        fake_sdk.ResultMessage(
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 3,
+                "cache_creation_input_tokens": 0,
+            },
+            total_cost_usd=0.01,
+            duration_api_ms=123,
+        ),
+    ]
+    bucket, broadcast = collect()
+
+    await experts.stream_to_events(_delayed_agen(msgs), "sess-ttft", role, broadcast)
+
+    usage_events = [ev for ev in bucket if ev.type == EventType.TOKEN_USAGE]
+    assert len(usage_events) == 1
+    ttft_s = usage_events[0].payload["ttft_s"]
+    assert isinstance(ttft_s, float)
+    assert 0 < ttft_s < 1
+    assert usage_events[0].payload["duration_ms"] == 123
+    assert usage_events[0].payload["cache_read"] == 3
+
+
+async def test_stream_to_events_records_ttft_s_on_first_tool_use(fake_sdk):
+    role = BY_KEY["engineer"]
+    msgs = [
+        fake_sdk.AssistantMessage(
+            content=[fake_sdk.ToolUseBlock("Read", {"file_path": "/w/main.py"})]
+        ),
+        fake_sdk.ResultMessage(usage={"input_tokens": 10, "output_tokens": 2}),
+    ]
+    bucket, broadcast = collect()
+
+    await experts.stream_to_events(_delayed_agen(msgs), "sess-tool-ttft", role, broadcast)
+
+    usage_events = [ev for ev in bucket if ev.type == EventType.TOKEN_USAGE]
+    assert len(usage_events) == 1
+    assert isinstance(usage_events[0].payload["ttft_s"], float)
+    assert usage_events[0].payload["ttft_s"] > 0
+
+
+async def test_stream_to_events_omits_ttft_s_when_no_content_arrives(fake_sdk):
+    role = BY_KEY["engineer"]
+    msgs = [
+        fake_sdk.ResultMessage(
+            usage={"input_tokens": 10, "output_tokens": 1},
+            total_cost_usd=0.001,
+        ),
+    ]
+    bucket, broadcast = collect()
+
+    await experts.stream_to_events(_delayed_agen(msgs), "sess-no-ttft", role, broadcast)
+
+    usage_events = [ev for ev in bucket if ev.type == EventType.TOKEN_USAGE]
+    assert len(usage_events) == 1
+    assert "ttft_s" not in usage_events[0].payload
 
 
 async def test_stream_to_events_stops_at_result_message(fake_sdk):

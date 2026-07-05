@@ -329,11 +329,21 @@ def _usage_int(obj, key: str) -> int:
         return 0
 
 
+def _stream_block_has_content(block) -> bool:
+    text = getattr(block, "text", None)
+    if isinstance(text, str):
+        return bool(text.strip())
+    return hasattr(block, "name") and hasattr(block, "input")
+
+
 async def _emit_claude_token_usage(
     msg,
     session_id: str,
     role: Role,
     broadcast: Broadcast,
+    *,
+    ttft_s: float | None = None,
+    model: str | None = None,
 ) -> None:
     usage = getattr(msg, "usage", None)
     if usage is None:
@@ -350,12 +360,13 @@ async def _emit_claude_token_usage(
             session_id,
             role.key,
             "claude",
-            _model_for(role),
+            model or _model_for(role),
             prompt,
             completion,
             total,
             cost_usd=getattr(msg, "total_cost_usd", None),
             duration_ms=duration_ms,
+            ttft_s=ttft_s,
             cache_read=_usage_int(usage, "cache_read_input_tokens"),
             cache_write=_usage_int(usage, "cache_creation_input_tokens"),
         )
@@ -407,6 +418,7 @@ async def stream_to_events(
     *,
     idle_timeout: float | None = None,
     hard_timeout: float | None = None,
+    model: str | None = None,
 ) -> str:
     """把 SDK 串流訊息翻譯成 StudioEvent，回傳整段發言文字。
 
@@ -424,6 +436,8 @@ async def stream_to_events(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + hard_timeout if hard_timeout else None
     it = messages.__aiter__()
+    request_sent_at = loop.time()
+    ttft_s: float | None = None
     while True:
         wait: float | None = idle_timeout or None
         reason = "idle"
@@ -442,6 +456,7 @@ async def stream_to_events(
             break
         except TimeoutError:
             raise ExpertTurnTimeout(reason, "\n".join(collected)) from None
+        msg_arrived_at = loop.time()
         if isinstance(msg, AssistantMessage):
             for block in msg.content:
                 if isinstance(block, TextBlock):
@@ -467,12 +482,16 @@ async def stream_to_events(
                         }:
                             raise ExpertAPIError(unavailable[0], text[:300], "\n".join(collected))
                         collected.append(text)
+                        if ttft_s is None and _stream_block_has_content(block):
+                            ttft_s = msg_arrived_at - request_sent_at
                         await broadcast(
                             events.expert_message(
                                 session_id, role.key, role.name, role.avatar, text
                             )
                         )
                 elif isinstance(block, ToolUseBlock):
+                    if ttft_s is None and _stream_block_has_content(block):
+                        ttft_s = msg_arrived_at - request_sent_at
                     await broadcast(events.expert_status(session_id, role.key, "working"))
                     await broadcast(
                         events.tool_use(
@@ -483,7 +502,9 @@ async def stream_to_events(
                         )
                     )
         elif isinstance(msg, ResultMessage):
-            await _emit_claude_token_usage(msg, session_id, role, broadcast)
+            await _emit_claude_token_usage(
+                msg, session_id, role, broadcast, ttft_s=ttft_s, model=model
+            )
             break
     return "\n".join(collected)
 
@@ -605,6 +626,7 @@ class Expert:
                 broadcast,
                 idle_timeout=config.TURN_IDLE_TIMEOUT or None,
                 hard_timeout=config.TURN_HARD_TIMEOUT or None,
+                model=self.effective_model(),
             )
 
         async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:

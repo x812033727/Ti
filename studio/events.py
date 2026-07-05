@@ -150,6 +150,7 @@ def token_usage(
     *,
     cost_usd: float | None = None,
     duration_ms: int | None = None,
+    ttft_s: float | None = None,
     cache_read: int = 0,
     cache_write: int = 0,
     task_id: int | None = None,
@@ -167,6 +168,8 @@ def token_usage(
     }
     if duration_ms is not None:
         payload["duration_ms"] = duration_ms
+    if ttft_s is not None:
+        payload["ttft_s"] = float(ttft_s)
     if task_id is not None:
         payload["task_id"] = task_id
     return StudioEvent(

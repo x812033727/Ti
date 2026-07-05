@@ -1,0 +1,6 @@
+{
+  "real_api": false,
+  "started_at": "2026-07-05T22:24:57Z",
+  "error_type": "ProviderUnavailable",
+  "error": "You're out of usage credits. Run /usage-credits to keep using Fable 5 or /model to switch models."
+}
