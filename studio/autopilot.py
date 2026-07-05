@@ -420,6 +420,32 @@ def _daily_pr_budget_exceeded(now: float | None = None) -> bool:
     return _todays_pr_count(now) >= budget
 
 
+def _todays_autopilot_token_count(now: float | None = None) -> int:
+    """統計 UTC 當日 autopilot history meta 的 total token；壞資料/非 autopilot 場次跳過。"""
+    day = time.gmtime(now if now is not None else time.time())[:3]
+    total = 0
+    for meta in history.list_sessions():
+        if not str(meta.get("requirement") or "").startswith("[autopilot]"):
+            continue
+        try:
+            if time.gmtime(float(meta.get("started_at", 0)))[:3] != day:
+                continue
+            usage = meta.get("token_usage") or {}
+            bucket = usage.get("total") or {}
+            total += int(bucket.get("total") or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _daily_token_budget_exceeded(now: float | None = None) -> bool:
+    """每日 token 預算是否已用滿。budget <= 0＝不限制（預設，行為不變）。"""
+    budget = config.AUTOPILOT_DAILY_TOKEN_BUDGET
+    if budget <= 0:
+        return False
+    return _todays_autopilot_token_count(now) >= budget
+
+
 def _next_utc_midnight(now: float) -> float:
     """下一個 UTC 零點的 epoch 秒（每日預算的自動恢復時刻）。"""
     day = time.gmtime(now)
@@ -1046,17 +1072,20 @@ async def _evaluate_self(clone: str) -> int:
 
     sid = f"ap-eval-{uuid.uuid4().hex[:8]}"
     ex = Expert(SENIOR, sid, Path(clone))
+    history.start_session(sid, "[autopilot] 自我評估")
 
-    async def _noop(_ev):
-        return None
+    async def _record(ev):
+        history.record_event(sid, ev.to_dict())
 
     # 取一次 pending/in_progress 快照，prompt 注入與進場 pre-filter 共用同一份，
     # 杜絕 LLM 延遲期間 backlog 變動造成兩端快照分裂（prompt 引導與 filter 比對不一致）。
     titles = _pending_titles()
     prompt = _build_discovery_prompt(titles=titles)
     try:
-        text = await ex.speak(prompt, _noop)
+        text = await ex.speak(prompt, _record)
     finally:
+        with contextlib.suppress(Exception):
+            history.finish_session(sid)
         with contextlib.suppress(Exception):
             await ex.stop()
     # 過濾掉與近期已完成標題完全相符者（補 backlog 去重對 done 的缺口，避免剛完成又重排）。
@@ -2092,6 +2121,25 @@ async def _main_loop(startup_sig: float) -> None:
             log.info(
                 "已達每日 PR 預算 %d，休眠 %.0f 秒（UTC 跨日自動恢復）",
                 config.AUTOPILOT_DAILY_PR_BUDGET,
+                sleep_s,
+            )
+            await asyncio.sleep(sleep_s)
+            continue
+
+        # 每日 token 成本熔斷：與 PR 預算同層，取任務/自評前先擋。只阻止下一輪 LLM
+        # 消耗；已完成討論的任務仍可走 deterministic gate/merge，避免把已花掉的 token 浪費掉。
+        if _daily_token_budget_exceeded():
+            now = time.time()
+            used = _todays_autopilot_token_count(now)
+            sleep_s = min(
+                max(_next_utc_midnight(now) - now, 60.0),
+                float(config.AUTOPILOT_QUOTA_MAX_SLEEP),
+            )
+            _write_status("budget_sleep", sleep_until=now + sleep_s, quota=quota)
+            log.info(
+                "已達每日 token 預算 %d（目前 %d），休眠 %.0f 秒（UTC 跨日自動恢復）",
+                config.AUTOPILOT_DAILY_TOKEN_BUDGET,
+                used,
                 sleep_s,
             )
             await asyncio.sleep(sleep_s)

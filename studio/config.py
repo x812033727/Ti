@@ -779,6 +779,9 @@ AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"
 # 上限即停止接新任務，睡到跨日自動恢復（不寫 pause 檔、免人工 resume）。0＝不限制（預設，
 # 行為不變）。防幻覺任務迴圈在單日燒光 PR/CI/LLM 成本。
 AUTOPILOT_DAILY_PR_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_PR_BUDGET", "0"))
+# 每日 token 成本熔斷：UTC 當日 autopilot history meta 的 token_usage.total.total 達上限
+# 即停止接新任務/自評，睡到跨日自動恢復。0＝不限制（預設，行為不變）。
+AUTOPILOT_DAILY_TOKEN_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_TOKEN_BUDGET", "0"))
 # 任務開場前的 PM workflow 分診：小任務走「快速模式」省三審輪次、高風險走「預設流程」完整
 # 把關（一次 MODEL_FAST 級短呼叫）。預設關閉（0）：維持「autopilot 一律走 default_workflow
 # 安全骨架」的既有不變式，opt-in 後才生效；任何分診失敗（LLM 錯誤/逾時/非法名稱）都退回
@@ -1066,7 +1069,7 @@ def reload() -> None:
     global APPRAISAL_ENABLED, APPRAISAL_MAX_STORE
     global ROLES_DIR, AUTOPILOT_NORTH_STAR
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP, QUOTA_STALE_MAX
-    global AUTOPILOT_DAILY_PR_BUDGET
+    global AUTOPILOT_DAILY_PR_BUDGET, AUTOPILOT_DAILY_TOKEN_BUDGET
     global AUTOPILOT_WORKFLOW_TRIAGE, AUTOPILOT_TRIAGE_TIMEOUT
     global LINT_AUTOFORMAT
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1216,6 +1219,8 @@ def reload() -> None:
     AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
     # 每日 PR 成本熔斷（預設值須與檔頂宣告一致）
     AUTOPILOT_DAILY_PR_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_PR_BUDGET", "0"))
+    # 每日 token 成本熔斷（預設值須與檔頂宣告一致）
+    AUTOPILOT_DAILY_TOKEN_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_TOKEN_BUDGET", "0"))
     # PM workflow 分診（預設值須與檔頂宣告一致）
     AUTOPILOT_WORKFLOW_TRIAGE = os.getenv("TI_AUTOPILOT_WORKFLOW_TRIAGE", "0") not in (
         "0",
