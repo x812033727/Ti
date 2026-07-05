@@ -763,3 +763,8 @@ if publish_repo and _repo_key(publish_repo) != repo_key:
 
 ## 任務 #3 完成：更新 `CLAUDE.md` 協作記憶，記錄本輪硬合約位置與決策，並把 audit log／每日 PR 成本熔斷明列為移交待辦
 
+
+## 任務 #3 完成：補 done-list 相似度去重黑白樣本測試（`tests/test_qa_task3_done_similarity_dedup.py`）
+- 三段：helper 單一來源契約（黑=語序改寫擋、白=無關放行、空 corpus 放行、與 pending `_filter_pending_duplicates` 判定一致）＋ `_discover` 端到端（dropped 回報含 done 相似層，驗收 #6）＋ `AUTOPILOT_EVAL_MEMORY=0` 退回舊行為。
+- ⚠️ 重要校正：驗收標準舉的「強化提案去重」vs 已 done「改善去重邏輯」實測 Jaccard 僅 **0.125 < 0.75，並不會被擋**（token 逐字法對「無共享字同義改寫」的架構已知漏網）。已用 `test_helper_known_limitation_no_shared_word_rewrite` 誠實釘住此漏網為預期行為，避免無聲漂移。真正有效的黑樣本＝語序改寫「去重邏輯改善」(Jaccard=1.0)。後續若要攔無共享字同義改寫，需改判定策略並更新該斷言。
+- 走離線假專家、不打外部 API；`pytest -k "dedup or discover or done"` 168 passed、ruff 全綠。
