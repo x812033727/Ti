@@ -9,10 +9,15 @@
 
 ## 結論（一句話）
 
-orchestrator **不自建任何退避**——所有 LLM 發言一律經 `expert.speak()`；兩條 provider 串流路徑
-（Claude／OpenAI 相容）都在發言層取 `make_retry_config()` 後交 `llm_caller.run_with_retries`，
-而 `run_with_retries` 內**唯一**的退避秒數計算點是注入的 `backoff` callback（源頭＝
-`backoff_delay(jitter=0.5)`），**唯一**的等待點是注入的 `sleep`。無旁路。
+orchestrator **不自建任何退避**——所有 LLM 呼叫路徑最終都經 `expert.speak()`（含 `complete_once`
+這種**非 `.speak()` 形式的 wrapper**，見 Orc4）；兩條 provider 串流路徑（Claude／OpenAI 相容）
+都在發言層取 `make_retry_config()` 後交 `llm_caller.run_with_retries`，而 `run_with_retries` 內
+**唯一**的退避秒數計算點是注入的 `backoff` callback（源頭＝`backoff_delay(jitter=0.5)`），
+**唯一**的等待點是注入的 `sleep`。無旁路。
+
+> 覆蓋範圍界定：本盤點的「呼叫端」＝orchestrator 路徑上**所有 LLM 呼叫入口**，含 (a) 直接
+> `expert.speak()`（Orc1/Orc3）與 (b) 包裝器 `providers.complete_once()`（Orc4）。已逐一走過並標記，
+> 無「只列 `.speak()`、漏審 wrapper」的縫。
 
 ## 唯一退避入口的證據鏈
 
@@ -33,9 +38,10 @@ orchestrator **不自建任何退避**——所有 LLM 發言一律經 `expert.s
 | C2 | `studio/experts.py:365`-`378` `_build_client()` | Claude SDK client 建構 | ✅ 天然單層（無旋鈕） | `ClaudeAgentOptions` **不暴露** `max_retries` 旋鈕（`experts.py:373`-`378` 註解），Claude 路徑天然單層退避，無從也無需另設 0；client 層**禁**再加任何 retry/backoff，否則與 C1 疊乘。 |
 | O1 | `studio/providers.py:884` `OpenAIExpert.speak()` | OpenAI 相容（openai/minimax/gemini）串流發言主體 | ✅ 收口 | `providers.py:902` `cfg = make_retry_config()` → `providers.py:1066` `run_with_retries(**cfg.as_kwargs(), …)`。與 C1 共用同一 `make_retry_config()` 旋鈕、同一 `backoff_delay(jitter=0.5)`。 |
 | O2 | `studio/providers.py:1160`-`1171` `_openai_chat()` | OpenAI SDK client 建構 | ✅ 已解除疊乘 | `providers.py:1167` `AsyncOpenAI(..., max_retries=0)`——顯式讓位給 `run_with_retries`，SDK 內建重試（預設 2）已關，**不**與外層退避疊乘。 |
-| Orc1 | `studio/orchestrator.py` 全部 `.speak()` 呼叫（如 `:446`/`:566`/`:731`/`:932`/`:983`/`:1202`/`:1287`/`:2192`/`:2282`/`:3528`/`:3567` …） | 各階段/任務/審查發言 | ✅ 委派 | orchestrator 內**無**任何 `run_with_retries`／`backoff`／`asyncio.sleep`／`time.sleep`（全檔 grep 為零）；一律透過 `expert.speak()` 落到 C1 或 O1。 |
+| Orc1 | `studio/orchestrator.py` 全部**直接 `.speak()`** 呼叫（如 `:446`/`:566`/`:731`/`:932`/`:983`/`:1202`/`:1287`/`:2192`/`:2282`/`:3528`/`:3567` …） | 各階段/任務/審查發言 | ✅ 委派 | orchestrator 內**無**任何 `run_with_retries`／`backoff`／`asyncio.sleep`／`time.sleep`（全檔 grep 為零）；一律透過 `expert.speak()` 落到 C1 或 O1。 |
 | Orc2 | `studio/orchestrator.py:22` `from .experts import … make_retry_config` | re-export | ℹ️ 僅轉出，非第二入口 | orchestrator 匯入 `make_retry_config`／`make_retry_observer` 供 `_speak` 掛可觀測接點，**不**另建 `RetryConfig`；實際退避仍在 C1/O1 的發言層執行。 |
 | Orc3 | `studio/discussion.py:315`-`318`（orchestrator 經 `DiscussionEngine` 消費串流） | 多角色討論發言 | ✅ 委派 | 只包 semaphore 後 `expert.speak()`，無本地退避，落到 C1/O1。 |
+| Orc4 | `studio/providers.py:1222` `complete_once()` wrapper——被 `orchestrator.py:3419`（分診）、`autopilot.py:1108`、`lessons.py:294` 呼叫 | 單輪 system+user→文字（非 `.speak()` 形式的 LLM 呼叫路徑） | ✅ 委派（零本地退避） | wrapper 本身**零退避／零重試**：`providers.py:1268` 僅 `asyncio.wait_for(expert.speak(user, _noop), timeout=timeout)`（`wait_for` 是硬逾時、非退避），`providers.py:1269` `except` 兜底回 `""`。限流退避由內層 `expert.speak()` 落 C1/O1 的 `run_with_retries` 吸收、不冒泡到本層（`providers.py:1236`-`1245` 明載「刻意不自套第二層 retry」）。故非旁路，jitter 仍＝0.5。 |
 
 ## 反證：無第二條繞過 jitter 的退避
 
