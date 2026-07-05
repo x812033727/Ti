@@ -2708,3 +2708,24 @@
 ## 三個測試為核可前提（非另案），走離線假專家沿用既有注入縫——① 有內容訊息 → `ttft_s` 為正 float 且進 payload；② 只有 ResultMessage 全程無內容 → `ttft_s` 留 None → payload 不含該鍵；③ 舊 JSONL（無 ttft_s）重播 + `/api/metrics` 聚合 null-safe 斷言
 - 時間：2026-07-06 05:17
 
+## Claude provider 走 `claude_agent_sdk` 路徑無法手動加 `cache_control`；prompt caching 已由 Agent SDK 自動生效，本輪不引入手動控制（列另案）
+- 時間：2026-07-06 05:17
+- 背景：本專案 Claude 專家經 `studio/experts.py` 的 `ClaudeSDKClient`/`ClaudeAgentOptions`（包 Claude Code CLI subprocess），非原生 `anthropic` SDK。`ClaudeAgentOptions` 未暴露 cache_control/cachePoint 注入旋鈕（官方 open 功能請求 anthropics/claude-agent-sdk-python#626，無 workaround），故需求字面「為 system_prompt/tool 定義加 caching」對此路徑是錯誤前提。
+- 事實：快取「已自動在跑」——Claude Code/Agent SDK 預設對 `tools → system → project context` 這段 prefix 自動放 ephemeral cache breakpoint（訂閱預設 1h、API key 預設 5m TTL）。`experts.py` 已擷取 `cache_read_input_tokens`/`cache_creation_input_tokens`，第一次請求為 creation（寫入、慢），後續同 prefix 為 read（~0.1x 成本、快），效果本就可驗證。
+- 決策：本輪只做觀測層（量 `ttft_s` + 真 API A/B 驗證命中 + 記錄 prefix 失效清單），不手動注入 cache_control。
+- 否決方案：改走原生 `anthropic` SDK 手動注入 cache_control（放大工具定義快取、指定 1h TTL 斷點）——需重寫整個工具迴圈、脫離 Agent SDK 的工具迴圈、成本高且不可逆，列為獨立評估的另案，不混進本任務。
+
+## prefix 失效清單——會使 Agent SDK 自動快取全失效（進而拉高 TTFT）的變因，量測期須全部鎖死
+- 時間：2026-07-06 05:17
+- 失效變因（改動即讓後續請求 prefix 不同、快取重建）：
+  1. 切換模型（model）。
+  2. 切換 reasoning effort。
+  3. 修改 system_prompt 或工具集（allowed_tools 增刪）。
+  4. 升級 Claude Code CLI 版本（量測期間勿升級）。
+  5. system_prompt 內動態段：cwd、git status、memory/檔案路徑——跨工作目錄/跨機器每個 prefix 不同、互不命中。
+  6. 子代理（subagent）快取預設 5m TTL，且曾被官方 hardcode 關閉（claude-code#29966），子代理路徑命中率須獨立看待、不可假設與主代理一致。
+- 相關環境變數旋鈕（皆為 Agent SDK/CLI 既有，非本專案 `TI_*`）：`DISABLE_PROMPT_CACHING`（本輪 A/B 的 before 開關）、`ENABLE_PROMPT_CACHING_1H`、`FORCE_PROMPT_CACHING_5M`。
+- 跨 session/跨機器共用快取抑制建議：抑制 system_prompt 的動態段（cwd/git status/memory 路徑），使各工作目錄 prefix 一致才可能互相命中（官方 fleet 建議 exclude_dynamic_sections / modifying-system-prompts）；此屬另案優化，本輪僅記錄清單。
+- 量測含意：A/B 期間若切模型/effort、或在升級 CLI 前後對比，TTFT 前後差可能來自 prefix 失效而非快取本身，結論即被污染——故命中證據以 after 的 `cache_read_input_tokens > 0` 為準，且固定 model/effort/system_prompt/CLI 版本。
+- 來源：anthropics/claude-agent-sdk-python#626、anthropics/claude-code#29966、Claude Code prompt caching 文件、API prompt caching 文件。
+
