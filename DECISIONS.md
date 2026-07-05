@@ -2270,3 +2270,45 @@
 ## 題目附帶的 lessons/vote 去重既有決策與本需求無關，本輪不觸碰
 - 時間：2026-07-05 03:41
 
+## 注入語義改為方案 A——wrapper 對本角色（speaker key 相符）的**每一則** EXPERT_MESSAGE 過境時注入 `duration_s = monotonic() - t0`（自本次 speak 開始的累計耗時）＋ provider/model/role；同 turn 最後一筆 ≈ 整輪耗時
+- 時間：2026-07-05 11:54
+- 理由：全 codebase 無呼叫點設 `final=True`，且 Claude 串流路徑逐 block 廣播、事件過境當下無法預知是否最後一則——「只攔 final」在現況永不觸發，屬靜默失效
+- 否決方案：方案 B（各後端終端訊息補 `final=True`）——fake/providers 可行但 experts.py 串流迴圈不知哪塊是最後一塊，需重構；且會造成 Claude 路徑永無 final 的分裂語義
+
+## `final` 旗標本輪不動、不修其語義；一次 speak 多則訊息（串流 block／system note）皆帶累計耗時，此語義明載於 wrapper docstring
+- 時間：2026-07-05 11:54
+- 理由：final 旗標的語義修復是獨立議題，混進本輪會擴大範圍；累計耗時語義對多訊息天然自洽
+
+## 注入點維持 wrapper 攔截傳入 speak 的 broadcast callable，就地 mutate `StudioEvent.payload`（mutable dict）；事件型別比對用 `events.EventType.EXPERT_MESSAGE` enum，不用字串
+- 時間：2026-07-05 11:54
+- 理由：零呼叫點侵入、可逆（拆 wrapper 即還原）；history 寫檔在 broadcast 之後，注入值會完整落檔
+- 否決方案：改 speak() 回傳值帶 duration——動 ExpertLike Protocol 與全部呼叫點簽名
+
+## expert_wrap.py 內加註解明講「依賴 broadcast → history 寫檔的順序」這條隱含耦合，防未來改 ws.py 的人踩坑
+- 時間：2026-07-05 11:54
+
+## provider 不用 getattr 猜——由建構點明傳：`make_expert()` 用已知的 `prov`、fake_experts 傳 `"fake"`；model 於注入當下解析：有 `effective_model()` 就呼叫（支援 per-task 覆寫的動態值），否則空字串
+- 時間：2026-07-05 11:54
+- 理由：各後端 model 屬性名分歧（`_model`/`_model_override`/`effective_model()`），純 getattr 屬性名會踩坑；effective_model 是既有的對外慣例（task_result 已用）
+- 否決方案：純 `getattr(expert, "provider"/"model")` fallback 鏈
+
+## wrapper 落在新中立模組 `studio/expert_wrap.py`（只依賴 events＋stdlib）；`providers.make_expert()` 回傳處與 `fake_experts.py` 全部建構點套同一函式；禁止 fake_experts import providers
+- 時間：2026-07-05 11:54
+- 理由：保護依賴方向——fake_experts 反向 import providers 會拖進全部 SDK 依賴
+
+## 計時基準 `time.monotonic()`；duration_s 語義＝含 retry 退避的 wall-clock，明載 docstring；speak 拋例外→無事件可附掛→無 duration，接受並文件化，不加旁路事件；每次 speak 各自 t0，並行 lane 互不干擾
+- 時間：2026-07-05 11:54
+
+## 欄位單一寫入路徑＝只有 wrapper 注入；`events.expert_message()` 增 keyword-only optional 參數（None 即省略）僅供 schema 文件與測試建構；欄位一律 optional，舊 history 重播與 events-render.js 容忍缺省，本輪不加 UI 顯示
+- 時間：2026-07-05 11:54
+
+## 驗收測試必含**正樣本**——FakeExpert 包 wrapper 跑離線 e2e，斷言事件確實出現 `duration_s > 0` 且 `provider="fake"`；另補 Claude 串流路徑單元測試斷言多則訊息皆帶累計耗時且單調遞增；缺省容忍（白樣本）另測
+- 時間：2026-07-05 11:54
+- 理由：高工指出本次「條件永不觸發」正是只測白樣本抓不到的靜默失效——正樣本是判別力所在
+
+## proxy 用 `__getattr__` 全轉發（name/avatar/role/stop/fake 的 calls 自然透傳），暴露 `.wrapped` 作 isinstance 逃生門
+- 時間：2026-07-05 11:54
+
+## 明文不做——不引入 wrapt/OTel SDK、不動 retry 內部、不做 per-attempt 粒度、不改 marker 字串、不修 final 旗標語義、不做 perf_counter 翻案；未來細粒度需求以新 optional 欄位擴充，不改 duration_s 既定語義
+- 時間：2026-07-05 11:54
+

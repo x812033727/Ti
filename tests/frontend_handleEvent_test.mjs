@@ -63,6 +63,7 @@ const known = [
   ev('phase_change', { phase: '實作', detail: 'x' }),
   ev('expert_status', { speaker: 'pm', status: 'thinking' }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi' }),
+  ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi', duration_s: 1.23, provider: 'fake', model: 'gpt-4', role: 'engineer' }),
   ev('tool_use', { speaker: 'pm', tool: 'Write', summary: 'x' }),
   ev('board_update', { columns: { todo: [{ title: 'a' }], doing: [], review: [], done: [] } }),
   ev('run_result', { passed: true, detail: 'ok', log: 'log' }),

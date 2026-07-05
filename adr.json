@@ -1,83 +1,6 @@
 {
   "entries": [
     {
-      "decision": "新增 `open_questions` 鍵採 **per-pair 末輪 stance 判定**：對每個 `(speaker,target)` 取最大 `Utterance.round` 的末態 stance，末態為「反對」者列入 open_questions；明確禁止沿用扁平 agree/disagree set 推「未轉同意收斂」",
-      "rationale": "高工指出扁平 set 會讓「先同意後反對」末態仍反對者被 `disagree-agree` 誤排除、漏判未決；唯有取 per-pair 末輪 stance 才正確，這是設計合約層級漏洞，現在釘最便宜",
-      "rejected": "工程師的純集合 `disagree-agree`——無法處理「先同意後反對」末態反對之 case，會漏判未決",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680502
-    },
-    {
-      "decision": "`unique_findings` 定義為 **role 粒度**——target 從未被任何 speaker mention 的角色發言（無人回應者）；建構 mention 圖時排除 self-mention（僅計 `m.speaker != m.target`），並補 self-mention 黑樣本測試防假陰性",
-      "rationale": "工程師指出 self-mention 會讓角色誤判為「被回應」而漏掉 unique；同時標明此為角色粒度近似、非論點粒度遺漏偵測，避免日後誤用",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680514
-    },
-    {
-      "decision": "`consensus` 維持僅取明確 `stance=同意` 的 mention，無 mention 的發言一律歸入 `unique_findings` 不進 consensus，以區分「明確同意」與「無人表態」",
-      "rationale": "工程師確認此為結構保證非測試運氣——零-mention transcript 的 `agree` 必為空集，假共識無生成路徑",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.968053
-    },
-    {
-      "decision": "測試須含零-mention 黑樣本（角色全無 mention）＋**灰樣本（角色被部分 mention）**，確認 unique/open_questions 語意，避免判別力只驗極端一半",
-      "rationale": "高工指出零-mention 只驗極端，灰樣本才驗到 role 粒度的真實語意",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680543
-    },
-    {
-      "decision": "新增 `conclusion.py` 模組（對齊 `adr.py`），職責＝組 prompt＋接 senior one-shot＋呼叫 `parse_conclusion`＋fallback＋render markdown＋落盤，介面 `summarize(summary, transcript) -> dict` 與 `record(cwd, conclusion, *, session_id) -> Path`",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680557
-    },
-    {
-      "decision": "結論蒸餾與 ADR 蒸餾分開兩次 senior one-shot 呼叫、不合併",
-      "rationale": "輸出格式（`共識:/分歧:/未決:/行動:` vs `設計決策:`）與職責不同，混一個 prompt 降遵循率；兩者皆×1 成本可控",
-      "rejected": "合併成單次 senior 呼叫——省一次呼叫但拉低各自格式遵循率，不划算",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680572
-    },
-    {
-      "decision": "蒸餾 prompt 含三條防坑硬指令——①只彙整 transcript 出現過的論點、不得新增②無人反對≠共識，需區分明確同意與無人表態③強分歧須保留並標明雙方，字面寫入可 grep 驗證",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680583
-    },
-    {
-      "decision": "蒸餾 prompt 要求每條結論盡量帶 `(round, speaker)` 錨點，但真錨點事實來源為規則層 summary（`final_positions`/`unique_findings` 天生帶 speaker），不信任 LLM 自填錨點；驗收「至少一條回指 transcript」由規則骨架保證",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.96806
-    },
-    {
-      "decision": "`CONCLUSION.md` 每場覆寫式單檔、落 workspace 根，四段固定 `## 共識／## 分歧／## 未決事項／## 後續行動`，歷史保存靠 git commit 而非 append 累積",
-      "rationale": "",
-      "rejected": "學 adr.py append 累積——結論是本場快照，累積語意錯且會膨脹；多檔歷史回顧留待 M2",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680612
-    },
-    {
-      "decision": "fallback 路徑——`parse_conclusion` 回空骨架時 `conclusion.record` 改用規則式 summary 骨架 render markdown：consensus→共識、disagreements→分歧、open_questions→未決；**行動段留空並標「（蒸餾失靈，無行動項）」，不以 final_positions 末輪發言冒充 action**",
-      "rationale": "高工指出末輪發言不是行動項，硬塞語意偏差；fallback 仍須產出 CONCLUSION.md（驗收 #6）但不偽造行動",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680624
-    },
-    {
-      "decision": "`events.py` 新增 `EventType.CONCLUSION`＋`conclusion(session_id, path, summary)` 建構子，沿用既有 broadcast→record_event 入 history 管道；同步確認 web 前端對未知 event type 有 default 容錯，會炸則補 default case",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680638
-    },
-    {
       "decision": "orchestrator 接線於 `_discuss_agenda` 討論全部結束後、ADR 蒸餾同階段，依序 summarize→record→commit（訊息「結論彙整：產出 CONCLUSION.md」）→broadcast CONCLUSION 事件，單一接點不散落",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3422,83 @@
       "rejected": "",
       "session_id": "apa87f3abce8",
       "created_at": 1783194111.5478024
+    },
+    {
+      "decision": "注入語義改為方案 A——wrapper 對本角色（speaker key 相符）的**每一則** EXPERT_MESSAGE 過境時注入 `duration_s = monotonic() - t0`（自本次 speak 開始的累計耗時）＋ provider/model/role；同 turn 最後一筆 ≈ 整輪耗時",
+      "rationale": "全 codebase 無呼叫點設 `final=True`，且 Claude 串流路徑逐 block 廣播、事件過境當下無法預知是否最後一則——「只攔 final」在現況永不觸發，屬靜默失效",
+      "rejected": "方案 B（各後端終端訊息補 `final=True`）——fake/providers 可行但 experts.py 串流迴圈不知哪塊是最後一塊，需重構；且會造成 Claude 路徑永無 final 的分裂語義",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.812277
+    },
+    {
+      "decision": "`final` 旗標本輪不動、不修其語義；一次 speak 多則訊息（串流 block／system note）皆帶累計耗時，此語義明載於 wrapper docstring",
+      "rationale": "final 旗標的語義修復是獨立議題，混進本輪會擴大範圍；累計耗時語義對多訊息天然自洽",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.8122845
+    },
+    {
+      "decision": "注入點維持 wrapper 攔截傳入 speak 的 broadcast callable，就地 mutate `StudioEvent.payload`（mutable dict）；事件型別比對用 `events.EventType.EXPERT_MESSAGE` enum，不用字串",
+      "rationale": "零呼叫點侵入、可逆（拆 wrapper 即還原）；history 寫檔在 broadcast 之後，注入值會完整落檔",
+      "rejected": "改 speak() 回傳值帶 duration——動 ExpertLike Protocol 與全部呼叫點簽名",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.812286
+    },
+    {
+      "decision": "expert_wrap.py 內加註解明講「依賴 broadcast → history 寫檔的順序」這條隱含耦合，防未來改 ws.py 的人踩坑",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.8122873
+    },
+    {
+      "decision": "provider 不用 getattr 猜——由建構點明傳：`make_expert()` 用已知的 `prov`、fake_experts 傳 `\"fake\"`；model 於注入當下解析：有 `effective_model()` 就呼叫（支援 per-task 覆寫的動態值），否則空字串",
+      "rationale": "各後端 model 屬性名分歧（`_model`/`_model_override`/`effective_model()`），純 getattr 屬性名會踩坑；effective_model 是既有的對外慣例（task_result 已用）",
+      "rejected": "純 `getattr(expert, \"provider\"/\"model\")` fallback 鏈",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.812288
+    },
+    {
+      "decision": "wrapper 落在新中立模組 `studio/expert_wrap.py`（只依賴 events＋stdlib）；`providers.make_expert()` 回傳處與 `fake_experts.py` 全部建構點套同一函式；禁止 fake_experts import providers",
+      "rationale": "保護依賴方向——fake_experts 反向 import providers 會拖進全部 SDK 依賴",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.8122895
+    },
+    {
+      "decision": "計時基準 `time.monotonic()`；duration_s 語義＝含 retry 退避的 wall-clock，明載 docstring；speak 拋例外→無事件可附掛→無 duration，接受並文件化，不加旁路事件；每次 speak 各自 t0，並行 lane 互不干擾",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.8122902
+    },
+    {
+      "decision": "欄位單一寫入路徑＝只有 wrapper 注入；`events.expert_message()` 增 keyword-only optional 參數（None 即省略）僅供 schema 文件與測試建構；欄位一律 optional，舊 history 重播與 events-render.js 容忍缺省，本輪不加 UI 顯示",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.8122911
+    },
+    {
+      "decision": "驗收測試必含**正樣本**——FakeExpert 包 wrapper 跑離線 e2e，斷言事件確實出現 `duration_s > 0` 且 `provider=\"fake\"`；另補 Claude 串流路徑單元測試斷言多則訊息皆帶累計耗時且單調遞增；缺省容忍（白樣本）另測",
+      "rationale": "高工指出本次「條件永不觸發」正是只測白樣本抓不到的靜默失效——正樣本是判別力所在",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.812292
+    },
+    {
+      "decision": "proxy 用 `__getattr__` 全轉發（name/avatar/role/stop/fake 的 calls 自然透傳），暴露 `.wrapped` 作 isinstance 逃生門",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.8122928
+    },
+    {
+      "decision": "明文不做——不引入 wrapt/OTel SDK、不動 retry 內部、不做 per-attempt 粒度、不改 marker 字串、不修 final 旗標語義、不做 perf_counter 翻案；未來細粒度需求以新 optional 欄位擴充，不改 duration_s 既定語義",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0663af6735",
+      "created_at": 1783223697.8122935
     }
   ]
 }

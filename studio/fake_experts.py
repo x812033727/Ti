@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from . import config, events
+from .expert_wrap import ExpertTimingProxy, with_timing
 from .roles import BY_KEY, Role
 
 # --- 範例專案檔案（逐任務寫出）----------------------------------------
@@ -179,20 +180,43 @@ class FakeExpert:
         pass
 
 
-def build_fake_critics(session_id: str, cwd: Path) -> dict[str, FakeExpert]:
+def _fake_expert(
+    role: Role,
+    session_id: str,
+    cwd: Path,
+    *,
+    scripts: list[str],
+    file_queue: list[dict[str, str]] | None = None,
+    action_marker: str = "",
+) -> ExpertTimingProxy:
+    return with_timing(
+        FakeExpert(
+            role,
+            session_id,
+            cwd,
+            scripts=scripts,
+            file_queue=file_queue,
+            action_marker=action_marker,
+        ),
+        provider="fake",
+        model="",
+    )
+
+
+def build_fake_critics(session_id: str, cwd: Path) -> dict[str, ExpertTimingProxy]:
     """離線示範用的異議檢查者（critic）：獨立實例、不寫檔，固定『不成立』放行。
 
     對應「換人」原則：任務審查 gate 用 pm 視角、最終驗收 gate 用 senior 視角。
     這讓離線端到端流程能跑完、又展示至少一次「內部討論」事件（critic_review）。
     """
     return {
-        "pm": FakeExpert(
+        "pm": _fake_expert(
             BY_KEY["pm"],
             session_id,
             cwd,
             scripts=["以驗收標準逐項檢查，找不到實質問題。\n異議: 不成立"],
         ),
-        "senior": FakeExpert(
+        "senior": _fake_expert(
             BY_KEY["senior"],
             session_id,
             cwd,
@@ -201,7 +225,7 @@ def build_fake_critics(session_id: str, cwd: Path) -> dict[str, FakeExpert]:
     }
 
 
-def build_fake_lane_expert(role: Role, session_id: str, cwd: Path) -> FakeExpert:
+def build_fake_lane_expert(role: Role, session_id: str, cwd: Path) -> ExpertTimingProxy:
     """並行示範用的 lane 專家工廠：每條支線各一套，工程師依其 worktree 對應的任務寫檔。
 
     供 orchestrator 的 `_lane_expert_factory` 注入（離線 + 並行時）。工程師寫該任務的檔、
@@ -209,7 +233,7 @@ def build_fake_lane_expert(role: Role, session_id: str, cwd: Path) -> FakeExpert
     """
     tid = _task_id_from_cwd(cwd)
     if role.key == "engineer":
-        return FakeExpert(
+        return _fake_expert(
             role,
             session_id,
             cwd,
@@ -218,14 +242,14 @@ def build_fake_lane_expert(role: Role, session_id: str, cwd: Path) -> FakeExpert
             file_queue=[_PARALLEL_FILES.get(tid, {})],
         )
     if role.key == "qa":
-        return FakeExpert(
+        return _fake_expert(
             role, session_id, cwd, scripts=["在本支線重跑測試，全數通過。\n驗證: PASS"]
         )
     if role.key == "senior":
-        return FakeExpert(
+        return _fake_expert(
             role, session_id, cwd, scripts=["本支線程式碼分層清楚、無明顯問題。\n決議: 核可"]
         )
-    return FakeExpert(role, session_id, cwd, scripts=["以驗收標準逐項檢查，沒有實質反對。"])
+    return _fake_expert(role, session_id, cwd, scripts=["以驗收標準逐項檢查，沒有實質反對。"])
 
 
 def _pm_decompose_script(requirement: str) -> str:
@@ -260,9 +284,11 @@ def _pm_decompose_script(requirement: str) -> str:
     )
 
 
-def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str, FakeExpert]:
+def build_fake_experts(
+    session_id: str, cwd: Path, requirement: str
+) -> dict[str, ExpertTimingProxy]:
     return {
-        "pm": FakeExpert(
+        "pm": _fake_expert(
             BY_KEY["pm"],
             session_id,
             cwd,
@@ -272,7 +298,7 @@ def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str
                 "做得不錯：模組分層清楚、有測試。下次可加更多輸入驗證與互動模式。",
             ],
         ),
-        "engineer": FakeExpert(
+        "engineer": _fake_expert(
             BY_KEY["engineer"],
             session_id,
             cwd,
@@ -290,7 +316,7 @@ def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str
                 {"README.md": _README_MD},
             ],
         ),
-        "qa": FakeExpert(
+        "qa": _fake_expert(
             BY_KEY["qa"],
             session_id,
             cwd,
@@ -303,7 +329,7 @@ def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str
                 {"test_calculator.py": _TEST_PY},
             ],
         ),
-        "senior": FakeExpert(
+        "senior": _fake_expert(
             BY_KEY["senior"],
             session_id,
             cwd,
