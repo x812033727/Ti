@@ -296,6 +296,108 @@ def test_events_token_usage_keeps_explicit_duration_ms_value():
     assert "duration_ms" not in ev_none.to_dict()["payload"]
 
 
+# --- 標準 #4（Claude 路徑）：ResultMessage.duration_api_ms 直通事件 payload ------
+
+
+@pytest.fixture
+def _fake_sdk(monkeypatch):
+    """最小假 claude_agent_sdk：與 tests/core/test_token_usage.py 的 fake_sdk 同型，
+    但 ResultMessage 額外支援 duration_api_ms（可帶可不帶屬性），
+    驗證 experts._emit_claude_token_usage 是「直通 SDK 值、不自造計時」。
+    """
+    import sys
+    import types
+
+    mod = types.ModuleType("claude_agent_sdk")
+
+    class AssistantMessage:
+        def __init__(self, content):
+            self.content = content
+
+    class ResultMessage:
+        def __init__(self, usage=None, total_cost_usd=None, **extra):
+            self.usage = usage
+            self.total_cost_usd = total_cost_usd
+            # 只有明確傳入才設屬性：不傳＝舊 SDK 無此欄位（getattr fallback None）
+            for k, v in extra.items():
+                setattr(self, k, v)
+
+    class TextBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class ToolUseBlock:
+        def __init__(self, name, input):
+            self.name = name
+            self.input = input
+
+    mod.AssistantMessage = AssistantMessage
+    mod.ResultMessage = ResultMessage
+    mod.TextBlock = TextBlock
+    mod.ToolUseBlock = ToolUseBlock
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", mod)
+    return mod
+
+
+async def _agen(items):
+    for it in items:
+        yield it
+
+
+def _collect():
+    bucket = []
+
+    async def broadcast(ev):
+        bucket.append(ev)
+
+    return bucket, broadcast
+
+
+async def test_claude_path_passes_duration_api_ms_through_verbatim(_fake_sdk):
+    """SDK ResultMessage.duration_api_ms=987 → token_usage payload duration_ms == 987（直通不換算）。"""
+    from studio import experts
+    from studio.events import EventType
+    from studio.roles import BY_KEY
+
+    msgs = [
+        _fake_sdk.AssistantMessage(content=[_fake_sdk.TextBlock("done")]),
+        _fake_sdk.ResultMessage(
+            usage={"input_tokens": 100, "output_tokens": 20},
+            total_cost_usd=0.01,
+            duration_api_ms=987,
+        ),
+    ]
+    bucket, broadcast = _collect()
+    await experts.stream_to_events(_agen(msgs), "s", BY_KEY["engineer"], broadcast)
+
+    tu = [e for e in bucket if e.type == EventType.TOKEN_USAGE]
+    assert len(tu) == 1
+    assert tu[0].payload["duration_ms"] == 987
+
+
+async def test_claude_path_old_sdk_without_duration_api_ms_omits_key(_fake_sdk):
+    """舊 SDK ResultMessage 無 duration_api_ms 屬性 → payload 不含 duration_ms 鍵（不塞 None/0）。"""
+    from studio import experts
+    from studio.events import EventType
+    from studio.roles import BY_KEY
+
+    msgs = [
+        _fake_sdk.AssistantMessage(content=[_fake_sdk.TextBlock("done")]),
+        _fake_sdk.ResultMessage(
+            usage={"input_tokens": 100, "output_tokens": 20},
+            total_cost_usd=0.01,
+        ),
+    ]
+    bucket, broadcast = _collect()
+    await experts.stream_to_events(_agen(msgs), "s", BY_KEY["engineer"], broadcast)
+
+    tu = [e for e in bucket if e.type == EventType.TOKEN_USAGE]
+    assert len(tu) == 1
+    assert "duration_ms" not in tu[0].payload, (
+        f"舊 SDK 無 duration_api_ms 時 payload 不應含 duration_ms，got: {tu[0].payload!r}"
+    )
+
+
 # --- 標準 #4：finish_session 整合——meta 同時有 token_usage 與 latency --------
 
 
