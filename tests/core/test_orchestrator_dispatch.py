@@ -391,6 +391,18 @@ async def test_auto_mode_never_rebinds_pm(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_result_model_backfilled_from_expert(monkeypatch):
+    """模型可見性：未經派工指定模型時，task_result 的 model 取實作專家的 effective_model()。"""
+    monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
+    s, experts, bucket = _session()
+    experts["engineer"].effective_model = lambda: "claude-fable-5"  # StubExpert 動態掛上
+    ok = await s._work_task(s._main_ctx, {"id": 1, "title": "甲", "status": "todo"}, "計畫")
+    assert ok is True
+    res = [e for e in bucket if e.type is events.EventType.TASK_RESULT]
+    assert res and res[0].payload["model"] == "claude-fable-5"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_decision_event_mode_manual(monkeypatch):
     """手動模式的 dispatch_decision 事件帶 mode=manual（向後相容欄位）。"""
     monkeypatch.setattr(provider_quota, "snapshot", _stub_snapshot)
