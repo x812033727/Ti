@@ -175,7 +175,7 @@ def _build_fail_markdown(payload: dict[str, Any]) -> str:
             "- 補驗指令：",
             "  ```bash",
             "  # 1) 確認 Anthropic 憑證（API key 模式）",
-            "  test -n \"$ANTHROPIC_API_KEY\" && echo OK || echo MISSING",
+            '  test -n "$ANTHROPIC_API_KEY" && echo OK || echo MISSING',
             "  # 2) 重跑 A/B 量測（單輪 timeout 60s，整體避免逾時）",
             "  timeout 90 .venv/bin/python scripts/measure_prompt_cache_ab.py \\",
             "      --after-attempts 2 --turn-timeout 30",
@@ -200,8 +200,7 @@ def _build_markdown(payload: dict[str, Any]) -> str:
 
     if synthetic:
         real_api_line = (
-            "- 真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema；"
-            "真 API 端到端未實測）"
+            "- 真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema；真 API 端到端未實測）"
         )
     elif payload.get("real_api"):
         real_api_line = "- 真實 API：是（Claude Agent SDK 正式 `Expert.speak()` 路徑）"

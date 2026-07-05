@@ -135,11 +135,16 @@ async def test_prompt_cache_ab_dry_run_marks_mode_and_recovery_hint(tmp_path):
     assert payload["mode"] == "dry_run"
     assert (
         "真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema；"
-        "真 API 端到端未實測）"
+        "真 API 端到端未實測）" in markdown
+    )
+    assert (
+        "after 命中證據：N/A（dry-run 為合成數據，非真實命中，PASS/FAIL 不適用；`cache_read_input_tokens=90` 僅為合成佔位值）"
         in markdown
     )
-    assert "after 命中證據：N/A（dry-run 為合成數據，非真實命中，PASS/FAIL 不適用；`cache_read_input_tokens=90` 僅為合成佔位值）" in markdown
-    assert "| 組別 | DISABLE_PROMPT_CACHING | ttft_s（合成佔位） | cache_read_input_tokens |" in markdown
+    assert (
+        "| 組別 | DISABLE_PROMPT_CACHING | ttft_s（合成佔位） | cache_read_input_tokens |"
+        in markdown
+    )
     assert "before ttft_s（合成佔位）：`0.123`" in markdown
     assert "after ttft_s（合成佔位）：`0.123`" in markdown
     assert "after - before（合成佔位）：`0.000` 秒" in markdown
