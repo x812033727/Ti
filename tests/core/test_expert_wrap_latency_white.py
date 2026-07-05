@@ -178,8 +178,7 @@ def test_speaker_mismatch_skips_metadata_injection(monkeypatch):
     assert payload["speaker"] != wrapper.wrapped.role.key
     for key in _INJECTED_KEYS:
         assert key not in payload, (
-            f"{key!r} 被注入非本人 ({payload['speaker']}) 的訊息 — "
-            "speaker 不匹配時必須跳過"
+            f"{key!r} 被注入非本人 ({payload['speaker']}) 的訊息 — speaker 不匹配時必須跳過"
         )
 
 
