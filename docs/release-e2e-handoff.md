@@ -27,7 +27,7 @@ GitHub 生產環境已對每一版都實跑過完整鏈
 | 發佈文件契約（GH_PAT 四項／DoD／半閉環聲明／403 runbook）在 `CLAUDE.md` | ✅ 已閉環（守護測試） | `tests/autopilot/test_qa_task4_release_docs_dod.py`（全數綠，含黑樣本 mutation 自證判別力） |
 | CI `test` job 於每次 push 跑 `pytest`，在 `v*` tag 推出前即攔截 | ✅ 已閉環 | `.github/workflows/ci.yml` 的 `test` job；閘門在 push 觸發，早於任何 `v*` tag-push |
 | **真實 `v*` tag-push → GitHub release 頁實際 body 頂部 Breaking 置頂** | ⏳ 佐證已具、待封（本任務範圍外，移交待辦） | 已有生產佐證 `docs/evidence/release-v0.2.0-online-body.json`（`body_match=true`，線上 body 頂部即 `## ⚠️ Breaking Changes`）；翻 ✅ 屬另一任務，本任務僅封 release-smoke 觸發一條 |
-| **`release: published` 事件實際觸發 `release-smoke.yml`** | ✅ **已生產閉環（實跑核對）** | 生產證據 `docs/evidence/release-smoke-v0.2.0-trigger.json`：run [27905531397](https://github.com/x812033727/Ti/actions/runs/27905531397)，`event=release`／`status=completed`／`conclusion=success`（`gh run view`＋REST 雙路核對一致）；觸發契約結構另由 `test_qa_task4_release_docs_dod.py::test_task4_commit_does_not_alter_release_smoke_trigger` 守護 |
+| **`release: published` 事件實際觸發 `release-smoke.yml`** | ✅ **已生產閉環（實跑核對）** | 生產證據 `docs/evidence/release-smoke-v0.2.0-trigger.json`：線上 run [27905531397](https://github.com/x812033727/Ti/actions/runs/27905531397)，`event=release`／`status=completed`／`conclusion=success`（gh+REST 雙路：`gh run view`＋REST 實跑核對一致）；觸發契約結構另由 `test_qa_task4_release_docs_dod.py::test_task4_commit_does_not_alter_release_smoke_trigger` 守護 |
 
 ## 發佈後人工核對步驟（具名、可逐項打勾）
 
