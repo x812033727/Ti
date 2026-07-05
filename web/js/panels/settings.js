@@ -354,6 +354,10 @@ function rateLimitBlock(rl) {
     if (rl.seven_day) wrap.appendChild(rateLimitRow("7 天", rl.seven_day));
     if (rl.seven_day_sonnet) wrap.appendChild(rateLimitRow("7 天 · Sonnet", rl.seven_day_sonnet));
     if (rl.seven_day_opus) wrap.appendChild(rateLimitRow("7 天 · Opus", rl.seven_day_opus));
+    // 按模型 scoped 的專屬限額（如 Fable 週限）：與全域窗獨立，一併列出。
+    for (const [name, mw] of Object.entries(rl.models || {})) {
+      if (mw) wrap.appendChild(rateLimitRow(`模型限額 · ${name}`, mw));
+    }
   }
   if (rl.fetched_at) {
     appendTextEl(

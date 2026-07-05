@@ -122,6 +122,10 @@ export function apQuotaWindows(p) {
   } else {
     if (rl.five_hour) wins.push({ label: "5h", pct: Number(rl.five_hour.used_percentage) });
     if (rl.seven_day) wins.push({ label: "7d", pct: Number(rl.seven_day.used_percentage) });
+    // 按模型 scoped 的專屬限額（如 Fable 週限）：與全域窗獨立顯示，PM/使用者一眼看到。
+    for (const [name, mw] of Object.entries(rl.models || {})) {
+      if (mw) wins.push({ label: name, pct: Number(mw.used_percentage) });
+    }
   }
   return wins.filter((w) => Number.isFinite(w.pct));
 }

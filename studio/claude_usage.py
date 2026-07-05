@@ -89,12 +89,42 @@ def _window(d: Any) -> dict | None:
     }
 
 
+def _scoped_models(limits: Any) -> dict | None:
+    """從 ``limits`` 清單抽「按模型 scoped」的限額窗，如 Fable 的 weekly_scoped。
+
+    官方對 Fable 等模型另設專屬限額（``{kind, percent, resets_at, scope.model.display_name}``），
+    與 5h/7d 全域窗互相獨立——某模型限額吃緊不代表整個 claude 受限，故正規化成獨立的
+    ``models`` 子欄位 ``{display_name: {used_percentage, reset_at, severity}}``，絕不混進
+    provider 層的 max_used（provider_quota._usage 只掃「值本身含 used_percentage 的窗」，
+    ``models`` 外層天然被跳過）。無 scoped 條目回 None。
+    """
+    if not isinstance(limits, list):
+        return None
+    out: dict[str, dict] = {}
+    for entry in limits:
+        if not isinstance(entry, dict):
+            continue
+        scope = entry.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        name = model.get("display_name") if isinstance(model, dict) else None
+        if not name:
+            continue
+        pct = entry.get("percent")
+        out[str(name)] = {
+            "used_percentage": round(float(pct), 1) if isinstance(pct, (int, float)) else None,
+            "reset_at": _iso_to_epoch(entry.get("resets_at")),
+            "severity": entry.get("severity"),
+        }
+    return out or None
+
+
 def _empty(error: str, now: float) -> dict:
     return {
         "five_hour": None,
         "seven_day": None,
         "seven_day_sonnet": None,
         "seven_day_opus": None,
+        "models": None,
         "fetched_at": now,
         "error": error,
     }
@@ -172,6 +202,7 @@ def fetch_rate_limits(force: bool = False, cred_file: Path | None = None) -> dic
         "seven_day": _window(body.get("seven_day")),
         "seven_day_sonnet": _window(body.get("seven_day_sonnet")),
         "seven_day_opus": _window(body.get("seven_day_opus")),
+        "models": _scoped_models(body.get("limits")),
         "fetched_at": now,
         "error": None,
     }
