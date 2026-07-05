@@ -43,6 +43,13 @@ def test_existing_event_payload_contracts_stable():
     e = events.expert_message("s", "pm", "PM", "🧑", "hi")
     assert set(e.payload) == {"speaker", "name", "avatar", "text", "streaming", "final"}
 
+    e2 = events.expert_message("s", "pm", "PM", "🧑", "hi", duration_s=1.5, provider="fake", model="fake-model", role="pm")
+    assert e2.payload.get("duration_s") == 1.5
+    assert e2.payload.get("provider") == "fake"
+    assert e2.payload.get("model") == "fake-model"
+    assert e2.payload.get("role") == "pm"
+    assert set(e2.payload) == {"speaker", "name", "avatar", "text", "streaming", "final", "duration_s", "provider", "model", "role"}
+
 
 def test_new_events_have_stable_payload_shape():
     """新增事件 huddle / critic_review 的 to_dict 結構正確、可序列化。"""

@@ -67,18 +67,31 @@ def expert_message(
     *,
     streaming: bool = False,
     final: bool = False,
+    duration_s: float | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    role: str | None = None,
 ) -> StudioEvent:
+    payload = {
+        "speaker": speaker_key,
+        "name": name,
+        "avatar": avatar,
+        "text": text,
+        "streaming": streaming,
+        "final": final,
+    }
+    if duration_s is not None:
+        payload["duration_s"] = duration_s
+    if provider is not None:
+        payload["provider"] = provider
+    if model is not None:
+        payload["model"] = model
+    if role is not None:
+        payload["role"] = role
     return StudioEvent(
         EventType.EXPERT_MESSAGE,
         session_id,
-        {
-            "speaker": speaker_key,
-            "name": name,
-            "avatar": avatar,
-            "text": text,
-            "streaming": streaming,
-            "final": final,
-        },
+        payload,
     )
 
 
