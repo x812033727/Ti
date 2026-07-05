@@ -1,104 +1,6 @@
 {
   "entries": [
     {
-      "decision": "PR 必須附 3–5 組中文邊界測試案例，記錄實測 ratio 值，涵蓋：同義詞替換（「修復」/「修正」）、縮寫（「單測」/「單元測試」）、英中混排（「retry/重試」）、完全不同主題（應為低 ratio 黑樣本）；測試案例本身成為閾值選取的溯源依據。",
-      "rationale": "0.75 目前是憑感覺拍的數字，無邊界案例則日後漏報時無從溯源；Senior 已明確列為核可條件。",
-      "rejected": "",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9180999
-    },
-    {
-      "decision": "`_filter_pending_duplicates` docstring 加一行複雜度說明：`# O(n×m)，其中 n=proposals 數、m=existing 數；existing 預期 < 50 筆，若規模增長需重估`。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.918101
-    },
-    {
-      "decision": "軟上限（topic cap）本輪不實作，決議記入 DECISIONS：理由為 topic bucket 分類需額外語意邏輯、誤殺風險尚未量化、prompt 廣度指示 + pre-filter 已覆蓋主要場景；待未來有隧道數據再評估。",
-      "rationale": "",
-      "rejected": "本輪同時做 topic cap——過度設計，且 bucket 分類若用關鍵詞切割容易誤殺跨模組任務。",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9181018
-    },
-    {
-      "decision": "測試四組（在原三組基礎上加一組）：(a) `_pending_awareness_context()` 輸出含每筆 pending + in_progress 標題；(b) prompt 組裝字串含兩條硬指令關鍵字；(c) `_filter_pending_duplicates()` feed 高重疊清單回傳為空，feed 不重疊清單全數保留；(d) 既有 autopilot/backlog 測試零回歸（不改動既有測試檔）。",
-      "rationale": "原設計把 (b) 與 (a) 合在同一個斷言——指令移到組裝層後需獨立斷言；(c) 需同時驗黑樣本（不重疊不誤殺）。",
-      "rejected": "",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9181027
-    },
-    {
-      "decision": "`_is_duplicate`（`backlog.py`）及 `add_many` 契約完全不動；pre-filter 僅作用於本次 LLM 提案進場前，不回溯清洗現有 backlog，不刪除/合併任何既有任務。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap1a0f5e780f",
-      "created_at": 1781449282.9181035
-    },
-    {
-      "decision": "`REQUIRE_CHOWN` 為 `config.py` 模組頂層常數，`import` 時一次解析完畢；`require_chown_mode()` 只回傳 `REQUIRE_CHOWN`，不重讀 env",
-      "rationale": "`importlib.reload(config)` 即可切值，不需 cache invalidation；`require_chown_mode` 被 monkeypatch 成 lambda 時語意清晰，無副作用",
-      "rejected": "每次呼叫動態讀 env（`_reload_with` 斷言語意混亂，且 reload 後 REQUIRE_CHOWN 與 require_chown_mode() 可能不一致）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.75369
-    },
-    {
-      "decision": "`_parse_require_chown()` 內部直接複用 `env_bool()` 判 strict/off，`warn` 單獨處理，不另維護一份同義詞表",
-      "rationale": "工程師提醒——兩份同義詞表（1/true/yes/on）若不同步必然漂移，single source of truth 更安全",
-      "rejected": "`_parse_require_chown` 自己寫全套 if/elif（需維護兩份清單）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.753694
-    },
-    {
-      "decision": "降級（warn/off）在 `_parse_require_chown` 解析時記 `logger.warning(\"TI_REQUIRE_CHOWN 降級至 %s ...\", mode)`；unknown 值記 `\"無法辨識\"`；預設 strict 不記 warning",
-      "rationale": "escape_hatch 測試 `test_default_strict_no_warning` 明確要求預設路徑靜默；降級訊息在 import time 觸發確保 systemd journal 可見",
-      "rejected": "在 `require_chown_mode()` 呼叫時記（每次寫入都觸發，日誌爆炸）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.7536955
-    },
-    {
-      "decision": "`env_bool()` 為 public 函式，空字串與 `None` 皆回傳 `default`",
-      "rationale": "測試直接斷言 `config.env_bool(\"TI_X_BOOL\", True)`；對齊既有 `_env_float` 容錯慣例（空字串 = 未設定）",
-      "rejected": "private `_env_bool`（測試無法直接斷言）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.7536964
-    },
-    {
-      "decision": "tmp 命名格式 `path.parent / f\".{path.name}.{os.getpid()}.{os.urandom(4).hex()}\"`",
-      "rationale": "高工指出同進程多 thread/coroutine 同時對同一 path 呼叫時，純 pid 會碰撞；`os.urandom` 已在 `import os` 範圍內，不引入新依賴；`O_EXCL` 確保碰撞時 open 失敗而非靜默覆蓋",
-      "rejected": "純 `os.getpid()`（同進程並發會碰撞）；threading.Lock 計數器（引入 threading 依賴，過度設計）；tempfile（前綴不可控，破壞 glob 清理斷言）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.7536974
-    },
-    {
-      "decision": "fd 生命週期——happy path 在 `os.rename` 前 `os.close(fd)`；except 內 close 與 unlink 各自獨立 `try/except OSError: pass` 包覆",
-      "rationale": "高工指出 `os.close(fd)` 本身可能拋例外；若 close 失敗未獨立保護，後面的 `os.unlink(tmp)` 不會執行，tmp 殘留；兩步驟各自吞 OSError 才能保證兩件事都盡力執行",
-      "rejected": "單一 try 包住 close+unlink（close 失敗即跳出，unlink 不執行）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.753698
-    },
-    {
-      "decision": "三態流程固定順序：`off` → 跳過 fchown/fstat 直接 rename；`warn` → fchown 失敗記 warning 後 rename 放行（不做 fstat）；`strict` → fchown 失敗 cleanup+raise → fstat uid≠0 cleanup+raise（訊息含實際 uid）→ fstat nlink≠1 cleanup+raise（訊息含 \"nlink\"）→ rename",
-      "rationale": "warn 的語意是「已知可能非 root，顯式接受」，fchown 後再做 fstat 驗證反而語意矛盾",
-      "rejected": "warn 也做 fstat（測試未要求，且「已知 chown 失敗下 fstat 仍驗」語意曖昧）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.7536993
-    },
-    {
-      "decision": "`require_chown` 參數非 `None` 時記 `logger.warning(\"secure_write_root: require_chown 被呼叫端強制覆蓋為 %s，路徑 %s\", mode_str, path)`",
-      "rationale": "高工指出此參數是安全邊界的旁路，生產環境若被誤用完全無 trace；警告不阻擋行為但留下稽核軌跡",
-      "rejected": "靜默覆蓋（security event 無 trace）；強制禁止此參數（測試需要直接傳入以 bypass config）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.7537048
-    },
-    {
-      "decision": "`start_session` 建立 `events.jsonl` 走 `secure_write_root(events_path, b\"\")`；`record_event` 開頭加 `if not path.exists(): raise RuntimeError(\"events.jsonl 尚未初始化，請先呼叫 start_session\")`",
-      "rationale": "高工指出若 `record_event` 先於 `start_session` 被呼叫，`.open(\"a\")` 會靜默建出非 root-owned 檔案，破壞整個 strict 不變量；guard 讓問題在測試期間早死，不留隱性安全破口",
-      "rejected": "僅靠呼叫順序慣例（沒有任何防線，review 或測試順序錯誤即破功）；`assert path.exists()`（production 不跑 assert）",
-      "session_id": "apb17e4e8ac5",
-      "created_at": 1781459089.7537057
-    },
-    {
       "decision": "`record_event` 的 append 維持 `.open(\"a\")`，不呼叫 `secure_write_root`",
       "rationale": "append 不改 owner；`secure_write_root` 是覆寫語意（tmp+rename），用於 append 會把整個 jsonl 清空成新內容",
       "rejected": "每次 append 都走 secure_write_root（破壞 jsonl 多行語意）",
@@ -3499,6 +3401,104 @@
       "rejected": "",
       "session_id": "apced8255483",
       "created_at": 1783275822.0069788
+    },
+    {
+      "decision": "body 置頂列只改單列（狀態 ⏳→✅＋依據欄補證據路徑），smoke 列維持不動、僅核對",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1098843
+    },
+    {
+      "decision": "落地一律用內容錨點定位（列首粗體字串／`BREAKING_HEADING` 常數／符號名），禁寫死行號",
+      "rationale": "本 repo 既有教訓「行號會漂」，設計指位的 L9/L29/L30 實際已漂移為 L7-18；錨點才穩定",
+      "rejected": "靠 L29/L30 行號 diff——文件前段增減行即誤改鄰列",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1098936
+    },
+    {
+      "decision": "evidence 三份 JSON 唯讀引用、零新增證據檔，文件宣稱單向依賴證據事實",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.109896
+    },
+    {
+      "decision": "保護依賴方向——禁止為文件自洽反向改 `BREAKING_HEADING`／版本字面／evidence 欄位",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1098976
+    },
+    {
+      "decision": "翻 body 列 ✅「前」必須先補一支對稱 pytest 守護，使 body 列 ✅ 與 smoke 列 ✅ 同級護欄",
+      "rationale": "smoke 列 ✅ 背後有 CI 跑的守護測試、竄改即紅；`check_release_body_structure.py`+`online-body.json` 目前無任何 tests/ 引用、CI 一次不跑，翻 ✅ 等於無護欄真理宣稱，evidence 被動或 CHANGELOG 結構漂移都不會翻紅",
+      "rejected": "直接引 script+靜態 json 當依據就翻 ✅——比 smoke 列弱一級證據，撐不起同一顆 ✅（高工退回點）",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.109899
+    },
+    {
+      "decision": "新守護獨立建檔 `tests/autopilot/test_qa_body_pinning_evidence.py`，對稱 smoke 的 `test_qa_smoke_trigger_evidence.py`",
+      "rationale": "沿用「每個生產級宣稱配一支對稱獨立守護」既有模式，依賴方向一致、後人易懂；多一檔成本低於把 body 斷言塞進 `test_qa_task4_e2e_handoff.py` 造成職責混雜",
+      "rejected": "斷言併入既有 handoff 測試——範圍雖更小，但該檔職責（守半閉環聲明）會被稀釋",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099024
+    },
+    {
+      "decision": "新守護斷言 `online-body.json` 的 `body_match=true`、頂部第一個頂層區塊＝`BREAKING_HEADING` 常數、四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙齊，並配成對黑樣本（頂部非 Breaking／抽掉要素即翻紅），可直接把 verdict 的 `black_sample_selfcheck` 包成 collect",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099043
+    },
+    {
+      "decision": "body 列依據欄除三路徑外，加引這支新守護 test，才與 smoke 列 ✅ 依據同級",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099057
+    },
+    {
+      "decision": "頂部聲明擴寫為並列 smoke＋body 兩環為「v0.2.0 已具生產證據之閉環」，`尚待／半閉環` 只保留給「後續版本／其餘未具證據環節」",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099072
+    },
+    {
+      "decision": "頂部聲明完整保留 `真實／tag-push／端到端／生產驗證／半閉環／尚待` 六關鍵詞（實際 `check_half_closed` 為四必要詞＋修飾詞，保六為安全冗餘）",
+      "rationale": "`test_mutation_soften` 是全域 replace 所有 `尚待/半閉環` 才驗紅，版本限定收斂可 baseline 綠、mutation 仍紅",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099095
+    },
+    {
+      "decision": "執行順序調整為 先補守護測試 → #3 聲明收斂 → #1 翻列 → #4 驗證，避免「表閉環／頭待封」矛盾中間態且翻列前護欄已就位",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099112
+    },
+    {
+      "decision": "範圍鎖定——不加 `--verify-tag`、不鎖 actions SHA、不碰 smoke 列與「gh+REST 雙路」既有字串，供應鏈硬化留待辦",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099129
+    },
+    {
+      "decision": "全產出 additive／可逆／零 production code 變更（新增守護測試屬 additive 護欄、不算 production 變更）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099145
+    },
+    {
+      "decision": "驗收指令補入新檔 `test_qa_body_pinning_evidence.py`，與既有三支守護測試一併為收斂閘",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apba34b61bff",
+      "created_at": 1783278871.1099164
     }
   ]
 }
