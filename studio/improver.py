@@ -411,7 +411,16 @@ class ProjectImprover:
 
         raw_n = len(items)
         done_titles = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY, state_dir=sdir)
-        items = [t for t in items if t["title"].strip() and t["title"].strip() not in done_titles]
+        # done 防線：與 pending 同構——精確比對升級為相似度比對，複用 autopilot._first_similar_title
+        # （詞集 Jaccard ≥ AUTOPILOT_DEDUP_RATIO），攔得住改寫過的重提。前半段真值守衛保留：空標題
+        # 應由真值檢查擋掉，不流進 helper。AUTOPILOT_EVAL_MEMORY=0 時 done_titles 為空 corpus，helper
+        # 全回 None，與舊精確比對關閉行為逐位等價，向後相容。
+        items = [
+            t
+            for t in items
+            if t["title"].strip()
+            and autopilot._first_similar_title(t["title"].strip(), done_titles) is None
+        ]
         # 進場 pre-filter：與 autopilot 自評同一把關（複用 _filter_pending_duplicates 兩道防線——
         # 相似度去重 + 子系統廣度），丟掉與專案 backlog 既有 pending/in_progress 語意相近、或同子系統
         # 已過多的提案。連同上一行 done 去重，把瑣碎/重複任務擋在進 backlog 之前（源頭擋）。
