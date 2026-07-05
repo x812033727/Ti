@@ -140,33 +140,80 @@ def _format_num(value: float | int | None, digits: int = 3) -> str:
     return str(value)
 
 
+def _is_real_llm_response(result: RunResult) -> bool:
+    """判斷一次 run 是否真的打到 Anthropic API。
+
+    啟發式（誠實 > 樂觀）：
+    - 必須有 `token_usage` payload（無 payload＝SDK 沒回 usage，通常是 fallback/本地）
+    - `cost_usd` 必須 > 0（fallback 路徑由專家層塞文字、`total_cost_usd` 為 None／0；
+      即便 SDK 撞限流後 fallback，`total_cost_usd` 也不會被填）
+    - `prompt_tokens` 必須 > 0（防「duration_ms 有值但 usage 全 0」的退化事件）
+
+    任何一條不符即標記為 `real_api=False`，報告改為誠實標示「未完成／fallback 路徑」，
+    不會把 fallback 數字當真 API delta 寫入對比表。
+    """
+    payload = result.token_usage_payload or {}
+    if not payload:
+        return False
+    if result.cost_usd is None or float(result.cost_usd) <= 0:
+        return False
+    if int(payload.get("prompt_tokens") or 0) <= 0:
+        return False
+    return True
+
+
+def _build_fail_markdown(payload: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "# Prompt Cache A/B Report",
+            "",
+            "- 真實 API：未完成",
+            f"- 失敗原因：`{payload.get('error_type', 'Unknown')}` {payload.get('error', '')}",
+            "- 補驗所需（任一即可）：",
+            "  - `ANTHROPIC_API_KEY` 環境變數已設定（API key 模式），或",
+            "  - 已登入的 `claude` CLI（`claude auth login` 訂閱模式；目前腳本環境需走 key）",
+            "- 補驗指令：",
+            "  ```bash",
+            "  # 1) 確認 Anthropic 憑證（API key 模式）",
+            "  test -n \"$ANTHROPIC_API_KEY\" && echo OK || echo MISSING",
+            "  # 2) 重跑 A/B 量測（單輪 timeout 60s，整體避免逾時）",
+            "  timeout 90 .venv/bin/python scripts/measure_prompt_cache_ab.py \\",
+            "      --after-attempts 2 --turn-timeout 30",
+            "  ```",
+            "",
+        ]
+    )
+
+
 def _build_markdown(payload: dict[str, Any]) -> str:
     if payload.get("error"):
-        return "\n".join(
-            [
-                "# Prompt Cache A/B Report",
-                "",
-                "- 真實 API：未完成",
-                f"- 失敗原因：`{payload['error_type']}` {payload['error']}",
-                "- 補驗方式：設定 Anthropic API key 或 Claude CLI 登入憑證後重跑本腳本。",
-                "",
-                "```bash",
-                "timeout 60 .venv/bin/python scripts/measure_prompt_cache_ab.py",
-                "```",
-                "",
-            ]
-        )
+        return _build_fail_markdown(payload)
 
+    mode = payload.get("mode", "real")
     before = payload["before"]
     after = payload["after"]
     delta = None
     if before["ttft_s"] is not None and after["ttft_s"] is not None:
         delta = after["ttft_s"] - before["ttft_s"]
     cache_hit = after["cache_read_input_tokens"] > 0
+
+    if mode == "dry_run":
+        real_api_line = (
+            "- 真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema）"
+        )
+    elif payload.get("real_api"):
+        real_api_line = "- 真實 API：是（Claude Agent SDK 正式 `Expert.speak()` 路徑）"
+    else:
+        # run 完成但成本/usage 顯示走 fallback／離線路徑（撞限流、配額、API 錯誤等）
+        real_api_line = (
+            "- 真實 API：否（run 完成但 `cost_usd<=0` 或無 `token_usage`，"
+            "推測走 fallback／離線路徑；A/B 數字不視為真實 API 對比）"
+        )
     lines = [
         "# Prompt Cache A/B Report",
         "",
-        "- 真實 API：是（Claude Agent SDK 正式 `Expert.speak()` 路徑）",
+        real_api_line,
+        f"- 模式：`{mode}`",
         f"- model：`{payload['model']}`",
         f"- effort：`{payload['effort']}`",
         f"- role/system_prompt：`{payload['role_key']}` / sha256 `{payload['system_prompt_sha256']}`",
@@ -236,7 +283,8 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     config.MAX_TURNS_PER_TURN = int(args.max_turns)
 
     meta = {
-        "real_api": True,
+        "real_api": False,
+        "mode": "real",
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "role_key": args.role,
         "model": args.model,
@@ -248,6 +296,11 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         "cli": shutil.which("claude") or "",
         "after_attempts_requested": args.after_attempts,
     }
+
+    if getattr(args, "dry_run", False):
+        # Dry-run：不啟動 SDK subprocess、不打 API；以合成資料驗腳本流程與報告 schema。
+        # 報告 `real_api=False, mode="dry_run"`，不會被誤標為真實對比。
+        return {**meta, **_build_dry_run_payload(prompt, cwd)}
 
     before = await _run_one(
         label="before",
@@ -275,11 +328,86 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         if result.cache_read_input_tokens > 0:
             break
 
+    # 誠實標示：所有 run 都通過 `_is_real_llm_response` 啟發式才算真實 API；
+    # 任一 run 走 fallback / 離線路徑，real_api 即為 False（不會把 fallback 數字當真 delta）。
+    all_real = all(_is_real_llm_response(r) for r in [before, *after_runs])
     return {
         **meta,
+        "real_api": all_real,
         "before": asdict(before),
         "after": asdict(after_runs[-1]),
         "after_runs": [asdict(r) for r in after_runs],
+    }
+
+
+def _build_dry_run_payload(prompt: str, cwd: Path) -> dict[str, Any]:
+    """合成 dry-run payload：保留真實 schema、不動 `real_api=False`。
+
+    目的：CI/離線環境能在不打 API 的前提下驗證腳本流程（env 操作、報告 markdown、
+    變因鎖死）。產出值僅供 schema 對齊，不可用於實際快取效果結論。
+    """
+    payload_before = {
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "duration_api_ms": 1234,
+        "total_cost_usd": 0.001,
+    }
+    payload_after_cold = {
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 90,
+        "duration_api_ms": 1300,
+        "total_cost_usd": 0.001,
+    }
+    payload_after_warm = {
+        "input_tokens": 10,
+        "output_tokens": 10,
+        "cache_read_input_tokens": 90,
+        "cache_creation_input_tokens": 0,
+        "duration_api_ms": 200,
+        "total_cost_usd": 0.0001,
+    }
+
+    def _result(label: str, disable: bool, payload: dict) -> RunResult:
+        return RunResult(
+            label=label,
+            disable_prompt_caching=disable,
+            ttft_s=0.123,
+            cache_read_input_tokens=int(payload.get("cache_read_input_tokens") or 0),
+            cache_creation_input_tokens=int(payload.get("cache_creation_input_tokens") or 0),
+            duration_ms=int(payload.get("duration_api_ms") or 0),
+            prompt_tokens=int(payload.get("input_tokens") or 0),
+            completion_tokens=int(payload.get("output_tokens") or 0),
+            total_tokens=int(payload.get("input_tokens") or 0)
+            + int(payload.get("output_tokens") or 0),
+            cost_usd=payload.get("total_cost_usd"),
+            text_chars=len(prompt),
+            token_usage_payload={
+                "speaker": "dry-run",
+                "provider": "claude",
+                "model": config.MODEL_FAST,
+                "prompt_tokens": int(payload.get("input_tokens") or 0),
+                "completion_tokens": int(payload.get("output_tokens") or 0),
+                "total_tokens": int(payload.get("input_tokens") or 0)
+                + int(payload.get("output_tokens") or 0),
+                "cost_usd": payload.get("total_cost_usd"),
+                "cache_read": int(payload.get("cache_read_input_tokens") or 0),
+                "cache_write": int(payload.get("cache_creation_input_tokens") or 0),
+                "duration_ms": int(payload.get("duration_api_ms") or 0),
+                "ttft_s": 0.123,
+            },
+        )
+
+    before = _result("before", True, payload_before)
+    after_cold = _result("after", False, payload_after_cold)
+    after_warm = _result("after_read_2", False, payload_after_warm)
+    return {
+        "before": asdict(before),
+        "after": asdict(after_warm),
+        "after_runs": [asdict(after_cold), asdict(after_warm)],
     }
 
 
@@ -300,6 +428,11 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-failure-report",
         action="store_true",
         help="失敗時仍以 exit 0 結束；只供無憑證環境產出移交報告。",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="不打 API：以合成資料驗腳本流程與報告 schema；報告 `real_api=False, mode=dry_run`。",
     )
     return parser
 
