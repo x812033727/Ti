@@ -1,0 +1,6 @@
+TI_REQUIRE_CHOWN 降級至 off：完全停用 state 寫入的 root owner 驗證
+ERROR: usage: python -m pytest [options] [file_or_dir] [file_or_dir] [...]
+python -m pytest: error: unrecognized arguments: --timeout=10
+  inifile: /opt/ti-autopilot-work/pyproject.toml
+  rootdir: /opt/ti-autopilot-work
+

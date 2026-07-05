@@ -1168,6 +1168,92 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
         )
 
 
+# 執行中活動停滯 supervisor 的輪詢/寬限常數（秒）。
+_LIVENESS_POLL_S = 30.0  # supervisor 輪詢 events_mtime 的間隔
+_STALL_RECLAIM_S = 60.0  # 偵測停滯→取消 session.run 後，等待其收斂的寬限；逾時即放棄續跑
+
+
+class AutopilotTaskStalled(Exception):
+    """任務執行中活動停滯（session events 檔 mtime 長時間未前進，疑似子程序死鎖）。
+
+    刻意**不繼承 TimeoutError**：與硬牆逾時（AUTOPILOT_TASK_TIMEOUT，多半是任務太大跑不完）
+    區分處置——停滯是基礎設施型失敗（子程序卡死），標 failed 由分診自動重試；硬牆逾時維持
+    parked（需人工拆分）。主迴圈以型別精準分流（見 _main_loop）。
+    """
+
+
+async def _cancel_and_reclaim(run_task: asyncio.Task) -> None:
+    """取消 run_task 並在 _STALL_RECLAIM_S 內等它收斂；逾時即放棄（不阻塞主迴圈續跑）。
+
+    Part 1 已把 Expert.stop()/interrupt()/disconnect() 的收尾圈上逾時，正常情況取消會迅速
+    收斂；此處的 shield+wait_for 是最後兜底——即使仍有殘留卡點，寬限用罄就放手，讓死鎖至多
+    殘留一個 idle 子程序而非拖死整個迴圈。
+    """
+    run_task.cancel()
+    try:
+        await asyncio.wait_for(asyncio.shield(run_task), _STALL_RECLAIM_S)
+    except (Exception, asyncio.CancelledError):  # noqa: BLE001 — 收斂或放棄皆吞
+        pass
+
+
+async def _run_session_supervised(session, requirement: str, sid: str):
+    """跑 session.run，並在其上疊「硬牆時鐘」與「活動停滯」兩道兜底，讓死鎖就地自癒。
+
+    - session.run 正常完成 → 回傳其結果。
+    - 執行時間超過 AUTOPILOT_TASK_TIMEOUT（硬牆，多半任務太大）→ 取消後拋 TimeoutError
+      （訊息沿用既有格式，落主迴圈的 parked 分支）。
+    - 連續 AUTOPILOT_STALL_TIMEOUT 秒「無任何進展」（疑似子程序死鎖）→ 取消後拋
+      AutopilotTaskStalled（落主迴圈的 failed→分診重試分支）。
+    - 收到取消（SIGTERM 優雅停機）→ 先回收 run_task 再原樣 re-raise，既有停機收斂不受影響。
+
+    「進展」＝events 檔 mtime 前進 **或** 任一 worker 子程序 CPU tick 前進（沿用 #298 的
+    _proc_descendant_cpu／_workers_field）。兩訊號正交互補：events_mtime 在長 inter-message
+    間隔會凍結（工具長跑但沒吐串流訊息），此時 cpu_active 仍為 True → 不誤殺合法長任務；反之
+    issue #286 的死鎖是子程序卡 ep_poll 零 CPU 且零事件 → 兩訊號同時靜止才判死鎖，訊號更強、
+    誤殺風險更低（尤其 TURN_IDLE/HARD 被設 0 停用的 footgun 配置，純 events 會誤殺 CPU 忙碌的
+    長 turn）。cpu_active 為 None（非 Linux／無 /proc／首個 tick）時退回純 events 判定，行為與
+    未整合前一致。門檻仍取 AUTOPILOT_STALL_TIMEOUT（預設 2400 > TURN_HARD_TIMEOUT）：CPU gate
+    是「更難誤殺」，不改動門檻語義（等 API 回應這類零 CPU＋零事件的合法慢 turn 仍靠此餘裕）。
+    """
+    hard = config.AUTOPILOT_TASK_TIMEOUT or None
+    stall = config.AUTOPILOT_STALL_TIMEOUT or None
+    loop = asyncio.get_running_loop()
+    run_task = asyncio.ensure_future(session.run(requirement))
+    started = loop.time()
+    last_mtime = history.events_mtime(sid)
+    prev_cpu = _proc_descendant_cpu()
+    last_progress = started
+    try:
+        while True:
+            done, _ = await asyncio.wait({run_task}, timeout=_LIVENESS_POLL_S)
+            if run_task in done:
+                return run_task.result()
+            now = loop.time()
+            # 進展訊號一：events 檔 mtime 前進。
+            mtime = history.events_mtime(sid)
+            progressed = mtime != last_mtime
+            last_mtime = mtime
+            # 進展訊號二：worker 子程序 CPU tick 前進（events 凍結時的活性兜底）。
+            cur_cpu = _proc_descendant_cpu()
+            if _workers_field(prev_cpu, cur_cpu).get("cpu_active") is True:
+                progressed = True
+            prev_cpu = cur_cpu
+            if progressed:
+                last_progress = now
+            if hard is not None and now - started >= hard:
+                await _cancel_and_reclaim(run_task)
+                raise TimeoutError(f"autopilot task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s")
+            if stall is not None and now - last_progress >= stall:
+                await _cancel_and_reclaim(run_task)
+                raise AutopilotTaskStalled(
+                    f"no activity for {int(now - last_progress)}s"
+                    "（events 凍結且 worker 零 CPU，逾時，疑似子程序死鎖）"
+                )
+    except asyncio.CancelledError:
+        await _cancel_and_reclaim(run_task)
+        raise
+
+
 async def run_one_task(task: dict) -> None:
     t0 = time.time()  # 供 audit.jsonl 的 duration_s（整個任務含討論/閘門/合併）
     sid = f"ap{uuid.uuid4().hex[:10]}"
@@ -1236,14 +1322,10 @@ async def run_one_task(task: dict) -> None:
 
     try:
         try:
-            result = await asyncio.wait_for(
-                session.run(requirement),
-                timeout=config.AUTOPILOT_TASK_TIMEOUT or None,
-            )
-        except TimeoutError as exc:
-            raise TimeoutError(
-                f"autopilot task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s"
-            ) from exc
+            # supervisor 疊「硬牆時鐘（→ TimeoutError → parked）」與「活動停滯（→
+            # AutopilotTaskStalled → failed 重試）」兩道兜底，讓執行中死鎖就地自癒，
+            # 不再依賴外部監控/人工重啟（issue #286）。硬牆逾時訊息沿用既有格式。
+            result = await _run_session_supervised(session, requirement, sid)
         finally:
             # 優雅停機路徑不 finish_session：收尾由停機收斂的 mark_interrupted 處理
             # （error＋停機註記）；這裡照跑會把 meta 先推成 incomplete，蓋掉中斷標記。
@@ -2030,6 +2112,16 @@ async def _main_loop(startup_sig: float) -> None:
         _write_status("running", task_id=task.get("id"), quota=quota)
         try:
             await run_one_task(task)
+        except AutopilotTaskStalled as exc:
+            # 執行中活動停滯（疑似子程序死鎖）＝基礎設施型失敗，非任務太大：標 failed 且 note
+            # 含「逾時」命中 INFRA_FAILURE_RE，下一輪頂端的 _maybe_triage_failed 即把 attempts
+            # 歸零、退回 pending 自動重試（無需外部監控/人工重啟）。與硬牆逾時的 parked 區分。
+            backlog.set_status(
+                task["id"],
+                "failed",
+                note=f"任務執行中停滯逾時（{exc}）——標 failed，由分診自動重試",
+            )
+            log.warning("任務 #%s 執行中停滯逾時，標 failed 待分診重試", task.get("id"))
         except TimeoutError:
             # 任務級 timeout ≠ 任務本身壞死：多半是範圍太大跑不完。標 parked（而非 failed
             # 死路）讓 backlog 分診看得見、待拆分後重排；session 軟性時間預算已讓多數場次
