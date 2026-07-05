@@ -288,6 +288,8 @@ async def _emit_claude_token_usage(
     total = prompt + completion
     if total <= 0:
         return
+    # Claude 端時延直取 SDK ResultMessage.duration_api_ms（API 通訊時間），不自造計時；無則 None。
+    duration_ms = getattr(msg, "duration_api_ms", None)
     await broadcast(
         events.token_usage(
             session_id,
@@ -298,6 +300,7 @@ async def _emit_claude_token_usage(
             completion,
             total,
             cost_usd=getattr(msg, "total_cost_usd", None),
+            duration_ms=duration_ms,
             cache_read=_usage_int(usage, "cache_read_input_tokens"),
             cache_write=_usage_int(usage, "cache_creation_input_tokens"),
         )
