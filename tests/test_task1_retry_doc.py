@@ -8,8 +8,15 @@ import pathlib
 import re
 import subprocess
 
+from _scope_guard import find_repo_scope_violations
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARCH = ROOT / "ARCHITECTURE.md"
+SCOPE_GUARD_MAINTENANCE_GLOBS = (
+    "tests/_scope_guard.py",
+    "tests/conftest.py",
+    "tests/test_task1_retry_doc.py",
+)
 
 
 def read(p):
@@ -192,11 +199,5 @@ def test_no_py_changed():
     ).stdout.strip()
     if not base:
         pytest.skip("取不到 origin/main 基準，略過 .py 變更護欄（避免假綠）")
-    out = subprocess.run(
-        ["git", "diff", "--name-only", base, "HEAD", "--", "*.py"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    changed = [line for line in out.stdout.splitlines() if line.strip()]
+    changed = find_repo_scope_violations(ROOT, base, SCOPE_GUARD_MAINTENANCE_GLOBS)
     assert not changed, f"不應有 .py 被改動，卻動了：{changed}"
