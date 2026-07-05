@@ -2576,3 +2576,52 @@
 ## 全部產出 additive／可逆／零 production code 變更，`BREAKING_HEADING` 常數與版本字面值不動、不加 `--verify-tag`
 - 時間：2026-07-06 02:23
 
+## body 置頂列只改單列（狀態 ⏳→✅＋依據欄補證據路徑），smoke 列維持不動、僅核對
+- 時間：2026-07-06 03:14
+
+## 落地一律用內容錨點定位（列首粗體字串／`BREAKING_HEADING` 常數／符號名），禁寫死行號
+- 時間：2026-07-06 03:14
+- 理由：本 repo 既有教訓「行號會漂」，設計指位的 L9/L29/L30 實際已漂移為 L7-18；錨點才穩定
+- 否決方案：靠 L29/L30 行號 diff——文件前段增減行即誤改鄰列
+
+## evidence 三份 JSON 唯讀引用、零新增證據檔，文件宣稱單向依賴證據事實
+- 時間：2026-07-06 03:14
+
+## 保護依賴方向——禁止為文件自洽反向改 `BREAKING_HEADING`／版本字面／evidence 欄位
+- 時間：2026-07-06 03:14
+
+## 翻 body 列 ✅「前」必須先補一支對稱 pytest 守護，使 body 列 ✅ 與 smoke 列 ✅ 同級護欄
+- 時間：2026-07-06 03:14
+- 理由：smoke 列 ✅ 背後有 CI 跑的守護測試、竄改即紅；`check_release_body_structure.py`+`online-body.json` 目前無任何 tests/ 引用、CI 一次不跑，翻 ✅ 等於無護欄真理宣稱，evidence 被動或 CHANGELOG 結構漂移都不會翻紅
+- 否決方案：直接引 script+靜態 json 當依據就翻 ✅——比 smoke 列弱一級證據，撐不起同一顆 ✅（高工退回點）
+
+## 新守護獨立建檔 `tests/autopilot/test_qa_body_pinning_evidence.py`，對稱 smoke 的 `test_qa_smoke_trigger_evidence.py`
+- 時間：2026-07-06 03:14
+- 理由：沿用「每個生產級宣稱配一支對稱獨立守護」既有模式，依賴方向一致、後人易懂；多一檔成本低於把 body 斷言塞進 `test_qa_task4_e2e_handoff.py` 造成職責混雜
+- 否決方案：斷言併入既有 handoff 測試——範圍雖更小，但該檔職責（守半閉環聲明）會被稀釋
+
+## 新守護斷言 `online-body.json` 的 `body_match=true`、頂部第一個頂層區塊＝`BREAKING_HEADING` 常數、四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙齊，並配成對黑樣本（頂部非 Breaking／抽掉要素即翻紅），可直接把 verdict 的 `black_sample_selfcheck` 包成 collect
+- 時間：2026-07-06 03:14
+
+## body 列依據欄除三路徑外，加引這支新守護 test，才與 smoke 列 ✅ 依據同級
+- 時間：2026-07-06 03:14
+
+## 頂部聲明擴寫為並列 smoke＋body 兩環為「v0.2.0 已具生產證據之閉環」，`尚待／半閉環` 只保留給「後續版本／其餘未具證據環節」
+- 時間：2026-07-06 03:14
+
+## 頂部聲明完整保留 `真實／tag-push／端到端／生產驗證／半閉環／尚待` 六關鍵詞（實際 `check_half_closed` 為四必要詞＋修飾詞，保六為安全冗餘）
+- 時間：2026-07-06 03:14
+- 理由：`test_mutation_soften` 是全域 replace 所有 `尚待/半閉環` 才驗紅，版本限定收斂可 baseline 綠、mutation 仍紅
+
+## 執行順序調整為 先補守護測試 → #3 聲明收斂 → #1 翻列 → #4 驗證，避免「表閉環／頭待封」矛盾中間態且翻列前護欄已就位
+- 時間：2026-07-06 03:14
+
+## 範圍鎖定——不加 `--verify-tag`、不鎖 actions SHA、不碰 smoke 列與「gh+REST 雙路」既有字串，供應鏈硬化留待辦
+- 時間：2026-07-06 03:14
+
+## 全產出 additive／可逆／零 production code 變更（新增守護測試屬 additive 護欄、不算 production 變更）
+- 時間：2026-07-06 03:14
+
+## 驗收指令補入新檔 `test_qa_body_pinning_evidence.py`，與既有三支守護測試一併為收斂閘
+- 時間：2026-07-06 03:14
+
