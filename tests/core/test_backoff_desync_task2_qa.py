@@ -2,8 +2,13 @@
 
 N=64 simulates many clients hitting the same attempt at once.  Each test injects
 a deterministic serialized rand stream.  White samples require len(set)>1,
-pstdev>0, and all samples inside the exact jitter band; the black sample asserts
-that jitter=0 degenerates to a constant delay.
+pstdev>0, and all samples inside the exact jitter band.
+
+白/黑樣本對照（任務 #2/#3）：
+- 白樣本（jitter=0.5）：同 attempt 的 N 客戶端延遲**去同步**——非全等、pstdev>0、落在理論帶內。
+- 黑樣本（jitter=0）：同 attempt 的 N 客戶端延遲**退化為全等**（len(set)==1、pstdev==0）。
+  這證明白樣本的「非全等」不是假綠——一旦 jitter 被關掉，測試會立刻抓到退化。
+黑白樣本刻意**同檔對照**，讓「開/關 jitter」的差異在同一處一眼可見。
 """
 
 from __future__ import annotations
@@ -71,7 +76,15 @@ def test_desync_jitter_529_without_retry_after_spreads_downward() -> None:
     assert max(delays) == nominal
 
 
+def _assert_collapsed_delay(delays: list[float], *, nominal: float) -> None:
+    assert len(delays) >= 50
+    assert len(set(delays)) == 1
+    assert pstdev(delays) == 0.0
+    assert delays[0] == nominal
+
+
 def test_black_sample_jitter_zero_collapses_to_constant_delay() -> None:
+    """jitter=0 時，429 與 529 都退化為同 attempt 延遲全等。"""
     retry_after = 10.0
     attempt = 3
     nominal_429 = min(retry_after, CAP)
@@ -87,11 +100,11 @@ def test_black_sample_jitter_zero_collapses_to_constant_delay() -> None:
         )
         for value in _serialized_rand_values()
     ]
-    assert len(set(delays_429)) == 1
-    assert delays_429[0] == nominal_429
+    _assert_collapsed_delay(delays_429, nominal=nominal_429)
 
     attempt = 2
     nominal_529 = min(BASE * (2**attempt), CAP)
+
     delays_529 = [
         backoff_delay(
             None,
@@ -103,5 +116,4 @@ def test_black_sample_jitter_zero_collapses_to_constant_delay() -> None:
         )
         for value in _serialized_rand_values()
     ]
-    assert len(set(delays_529)) == 1
-    assert delays_529[0] == nominal_529
+    _assert_collapsed_delay(delays_529, nominal=nominal_529)
