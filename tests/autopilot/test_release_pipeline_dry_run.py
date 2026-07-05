@@ -45,6 +45,7 @@ from tests.autopilot._release_check import (
     missing_elements as _missing_elements,
     outlet_carries_block as _outlet_carries_block,
     render_or_none as _render_or_none,
+    version_matches_effective as _version_matches_effective,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,11 +105,14 @@ def test_dry_run_dump_both_outlets_carry_block(changelog, version):
 
 
 def test_version_from_pyproject_appears_in_both_outlets(changelog, version):
-    """版本字串來自 pyproject（非硬寫），且在兩出口 body 內可見。"""
+    """版本字串來自 pyproject，且 ④ 生效版本逐字對應該版本。"""
     assert re.fullmatch(r"\d+\.\d+\.\d+", version), f"pyproject 版本格式異常：{version!r}"
     out = dry_run_dump(changelog, version)
     for name, body in out.items():
         assert version in body, f"AC#2：{name} 出口未帶 pyproject 版本字串 {version!r}"
+        assert _version_matches_effective(body, version), (
+            f"AC#2：{name} 的 ④ 生效版本未對應 pyproject 版本 {version!r}"
+        )
 
 
 def test_dry_run_default_version_uses_pyproject(changelog, version):
