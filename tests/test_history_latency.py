@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 from studio import config, events, history
 
@@ -396,3 +397,78 @@ def test_finish_session_meta_latency_present_even_when_all_events_legacy():
     # token_usage 照常聚合
     assert meta["token_usage"]["total"]["calls"] == 1
     assert meta["token_usage"]["total"]["total"] == 7
+
+
+# --- 標準 #5：離線 e2e——finish_session 後 meta 有 latency 頂層鍵 ----------------
+
+
+@pytest.fixture
+def _offline_client(tmp_path, monkeypatch):
+    """最小離線 TestClient：沿用 test_offline_e2e.py 的 fixture 模式，
+    不打真 LLM（OFFLINE_MODE=True），讓 finish_session 真實跑到。
+    HISTORY_ROOT 在 _tmp_history（autouse）設好後由此 fixture 覆寫至同 tmp_path 子目錄，
+    兩者皆為 monkeypatch 暫時設定，測試結束自動還原。
+    """
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    monkeypatch.setattr(config, "OFFLINE_MODE", True)
+    monkeypatch.setattr(config, "PARALLEL_TASKS_ENABLED", False)
+    monkeypatch.setattr(config, "OFFLINE_DELAY", 0.0)
+    monkeypatch.setattr(config, "DEBATE_ROUNDS", 1)
+    monkeypatch.setattr(config, "HUDDLE_ENABLED", False)
+    monkeypatch.setattr(config, "REFLEXION_ENABLED", False)
+    monkeypatch.setattr(config, "SELF_REFINE_ITERS", 0)
+    monkeypatch.setattr(config, "OBJECTIVE_GATE", "0")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "ws")
+    # 覆寫 autouse _tmp_history 設定的路徑：同一 tmp_path 下的 hist 子目錄
+    monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "hist")
+    from studio.server import app
+
+    return TestClient(app, client=("127.0.0.1", 12345))
+
+
+def test_offline_e2e_meta_has_latency_key(_offline_client):
+    """離線端到端：真實 session 收尾後，/api/history/{sid}/events 回傳的 meta
+    必須含頂層 latency 鍵，且結構完整（total/by_provider/by_model/by_role，
+    各桶有 count/sum_ms/max_ms/avg_ms）。
+
+    fake 專家不帶 duration_ms，故 latency.total.count == 0；但 latency 鍵本身
+    必須存在（finish_session 無論有無 duration_ms 事件都寫 meta["latency"]）。
+    """
+    sid = None
+    with _offline_client.websocket_connect("/ws") as ws:
+        ws.send_json({"requirement": "做一個加法函式"})
+        for _ in range(500):
+            ev = ws.receive_json()
+            if sid is None:
+                sid = ev.get("session_id")
+            if ev["type"] in ("done", "error"):
+                break
+
+    assert sid is not None, "應取得 session_id"
+
+    resp = _offline_client.get(f"/api/history/{sid}/events")
+    assert resp.status_code == 200, f"history 端點失敗：{resp.status_code} {resp.text}"
+    data = resp.json()
+    meta = data.get("meta", {})
+
+    # 頂層兩鍵必須平行存在（不可 latency 塞進 token_usage 內）
+    assert "latency" in meta, f"meta 缺 latency 鍵，實有：{sorted(meta)}"
+    assert "token_usage" in meta, f"meta 缺 token_usage 鍵，實有：{sorted(meta)}"
+
+    lat = meta["latency"]
+    # 四個子桶齊全
+    assert set(lat) == {"total", "by_provider", "by_model", "by_role"}, (
+        f"latency 應有 total/by_provider/by_model/by_role，got {sorted(lat)}"
+    )
+    # total 桶欄位齊全
+    for field in _LATENCY_FIELDS:
+        assert field in lat["total"], f"latency.total 缺欄位 {field!r}"
+
+    # fake 專家無 duration_ms → count=0，但數值必須合理（非負）
+    assert lat["total"]["count"] >= 0
+    assert lat["total"]["sum_ms"] >= 0
+    assert lat["total"]["max_ms"] >= 0
+    assert lat["total"]["avg_ms"] >= 0
+    # count=0 時 avg_ms 須為 0（_finalize_latency_bucket 保證）
+    if lat["total"]["count"] == 0:
+        assert lat["total"]["avg_ms"] == 0, "count=0 時 avg_ms 必須為 0"
