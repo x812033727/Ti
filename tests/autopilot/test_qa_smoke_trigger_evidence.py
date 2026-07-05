@@ -181,9 +181,18 @@ def test_gate_handoff_green_iff_evidence_verified(evidence, handoff_text):
 
 
 def test_black_sample_tampered_runid_turns_red(evidence, handoff_text):
-    """竄改證據 run-id → 與 handoff 引用值失聯，gate 翻紅。"""
+    """竄改證據 run-id → 與 handoff 引用值失聯，gate 翻紅。
+
+    竄改值須與 baseline 現值明確不同，否則「竄改態＝提交態」黑樣本會喪失判別力
+    （跨場次教訓：run-id 字串在 ≠ 判別力）。此處以斷言強制 mutation 真的改動了值。
+    """
+    tampered = "deadbeef-not-a-run-id"
+    assert tampered != EXPECTED_RUN_ID, "黑樣本竄改值不得與 EXPECTED_RUN_ID 相同"
+    assert tampered != evidence.get("run_id"), (
+        "黑樣本竄改值與證據 baseline run_id 撞值，喪失判別力"
+    )
     mutated = copy.deepcopy(evidence)
-    mutated["run_id"] = "99999999999"
+    mutated["run_id"] = tampered
     problems = check_gate(mutated, handoff_text) + check_evidence(mutated)
     assert problems, "假綠：竄改 run-id 後守護未翻紅"
 
