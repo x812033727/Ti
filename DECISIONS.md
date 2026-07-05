@@ -2386,3 +2386,43 @@
   - RetryConfig 層另有 jitter=0 確定值黑樣本於 `tests/core/test_retry_config_task4_qa.py`。
 - **SDK 不疊乘（任務#4）**：Python SDK 可控層無 retry 旋鈕（`experts.py:373-381`、`providers.py:1167 max_retries=0`），守門 `tests/core/test_claude_no_double_backoff_task3_qa.py`；CLI subprocess 層是否內部 retry 屬已知邊界（見上方任務#4 查核結論）。
 - **收尾驗證**：`.venv/bin/python -m pytest -q` 全綠、`.venv/bin/python -m ruff check .` 無錯（新測試在其中）。
+## 本場定性為驗證封口，範圍限 additive 產出（測試斷言／文件／移交待辦），禁止修改 CHANGELOG 內容、`BREAKING_HEADING` 常數、`render_release_body` 簽章及任何 marker 字串
+- 時間：2026-07-06 00:11
+- 理由：內容改一字可能動到四要素順序契約，換來零回歸與可逆性
+- 否決方案：順手潤飾 CHANGELOG 或改常數遷就內容
+
+## 資料流沿用現況不變——CHANGELOG（內容 SSOT）→ `release_note.extract_breaking_block`（錨＝`BREAKING_HEADING`）→ `publish_release.render_release_body` → `body.md`，本場只沿此鏈實跑取證
+- 時間：2026-07-06 00:11
+
+## `release_note.BREAKING_HEADING` 為抽取錨點單一事實來源，依賴方向固定為「CHANGELOG heading 對齊常數」；若查出漂移一律改 `CHANGELOG.md`，不得反向改常數
+- 時間：2026-07-06 00:11
+
+## #2 交付為文件級逐字比對證據，不新增與 `four_elements_in_order`／`breaking_is_at_top` 重疊的測試
+- 時間：2026-07-06 00:11
+- 理由：現況守門測試已覆蓋，避免測試堆疊
+- 否決方案：為求安全感新增比對測試
+
+## #2 逐字比對證據須指名到出處路徑——貼出 `release_note.BREAKING_HEADING` 常數與 `CHANGELOG.md` 實際 heading 兩邊來源的檔名行號，供接手者重驗漂移
+- 時間：2026-07-06 00:11
+- 理由：高工提醒「已比對」一句話不可勾稽，具名出處才能重驗
+
+## #2 須實跑 mutation 證明改 heading 會翻紅，且判準寫死為「必失敗於 `four_elements_in_order` 或 `breaking_is_at_top`」，而非任意 collection/import error
+- 時間：2026-07-06 00:11
+- 理由：靜態看兩處相等是假綠重災區；typo 讓 import 爆掉不算驗到契約
+- 否決方案：只靜態比對兩處相等即結案
+
+## warn/off 維持「使用者側逃生艙、即刻生效」語氣，禁止引入 deprecation 過渡期或未來版本才 enforce 措辭，否則 `has_future_enforce_timeline` 翻紅且違反 ADR
+- 時間：2026-07-06 00:11
+- 否決方案：採業界「先 deprecated 數版警告再 breaking」過渡策略（須先翻 `DECISIONS.md:791,1000`）
+
+## #3 明確標註「真實 v* tag-push 生產 E2E」為未閉環移交待辦，不以單元/守門測試假裝已閉環
+- 時間：2026-07-06 00:11
+- 理由：記憶明載半閉環，驗證報告不得過度宣稱
+
+## #3 人工確認清單須可勾稽，明列具名步驟「發 release 後開 `body.md` 確認 breaking 區塊在頂部」，不得只寫「人工確認」
+- 時間：2026-07-06 00:11
+- 理由：高工提醒無具名步驟等於沒交
+
+## 全部產出 additive、零 production code 變更、可逆（新測試斷言＋文件盤點＋移交待辦），退避／marker SSOT 保持唯一
+- 時間：2026-07-06 00:11
+
