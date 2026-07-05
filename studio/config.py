@@ -112,6 +112,18 @@ def role_provider(key: str) -> str:
 PM_PIN_PROVIDER = os.getenv("TI_PM_PIN_PROVIDER", "claude").strip().lower()
 PM_PIN_MODEL = os.getenv("TI_PM_PIN_MODEL", "claude-fable-5").strip()
 
+# Claude 訂閱對 Fable 等模型另設「按模型 scoped」的週限（與 5h/7d 全域窗獨立，見
+# claude_usage._scoped_models）。當在線帳號對「本場某 claude 專家要用的模型」的 scoped 週限
+# 達門檻時，_model_for 自動改派到「非 scoped」的備援模型（預設 Opus，走全域 weekly 額度）：
+# 否則所有 claude 專家（含釘 Fable 的 PM）會一直撞滿額度、任務退回 pending 空轉，直到週限重置。
+# 這是額度閘門（provider_quota，只看全域 5h/7d）的盲點補丁——它刻意不把 scoped 週限算進
+# provider max_used（「Fable 滿 ≠ claude 受限」），代價就是模型被釘死在滿額 scoped 時無人接手。
+# 空字串＝關閉自動改派（回舊行為）；備援模型自身若也 scoped 達門檻則不改派（改無益，交回閘門）。
+CLAUDE_SCOPED_FALLBACK_MODEL = os.getenv(
+    "TI_CLAUDE_SCOPED_FALLBACK_MODEL", "claude-opus-4-8"
+).strip()
+CLAUDE_SCOPED_LIMIT_THRESHOLD = float(os.getenv("TI_CLAUDE_SCOPED_LIMIT_THRESHOLD", "95"))
+
 
 # OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -1034,6 +1046,7 @@ def reload() -> None:
     """
     global PROVIDER, MODEL_LEAD, MODEL_FAST, ROLE_MODELS, ROLE_PROVIDERS
     global PM_PIN_PROVIDER, PM_PIN_MODEL
+    global CLAUDE_SCOPED_FALLBACK_MODEL, CLAUDE_SCOPED_LIMIT_THRESHOLD
     global OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL_LEAD, OPENAI_MODEL_FAST, OPENAI_MAX_STEPS
     global MINIMAX_API_KEY, MINIMAX_BASE_URL, MINIMAX_MODEL_LEAD, MINIMAX_MODEL_FAST
     global GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_MODEL_LEAD, GEMINI_MODEL_FAST
@@ -1098,6 +1111,10 @@ def reload() -> None:
     ROLE_PROVIDERS = _role_providers()
     PM_PIN_PROVIDER = os.getenv("TI_PM_PIN_PROVIDER", "claude").strip().lower()
     PM_PIN_MODEL = os.getenv("TI_PM_PIN_MODEL", "claude-fable-5").strip()
+    CLAUDE_SCOPED_FALLBACK_MODEL = os.getenv(
+        "TI_CLAUDE_SCOPED_FALLBACK_MODEL", "claude-opus-4-8"
+    ).strip()
+    CLAUDE_SCOPED_LIMIT_THRESHOLD = float(os.getenv("TI_CLAUDE_SCOPED_LIMIT_THRESHOLD", "95"))
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
     OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")

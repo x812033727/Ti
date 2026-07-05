@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import config, events, llm_caller, tools
+from . import claude_usage, config, events, llm_caller, tools
 from .roles import Role, effective_tools
 
 logger = logging.getLogger(__name__)
@@ -230,19 +230,74 @@ def _make_fs_guard_hook(cwd: Path):
     return pre_tool_use
 
 
+def _scoped_exhausted(model: str, models_usage: dict, threshold: float) -> bool:
+    """該 claude 模型是否撞上「按模型 scoped」週限。
+
+    models_usage＝claude_usage.fetch_rate_limits()["models"]，鍵為模型 display_name（如
+    "Fable"）。以「display_name（小寫）出現在 model id（小寫）內」比對，涵蓋 fable→
+    claude-fable-5 這類命名；用量達 threshold 即視為撞滿。
+    """
+    if not model or not isinstance(models_usage, dict):
+        return False
+    mid = model.lower()
+    for disp, w in models_usage.items():
+        if not isinstance(w, dict):
+            continue
+        pct = w.get("used_percentage")
+        if not isinstance(pct, (int, float)) or pct < threshold:
+            continue
+        if disp and str(disp).lower() in mid:
+            return True
+    return False
+
+
+def _reroute_if_scoped_exhausted(model: str) -> str:
+    """在線 claude 帳號對 model 的 scoped 週限已達門檻時，改派非 scoped 備援模型（預設 Opus）。
+
+    補額度閘門盲點：provider_quota 只看全域 5h/7d、刻意不含 scoped 週限，故 Fable 週限滿了
+    閘門仍判 claude「可用」→ 釘 Fable 的專家一直撞滿額度空轉。此處在每次建 session（LLM 呼叫前）
+    無條件攔一手，把撞滿 scoped 的模型換成走全域額度的備援，讓工作室續跑到週限重置。
+    保守原則：額度查不到（error）、無 scoped 資訊、未撞門檻、或備援自身也撞 scoped → 一律不改派。
+    """
+    fallback = config.CLAUDE_SCOPED_FALLBACK_MODEL
+    threshold = config.CLAUDE_SCOPED_LIMIT_THRESHOLD
+    if not fallback or not model or model == fallback:
+        return model
+    rl = claude_usage.fetch_rate_limits()
+    if rl.get("error"):
+        return model
+    models_usage = rl.get("models") or {}
+    if not models_usage or not _scoped_exhausted(model, models_usage, threshold):
+        return model
+    if _scoped_exhausted(fallback, models_usage, threshold):
+        # 備援也撞 scoped 週限 → 改派無益，維持原模型，交回既有額度閘門/帳號輪替處理。
+        return model
+    logger.warning(
+        "claude 模型 %s scoped 週限達 %.0f%%，本場自動改派備援模型 %s（走全域 weekly 額度）",
+        model,
+        threshold,
+        fallback,
+    )
+    return fallback
+
+
 def _model_for(role: Role) -> str:
     """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。
 
     優先序：PM 釘選（config.PM_PIN_MODEL——PM 是分派/檢驗/表決的決策者，判斷品質須穩定，
     預設釘 claude-fable-5；設空字串＝解除釘選）→ 該角色的個別覆寫（config.ROLE_MODELS，
     設定面板「<角色>模型」欄位）→ 沒覆寫（auto）就沿用 LEAD_ROLES → MODEL_LEAD/FAST 的二分法。
+    末段套 _reroute_if_scoped_exhausted：選定的模型若在線帳號 scoped 週限已滿，改派備援模型。
     """
     if role.key == "pm" and config.PM_PIN_MODEL:
-        return config.PM_PIN_MODEL
-    override = config.ROLE_MODELS.get(role.key, "")
-    if override:
-        return override
-    return config.MODEL_LEAD if role.key in config.LEAD_ROLES else config.MODEL_FAST
+        model = config.PM_PIN_MODEL
+    else:
+        override = config.ROLE_MODELS.get(role.key, "")
+        if override:
+            model = override
+        else:
+            model = config.MODEL_LEAD if role.key in config.LEAD_ROLES else config.MODEL_FAST
+    return _reroute_if_scoped_exhausted(model)
 
 
 def _summarize_tool(name: str, tool_input: dict) -> str:
@@ -401,6 +456,13 @@ async def stream_to_events(
                             if hit[0] == "overloaded":
                                 raise ExpertOverloaded(str(hit[1]), text[:300], partial)
                             raise ExpertAPIError(str(hit[1]), text[:300], partial)
+                        unavailable = llm_caller.provider_unavailable_kind(text)
+                        if unavailable is not None and unavailable[0] in {
+                            "usage_limit",
+                            "quota",
+                            "billing",
+                        }:
+                            raise ExpertAPIError(unavailable[0], text[:300], "\n".join(collected))
                         collected.append(text)
                         await broadcast(
                             events.expert_message(

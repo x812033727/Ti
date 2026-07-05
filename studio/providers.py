@@ -373,6 +373,14 @@ class CodexExpert:
 
             text = "\n".join(m for m in final_messages if m).strip()
             if text:
+                decision = _codex_pause_or_soft(text)
+                if decision == "pause":
+                    raise ProviderUnavailable("codex", text)
+                if decision == "soft":
+                    return await self._system_note(
+                        "【系統】Codex 本輪暫時不可用，略過本輪發言。\n" + text,
+                        broadcast,
+                    )
                 return text
             if stdout_error is not None:
                 return await self._system_note(
@@ -442,6 +450,8 @@ class CodexExpert:
         if typ == "item.completed" and item.get("type") == "agent_message":
             text = str(item.get("text") or "").strip()
             if text:
+                if llm_caller.provider_unavailable_kind(text) is not None:
+                    return text
                 await broadcast(
                     events.expert_message(
                         self.session_id,
