@@ -2426,3 +2426,51 @@
 ## 全部產出 additive、零 production code 變更、可逆（新測試斷言＋文件盤點＋移交待辦），退避／marker SSOT 保持唯一
 - 時間：2026-07-06 00:11
 
+## #2 假綠封口採「新增獨立斷言」而非改動 `FOUR_ELEMENTS` 生效版本 regex
+- 時間：2026-07-06 00:51
+- 理由：`FOUR_ELEMENTS`／`missing_elements()` 簽名與語意保持不變，維持零 production 變更與可逆；職責分離（既有尺規管結構、新斷言管版本值）
+- 否決方案：把 `FOUR_ELEMENTS[3]` 語意 regex 插值 `pyproject_version()`——會迫使 `missing_elements()` 吃 version 參數、擴散到 task-3/task-4 兩檔並改到共用 production 尺規語意
+
+## 新增版本對應 helper（如 `version_matches_effective(body, version)`）落在 `tests/autopilot/_release_check.py`，作為兩出口尺規的同一單一事實來源，不新增第二份版本判定邏輯
+- 時間：2026-07-06 00:51
+- 理由：task-3／task-4 已共同 import `_release_check`，放這裡一次餵到兩檔，避免尺規散落漂移
+
+## helper 必須錨定「④ 生效版本」那句，用 `④\s*生效版本[^\n]*自\s*`?{re.escape(version)}`?\s*起`，禁止 `version in body` 子串比對
+- 時間：2026-07-06 00:51
+- 理由：body 的 heading／footer／③ before-after 已出現 `0.2.0`，子串比對下把 ④ 行改舊版仍含 `0.2.0`→不翻紅，假綠復活；`polluted != changelog` 只擋空操作、擋不住這個
+
+## helper 比對前對 `version` 做 `re.escape()`
+- 時間：2026-07-06 00:51
+- 理由：版本含 `.`，未跳脫時 `0.2.0` 會誤配 `0x2y0` 之類，稀釋鑑別力
+
+## 新版本對應斷言須套在 tag_notes／email_banner 兩個出口 body，與 `missing_elements()` 同待遇
+- 時間：2026-07-06 00:51
+- 理由：只驗單一出口＝尺規半殘，另一出口仍可版本漂移
+
+## helper docstring 明寫「本函式補 `FOUR_ELEMENTS[3]` 對版本值不敏感的缺口」，交代兩把尺分工
+- 時間：2026-07-06 00:51
+- 理由：既有 ④ 語意 regex 有 `|生效版本` 分支（有四字無版本號也算過），讓接手者一眼懂分工、不誤刪其一
+
+## 版本權威唯一來源固定為 `release_note.pyproject_version()`，renderer 傳入版本與 body 內 ④ 句同源勾稽，任一失配翻紅
+- 時間：2026-07-06 00:51
+
+## 依賴方向不變——CHANGELOG heading 對齊 `BREAKING_HEADING`、版本對齊 pyproject；查出漂移一律改 CHANGELOG，禁止反向改常數或硬寫版本字面值
+- 時間：2026-07-06 00:51
+
+## #2 黑樣本只 mutate CHANGELOG 副本「④ 生效版本」行的版本字串（0.2.0→舊版如 0.1.9），renderer 傳入版本維持權威 0.2.0，成對自證 baseline 綠→mutation 紅，並斷言 `polluted != changelog` 排除空操作
+- 時間：2026-07-06 00:51
+
+## #2 黑樣本判準寫死為「新版本對應斷言失敗」，非任意 collection/import error，避免 typo 假綠
+- 時間：2026-07-06 00:51
+
+## #3 離線核對 body.md 時，因 `scripts/publish_release.py` CLI 固定寫 repo root，改用其底層 `render_release_body()` 寫 `$TMPDIR`；若堅持走 CLI，則跑完立即刪除 repo root `body.md` 並以 `git status` 驗無殘留
+- 時間：2026-07-06 00:51
+- 理由：工程師指出 CLI 不支援 `$TMPDIR`，硬要臨時檔不落 repo 會與 CLI 行為衝突，須二擇一明確落地
+- 否決方案：直接讓 body.md 落在 repo root 不清理——會造成 pre-commit 綠／CI 紅分歧、違反臨時檔不落被掃描目錄的硬規則
+
+## #4 明文標註「真實 v* tag-push 生產 E2E 為半閉環未閉環」並列具名人工核對步驟（發 release 後開 body.md 確認 Breaking 區塊置頂、含四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙），不以單元/守門測試假裝已閉環
+- 時間：2026-07-06 00:51
+
+## 全部產出 additive、可逆、零 production code 變更（新測試斷言＋文件盤點＋移交待辦）；warn/off 維持即刻生效逃生艙語氣，不引入 deprecation 過渡措辭
+- 時間：2026-07-06 00:51
+

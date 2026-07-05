@@ -1,97 +1,6 @@
 {
   "entries": [
     {
-      "decision": "**短路守門三態（任務#3）** 各自一支測試，每支均裝 FakeChat spy 並斷言 `fake.seen == []` 作反向對照排假綠；三態分別為：① `cwd=None`（其餘 config 無須特設）、② `OFFLINE_MODE=True`＋`PROVIDER=\"openai\"`＋`OPENAI_BASE_URL=\"http://local\"`、③ `PROVIDER=\"openai\"`＋`OPENAI_API_KEY=\"\"`＋`OPENAI_BASE_URL=\"\"`",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.749054
-    },
-    {
-      "decision": "**`provider_ready()=False` 守門測試（第三態）必須同時設 `PROVIDER=\"openai\"`**，否則函數走 claude 分支不讀 OPENAI_* 變數，guard 驗的是 CI 有無 claude 憑證，非目標行為",
-      "rationale": "",
-      "rejected": "僅設雙空字串不設 PROVIDER——高工確認 `config.py:621` 先判斷 PROVIDER 分支，不設 openai 會靜默走錯分支，假綠/假紅均有可能",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.749055
-    },
-    {
-      "decision": "**例外降級測試（任務#4）** 用 inline `async def exploding_chat(...): raise RuntimeError(\"API 炸了\")`，同時設 `PROVIDER=\"openai\"`＋`OFFLINE_MODE=False`＋`OPENAI_BASE_URL=\"http://local\"` 讓 guard 通過，斷言 `complete_once` 回 `\"\"` 且不外拋",
-      "rationale": "",
-      "rejected": "新建 ExplodingChat class——inline async def 已足夠覆蓋 `except Exception: return \"\"` 路徑，無需增加 class",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.7490559
-    },
-    {
-      "decision": "任務#2/#3/#4 三組測試互不依賴，可並行撰寫；任務#5 排最後，執行 `.venv/bin/python -m pytest tests/core/test_providers.py -q` 確認全綠、無真實網路 I/O",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.749057
-    },
-    {
-      "decision": "`RetryConfig` dataclass 新增於 `llm_caller.py`，緊鄰 `run_with_retries`，欄位為 `max_retries: int`、`backoff: Callable[[float|None, int], float]`、`sleep: Callable[[float], Awaitable[None]]`",
-      "rationale": "llm_caller 是 `run_with_retries` 介面的所有者，RetryConfig 是其參數的結構化型別；零 config 依賴確保模組維持 provider-agnostic",
-      "rejected": "放 `experts.py` — 會讓下游 import `experts` 才能取得型別，破壞 llm_caller 作為穩定公開介面的角色",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761533
-    },
-    {
-      "decision": "`RetryConfig` 提供 `as_kwargs() -> dict` 方法，明確回傳 `{\"max_retries\": self.max_retries, \"backoff\": self.backoff, \"sleep\": self.sleep}`，docstring 標注「僅封裝 config-driven 三參數，call-site callback 鉤平鋪傳入」",
-      "rationale": "Callable 欄位無法 `dataclasses.asdict()` 序列化；docstring 說明消除後來者對「其餘 6 個 kwargs 為何未封裝」的困惑（高工意見）",
-      "rejected": "`dataclasses.asdict()` — Callable 欄位崩潰；`**cfg.__dict__` — 繞過 dataclass 抽象且語義不清",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761576
-    },
-    {
-      "decision": "`make_retry_config()` 落點 `experts.py`，call-time 讀 config，回傳 `RetryConfig(max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES), backoff=_backoff_delay, sleep=_sleep)`",
-      "rationale": "讀 config 的責任屬消費層；工廠在 `experts.py` 保持 `llm_caller` config-free",
-      "rejected": "放 `config.py` — config 模組不應 import experts 的 Callable；放 `llm_caller.py` — 違反 provider-agnostic 原則",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761593
-    },
-    {
-      "decision": "`max(0, ...)` clamp 移入 `make_retry_config()` 內部，`RetryConfig.max_retries` 保證 ≥0；移除 `_speak_with_retries` L380 的本地讀值",
-      "rationale": "工程師指出 clamp 語義不可在「移除本地變數」時靜默丟失；高工補充 `run_with_retries` 雖在 L410 也有 `max(0, ...)`，但在工廠明訂讓外部合約清晰、防呆在最近端",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761605
-    },
-    {
-      "decision": "`_speak_with_retries` 改動點：① 刪 L380 本地 `max_retries` 讀值；② 插入 `cfg = make_retry_config()`；③ `run_with_retries` 呼叫改傳 `**cfg.as_kwargs()`；④ L405/L407 fallback 字串的 `{max_retries}` 改為 `{cfg.max_retries}`",
-      "rationale": "工程師與高工同步指出 L405/L407 仍引用局部變數，改後若不替換即 NameError；此為實作必補項，納入最小化改動清單",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761614
-    },
-    {
-      "decision": "`_backoff_delay`、`_sleep` 保留為 `experts.py` 模組級 lazy 函式，`make_retry_config()` 直接以函式物件引用傳入 `RetryConfig`；不在工廠內另建 closure",
-      "rationale": "兩者已是 call-time 讀 config 的 lazy closure（L83-91 既有範本），直接引用等價；不重複造 closure 避免多層包裝增加可讀性負擔",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761629
-    },
-    {
-      "decision": "wiring 測試用 `mocker.spy(experts, \"make_retry_config\")`（保留真實邏輯），斷言 `spy.assert_called_once()`；補反向對照：`monkeypatch.setattr(config, \"EXPERT_RATE_LIMIT_RETRIES\", 7)` 後再呼工廠，斷言 `cfg.max_retries == 7`",
-      "rationale": "spy 不替換實現，可同時驗「有取用」與「值正確流入」；反向對照排假綠（高工確認）",
-      "rejected": "`mocker.patch(\"make_retry_config\")` 直接替換 — 只驗呼叫、跳過真實值流，無法確認 config 值是否正確傳入",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761636
-    },
-    {
-      "decision": "任務#5 grep 驗收對象為 `max_retries` 與 `_backoff_delay` 的所有引用點，確認無第二套散傳退避呼叫點，且 L405/L407 已改為 `cfg.max_retries`（工程師建議：grep max_retries 引用點可順帶抓出此細節）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761645
-    },
-    {
-      "decision": "`providers.py` 頂層直接 `from .experts import make_retry_config`，不新增模組、不複製工廠。",
-      "rationale": "experts.py 無任何 providers import（循環依賴不存在），共用同一 `EXPERT_RATE_LIMIT_*` 旋鈕保持三端一致。",
-      "rejected": "",
-      "session_id": "ap6e19134877",
-      "created_at": 1781442117.1619449
-    },
-    {
       "decision": "`OpenAIExpert.speak()` 將整個工具迴圈（`for _ in range(OPENAI_MAX_STEPS)`）打包為單一 `_attempt`，交 `run_with_retries` 控制退避。",
       "rationale": "對齊 Claude 端「一次 attempt = 一個完整 turn」語義；逐步包裝需在上層處理 `resp` 型態歧義，複雜度不值得。",
       "rejected": "逐 `_chat` 單步包裝（複雜、需把 resp 從 attempt_fn 回傳再由外層繼續處理，架構破碎）。",
@@ -3499,6 +3408,97 @@
       "rejected": "",
       "session_id": "ap26b4512602",
       "created_at": 1783267864.1791925
+    },
+    {
+      "decision": "#2 假綠封口採「新增獨立斷言」而非改動 `FOUR_ELEMENTS` 生效版本 regex",
+      "rationale": "`FOUR_ELEMENTS`／`missing_elements()` 簽名與語意保持不變，維持零 production 變更與可逆；職責分離（既有尺規管結構、新斷言管版本值）",
+      "rejected": "把 `FOUR_ELEMENTS[3]` 語意 regex 插值 `pyproject_version()`——會迫使 `missing_elements()` 吃 version 參數、擴散到 task-3/task-4 兩檔並改到共用 production 尺規語意",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802098
+    },
+    {
+      "decision": "新增版本對應 helper（如 `version_matches_effective(body, version)`）落在 `tests/autopilot/_release_check.py`，作為兩出口尺規的同一單一事實來源，不新增第二份版本判定邏輯",
+      "rationale": "task-3／task-4 已共同 import `_release_check`，放這裡一次餵到兩檔，避免尺規散落漂移",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802177
+    },
+    {
+      "decision": "helper 必須錨定「④ 生效版本」那句，用 `④\\s*生效版本[^\\n]*自\\s*`?{re.escape(version)}`?\\s*起`，禁止 `version in body` 子串比對",
+      "rationale": "body 的 heading／footer／③ before-after 已出現 `0.2.0`，子串比對下把 ④ 行改舊版仍含 `0.2.0`→不翻紅，假綠復活；`polluted != changelog` 只擋空操作、擋不住這個",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802186
+    },
+    {
+      "decision": "helper 比對前對 `version` 做 `re.escape()`",
+      "rationale": "版本含 `.`，未跳脫時 `0.2.0` 會誤配 `0x2y0` 之類，稀釋鑑別力",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802196
+    },
+    {
+      "decision": "新版本對應斷言須套在 tag_notes／email_banner 兩個出口 body，與 `missing_elements()` 同待遇",
+      "rationale": "只驗單一出口＝尺規半殘，另一出口仍可版本漂移",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802206
+    },
+    {
+      "decision": "helper docstring 明寫「本函式補 `FOUR_ELEMENTS[3]` 對版本值不敏感的缺口」，交代兩把尺分工",
+      "rationale": "既有 ④ 語意 regex 有 `|生效版本` 分支（有四字無版本號也算過），讓接手者一眼懂分工、不誤刪其一",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.480222
+    },
+    {
+      "decision": "版本權威唯一來源固定為 `release_note.pyproject_version()`，renderer 傳入版本與 body 內 ④ 句同源勾稽，任一失配翻紅",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802227
+    },
+    {
+      "decision": "依賴方向不變——CHANGELOG heading 對齊 `BREAKING_HEADING`、版本對齊 pyproject；查出漂移一律改 CHANGELOG，禁止反向改常數或硬寫版本字面值",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802234
+    },
+    {
+      "decision": "#2 黑樣本只 mutate CHANGELOG 副本「④ 生效版本」行的版本字串（0.2.0→舊版如 0.1.9），renderer 傳入版本維持權威 0.2.0，成對自證 baseline 綠→mutation 紅，並斷言 `polluted != changelog` 排除空操作",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802248
+    },
+    {
+      "decision": "#2 黑樣本判準寫死為「新版本對應斷言失敗」，非任意 collection/import error，避免 typo 假綠",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802253
+    },
+    {
+      "decision": "#3 離線核對 body.md 時，因 `scripts/publish_release.py` CLI 固定寫 repo root，改用其底層 `render_release_body()` 寫 `$TMPDIR`；若堅持走 CLI，則跑完立即刪除 repo root `body.md` 並以 `git status` 驗無殘留",
+      "rationale": "工程師指出 CLI 不支援 `$TMPDIR`，硬要臨時檔不落 repo 會與 CLI 行為衝突，須二擇一明確落地",
+      "rejected": "直接讓 body.md 落在 repo root 不清理——會造成 pre-commit 綠／CI 紅分歧、違反臨時檔不落被掃描目錄的硬規則",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802263
+    },
+    {
+      "decision": "#4 明文標註「真實 v* tag-push 生產 E2E 為半閉環未閉環」並列具名人工核對步驟（發 release 後開 body.md 確認 Breaking 區塊置頂、含四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙），不以單元/守門測試假裝已閉環",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.4802275
+    },
+    {
+      "decision": "全部產出 additive、可逆、零 production code 變更（新測試斷言＋文件盤點＋移交待辦）；warn/off 維持即刻生效逃生艙語氣，不引入 deprecation 過渡措辭",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap30d9edbfe3",
+      "created_at": 1783270315.480229
     }
   ]
 }
