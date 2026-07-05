@@ -163,6 +163,27 @@ def _reset_provider_quota_cache():
     yield
 
 
+# --- claude_usage 憑證隔離：測試不得誤讀部署機真實 ~/.claude 憑證 ------------------
+# experts._model_for 末段的 scoped 改派會呼叫 claude_usage.fetch_rate_limits()（讀
+# config.CLAUDE_CREDENTIALS_FILE）。部署機上該檔存在且可能 Fable 週限滿載，會讓「模型
+# 選擇」類既有測試默默改道到備援模型（純環境相依的假紅）。每個測試預設把憑證指向不存在的
+# tmp 檔（＝token_missing→error→不改派＝原模型），並清空 TTL/last-good 快取。需要真的
+# 額度資料的測試自行 monkeypatch claude_usage.fetch_rate_limits（如 test_scoped_reroute），
+# 或覆寫 CLAUDE_CREDENTIALS_FILE 指向自備 token（如 test_claude_usage，會蓋過本 fixture）。
+@pytest.fixture(autouse=True)
+def _isolate_claude_credentials(monkeypatch, tmp_path):
+    from studio import claude_usage as _cu, config as _config
+
+    monkeypatch.setattr(
+        _config, "CLAUDE_CREDENTIALS_FILE", tmp_path / ".claude" / ".credentials.json"
+    )
+    _cu._cache.clear()
+    _cu._last_good.clear()
+    yield
+    _cu._cache.clear()
+    _cu._last_good.clear()
+
+
 # 偵測 bwrap 實際是否可用（防止檔案存在但因權限無法使用造成測試紅燈）
 def _check_bwrap_actually_works() -> bool:
     import subprocess
