@@ -159,6 +159,9 @@ _REFERENCED_SYMBOLS = {
     "tests/autopilot/test_qa_task4_release_docs_dod.py": (
         "test_task4_commit_does_not_alter_release_smoke_trigger",
     ),
+    "tests/autopilot/test_qa_body_pinning_evidence.py": (
+        "test_handoff_body_row_is_green_with_evidence_paths",
+    ),
 }
 
 
