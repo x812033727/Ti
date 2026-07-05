@@ -347,9 +347,11 @@ async def test_dispatch_passes_performance_to_choose_dispatch(monkeypatch):
     seen: list[dict] = []
     real_choose = flow.choose_dispatch
 
-    def spy(digest, task, hint, allowed_models, recent, performance=None, threshold=90.0):
+    def spy(digest, task, hint, allowed_models, recent, performance=None, threshold=90.0, **kwargs):
         seen.append(performance)
-        return real_choose(digest, task, hint, allowed_models, recent, performance, threshold)
+        return real_choose(
+            digest, task, hint, allowed_models, recent, performance, threshold, **kwargs
+        )
 
     monkeypatch.setattr(flow, "choose_dispatch", spy)
     s, experts, _ = _session()

@@ -271,6 +271,9 @@ class StudioSession:
         self._dispatch_recent: list[str] = []
         self._dispatch_bindings: dict[str, str] = {}
         self._dispatch_factory = None
+        # auto 派工模式（UI 哨兵檔）：拆解時重讀一次、整場沿用同一值——PM 看到的派工規則
+        # 與系統兜底規則同場一致，UI 中途切換從下一場 session 生效。
+        self._dispatch_auto = config.dispatch_auto()
         # 3-AI 表決狀態：本場已舉行的表決次數（受 config.VOTE_MAX 上限）。_vote_factory 供測試
         # 注入一次性投票員 stub（簽名同 _recruit_factory：(role, cwd, provider)→expert）；
         # None 時走 providers.make_expert。投票員不進 roster，用完即 stop。
@@ -1249,15 +1252,36 @@ class StudioSession:
         # 額度感知派工：拆解前查一次 provider 額度快照，讓 PM 依「目前各家額度」把任務
         # 分散到各 provider（`派工:` 行只是建議，合法性與受限與否由 flow.choose_dispatch 兜底）。
         # 績效感知：另附各 AI 近期考核摘要（studio/appraisal 聚合；無資料/失敗＝空字串）。
+        # auto 派工模式（哨兵檔）：PM 全權——provider 限 AUTO_DISPATCH_PROVIDERS 兩家、
+        # 每任務必標派工、模型自由指定直通；兜底只剩「該家不可用或用量 ≥ 門檻才改派另一家」。
         await self._refresh_quota_snapshot()
-        dispatch_note = (
-            self._quota_note(experts)
-            + self._appraisal_note(await self._appraisal_perf())
-            + "每個任務可（選填）加一行 `派工: #<id> <provider> [<model>]`（provider 限 "
-            + "、".join(config.PROVIDERS)
-            + "；model 可省略＝該家預設模型），依上方額度把任務分散到各 provider、避開受限者；"
-            "未標派工的任務由系統依額度自動分派。\n"
-        )
+        self._dispatch_auto = config.dispatch_auto()
+        if self._dispatch_auto:
+            allowed = self._allowed_models()
+            known = "；".join(
+                f"{p}：{'、'.join(allowed.get(p) or ()) or '（無參考清單）'}"
+                for p in config.AUTO_DISPATCH_PROVIDERS
+            )
+            dispatch_note = (
+                self._quota_note(experts)
+                + self._appraisal_note(await self._appraisal_perf())
+                + "本場為 auto 派工模式，由你全權派工：請為**每個任務**都加一行 "
+                "`派工: #<id> <provider> <model>`（provider 限 "
+                + "、".join(config.AUTO_DISPATCH_PROVIDERS)
+                + "；model 必填，可自由指定任何模型 ID、將直通該家）。請依上方即時額度把任務"
+                "分散到兩家、並依各角色任務的難度挑合適模型；僅當你指定的家不可用或用量 ≥ "
+                f"{config.AUTO_DISPATCH_THRESHOLD:.0f}% 時，系統才會改派另一家（此時模型改用"
+                f"該家預設）。目前已知可用模型（僅供參考、非白名單）：{known}。\n"
+            )
+        else:
+            dispatch_note = (
+                self._quota_note(experts)
+                + self._appraisal_note(await self._appraisal_perf())
+                + "每個任務可（選填）加一行 `派工: #<id> <provider> [<model>]`（provider 限 "
+                + "、".join(config.PROVIDERS)
+                + "；model 可省略＝該家預設模型），依上方額度把任務分散到各 provider、避開受限者；"
+                "未標派工的任務由系統依額度自動分派。\n"
+            )
         pm_plan = await pm.speak(
             (await self._human_prefix())
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
@@ -1454,13 +1478,29 @@ class StudioSession:
         except Exception:  # noqa: BLE001 — 額度查詢失敗不該拖垮討論，退回「無額度資訊」
             self._quota_snap = None
 
+    def _auto_quota_snap(self, snap: dict | None) -> dict | None:
+        """auto 派工模式：把額度快照過濾到 AUTO_DISPATCH_PROVIDERS 兩家子集。
+
+        供 PM 額度摘要與招募重綁共用——PM 看不到兩家以外的額度、重綁也不會落到子集外，
+        與 per-task 派工的 digest 過濾同一道理。手動模式呼叫端不經過此函式。
+        """
+        if not snap:
+            return snap
+        return {
+            **snap,
+            "providers": [
+                e
+                for e in snap.get("providers", [])
+                if isinstance(e, dict) and e.get("key") in config.AUTO_DISPATCH_PROVIDERS
+            ],
+        }
+
     def _quota_note(self, experts: dict) -> str:
         """把 provider 即時額度摘要組成給 PM 的 prompt 片段（無快照/空摘要回空字串）。"""
         if not self._quota_snap:
             return ""
-        summary = provider_quota.summarize_for_pm(
-            self._quota_snap, self._role_provider_map(experts)
-        )
+        snap = self._auto_quota_snap(self._quota_snap) if self._dispatch_auto else self._quota_snap
+        summary = provider_quota.summarize_for_pm(snap, self._role_provider_map(experts))
         if not summary:
             return ""
         return (
@@ -1580,8 +1620,13 @@ class StudioSession:
         # 績效感知：近期考核的 {provider: avg_score} 作 choose_dispatch 同分次序鍵
         # （偏好歷史表現高者）；聚合失敗回 {} ＝ 行為與純額度分派相同。
         perf_summary = await self._appraisal_perf()
+        digest = provider_quota.digest(self._quota_snap)
+        if self._dispatch_auto:
+            # auto 派工：候選夾到兩家子集（PM 違規指定他家＝hint 不在 digest、自然兜底），
+            # 門檻放寬到 AUTO_DISPATCH_THRESHOLD、模型直通不查白名單（model_free）。
+            digest = {k: v for k, v in digest.items() if k in config.AUTO_DISPATCH_PROVIDERS}
         choice = flow.choose_dispatch(
-            provider_quota.digest(self._quota_snap),
+            digest,
             task,
             self._dispatch_hints.get(task["id"]) or {},
             self._allowed_models(),
@@ -1591,6 +1636,8 @@ class StudioSession:
                 for p, st in (perf_summary.get("providers") or {}).items()
                 if isinstance(st, dict)
             },
+            threshold=config.AUTO_DISPATCH_THRESHOLD if self._dispatch_auto else 90.0,
+            model_free=self._dispatch_auto,
         )
         provider, model = choice.get("provider", ""), choice.get("model", "")
         current = self._role_provider_map({impl_role: prev_expert}).get(impl_role, "")
@@ -1631,6 +1678,7 @@ class StudioSession:
                 provider,
                 model,
                 choice.get("reason", ""),
+                mode="auto" if self._dispatch_auto else "manual",
             )
         )
 
@@ -1682,7 +1730,15 @@ class StudioSession:
         if prov not in config.PROVIDERS:
             prov = effective_provider(role)
         snap = self._quota_snap
-        if snap and provider_quota.constrained(snap, prov):
+        threshold = provider_quota.CONSTRAINED_THRESHOLD
+        if self._dispatch_auto:
+            # auto 派工模式：招募綁定也夾到兩家子集、門檻同 per-task 派工放寬。
+            snap = self._auto_quota_snap(snap)
+            threshold = config.AUTO_DISPATCH_THRESHOLD
+            if prov not in config.AUTO_DISPATCH_PROVIDERS:
+                alt = provider_quota.least_constrained_ready(snap) if snap else None
+                prov = alt or config.AUTO_DISPATCH_PROVIDERS[0]
+        if snap and provider_quota.constrained(snap, prov, threshold=threshold):
             alt = provider_quota.least_constrained_ready(snap)
             if alt and alt != prov:
                 log.info("招募 %s：provider %s 受限，自動重綁 %s", role.key, prov, alt)
@@ -1700,8 +1756,14 @@ class StudioSession:
         provider 的白名單時傳給 make_expert，否則棄用、沿用該家預設模型槽。
         """
         prov = self._pick_provider(role, provider_hint)
-        if model and model not in (self._allowed_models().get(prov) or ()):
-            model = ""  # 模型不屬於實際綁定 provider 的白名單（或 provider 被重綁）→ 棄用
+        if model:
+            if self._dispatch_auto and prov in config.AUTO_DISPATCH_PROVIDERS:
+                # auto 派工：模型直通不查白名單，但僅限實際綁定＝PM 指定的家
+                # （被重綁到另一家時棄用，避免 A 家模型 ID 直通 B 家）。
+                if prov != (provider_hint or "").strip().lower():
+                    model = ""
+            elif model not in (self._allowed_models().get(prov) or ()):
+                model = ""  # 模型不屬於實際綁定 provider 的白名單（或 provider 被重綁）→ 棄用
         if self._recruit_factory is not None:
             expert = self._recruit_factory(role, ctx.cwd, prov)
         else:

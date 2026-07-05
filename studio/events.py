@@ -212,11 +212,13 @@ def dispatch_decision(
     provider: str,
     model: str,
     reason: str,
+    mode: str = "manual",
 ) -> StudioEvent:
     """額度感知 per-task 派工：任務 #task_id 的實作者（role）暫時換綁 provider/model 的決策快照。
 
     ``model`` 空字串＝沿用該 provider 的預設模型槽；``reason`` 為 flow.choose_dispatch 的
-    繁中一句話決策理由（前端以 log-line 顯示、入 history 供重播）。
+    繁中一句話決策理由（前端以 log-line 顯示、入 history 供重播）。``mode``＝派工模式
+    （"auto"＝PM 全權、"manual"＝規則裁決；預設 manual 向後相容舊 history）。
     """
     return StudioEvent(
         EventType.DISPATCH_DECISION,
@@ -228,6 +230,7 @@ def dispatch_decision(
             "provider": provider,
             "model": model,
             "reason": reason,
+            "mode": mode,
         },
     )
 

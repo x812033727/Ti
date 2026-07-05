@@ -513,6 +513,7 @@ def choose_dispatch(
     recent: list[str],
     performance: dict | None = None,
     threshold: float = 90.0,
+    model_free: bool = False,
 ) -> dict:
     """依即時額度為單一任務挑 provider／model，回傳 ``{provider, model, reason}``。
 
@@ -528,6 +529,9 @@ def choose_dispatch(
     - performance: 可選 ``{provider: avg_score}``——同用量時偏好歷史表現高者（缺省視為 0）。
       目前僅作次序鍵；詳細考核資料流由後續 PR 接上。
     - threshold: 受限門檻（任一額度窗用量 % 達此值即視為受限）。
+    - model_free: auto 派工模式——hint.model 不查白名單、原樣直通；但僅限「選定 provider
+      ＝hint 的 provider」時（被兜底改派到另一家時模型丟空，改用該家預設槽，避免 A 家的
+      模型 ID 直通 B 家必炸）。False＝現行白名單行為，一字不變。
 
     規則：hint.provider 合法（在 digest 內）且未受限（就緒、無 error、用量<門檻）→ 採用；
     否則在「就緒未受限」集合取用量最低者（同分先比 performance 高者、再避開 recent 尾端剛
@@ -556,6 +560,9 @@ def choose_dispatch(
 
     def _model_for(provider: str) -> str:
         model = (hint.get("model") or "").strip()
+        if model_free:
+            hinted_prov = (hint.get("provider") or "").strip().lower()
+            return model if model and provider == hinted_prov else ""
         return model if model and model in (allowed_models.get(provider) or ()) else ""
 
     tid = task.get("id", "?")

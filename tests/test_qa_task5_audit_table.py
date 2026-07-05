@@ -106,6 +106,8 @@ def test_audit_has_no_phantom_routes(app):
 # （push＋開 PR＋合併）屬對外狀態變更，與其他寫入端點同級納管。
 # 動態流程：/api/workflows 寫入端點（POST/PUT/DELETE）走 WRITE_DEPS(require_admin)，
 # 與 /api/groups 同級保護（workflows.yaml 為 stage 序列/角色/閘門注入面），一併納管。
+# 派工模式：/api/autopilot/dispatch-mode 走 WRITE_DEPS(require_admin)，切哨兵檔改變後續
+# session 的 provider/模型分配（auto＝PM 全權），與 pause/resume 同級納管。
 def test_audit_managed_set_matches_decision():
     http_docs, _ = parse_audit()
     managed = {p for (m, p), mark in http_docs.items() if mark}
@@ -115,6 +117,7 @@ def test_audit_managed_set_matches_decision():
         "/api/settings",
         "/api/autopilot/pause",
         "/api/autopilot/resume",
+        "/api/autopilot/dispatch-mode",
         "/api/autopilot/task",
         "/api/autopilot/triage",
         "/api/roles",
