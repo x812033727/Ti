@@ -6,10 +6,7 @@
 
 ## 半閉環聲明（最重要，先讀）
 
-**真實 `v*` tag-push 端到端（E2E）鏈中，v0.2.0 此鏈已生產閉環；後續版本仍半閉環、尚待逐版
-生產驗證。** 其中 `release: published → release-smoke` 與 GitHub release 頁實際 body 頂部
-Breaking 置頂，皆已由 v0.2.0 線上證據封口（見下方邊界表與對應 evidence）；目前多數單元／
-守護測試只證明「推 tag 前的 render 結構正確」，**不代表** GitHub 生產環境已對每一版都
+**真實 `v*` tag-push 端到端（E2E）鏈中，v0.2.0 此鏈已生產閉環；後續版本仍半閉環、尚待逐版生產驗證。** 其中 `release: published → release-smoke` 與 GitHub release 頁實際 body 頂部 Breaking 置頂，皆已由 v0.2.0 線上證據封口（見下方邊界表與對應 evidence）；目前多數單元／守護測試只證明「推 tag 前的 render 結構正確」，**不代表** GitHub 生產環境已對每一版都
 實跑過完整鏈
 `push tag → gh release create → release: published → release-smoke`。除已具生產證據的環節外，
 第一次正式打新 `v*` tag 發 release 後，仍須依下方「發佈後人工核對步驟」逐項確認，才算真正閉環。
