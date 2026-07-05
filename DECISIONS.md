@@ -2366,3 +2366,11 @@
 ## 不引入 tenacity/backoff 等第三方套件，沿用自研退避骨幹為唯一 SSOT
 - 時間：2026-07-05 22:28
 
+## 【任務#4 查核結論】Claude Agent SDK 無 `max_retries` 旋鈕，不與 `run_with_retries` 疊乘（已落實）
+- 時間：2026-07-05
+- 結論：實際 SDK 自省確認 `ClaudeAgentOptions.__init__` 與 `ClaudeSDKClient.__init__` 均不含 `max_retries` 參數（前者完整參數列：tools/allowed_tools/system_prompt/.../max_turns/model 等，後者只有 options/transport），Claude 路徑天然單層退避，**無需**也無從顯式設 0。
+  - 建構點①（Claude 路徑）：`experts.py:373-378` — `_build_client` docstring 明文：「ClaudeSDKClient 本身不做額外退避，避免雙層疊乘；ClaudeAgentOptions 不暴露 max_retries 旋鈕，故無需也無從顯式設 0」
+  - 建構點②（OpenAI 路徑）：`providers.py:1167` — `openai.AsyncOpenAI(max_retries=0)` 顯式設 0，已解除疊乘；MiniMax/Gemini 共用同路徑，一次修到位
+  - 回歸守門：`tests/core/test_claude_no_double_backoff_task3_qa.py`（AST 層級確保 `_build_client` 不引入任何 retry/backoff 旋鈕；三個測試：書面結論、無 retry kwarg、speak 路徑唯一退避權威）
+- 不加額外守門測試的理由：SDK 無旋鈕是常數性事實而非條件邏輯，現有 AST 守門已覆蓋回歸保護；若 SDK 升版新增旋鈕，該時重審
+
