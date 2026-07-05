@@ -102,7 +102,12 @@ def _row_containing(text: str, anchor: str) -> str:
 
 def _row_body(text: str) -> str:
     # 用不會被「拿掉 evidence 路徑」黑樣本破壞的穩定字串當錨點，才打得到缺路徑本身。
-    for anchor in ("body_sha256", "body_match=true", "verdict=PASS", "docs/evidence/release-v0.2.0-online-body.json"):
+    for anchor in (
+        "body_sha256",
+        "body_match=true",
+        "verdict=PASS",
+        "docs/evidence/release-v0.2.0-online-body.json",
+    ):
         row = _row_containing(text, anchor)
         if row:
             return row
@@ -232,9 +237,7 @@ def check_body_row_paths(text: str) -> list[str]:
 
     # 守護測試（AC#B2 第四路徑：對稱 smoke 的 test_qa_smoke_trigger_evidence）
     if EXPECTED_BODY_GUARD not in row:
-        problems.append(
-            f"body 列依據欄未回指本輪新守護測試 {EXPECTED_BODY_GUARD}"
-        )
+        problems.append(f"body 列依據欄未回指本輪新守護測試 {EXPECTED_BODY_GUARD}")
 
     return problems
 
@@ -391,10 +394,8 @@ def test_handoff_version_literal_matches_pyproject(handoff_text):
     version = pyproject_version()
     # 文件必然提到 0.2.0（v0.2.0 與 0.2.0 兩種寫法都算）
     if "0.2.0" not in handoff_text and "v0.2.0" not in handoff_text:
-        pytest.fail(f"AC#B7：handoff 文件無 0.2.0 字面值（可能漂移到非當前版本）")
-    assert version == "0.2.0", (
-        f"AC#B7：pyproject 版本 {version!r} ≠ 0.2.0（驗收基準漂移）"
-    )
+        pytest.fail("AC#B7：handoff 文件無 0.2.0 字面值（可能漂移到非當前版本）")
+    assert version == "0.2.0", f"AC#B7：pyproject 版本 {version!r} ≠ 0.2.0（驗收基準漂移）"
 
 
 def test_handoff_breaking_heading_literal_matches_constant(handoff_text):
@@ -533,22 +534,24 @@ def test_black_sample_soften_disclaimer_to_fully_verified_turns_red(handoff_text
     assert mutated_top != top, "mutation 無效：未軟化聲明"
     mutated = handoff_text.replace(top, mutated_top)
     problems = check_six_keywords(mutated) + check_disclaimer_coexists_with_green(mutated)
-    assert problems, (
-        f"假綠：整體軟化為『已完整』後守護未翻紅，problems={problems}"
-    )
+    assert problems, f"假綠：整體軟化為『已完整』後守護未翻紅，problems={problems}"
 
 
 def test_black_sample_drop_body_path_in_row_turns_red(handoff_text):
-    """黑樣本：把 body 列的 evidence 路徑拿掉 → AC#B2 翻紅。"""
+    """黑樣本：把 body 列的 evidence 路徑拿掉 → AC#B2 翻紅。
+
+    注意：mutation 只在 row 內做，全域 replace 會誤刪行內外其他守護測試引用，
+    反而讓 `_row_body` 抓不到列而誤判守護失效。
+    """
     row = _row_body(handoff_text)
-    assert row and "docs/evidence/release-v0.2.0-online-body.json" in row, (
-        "baseline 失效"
-    )
-    mutated = handoff_text.replace(
+    assert row and "docs/evidence/release-v0.2.0-online-body.json" in row, "baseline 失效"
+    mutated_row = row.replace(
         "docs/evidence/release-v0.2.0-online-body.json",
         "docs/evidence/_redacted.json",
     )
-    assert mutated != handoff_text, "mutation 無效"
+    assert mutated_row != row, "mutation 無效：未改到 row 內 evidence 路徑"
+    mutated = handoff_text.replace(row, mutated_row, 1)
+    assert mutated != handoff_text, "mutation 無效：未替換到 body 列"
     problems = check_body_row_paths(mutated)
     assert any("online-body.json" in p or "evidence" in p for p in problems), (
         f"假綠：拿掉 evidence 路徑後 AC#B2 未翻紅，problems={problems}"

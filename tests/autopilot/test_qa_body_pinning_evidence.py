@@ -203,7 +203,9 @@ def test_mutation_relabel_body_row_to_pending_turns_red(evidence, verdict, hando
 def test_mutation_drop_checker_script_path_turns_red(evidence, verdict, handoff_text):
     row = _body_row(handoff_text)
     assert EXPECTED_SCRIPT_PATH in row, "baseline 失效：body 列原本就無 script path"
-    mutated_text = handoff_text.replace(EXPECTED_SCRIPT_PATH, "scripts/check_release_body_structure_old.py")
+    mutated_text = handoff_text.replace(
+        EXPECTED_SCRIPT_PATH, "scripts/check_release_body_structure_old.py"
+    )
     assert mutated_text != handoff_text, "mutation 無效：未改到 script path"
     problems = check_handoff_body_row(mutated_text) + check_gate(evidence, verdict, mutated_text)
     assert any("script" in p or "回指" in p for p in problems), (
