@@ -210,6 +210,14 @@ _PROVIDER_UNAVAILABLE_HTTP_KINDS: dict[str, tuple[str, str]] = {
 _PROVIDER_UNAVAILABLE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, str]], ...] = (
     (
         re.compile(
+            r"(?m)^\s*(?:you(?:'re| are|'ve| have)\s+)?(?:run\s+)?"
+            r"out\s+of\s+(?:usage\s+)?credits?\b",
+            re.I,
+        ),
+        ("usage_limit", "usage limit reached"),
+    ),
+    (
+        re.compile(
             r"\byou(?:'ve| have)?\s+(?:hit|reached|exceeded)\s+"
             r"(?:your\s+)?(?:daily\s+)?usage\s+limit\b",
             re.I,
