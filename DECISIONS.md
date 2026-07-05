@@ -2375,3 +2375,14 @@
 - 回歸守門：`tests/core/test_claude_no_double_backoff_task3_qa.py`（AST 確認 Python 層無 retry 旋鈕；三測試：書面結論、無 retry kwarg、speak 路徑唯一退避權威）
 - 不加額外守門測試的理由：CLI 內部行為不在 Python SDK 可測範圍，AST 守門已封住「在 Python client 層再加旋鈕」這條退化路徑；CLI 層風險屬架構邊界，非可用測試守護的條件邏輯
 
+
+## 【任務#5 收尾記錄】jitter 消費端 default-on＝0.5 與去同步黑白樣本測法
+- 時間：2026-07-05
+- **jitter 消費端 default-on＝0.5（非未接線）**：`config.EXPERT_RATE_LIMIT_BACKOFF_JITTER = _env_float("TI_RATELIMIT_BACKOFF_JITTER", 0.5)`（`studio/config.py:443`，`reload()` 於 `config.py:1203` 同鍵複寫）。`llm_caller.DEFAULT_BACKOFF_JITTER=0.0` 僅為**函式庫層預設關閉**，消費端 `experts.make_retry_config()` 已覆寫為 0.5（`experts.py:132`）並 lazy-read（`experts.py:96`）。→ 本需求**九成已落地**，本場重心為「補分散式去同步統計驗證＋封口串流無旁路退避」，非從零開啟 jitter。
+- **無旁路盤點（任務#1）**：`studio/docs/jitter_backoff_inventory.md` 逐一標出 orchestrator/experts 串流路徑所有退避呼叫點（C1/C2/O1/O2/Orc1–Orc4，含 `complete_once` wrapper），證明唯一退避入口＝`make_retry_config`→`backoff_delay`，無第二條繞過 jitter 的退避。
+- **去同步驗證黑白樣本測法（任務#2/#3）**：`tests/core/test_backoff_desync_task2_qa.py`，N=64 客戶端同 attempt、注入序列化 rand（`i/(N-1)`，禁真 random 保 CI 可重現）。
+  - 白樣本（jitter=0.5）：429（有 retry-after）向上散、529（無 retry-after）向下散，各斷言 (a) 非全等 `len(set)>1`、(b) `pstdev>0`、(c) 全落理論帶內（429∈`[nominal, nominal·(1+j)]` 且下界嚴格＝nominal 守驗收#6；529∈`[nominal·(1-j), nominal]`）。
+  - 黑樣本（jitter=0，同檔對照）：同 attempt 延遲**退化全等** `len(set)==1`、`pstdev==0`、值＝nominal，證白樣本「非全等」非假綠。
+  - RetryConfig 層另有 jitter=0 確定值黑樣本於 `tests/core/test_retry_config_task4_qa.py`。
+- **SDK 不疊乘（任務#4）**：Python SDK 可控層無 retry 旋鈕（`experts.py:373-381`、`providers.py:1167 max_retries=0`），守門 `tests/core/test_claude_no_double_backoff_task3_qa.py`；CLI subprocess 層是否內部 retry 屬已知邊界（見上方任務#4 查核結論）。
+- **收尾驗證**：`.venv/bin/python -m pytest -q` 全綠、`.venv/bin/python -m ruff check .` 無錯（新測試在其中）。
