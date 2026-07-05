@@ -417,5 +417,21 @@ def summarize_for_pm(snap: dict, role_provider_map: dict[str, str] | None = None
         if u["soonest_reset"]:
             mins = max(0, int((u["soonest_reset"] - now) / 60))
             parts.append(f"約 {mins} 分後重置")
+        # 按模型 scoped 的專屬限額（如 Fable 週限）：與全域窗獨立，附在同一行讓 PM 依
+        # 「某模型快滿」把重任務改派其他模型，而非誤判整家 provider 受限。
+        for mname, mw in ((entry.get("rate_limits") or {}).get("models") or {}).items():
+            if not isinstance(mw, dict):
+                continue
+            mpct = mw.get("used_percentage")
+            if mpct is None:
+                continue
+            mwarn = "⚠️" if mpct >= CONSTRAINED_THRESHOLD else ""
+            seg = f"{mname} 模型限額 {mwarn}{mpct:.0f}%"
+            if isinstance(mw.get("reset_at"), (int, float)):
+                mins = max(0, int((mw["reset_at"] - now) / 60))
+                seg += (
+                    f"（約 {mins // 60} 小時後重置）" if mins >= 120 else f"（約 {mins} 分後重置）"
+                )
+            parts.append(seg)
         lines.append(f"- {key}{who}：{'、'.join(parts) if parts else 'ready'}")
     return "\n".join(lines)

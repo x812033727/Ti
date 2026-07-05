@@ -1269,7 +1269,9 @@ class StudioSession:
                 "`派工: #<id> <provider> <model>`（provider 限 "
                 + "、".join(config.AUTO_DISPATCH_PROVIDERS)
                 + "；model 必填，可自由指定任何模型 ID、將直通該家）。請依上方即時額度把任務"
-                "分散到兩家、並依各角色任務的難度挑合適模型；僅當你指定的家不可用或用量 ≥ "
+                "分散到兩家、並依各角色任務的難度挑合適模型；注意「模型限額」（如 Fable 的"
+                "專屬週限）與全域額度互相獨立——某模型限額吃緊時把任務改用同家其他模型"
+                "（如 claude-opus-4-8）即可，不必整家避開；僅當你指定的家不可用或用量 ≥ "
                 f"{config.AUTO_DISPATCH_THRESHOLD:.0f}% 時，系統才會改派另一家（此時模型改用"
                 f"該家預設）。目前已知可用模型（僅供參考、非白名單）：{known}。\n"
             )
