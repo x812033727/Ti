@@ -1,4 +1,4 @@
-"""任務 #1 驗收：_derive_latency 四桶聚合＋事件 payload 形狀＋finish_session 整合。
+"""任務 #5 驗收：_derive_latency 四桶聚合＋事件 payload 形狀＋finish_session 整合。
 
 對應驗收標準：
   - 標準 #1（事件形狀）：events.token_usage(...) 不傳 duration_ms 時 payload 無此鍵、
@@ -136,16 +136,17 @@ def test_derive_latency_empty_input_returns_zero_buckets():
     assert lat["by_role"] == {}
 
 
-def test_derive_latency_skips_zero_and_invalid_duration_with_value_fallback():
-    """邊界：duration_ms=0 合法計入（count+1、sum/max 不變）；字串等無效值經 _int_ms 歸 0 仍計入。
+def test_derive_latency_skips_zero_negative_and_invalid_duration_with_value_fallback():
+    """邊界：duration_ms=0 合法計入；負數/字串等無效值經 _int_ms 歸 0 仍計入。
 
-    目的：守住 _int_ms 的容錯行為——回溯舊檔案若有人塞了字串，行為可預期
+    目的：守住 _int_ms 的容錯行為——回溯舊檔案若有人塞了 -1 或字串，行為可預期
     （count 仍 +1，但 sum/max 不變），不丟例外、不靜默丟事件。
     """
     evs = [
         _token_usage_event(provider="openai", model="gpt-5", speaker="engineer", duration_ms=500),
         _token_usage_event(provider="openai", model="gpt-5", speaker="engineer", duration_ms=0),
-        # 故意塞字串；_int_ms 應以 int(value or 0) 解析失敗 → 0
+        _token_usage_event(provider="openai", model="gpt-5", speaker="engineer", duration_ms=-1),
+        # 故意塞字串；_int_ms 應解析失敗 → 0
         {
             "type": "token_usage",
             "session_id": "s",
@@ -159,9 +160,9 @@ def test_derive_latency_skips_zero_and_invalid_duration_with_value_fallback():
         },
     ]
     lat = history._derive_latency(evs)
-    # 3 筆皆計入 count；sum=500（後兩筆加 0）；max=500；avg=166（500//3）
-    _assert_latency_bucket(lat["total"], count=3, sum_ms=500, max_ms=500)
-    _assert_latency_bucket(lat["by_role"]["engineer"], count=3, sum_ms=500, max_ms=500)
+    # 4 筆皆計入 count；sum=500（後三筆加 0）；max=500；avg=125（500//4）
+    _assert_latency_bucket(lat["total"], count=4, sum_ms=500, max_ms=500)
+    _assert_latency_bucket(lat["by_role"]["engineer"], count=4, sum_ms=500, max_ms=500)
 
 
 # --- 標準 #3：回溯相容——舊事件不計入 latency，但不影響 token_usage 聚合 ---------
@@ -250,7 +251,16 @@ def test_events_token_usage_omits_duration_ms_when_not_provided():
     這是回溯相容的寫入端對應：舊讀者只認得「有此鍵才視為有 latency」，不要讓 None 漏成
     payload["duration_ms"] = None 混淆下游。
     """
-    ev = events.token_usage("s", "engineer", "openai", "gpt-5", 10, 5, 15, cost_usd=0.01)
+    ev = events.token_usage(
+        "s",
+        "engineer",
+        "openai",
+        "gpt-5",
+        10,
+        5,
+        15,
+        cost_usd=0.01,
+    )
     assert ev.type == events.EventType.TOKEN_USAGE
     payload = ev.to_dict()["payload"]
     assert "duration_ms" not in payload, f"未傳 duration_ms 時 payload 不應含此鍵，got: {payload!r}"
@@ -272,7 +282,16 @@ def test_events_token_usage_keeps_explicit_duration_ms_value():
     assert ev.to_dict()["payload"]["duration_ms"] == 1234
 
     # 額外：傳 None 視同不傳（與上一測試同語義）
-    ev_none = events.token_usage("s", "engineer", "openai", "gpt-5", 10, 5, 15, duration_ms=None)
+    ev_none = events.token_usage(
+        "s",
+        "engineer",
+        "openai",
+        "gpt-5",
+        10,
+        5,
+        15,
+        duration_ms=None,
+    )
     assert "duration_ms" not in ev_none.to_dict()["payload"]
 
 

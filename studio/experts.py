@@ -288,6 +288,7 @@ async def _emit_claude_token_usage(
     total = prompt + completion
     if total <= 0:
         return
+    # Claude 端時延直取 SDK ResultMessage.duration_api_ms（API 通訊時間），不自造計時；無則 None。
     duration_ms = getattr(msg, "duration_api_ms", None)
     await broadcast(
         events.token_usage(

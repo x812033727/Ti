@@ -85,6 +85,7 @@ def finish_session(session_id: str) -> dict | None:
         meta["parallel"] = parallel  # 供 /api/metrics 聚合並行可觀測性
     meta["scorecard"] = _derive_scorecard(events, meta)  # 供 /api/metrics 聚合成果記分卡
     meta["token_usage"] = _derive_token_usage(events)  # 供 /api/usage 聚合 provider/model 成本
+    # 供 /api/metrics 聚合 wall-clock 時延（與 token_usage 平行）
     meta["latency"] = _derive_latency(events)
     _write_meta(session_id, meta)
     # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
@@ -280,7 +281,7 @@ def _blank_latency() -> dict:
 
 def _int_ms(value) -> int:
     try:
-        return int(value or 0)
+        return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
 
@@ -292,13 +293,21 @@ def _add_latency(dst: dict, duration_ms: int) -> None:
 
 
 def _finalize_latency_bucket(bucket: dict) -> dict:
+    # avg_ms 為衍生值：收尾一次算（sum // count），count=0 維持 0。
     if bucket["count"]:
         bucket["avg_ms"] = bucket["sum_ms"] // bucket["count"]
     return bucket
 
 
 def _derive_latency(events: list[dict]) -> dict:
-    """從 token_usage.duration_ms 彙總 provider/model/role 維度的 wall-clock latency。"""
+    """從 token_usage 事件的 duration_ms 彙總 provider/model/role 維度的 wall-clock 時延。
+
+    只計 payload 帶 `duration_ms` 的事件（缺欄位＝舊事件，直接跳過），故 count 與
+    token_usage 的 calls 是獨立欄位、混入無 duration 的舊事件不失真。負值/非數值由
+    _int_ms 防禦（截為 0），不讓單一壞事件炸掉 finish_session。每桶存
+    {count, sum_ms, max_ms, avg_ms}：sum_ms/count 為權威、avg_ms 衍生，故 /api/metrics
+    跨場合併時可安全相加 sum 與 count 再重導 avg（不會有「平均 p99」式失真）。
+    """
     total = _blank_latency()
     by_provider: dict[str, dict] = {}
     by_model: dict[str, dict] = {}
@@ -320,12 +329,7 @@ def _derive_latency(events: list[dict]) -> dict:
             by_role.setdefault(role, _blank_latency()),
         ):
             _add_latency(bucket, duration_ms)
-    for bucket in (
-        total,
-        *by_provider.values(),
-        *by_model.values(),
-        *by_role.values(),
-    ):
+    for bucket in (total, *by_provider.values(), *by_model.values(), *by_role.values()):
         _finalize_latency_bucket(bucket)
     return {
         "total": total,
