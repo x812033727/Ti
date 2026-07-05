@@ -138,9 +138,7 @@ class _MismatchExpert:
     async def speak(self, prompt: str, broadcast) -> str:
         del prompt
         pm = BY_KEY["pm"]
-        await broadcast(
-            events.expert_message("s", pm.key, pm.name, pm.avatar, "not mine")
-        )
+        await broadcast(events.expert_message("s", pm.key, pm.name, pm.avatar, "not mine"))
         return "done"
 
 
