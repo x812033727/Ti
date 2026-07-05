@@ -284,7 +284,9 @@ def _pm_decompose_script(requirement: str) -> str:
     )
 
 
-def build_fake_experts(session_id: str, cwd: Path, requirement: str) -> dict[str, ExpertTimingProxy]:
+def build_fake_experts(
+    session_id: str, cwd: Path, requirement: str
+) -> dict[str, ExpertTimingProxy]:
     return {
         "pm": _fake_expert(
             BY_KEY["pm"],

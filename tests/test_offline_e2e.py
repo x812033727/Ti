@@ -67,6 +67,18 @@ def test_offline_end_to_end(client):
     # 真的有階段性 git commit
     assert by_type.get("git_commit"), "應有 git commit 事件"
 
+    # fake 專家訊息應由共用 wrapper 補上可觀測欄位
+    timed_messages = [
+        e
+        for e in by_type.get("expert_message", [])
+        if isinstance(e["payload"].get("duration_s"), float) and e["payload"]["duration_s"] > 0
+    ]
+    assert timed_messages, "expert_message 應帶 duration_s > 0"
+    assert any(
+        e["payload"].get("provider") == "fake" and e["payload"].get("model") == ""
+        for e in timed_messages
+    )
+
     # 三個任務都移到完成
     done_tasks = [e for e in by_type.get("task_status", []) if e["payload"]["status"] == "done"]
     assert len({e["payload"]["id"] for e in done_tasks}) == 3
