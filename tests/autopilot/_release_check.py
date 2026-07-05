@@ -53,6 +53,16 @@ def missing_elements(body: str) -> list[str]:
     return missing
 
 
+def version_matches_effective(body: str, version: str) -> bool:
+    """④ 生效版本是否逐字對應 pyproject 版本。
+
+    補 `FOUR_ELEMENTS[3]` 只驗「有生效版本語意」但不敏感於版本值的缺口；
+    必須錨定 ④ 那句，不能用 `version in body`，避免 heading/footer 的版本字串造成假綠。
+    """
+    pattern = r"(?m)^.*④\s*生效版本[^\n]*自\s*`?" + re.escape(version) + r"`?\s*起[^\n]*$"
+    return re.search(pattern, body) is not None
+
+
 def outlet_carries_block(body: str) -> bool:
     """單一出口是否完整帶出 Breaking 區塊：heading＋四要素全到（正向與黑樣本同一把尺）。"""
     return has_heading(body) and not missing_elements(body)
