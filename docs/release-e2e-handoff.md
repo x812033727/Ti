@@ -6,12 +6,11 @@
 
 ## 半閉環聲明（最重要，先讀）
 
-**真實 `v*` tag-push 端到端（E2E）鏈中，`release: published → release-smoke` 這一環已於 v0.2.0
-生產閉環**（見下方邊界表與 `docs/evidence/release-smoke-v0.2.0-trigger.json`：run
-[27905531397](https://github.com/x812033727/Ti/actions/runs/27905531397)，`event=release`／
-`conclusion=success`，`gh run view`＋REST 雙路實跑核對一致）；**其餘環節與後續版本仍為半閉環，
-尚待逐版生產驗證。** 目前多數單元／守護測試只證明「推 tag 前的 render 結構正確」，**不代表**
-GitHub 生產環境已對每一版都實跑過完整鏈
+**真實 `v*` tag-push 端到端（E2E）鏈中，v0.2.0 此鏈已生產閉環；後續版本仍半閉環、尚待逐版
+生產驗證。** 其中 `release: published → release-smoke` 與 GitHub release 頁實際 body 頂部
+Breaking 置頂，皆已由 v0.2.0 線上證據封口（見下方邊界表與對應 evidence）；目前多數單元／
+守護測試只證明「推 tag 前的 render 結構正確」，**不代表** GitHub 生產環境已對每一版都
+實跑過完整鏈
 `push tag → gh release create → release: published → release-smoke`。除已具生產證據的環節外，
 第一次正式打新 `v*` tag 發 release 後，仍須依下方「發佈後人工核對步驟」逐項確認，才算真正閉環。
 
@@ -26,8 +25,8 @@ GitHub 生產環境已對每一版都實跑過完整鏈
 | 缺區塊／缺任一要素／版本改舊版 → 兩出口翻紅（黑樣本成對自證） | ✅ 已閉環（守護測試） | `test_qa_task4_pretag_breaking_outlets.py` 的 `test_black_sample_missing_block_pairs_red`、`test_black_sample_missing_each_element_pairs_red`、`test_black_sample_stale_effective_version_pairs_red` |
 | 發佈文件契約（GH_PAT 四項／DoD／半閉環聲明／403 runbook）在 `CLAUDE.md` | ✅ 已閉環（守護測試） | `tests/autopilot/test_qa_task4_release_docs_dod.py`（全數綠，含黑樣本 mutation 自證判別力） |
 | CI `test` job 於每次 push 跑 `pytest`，在 `v*` tag 推出前即攔截 | ✅ 已閉環 | `.github/workflows/ci.yml` 的 `test` job；閘門在 push 觸發，早於任何 `v*` tag-push |
-| **真實 `v*` tag-push → GitHub release 頁實際 body 頂部 Breaking 置頂** | ⏳ 佐證已具、待封（本任務範圍外，移交待辦） | 已有生產佐證 `docs/evidence/release-v0.2.0-online-body.json`（`body_match=true`，線上 body 頂部即 `## ⚠️ Breaking Changes`）；翻 ✅ 屬另一任務，本任務僅封 release-smoke 觸發一條 |
-| **`release: published` 事件實際觸發 `release-smoke.yml`** | ✅ **已生產閉環（實跑核對）** | 生產證據 `docs/evidence/release-smoke-v0.2.0-trigger.json`：線上 run [27905531397](https://github.com/x812033727/Ti/actions/runs/27905531397)，`event=release`／`status=completed`／`conclusion=success`（gh+REST 雙路：`gh run view`＋REST 實跑核對一致）；觸發契約結構另由 `test_qa_task4_release_docs_dod.py::test_task4_commit_does_not_alter_release_smoke_trigger` 守護 |
+| **真實 `v*` tag-push → GitHub release 頁實際 body 頂部 Breaking 置頂** | ✅ 已生產閉環（實跑核對） | `docs/evidence/release-v0.2.0-online-body.json`（`body_match=true`、`body_sha256`）＋`docs/evidence/release-v0.2.0-body-structure-verdict.json`（`verdict=PASS`、`頂部即 Breaking 置頂=true`、`雙來源正規化後逐字相等=true`）＋`scripts/check_release_body_structure.py`＋`tests/autopilot/test_qa_body_pinning_evidence.py::test_handoff_body_row_is_green_with_evidence_paths` |
+| **`release: published` 事件實際觸發 `release-smoke.yml`** | ✅ **已生產閉環（實跑核對）** | 生產證據 `docs/evidence/release-smoke-v0.2.0-trigger.json`：run [27905531397](https://github.com/x812033727/Ti/actions/runs/27905531397)，`event=release`／`status=completed`／`conclusion=success`（`gh run view`＋REST 雙路核對一致）；觸發契約結構另由 `test_qa_task4_release_docs_dod.py::test_task4_commit_does_not_alter_release_smoke_trigger` 守護 |
 
 ## 發佈後人工核對步驟（具名、可逐項打勾）
 
@@ -66,7 +65,8 @@ GitHub 生產環境已對每一版都實跑過完整鏈
 - **③ before / after 遷移範例**：...
 ```
 
-> ⚠️ 此為**離線 render** 結果，只證明「推 tag 前結構正確」。**真實 `v*` tag-push 生產 E2E 仍待第一次正式發 release 後由步驟 B 人工閉環。**
+> ⚠️ 此為**離線 render** 結果，只證明「推 tag 前結構正確」。v0.2.0 線上 body 與
+> `release-smoke` 觸發已由上方 evidence 封口；後續版本仍須依步驟 B 逐版人工核對後才算閉環。
 
 ## 邊界與不做事項
 
