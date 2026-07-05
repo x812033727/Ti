@@ -884,6 +884,8 @@ class OpenAIExpert:
         寫入型／非冪等工具的重執行防護由 **providers 層 per-speak `_dedup_cache`** 處理
         （`tools.execute_deduped`：同一 key 第二次命中回首次結果、不重跑副作用），非 tools.execute
         層。Claude provider 路徑尚無此保護（已開核心 backlog 票，見任務 #2 架構決策）。
+
+        `duration_ms` 以 perf_counter 量整輪工具迴圈 wall-clock，非單次 API 呼叫時長。
         """
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
