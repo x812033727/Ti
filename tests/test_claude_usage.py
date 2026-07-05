@@ -242,3 +242,46 @@ def test_last_good_older_than_max_age_is_unreachable(monkeypatch):
     monkeypatch.setattr(claude_usage, "_now", lambda: t0 + claude_usage._LAST_GOOD_MAX_AGE + 1)
     _patch_get(monkeypatch, FakeResp(status_code=429))
     assert claude_usage.fetch_rate_limits()["error"] == "unreachable"
+
+
+# --- 按模型 scoped 限額（limits 清單 → models 欄位）------------------------------
+
+
+def test_scoped_model_limits_parsed(monkeypatch):
+    body = {
+        **SAMPLE,
+        "limits": [
+            {
+                "kind": "session",
+                "group": "session",
+                "percent": 13,
+                "severity": "normal",
+                "resets_at": "2026-07-05T06:59:59+00:00",
+                "scope": None,
+                "is_active": False,
+            },
+            {
+                "kind": "weekly_scoped",
+                "group": "weekly",
+                "percent": 85,
+                "severity": "warning",
+                "resets_at": "2026-07-10T22:59:59+00:00",
+                "scope": {"model": {"id": None, "display_name": "Fable"}, "surface": None},
+                "is_active": True,
+            },
+        ],
+    }
+    _patch_get(monkeypatch, FakeResp(body=body))
+    r = claude_usage.fetch_rate_limits()
+    assert r["error"] is None
+    fable = r["models"]["Fable"]
+    assert fable["used_percentage"] == 85.0 and fable["severity"] == "warning"
+    assert isinstance(fable["reset_at"], float) and fable["reset_at"] > 1.7e9
+    # 無 scope.model 的條目（session/weekly_all）不入 models。
+    assert list(r["models"]) == ["Fable"]
+
+
+def test_scoped_model_limits_absent_is_none(monkeypatch):
+    _patch_get(monkeypatch, FakeResp())  # SAMPLE 無 limits 欄位
+    r = claude_usage.fetch_rate_limits()
+    assert r["models"] is None
