@@ -1202,13 +1202,18 @@ async def _run_session_supervised(session, requirement: str, sid: str):
     - session.run 正常完成 → 回傳其結果。
     - 執行時間超過 AUTOPILOT_TASK_TIMEOUT（硬牆，多半任務太大）→ 取消後拋 TimeoutError
       （訊息沿用既有格式，落主迴圈的 parked 分支）。
-    - events 檔 mtime 連續 AUTOPILOT_STALL_TIMEOUT 秒未前進（疑似子程序死鎖）→ 取消後拋
+    - 連續 AUTOPILOT_STALL_TIMEOUT 秒「無任何進展」（疑似子程序死鎖）→ 取消後拋
       AutopilotTaskStalled（落主迴圈的 failed→分診重試分支）。
     - 收到取消（SIGTERM 優雅停機）→ 先回收 run_task 再原樣 re-raise，既有停機收斂不受影響。
 
-    以 events_mtime 為停滯訊號可區分「真死鎖（零新事件）」與「合法長任務（事件仍在產生）」；
-    Part 1 修好後健康設定下 events 至多每 ~TURN_HARD_TIMEOUT 被觸碰一次（_abort_turn 逾時也會
-    broadcast 一則事件），故 AUTOPILOT_STALL_TIMEOUT（預設 2400 > TURN_HARD_TIMEOUT）不誤殺。
+    「進展」＝events 檔 mtime 前進 **或** 任一 worker 子程序 CPU tick 前進（沿用 #298 的
+    _proc_descendant_cpu／_workers_field）。兩訊號正交互補：events_mtime 在長 inter-message
+    間隔會凍結（工具長跑但沒吐串流訊息），此時 cpu_active 仍為 True → 不誤殺合法長任務；反之
+    issue #286 的死鎖是子程序卡 ep_poll 零 CPU 且零事件 → 兩訊號同時靜止才判死鎖，訊號更強、
+    誤殺風險更低（尤其 TURN_IDLE/HARD 被設 0 停用的 footgun 配置，純 events 會誤殺 CPU 忙碌的
+    長 turn）。cpu_active 為 None（非 Linux／無 /proc／首個 tick）時退回純 events 判定，行為與
+    未整合前一致。門檻仍取 AUTOPILOT_STALL_TIMEOUT（預設 2400 > TURN_HARD_TIMEOUT）：CPU gate
+    是「更難誤殺」，不改動門檻語義（等 API 回應這類零 CPU＋零事件的合法慢 turn 仍靠此餘裕）。
     """
     hard = config.AUTOPILOT_TASK_TIMEOUT or None
     stall = config.AUTOPILOT_STALL_TIMEOUT or None
@@ -1216,6 +1221,7 @@ async def _run_session_supervised(session, requirement: str, sid: str):
     run_task = asyncio.ensure_future(session.run(requirement))
     started = loop.time()
     last_mtime = history.events_mtime(sid)
+    prev_cpu = _proc_descendant_cpu()
     last_progress = started
     try:
         while True:
@@ -1223,16 +1229,25 @@ async def _run_session_supervised(session, requirement: str, sid: str):
             if run_task in done:
                 return run_task.result()
             now = loop.time()
+            # 進展訊號一：events 檔 mtime 前進。
             mtime = history.events_mtime(sid)
-            if mtime != last_mtime:
-                last_mtime, last_progress = mtime, now
+            progressed = mtime != last_mtime
+            last_mtime = mtime
+            # 進展訊號二：worker 子程序 CPU tick 前進（events 凍結時的活性兜底）。
+            cur_cpu = _proc_descendant_cpu()
+            if _workers_field(prev_cpu, cur_cpu).get("cpu_active") is True:
+                progressed = True
+            prev_cpu = cur_cpu
+            if progressed:
+                last_progress = now
             if hard is not None and now - started >= hard:
                 await _cancel_and_reclaim(run_task)
                 raise TimeoutError(f"autopilot task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s")
             if stall is not None and now - last_progress >= stall:
                 await _cancel_and_reclaim(run_task)
                 raise AutopilotTaskStalled(
-                    f"no activity for {int(now - last_progress)}s（逾時，疑似子程序死鎖）"
+                    f"no activity for {int(now - last_progress)}s"
+                    "（events 凍結且 worker 零 CPU，逾時，疑似子程序死鎖）"
                 )
     except asyncio.CancelledError:
         await _cancel_and_reclaim(run_task)

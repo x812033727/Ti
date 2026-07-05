@@ -748,9 +748,10 @@ AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
 AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
 AUTOPILOT_TASK_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TASK_TIMEOUT", "3600"))
-# 任務執行中「活動停滯」自癒門檻（秒）：session events 檔 mtime 連續此秒數未前進＝疑似
-# 子程序死鎖（非任務太大），autopilot 就地取消該場並標 failed 交分診自動重試，無需外部
-# 監控/重啟。不變量：須 > TURN_HARD_TIMEOUT（單一 turn 可合法靜默的上限，預設 1800），
+# 任務執行中「活動停滯」自癒門檻（秒）：連續此秒數「無進展」（events 檔 mtime 未前進 **且**
+# worker 子程序零 CPU 活性）＝疑似子程序死鎖（非任務太大），autopilot 就地取消該場並標 failed
+# 交分診自動重試，無需外部監控/重啟。以 events＋CPU 雙訊號判活（events 在長 inter-message 間隔
+# 會凍結，CPU 兜底）。不變量：須 > TURN_HARD_TIMEOUT（單一 turn 可合法靜默的上限，預設 1800），
 # 否則會誤殺慢但活著的 turn。預設 2400（40min）＝ TURN_HARD_TIMEOUT 之上留 600s headroom，
 # 且 < AUTOPILOT_TASK_TIMEOUT(3600) 以更早自癒。0＝停用（退回僅硬牆逾時）。
 AUTOPILOT_STALL_TIMEOUT = int(os.getenv("TI_AUTOPILOT_STALL_TIMEOUT", "2400"))

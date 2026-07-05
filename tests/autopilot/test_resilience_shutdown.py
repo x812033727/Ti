@@ -338,11 +338,28 @@ def _record(sid, i):
     )
 
 
-def _fast_supervisor(monkeypatch, *, stall, task_timeout, reclaim=0.5, poll=0.02):
+def _fake_cpu(active):
+    """stateful 的 _proc_descendant_cpu 替身：active=True 每次呼叫 tick 前進（模擬 worker
+    燒 CPU → cpu_active=True）；active=False 回 {}（無 worker → cpu_active=False）。讓
+    supervisor 的 CPU 判活訊號在測試中確定，不依賴測試行程真實子程序樹。"""
+    ticks = {"n": 0}
+
+    def _sample(*_a, **_k):
+        if not active:
+            return {}
+        ticks["n"] += 5
+        return {111: ticks["n"]}
+
+    return _sample
+
+
+def _fast_supervisor(monkeypatch, *, stall, task_timeout, reclaim=0.5, poll=0.02, cpu_active=False):
     monkeypatch.setattr(autopilot, "_LIVENESS_POLL_S", poll)
     monkeypatch.setattr(autopilot, "_STALL_RECLAIM_S", reclaim)
     monkeypatch.setattr(config, "AUTOPILOT_STALL_TIMEOUT", stall)
     monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", task_timeout)
+    # 預設無 worker CPU 活性：純靠 events 訊號，讓「events 凍結」測試確定觸發停滯。
+    monkeypatch.setattr(autopilot, "_proc_descendant_cpu", _fake_cpu(cpu_active))
 
 
 async def test_supervisor_detects_stall_raises_stalled(state_dir, monkeypatch):
@@ -388,6 +405,26 @@ async def test_supervisor_lets_active_session_complete(state_dir, monkeypatch):
         autopilot._run_session_supervised(ActiveSession(), "req", sid), timeout=5
     )
     assert result == {"completed": True, "followups": []}
+
+
+async def test_supervisor_no_kill_when_workers_cpu_active(state_dir, monkeypatch):
+    """白樣本（CPU 忙碌但事件凍結）：events mtime 凍結（工具長跑沒吐串流訊息），但 worker
+    子程序持續燒 CPU（cpu_active=True）→ 不得誤判死鎖。即使總時長超過停滯門檻，supervisor
+    仍正常回傳結果——這正是純 events 會誤殺、CPU 訊號救回的關鍵情境（issue #286 的反面）。"""
+    _fast_supervisor(monkeypatch, stall=0.1, task_timeout=100, cpu_active=True)
+    sid = "ap-cpu-1"
+    history.start_session(sid, "req")
+
+    class CpuBusySilentSession:
+        async def run(self, requirement):
+            _record(sid, 0)  # 唯一事件；此後 mtime 凍結，僅剩 CPU 訊號判活
+            await real_asyncio.sleep(0.4)  # > stall 0.1；期間全靠 worker CPU 活性維持
+            return {"completed": True}
+
+    result = await real_asyncio.wait_for(
+        autopilot._run_session_supervised(CpuBusySilentSession(), "req", sid), timeout=5
+    )
+    assert result == {"completed": True}
 
 
 async def test_supervisor_hard_timeout_still_parks(state_dir, monkeypatch):
