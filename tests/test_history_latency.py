@@ -296,6 +296,34 @@ def test_events_token_usage_keeps_explicit_duration_ms_value():
     assert "duration_ms" not in ev_none.to_dict()["payload"]
 
 
+def test_events_token_usage_ttft_s_omitted_when_none_and_kept_when_set():
+    ev = events.token_usage(
+        "s",
+        "engineer",
+        "claude",
+        "claude-sonnet",
+        10,
+        5,
+        15,
+        ttft_s=0.123,
+    )
+    payload = ev.to_dict()["payload"]
+    assert payload["ttft_s"] == 0.123
+    assert isinstance(payload["ttft_s"], float)
+
+    ev_none = events.token_usage(
+        "s",
+        "engineer",
+        "claude",
+        "claude-sonnet",
+        10,
+        5,
+        15,
+        ttft_s=None,
+    )
+    assert "ttft_s" not in ev_none.to_dict()["payload"]
+
+
 # --- 標準 #4（Claude 路徑）：ResultMessage.duration_api_ms 直通事件 payload ------
 
 
