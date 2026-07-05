@@ -415,7 +415,9 @@ export function handleEvent(ev) {
       addCI(p);
       break;
     case "token_usage":
-      // 統計事件由後端 history/meta 聚合，前端即時串流不用顯示。
+      // 統計事件由後端 history/meta 聚合，前端即時串流不用顯示；
+      // ttft_s 為選填欄位，老 JSONL / 舊 replay 沒有時也要安全略過。
+      void p.ttft_s;
       break;
     case "task_result": {
       // 任務結果 log-line：顯示實際用的 provider/模型與耗時/QA/費用（缺欄位一律省略不崩潰）。

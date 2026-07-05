@@ -49,7 +49,7 @@ def _patch_task(task_id: int, **fields) -> None:
     p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-def _seed_session_meta(sid: str) -> None:
+def _seed_session_meta(sid: str, *, ttft_s: float | None = None) -> None:
     """造一個帶 scorecard 與 token_usage 的 history meta。"""
     meta = history.start_session(sid, "[autopilot] 測試任務")
     meta["status"] = "completed"
@@ -60,6 +60,8 @@ def _seed_session_meta(sid: str) -> None:
         "by_model": {"claude-opus-4-8": {"total": 150}},
         "by_role": {"senior": {"total": 150}},
     }
+    if ttft_s is not None:
+        meta["token_usage"]["ttft_s"] = ttft_s
     history._write_meta(sid, meta)
 
 
@@ -68,7 +70,7 @@ def _seed_tasks() -> dict[str, int]:
     done = backlog.add("已完成的任務")
     failed = backlog.add("失敗的任務")
     pending = backlog.add("排隊中的任務")
-    _seed_session_meta("s-done")
+    _seed_session_meta("s-done", ttft_s=0.123)
     backlog.set_status(
         done["id"],
         "done",
@@ -105,6 +107,7 @@ def test_activity_aggregates_and_sorts_desc(client, state):
     assert done["scorecard"]["tasks_done"] == 2
     assert done["token_usage"]["by_provider"]["claude"]["total"] == 150
     assert "claude-opus-4-8" in done["token_usage"]["by_model"]
+    assert done["token_usage"]["ttft_s"] == pytest.approx(0.123)
     # failed 任務：note/attempts/source 齊備；session meta 不存在 → 不虛構聚合欄位
     failed = by_id[ids["failed"]]
     assert failed["note"] == "討論未達完成"
@@ -123,6 +126,26 @@ def test_activity_limit_pagination(client, state):
 def test_activity_empty_backlog(client, state):
     data = client.get("/api/autopilot/activity").json()
     assert data == {"tasks": [], "total": 0}
+
+
+def test_activity_omits_legacy_ttft_s_when_missing(client, state):
+    meta = history.start_session("s-legacy", "[autopilot] 舊任務")
+    meta["status"] = "completed"
+    meta["scorecard"] = {"tasks_total": 1, "tasks_done": 1, "qa_total": 0, "qa_pass": 0}
+    meta["token_usage"] = {
+        "total": {"prompt": 10, "completion": 2, "total": 12, "cost_usd": 0.0, "calls": 1},
+        "by_provider": {"claude": {"total": 12}},
+        "by_model": {"claude-sonnet": {"total": 12}},
+        "by_role": {"senior": {"total": 12}},
+    }
+    history._write_meta("s-legacy", meta)
+    task = backlog.add("舊任務")
+    backlog.set_status(task["id"], "done", session_id="s-legacy")
+
+    data = client.get("/api/autopilot/activity").json()
+    rows = {r["session_id"]: r for r in data["tasks"] if r.get("session_id")}
+    legacy = rows["s-legacy"]
+    assert "ttft_s" not in legacy["token_usage"]
 
 
 def test_activity_requires_auth(client, state, monkeypatch):

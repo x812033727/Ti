@@ -189,6 +189,11 @@ export async function refreshApActivity() {
       const tu = t.token_usage || {};
       Object.keys(tu.by_provider || {}).forEach((prov) => apChip(chips, prov, "prov"));
       Object.keys(tu.by_model || {}).forEach((model) => apChip(chips, model, ""));
+      const ttftRaw = tu.ttft_s;
+      if (ttftRaw != null) {
+        const ttft = Number(ttftRaw);
+        if (Number.isFinite(ttft)) apChip(chips, `TTFT ${ttft.toFixed(3)}s`, "ttft");
+      }
       if (t.pr) {
         const a = document.createElement("a");
         a.className = "ap-chip ap-pr";
