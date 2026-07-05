@@ -1,0 +1,28 @@
+{
+  "task": "#2 線上 body 結構斷言核對",
+  "source_evidence": "docs/evidence/release-v0.2.0-online-body.json",
+  "captured_at_utc": "2026-07-05T17:43:50Z",
+  "checker_script": "scripts/check_release_body_structure.py",
+  "tag": "v0.2.0",
+  "repo": "x812033727/Ti",
+  "pyproject_version_ssot": "0.2.0",
+  "breaking_heading_constant": "## ⚠️ Breaking Changes",
+  "normalization": "CRLF->LF + 去每行尾隨空白 + 去尾端空行（等效 sed 's/\\r$//' + 去尾空行）",
+  "checks": {
+    "雙來源正規化後逐字相等(gh vs REST)": true,
+    "頂部第一個頂層## 區塊": "## ⚠️ Breaking Changes",
+    "頂部即 Breaking 置頂": true,
+    "四要素齊(①行為變動②原因③before/after④生效版本)": true,
+    "生效版本逐字對應_自0.2.0起": true,
+    "逃生艙_TI_REQUIRE_CHOWN=warn/off": true
+  },
+  "black_sample_selfcheck": {
+    "頂部非Breaking->翻紅": true,
+    "抽逃生艙->翻紅": true,
+    "雙來源不一致->翻紅": true,
+    "生效版本改舊版->翻紅": true
+  },
+  "problems": [],
+  "verdict": "PASS",
+  "note": "一次性核對腳本產物，讀本地雙來源證據 JSON、零網路、確定性；依架構決策不進 CI 測試套件。"
+}
