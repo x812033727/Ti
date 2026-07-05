@@ -1,13 +1,13 @@
 """反向 / 白樣本測試 — expert_wrap 的 NOT 路徑。
 
-僅補 ``tests/core/test_expert_wrap_latency.py`` 之四個反例：：
+僅補 ``tests/core/test_expert_wrap_latency.py`` 之四個反例：
 
 * 非 ``EXPERT_MESSAGE`` 事件不被注入任何 metadata 鍵。
 * ``payload`` 非 ``dict``：``speak`` 不炸、metadata 不注入。
 * ``speaker`` 與 ``role_key`` 不匹配時不注入。
 * ``wrapped.speak`` 拋例外時 ``last_duration_s`` 仍被 ``finally`` 記錄。
 
-每個反例都斷言「注入鍵 **不存在**」(`not in payload`)，而非值為空—這是與黑樣本
+每個反例都斷言「注入鍵 **不存在**」(`not in payload`)，而非值為空——這是與黑樣本
 (``duration_s == 0.25``) 的判別力所在。本檔 **不重複** 黑樣本的 happy-path 斷言。
 """
 
@@ -26,7 +26,7 @@ from studio.roles import BY_KEY
 _INJECTED_KEYS: tuple[str, ...] = ("duration_s", "provider", "model", "role")
 
 
-# --- 共用 stub：與黑樣本測試同款，monotonic 耗盡後停在最後值 -------------------
+# --- 共用 stub：與黑樣本同款，monotonic 耗盡後停在最後值，避免 teardown 干擾 ----
 
 
 def _controlled_clock(monkeypatch: pytest.MonkeyPatch, values: list[float]) -> None:
@@ -40,6 +40,7 @@ def _controlled_clock(monkeypatch: pytest.MonkeyPatch, values: list[float]) -> N
 
 
 def _run_without_loop(coro: Coroutine[Any, Any, Any]) -> Any:
+    """同步驅動不讓出控制權的 coroutine，避免 event loop 消耗受控時鐘序列。"""
     try:
         coro.send(None)
     except StopIteration as exc:
@@ -99,14 +100,14 @@ def test_non_expert_message_events_receive_no_metadata(monkeypatch):
 
 
 class _BadPayloadExpert:
-    """發 EXPERT_MESSAGE 但 payload 是 list（不是 dict）— 破壞性別名。"""
+    """發 EXPERT_MESSAGE 但 payload 是 list（不是 dict）— 破壞性邊界案例。"""
 
     role = BY_KEY["engineer"]
 
     async def speak(self, prompt: str, broadcast) -> str:
         del prompt
         sentinel: list[str] = ["untouched"]
-        # dataclass 沒做型別強制；payload 接受 list — 也代表後端可能餵壞資料。
+        # dataclass 沒做型別強制；payload 接受 list — 代表後端可能餵壞資料。
         await broadcast(
             events.StudioEvent(
                 events.EventType.EXPERT_MESSAGE,
@@ -125,7 +126,7 @@ def test_non_dict_payload_does_not_crash_or_get_injected(monkeypatch):
     )
     _controlled_clock(monkeypatch, [5.0, 5.42])
 
-    # 不炸：speak() 順利返回（_run_without_loop 沒丟 StopIteration 以外例外）
+    # 不炸：speak() 順利返回
     bucket = _run_without_loop(_collect_speech(wrapper))
 
     assert bucket[0].type == events.EventType.EXPERT_MESSAGE
@@ -201,7 +202,7 @@ def test_last_duration_recorded_even_when_speak_raises(monkeypatch):
         provider="fake-provider",
         model="fake-model",
     )
-    # started 在 speak 入口；最後在 finally；兩次 monotonic 落差即 elapsed。
+    # started 在 speak 入口；finally 時再取一次；兩次 monotonic 落差即 elapsed。
     _controlled_clock(monkeypatch, [2.0, 5.0])
 
     with pytest.raises(RuntimeError, match="backend blew up"):
