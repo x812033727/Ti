@@ -1,7 +1,7 @@
 {
   "real_api": false,
-  "mode": "real",
-  "started_at": "2026-07-05T21:54:49Z",
+  "mode": "dry_run",
+  "started_at": "2026-07-05T22:05:25Z",
   "role_key": "engineer",
   "model": "claude-fable-5",
   "effort": "agent_sdk_default",
@@ -15,7 +15,7 @@
     "Glob"
   ],
   "prompt_sha256": "c1eef4e4a4296f1ac653ba622ac2187ed892b295a5840916d8a5054037721552",
-  "cwd": "/opt/ti-autopilot-work.lanes/lane-apd337e27107-3/.qa_artifacts/prompt_cache_ab/workdir",
+  "cwd": "/opt/ti-autopilot-work.lanes/lane-apd337e27107-4/.qa_artifacts/prompt_cache_ab/workdir",
   "cli": "/usr/bin/claude",
   "after_attempts_requested": 2,
   "before": {

@@ -199,7 +199,8 @@ def _build_markdown(payload: dict[str, Any]) -> str:
 
     if mode == "dry_run":
         real_api_line = (
-            "- 真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema）"
+            "- 真實 API：未打（`--dry-run` 模式，純驗腳本流程與報告 schema；"
+            "真 API 端到端未實測）"
         )
     elif payload.get("real_api"):
         real_api_line = "- 真實 API：是（Claude Agent SDK 正式 `Expert.speak()` 路徑）"
@@ -248,6 +249,19 @@ def _build_markdown(payload: dict[str, Any]) -> str:
             f"- after - before：`{_format_num(delta)}` 秒",
             f"- before cache_read_input_tokens：`{before['cache_read_input_tokens']}`",
             f"- after cache_read_input_tokens：`{after['cache_read_input_tokens']}`",
+            "",
+            "## 補驗方式",
+            "",
+            "- 這份報告若非真 API，先把憑證準備好再重跑同一腳本。",
+            "- 建議做法：設定 `ANTHROPIC_API_KEY`，保留同一組 `model` / `effort` / "
+            "`system_prompt`，取消 `--dry-run` 後重執行。",
+            "- 參考指令：",
+            "  ```bash",
+            "  timeout 90 .venv/bin/python scripts/measure_prompt_cache_ab.py \\",
+            "      --after-attempts 2 --turn-timeout 30",
+            "  ```",
+            "- 真 API 端到端驗收以 `after` 的 `cache_read_input_tokens > 0` 為命中證據，"
+            "再核對 `ttft_s` before/after 差異。",
             "",
             "註：`ttft_s` 是本專案串流包裝層量到的首個內容事件時間，適合看同路徑 A/B delta；"
             "絕對值不宣稱等同 provider 原生 TTFT。",
@@ -405,6 +419,8 @@ def _build_dry_run_payload(prompt: str, cwd: Path) -> dict[str, Any]:
     after_cold = _result("after", False, payload_after_cold)
     after_warm = _result("after_read_2", False, payload_after_warm)
     return {
+        "real_api": False,
+        "mode": "dry_run",
         "before": asdict(before),
         "after": asdict(after_warm),
         "after_runs": [asdict(after_cold), asdict(after_warm)],
