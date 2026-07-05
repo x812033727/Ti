@@ -85,6 +85,7 @@ def finish_session(session_id: str) -> dict | None:
         meta["parallel"] = parallel  # 供 /api/metrics 聚合並行可觀測性
     meta["scorecard"] = _derive_scorecard(events, meta)  # 供 /api/metrics 聚合成果記分卡
     meta["token_usage"] = _derive_token_usage(events)  # 供 /api/usage 聚合 provider/model 成本
+    meta["latency"] = _derive_latency(events)
     _write_meta(session_id, meta)
     # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
     # 自己回收掉）；回收失敗絕不影響本次收尾。
@@ -265,6 +266,67 @@ def _derive_token_usage(events: list[dict]) -> dict:
             _add_token_usage(
                 bucket, prompt, completion, event_total, cost_usd, cache_read, cache_write
             )
+    return {
+        "total": total,
+        "by_provider": by_provider,
+        "by_model": by_model,
+        "by_role": by_role,
+    }
+
+
+def _blank_latency() -> dict:
+    return {"count": 0, "sum_ms": 0, "max_ms": 0, "avg_ms": 0}
+
+
+def _int_ms(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _add_latency(dst: dict, duration_ms: int) -> None:
+    dst["count"] += 1
+    dst["sum_ms"] += duration_ms
+    dst["max_ms"] = max(dst["max_ms"], duration_ms)
+
+
+def _finalize_latency_bucket(bucket: dict) -> dict:
+    if bucket["count"]:
+        bucket["avg_ms"] = bucket["sum_ms"] // bucket["count"]
+    return bucket
+
+
+def _derive_latency(events: list[dict]) -> dict:
+    """從 token_usage.duration_ms 彙總 provider/model/role 維度的 wall-clock latency。"""
+    total = _blank_latency()
+    by_provider: dict[str, dict] = {}
+    by_model: dict[str, dict] = {}
+    by_role: dict[str, dict] = {}
+    for ev in events:
+        if ev.get("type") != "token_usage":
+            continue
+        p = ev.get("payload") or {}
+        if "duration_ms" not in p:
+            continue
+        duration_ms = _int_ms(p.get("duration_ms"))
+        provider = str(p.get("provider") or "unknown")
+        model = str(p.get("model") or "unknown")
+        role = str(p.get("speaker") or "unknown")
+        for bucket in (
+            total,
+            by_provider.setdefault(provider, _blank_latency()),
+            by_model.setdefault(model, _blank_latency()),
+            by_role.setdefault(role, _blank_latency()),
+        ):
+            _add_latency(bucket, duration_ms)
+    for bucket in (
+        total,
+        *by_provider.values(),
+        *by_model.values(),
+        *by_role.values(),
+    ):
+        _finalize_latency_bucket(bucket)
     return {
         "total": total,
         "by_provider": by_provider,

@@ -14,6 +14,7 @@ import contextlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from . import config, events, llm_caller, runner, tools
@@ -977,6 +978,8 @@ class OpenAIExpert:
             # 回傳不含核可關鍵詞的系統 note，沿用既有「未過→失敗回饋」收斂路徑，orchestrator 無需改動。
             hard_timeout = config.TURN_HARD_TIMEOUT or None
             timed_out = False
+            # 整輪工具迴圈 wall-clock，非單次 API 呼叫。
+            loop_started_at = time.perf_counter()
             try:
                 if hard_timeout is not None:
                     await asyncio.wait_for(_run_loop(), timeout=hard_timeout)
@@ -984,6 +987,7 @@ class OpenAIExpert:
                     await _run_loop()
             except asyncio.TimeoutError:
                 timed_out = True
+            duration_ms = int((time.perf_counter() - loop_started_at) * 1000)
 
             if usage["calls"]:
                 await broadcast(
@@ -995,6 +999,7 @@ class OpenAIExpert:
                         usage["prompt"],
                         usage["completion"],
                         usage["total"],
+                        duration_ms=duration_ms,
                     )
                 )
             if timed_out:
