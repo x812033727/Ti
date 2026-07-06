@@ -2,16 +2,17 @@
 
 > 範圍：只做 `docs/evidence/` 既有證據勾稽與 2026-07-06 線上重驗，不重做發版。
 > N/A 規則：若工具不可直接提供欄位，明示 `N/A` 並附補驗指令；不得合成佔位值。
-> 本報告以 evidence 內既有值為主，必要時補列衍生 hash 用於重算口徑定位。
+> 本報告引用 evidence 內既有勾稽值；唯一報告端另算值為 2026-07-06 線上重驗的 exact body hash
+> （body 逐字、不加結尾換行；可由 evidence 內存 body 重算導出，見「三、雜湊計算規則」與「五、缺口」）。
 > 第二章資料源為任務 #1／#2／#3 執行紀錄；原始路徑反映來源環境，未改寫成目前 lane 路徑。
 
 ## 一、三列閉環表
 
 | # | 閉環環節 | Evidence 檔路徑 | 原 `captured_at_utc` | 關鍵勾稽值 | 本次線上重驗 | 雜湊 / 判定規則 |
 |---|---|---|---|---|---|---|
-| #1 | 線上 release body 抓取（gh CLI + REST 雙來源） | `docs/evidence/release-v0.2.0-online-body.json` | `2026-07-05T17:43:50Z` | `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`、`body_match=true`、`tag_match=true`、`url_match=true` | 2026-07-06 成功；`tag`、`url` 全項 match；`body_sha256` 呈現計算口徑歧義（不含最後換行 vs evidence 定義） | 沿用 evidence 定義：取 `gh_release_view.body` 內容後補 CLI 輸出換行再取 UTF-8 SHA-256，另補 `exact body` 逐字重算 |
-| #2 | 線上 body 結構判定（Breaking 置頂、四要素、逃生艙） | `docs/evidence/release-v0.2.0-body-structure-verdict.json` | `2026-07-05T17:43:50Z` | `verdict=PASS`、`problems=[]`、`雙來源正規化後逐字相等=true`、`頂部即 Breaking 置頂=true`、`四要素齊=true`、`生效版本逐字對應_自0.2.0起=true`、`逃生艙_TI_REQUIRE_CHOWN=warn/off=true` | 2026-07-06 成功；裸跑 `python3 scripts/check_release_body_structure.py` 因 import path 失敗；補驗 `PYTHONPATH=.` 後 PASS，與 evidence 一致 | 不另算雜湊；沿用 evidence 內 `verdict` / `checks` / `problems` |
-| #3 | `release: published` 實際觸發 release-smoke | `docs/evidence/release-smoke-v0.2.0-trigger.json` | `2026-07-05T18:24:35Z` | `run_id=27905531397`、`event=release`、`status=completed`、`conclusion=success`、`workflow_path=.github/workflows/release-smoke.yml` | 2026-07-06 成功；`gh run view` 可得欄位與 REST 全項 match。`path` 在 `gh run view --json` 為 `N/A`，由 REST 補驗 | 不用 hash；以 GitHub Actions run metadata 勾稽。`path` 補驗指令：`gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,name,path}'` |
+| #1 | 線上 release body 抓取（gh CLI + REST 雙來源） | `docs/evidence/release-v0.2.0-online-body.json` | `2026-07-05T17:43:50Z` | `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`、`body_match=true`、`tag_match=true`、`url_match=true` | 擷取日期 2026-07-06，本次線上重驗：成功。tagName MATCH、url MATCH、body 文字 MATCH（gh vs REST vs evidence 三方逐字一致）；mismatch 落字：線上 body 逐字 exact hash `fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4` ≠ evidence `body_sha256`——屬勾稽值計算方式瑕疵而非內容漂移，見「五、缺口」 | 沿用 evidence 定義：取 `gh_release_view.body` 內容，加 CLI 輸出結尾換行後取 UTF-8 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行） |
+| #2 | 線上 body 結構判定（Breaking 置頂、四要素、逃生艙） | `docs/evidence/release-v0.2.0-body-structure-verdict.json` | `2026-07-05T17:43:50Z` | `verdict=PASS`、`problems=[]`、`雙來源正規化後逐字相等=true`、`頂部即 Breaking 置頂=true`、`四要素齊=true`、`生效版本逐字對應_自0.2.0起=true`、`逃生艙_TI_REQUIRE_CHOWN=warn/off=true` | 擷取日期 2026-07-06，本次線上重驗：成功，六項 checks 全 MATCH、exit code 0，`body_sha256_exact`/`body_sha256_with_newline` 勾稽 MATCH，無 mismatch。裸跑 `python3 scripts/check_release_body_structure.py` 因 import path 失敗；補驗 `PYTHONPATH=.` 後 PASS，與 evidence 一致 | 不另算雜湊；沿用 evidence 內 `verdict` / `checks` / `problems` / `body_sha256*` 欄位 |
+| #3 | `release: published` 實際觸發 release-smoke | `docs/evidence/release-smoke-v0.2.0-trigger.json` | `2026-07-05T18:24:35Z` | `run_id=27905531397`、`event=release`、`status=completed`、`conclusion=success`、`workflow_path=.github/workflows/release-smoke.yml` | 擷取日期 2026-07-06，本次線上重驗：成功，`gh run view` 可得欄位與 REST 全項 MATCH，無 mismatch。`path` 在 `gh run view --json` 為 `N/A`，由 REST 補驗 | 不用 hash；以 GitHub Actions run metadata 勾稽。`path` 補驗指令：`gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,name,path}'` |
 
 ## 二、任務 #1／#2／#3 執行紀錄轉錄
 
@@ -235,35 +236,101 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 補充：evidence 檔保留同 tag 較早的失敗 run `27905351284`（`superseded_failure_run`），本報告不以後來成功 run 掩蓋先前失敗；目前閉環只採用 `run_id=27905531397` 的成功 release run。
 
+### 2026-07-06 線上重驗可照抄重跑指令（qa／工程師提供）
+
+關鍵值一律內嵌於本節與三列表，**不以 `$TMPDIR` 路徑作為唯一證據**（`$TMPDIR` 產物僅為輔助落檔，可隨環境消失）。
+
+#1 gh CLI + REST 雙來源 raw 落檔與 identity 欄位比對（重驗結果：tagName MATCH、url MATCH、body_sha256 MISMATCH；易變欄位只記錄不比對）：
+
+```bash
+set -euo pipefail
+TMP="${TMPDIR:-/tmp}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+GH="$TMP/task1-gh-release-view-v0.2.0-$STAMP.json"
+REST="$TMP/task1-rest-release-by-tag-v0.2.0-$STAMP.json"
+EVIDENCE="docs/evidence/release-v0.2.0-online-body.json"
+EVIDENCE_ID="$TMP/task1-evidence-identity-v0.2.0-$STAMP.json"
+GH_ID="$TMP/task1-gh-identity-v0.2.0-$STAMP.json"
+REST_ID="$TMP/task1-rest-identity-v0.2.0-$STAMP.json"
+
+timeout 60 gh auth status
+timeout 60 curl -sf https://api.github.com/rate_limit >/dev/null
+timeout 60 gh release view v0.2.0 --json tagName,url --repo x812033727/Ti >/dev/null
+timeout 60 gh release view v0.2.0 --json body,tagName,url --repo x812033727/Ti >"$GH"
+timeout 60 gh api repos/x812033727/Ti/releases/tags/v0.2.0 >"$REST"
+
+GH_SHA="$(jq -e -rj '.body // ""' "$GH" | sha256sum | awk '{print $1}')"
+REST_SHA="$(jq -e -rj '.body // ""' "$REST" | sha256sum | awk '{print $1}')"
+
+jq -e -S '{tagName:.gh_release_view.tagName,url:.gh_release_view.url,body_sha256:.body_sha256}' \
+  "$EVIDENCE" >"$EVIDENCE_ID"
+jq -e -S --arg body_sha256 "$GH_SHA" \
+  '{tagName:.tagName,url:.url,body_sha256:$body_sha256}' \
+  "$GH" >"$GH_ID"
+jq -e -S --arg body_sha256 "$REST_SHA" \
+  '{tagName:.tag_name,url:.html_url,body_sha256:$body_sha256}' \
+  "$REST" >"$REST_ID"
+
+diff -u "$EVIDENCE_ID" "$GH_ID" || true
+diff -u "$EVIDENCE_ID" "$REST_ID" || true
+jq -e '{id,created_at,published_at}' "$REST"
+```
+
+`diff -u` 的唯一差異為 `body_sha256`：線上 gh/REST exact body hash 皆為 `fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4`，evidence 為 `d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`。兩者差一個結尾換行字元——此即「五、缺口」所述計算方式瑕疵的最小重現。
+
+#2 結構斷言（重驗結果：六項 checks 全 MATCH、exit code 0）：
+
+```bash
+timeout 60 env PYTHONPATH=. python3 scripts/check_release_body_structure.py; echo "exit=$?"
+```
+
+預期尾行：`exit=0`（本 repo 內亦可用 `.venv/bin/python scripts/check_release_body_structure.py`）。
+
+#3 smoke run 勾稽（重驗結果：全項 MATCH）：
+
+```bash
+timeout 60 gh run view 27905531397 --json databaseId,event,status,conclusion,workflowName,url
+timeout 60 gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,name,path}'
+```
+
 ## 三、雜湊計算規則
 
-`docs/evidence/release-v0.2.0-body-structure-verdict.json` 同時保留：
-- `body_sha256`（含換行口徑）
-- `body_sha256_with_newline`（同上）
-- `body_sha256_exact`（不含尾端換行）
+`body_sha256` 的計算規則沿用 `docs/evidence/release-v0.2.0-online-body.json` 內定義：取 `gh_release_view.body` 字串、保留 CLI 輸出結尾換行、以 UTF-8 取 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行）。2026-07-06 重驗已證實：此規則實為 `jq -r` 式 raw 輸出**含結尾換行**的 hash，非 body 逐字 exact hash（見「五、缺口」）。
 
-`#2` 判定綁 `body_sha256_exact == "fd9b16..."` 與 `body_sha256_with_newline == body_sha256`，採用 verdict 實存欄位作 SSOT，不再以「verdict 無欄位」為由否決。
+`docs/evidence/release-v0.2.0-body-structure-verdict.json` 同時保留 `body_sha256`、`body_sha256_with_newline`、`body_sha256_exact`。#2 判定採 verdict 實存欄位勾稽：`body_sha256_with_newline == body_sha256`，且 `body_sha256_exact` 等於 body 逐字 exact hash。
+
+本報告引用的雜湊只有兩個，皆可由 evidence 反查或重算導出：
+
+- evidence 既有勾稽值 `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`（body + 結尾換行）。
+- 2026-07-06 重驗 exact body hash `fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4`（body 逐字、不加結尾換行；對 evidence 內存 `gh_release_view.body` 重算即得同值，故非新增外部勾稽源）。
+
+除上述兩值外，不新增其他報告端衍生雜湊。
 
 ## 四、結論
 
-三證據俱全：#1 線上 body 抓取與雜湊勾稽（tag/url 一致，`body_sha256` 存在口徑差異）、#2 結構判定 `verdict=PASS`、#3 smoke run `event=release` / `conclusion=success`。2026-07-06 線上重驗除口徑差異外，其他欄位吻合。
+三證據俱全：#1 線上 body 抓取與勾稽（tagName/url/body 文字 MATCH）、#2 結構判定 `verdict=PASS`（六項 checks 全 MATCH、exit code 0）、#3 smoke run `event=release` / `conclusion=success` 全項 MATCH。
 
-**判定：閉環（僅及 v0.2.0）—缺口章：因 #1 `body_sha256` 計算口徑歧義，降級至待補結論，不宣告本輪全量閉環。**
+降級註記：#1 的 evidence `body_sha256` 經 2026-07-06 重驗證實為計算方式瑕疵（`jq -r` 含結尾換行的 hash，非 body 逐字 hash；交叉檢查 body 文字 MATCH，非線上內容漂移，詳見「五、缺口」）。故結論由「全項無不符」**降級**為：**內容閉環成立，但 evidence 勾稽值計算方式存在已知瑕疵、修復列移交待辦**。
 
-範圍限定：本閉環判定只及 v0.2.0；後續版本需依 `docs/release-e2e-handoff.md` 逐版驗證。
+**判定：閉環（僅及 v0.2.0）——v0.2.0 生產 E2E 鏈內容閉環成立，附「五、缺口」所列 evidence hash 計算方式瑕疵。**
+
+範圍限定：本閉環判定（含上述降級註記）只及 v0.2.0；後續版本需依 `docs/release-e2e-handoff.md` 逐版驗證。
 
 ## 五、缺口
 
-缺口一：`body_sha256` 計算口徑。
+**缺口 1（本輪唯一缺口）：evidence `body_sha256` 為 `jq -r` 含結尾換行的 hash，非 body 逐字 exact hash。**
 
-- `release-v0.2.0-online-body.json` 的 hash 欄位仍為含尾端換行口徑，與 `body_sha256_with_newline` 一致；
-- `release-v0.2.0-body-structure-verdict.json` 同步保留 `body_sha256_exact`，驗證邏輯改為：
-  - `body_sha256_exact = fd9b16...`（精準線上內容）
-  - `body_sha256_with_newline = d1779cbb...`（含換行）
-- 已完成 #2 勾稽歸檔為 PASS，差異保留在 #1 定義口徑下追蹤；不更動 evidence，待後續規格統一再補寫回。
+- 事實：`docs/evidence/release-v0.2.0-online-body.json` 的 `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`，經 2026-07-06 重驗證實是 `gh --jq '.body'`（`jq -r` 式 raw 輸出）**含結尾換行字元**的 SHA-256；body 逐字 exact hash 為 `fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4`。兩者差一個 `\n`，最小重現指令見「二、2026-07-06 線上重驗可照抄重跑指令」。
+- 定性：**屬勾稽值計算方式瑕疵，非線上內容漂移**——交叉檢查線上 body 文字（gh CLI vs REST vs evidence 內存 body）三方逐字 MATCH；且對 evidence 內存 body 重算 exact hash 即得 `fd9b16…`，可自證兩值指向同一份內容。
+- 影響：結論相應降級（見「四、結論」降級註記），且範圍僅及 v0.2.0；不影響 #2／#3 的判定。
+- #2 勾稽：`release-v0.2.0-body-structure-verdict.json` 同步保留 `body_sha256_exact` / `body_sha256_with_newline`，已依 verdict 實存欄位判定 PASS；不再以「verdict 無欄位」否決。
+- 處置：**修復 evidence `body_sha256`（改為 body 逐字 exact hash 並更新計算規則描述）列為移交待辦；本場不修、不動 evidence 檔。**
 
 ## 六、交付狀態對照
 
-本報告已入 git 追蹤，`git status docs/` 乾淨、無 untracked/modified 殘留；2026-07-06 重驗僅更新本檔（三列表本次重驗欄、結論章、本交付狀態章），未新增任何 evidence 副本或報告端衍生雜湊。
+本報告已入 git 追蹤；2026-07-06 重驗僅更新本檔（三列表重驗欄含 mismatch 落字、可照抄重跑指令節、雜湊計算規則章、結論降級、缺口章、本交付狀態章），未新增任何 evidence 副本，未改動任何 `docs/evidence/` 檔案；報告端雜湊僅限「三、雜湊計算規則」列出的兩值。
 
-備註（移交待辦）：`scripts/check_release_body_structure.py` 的 `PYTHONPATH` 自舉問題維持移交待辦，不併入本輪。
+備註（移交待辦）：
+
+1. 修復 evidence `body_sha256` 計算方式瑕疵（見「五、缺口」）——本場不修、不動 evidence 檔。
+2. `scripts/check_release_body_structure.py` 的 `PYTHONPATH` 自舉問題維持移交待辦，不併入本輪。
