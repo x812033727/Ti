@@ -422,7 +422,7 @@ def detect_entrypoint(cwd: Path | str) -> str | None:
 
 
 _INLINE_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
-_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>]+$")
+_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>/]+$")
 _SLASH_INLINE_CODE_SEPARATOR_RE = re.compile(r"^\s*/+\s*$")
 
 
@@ -445,12 +445,9 @@ def _unwrap_markdown_command_spans(raw: str) -> str | None:
     pos = 0
     for span in spans:
         outside = raw[pos : span.start()]
-        if outside and _SLASH_INLINE_CODE_SEPARATOR_RE.fullmatch(outside):
-            pieces.append(" && ")
-        elif outside and _INLINE_CODE_SEPARATOR_RE.fullmatch(outside):
-            pieces.append(outside)
-        elif outside:
+        if outside and not _INLINE_CODE_SEPARATOR_RE.fullmatch(outside):
             return None
+        pieces.append(" && " if _SLASH_INLINE_CODE_SEPARATOR_RE.fullmatch(outside) else outside)
         pieces.append(span.group(1).strip())
         pos = span.end()
 

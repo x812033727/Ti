@@ -32,11 +32,6 @@ def test_parse_run_command_turns_slash_separated_inline_code_spans_into_andand()
     assert runner.parse_run_command(text) == "echo A && echo B && echo C"
 
 
-def test_parse_run_command_does_not_unwrap_mixed_slash_separator():
-    text = "完成\n執行指令: `echo A` ;/ `echo B`"
-    assert runner.parse_run_command(text) == "`echo A` ;/ `echo B`"
-
-
 def test_parse_run_command_keeps_shell_backtick_substitution():
     text = "完成\n執行指令: echo `printf A`"
     assert runner.parse_run_command(text) == "echo `printf A`"

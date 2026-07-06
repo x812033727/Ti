@@ -3,21 +3,19 @@
 > 範圍：只做 `docs/evidence/` 既有證據勾稽與 2026-07-06 線上重驗，不重做發版。
 > N/A 規則：若工具不可直接提供欄位，明示 `N/A` 並附補驗指令；不得合成佔位值。
 > 本報告只引用 evidence 內既有勾稽值，不另存報告端衍生雜湊。
-> 第二章資料源為任務 #1／#2／#3 執行紀錄；任務 #1/#2 本次 rerun 原始輸出與比對另存 `docs/evidence/release-v0.2.0-rerun-20260706.json`。
+> 第二章資料源為任務 #1／#2／#3 執行紀錄；原始路徑反映來源環境，未改寫成目前 lane 路徑。
 
 ## 一、三列閉環表
 
 | # | 閉環環節 | Evidence 檔路徑 | 原 `captured_at_utc` | 關鍵勾稽值 | 本次線上重驗 | 雜湊 / 判定規則 |
 |---|---|---|---|---|---|---|
-| #1 | 線上 release body 抓取（gh CLI + REST 雙來源） | `docs/evidence/release-v0.2.0-online-body.json`；本次 rerun：`docs/evidence/release-v0.2.0-rerun-20260706.json` | `2026-07-05T17:43:50Z` | `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`、`body_match=true`、`tag_match=true`、`url_match=true` | 成功；本次 raw/exit/comparison 已落 `docs/evidence/release-v0.2.0-rerun-20260706.json`，線上 body 重抓後雜湊、tag、url 全項 match | 沿用 evidence 定義：取 `gh_release_view.body` 內容，加 CLI 輸出結尾換行後取 UTF-8 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行） |
-| #2 | 線上 body 結構判定（Breaking 置頂、四要素、逃生艙） | `docs/evidence/release-v0.2.0-body-structure-verdict.json`；本次 rerun：`docs/evidence/release-v0.2.0-rerun-20260706.json` | `2026-07-05T17:43:50Z` | `verdict=PASS`、`problems=[]`、`雙來源正規化後逐字相等=true`、`頂部即 Breaking 置頂=true`、`四要素齊=true`、`生效版本逐字對應_自0.2.0起=true`、`逃生艙_TI_REQUIRE_CHOWN=warn/off=true` | 成功；`PYTHONPATH=.` 補驗 PASS，raw/exit/comparison 已落 `docs/evidence/release-v0.2.0-rerun-20260706.json`，與 evidence 一致 | 不另算雜湊；沿用 evidence 內 `verdict` / `checks` / `problems` |
+| #1 | 線上 release body 抓取（gh CLI + REST 雙來源） | `docs/evidence/release-v0.2.0-online-body.json` | `2026-07-05T17:43:50Z` | `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`、`body_match=true`、`tag_match=true`、`url_match=true` | 成功；線上 body 重抓後雜湊、tag、url 全項 match | 沿用 evidence 定義：取 `gh_release_view.body` 內容，加 CLI 輸出結尾換行後取 UTF-8 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行） |
+| #2 | 線上 body 結構判定（Breaking 置頂、四要素、逃生艙） | `docs/evidence/release-v0.2.0-body-structure-verdict.json` | `2026-07-05T17:43:50Z` | `verdict=PASS`、`problems=[]`、`雙來源正規化後逐字相等=true`、`頂部即 Breaking 置頂=true`、`四要素齊=true`、`生效版本逐字對應_自0.2.0起=true`、`逃生艙_TI_REQUIRE_CHOWN=warn/off=true` | 成功；裸跑 `python3 scripts/check_release_body_structure.py` 因 import path 失敗；補驗 `PYTHONPATH=.` 後 PASS，與 evidence 一致 | 不另算雜湊；沿用 evidence 內 `verdict` / `checks` / `problems` |
 | #3 | `release: published` 實際觸發 release-smoke | `docs/evidence/release-smoke-v0.2.0-trigger.json` | `2026-07-05T18:24:35Z` | `run_id=27905531397`、`event=release`、`status=completed`、`conclusion=success`、`workflow_path=.github/workflows/release-smoke.yml` | 成功；`gh run view` 可得欄位與 REST 全項 match。`path` 在 `gh run view --json` 為 `N/A`，由 REST 補驗 | 不用 hash；以 GitHub Actions run metadata 勾稽。`path` 補驗指令：`gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,name,path}'` |
 
 ## 二、任務 #1／#2／#3 執行紀錄轉錄
 
 ### #1 線上 release body（來源：任務 #1 執行紀錄，2026-07-06）
-
-本次 rerun 可自證證據檔：`docs/evidence/release-v0.2.0-rerun-20260706.json`（含三腿 raw stdout/stderr、exit code、逐項 comparison，`all_matches_evidence=true`）。
 
 指令：
 
@@ -213,4 +211,6 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 ## 六、交付狀態對照
 
-本輪任務 #1/#2 rerun 證據已落 `docs/evidence/release-v0.2.0-rerun-20260706.json`；QA 守門測試為 `tests/docs/test_release_e2e_task1_online_revalidation.py`。
+本輪交付目標仍以驗收規格為準：`git status --porcelain --untracked-files=all` 應僅有 `?? docs/release-e2e-closure-report.md` 一筆，無其他範圍外檔案。
+
+備註（移交待辦）：`scripts/check_release_body_structure.py` 的 `PYTHONPATH` 自舉問題維持移交待辦，不併入本輪。
