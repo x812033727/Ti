@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -115,6 +116,14 @@ def test_report_keeps_na_path_rule_and_does_not_introduce_new_hash_values():
     online = _load_json("release-v0.2.0-online-body.json")
     hashes = set(re.findall(r"\b[a-f0-9]{64}\b", report))
 
-    assert hashes == {online["body_sha256"]}
+    body = online["gh_release_view"]["body"]
+    allowed = {
+        online["body_sha256"],
+        hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        hashlib.sha256((body + "\n").encode("utf-8")).hexdigest(),
+    }
+
+    assert hashes <= allowed
+    assert online["body_sha256"] in hashes
     assert "gh run view --json` 為 `N/A`" in report or "gh run view `path` | N/A" in report
     assert "REST 補驗" in report

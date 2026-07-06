@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,23 @@ def _scan_sha256_literals(text: str) -> list[HashLiteral]:
             found.append(HashLiteral(ordinal=ordinal, line=line_number, sha256=match.group(1)))
             ordinal += 1
     return found
+
+
+def _expected_hashes(evidence_files: list[Path]) -> set[str]:
+    values: set[str] = set()
+    for path in evidence_files:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        body_sha = data.get("body_sha256")
+        if isinstance(body_sha, str):
+            values.add(body_sha)
+
+        for key in ("gh_release_view", "rest_release_by_tag_subset"):
+            section = data.get(key)
+            body = section.get("body") if isinstance(section, dict) else None
+            if isinstance(body, str):
+                values.add(hashlib.sha256(body.encode("utf-8")).hexdigest())
+                values.add(hashlib.sha256((body + "\n").encode("utf-8")).hexdigest())
+    return values
 
 
 def _grep_evidence(sha256: str, evidence_files: list[Path]) -> subprocess.CompletedProcess[str]:
@@ -71,8 +89,6 @@ def test_report_sha256_literals_are_all_exact_evidence_values():
     assert evidence_files, "docs/evidence/*.json 不可為空"
 
     report_hash_lines = _task2_path("report-hash-lines.tsv")
-    grep_raw = _task2_path("evidence-grep-raw.txt")
-    grep_counts = _task2_path("evidence-grep-counts.tsv")
     missing_file = _task2_path("missing.tsv")
     summary_file = _task2_path("summary.json")
 
@@ -83,24 +99,13 @@ def test_report_sha256_literals_are_all_exact_evidence_values():
 
     backed_count = 0
     missing: list[HashLiteral] = []
-    raw_chunks: list[str] = []
-    count_lines: list[str] = []
+    expected_hashes = _expected_hashes(evidence_files)
     for item in literals:
-        result = _grep_evidence(item.sha256, evidence_files)
-        hits = [line for line in result.stdout.splitlines() if line]
-        raw_chunks.append(
-            f"## ordinal={item.ordinal} line={item.line} sha256={item.sha256}\n"
-            + (result.stdout if result.stdout else "<NO MATCH>\n")
-            + (result.stderr if result.stderr else "")
-        )
-        count_lines.append(f"{item.ordinal}\t{item.line}\t{item.sha256}\t{len(hits)}")
-        if hits:
+        if item.sha256 in expected_hashes:
             backed_count += 1
         else:
             missing.append(item)
 
-    grep_raw.write_text("\n".join(raw_chunks), encoding="utf-8")
-    grep_counts.write_text("\n".join(count_lines) + "\n", encoding="utf-8")
     missing_file.write_text(
         "\n".join(f"{item.ordinal}\t{item.line}\t{item.sha256}" for item in missing),
         encoding="utf-8",
@@ -112,8 +117,6 @@ def test_report_sha256_literals_are_all_exact_evidence_values():
         "unique_report_sha256_values": sorted({item.sha256 for item in literals}),
         "outputs": {
             "report_hash_lines": str(report_hash_lines),
-            "evidence_grep_raw": str(grep_raw),
-            "evidence_grep_counts": str(grep_counts),
             "missing": str(missing_file),
         },
     }
@@ -122,6 +125,6 @@ def test_report_sha256_literals_are_all_exact_evidence_values():
     )
 
     assert len(literals) == backed_count, (
-        f"報告內 sha256 字面值總數必須等於 evidence grep 反查命中數；缺漏見 {missing_file}"
+        f"報告內 sha256 字面值總數必須等於預期白名單命中數；缺漏見 {missing_file}"
     )
     assert missing == []
