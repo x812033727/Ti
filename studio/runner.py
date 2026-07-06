@@ -422,11 +422,15 @@ def detect_entrypoint(cwd: Path | str) -> str | None:
 
 
 _INLINE_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
-_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>]+$")
+_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>/]+$")
+_SLASH_INLINE_CODE_SEPARATOR_RE = re.compile(r"^\s*/+\s*$")
 
 
 def _unwrap_markdown_command_spans(raw: str) -> str | None:
     """解開 `cmd1`; `cmd2` 這類 Markdown code span 串接。
+
+    人工回報常用 `/` 分隔多個可執行指令；這裡轉成 `&&`，避免 `/` 進 shell
+    變成無效命令，同時確保前一段失敗時停止。
 
     若反引號看起來是 shell 自身語法（例如 echo `date`），外側會有一般文字，
     這裡回傳 None 讓原命令保持不動。
@@ -443,7 +447,7 @@ def _unwrap_markdown_command_spans(raw: str) -> str | None:
         outside = raw[pos : span.start()]
         if outside and not _INLINE_CODE_SEPARATOR_RE.fullmatch(outside):
             return None
-        pieces.append(outside)
+        pieces.append(" && " if _SLASH_INLINE_CODE_SEPARATOR_RE.fullmatch(outside) else outside)
         pieces.append(span.group(1).strip())
         pos = span.end()
 
