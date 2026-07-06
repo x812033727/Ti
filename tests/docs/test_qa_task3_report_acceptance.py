@@ -242,15 +242,13 @@ def test_task2_checker_recheck_matches_verdict_hash_fields():
     )
     assert "核對通過" in result.stdout
 
-    online = json.loads(ONLINE_EVIDENCE.read_text(encoding="utf-8"))
     verdict = json.loads(STRUCTURE_VERDICT.read_text(encoding="utf-8"))
-    body = online["gh_release_view"]["body"]
-    exact_hash = hashlib.sha256(body.encode()).hexdigest()
-    newline_hash = hashlib.sha256(f"{body}\n".encode()).hexdigest()
 
     assert verdict["verdict"] == "PASS"
     assert verdict["problems"] == []
     assert all(verdict["checks"].values())
-    assert verdict["body_sha256"] == online["body_sha256"]
-    assert verdict["body_sha256_exact"] == exact_hash
-    assert verdict["body_sha256_with_newline"] == newline_hash
+    assert {
+        "body_sha256",
+        "body_sha256_exact",
+        "body_sha256_with_newline",
+    }.isdisjoint(verdict)

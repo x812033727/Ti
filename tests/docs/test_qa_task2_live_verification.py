@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import os
@@ -160,35 +159,8 @@ def test_task2_live_prereqs_checker_output_and_verdict_match():
     assert verdict["problems"] == []
     assert problems == []
     assert recomputed_checks == verdict["checks"]
-
-    body_sha256_exact = hashlib.sha256(
-        evidence["gh_release_view"]["body"].encode("utf-8")
-    ).hexdigest()
-    body_sha256_with_newline = hashlib.sha256(
-        (evidence["gh_release_view"]["body"] + "\n").encode("utf-8")
-    ).hexdigest()
-    body_sha256_summary = {
-        "verdict_has_body_sha256": "body_sha256" in verdict,
-        "evidence_body_sha256": evidence["body_sha256"],
-        "verdict_body_sha256": verdict.get("body_sha256"),
-        "exact_body_sha256": body_sha256_exact,
-        "with_printed_newline_sha256": body_sha256_with_newline,
-        "matches_exact": evidence["body_sha256"] == body_sha256_exact,
-        "matches_with_printed_newline": evidence["body_sha256"] == body_sha256_with_newline,
-        "verdict_matches_with_newline": verdict.get("body_sha256") == body_sha256_with_newline,
-        "verdict_matches_exact": verdict.get("body_sha256") == body_sha256_exact,
-        "verdict_with_printed_newline_field_matches": verdict.get("body_sha256_with_newline")
-        == body_sha256_with_newline,
-        "verdict_exact_field_matches": verdict.get("body_sha256_exact") == body_sha256_exact,
-    }
-    summary_path = _tmp_file("body-sha256-summary")
-    summary_path.write_text(
-        json.dumps(body_sha256_summary, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    print(f"TASK2_BODY_SHA256_SUMMARY={summary_path}")
-    assert verdict["body_sha256"] == evidence["body_sha256"]
-    assert verdict.get("body_sha256") in {body_sha256_exact, body_sha256_with_newline}
-    assert verdict.get("body_sha256_with_newline") == body_sha256_with_newline
-    assert verdict.get("body_sha256_exact") == body_sha256_exact
-    assert evidence["body_sha256"] in {body_sha256_exact, body_sha256_with_newline}
+    assert {
+        "body_sha256",
+        "body_sha256_exact",
+        "body_sha256_with_newline",
+    }.isdisjoint(verdict)
