@@ -246,6 +246,8 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 關鍵值一律內嵌於本節與三列表，**不以 `$TMPDIR` 路徑作為唯一證據**（`$TMPDIR` 產物僅為輔助落檔，可隨環境消失）。
 
+<!-- MARKER：以下各線上重驗小節的開頭標題為守護測試 tests/docs/test_qa_task3_report_acceptance.py 定位指令塊的錨點，改字前請同步改測試斷言。 -->
+
 #1 gh CLI + REST 雙來源 raw 落檔與 identity 欄位比對（重驗結果：tagName MATCH、url MATCH、body_sha256 MISMATCH；易變欄位只記錄不比對）：
 
 ```bash
