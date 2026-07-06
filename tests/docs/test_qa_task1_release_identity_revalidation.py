@@ -47,8 +47,7 @@ def test_task1_reverify_script_fetches_fresh_sources_and_records_gap():
     after = EVIDENCE.read_bytes()
     assert after == before, "task #1 revalidation must not mutate evidence"
     assert result.returncode == 0, (
-        "reverify script failed; stdout/stderr:\n"
-        f"{result.stdout}\n--- stderr ---\n{result.stderr}"
+        f"reverify script failed; stdout/stderr:\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
 
     payload = _json_from_stdout(result.stdout)
@@ -83,11 +82,7 @@ def test_task1_reverify_script_fetches_fresh_sources_and_records_gap():
 
 def test_task1_reverify_script_uses_jq_e_and_diff_for_identity_fields():
     script = REVERIFY_SCRIPT.read_text(encoding="utf-8")
-    missing = [
-        token
-        for token in ("jq -e", "diff -u")
-        if token not in script
-    ]
+    missing = [token for token in ("jq -e", "diff -u") if token not in script]
     assert not missing, (
         "task #1 acceptance requires commandized jq+diff comparison; "
         f"missing from {REVERIFY_SCRIPT}: {missing}"
@@ -97,7 +92,7 @@ def test_task1_reverify_script_uses_jq_e_and_diff_for_identity_fields():
 def test_report_task1_copy_paste_commands_include_raw_tmpdir_and_jq_diff():
     section = _task1_command_section(REPORT.read_text(encoding="utf-8"))
     required_snippets = [
-        "TMP=\"${TMPDIR:-/tmp}\"",
+        'TMP="${TMPDIR:-/tmp}"',
         "gh release view v0.2.0 --json body,tagName,url",
         "gh api repos/x812033727/Ti/releases/tags/v0.2.0",
         "task1",

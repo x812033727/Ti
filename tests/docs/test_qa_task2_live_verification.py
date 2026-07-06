@@ -23,7 +23,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run(command: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str], *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=ROOT,
@@ -40,7 +42,9 @@ def _tmp_file(stem: str) -> Path:
     return tmpdir / f"task2-qa-{stem}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.raw.log"
 
 
-def _write_raw_log(path: Path, command: list[str], result: subprocess.CompletedProcess[str]) -> None:
+def _write_raw_log(
+    path: Path, command: list[str], result: subprocess.CompletedProcess[str]
+) -> None:
     path.write_text(
         "\n".join(
             [
@@ -129,9 +133,7 @@ def test_task2_live_prereqs_checker_output_and_verdict_match():
         )
     )
     evidence = json.loads(
-        (ROOT / "docs" / "evidence" / "release-v0.2.0-online-body.json").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "docs" / "evidence" / "release-v0.2.0-online-body.json").read_text(encoding="utf-8")
     )
     checker_module = _load_checker_module()
     version = checker_module.pyproject_version()
@@ -147,8 +149,7 @@ def test_task2_live_prereqs_checker_output_and_verdict_match():
             anchor in body and any(keyword.lower() in body.lower() for keyword in semantics)
             for _name, anchor, semantics in checker_module.FOUR_ELEMENTS
         ),
-        "生效版本逐字對應_自0.2.0起": f"自 `{version}` 起" in body
-        or f"自 {version} 起" in body,
+        "生效版本逐字對應_自0.2.0起": f"自 `{version}` 起" in body or f"自 {version} 起" in body,
         "逃生艙_TI_REQUIRE_CHOWN=warn/off": "TI_REQUIRE_CHOWN=warn" in body
         and "TI_REQUIRE_CHOWN=off" in body,
     }
@@ -160,7 +161,9 @@ def test_task2_live_prereqs_checker_output_and_verdict_match():
     assert problems == []
     assert recomputed_checks == verdict["checks"]
 
-    body_sha256_exact = hashlib.sha256(evidence["gh_release_view"]["body"].encode("utf-8")).hexdigest()
+    body_sha256_exact = hashlib.sha256(
+        evidence["gh_release_view"]["body"].encode("utf-8")
+    ).hexdigest()
     body_sha256_with_newline = hashlib.sha256(
         (evidence["gh_release_view"]["body"] + "\n").encode("utf-8")
     ).hexdigest()

@@ -212,14 +212,8 @@ exit 2
     )
 
     exact_hash = hashlib.sha256(evidence["gh_release_view"]["body"].encode()).hexdigest()
-    newline_hash = hashlib.sha256(
-        f"{evidence['gh_release_view']['body']}\n".encode()
-    ).hexdigest()
-    changed_lines = [
-        line
-        for line in result.stdout.splitlines()
-        if line.startswith(("+  ", "-  "))
-    ]
+    newline_hash = hashlib.sha256(f"{evidence['gh_release_view']['body']}\n".encode()).hexdigest()
+    changed_lines = [line for line in result.stdout.splitlines() if line.startswith(("+  ", "-  "))]
 
     assert newline_hash == evidence["body_sha256"]
     assert f'"body_sha256": "{newline_hash}"' in result.stdout
@@ -230,15 +224,21 @@ exit 2
 
 def test_task2_checker_recheck_matches_verdict_hash_fields():
     result = subprocess.run(
-        ["timeout", "60", "env", "PYTHONPATH=.", "python3", "scripts/check_release_body_structure.py"],
+        [
+            "timeout",
+            "60",
+            "env",
+            "PYTHONPATH=.",
+            "python3",
+            "scripts/check_release_body_structure.py",
+        ],
         cwd=ROOT,
         text=True,
         capture_output=True,
         check=False,
     )
     assert result.returncode == 0, (
-        "task2 checker 補驗應 exit 0。\n"
-        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        f"task2 checker 補驗應 exit 0。\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert "核對通過" in result.stdout
 
