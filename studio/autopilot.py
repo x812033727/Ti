@@ -1289,13 +1289,14 @@ async def run_one_task(task: dict) -> None:
         turn_state["current_expert"] = None
         turn_state["turn_started_at"] = None
         prev_status = _read_status()
-        if (
-            prev_status.get("state") == "running"
-            and str(prev_status.get("task_id")) == str(task.get("id"))
+        if prev_status.get("state") == "running" and str(prev_status.get("task_id")) == str(
+            task.get("id")
         ):
             _write_running_status_preserving(
                 task.get("id"),
-                last_activity_at=_latest_activity_at(prev_status.get("last_activity_at"), time.time()),
+                last_activity_at=_latest_activity_at(
+                    prev_status.get("last_activity_at"), time.time()
+                ),
                 current_expert=None,
                 turn_started_at=None,
             )
@@ -1922,6 +1923,73 @@ def _dict_or_none(value: object) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+# 判死規則的睡眠狀態：主迴圈此時阻塞在 asyncio.sleep，updated_at 本就不會每 60s 前進，
+# 不可據 updated_at 停滯判死（否則長 quota/budget 睡眠會被誤判主迴圈死）。
+_LIVENESS_SLEEP_STATES = frozenset({"quota_sleep", "budget_sleep", "rotate_restart"})
+
+
+def liveness_verdict(
+    status: dict,
+    *,
+    now: float,
+    stale_threshold_s: float,
+) -> str:
+    """依 `docs/guides/autopilot-monitoring.md` 判定規則 1–5 對 status.json 快照判死。
+
+    範圍誠實聲明：真正執行 restart 的是 **repo 外的「層3監控」腳本**，它並不 import 本函式。
+    本謂詞是判死規則的 **repo 內正典實作（reference implementation）**：供回歸守門測試把
+    AND 邏輯釘死、並讓外部作者有可對齊的可執行版本，但**不強制**外部監控——外部規則若被
+    放寬或餵它的欄位寫壞，本函式仍會綠，那類回歸須靠外部監控自身的測試把關。文件已標示本
+    函式為正典並要求外部對齊，`tests/docs/test_qa_task4_liveness_ssot_doc.py` 防兩者漂移。
+    定位如此明確，才不會用一個「假 SSOT」製造它本應防止的錯誤信心（issue #285 誤殺教訓）。
+
+    回傳（字串，非例外）：
+      - ``"alive"``          仍在工作，**不得** restart。
+      - ``"dead_main_loop"`` 規則 1：``updated_at`` 停滯超過門檻＝主迴圈疑似死了。
+      - ``"dead_task"``      規則 3 第二條：``running`` 且 ``cpu_active == False`` **且**
+                             ``last_activity_at`` 長不動（兩子句同時成立才殺）。
+
+    不變式：
+      - null-safe——舊 status.json 缺欄一律當 None，不拋例外。
+      - ``current_expert`` / ``turn_started_at`` **完全不參與判死**（規則 5）：長 turn 本就可能
+        長時間停在同一專家，據此 restart 會重演誤殺。
+      - ``cpu_active`` 為 True 或 ``last_activity_at`` 仍前進，任一為真即 ``alive``（規則 2）。
+      - ``cpu_active`` 為 None（/proc 不可用或首 tick）不可單獨判死，退回只看 ``last_activity_at``
+        新鮮度（規則 4）。
+      - 睡眠狀態（quota/budget/rotate）期間主迴圈阻塞在 sleep，改以 ``sleep_until`` 判是否仍在
+        合法睡眠，不因 ``updated_at`` 停滯判死。
+    """
+    state = _str_or_none(status.get("state"))
+
+    # 規則 1（睡眠特例）：睡眠狀態不看 updated_at，看 sleep_until 是否尚未到期（含門檻裕度）。
+    if state in _LIVENESS_SLEEP_STATES:
+        sleep_until = _number_or_none(status.get("sleep_until"))
+        if sleep_until is not None and now < sleep_until + stale_threshold_s:
+            return "alive"
+        return "dead_main_loop"
+
+    # 規則 1：updated_at＝主迴圈存活訊號，停滯超過門檻（或缺值）即主迴圈疑似死了。
+    updated_at = _number_or_none(status.get("updated_at"))
+    if updated_at is None or now - updated_at > stale_threshold_s:
+        return "dead_main_loop"
+
+    # 規則 2/3：只有 running 才做任務層判死；其餘（idle/stopped）updated_at 新鮮即存活。
+    if state != "running":
+        return "alive"
+
+    workers = _dict_or_none(status.get("workers")) or {}
+    cpu_active = workers.get("cpu_active")
+    last_activity_at = _number_or_none(status.get("last_activity_at"))
+    activity_stale = last_activity_at is None or now - last_activity_at > stale_threshold_s
+
+    # 規則 2：cpu_active 為 True（有 worker 燒 CPU）或 last_activity 仍前進 → 不得 restart。
+    if cpu_active is True or not activity_stale:
+        return "alive"
+    # 至此 activity_stale 必為 True。規則 3：cpu_active==False（AND 成立）或
+    # 規則 4：cpu_active==None 退回只看 last_activity（已 stale）→ 判死。
+    return "dead_task"
+
+
 def _latest_activity_at(*values: object) -> float | None:
     nums = [_number_or_none(v) for v in values]
     live = [v for v in nums if v is not None]
@@ -1945,9 +2013,7 @@ def _write_running_status_preserving(
         else _number_or_none(last_activity_at)
     )
     resolved_workers = (
-        _dict_or_none(prev.get("workers"))
-        if workers is _STATUS_UNSET
-        else _dict_or_none(workers)
+        _dict_or_none(prev.get("workers")) if workers is _STATUS_UNSET else _dict_or_none(workers)
     )
     resolved_current_expert = (
         _str_or_none(prev.get("current_expert"))
