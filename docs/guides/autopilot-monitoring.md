@@ -88,5 +88,17 @@ curl -s http://127.0.0.1:8021/api/autopilot | jq '.heartbeat | {state, updated_a
 `current_expert` / `turn_started_at` 顯示目前輪到 `senior`、已跑 `now - turn_started_at`（供
 timeline 展示），但如規則 5 所述**不參與判死**。
 
-相關程式碼：`studio/autopilot.py` 的 `_proc_descendant_cpu` / `_workers_field` /
-`_task_heartbeat` / `_write_status`；API 於 `studio/routes.py::autopilot_status`。
+## 判死規則的 repo 內正典實作
+
+上述規則 1–5 有一份可執行的 **repo 內正典實作**：`studio.autopilot.liveness_verdict(status, *,
+now, stale_threshold_s)`，回傳 `"alive"` / `"dead_main_loop"` / `"dead_task"`。**外部「層3監控」
+腳本作者請以此函式為對齊基準**——照散文實作時，行為應與它逐條一致（AND 邏輯、`cpu_active`
+救命、`cpu_active==null` 退回 `last_activity_at`、turn 欄位不判死、睡眠狀態看 `sleep_until`）。
+
+範圍界線（誠實）：此函式**不被外部監控自動 import**（層3監控在 repo 外、語言/部署各異），
+故它是「參照實作＋repo 內回歸守門」，不是能強制外部行為的執行點。外部規則被放寬或欄位寫壞，
+需靠外部監控**自身**的測試把關；repo 內由 `tests/autopilot/test_qa_task4_liveness_verdict.py`
+把 AND 邏輯釘死、`tests/docs/test_qa_task4_liveness_ssot_doc.py` 防本節與函式簽章漂移。
+
+相關程式碼：`studio/autopilot.py` 的 `liveness_verdict`（判死正典）／ `_proc_descendant_cpu` /
+`_workers_field` / `_task_heartbeat` / `_write_status`；API 於 `studio/routes.py::autopilot_status`。

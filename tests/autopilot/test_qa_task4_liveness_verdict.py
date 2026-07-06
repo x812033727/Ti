@@ -1,4 +1,11 @@
-"""守門測試 #4：判死規則 SSOT（`autopilot.liveness_verdict`）的黑白判別。
+"""守門測試 #4：判死規則 **repo 內正典實作** `autopilot.liveness_verdict` 的黑白判別。
+
+範圍誠實聲明（回應 critic 異議）：真正執行 restart 的是 repo 外的「層3監控」腳本，它並不
+import `liveness_verdict`。本檔鎖的是**函式這份參照實作**的 AND 邏輯不被悄悄放寬——它**不能**
+保證外部監控同步，那類回歸須靠外部監控自身的測試。此函式被文件（`autopilot-monitoring.md`
+「repo 內正典實作」節）標為對齊基準，並由 `tests/docs/test_qa_task4_liveness_ssot_doc.py`
+防文件與函式漂移；三處合起來把「散文規則→可執行正典→外部對齊要求」串成可查證的鏈，而非
+假稱「共用同一份程式」。
 
 對照 2026-07-04 誤殺（issue #285）：長輪多專家討論的 inter-message 間隔期間 events mtime／
 `last_activity_at` 凍結 30–90 分鐘，但子行程仍在燒 CPU。若監控只看 `last_activity_at` 就會

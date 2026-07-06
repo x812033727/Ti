@@ -1936,8 +1936,12 @@ def liveness_verdict(
 ) -> str:
     """依 `docs/guides/autopilot-monitoring.md` 判定規則 1–5 對 status.json 快照判死。
 
-    這是判死規則的**單一真相源**：規則原本只存在散文，正是 2026-07-04 誤殺（issue #285）的
-    漂移根源——外部監控腳本與守門測試共用此謂詞，AND 邏輯就無法被悄悄放寬。
+    範圍誠實聲明：真正執行 restart 的是 **repo 外的「層3監控」腳本**，它並不 import 本函式。
+    本謂詞是判死規則的 **repo 內正典實作（reference implementation）**：供回歸守門測試把
+    AND 邏輯釘死、並讓外部作者有可對齊的可執行版本，但**不強制**外部監控——外部規則若被
+    放寬或餵它的欄位寫壞，本函式仍會綠，那類回歸須靠外部監控自身的測試把關。文件已標示本
+    函式為正典並要求外部對齊，`tests/docs/test_qa_task4_liveness_ssot_doc.py` 防兩者漂移。
+    定位如此明確，才不會用一個「假 SSOT」製造它本應防止的錯誤信心（issue #285 誤殺教訓）。
 
     回傳（字串，非例外）：
       - ``"alive"``          仍在工作，**不得** restart。
