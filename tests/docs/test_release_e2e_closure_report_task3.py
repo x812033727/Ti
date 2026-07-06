@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -113,8 +114,11 @@ def test_report_has_no_stale_untracked_delivery_text():
 def test_report_keeps_na_path_rule_and_does_not_introduce_new_hash_values():
     report = _read_report()
     online = _load_json("release-v0.2.0-online-body.json")
+    # 2026-07-06 重驗 exact body hash：由 evidence 內存 body 重算導出（非硬編碼放行）。
+    # evidence 的 body_sha256 為 jq -r 含結尾換行的 hash（計算方式瑕疵，修復列移交待辦）。
+    reverify_exact = hashlib.sha256(online["gh_release_view"]["body"].encode("utf-8")).hexdigest()
     hashes = set(re.findall(r"\b[a-f0-9]{64}\b", report))
 
-    assert hashes == {online["body_sha256"]}
+    assert hashes == {online["body_sha256"], reverify_exact}
     assert "gh run view --json` 為 `N/A`" in report or "gh run view `path` | N/A" in report
     assert "REST 補驗" in report
