@@ -38,7 +38,8 @@ def _task1_command_section(report_text: str) -> str:
 
 def test_task1_reverify_script_fetches_fresh_sources_and_records_gap():
     before = EVIDENCE.read_bytes()
-    tmpdir = ROOT / ".qa-tmp" / "task1-release-identity"
+    # 使用環境的 $TMPDIR（sandbox 可寫），不寫入 read-only 的 worktree
+    tmpdir = Path(os.environ.get("TMPDIR", "/tmp")) / "task1-release-identity"
     tmpdir.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "TMPDIR": str(tmpdir)}
 
