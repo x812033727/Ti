@@ -421,13 +421,46 @@ def detect_entrypoint(cwd: Path | str) -> str | None:
     return None
 
 
+_INLINE_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>]+$")
+
+
+def _unwrap_markdown_command_spans(raw: str) -> str | None:
+    """解開 `cmd1`; `cmd2` 這類 Markdown code span 串接。
+
+    若反引號看起來是 shell 自身語法（例如 echo `date`），外側會有一般文字，
+    這裡回傳 None 讓原命令保持不動。
+    """
+    spans = list(_INLINE_CODE_SPAN_RE.finditer(raw))
+    if not spans:
+        return None
+    if len(spans) == 1 and spans[0].span() == (0, len(raw)):
+        return spans[0].group(1).strip()
+
+    pieces: list[str] = []
+    pos = 0
+    for span in spans:
+        outside = raw[pos : span.start()]
+        if outside and not _INLINE_CODE_SEPARATOR_RE.fullmatch(outside):
+            return None
+        pieces.append(outside)
+        pieces.append(span.group(1).strip())
+        pos = span.end()
+
+    tail = raw[pos:]
+    if tail and not _INLINE_CODE_SEPARATOR_RE.fullmatch(tail):
+        return None
+    return "".join(pieces).strip()
+
+
 def parse_run_command(text: str) -> str | None:
     """從專家文字解析 `執行指令: ...`（也接受 run command / 執行：）。"""
     m = re.search(r"(?:執行指令|執行命令|run command)\s*[:：]\s*(.+)", text, re.I)
     if not m:
         return None
-    cmd = m.group(1).strip().strip("`").strip()
-    return cmd or None
+    raw = m.group(1).strip()
+    cmd = _unwrap_markdown_command_spans(raw) or raw
+    return cmd.strip() or None
 
 
 def resolve_demo_command(cwd: Path | str, declared: str | None) -> str | None:
