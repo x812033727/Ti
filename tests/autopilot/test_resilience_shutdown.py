@@ -586,9 +586,7 @@ def test_write_status_accepts_current_turn_fields(state_dir):
     assert status["turn_started_at"] == 123.0
 
 
-async def test_run_one_task_events_refresh_status_and_clear_turn(
-    state_dir, monkeypatch, tmp_path
-):
+async def test_run_one_task_events_refresh_status_and_clear_turn(state_dir, monkeypatch, tmp_path):
     monkeypatch.setattr(autopilot, "_EVENT_STATUS_WRITE_MIN_INTERVAL_S", 0.0)
     clone = tmp_path / "clone"
     clone.mkdir()
