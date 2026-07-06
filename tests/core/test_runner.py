@@ -22,6 +22,16 @@ def test_parse_run_command():
     assert runner.parse_run_command("沒有宣告") is None
 
 
+def test_parse_run_command_unwraps_chained_inline_code_spans():
+    text = "完成\n執行指令: `echo A`; `echo B`; `echo C`"
+    assert runner.parse_run_command(text) == "echo A; echo B; echo C"
+
+
+def test_parse_run_command_keeps_shell_backtick_substitution():
+    text = "完成\n執行指令: echo `printf A`"
+    assert runner.parse_run_command(text) == "echo `printf A`"
+
+
 # --- 偵測入口 -----------------------------------------------------------
 
 
