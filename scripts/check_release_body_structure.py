@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -123,11 +124,16 @@ def main() -> int:
         return 2
     evidence = json.loads(EVIDENCE.read_text(encoding="utf-8"))
     version = pyproject_version()
+    gh_body = evidence["gh_release_view"]["body"]
+    body_sha256_exact = hashlib.sha256(gh_body.encode("utf-8")).hexdigest()
+    body_sha256_with_newline = hashlib.sha256((gh_body + "\n").encode("utf-8")).hexdigest()
 
     print("== v0.2.0 線上 body 結構斷言核對 ==")
     print(f"證據檔：{EVIDENCE.relative_to(ROOT)}")
     print(f"pyproject 版本（SSOT）：{version}")
     print(f"Breaking heading 常數：{BREAKING_HEADING!r}")
+    print(f"body_sha256_exact={body_sha256_exact}")
+    print(f"body_sha256_with_newline={body_sha256_with_newline}")
 
     problems = check(evidence, version)
 

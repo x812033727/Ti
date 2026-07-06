@@ -158,7 +158,9 @@ Breaking heading 常數：'## ⚠️ Breaking Changes'
 }
 ```
 
-補充：`release-v0.2.0-body-structure-verdict.json` 僅有 `checks`/`problems`/`verdict`，未定義 `body_sha256`，本次以該欄位不存在作為 `evidence` 對齊依據。
+補充：`release-v0.2.0-body-structure-verdict.json` 已補 `body_sha256` 相關欄位，`body_sha256` 仍以
+`docs/evidence/release-v0.2.0-online-body.json` 的 `body_sha256` 定義（含輸出尾端 newline）為主要勾稽基準，並同步保留
+`body_sha256_exact`/`body_sha256_with_newline` 對照欄位。
 
 ### #3 release-smoke 觸發（來源：任務 #2 執行紀錄，2026-07-06）
 
