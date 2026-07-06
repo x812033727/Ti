@@ -16,9 +16,6 @@
     "生效版本逐字對應_自0.2.0起": true,
     "逃生艙_TI_REQUIRE_CHOWN=warn/off": true
   },
-  "body_sha256": "d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4",
-  "body_sha256_exact": "fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4",
-  "body_sha256_with_newline": "d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4",
   "black_sample_selfcheck": {
     "頂部非Breaking->翻紅": true,
     "抽逃生艙->翻紅": true,
