@@ -152,6 +152,8 @@
   list-style: none; margin: 0; padding: 0;
 }
 .ap-item { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.ap-current-turn { color: var(--text); }
+.ap-current-turn .ap-item-title { color: var(--accent); }
 .ap-item:last-child { border-bottom: none; }
 .ap-item-head { display: flex; align-items: baseline; gap: 6px; }
 .ap-item-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
