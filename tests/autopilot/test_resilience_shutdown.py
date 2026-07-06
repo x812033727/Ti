@@ -23,7 +23,7 @@ import types
 
 import pytest
 
-from studio import autopilot, backlog, config, history
+from studio import autopilot, backlog, config, events, history
 
 
 class _Stop(BaseException):
@@ -308,7 +308,13 @@ async def test_main_loop_other_exception_still_marks_failed(state_dir, monkeypat
 async def test_task_heartbeat_refreshes_status_and_keeps_fields(state_dir, monkeypatch):
     monkeypatch.setattr(autopilot, "_HEARTBEAT_INTERVAL_S", 0.01)
     history.start_session("ap-hb-1", "req")
-    autopilot._write_status("running", task_id=7, quota={"claude": 12})
+    autopilot._write_status(
+        "running",
+        task_id=7,
+        quota={"claude": 12},
+        current_expert="engineer",
+        turn_started_at=123.0,
+    )
     before = _read_status(state_dir)
 
     hb = real_asyncio.create_task(autopilot._task_heartbeat(7, "ap-hb-1"))
@@ -321,6 +327,8 @@ async def test_task_heartbeat_refreshes_status_and_keeps_fields(state_dir, monke
     assert status["state"] == "running"
     assert status["task_id"] == 7
     assert status["quota"] == {"claude": 12}, "心跳須保留既有 quota 欄位"
+    assert status["current_expert"] == "engineer"
+    assert status["turn_started_at"] == 123.0
     assert status["updated_at"] > before["updated_at"], "心跳須刷新 updated_at"
     assert status["last_activity_at"] == pytest.approx(history.events_mtime("ap-hb-1"), abs=1), (
         "last_activity_at 應為 session events 檔 mtime"
@@ -559,6 +567,74 @@ def test_write_status_stopped_includes_last_activity_field(state_dir):
     status = _read_status(state_dir)
     assert status["state"] == "stopped"
     assert "last_activity_at" in status and status["last_activity_at"] is None
+    assert status["current_expert"] is None
+    assert status["turn_started_at"] is None
+
+
+def test_write_status_accepts_current_turn_fields(state_dir):
+    """status.json 契約：current_expert / turn_started_at 可寫入且 null-safe。"""
+    autopilot._write_status(
+        "running",
+        task_id=2,
+        last_activity_at=456.0,
+        current_expert="qa",
+        turn_started_at=123.0,
+    )
+    status = _read_status(state_dir)
+    assert status["last_activity_at"] == 456.0
+    assert status["current_expert"] == "qa"
+    assert status["turn_started_at"] == 123.0
+
+
+async def test_run_one_task_events_refresh_status_and_clear_turn(state_dir, monkeypatch, tmp_path):
+    monkeypatch.setattr(autopilot, "_EVENT_STATUS_WRITE_MIN_INTERVAL_S", 0.0)
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    snapshots: list[dict] = []
+
+    async def fake_prepare_clone():
+        return str(clone)
+
+    async def fake_select_workflow(*_args, **_kwargs):
+        return None, ""
+
+    class EventSession:
+        def __init__(self, sid, broadcast, **_kwargs):
+            self.sid = sid
+            self.broadcast = broadcast
+
+        async def run(self, _requirement):
+            await self.broadcast(events.tool_use(self.sid, "engineer", "Bash", "跑測試"))
+            snapshots.append(_read_status(state_dir))
+            await real_asyncio.sleep(0.01)
+            await self.broadcast(
+                events.expert_message(self.sid, "engineer", "工程師", "", "完成", final=True)
+            )
+            snapshots.append(_read_status(state_dir))
+            return {
+                "completed": False,
+                "followups": [],
+                "followup_items": [],
+                "core_changes": [],
+                "provider_unavailable": "codex",
+            }
+
+    task = backlog.add("事件驅動心跳測試")
+    autopilot._write_status("running", task_id=task["id"], quota={"claude": 12})
+    monkeypatch.setattr(autopilot, "_prepare_clone", fake_prepare_clone)
+    monkeypatch.setattr(autopilot, "_select_workflow", fake_select_workflow)
+    monkeypatch.setattr(autopilot, "StudioSession", EventSession)
+
+    await autopilot.run_one_task(task)
+
+    assert snapshots[0]["current_expert"] == "engineer"
+    assert snapshots[0]["turn_started_at"] is not None
+    assert snapshots[0]["last_activity_at"] is not None
+    assert snapshots[0]["quota"] == {"claude": 12}
+    assert snapshots[1]["last_activity_at"] > snapshots[0]["last_activity_at"]
+    final_status = _read_status(state_dir)
+    assert final_status["current_expert"] is None
+    assert final_status["turn_started_at"] is None
 
 
 # --- 審查修正（commit 3）：SIGTERM 競態三層防護、心跳例外隔離、execv 訊號安全 ----

@@ -66,3 +66,23 @@ def test_autopilot_status_exposes_workers(client, tmp_path):
     (tmp_path / "status.json").write_text(json.dumps(hb, ensure_ascii=False), encoding="utf-8")
     data = client.get("/api/autopilot").json()
     assert data["heartbeat"]["workers"] == {"count": 5, "cpu_active": True}
+
+
+def test_autopilot_status_exposes_turn_fields(client, tmp_path):
+    """current_expert / turn_started_at / last_activity_at 由 status.json 原樣進 heartbeat。"""
+    hb = {
+        "state": "running",
+        "task_id": 42,
+        "sleep_until": None,
+        "updated_at": 1000.0,
+        "quota": {"claude": 12},
+        "last_activity_at": 1783140430.0,
+        "workers": {"count": 5, "cpu_active": True},
+        "current_expert": "engineer",
+        "turn_started_at": 1783140400.0,
+    }
+    (tmp_path / "status.json").write_text(json.dumps(hb, ensure_ascii=False), encoding="utf-8")
+    data = client.get("/api/autopilot").json()
+    assert data["heartbeat"]["current_expert"] == "engineer"
+    assert data["heartbeat"]["turn_started_at"] == 1783140400.0
+    assert data["heartbeat"]["last_activity_at"] == 1783140430.0

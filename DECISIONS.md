@@ -2729,3 +2729,58 @@
 - 量測含意：A/B 期間若切模型/effort、或在升級 CLI 前後對比，TTFT 前後差可能來自 prefix 失效而非快取本身，結論即被污染——故命中證據以 after 的 `cache_read_input_tokens > 0` 為準，且固定 model/effort/system_prompt/CLI 版本。
 - 來源：anthropics/claude-agent-sdk-python#626、anthropics/claude-code#29966、Claude Code prompt caching 文件、API prompt caching 文件。
 
+## 心跳維持 `_write_status` → `status.json` 單一真相源，新增 `current_expert`(str|null)/`turn_started_at`(float|null) 併入既有扁平 payload；不新增檔案、機制或 `TI_*` 旋鈕
+- 時間：2026-07-06 09:29
+- 理由：基礎設施已存在，真正缺口只有專家粒度與事件驅動刷新，補欄位比重造風險小且可逆
+- 否決方案：另開新狀態檔或引入 OTEL/Langfuse——與 repo「不隨意新增依賴」相悖，且輕量 JSON 心跳已足夠
+
+## `/api/autopilot` 不改邏輯，沿用「原樣吐 status.json 當 heartbeat」，新欄位隨 payload 自動曝露；前端 timeline 以 null-safe `.get()` 讀 heartbeat，顯示 `current_expert` 與 `now - turn_started_at` 已跑時長
+- 時間：2026-07-06 09:29
+
+## turn 邊界資訊的接縫定在 autopilot `run_one_task` 的 `broadcast` callback（tap 層），禁止改 `orchestrator.py`/`experts.py`/`events.py`
+- 時間：2026-07-06 09:29
+- 理由：事件本就全數流經此 callback，是既有的縫；orchestrator 同時跑在 ws.py 一般 session，對 autopilot 一無所知，此依賴方向必須守住
+- 否決方案：在 orchestrator 新增顯式 `turn_started` 事件型別——會讓 orchestrator 耦合 autopilot 觀測需求，破壞依賴方向
+
+## turn 起點由「事件帶入新 speaker」推斷，取 `tool_use.speaker_key` 或 `expert_message.speaker` 中先出現的新 speaker 為 `turn_started_at`，不新增 turn 事件型別
+- 時間：2026-07-06 09:29
+- 理由：用先到的工具或發言事件定起點，抵消「先靜默跑工具才發言」的延遲
+
+## `speaker_key` 與 `expert_message.speaker` 進 tap 前先正規化成同一種 key，避免同一專家被判成兩個 turn
+- 時間：2026-07-06 09:29
+
+## turn state 用 `run_one_task` closure 內共享的 mutable holder，同時供 broadcast tap 更新與 `_task_heartbeat` 讀取，不落 journal、不用 module global、不加鎖
+- 時間：2026-07-06 09:29
+- 理由：holder 讀寫都在同一 event loop、await 邊界間無搶佔，無真並行，加鎖是多餘複雜度
+- 否決方案：加 lock 保護 holder——asyncio 單執行緒模型下不需要，屬過度設計
+
+## 事件驅動刷新只在 turn 邊界（新 speaker）、`tool_use`、`final=True` 的 `expert_message` 觸發 `_write_status`，跳過 streaming 逐塊事件
+- 時間：2026-07-06 09:29
+
+## 事件驅動寫入必須比照 `_task_heartbeat` 以 `_read_status` 帶回 `quota`/`sleep_until`/turn 欄位等既有欄位（對稱 preserve）
+- 時間：2026-07-06 09:29
+- 理由：高工核出的對稱漏洞——tap 觸發的 `_write_status("running",…)` 若不 preserve，會在任務中把主迴圈寫的 quota/sleep_until 閃成空，`/api/autopilot` 用量歸零
+
+## `_write_status` 提供明確 preserve 參數或 helper，把「帶回既有欄位」收成單一入口，避免未來改 payload 時漏帶欄位
+- 時間：2026-07-06 09:29
+
+## 事件驅動寫入加最小寫入間隔節流（同 speaker 距上次事件驅動寫 <1–2s 即跳過，交由下個事件或下次 tick 補寫）
+- 時間：2026-07-06 09:29
+- 理由：高工核出 `tool_use` 非有界事件源，重工具迴圈一秒可噴多則，每則一次 atomic tmp+rename 會打爆原子寫；節流才守得住「寫入率有界」
+
+## 事件驅動以 `time.time()` 蓋 `last_activity_at`；60s 背景 tick 完整保留（含 `events_mtime` 與 `workers.cpu_active` 盲區補償），兩軌並存不取代
+- 時間：2026-07-06 09:29
+
+## 60s 保底 tick 沿用 preserve 範式，從共享 state 帶回 `current_expert`/`turn_started_at`，避免每輪 tick 把 turn 欄位清 null
+- 時間：2026-07-06 09:29
+
+## turn 欄位在任務收尾清為 null，且清理需涵蓋 `_select_workflow`/clone 失敗提早 return 的路徑，防上一任務 `current_expert` 殘留；舊 status.json/舊 JSONL 無此欄位一律 null-safe 不回歸
+- 時間：2026-07-06 09:29
+
+## 監控判定維持「僅 `updated_at` 停滯（主迴圈死）**或**（`cpu_active==false` **且** `last_activity_at` 長不動）才殺」，AND 子句不放寬；`last_activity_at` 取代 journal 掃描僅作新鮮度來源，門檻 ≥3× 刷新間隔
+- 時間：2026-07-06 09:29
+- 理由：對應 2026-07-04 誤殺教訓——長工具靜默時 cpu_active 仍為 True 即不判死，兩訊號 AND 才殺
+
+## 本任務與 `ttft_s`/prompt-caching 決策正交互不牽動；Claude path retry 去重缺口沿用共識只記 `核心改動: Claude provider 路徑缺乏 per-speak 去重保護` 進 backlog，本場不動 `experts.py`
+- 時間：2026-07-06 09:29
+

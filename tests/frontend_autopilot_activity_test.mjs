@@ -1,5 +1,5 @@
 // Autopilot activity 面板：用 node 載入真實 web/js/panels/autopilot.js，
-// 驗證 ttft_s 有值時會顯示 chip、缺值時不會炸。
+// 驗證 ttft_s 有值時會顯示 chip、缺值時不會炸，且 heartbeat 會置頂顯示目前 turn。
 
 class RecEl {
   constructor(tag) {
@@ -113,7 +113,8 @@ Object.assign(globalThis, {
 });
 
 const mod = await import("../web/js/panels/autopilot.js");
-await mod.refreshApActivity();
+Date.now = () => 3_785_000;
+await mod.refreshApActivity({ current_expert: "engineer", turn_started_at: 3_600 });
 
 function collectByClass(root, cls, out = []) {
   if ((root.className || "").split(/\s+/).includes(cls)) out.push(root);
@@ -132,10 +133,34 @@ if (ttftChips[0].textContent !== "TTFT 0.123s") {
 }
 
 const rows = activity.children || [];
-if (rows.length !== 2) {
-  console.error(`FAIL: 應渲染 2 筆 activity，實際 ${rows.length}`);
+if (rows.length !== 3) {
+  console.error(`FAIL: 應渲染目前 turn + 2 筆 activity，實際 ${rows.length}`);
   process.exit(1);
 }
 
-console.log("OK: autopilot activity 面板可安全讀取 ttft_s");
+const currentTurns = collectByClass(activity, "ap-current-turn");
+if (currentTurns.length !== 1) {
+  console.error(`FAIL: 應渲染一筆目前 turn，實際 ${currentTurns.length} 筆`);
+  process.exit(1);
+}
+
+const titles = collectByClass(currentTurns[0], "ap-item-title").map((el) => el.textContent);
+if (!titles.includes("目前輪到 engineer")) {
+  console.error(`FAIL: 目前 turn 標題不對：${titles.join(" / ")}`);
+  process.exit(1);
+}
+
+const times = collectByClass(currentTurns[0], "ap-item-time").map((el) => el.textContent);
+if (!times.includes("已跑 3分05秒")) {
+  console.error(`FAIL: 目前 turn 已跑時間不對：${times.join(" / ")}`);
+  process.exit(1);
+}
+
+await mod.refreshApActivity({ current_expert: "senior", turn_started_at: null });
+if (collectByClass(activity, "ap-current-turn").length !== 0) {
+  console.error("FAIL: 缺 turn_started_at 的舊 heartbeat 不應渲染目前 turn");
+  process.exit(1);
+}
+
+console.log("OK: autopilot activity 面板可安全讀取 ttft_s 並顯示目前 turn");
 process.exit(0);
