@@ -1,90 +1,6 @@
 {
   "entries": [
     {
-      "decision": "_SUBSYSTEM_KEYWORDS 初始清單改為帶邊界的 pattern 列表，如下",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.17365
-    },
-    {
-      "decision": "_extract_subsystems 匹配時固定傳入 re.IGNORECASE，不由呼叫端決定",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.1736507
-    },
-    {
-      "decision": "_count_subsystem_coverage 回傳型別明確為 collections.Counter[str]，docstring 標明",
-      "rationale": "`Counter` 直接支援 `.most_common()`、`>= K` 比較，且型別明確；呼叫端不猜回傳結構。",
-      "rejected": "回傳 `dict[str, int]`（可行但語意不如 Counter 清晰，且日後呼叫端可能重造輪子）。",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.1736517
-    },
-    {
-      "decision": "0.55 閾值的主力論述修正——PR 描述須明確說明「0.55 是邊緣補強，同子系統 K-filter 才是治隧道的主防線」",
-      "rationale": "工程師實測指出真實長標題 0.75 已能抓到，0.55 僅對極短同義標題有效；若 PR 把 0.55 包裝成主修，維護者日後調 threshold 時會誤判影響範圍。",
-      "rejected": "",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.1736534
-    },
-    {
-      "decision": "在 known-limitation 測試裡加一條「0.55 錯誤攔截」的反向哨兵，標記為 xfail 或明確 assert 被擋，CI 永遠看得到代價",
-      "rationale": "",
-      "rejected": "只測「該擋的」而不測「不該擋的」——鑑別力為零，等同假綠。",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.1736543
-    },
-    {
-      "decision": "collection guard 的 TYPE_CHECKING 往上 10 行啟發式，加一個「guard 在第 12 行」反向樣本確認邊界行為，並在測試 docstring 明確標記「10 行是啟發值，非精確語義邊界」",
-      "rationale": "高級工程師指出若 guard 在 20 行外會漏攔；此反向樣本讓邊界可見、CI 可驗，而非文件死角。",
-      "rejected": "",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.173655
-    },
-    {
-      "decision": "其餘既有決策維持不變——閾值單一常數 AUTOPILOT_DEDUP_RATIO、不引入 jieba、K 放 config、不回溯 backlog、模組邊界全在 autopilot.py",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.1736557
-    },
-    {
-      "decision": "新節插入錨點固定為「`## 設定流程` 節結束後、`## 指定 GitHub repo` 之前」（L286 之後），不以區間描述",
-      "rationale": "工程師核查出 L296 存在第三節，原「之後…之前」描述有兩個落點；單一錨點讓執行零歧義",
-      "rejected": "描述為「設定流程後、雙軌路由前」——中間夾了 `指定 GitHub repo`，區間含糊",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932276
-    },
-    {
-      "decision": "流向圖改用單行內文 `` make_retry_config() → RetryConfig → run_with_retries ``，不使用 ASCII art",
-      "rationale": "ASCII art 在 merge conflict 時對齊易跑掉且無工具保護；單行可讀性等價，維護成本為零",
-      "rejected": "ASCII 三層流向圖——視覺化代價高於收益，且三層架構本身已夠簡單",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932295
-    },
-    {
-      "decision": "流向圖只畫「工廠 → config 物件 → 單一執行器」一條路徑，Claude / OpenAI 收斂點在 `run_with_retries`，不畫兩條分叉",
-      "rationale": "畫兩條獨立路徑與「禁第二層 retry」禁令自相矛盾；單路徑才能正確傳達「provider 層無自帶 retry」的語意",
-      "rejected": "",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932305
-    },
-    {
-      "decision": "jitter 語意只寫「jitter 為比例值（非秒數）」，不硬寫 `[0,1]` 具體範圍，改加「語意見 `llm_caller.py` 實作備註」指向源頭",
-      "rationale": "若實作改為 `[0, 0.5]` 文件即過時；指向源頭讓文件穩定，實作是唯一真相",
-      "rejected": "文件直寫 `[0,1]`——取捨表聲稱「公式改動不需同步文件」但同時寫死範圍，自相矛盾",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932317
-    },
-    {
-      "decision": "「禁第二層 retry」禁令後緊接一行偵測提示：「症狀為 log 出現指數級累積等待（單次 retry 延遲超過 `EXPERT_RATE_LIMIT_BACKOFF_CAP` 數倍），可 grep `retry attempt` 行的 delay 欄位確認」",
-      "rationale": "純文件禁令無執行力；加偵測提示讓維護者有具體查核點，半年後禁令仍有效",
-      "rejected": "僅寫禁令文字——高級工程師明確指出純文字禁令通常第一個被新人繞過",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932324
-    },
-    {
       "decision": "節內三段結構維持「角色與資料流 → 新 provider 接入契約 → 語意備忘」順序不變",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3415,90 @@
       "rejected": "",
       "session_id": "ape6d5178efe",
       "created_at": 1783301373.1819022
+    },
+    {
+      "decision": "零新工具零新腳本，重驗全用報告內既有指令（gh CLI + REST + `env PYTHONPATH=. python3 scripts/check_release_body_structure.py`），不自建勾稽自動化",
+      "rationale": "一次性重驗自證不了新抽象的複雜度；自動勾稽腳本會成為半年後沒人敢刪的死碼",
+      "rejected": "寫一支自動勾稽腳本供未來每版重驗——若真有此需求，另立專門任務",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525514
+    },
+    {
+      "decision": "`docs/evidence/*.json` 三檔凍結為不可變原始憑證，不覆寫、不新增 07-06 副本；今日結果只落報告「本次重驗」欄",
+      "rationale": "07-05 的 `captured_at_utc` 是擷取時刻的事實；雙份 evidence 會製造雙份真相，勾稽鏈反而斷裂",
+      "rejected": "新增 2026-07-06 evidence 檔並列存放",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525568
+    },
+    {
+      "decision": "`docs/release-e2e-closure-report.md` 為唯一可變產物，改動範圍限三列表重驗欄、第二章轉錄（逐字貼 2026-07-06 輸出並標註日期）、缺口章",
+      "rationale": "",
+      "rejected": "沿用 07-05 舊輸出僅加註——驗收標準 2 明文要求本次實際輸出",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525578
+    },
+    {
+      "decision": "雜湊規則章與正規化規則凍結，報告端零衍生雜湊，只引 evidence 既有值",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525585
+    },
+    {
+      "decision": "逐欄比對一律指令化：以 `jq` 從 $TMPDIR 原始輸出抽欄位、與 evidence 值 `diff`，報告重驗欄附上抽取指令；不接受「用眼比對」作為 match 依據",
+      "rationale": "眼比出的 match 無法自證，違反「實跑行為，不靠看起來對」的既有教訓（採高工意見）",
+      "rejected": "人工目視逐欄核對",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525597
+    },
+    {
+      "decision": "#1/#2 動工前先落定欄位分類——身分欄位（tagName、body 雜湊來源值、run_id、event、status、conclusion、workflow_path）不符即缺口；易變欄位（`updatedAt`、下載計數等合法漂移欄位）只記錄不比對",
+      "rationale": "不先定分類，執行者現場自由裁量會讓缺口章公信力打折（採高工意見）",
+      "rejected": "執行時遇到再判斷",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525607
+    },
+    {
+      "decision": "重驗原始輸出一律存 `$TMPDIR` 且檔名帶 task 編號等唯一識別，禁落 docs/，#1/#2 並行互不踩檔（採工程師意見）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525611
+    },
+    {
+      "decision": "mismatch 路徑＝如實寫缺口章＋結論降級，不現場修復、不動 evidence、不動線上資源；全 match＝結論明文限定「閉環（僅及 v0.2.0）」",
+      "rationale": "修復是新任務，本場只負責如實記錄，先定失敗路徑擋範圍爆炸",
+      "rejected": "",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525616
+    },
+    {
+      "decision": "`path` 欄位維持 N/A＋REST 補驗雙落字，判定值取 REST 的 `workflow_path`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.952562
+    },
+    {
+      "decision": "收尾驗收精準化：`git diff docs/` 只允許 `docs/release-e2e-closure-report.md` 有預期改動，`docs/` 無任何 untracked；非「整個 docs/ 乾淨」（採工程師意見）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.952563
+    },
+    {
+      "decision": "第二章轉錄更新時不得動到 marker 行與守護測試 grep 的報告字串；#4 驗收含 `.venv/bin/python -m pytest tests/docs -q` 全綠，報告內指令全維持 `python3`/`.venv/bin/python`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.9525635
+    },
+    {
+      "decision": "`gh` 認證、網路可達、線上 v0.2.0 release/run 27905531397 仍可讀列為重驗前置條件，#1/#2 起手先驗；前置不成立即回報阻塞，不以舊值充當重驗結果",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap19fb00ee65",
+      "created_at": 1783336459.952564
     }
   ]
 }
