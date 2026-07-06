@@ -34,6 +34,7 @@ export async function expandAutopilot() {
 
 // autopilot 目標 repo（PR 連結用）；由 /api/autopilot 回應更新，取不到時退回核心 repo。
 let apRepo = "x812033727/Ti";
+let apHeartbeat = {};
 export const AP_STATUS_ICON = { pending: "🕓", in_progress: "⚙️", done: "✅", failed: "❌", parked: "🅿️" };
 
 export async function refreshAutopilot() {
@@ -44,6 +45,7 @@ export async function refreshAutopilot() {
     // 心跳：/api/autopilot 的巢狀 heartbeat 物件（autopilot 主迴圈寫 status.json：
     // state=idle/running/quota_sleep、task_id、sleep_until）；兼容頂層欄位，缺省時容錯不顯示。
     const hbObj = st.heartbeat || {};
+    apHeartbeat = hbObj;
     const hbState = hbObj.state || st.state;
     const hbSleep = hbObj.sleep_until || st.sleep_until;
     let hb = "";
@@ -71,6 +73,7 @@ export async function refreshAutopilot() {
       ul.appendChild(li);
     });
   } catch (e) {
+    apHeartbeat = {};
     $("#apState").textContent = "讀取失敗（autopilot 服務可能未啟動）";
     $("#apMini").textContent = "讀取失敗";
   }
@@ -166,12 +169,42 @@ function apChip(parent, text, cls) {
   if (text) appendTextEl(parent, "span", `ap-chip${cls ? ` ${cls}` : ""}`, text);
 }
 
-export async function refreshApActivity() {
+export function apElapsedText(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}分${String(s % 60).padStart(2, "0")}秒`;
+  const h = Math.floor(m / 60);
+  return `${h}小時${String(m % 60).padStart(2, "0")}分`;
+}
+
+function renderCurrentTurn(ul, heartbeat) {
+  const hb = heartbeat || {};
+  const expert = typeof hb.current_expert === "string" ? hb.current_expert.trim() : "";
+  const rawStarted = hb.turn_started_at;
+  if (rawStarted == null || rawStarted === "") return;
+  const started = Number(rawStarted);
+  if (!expert || !Number.isFinite(started)) return;
+
+  const elapsed = apElapsedText(Date.now() / 1000 - started);
+  const li = document.createElement("li");
+  li.className = "ap-item ap-current-turn";
+  const head = document.createElement("div");
+  head.className = "ap-item-head";
+  appendTextEl(head, "span", "", "▶");
+  appendTextEl(head, "strong", "ap-item-title", `目前輪到 ${expert}`);
+  appendTextEl(head, "span", "ap-item-time muted", `已跑 ${elapsed}`);
+  li.appendChild(head);
+  ul.appendChild(li);
+}
+
+export async function refreshApActivity(heartbeat = apHeartbeat) {
   const ul = $("#apActivity");
   if (!ul) return;
   try {
     const data = await (await fetch("/api/autopilot/activity?limit=50")).json();
     ul.innerHTML = "";
+    renderCurrentTurn(ul, heartbeat);
     // 後端已按 updated_at 倒序（最新在最上）。
     for (const t of data.tasks || []) {
       const li = document.createElement("li");
