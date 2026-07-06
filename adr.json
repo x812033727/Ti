@@ -1,118 +1,6 @@
 {
   "entries": [
     {
-      "decision": "`studio/__init__.py` 在 `__version__` 行之後插入 `from . import secure_write`，全檔其他內容不動。",
-      "rationale": "讓 `from studio import secure_write` 的語意由「隱性 submodule lookup」變為「顯式套件匯出」，消除測試執行順序對 collection 的影響，且是業界標準做法。",
-      "rejected": "補 `__all__`——會把現有未宣告的 submodule 全部屏蔽，範圍遠超本場需求；否決在 `secure_write.py` 改動 import 鏈——問題根源在 `__init__.py`，不應改 production logic。",
-      "session_id": "ap99f8453bb2",
-      "created_at": 1781470078.287234
-    },
-    {
-      "decision": "動工前以 `python3 -c \"import studio\"` 確認 import chain（`studio` → `secure_write` → `config`）無 side effect 或 circular dep，通過才合入。",
-      "rationale": "`__init__.py` 加入 import 後，`studio` 套件任何人 import 都會觸發 `secure_write` 的 import；若 `config` 有 import-time side effect，才會在此炸——用一條命令最便宜地確認。",
-      "rejected": "不驗直接合入——代價是若有問題，所有用 `import studio` 的測試與工具全炸，修復成本高。",
-      "session_id": "ap99f8453bb2",
-      "created_at": 1781470078.2872365
-    },
-    {
-      "decision": "`studio/secure_write.py` line 79 的 `SecureWriteError` 訊息改為 `f\"fchown(0,0) 失敗（非 root？）：{target}：{e}\"`，其餘字串不動。",
-      "rationale": "`target`（`str`，來自 line 55 `os.fspath(path)`）在 except 塊可見；此格式同時滿足驗收測試三條斷言：`str(target) in msg`、`\"chown\" in msg.lower()`、`msg.strip() != \"\"`。",
-      "rejected": "改測試斷言放寬——「error message 含路徑」是可行動錯誤訊息的基本品質，應由 production code 承諾，弱化斷言即弱化契約；否決只放 `os.path.basename(target)`——`str(target)` 是全路徑，basename 不能通過斷言。",
-      "session_id": "ap99f8453bb2",
-      "created_at": 1781470078.2872372
-    },
-    {
-      "decision": "撤銷原任務 #2（修正 `test_qa_task3_failclosed_contract.py` 的 monkeypatch 對象）。`monkeypatch.setattr(os, \"fchown\", ...)` 與 `monkeypatch.setattr(secure_write.os, \"fchown\", ...)` 作用在同一 singleton 物件上，無 bug，兩者等效。",
-      "rationale": "`secure_write.py` 的 `import os` 與測試的 `import os` 均拿到 `sys.modules['os']`；patch 其屬性 `fchown` 即全域生效。研究員此點判斷有誤，不應引入不必要的改動。",
-      "rejected": "改為 `monkeypatch.setattr(secure_write, \"os\", ...)` 替換整個 os 物件——等效但侵入性更高；此方式值得寫進跟進待辦（防日後有人把 `import os` 改成 `from os import fchown`），本場不動。",
-      "session_id": "ap99f8453bb2",
-      "created_at": 1781470078.287238
-    },
-    {
-      "decision": "`test_studio_exports.py` 防呆測試列為核心 backlog 跟進待辦，本場不新增。",
-      "rationale": "本場驗收邊界是「7 模組 collection 通過且測試全綠」，防呆 guard 屬獨立改善項，硬塞只會讓範圍失控、驗收條件混淆。",
-      "rejected": "本場一起補——不阻擋進度卻增加 scope；先驗 7 模組全綠、再獨立 PR 補 guard，風險更低。",
-      "session_id": "ap99f8453bb2",
-      "created_at": 1781470078.2872384
-    },
-    {
-      "decision": "任務 #1（`__init__.py`）與 任務 #2-new（`secure_write.py` 錯誤訊息）並行起手，任務 #3（全量驗收 `pytest tests/autopilot/ -q`）待兩者合入後統一執行，驗收口徑為「7 模組全收集 + 全綠 + 無回歸」。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap99f8453bb2",
-      "created_at": 1781470078.2872393
-    },
-    {
-      "decision": "`studio/providers.py:203` 的 `openai.AsyncOpenAI(...)` 加入 `max_retries=0`，行尾補單行註解 `# 讓位給 run_with_retries，避免 SDK 內建重試與外層退避雙層疊乘`。",
-      "rationale": "這是語意約束（SDK 永遠讓位），不是策略旋鈕；約束就在決策點旁，閱讀者不需跳外部文件。",
-      "rejected": "抽成 `config.SDK_MAX_RETRIES`——製造「可設非零」誤讀空間，且旋鈕沒有合理的非零使用情境。",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.6947198
-    },
-    {
-      "decision": "MiniMax 等 OpenAI 相容 provider 共用 `_openai_chat` → `_openai_client_args` 同一路徑，`max_retries=0` 一次修到位，不個別處理。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.6947224
-    },
-    {
-      "decision": "測試接縫為 `monkeypatch.setattr(\"openai.AsyncOpenAI\", mock_cls)`（patch 頂層模組，非 `studio.providers.openai.AsyncOpenAI`），原因是 `_openai_chat` 用 lazy `import openai`，patch 本地屬性攔不到；PR 描述須明確說明此選擇。",
-      "rationale": "高級工程師指出 lazy import 的陷阱——patch 目標錯，測試永遠綠但鑑別力為零，連反向樣本的優點也被抵消。",
-      "rejected": "`monkeypatch.setattr(\"studio.providers.openai.AsyncOpenAI\", ...)`——因 lazy import 不在 module 載入時綁定屬性，patch 無效。",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.6947238
-    },
-    {
-      "decision": "正向斷言用 `mock_cls.call_args.kwargs[\"max_retries\"] == 0`（驗收傳入的建構參數），不實際建構真實 client。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.6947246
-    },
-    {
-      "decision": "反向樣本（證明測試有鑑別力）用 `openai.AsyncOpenAI(api_key=\"sk-test\").max_retries == 2`，必須帶 `api_key` 避免 `OpenAIError`；「2」為 SDK 外部預設值，未來若 SDK 改預設會無辜變紅，屬可接受的已知風險，在測試註解說明即可。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.694725
-    },
-    {
-      "decision": "`experts.py::_build_client()` 的 docstring 補兩行明確說明：`# 重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，避免雙層疊乘。`",
-      "rationale": "「一行補充」措辭模糊，未來維護者可能「好心」加上重試；明確點名 ClaudeSDKClient 無額外退避，才能防止誤改。",
-      "rejected": "寫進 KNOWN_LIMITATIONS 或新增測試——前者需跳外部文件、後者屬越界驗收（Claude 重試行為應由 Ti SDK 側守）。",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.6947262
-    },
-    {
-      "decision": "`_openai_chat` 每次建構新 `AsyncOpenAI` client（無連線池重用）列為**範圍外技術債**，進下個 sprint backlog，本次不阻擋。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.6947272
-    },
-    {
-      "decision": "全量驗收指令 `python3 -m pytest tests/autopilot/ tests/core/ -q`，基線 1058 passed；任何回歸（含 push_merge_flags、merge_outcomes、_wait_for_ci）皆視為阻斷，不允許「範圍外測試變紅」被忽略。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap93333aae73",
-      "created_at": 1781472526.6947281
-    },
-    {
-      "decision": "_SUBSYSTEM_KEYWORDS 所有 pattern 一律加 \\b word boundary，匹配時套 re.IGNORECASE",
-      "rationale": "`re.search(r'ci', \"social\")` 等會 false positive 打到無關英文詞，污染子系統計數器，導致合法提案被錯誤攔截——這是正確性 bug，非偏好問題。",
-      "rejected": "不加 `\\b` 直接用原始短字串（會打到 decide、emergence、social 等，不可接受）。",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.173646
-    },
-    {
-      "decision": "中文 keyword（去重、評估）改用 negative lookahead/lookbehind 保護，不依賴 \\b 的 Unicode 語義",
-      "rationale": "Python `re` 的 `\\b` 對 Unicode CJK 字元與 ASCII 混排時邊界語義不穩定；`(?<![^\\s，。！？])去重(?![^\\s，。！？])` 或等效寫法比賭 `\\b` 可靠。",
-      "rejected": "直接用 `\\b去重\\b`（實測前不可信賴，已有前例踩坑）。",
-      "session_id": "apdcab9d76f8",
-      "created_at": 1781474927.1736486
-    },
-    {
       "decision": "_SUBSYSTEM_KEYWORDS 初始清單改為帶邊界的 pattern 列表，如下",
       "rationale": "",
       "rejected": "",
@@ -3506,6 +3394,111 @@
       "rejected": "本場一併補 Claude path 對稱去重保護——超出既定範圍，且需新測試矩陣；不能假設結構對稱，列 backlog 另案。",
       "session_id": "apd337e27107",
       "created_at": 1783287200.0
+    },
+    {
+      "decision": "心跳維持 `_write_status` → `status.json` 單一真相源，新增 `current_expert`(str|null)/`turn_started_at`(float|null) 併入既有扁平 payload；不新增檔案、機制或 `TI_*` 旋鈕",
+      "rationale": "基礎設施已存在，真正缺口只有專家粒度與事件驅動刷新，補欄位比重造風險小且可逆",
+      "rejected": "另開新狀態檔或引入 OTEL/Langfuse——與 repo「不隨意新增依賴」相悖，且輕量 JSON 心跳已足夠",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818805
+    },
+    {
+      "decision": "`/api/autopilot` 不改邏輯，沿用「原樣吐 status.json 當 heartbeat」，新欄位隨 payload 自動曝露；前端 timeline 以 null-safe `.get()` 讀 heartbeat，顯示 `current_expert` 與 `now - turn_started_at` 已跑時長",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818871
+    },
+    {
+      "decision": "turn 邊界資訊的接縫定在 autopilot `run_one_task` 的 `broadcast` callback（tap 層），禁止改 `orchestrator.py`/`experts.py`/`events.py`",
+      "rationale": "事件本就全數流經此 callback，是既有的縫；orchestrator 同時跑在 ws.py 一般 session，對 autopilot 一無所知，此依賴方向必須守住",
+      "rejected": "在 orchestrator 新增顯式 `turn_started` 事件型別——會讓 orchestrator 耦合 autopilot 觀測需求，破壞依賴方向",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818893
+    },
+    {
+      "decision": "turn 起點由「事件帶入新 speaker」推斷，取 `tool_use.speaker_key` 或 `expert_message.speaker` 中先出現的新 speaker 為 `turn_started_at`，不新增 turn 事件型別",
+      "rationale": "用先到的工具或發言事件定起點，抵消「先靜默跑工具才發言」的延遲",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818905
+    },
+    {
+      "decision": "`speaker_key` 與 `expert_message.speaker` 進 tap 前先正規化成同一種 key，避免同一專家被判成兩個 turn",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818914
+    },
+    {
+      "decision": "turn state 用 `run_one_task` closure 內共享的 mutable holder，同時供 broadcast tap 更新與 `_task_heartbeat` 讀取，不落 journal、不用 module global、不加鎖",
+      "rationale": "holder 讀寫都在同一 event loop、await 邊界間無搶佔，無真並行，加鎖是多餘複雜度",
+      "rejected": "加 lock 保護 holder——asyncio 單執行緒模型下不需要，屬過度設計",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818929
+    },
+    {
+      "decision": "事件驅動刷新只在 turn 邊界（新 speaker）、`tool_use`、`final=True` 的 `expert_message` 觸發 `_write_status`，跳過 streaming 逐塊事件",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818938
+    },
+    {
+      "decision": "事件驅動寫入必須比照 `_task_heartbeat` 以 `_read_status` 帶回 `quota`/`sleep_until`/turn 欄位等既有欄位（對稱 preserve）",
+      "rationale": "高工核出的對稱漏洞——tap 觸發的 `_write_status(\"running\",…)` 若不 preserve，會在任務中把主迴圈寫的 quota/sleep_until 閃成空，`/api/autopilot` 用量歸零",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818955
+    },
+    {
+      "decision": "`_write_status` 提供明確 preserve 參數或 helper，把「帶回既有欄位」收成單一入口，避免未來改 payload 時漏帶欄位",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818962
+    },
+    {
+      "decision": "事件驅動寫入加最小寫入間隔節流（同 speaker 距上次事件驅動寫 <1–2s 即跳過，交由下個事件或下次 tick 補寫）",
+      "rationale": "高工核出 `tool_use` 非有界事件源，重工具迴圈一秒可噴多則，每則一次 atomic tmp+rename 會打爆原子寫；節流才守得住「寫入率有界」",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818974
+    },
+    {
+      "decision": "事件驅動以 `time.time()` 蓋 `last_activity_at`；60s 背景 tick 完整保留（含 `events_mtime` 與 `workers.cpu_active` 盲區補償），兩軌並存不取代",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818984
+    },
+    {
+      "decision": "60s 保底 tick 沿用 preserve 範式，從共享 state 帶回 `current_expert`/`turn_started_at`，避免每輪 tick 把 turn 欄位清 null",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818988
+    },
+    {
+      "decision": "turn 欄位在任務收尾清為 null，且清理需涵蓋 `_select_workflow`/clone 失敗提早 return 的路徑，防上一任務 `current_expert` 殘留；舊 status.json/舊 JSONL 無此欄位一律 null-safe 不回歸",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1818995
+    },
+    {
+      "decision": "監控判定維持「僅 `updated_at` 停滯（主迴圈死）**或**（`cpu_active==false` **且** `last_activity_at` 長不動）才殺」，AND 子句不放寬；`last_activity_at` 取代 journal 掃描僅作新鮮度來源，門檻 ≥3× 刷新間隔",
+      "rationale": "對應 2026-07-04 誤殺教訓——長工具靜默時 cpu_active 仍為 True 即不判死，兩訊號 AND 才殺",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.181901
+    },
+    {
+      "decision": "本任務與 `ttft_s`/prompt-caching 決策正交互不牽動；Claude path retry 去重缺口沿用共識只記 `核心改動: Claude provider 路徑缺乏 per-speak 去重保護` 進 backlog，本場不動 `experts.py`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ape6d5178efe",
+      "created_at": 1783301373.1819022
     }
   ]
 }
