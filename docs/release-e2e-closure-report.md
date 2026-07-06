@@ -338,6 +338,8 @@ timeout 60 gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,s
 
 本報告已入 git 追蹤；2026-07-06 重驗僅更新本檔（三列表重驗欄含 mismatch 落字、可照抄重跑指令節、雜湊計算規則章、結論降級、缺口章、本交付狀態章），未新增任何 evidence 副本，未改動任何 `docs/evidence/` 檔案；報告端雜湊僅限「三、雜湊計算規則」列出的兩值。
 
+本輪本機驗收已補齊 `.venv` 後，以 `.venv/bin/python -m pytest tests/docs -q` 與 `ruff check .` 重跑通過；`.venv` 只作本機驗證環境，維持 `.gitignore` 忽略。
+
 備註（移交待辦）：
 
 1. 修復 evidence `body_sha256` 計算方式瑕疵（見「五、缺口」）——本場不修、不動 evidence 檔。
