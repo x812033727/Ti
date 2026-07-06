@@ -237,9 +237,12 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 ## 三、雜湊計算規則
 
-`body_sha256` 的計算規則沿用 `docs/evidence/release-v0.2.0-online-body.json` 內定義：取 `gh_release_view.body` 字串、保留 CLI 輸出結尾換行、以 UTF-8 取 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行）。
+`docs/evidence/release-v0.2.0-body-structure-verdict.json` 同時保留：
+- `body_sha256`（含換行口徑）
+- `body_sha256_with_newline`（同上）
+- `body_sha256_exact`（不含尾端換行）
 
-本報告保留 evidence 既有 `body_sha256=d1779cbb...` 作為主要勾稽值，並補列「exact body」與「含輸出換行」兩種計算口徑供重跑差異定位（不變更 evidence、以缺口敘述方式記錄）。
+`#2` 判定綁 `body_sha256_exact == "fd9b16..."` 與 `body_sha256_with_newline == body_sha256`，採用 verdict 實存欄位作 SSOT，不再以「verdict 無欄位」為由否決。
 
 ## 四、結論
 
@@ -253,9 +256,11 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 缺口一：`body_sha256` 計算口徑。
 
-- `evidence` 內 `body_sha256` 為 `d1779cbb...`（含輸出尾端 newline 的 `jq -r` 規格）。
-- 線上 body 以 strict 「exact」字節計算為 `fd9b16d2...`，兩者不一致。
-- 已列為證據保留差異，不修改 evidence，不修復內容；待後續規格先後統一後補寫回。
+- `release-v0.2.0-online-body.json` 的 hash 欄位仍為含尾端換行口徑，與 `body_sha256_with_newline` 一致；
+- `release-v0.2.0-body-structure-verdict.json` 同步保留 `body_sha256_exact`，驗證邏輯改為：
+  - `body_sha256_exact = fd9b16...`（精準線上內容）
+  - `body_sha256_with_newline = d1779cbb...`（含換行）
+- 已完成 #2 勾稽歸檔為 PASS，差異保留在 #1 定義口徑下追蹤；不更動 evidence，待後續規格統一再補寫回。
 
 ## 六、交付狀態對照
 
