@@ -196,27 +196,43 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 關鍵值一律內嵌於本節與三列表，**不以 `$TMPDIR` 路徑作為唯一證據**（`$TMPDIR` 產物僅為輔助落檔，可隨環境消失）。
 
-#1 tag / url 勾稽（重驗結果：tagName MATCH、url MATCH）：
+#1 gh CLI + REST 雙來源 raw 落檔與 identity 欄位比對（重驗結果：tagName MATCH、url MATCH、body_sha256 MISMATCH；易變欄位只記錄不比對）：
 
 ```bash
-timeout 60 gh release view v0.2.0 --json tagName,url
+set -euo pipefail
+TMP="${TMPDIR:-/tmp}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+GH="$TMP/task1-gh-release-view-v0.2.0-$STAMP.json"
+REST="$TMP/task1-rest-release-by-tag-v0.2.0-$STAMP.json"
+EVIDENCE="docs/evidence/release-v0.2.0-online-body.json"
+EVIDENCE_ID="$TMP/task1-evidence-identity-v0.2.0-$STAMP.json"
+GH_ID="$TMP/task1-gh-identity-v0.2.0-$STAMP.json"
+REST_ID="$TMP/task1-rest-identity-v0.2.0-$STAMP.json"
+
+timeout 60 gh auth status
+timeout 60 curl -sf https://api.github.com/rate_limit >/dev/null
+timeout 60 gh release view v0.2.0 --json tagName,url --repo x812033727/Ti >/dev/null
+timeout 60 gh release view v0.2.0 --json body,tagName,url --repo x812033727/Ti >"$GH"
+timeout 60 gh api repos/x812033727/Ti/releases/tags/v0.2.0 >"$REST"
+
+GH_SHA="$(jq -e -rj '.body // ""' "$GH" | sha256sum | awk '{print $1}')"
+REST_SHA="$(jq -e -rj '.body // ""' "$REST" | sha256sum | awk '{print $1}')"
+
+jq -e -S '{tagName:.gh_release_view.tagName,url:.gh_release_view.url,body_sha256:.body_sha256}' \
+  "$EVIDENCE" >"$EVIDENCE_ID"
+jq -e -S --arg body_sha256 "$GH_SHA" \
+  '{tagName:.tagName,url:.url,body_sha256:$body_sha256}' \
+  "$GH" >"$GH_ID"
+jq -e -S --arg body_sha256 "$REST_SHA" \
+  '{tagName:.tag_name,url:.html_url,body_sha256:$body_sha256}' \
+  "$REST" >"$REST_ID"
+
+diff -u "$EVIDENCE_ID" "$GH_ID" || true
+diff -u "$EVIDENCE_ID" "$REST_ID" || true
+jq -e '{id,created_at,published_at}' "$REST"
 ```
 
-預期輸出（逐字）：`{"tagName":"v0.2.0","url":"https://github.com/x812033727/Ti/releases/tag/v0.2.0"}`
-
-#1 exact body hash（body 逐字、不加結尾換行；重驗實得 `fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4`）：
-
-```bash
-timeout 60 gh release view v0.2.0 --json body | python3 -c 'import sys,json,hashlib; print(hashlib.sha256(json.load(sys.stdin)["body"].encode("utf-8")).hexdigest())'
-```
-
-#1 evidence 勾稽值計算方式重現（`--jq '.body'` 即 `jq -r` 式 raw 輸出、含結尾換行；實得即 evidence `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`）：
-
-```bash
-timeout 60 gh release view v0.2.0 --json body --jq '.body' | python3 -c 'import sys,hashlib; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
-```
-
-兩式差一個結尾換行字元——此即「五、缺口」所述計算方式瑕疵的最小重現。
+`diff -u` 的唯一差異為 `body_sha256`：線上 gh/REST exact body hash 皆為 `fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4`，evidence 為 `d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`。兩者差一個結尾換行字元——此即「五、缺口」所述計算方式瑕疵的最小重現。
 
 #2 結構斷言（重驗結果：六項 checks 全 MATCH、exit code 0）：
 
