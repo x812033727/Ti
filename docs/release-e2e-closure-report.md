@@ -45,27 +45,33 @@ TMPDIR_SAFE="${TMPDIR:-/tmp}"
 TASK1_GH="$TMPDIR_SAFE/task1-gh-release-view-v0.2.0-20260706T152100Z.json"
 TASK1_REST="$TMPDIR_SAFE/task1-gh-api-release-v0.2.0-20260706T152100Z.json"
 
+# 線上重驗時先抓 raw（本段以既存 raw 檔對帳；線上抓取見 #1 執行紀錄）：
+#   timeout 60 gh release view v0.2.0 --json body,tagName,url > "$TASK1_GH"
+#   timeout 60 gh api repos/x812033727/Ti/releases/tags/v0.2.0 > "$TASK1_REST"
+
+# evidence 身分欄位：body_sha256 為 evidence 既存值（＝含結尾換行式，見「三、雜湊計算規則」）
 jq -e '{body_sha256: .body_sha256, tagName: .gh_release_view.tagName, url: .gh_release_view.url}' \
   docs/evidence/release-v0.2.0-online-body.json > "$TMPDIR_SAFE/task1-evidence.identity.json"
-jq -n --arg sha "$(printf '%s' "$(jq -r '.body' "$TASK1_GH")" | sha256sum | awk '{print $1}')" \
+
+# gh 線上 raw：body 含結尾換行式重算（jq -r 補一個換行），key 對齊 evidence 的 body_sha256
+jq -n --arg sha "$(jq -r '.body' "$TASK1_GH" | sha256sum | awk '{print $1}')" \
       --arg tag "$(jq -r '.tagName' "$TASK1_GH")" \
       --arg url "$(jq -r '.url' "$TASK1_GH")" \
-      '{body_sha256_exact:$sha, tagName:$tag, url:$url}' > "$TMPDIR_SAFE/task1-gh-body-check.exact.json"
-jq -n --arg sha "$(printf '%s\n' "$(jq -r '.body' "$TASK1_GH")" | sha256sum | awk '{print $1}')" \
-      --arg tag "$(jq -r '.tagName' "$TASK1_GH")" \
-      --arg url "$(jq -r '.url' "$TASK1_GH")" \
-      '{body_sha256_with_newline:$sha, tagName:$tag, url:$url}' > "$TMPDIR_SAFE/task1-gh-body-check.with_newline.json"
-jq -n --arg sha "$(printf '%s' "$(jq -r '.body' "$TASK1_REST")" | sha256sum | awk '{print $1}')" \
+      '{body_sha256:$sha, tagName:$tag, url:$url}' > "$TMPDIR_SAFE/task1-gh.identity.json"
+
+# REST 線上 raw：欄位名為 tag_name/html_url，body 同樣含結尾換行式重算
+jq -n --arg sha "$(jq -r '.body' "$TASK1_REST" | sha256sum | awk '{print $1}')" \
       --arg tag "$(jq -r '.tag_name' "$TASK1_REST")" \
       --arg url "$(jq -r '.html_url' "$TASK1_REST")" \
-      '{body_sha256_exact:$sha, tagName:$tag, url:$url}' > "$TMPDIR_SAFE/task1-rest-body-check.exact.json"
-jq -n --arg sha "$(printf '%s\n' "$(jq -r '.body' "$TASK1_REST")" | sha256sum | awk '{print $1}')" \
-      --arg tag "$(jq -r '.tag_name' \"$TASK1_REST\")" \
-      --arg url "$(jq -r '.html_url' \"$TASK1_REST\")" \
-      '{body_sha256_with_newline:$sha, tagName:$tag, url:$url}' > "$TMPDIR_SAFE/task1-rest-body-check.with_newline.json"
+      '{body_sha256:$sha, tagName:$tag, url:$url}' > "$TMPDIR_SAFE/task1-rest.identity.json"
 
-diff -u "$TMPDIR_SAFE/task1-evidence.identity.json" "$TMPDIR_SAFE/task1-gh-body-check.with_newline.json"
-diff -u "$TMPDIR_SAFE/task1-evidence.identity.json" "$TMPDIR_SAFE/task1-rest-body-check.with_newline.json"
+# 身分欄位逐欄對帳：與 evidence 一致則兩個 diff 皆無輸出、exit 0
+diff -u "$TMPDIR_SAFE/task1-evidence.identity.json" "$TMPDIR_SAFE/task1-gh.identity.json"
+diff -u "$TMPDIR_SAFE/task1-evidence.identity.json" "$TMPDIR_SAFE/task1-rest.identity.json"
+
+# body 逐字 exact hash（不加結尾換行）僅列印供對照——與 evidence 的 body_sha256 差一個 \n，見「五、缺口」
+printf 'gh   exact body sha256 = %s\n' "$(jq -j '.body' "$TASK1_GH" | sha256sum | awk '{print $1}')"
+printf 'rest exact body sha256 = %s\n' "$(jq -j '.body' "$TASK1_REST" | sha256sum | awk '{print $1}')"
 ```
 
 原始輸出（同上，原始路徑）：
@@ -239,6 +245,8 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 ### 2026-07-06 線上重驗可照抄重跑指令（qa／工程師提供）
 
 關鍵值一律內嵌於本節與三列表，**不以 `$TMPDIR` 路徑作為唯一證據**（`$TMPDIR` 產物僅為輔助落檔，可隨環境消失）。
+
+<!-- MARKER：以下各線上重驗小節的開頭標題為守護測試 tests/docs/test_qa_task3_report_acceptance.py 定位指令塊的錨點，改字前請同步改測試斷言。 -->
 
 #1 gh CLI + REST 雙來源 raw 落檔與 identity 欄位比對（重驗結果：tagName MATCH、url MATCH、body_sha256 MISMATCH；易變欄位只記錄不比對）：
 
