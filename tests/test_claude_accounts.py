@@ -147,9 +147,13 @@ def _w(
     sd: float | None = None,
     fhr: float | None = None,
     sdr: float | None = None,
+    sc: float | None = None,
 ) -> dict:
-    """usages 值：兩額度窗用量 + 兩窗重置時間（epoch）。"""
-    return {"five_hour": fh, "seven_day": sd, "five_hour_reset": fhr, "seven_day_reset": sdr}
+    """usages 值：兩額度窗用量 + 兩窗重置時間（epoch）+ 可選 scoped（Fable 週限）用量%。"""
+    d = {"five_hour": fh, "seven_day": sd, "five_hour_reset": fhr, "seven_day_reset": sdr}
+    if sc is not None:
+        d["scoped"] = sc
+    return d
 
 
 def _pick(
@@ -160,9 +164,17 @@ def _pick(
     margin=10.0,
     reset_edge=900.0,
     reset_edge_7d=21600.0,
+    scoped_threshold=95.0,
 ):
     return claude_accounts.pick_account(
-        usages, active, preferred, threshold, margin, reset_edge, reset_edge_7d
+        usages,
+        active,
+        preferred,
+        threshold,
+        margin,
+        reset_edge,
+        reset_edge_7d,
+        scoped_threshold=scoped_threshold,
     )
 
 
@@ -370,3 +382,76 @@ def test_pick_account_7d_respects_threshold():
         "C": _w(40.0, sdr=_T + 40 * 3600, fhr=_T + 9000),  # 候選中 7d 最早（早 50h ≥edge_7d）
     }
     assert _pick(usages, "B") == "C"
+
+
+# --- 第 1.5 層：scoped 週限（Fable）救援 ------------------------------------
+
+
+def test_pick_account_scoped_rescue_switches_to_peer_with_headroom():
+    """在線 A 的 scoped 撞滿(≥門檻)、B 仍有餘且全域可用 → 切 B(恢復 Fable 可用)。"""
+    usages = {"A": _w(60.0, 60.0, sc=100.0), "B": _w(0.0, 0.0, sc=0.0)}
+    assert _pick(usages, "A") == "B"
+
+
+def test_pick_account_scoped_rescue_beats_7d_reset_preference():
+    """scoped 救援優先於 7d 早重置:A 全域較早重置(純 v4 會留 A)但 A Fable 滿、B 新鮮 → 仍切 B。"""
+    usages = {
+        "A": _w(60.0, 60.0, sdr=_T + 3600, sc=100.0),  # 全域較早重置 + Fable 滿
+        "B": _w(0.0, 0.0, sdr=_T + 90 * 3600, sc=0.0),  # 全域較晚重置 + Fable 新鮮
+    }
+    assert _pick(usages, "A") == "B"
+
+
+def test_pick_account_scoped_no_rescue_when_peer_also_exhausted():
+    """兩帳號 scoped 皆滿 → 無救援對象,下沉既有全域規則(此處負載差 <margin → 不切)。"""
+    usages = {"A": _w(40.0, 40.0, sc=100.0), "B": _w(45.0, 45.0, sc=98.0)}
+    assert _pick(usages, "A") is None
+
+
+def test_pick_account_scoped_ignored_when_online_not_exhausted():
+    """在線 scoped 未達門檻 → 本層不介入,照全域負載規則(B 高出 ≥margin → 切 A)。"""
+    usages = {"A": _w(18.0, 8.0, sc=50.0), "B": _w(40.0, 12.0, sc=0.0)}
+    assert _pick(usages, "B") == "A"
+
+
+def test_pick_account_scoped_peer_global_capped_not_a_target():
+    """對方 scoped 有餘但全域已達上限 → 不在候選,不得作救援目標(不切到爆帳號)。"""
+    usages = {"A": _w(30.0, 30.0, sc=100.0), "B": _w(96.0, 50.0, sc=0.0)}
+    assert _pick(usages, "A") is None
+
+
+def test_pick_account_scoped_absent_field_is_backward_compatible():
+    """未填 scoped 欄位(None)→ 本層完全略過,決策與純 v4 一致。"""
+    usages = {"A": _w(18.0, 8.0), "B": _w(40.0, 12.0)}
+    assert _pick(usages, "B") == "A"  # 同 test_pick_account_balances_when_gap_reaches_margin
+
+
+def test_pick_account_scoped_tiebreak_prefers_preferred_then_alpha():
+    """多個救援對象 scoped 同分 → preferred 優先、再字母序。"""
+    usages = {
+        "A": _w(50.0, 50.0, sc=100.0),  # 在線,Fable 滿
+        "B": _w(10.0, 10.0, sc=0.0),
+        "C": _w(10.0, 10.0, sc=0.0),
+    }
+    assert _pick(usages, "A", preferred="C") == "C"  # B、C scoped 同 0 → preferred C
+
+
+# --- scoped_used_pct：scoped 比對 SSOT --------------------------------------
+
+
+def test_scoped_used_pct_matches_display_name_in_model_id():
+    """display_name(小寫)出現在 model id 內即命中,回 used_percentage。"""
+    mu = {"Fable": {"used_percentage": 87.0, "reset_at": None}}
+    assert claude_accounts.scoped_used_pct("claude-fable-5", mu) == 87.0
+
+
+def test_scoped_used_pct_none_when_no_match_or_bad_input():
+    """無對應模型 / 空 / 非 dict / 用量非數字 → None。"""
+    mu = {"Fable": {"used_percentage": 87.0}}
+    assert claude_accounts.scoped_used_pct("claude-opus-4-8", mu) is None
+    assert claude_accounts.scoped_used_pct("claude-fable-5", None) is None
+    assert claude_accounts.scoped_used_pct("", mu) is None
+    assert (
+        claude_accounts.scoped_used_pct("claude-fable-5", {"Fable": {"used_percentage": None}})
+        is None
+    )

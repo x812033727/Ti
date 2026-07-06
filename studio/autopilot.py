@@ -1601,6 +1601,8 @@ def _claude_accounts_usage(
             continue
         rl = acct.get("rate_limits") or {}
         err = rl.get("error")
+        # scoped（Fable 週限）救援用：查詢異常時 models 不可信 → None（本層保守略過）。
+        models_usage = rl.get("models") if not err else None
         if err:
             errors[label] = str(err)
             rl = {}  # 查詢異常 → 全欄位 None（不可用）
@@ -1610,6 +1612,12 @@ def _claude_accounts_usage(
             "five_hour_reset": _window_field(rl, "five_hour", "reset_at"),
             "seven_day_reset": _window_field(rl, "seven_day", "reset_at"),
         }
+        # 只在啟用（CLAUDE_ROTATE_SCOPED）且 PM 有釘 scoped 模型時填 scoped 用量%，餵給
+        # pick_account 第 1.5 層；未填＝None＝該層略過（完全相容既有純負載/重置決策）。
+        if config.CLAUDE_ROTATE_SCOPED and config.PM_PIN_MODEL:
+            usages[label]["scoped"] = claude_accounts.scoped_used_pct(
+                config.PM_PIN_MODEL, models_usage
+            )
         if acct.get("active"):
             active = label
     return usages, active, errors
@@ -1692,6 +1700,7 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
             config.CLAUDE_ROTATE_MARGIN,
             config.CLAUDE_ROTATE_RESET_EDGE,
             config.CLAUDE_ROTATE_RESET_EDGE_7D,
+            scoped_threshold=config.CLAUDE_SCOPED_LIMIT_THRESHOLD,
         )
         if not target:
             return None
