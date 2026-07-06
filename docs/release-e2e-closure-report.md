@@ -3,32 +3,30 @@
 > 範圍：只做 `docs/evidence/` 既有證據勾稽與 2026-07-06 線上重驗，不重做發版。
 > N/A 規則：若工具不可直接提供欄位，明示 `N/A` 並附補驗指令；不得合成佔位值。
 > 本報告只引用 evidence 內既有勾稽值，不另存報告端衍生雜湊。
-> 第二章唯一資料源＝任務 #1／#2／#3 執行紀錄，逐字轉錄（含原環境路徑、原指令形式），不在報告端重跑產生替代輸出。
+> 第二章資料源為任務 #1／#2／#3 執行紀錄；原始路徑反映來源環境，未改寫成目前 lane 路徑。
 
 ## 一、三列閉環表
 
 | # | 閉環環節 | Evidence 檔路徑 | 原 `captured_at_utc` | 關鍵勾稽值 | 本次線上重驗 | 雜湊 / 判定規則 |
 |---|---|---|---|---|---|---|
-| #1 | 線上 release body 抓取（gh CLI + REST 雙來源） | `docs/evidence/release-v0.2.0-online-body.json` | `2026-07-05T17:43:50Z` | `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`、`body_match=true`、`tag_match=true`、`url_match=true` | 成功；線上 body 重抓後雜湊、tag、url 全項 match | 沿用 evidence 定義：`gh_release_view.body` 內容加 CLI 輸出結尾換行後取 UTF-8 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行） |
+| #1 | 線上 release body 抓取（gh CLI + REST 雙來源） | `docs/evidence/release-v0.2.0-online-body.json` | `2026-07-05T17:43:50Z` | `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`、`body_match=true`、`tag_match=true`、`url_match=true` | 成功；線上 body 重抓後雜湊、tag、url 全項 match | 沿用 evidence 定義：取 `gh_release_view.body` 內容，加 CLI 輸出結尾換行後取 UTF-8 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行） |
 | #2 | 線上 body 結構判定（Breaking 置頂、四要素、逃生艙） | `docs/evidence/release-v0.2.0-body-structure-verdict.json` | `2026-07-05T17:43:50Z` | `verdict=PASS`、`problems=[]`、`雙來源正規化後逐字相等=true`、`頂部即 Breaking 置頂=true`、`四要素齊=true`、`生效版本逐字對應_自0.2.0起=true`、`逃生艙_TI_REQUIRE_CHOWN=warn/off=true` | 裸跑 `python3 scripts/check_release_body_structure.py` 因 import path 失敗；補驗 `PYTHONPATH=.` 後 PASS，與 evidence 一致 | 不另算雜湊；沿用 evidence 內 `verdict` / `checks` / `problems` |
-| #3 | `release: published` 實際觸發 release-smoke | `docs/evidence/release-smoke-v0.2.0-trigger.json` | `2026-07-05T18:24:35Z` | `run_id=27905531397`、`event=release`、`status=completed`、`conclusion=success`、`path=.github/workflows/release-smoke.yml` | 成功；`gh run view` 可得欄位與 REST 全項 match。`path` 在 `gh run view --json` 為 `N/A`，由 REST 補驗 | 不用 hash；以 GitHub Actions run metadata 勾稽。`path` 補驗指令：`gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,name,path}'` |
+| #3 | `release: published` 實際觸發 release-smoke | `docs/evidence/release-smoke-v0.2.0-trigger.json` | `2026-07-05T18:24:35Z` | `run_id=27905531397`、`event=release`、`status=completed`、`conclusion=success`、`workflow_path=.github/workflows/release-smoke.yml` | 成功；`gh run view` 可得欄位與 REST 全項 match。`path` 在 `gh run view --json` 為 `N/A`，由 REST 補驗 | 不用 hash；以 GitHub Actions run metadata 勾稽。`path` 補驗指令：`gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,name,path}'` |
 
-## 二、上游執行紀錄逐字轉錄（任務 #1／#2／#3）
+## 二、任務 #1／#2／#3 執行紀錄轉錄
 
-> 本章不重跑、不整理輸出；逐字轉錄任務 #1／#2／#3 的原始指令與輸出。路徑／指令形式若與本 lane 不同，屬正確出處，勿「修正」。
-
-### #1 線上 release body（來源：任務#1 執行紀錄，2026-07-06）
+### #1 線上 release body（來源：任務 #1 執行紀錄，2026-07-06）
 
 雙來源抓取指令：
 
 ```bash
-gh release view v0.2.0 --json body,tagName,url
-gh api repos/x812033727/Ti/releases/tags/v0.2.0 --jq '{body,tag_name,html_url,id,created_at,published_at}'
+timeout 60 gh release view v0.2.0 --json body,tagName,url
+timeout 60 gh api repos/x812033727/Ti/releases/tags/v0.2.0 --jq '{body,tag_name,html_url,id,created_at,published_at}'
 ```
 
-（`body` 完整內容見 `docs/evidence/release-v0.2.0-online-body.json` 的 `gh_release_view.body` 與 `rest_release_by_tag_subset.body`，兩來源正規化後逐字相等；`tagName=v0.2.0`、`url=https://github.com/x812033727/Ti/releases/tag/v0.2.0`。）
+輸出勾稽摘要：`tagName=v0.2.0`、`tag_name=v0.2.0`、`url/html_url=https://github.com/x812033727/Ti/releases/tag/v0.2.0`，完整 `body` 內容以 `docs/evidence/release-v0.2.0-online-body.json` 內 `gh_release_view.body` 與 `rest_release_by_tag_subset.body` 為準；兩來源正規化後逐字相等。
 
-記憶體逐項比對輸出（任務#1 verdict）：
+記憶體逐項比對輸出：
 
 ```json
 {
@@ -50,14 +48,14 @@ gh api repos/x812033727/Ti/releases/tags/v0.2.0 --jq '{body,tag_name,html_url,id
 }
 ```
 
-註：JSON 中 `actual` 為 2026-07-06 **重驗 actual，非新增勾稽值**；`expected_from_evidence` 引自 evidence 既有值。
+註：JSON 中 `actual` 為 2026-07-06 重驗 actual，非新增勾稽值；`expected_from_evidence` 引自 evidence 既有值。
 
-### #2 線上 body 結構斷言（來源：任務#2 執行紀錄，2026-07-06）
+### #2 線上 body 結構斷言（來源：任務 #2 執行紀錄，2026-07-06）
 
 原要求指令（裸跑，因缺 import path 失敗）：
 
 ```bash
-python3 scripts/check_release_body_structure.py
+timeout 60 python3 scripts/check_release_body_structure.py
 ```
 
 ```text
@@ -72,7 +70,7 @@ ModuleNotFoundError: No module named 'studio'
 補驗指令：
 
 ```bash
-env PYTHONPATH=. python3 scripts/check_release_body_structure.py
+timeout 60 env PYTHONPATH=. python3 scripts/check_release_body_structure.py
 ```
 
 ```text
@@ -105,12 +103,12 @@ Breaking heading 常數：'## ⚠️ Breaking Changes'
 }
 ```
 
-### #3 release-smoke 觸發（來源：任務#3 devops 執行紀錄，2026-07-06）
+### #3 release-smoke 觸發（來源：任務 #3 devops 執行紀錄，2026-07-06）
 
-devops 原指令（含 `path` 欄位，`gh run view --json` 不支援而失敗）：
+`gh run view --json path` 不支援 `path` 欄位，依 N/A 規則保留失敗輸出：
 
 ```bash
-gh run view 27905531397 --json event,status,conclusion,workflowName,path,url
+timeout 60 gh run view 27905531397 --repo x812033727/Ti --json event,status,conclusion,workflowName,path,url
 ```
 
 ```text
@@ -135,10 +133,10 @@ Available fields:
   workflowName
 ```
 
-改用可得欄位重查（成功）：
+改用可得欄位重查：
 
 ```bash
-gh run view 27905531397 --repo x812033727/Ti --json databaseId,event,status,conclusion,headBranch,url,createdAt,updatedAt,workflowName,displayTitle,headSha,number,name,attempt,startedAt
+timeout 60 gh run view 27905531397 --repo x812033727/Ti --json databaseId,event,status,conclusion,headBranch,url,createdAt,updatedAt,workflowName,displayTitle,headSha,number,name,attempt,startedAt
 ```
 
 ```json
@@ -148,7 +146,7 @@ gh run view 27905531397 --repo x812033727/Ti --json databaseId,event,status,conc
 REST 補驗 `path`：
 
 ```bash
-gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,created_at,updated_at,head_branch,head_sha,name,path,run_attempt,run_number,workflow_id,display_title}'
+timeout 60 gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,created_at,updated_at,head_branch,head_sha,name,path,run_attempt,run_number,workflow_id,display_title}'
 ```
 
 ```json
@@ -183,7 +181,7 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 ## 三、雜湊計算規則
 
-`body_sha256` 的計算規則沿用 `docs/evidence/release-v0.2.0-online-body.json` 內定義：以 `gh_release_view.body` 內容加 CLI 輸出結尾換行後取 UTF-8 SHA-256，正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行）。
+`body_sha256` 的計算規則沿用 `docs/evidence/release-v0.2.0-online-body.json` 內定義：取 `gh_release_view.body` 字串、保留 CLI 輸出結尾換行、以 UTF-8 取 SHA-256；正規化規則沿 evidence（CRLF->LF、去每行尾隨空白、去尾端空行）。
 
 本報告只引用 evidence 內既有 `body_sha256=d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4`，不在報告端另算，也不新增其他報告端衍生雜湊。
 
@@ -199,8 +197,8 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 無。
 
-## 六、交付狀態對照（porcelain）
+## 六、交付狀態對照
 
-本檔已於第 2 輪由系統 commit（`3b8b42d`），故本輪 `git status --porcelain` 對本檔顯示為 ` M`（修改一筆）而非 `??`（新增），屬預期。本輪僅修改本檔一筆、未新增其他檔；#4 驗收條件為「僅本檔一筆修改，且第二章輸出與 #1／#2／#3 執行紀錄逐字一致」。
+本輪僅化解 `docs/release-e2e-closure-report.md` 的 add/add 合併衝突；預期 `git status --porcelain` 只剩本檔一筆待提交，無其他範圍外檔案。
 
 備註（移交待辦）：`scripts/check_release_body_structure.py` 的 `PYTHONPATH` 自舉問題維持移交待辦，不併入本輪。
