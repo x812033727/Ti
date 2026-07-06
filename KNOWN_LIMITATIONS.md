@@ -2,5 +2,4 @@
 
 本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:
 
-- [ ] 撰寫 `docs/release-e2e-closure-report.md`：三列閉環表（每列＝證據檔路徑＋勾稽值＋原 captured_at_utc＋本次重驗結果＋雜湊計算規則），貼齊 #1/#2 實際指令輸出；三證據俱全→結論閉環，任一缺→缺口章節
-- [ ] 驗收：檢查三列俱全、報告只引用 evidence 檔內值（不列報告端另算的衍生雜湊）、重驗輸出可回指本次執行、porcelain 僅新增報告檔
+- [ ] 重跑證據 #1/#2 線上重驗指令（`gh release view v0.2.0 --json body,tagName,url`、REST 同義抓取、`env PYTHONPATH=. python3 scripts/check_release_body_structure.py`），逐項比對 `docs/evidence/` 兩檔既有勾稽值並保存原始輸出
