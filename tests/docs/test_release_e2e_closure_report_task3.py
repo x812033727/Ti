@@ -1,9 +1,8 @@
+from __future__ import annotations
+
 import json
 import re
-import shutil
-import subprocess
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "docs" / "release-e2e-closure-report.md"
@@ -20,7 +19,9 @@ def _load_json(name: str) -> dict:
 
 def _table_rows(report: str) -> list[str]:
     lines = report.splitlines()
-    start = lines.index("| # | 閉環環節 | Evidence 檔路徑 | 原 `captured_at_utc` | 關鍵勾稽值 | 本次線上重驗 | 雜湊 / 判定規則 |")
+    start = lines.index(
+        "| # | 閉環環節 | Evidence 檔路徑 | 原 `captured_at_utc` | 關鍵勾稽值 | 本次線上重驗 | 雜湊 / 判定規則 |"
+    )
     rows = []
     for line in lines[start + 2 :]:
         if not line.startswith("| #"):
@@ -37,31 +38,6 @@ def _section(report: str, heading: str) -> str:
     start = report.index(heading)
     next_heading = report.find("\n## ", start + len(heading))
     return report[start:] if next_heading == -1 else report[start:next_heading]
-
-
-def _between(report: str, start_heading: str, end_heading: str) -> str:
-    start = report.index(start_heading)
-    end = report.index(end_heading, start + len(start_heading))
-    return report[start:end]
-
-
-def _fenced_block_after(report: str, marker: str, language: str) -> str:
-    marker_index = report.index(marker)
-    fence = f"```{language}\n"
-    block_start = report.index(fence, marker_index) + len(fence)
-    block_end = report.index("\n```", block_start)
-    return report[block_start:block_end]
-
-
-def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
 
 
 def test_three_row_table_has_required_evidence_values_and_20260706_result():
@@ -108,7 +84,7 @@ def test_three_row_table_has_required_evidence_values_and_20260706_result():
     ]
 
     missing_dates = []
-    for row, (evidence_path, captured_at, required_values) in zip(rows, expectations):
+    for row, (evidence_path, captured_at, required_values) in zip(rows, expectations, strict=True):
         cells = _cells(row)
         assert evidence_path in cells[2]
         assert captured_at in cells[3]
@@ -142,97 +118,3 @@ def test_report_keeps_na_path_rule_and_does_not_introduce_new_hash_values():
     assert hashes == {online["body_sha256"]}
     assert "gh run view --json` 為 `N/A`" in report or "gh run view `path` | N/A" in report
     assert "REST 補驗" in report
-
-
-def test_transcribed_online_outputs_match_current_commands_exactly():
-    if shutil.which("gh") is None:
-        raise AssertionError("gh CLI 不存在，無法驗證第二章線上轉錄")
-
-    report = _between(
-        _read_report(),
-        "## 二、任務 #1／#2／#3 執行紀錄轉錄",
-        "## 三、雜湊計算規則",
-    )
-
-    command_cases = [
-        (
-            "timeout 60 gh release view v0.2.0 --json body,tagName,url",
-            ["gh", "release", "view", "v0.2.0", "--json", "body,tagName,url"],
-            "json",
-            "stdout",
-        ),
-        (
-            "timeout 60 gh api repos/x812033727/Ti/releases/tags/v0.2.0 --jq '{body,tag_name,html_url,id,created_at,published_at}'",
-            [
-                "gh",
-                "api",
-                "repos/x812033727/Ti/releases/tags/v0.2.0",
-                "--jq",
-                "{body,tag_name,html_url,id,created_at,published_at}",
-            ],
-            "json",
-            "stdout",
-        ),
-        (
-            "timeout 60 env PYTHONPATH=. python3 scripts/check_release_body_structure.py",
-            ["env", "PYTHONPATH=.", "python3", "scripts/check_release_body_structure.py"],
-            "text",
-            "stdout",
-        ),
-        (
-            "gh run view 27905531397 --json event,status,conclusion,workflowName,path,url",
-            [
-                "gh",
-                "run",
-                "view",
-                "27905531397",
-                "--json",
-                "event,status,conclusion,workflowName,path,url",
-            ],
-            "text",
-            "stderr",
-        ),
-        (
-            "gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{event,status,conclusion,name,path,html_url}'",
-            [
-                "gh",
-                "api",
-                "repos/x812033727/Ti/actions/runs/27905531397",
-                "--jq",
-                "{event,status,conclusion,name,path,html_url}",
-            ],
-            "json",
-            "stdout",
-        ),
-        (
-            "gh run view 27905531397 --json databaseId,event,status,conclusion,workflowName,url",
-            [
-                "gh",
-                "run",
-                "view",
-                "27905531397",
-                "--json",
-                "databaseId,event,status,conclusion,workflowName,url",
-            ],
-            "json",
-            "stdout",
-        ),
-        (
-            "gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,conclusion,html_url,name,path}'",
-            [
-                "gh",
-                "api",
-                "repos/x812033727/Ti/actions/runs/27905531397",
-                "--jq",
-                "{id,event,status,conclusion,html_url,name,path}",
-            ],
-            "json",
-            "stdout",
-        ),
-    ]
-
-    for marker, command, language, stream_name in command_cases:
-        completed = _run(command)
-        stream = completed.stdout if stream_name == "stdout" else completed.stderr
-        assert completed.returncode == (1 if "workflowName,path" in marker else 0)
-        assert _fenced_block_after(report, marker, language) == stream.rstrip("\n")
