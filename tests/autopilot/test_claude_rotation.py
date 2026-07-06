@@ -30,8 +30,10 @@ def _acct(
     error: str | None = None,
     fhr: float | None = None,
     sdr: float | None = None,
+    fable: float | None = None,
 ):
-    """單一帳號條目：used 取 5h 窗（7d 窗放較低值，驗證取 max 的語意）；可指定兩窗 reset_at。"""
+    """單一帳號條目：used 取 5h 窗（7d 窗放較低值，驗證取 max 的語意）；可指定兩窗 reset_at；
+    ``fable`` 指定該帳號 Fable scoped 週限用量%（放進 rate_limits["models"]，驗 scoped 救援）。"""
     rl: dict = {"error": error}
     if used is not None:
         rl["five_hour"] = {
@@ -42,6 +44,8 @@ def _acct(
             "used_percentage": max(0.0, used - 5),
             "reset_at": sdr if sdr is not None else time.time() + 86400,
         }
+    if fable is not None:
+        rl["models"] = {"Fable": {"used_percentage": fable, "reset_at": None, "severity": "normal"}}
     return {"label": label, "subscription": "max", "active": active, "rate_limits": rl}
 
 
@@ -67,6 +71,10 @@ def rotate_env(monkeypatch):
     monkeypatch.setattr(config, "CLAUDE_ROTATE_MARGIN", 10.0)
     monkeypatch.setattr(config, "CLAUDE_ROTATE_RESET_EDGE", 900.0)
     monkeypatch.setattr(config, "CLAUDE_ROTATE_RESET_EDGE_7D", 21600.0)
+    # scoped（Fable 週限）救援：預設開、PM 釘 Fable、門檻 95（不依賴 ambient TI_* env）。
+    monkeypatch.setattr(config, "CLAUDE_ROTATE_SCOPED", True)
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "claude-fable-5")
+    monkeypatch.setattr(config, "CLAUDE_SCOPED_LIMIT_THRESHOLD", 95.0)
     monkeypatch.setattr(config, "PROVIDER", "claude")
     monkeypatch.setattr(config, "has_api_key", lambda: False)
     monkeypatch.setattr(config, "claude_cli_logged_in", lambda: True)
@@ -203,7 +211,31 @@ def test_claude_accounts_usage_extracts_windows_and_resets(rotate_env):
         "seven_day": None,
         "five_hour_reset": None,
         "seven_day_reset": None,
+        "scoped": None,  # error 帳號 models 不可信 → scoped 亦 None（保守）
     }
+
+
+def test_claude_accounts_usage_extracts_fable_scoped(rotate_env):
+    """scoped 救援接線：models 的 Fable 用量% 依 PM 釘選模型抽進 usages[label]["scoped"]。"""
+    snap = _snap([_acct("A", 60.0, active=True, fable=100.0), _acct("B", 0.0, fable=0.0)])
+    usages, active, _ = autopilot._claude_accounts_usage(snap)
+    assert usages["A"]["scoped"] == 100.0
+    assert usages["B"]["scoped"] == 0.0
+
+
+def test_rotate_scoped_rescue_switches_to_fresh_fable(rotate_env):
+    """在線 A 的 Fable scoped 撞滿、B Fable 新鮮且全域低 → 救援切 B（優先於全域 7d/負載決策）。"""
+    snap = _snap([_acct("A", 60.0, active=True, fable=100.0), _acct("B", 0.0, fable=0.0)])
+    assert autopilot._maybe_rotate_claude_account(snap) == "B"
+    assert rotate_env == [("switch", "B"), ("restart",)]
+
+
+def test_rotate_scoped_disabled_falls_back_to_global(rotate_env, monkeypatch):
+    """關閉 CLAUDE_ROTATE_SCOPED → 不填 scoped、回退純全域決策（負載差 <margin → 不切）。"""
+    monkeypatch.setattr(config, "CLAUDE_ROTATE_SCOPED", False)
+    snap = _snap([_acct("A", 60.0, active=True, fable=100.0), _acct("B", 55.0, fable=0.0)])
+    assert autopilot._maybe_rotate_claude_account(snap) is None
+    assert rotate_env == []
 
 
 def test_rotate_gap_below_margin_stays(rotate_env):

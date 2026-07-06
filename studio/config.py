@@ -722,6 +722,9 @@ CLAUDE_ROTATE_THRESHOLD = _env_float("TI_CLAUDE_ROTATE_THRESHOLD", 95.0)
 CLAUDE_ROTATE_MARGIN = _env_float("TI_CLAUDE_ROTATE_MARGIN", 10.0)
 CLAUDE_ROTATE_RESET_EDGE = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE", 900.0)
 CLAUDE_ROTATE_RESET_EDGE_7D = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE_7D", 21600.0)
+# scoped 週限（如 PM 釘的 Fable）救援輪替：在線帳號該模型 scoped 撞 CLAUDE_SCOPED_LIMIT_THRESHOLD
+# 而對方仍有餘時,切過去讓 Fable 恢復可用（免全被改派較貴的 opus）。設 0 關閉、回退純全域決策。
+CLAUDE_ROTATE_SCOPED = os.getenv("TI_CLAUDE_ROTATE_SCOPED", "1") not in ("0", "false", "False", "")
 
 # Antigravity（agy）的 OAuth token 檔（agy 登入後寫入、執行時刷新；antigravity_usage 讀其
 # token.access_token 查 Google Code Assist 配額）。預設 ~/.gemini/antigravity-cli/...；可 env 覆寫。
@@ -1084,6 +1087,7 @@ def reload() -> None:
     global LINT_AUTOFORMAT
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
+    global CLAUDE_ROTATE_SCOPED
     PROVIDER = os.getenv("TI_PROVIDER", "claude").lower()
     AUTOPILOT_NORTH_STAR = os.getenv(
         "TI_AUTOPILOT_NORTH_STAR",
@@ -1252,3 +1256,9 @@ def reload() -> None:
     CLAUDE_ROTATE_MARGIN = _env_float("TI_CLAUDE_ROTATE_MARGIN", 10.0)
     CLAUDE_ROTATE_RESET_EDGE = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE", 900.0)
     CLAUDE_ROTATE_RESET_EDGE_7D = _env_float("TI_CLAUDE_ROTATE_RESET_EDGE_7D", 21600.0)
+    CLAUDE_ROTATE_SCOPED = os.getenv("TI_CLAUDE_ROTATE_SCOPED", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )

@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import claude_usage, config, events, llm_caller, tools
+from . import claude_accounts, claude_usage, config, events, llm_caller, tools
 from .roles import Role, effective_tools
 
 logger = logging.getLogger(__name__)
@@ -234,21 +234,12 @@ def _scoped_exhausted(model: str, models_usage: dict, threshold: float) -> bool:
     """該 claude 模型是否撞上「按模型 scoped」週限。
 
     models_usage＝claude_usage.fetch_rate_limits()["models"]，鍵為模型 display_name（如
-    "Fable"）。以「display_name（小寫）出現在 model id（小寫）內」比對，涵蓋 fable→
-    claude-fable-5 這類命名；用量達 threshold 即視為撞滿。
+    "Fable"）。比對規則（display_name 小寫出現在 model id 小寫內，涵蓋 fable→claude-fable-5）
+    集中在 ``claude_accounts.scoped_used_pct``（SSOT，帳號輪替第 1.5 層亦用同一比對）；
+    用量達 threshold 即視為撞滿。
     """
-    if not model or not isinstance(models_usage, dict):
-        return False
-    mid = model.lower()
-    for disp, w in models_usage.items():
-        if not isinstance(w, dict):
-            continue
-        pct = w.get("used_percentage")
-        if not isinstance(pct, (int, float)) or pct < threshold:
-            continue
-        if disp and str(disp).lower() in mid:
-            return True
-    return False
+    pct = claude_accounts.scoped_used_pct(model, models_usage)
+    return pct is not None and pct >= threshold
 
 
 def _reroute_if_scoped_exhausted(model: str) -> str:
