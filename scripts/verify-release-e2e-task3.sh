@@ -24,8 +24,10 @@ run_capture() {
 }
 
 extract_report_value() {
+  # #3 為單行表格列，同一行內每個 key 會出現多次（關鍵勾稽值欄＋重驗欄）；
+  # grep -o 會在該行輸出多個匹配，-m1 只限行不限同行多匹配，故再 head -n1 取首個乾淨值。
   key="$1"
-  grep -m1 -o "$key=[^、| ]*" "$REPORT" | sed "s/^$key=//; s/\`//g"
+  grep -o "$key=[^、| ]*" "$REPORT" | head -n1 | sed "s/^$key=//; s/\`//g"
 }
 
 write_bool_from_exit() {
