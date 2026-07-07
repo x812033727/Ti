@@ -67,20 +67,21 @@ timeout 60 gh api repos/x812033727/Ti/releases/tags/v0.2.0 --jq '{body,tag_name,
 
 ### #2 線上 body 結構斷言（來源：任務 #1 執行紀錄，2026-07-06）
 
-原要求指令（裸跑，因缺 import path 失敗）：
+結構檢查指令（腳本已自舉 repo root，可裸跑）：
 
 ```bash
 timeout 60 python3 scripts/check_release_body_structure.py
 ```
 
 ```text
-Traceback (most recent call last):
-  File "/opt/ti-autopilot-work/scripts/check_release_body_structure.py", line 28, in <module>
-    from studio.release_note import BREAKING_HEADING, pyproject_version
-ModuleNotFoundError: No module named 'studio'
-```
+== v0.2.0 線上 body 結構斷言核對 ==
+證據檔：docs/evidence/release-v0.2.0-online-body.json
+pyproject 版本（SSOT）：0.2.0
+Breaking heading 常數：'## ⚠️ Breaking Changes'
+頂部第一個頂層 `## ` 區塊：'## ⚠️ Breaking Changes'
 
-> 路徑反映上游任務執行環境（`/opt/ti-autopilot-work`），非本 lane；為原始出處，未改寫。
+核對通過（雙來源一致＋頂部 Breaking 置頂＋四要素齊＋逃生艙齊＋生效版本逐字對應）。
+```
 
 補驗指令：
 
@@ -120,33 +121,7 @@ Breaking heading 常數：'## ⚠️ Breaking Changes'
 
 ### #3 release-smoke 觸發（來源：任務 #2 執行紀錄，2026-07-06）
 
-`gh run view --json path` 不支援 `path` 欄位，依 N/A 規則保留失敗輸出：
-
-```bash
-gh run view 27905531397 --json event,status,conclusion,workflowName,path,url
-```
-
-```text
-Unknown JSON field: "path"
-Available fields:
-  attempt
-  conclusion
-  createdAt
-  databaseId
-  displayTitle
-  event
-  headBranch
-  headSha
-  jobs
-  name
-  number
-  startedAt
-  status
-  updatedAt
-  url
-  workflowDatabaseId
-  workflowName
-```
+`gh run view --json path` 不支援 `path` 欄位，依 N/A 規則不提供可照抄執行的 `bash` 指令；錯誤摘要為 `Unknown JSON field: "path"`。`path` 改由 REST 補驗。
 
 REST 補驗：
 
@@ -215,4 +190,4 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 本報告已入 git 追蹤；2026-07-06 重驗與 2026-07-07 重驗均僅更新本檔（三列表 #2/#3 本次重驗欄、結論／裁決章、本交付狀態章），未動 `docs/evidence/`、未新增 evidence 副本或報告端衍生雜湊。本輪（2026-07-07）改動 commit 後 `git status docs/` 即回乾淨、無 untracked/modified 殘留（本報告以外的 untracked 測試檔屬 QA #5 產出，不在本報告範圍）。
 
-備註（移交待辦）：`scripts/check_release_body_structure.py` 的 `PYTHONPATH` 自舉問題維持移交待辦，不併入本輪。
+備註：`scripts/check_release_body_structure.py` 已自舉 repo root；報告仍保留 `PYTHONPATH=.` 補驗指令，供舊環境與重驗流程照抄。
