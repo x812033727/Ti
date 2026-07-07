@@ -199,7 +199,9 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 ## 四、結論
 
-三證據俱全：#1 線上 body 抓取與雜湊勾稽、#2 結構判定 `verdict=PASS`、#3 smoke run `event=release` / `conclusion=success`。2026-07-06 線上重驗全項 match，無不符項。
+三證據俱全：#1 線上 body 抓取與雜湊勾稽、#2 結構判定 `verdict=PASS`、#3 smoke run `event=release` / `conclusion=success`。2026-07-06 線上重驗全項 match；2026-07-07 再次線上重驗，#2（`verdict`/`checks`）與 #3（run_id/event/status/conclusion/workflow_path）身分欄位以報告內自足 `jq`+`diff` 指令塊逐項比對，皆 `無 mismatch`，全項 match、無不符項。
+
+裁決：#2/#3 身分欄位全 match，無任一 mismatch，結論不降級。
 
 **判定：閉環（僅及 v0.2.0）——v0.2.0 生產 E2E 鏈已閉環。**
 
@@ -211,6 +213,6 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 ## 六、交付狀態對照
 
-本報告已入 git 追蹤，`git status docs/` 乾淨、無 untracked/modified 殘留；2026-07-06 重驗僅更新本檔（三列表本次重驗欄、結論章、本交付狀態章），未新增任何 evidence 副本或報告端衍生雜湊。
+本報告已入 git 追蹤；2026-07-06 重驗與 2026-07-07 重驗均僅更新本檔（三列表 #2/#3 本次重驗欄、結論／裁決章、本交付狀態章），未動 `docs/evidence/`、未新增 evidence 副本或報告端衍生雜湊。本輪（2026-07-07）改動 commit 後 `git status docs/` 即回乾淨、無 untracked/modified 殘留（本報告以外的 untracked 測試檔屬 QA #5 產出，不在本報告範圍）。
 
 備註（移交待辦）：`scripts/check_release_body_structure.py` 的 `PYTHONPATH` 自舉問題維持移交待辦，不併入本輪。
