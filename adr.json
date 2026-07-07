@@ -1,83 +1,6 @@
 {
   "entries": [
     {
-      "decision": "節內三段結構維持「角色與資料流 → 新 provider 接入契約 → 語意備忘」順序不變",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932333
-    },
-    {
-      "decision": "新節標題與層級維持 `## LLM 韌性中介層（retry 子系統）`，H2 齊平其他架構節",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.093234
-    },
-    {
-      "decision": "模組職責表僅在 `experts.py`、`llm_caller.py`、`providers.py` 三列末補一句指回新節，不新增欄位、不重排",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932348
-    },
-    {
-      "decision": "`make_retry_config()` 工廠本次不搬移，以「架構伏筆：」前綴標注接入點預留，明確標示「非現行需求」",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932353
-    },
-    {
-      "decision": "Tenacity / backoff 套件評選不入文，僅加一句「設計與 exponential-backoff-with-jitter 慣例對齊」交代來源，不展開比較",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6823ce4e68",
-      "created_at": 1781477253.0932357
-    },
-    {
-      "decision": "反向黑樣本測試使用 in-memory 字串操作——讀 CHANGELOG.md 內容後用 Python str 截掉 Breaking 區塊，對截斷後的字串跑斷言；不動真實檔案、不依賴 tmp_path 寫回磁碟",
-      "rationale": "in-memory 最輕量，不產生任何磁碟副作用；測試 crash 也不會殘留；同時避免工程師用 tmp_path 時因路徑指向錯誤而假綠",
-      "rejected": "改動真實 CHANGELOG.md 後還原（crash 就殘留）；寫入 tmp_path 再讀（多一層 I/O，失敗模式更多）",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.009741
-    },
-    {
-      "decision": "版本讀取方式指定 tomllib.load()（Python 3.11+ 標準庫，3.12 環境內建，無額外依賴）；pyproject.toml 路徑用 Path(__file__).parents[N] 推 repo root，不用 cwd；N 值在實作前先用 Explore 確認測試檔深度",
-      "rationale": "importlib.metadata.version() 需套件已安裝，CI 裸 checkout 沒裝就爆；tomllib 只需檔案存在即可，與安裝狀態無關",
-      "rejected": "importlib.metadata（CI 安裝前提不受控）；regex parse（脆，版本格式一改即壞）",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0097442
-    },
-    {
-      "decision": "README 錨點互指納入測試範疇，但只斷言「README 檔案內含 state 安全寫入 這個字串」，不追 HTML anchor hash；CHANGELOG 內的指向文字必須與此字串一致",
-      "rationale": "完整 anchor 是 GitHub Markdown 自動生成，測試無法直接驗；測 raw text 已能防止小節被悄悄改名後連結語意斷開；且 test_qa_task5 已有 README 字樣掃描，新測試只需互指一致性即可，不重複",
-      "rejected": "完全不測（靜默死鏈，高工明確指出不可接受）；測 HTML anchor（#state-安全寫入 這類 hash，跨平台渲染不一致）",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0097451
-    },
-    {
-      "decision": "動工第一步執行 grep -rn \"0.1.0\" tests/，若既有測試硬寫版本字串則先修正再升版；此步驟必須在 pyproject.toml 改版之前完成",
-      "rationale": "工程師已提醒，既有測試寫死舊版本字串會造成升版後連帶紅燈，需先排雷",
-      "rejected": "",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0099838
-    },
-    {
-      "decision": "版本字串升 0.2.0，pyproject.toml 為單一事實來源；CHANGELOG.md 與測試皆從 pyproject.toml 讀取，不在兩處硬寫版本字串",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.009985
-    },
-    {
-      "decision": "CHANGELOG.md 落點 repo 根目錄，Keep a Changelog 格式，## ⚠️ Breaking Changes 作為 0.2.0 節最頂端子區塊，位置先於 ### Changed / ### Added",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0099857
-    },
-    {
       "decision": "Breaking 條目時序語意鎖定「宣告已發生」——用現在完成式（「已改為 strict 預設，自 0.2.0 起生效」），禁止出現「下版才 enforce」「警告期後」等未來時序",
       "rationale": "",
       "rejected": "研究員兩階段過渡模板（與 config.py 第 695 行 strict 已成立矛盾）",
@@ -3499,6 +3422,83 @@
       "rejected": "",
       "session_id": "ap19fb00ee65",
       "created_at": 1783336459.952564
+    },
+    {
+      "decision": "唯一權威決議檔落 `docs/task3-authoritative-decision-2026-07-08.md`，沿用既有 `release-e2e-authoritative-declaration` 的 additive 宣告範式，不覆寫既有 evidence/closure/handoff",
+      "rationale": "既有範式已被 `tests/docs/` 守門驗證過，讀者心智模型與測試比照方式一致",
+      "rejected": "另立新格式——會讓守門測試無從比照且範圍爆炸",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.113548
+    },
+    {
+      "decision": "作廢標記採 ADR「Superseded by」語義，五份原檔 immutability——存在則不刪除、不改寫歷史",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.1135535
+    },
+    {
+      "decision": "因五份為 QA 訊息流短碼（`778ced`/`rerun-765f1b` 等 repo grep 不到實體檔），權威檔採「單向明列作廢＋明文標註『訊息流明列值、非 repo 實體檔』」，雙向回指僅在原檔實際存在時才落地",
+      "rationale": "硬追形式雙向會逼我們憑空造五個檔或改歷史，兩者都違反 immutability；且不講白會讓終判卡在「作廢對象查無此檔」",
+      "rejected": "憑空造五個原檔以湊齊雙向連結",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.1135557
+    },
+    {
+      "decision": "五份識別碼與省略 hash 逐字照抄 QA 訊息流，省略號（U+2026）原樣保留，落盤與測試斷言一律用 bytes 比對，防編輯器/格式化把 `…` 正規化成 `...`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.113557
+    },
+    {
+      "decision": "帶省略號的 `99f330…9d3b` 類值只當「訊息流逐字值」，不得測成真實 64 碼 sha256",
+      "rationale": "它是自證用短碼、非外部整檔校驗值，用 64-hex 正則會誤紅或漏抓",
+      "rejected": "",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.1135583
+    },
+    {
+      "decision": "落盤用標準庫原子寫入（temp→flush→`os.fsync`→`os.replace`），不新增第三方依賴",
+      "rationale": "",
+      "rejected": "引入 `atomicwrites` 第三方套件——標準庫已足夠且違反不加依賴慣例",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.1135595
+    },
+    {
+      "decision": "落盤腳本一次性、走 `$TMPDIR`，不留在 repo 被掃描目錄，收尾以 `git status docs/ tests/` 確認無 untracked 殘留",
+      "rationale": "被掃描目錄的 untracked 臨時檔會造成 pre-commit 綠／CI 紅分歧",
+      "rejected": "",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.113561
+    },
+    {
+      "decision": "權威檔內硬分「整檔 sha256（外部權威）」與「檔內嵌 hash（僅自證）」兩節，附 `python3` 自驗指令",
+      "rationale": "前一輪 `c2f4bb→725cf1` 重跑的踩坑根因即語義未分，不可省",
+      "rejected": "",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.1135616
+    },
+    {
+      "decision": "`tests/docs/` 新守門測試不繼承 task2 的 `SHA256_RE`（64-hex）＋evidence 檔比對邏輯，改抓「必要標題＋五個識別碼逐字存在＋省略號原樣＋`Superseded by` 語義＋非實體檔標註＋回報路徑字串可讀＋報告內無裸 python」",
+      "rationale": "本任務值為短碼/帶省略號且 evidence 實體檔不存在，沿用 64-hex 掃描會漏抓或誤紅",
+      "rejected": "照抄 `test_release_e2e_closure_report_task2.py`",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.1135633
+    },
+    {
+      "decision": "本任務邊界限定 `docs/` 一份新檔 + `tests/docs/` 一支守門測試，零 `studio/` 主套件改動",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.1135657
+    },
+    {
+      "decision": "回報值＝權威檔相對路徑字串 `docs/task3-authoritative-decision-2026-07-08.md`，由守門測試斷言可程式讀出",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap9209e78194",
+      "created_at": 1783465064.113567
     }
   ]
 }
