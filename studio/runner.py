@@ -422,7 +422,9 @@ def detect_entrypoint(cwd: Path | str) -> str | None:
 
 
 _INLINE_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_LEADING_INLINE_CODE_SPAN_RE = re.compile(r"^`+([^`\n]+)`+")
 _INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>]+$")
+_EXPLANATORY_COMMAND_TAIL_RE = re.compile(r"^(?:[（(，,。:：#]|//)")
 
 
 def _unwrap_markdown_command_spans(raw: str) -> str | None:
@@ -453,13 +455,24 @@ def _unwrap_markdown_command_spans(raw: str) -> str | None:
     return "".join(pieces).strip()
 
 
+def _leading_markdown_command(raw: str) -> str | None:
+    """取出「開頭 inline code 是命令、後面是說明文字」的保守案例。"""
+    m = _LEADING_INLINE_CODE_SPAN_RE.match(raw)
+    if not m:
+        return None
+    tail = raw[m.end() :].strip()
+    if tail and not _EXPLANATORY_COMMAND_TAIL_RE.match(tail):
+        return None
+    return m.group(1).strip() or None
+
+
 def parse_run_command(text: str) -> str | None:
     """從專家文字解析 `執行指令: ...`（也接受 run command / 執行：）。"""
     m = re.search(r"(?:執行指令|執行命令|run command)\s*[:：]\s*(.+)", text, re.I)
     if not m:
         return None
     raw = m.group(1).strip()
-    cmd = _unwrap_markdown_command_spans(raw) or raw
+    cmd = _unwrap_markdown_command_spans(raw) or _leading_markdown_command(raw) or raw
     return cmd.strip() or None
 
 
