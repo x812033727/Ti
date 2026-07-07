@@ -25,9 +25,12 @@ import json
 import sys
 from pathlib import Path
 
-from studio.release_note import BREAKING_HEADING, pyproject_version
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from studio.release_note import BREAKING_HEADING, pyproject_version  # noqa: E402
+
 EVIDENCE = ROOT / "docs" / "evidence" / "release-v0.2.0-online-body.json"
 
 
