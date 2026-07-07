@@ -57,7 +57,11 @@ def test_task4_all_match_keeps_closure_and_empty_gap():
         "diff -u",
         "jq -S '{verdict, checks, problems}'",
     ]
-    task2_required.extend(f"{key}={str(value).lower()}" for key, value in verdict["checks"].items() if isinstance(value, bool))
+    task2_required.extend(
+        f"{key}={str(value).lower()}"
+        for key, value in verdict["checks"].items()
+        if isinstance(value, bool)
+    )
     task2_required.append(f"頂部第一個頂層## 區塊={verdict['checks']['頂部第一個頂層## 區塊']}")
 
     task3_required = [

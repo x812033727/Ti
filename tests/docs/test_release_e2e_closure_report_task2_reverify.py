@@ -10,9 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "docs" / "release-e2e-closure-report.md"
 EVIDENCE = ROOT / "docs" / "evidence" / "release-v0.2.0-body-structure-verdict.json"
-TABLE_HEADER = (
-    "| # | 閉環環節 | Evidence 檔路徑 | 原 `captured_at_utc` | 關鍵勾稽值 | 本次線上重驗 | 雜湊 / 判定規則 |"
-)
+TABLE_HEADER = "| # | 閉環環節 | Evidence 檔路徑 | 原 `captured_at_utc` | 關鍵勾稽值 | 本次線上重驗 | 雜湊 / 判定規則 |"
 
 
 def _table_rows(report: str) -> list[str]:
@@ -84,9 +82,7 @@ def test_task2_report_inline_command_is_copyable_and_exits_zero():
     )
 
     assert result.returncode == 0, (
-        "報告 #2 欄內可照抄指令執行失敗\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        f"報告 #2 欄內可照抄指令執行失敗\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert result.stdout == ""
 
@@ -95,7 +91,7 @@ def test_task2_body_structure_reverify_command_matches_evidence_with_jq_diff():
     tmpdir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
     env = os.environ.copy()
     env["TMPDIR"] = str(tmpdir)
-    command = r'''
+    command = r"""
 set -euo pipefail
 : "${TMPDIR:?TMPDIR must be set}"
 check_log="$TMPDIR/task2_qa_body_structure_check.log"
@@ -148,7 +144,7 @@ printf 'task2_check_log=%s\n' "$check_log"
 printf 'task2_expected=%s\n' "$expected"
 printf 'task2_actual=%s\n' "$actual"
 printf 'task2_diff=%s\n' "$diff_out"
-'''
+"""
     result = subprocess.run(
         ["bash", "-lc", command],
         cwd=ROOT,
