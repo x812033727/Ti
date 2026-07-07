@@ -32,6 +32,16 @@ def test_parse_run_command_keeps_shell_backtick_substitution():
     assert runner.parse_run_command(text) == "echo `printf A`"
 
 
+def test_parse_run_command_ignores_explanatory_tail_after_inline_code():
+    text = "完成\n執行指令: `.venv/bin/python -m pytest tests/docs -q`（外層加 timeout 60）"
+    assert runner.parse_run_command(text) == ".venv/bin/python -m pytest tests/docs -q"
+
+
+def test_parse_run_command_handles_extra_leading_markdown_backtick():
+    text = "完成\n執行指令: ``.venv/bin/python -m pytest tests/docs -q`（外層加 `timeout 60`）`"
+    assert runner.parse_run_command(text) == ".venv/bin/python -m pytest tests/docs -q"
+
+
 # --- 偵測入口 -----------------------------------------------------------
 
 
