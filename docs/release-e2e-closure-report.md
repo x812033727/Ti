@@ -199,7 +199,9 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 ## 四、結論
 
-三證據俱全：#1 線上 body 抓取與雜湊勾稽、#2 結構判定 `verdict=PASS`、#3 smoke run `event=release` / `conclusion=success`。2026-07-06 線上重驗全項 match，無不符項。
+三證據俱全：#1 線上 body 抓取與雜湊勾稽、#2 結構判定 `verdict=PASS`、#3 smoke run `event=release` / `conclusion=success`。2026-07-06 線上重驗全項 match；2026-07-07 再次線上重驗，#2（`verdict`/`checks`）與 #3（run_id/event/status/conclusion/workflow_path）身分欄位以報告內自足 `jq`+`diff` 指令塊逐項比對，皆 `無 mismatch`，全項 match、無不符項。
+
+裁決：#2/#3 身分欄位全 match，無任一 mismatch，結論不降級。
 
 **判定：閉環（僅及 v0.2.0）——v0.2.0 生產 E2E 鏈已閉環。**
 
