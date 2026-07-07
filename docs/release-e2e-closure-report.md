@@ -213,6 +213,6 @@ gh api repos/x812033727/Ti/actions/runs/27905531397 --jq '{id,event,status,concl
 
 ## 六、交付狀態對照
 
-本報告已入 git 追蹤，`git status docs/` 乾淨、無 untracked/modified 殘留；2026-07-06 重驗僅更新本檔（三列表本次重驗欄、結論章、本交付狀態章），未新增任何 evidence 副本或報告端衍生雜湊。
+本報告已入 git 追蹤；2026-07-06 重驗與 2026-07-07 重驗均僅更新本檔（三列表 #2/#3 本次重驗欄、結論／裁決章、本交付狀態章），未動 `docs/evidence/`、未新增 evidence 副本或報告端衍生雜湊。本輪（2026-07-07）改動 commit 後 `git status docs/` 即回乾淨、無 untracked/modified 殘留（本報告以外的 untracked 測試檔屬 QA #5 產出，不在本報告範圍）。
 
 備註（移交待辦）：`scripts/check_release_body_structure.py` 的 `PYTHONPATH` 自舉問題維持移交待辦，不併入本輪。
