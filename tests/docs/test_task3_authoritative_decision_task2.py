@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 TARGET_REL = "docs/task3-authoritative-decision-2026-07-08.md"
 TARGET = ROOT / TARGET_REL

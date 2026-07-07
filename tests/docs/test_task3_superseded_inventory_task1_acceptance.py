@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / ".qa_artifacts" / "task3" / "superseded-decision-inventory-2026-07-08.md"
 TARGET_AUTHORITY = "docs/task3-authoritative-decision-2026-07-08.md"
