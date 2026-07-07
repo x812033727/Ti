@@ -77,9 +77,7 @@ def build_checks(evidence: dict[str, Any], version: str) -> dict[str, Any]:
             anchor in gh and any(keyword.lower() in lower_body for keyword in semantics)
             for _, anchor, semantics in body_check.FOUR_ELEMENTS
         ),
-        "生效版本逐字對應_自0.2.0起": (
-            f"自 `{version}` 起" in gh or f"自 {version} 起" in gh
-        ),
+        "生效版本逐字對應_自0.2.0起": (f"自 `{version}` 起" in gh or f"自 {version} 起" in gh),
         "逃生艙_TI_REQUIRE_CHOWN=warn/off": (
             "TI_REQUIRE_CHOWN=warn" in gh and "TI_REQUIRE_CHOWN=off" in gh
         ),
@@ -159,9 +157,7 @@ def build_payload(
     }
 
     all_match = all(
-        item["matches_evidence"]
-        for key, item in comparisons.items()
-        if key != "structure"
+        item["matches_evidence"] for key, item in comparisons.items() if key != "structure"
     )
     structure_match = all(comparisons["structure"].values())
     command_ok = (
