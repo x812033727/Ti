@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / ".qa_artifacts" / "task3" / "superseded-decision-inventory-2026-07-08.md"
 SOURCE_DOC = ROOT / "docs" / "release-e2e-authoritative-declaration-2026-07-08.md"
@@ -81,5 +80,7 @@ def test_task3_superseded_inventory_does_not_count_release_e2e_hash_as_file():
     rows = _table_rows(text)
     row_values = {cell for row in rows for cell in row}
     assert not row_values.intersection(EXCLUDED_RELEASE_VALUES)
-    assert "`99f330…9d3b`：出現於 `docs/release-e2e-authoritative-declaration-2026-07-08.md`" in text
+    assert (
+        "`99f330…9d3b`：出現於 `docs/release-e2e-authoritative-declaration-2026-07-08.md`" in text
+    )
     assert "它是 hash 屬性，不是另一份獨立決議檔" in text
