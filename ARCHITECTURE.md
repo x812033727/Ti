@@ -109,6 +109,25 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 關閉（預設）時退化成「每任務一波、單一主 lane」，與循序逐任務迭代逐字等價。
 全域 `TI_LLM_MAX_CONCURRENCY` 節流同時進行的 LLM 發言數。
 
+### baseline 注入契約
+
+此 baseline 指 **lane 啟動設定基準**（env + manifest），與 `write_baseline_gitignore`（`runner.py`，發佈前 .gitignore 淨化）同名不同源，切勿混淆。**狀態：前瞻契約，lane 注入層尚未落地**——目前 `LaneContext` 只隔離 git worktree 分支與獨立專家團隊，尚無統一的 env/manifest 注入層，本子段規範的是該層落地時應遵循的契約，而非既有實作。現況逐項稽核見 `studio/docs/lane_baseline_injection_inventory.md`。
+
+**優先序（單一有序清單）**：`顯式注入 > env(TI_*) > lane manifest > 模組 DEFAULT`。此序與 `config.py`/`settings.py` 既有語意同源（設定走 `TI_*` 環境變數、UI 改設定寫 `.env` → `config.reload()`），即 **env 覆蓋檔案**——manifest 承載大宗分層預設，env 作為 per-lane 即時覆蓋，顯式注入（呼叫端明給）優先級最高，模組級 `DEFAULT` 常數墊底。
+
+**fail 策略決策表**（分流準則：安全/正確性關鍵項缺失 → fail-closed 中止該 lane；非關鍵增益項缺失 → fail-open 退回 `DEFAULT` + `log.warning`）：
+
+| 注入項類別 | 缺失/非法時行為 | 依據 |
+|------------|-----------------|------|
+| 安全/正確性關鍵（密鑰、repo 路由、sandbox 開關） | fail-closed：中止該 lane，不以預設矇混放行 | `autopilot._commit_push_merge` 見 `AUTOPILOT_REPO` 為空即回 `(False, reason)` 擋下（fail-closed 類比佐證） |
+| 非關鍵增益（可選旋鈕、可由 DEFAULT 推導） | fail-open：退回模組 `DEFAULT` 並 `log.warning` | `TI_DISCUSS_MODE` 非法值 fallback legacy 模式續跑（fail-open 類比佐證） |
+
+> 表註：上列 `AUTOPILOT_REPO`/`TI_DISCUSS_MODE` 為 fail 策略之**準則類比佐證**，非 lane 注入層現有行為（該層尚未落地）。
+
+**移交待辦**：本子段所述 fail-open/closed 行為尚無守門測試覆蓋，`lane 注入層落地後補守門測試對齊決策表`。
+
+決策脈絡見 DECISIONS.md『lane baseline 注入契約：env/manifest 優先序與 fail-open/closed 分流策略』。
+
 ## 專案與持續改良迴圈
 
 session 是一次性的；**專案**（`projects.py`）則是「同一個產品做下去」的一級實體：
