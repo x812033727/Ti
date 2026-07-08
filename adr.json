@@ -1,69 +1,6 @@
 {
   "entries": [
     {
-      "decision": "不在 Pass 1 對 CJK 加邊界保護（正則 `\\b` 對 CJK 無效，且同義詞限 ≥2 字已足夠隔離）。在 `_SYNONYM_CJK_TO_CANONICAL` 上方加 docstring 警告：「字串級無邊界保護；同義詞請選 ≥2 字且辨識度高的詞，避免同義前綴（如不得加單字 `改`）。」",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.6840537
-    },
-    {
-      "decision": "測試檔落在 `tests/autopilot/test_dedup_synonym_task7.py`，不放 `tests/core/`。",
-      "rationale": "高工確認現有同義詞測試已在 `tests/autopilot/`，`tests/core/` 是 infra 層；混放違反目錄語意，掃描路徑也要一致。",
-      "rejected": "`tests/core/test_dedup_synonym_task7.py`——目錄錯位，不採。",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.6840546
-    },
-    {
-      "decision": "測試 ③「字串等值契約」的 docstring 必須同時標注雙重行為：`backlog._is_duplicate(\"修正去重邏輯\", \"修復去重邏輯\")` → False（維持等值合約）；同一對輸入進 `_filter_pending_duplicates` → 攔截（同義展開後 Jaccard ≈ 1.0）。兩個斷言寫在同一 test 函式內，防止讀者誤判「③ 回傳 False = 系統無防護」。",
-      "rationale": "高工指出這是兩個對立事實共存；只測其一會製造誤解。",
-      "rejected": "",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.6840558
-    },
-    {
-      "decision": "測試補第五類（子字串汙染反例）：含 `add`/`fix` 子串的英文標題（`address prefix`、`fixture toolkit`），Pass 1+2 正規化後 token 不可含 `add` 或 `fix` canonical；此為黑樣本，用以驗證 ASCII 子字串汙染不再發生。",
-      "rationale": "工程師指出這條測試才能抓出 naive replace 的 bug；不加就驗不出設計修正有效。",
-      "rejected": "",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.6840568
-    },
-    {
-      "decision": "異動檔案邊界最終確認：studio/autopilot.py（+兩常數 + _normalize_for_dedup Pass 1 + _tokenize_for_dedup Pass 2 共約 10 行）、tests/autopilot/test_dedup_synonym_task7.py（新增）。不動 config.py、backlog.py、任何既有測試檔案。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.6840582
-    },
-    {
-      "decision": "本任務定性為「驗證關閉」，交付形式為空 diff + 守護測試全綠（11 passed），不產生任何 .py / .md 變更。",
-      "rationale": "lint 與 ARCHITECTURE 兩半在當前 HEAD 皆已滿足，重做正確交付屬返工。",
-      "rejected": "",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.955489
-    },
-    {
-      "decision": "不新增 `retry_config` 別名；正式符號固定為 `make_retry_config()`，需求快照中的舊字樣不反映為 API 表面。",
-      "rationale": "YAGNI——API 表面保持最小，舊快照字樣不值得引入額外入口。",
-      "rejected": "新增 alias `retry_config = make_retry_config` ——製造兩個名字，未來清理成本高於零收益。",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.955492
-    },
-    {
-      "decision": "未來若需統一符號，做法為直接改名 `make_retry_config` + 同步改測試錨點，禁止先加 alias 再留著。",
-      "rationale": "不留別名正是此刻的可逆性投資；改名比消除別名便宜。",
-      "rejected": "alias 過渡期——在符號分歧上疊一層，只是把清理日期往後推。",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.9554949
-    },
-    {
-      "decision": "禁止 provider 層自帶第二層 retry（OpenAI 端維持 max_retries=0）；新 provider 接入必須依 ARCHITECTURE.md L318–325 三步契約走。",
-      "rationale": "兩層退避疊加導致指數爆炸，且 log 偵測症狀已標注，後人查得到。",
-      "rejected": "讓各 provider 自管 retry——退避語意碎片化，難以統一調參。",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.9554965
-    },
-    {
       "decision": "`make_retry_config()` 目前住在 `experts.py`（業務層）卻被 `providers.py`（基礎設施層）反向 import，此依賴方向反轉列為具名技術債，以 backlog 工單追蹤，不靠 ARCHITECTURE.md「伏筆」二字承載。",
       "rationale": "文字伏筆沒有觸發機制，容易在後續迭代中消失；工單有狀態、有觸發條件才可追蹤。",
       "rejected": "繼續只靠 ARCHITECTURE.md 備注——高工指出「伏筆」無觸發器，風險在第三個 provider 接入前被遺忘。",
@@ -3499,6 +3436,69 @@
       "rejected": "與本輪稽核清單同 PR 提交",
       "session_id": "ap98e857129e",
       "created_at": 1783536746.860572
+    },
+    {
+      "decision": "稽核資料流維持單向——清單第 27 列示例順序漂移改清單對齊實碼（`hooks → sandbox → cwd → model`），禁止反向改 `experts.py` 遷就清單",
+      "rationale": "程式碼為 SSOT、清單為被動鏡像，改清單對齊碼是唯一正解，保護依賴方向",
+      "rejected": "保留原樣＋加註理由——留著等於鏡像持續偏移，下輪還要再解釋一次，不划算",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730723
+    },
+    {
+      "decision": "#2 僅重排示例的具名參數順序，不變更 marker 字串本身（`experts._build_client` symbol 錨不動），確保 gate 的 `PYTHON_SOURCE_ANCHORS` 白名單零連鎖",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730802
+    },
+    {
+      "decision": "示例參數順序不納入 AST 鎖定，僅列為移交待辦",
+      "rationale": "示例順序屬排版細節、非契約，用 AST 鎖之會把脆弱項升級成硬約束，違反可逆性優先",
+      "rejected": "順手鎖示例順序——超出本輪範圍且製造反向漂移風險",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730819
+    },
+    {
+      "decision": "本輪不新增漂移偵測腳本、不新增守門測試——既有 5 支 lane baseline gate（AST 鎖欄位/16 列/13 marker）已覆蓋，驗證邊界＝`tests/docs` 為唯一 gate",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.173083
+    },
+    {
+      "decision": "修改後須 `git diff studio/docs` 確認只動第 27 列一行，未連帶重排其他列或碰欄位標題，避免「順手整理」擴大 diff",
+      "rationale": "高工提醒——控制 diff 面積，讓變更可精確回指本次漂移點",
+      "rejected": "",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730847
+    },
+    {
+      "decision": "若既有 docs gate 含文字快照因該列變更而需同步 expected，一併更新並重跑；除此之外視為零連鎖",
+      "rationale": "工程師提醒的唯一潛在連鎖點，先驗證再收尾",
+      "rejected": "",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730862
+    },
+    {
+      "decision": "LaneContext 7 欄位、16 列對照表、13 marker 判定為零實質漂移，交付須貼出 `test_qa_task1_lane_baseline_inventory_live_audit.py` 跑綠結果自證對應，明講「已再核對、零漂移」，不接受口頭宣稱",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730871
+    },
+    {
+      "decision": "`lane manifest` 欄維持標註「前瞻契約、非現況」且全填「無」，待注入層落地再補鎖定欄位/優先序/fail-open|closed 的守門測試",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730888
+    },
+    {
+      "decision": "收尾 `git status studio/docs tests/docs` 須無範圍外殘跡；文件互鏈類核心變更（若有）走 `x812033727/Ti` 獨立 PR，不混入本輪稽核產出",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap0245692bd6",
+      "created_at": 1783539910.1730897
     }
   ]
 }
