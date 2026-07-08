@@ -20,6 +20,16 @@ def _index(text: str, needle: str) -> int:
     return pos
 
 
+def _section(text: str, heading: str) -> str:
+    match = re.search(rf"^## .*{re.escape(heading)}.*$", text, re.MULTILINE)
+    assert match, f"缺少章節: {heading}"
+    start = match.start()
+    next_heading = re.search(r"^## ", text[match.end() :], re.MULTILINE)
+    if next_heading is None:
+        return text[start:]
+    return text[start : match.end() + next_heading.start()]
+
+
 def test_mainline_documents_safe_rotation_order_and_boundaries() -> None:
     text = _text()
 
@@ -90,14 +100,35 @@ def test_residual_token_scan_section_has_primary_and_fallback_commands() -> None
 
 def test_rotation_dod_requires_live_auth_check_and_release_403_signal() -> None:
     text = _text()
+    dod = _section(text, "輪替驗證 DoD")
 
-    assert re.search(r"^## .*輪替驗證 DoD", text, re.MULTILINE), "缺少輪替驗證 DoD 章節"
-    assert "gh auth status" in text or (
-        'Authorization: Bearer $GH_PAT' in text and "https://api.github.com/user" in text
+    # 必須明確綁定新 token（防止 keyring 舊 token 假綠）
+    assert 'GH_TOKEN="$GH_PAT"' in dod, (
+        'DoD 缺 GH_TOKEN="$GH_PAT" gh auth status；裸跑 gh auth status 只驗 keyring 舊 token'
     )
-    assert "200" in text
-    assert "gh release create" in text
-    assert "403" in text
+    assert "gh auth status" in dod
+
+    # curl fallback：帶 Bearer header 打 /user
+    assert "Authorization: Bearer $GH_PAT" in dod
+    assert "https://api.github.com/user" in dod
+
+    # HTTP 200 生效判定
+    assert "200" in dod, "DoD 必須說明 HTTP 200 為生效判定"
+
+    # scope 警告：200 不等於有 Contents RW 權限
+    assert "scope" in dod or "Contents: Read and write" in dod, (
+        "DoD 缺 scope != 200 說明（token 有效不代表有 Contents RW 權限，scope 錯仍 403）"
+    )
+
+    # curl 洩漏面：真正外洩點是 process argv，非 shell history 字面
+    assert "process argv" in dod or "ps aux" in dod, (
+        "DoD 缺 curl token 洩漏面說明（真正外洩點是 process argv，非 history 字面）"
+    )
+
+    # 斷鏈訊號：到期/撤銷在 gh release create 以 403 失敗
+    assert "gh release create" in dod
+    assert "403" in dod
+    assert re.search(r"到期|撤銷", dod), "DoD 必須說明 token 到期/撤銷的失敗情境"
 
 
 def test_runbook_contains_no_bare_python_command() -> None:
