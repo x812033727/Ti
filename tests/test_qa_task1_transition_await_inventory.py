@@ -21,8 +21,8 @@ TRANSITION_ANCHORS = {
     "gather": "results = await asyncio.gather(",
     "integrate_call": "all_ok = await self._integrate_wave(",
     "integrate_def": "async def _integrate_wave(",
-    "stage_demo_def": "async def _stage_demo(",
     "intervention": "first = await asyncio.wait_for(",
+    "stage_demo_def": "async def _stage_demo(",
     "final_demo": "self._demo = await self._final_demo()",
 }
 
@@ -42,6 +42,12 @@ def _line_with(source: str, needle: str) -> int:
     matches = [i for i, line in enumerate(source.splitlines(), start=1) if needle in line]
     assert matches, f"orchestrator 現碼找不到片段：{needle!r}"
     assert len(matches) == 1, f"片段非唯一，無法動態定位行號：{needle!r} -> {matches}"
+    return matches[0]
+
+
+def _boundary_line(markdown: str, label: str) -> str:
+    matches = [line for line in markdown.splitlines() if line.startswith(f"- {label}")]
+    assert len(matches) == 1, f"邊界宣告須唯一：{label}"
     return matches[0]
 
 
@@ -74,6 +80,25 @@ def test_inventory_exists_and_defines_boundary():
         for anchor_name in anchor_names:
             expected_ref = f"studio/orchestrator.py:{expected[anchor_name]}"
             assert expected_ref in line, f"{marker} 邊界行號漂移，應含 {expected_ref}：{line}"
+
+
+def test_boundary_lines_use_current_source_line_numbers():
+    md = _read(INVENTORY)
+    src = _read(ORCHESTRATOR)
+
+    for label, anchor_name in (
+        ("起點", "gather"),
+        ("主要過渡段", "integrate_call"),
+        ("過渡段實作", "integrate_def"),
+    ):
+        line = _boundary_line(md, label)
+        lineno = _line_with(src, TRANSITION_ANCHORS[anchor_name])
+        assert f"studio/orchestrator.py:{lineno}" in line
+
+    endpoint = _boundary_line(md, "終點")
+    for anchor_name in ("stage_demo_def", "final_demo"):
+        lineno = _line_with(src, TRANSITION_ANCHORS[anchor_name])
+        assert f"studio/orchestrator.py:{lineno}" in endpoint
 
 
 def test_no_pyc_wrapper_symbol_anywhere():
