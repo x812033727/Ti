@@ -4,7 +4,8 @@
 - 行號一律對 `studio/orchestrator.py` 現碼**動態重算**，md 為被校驗方（防文件漂移）。
 - 現行過渡段入口是 `await self._integrate_wave(`；**禁用** pyc 舊符號
   `_integrate_wave_with_timeout`（產品碼不得為了過測試硬塞 wrapper）。
-- 過渡段真無界 await 葉節點數量以現碼實證為準＝0（廢棄 pyc「2 個」假設）。
+- 過渡段真無界 **subprocess** 葉節點數量以現碼實證為準＝0（廢棄 pyc「2 個」假設）；
+  broadcast->ws.py send_json 為無本地 timeout 的網路 await，不列入 subprocess 維度的 0。
 """
 
 from __future__ import annotations
@@ -62,10 +63,10 @@ def test_unbounded_leaf_count_is_zero_and_subprocess_delegated():
     md = _read(INVENTORY)
     src = _read(ORCHESTRATOR)
 
-    # md 如實記 0，並宣告過渡段 subprocess 收尾均帶 timeout。
+    # md 如實記 subprocess 維度 0，並宣告過渡段 subprocess 收尾均帶 timeout。
     assert "0 個" in md
     assert "過渡段 subprocess 收尾均帶 timeout" in md
-    assert "真無界 await 葉節點數量為 **0**" in md
+    assert "真無界 subprocess 葉節點數量為 **0**" in md
 
     # 實證：orchestrator 全檔無裸 subprocess 原語，故過渡段無界葉節點＝0。
     leaked = [p for p in FORBIDDEN_SUBPROCESS_PRIMITIVES if p in src]
