@@ -69,7 +69,7 @@ async def test_publish_project_repo_ready_opens_pr_there(monkeypatch, _configure
         seen["ensure"] = (repo, base)
         return "ready"
 
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         seen["push_url"] = url
         return _ok_run("git push")
 
@@ -97,7 +97,7 @@ async def test_publish_project_repo_empty_initializes_base(monkeypatch, _configu
 
     pushed = {}
 
-    async def fake_push_base(cwd, base, url):
+    async def fake_push_base(cwd, base, url, **kwargs):
         pushed["base"] = base
         return _ok_run("git push init")
 
@@ -131,7 +131,7 @@ async def test_publish_without_override_skips_ensure(monkeypatch, _configured, _
         called["ensure"] += 1
         return "ready"
 
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return _ok_run("git push")
 
     monkeypatch.setattr(publisher, "_ensure_repo", fake_ensure)

@@ -45,10 +45,44 @@ def test_branch_name_empty_fallback():
 def test_remote_url_and_redact(monkeypatch):
     # remote_url 掛了 owner allowlist 護欄：放行本測試用的 owner
     monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"octo"}))
-    url = publisher.remote_url("octo/repo", "secrettoken")
-    assert url == "https://x-access-token:secrettoken@github.com/octo/repo.git"
-    assert "secrettoken" not in publisher.redact(url, "secrettoken")
-    assert "***" in publisher.redact(url, "secrettoken")
+    url = publisher.remote_url("octo/repo")
+    # 乾淨裸 URL：逐字不含 x-access-token 與 token 明文
+    assert url == "https://github.com/octo/repo.git"
+    assert "x-access-token" not in url
+    assert "secrettoken" not in url
+
+
+def test_git_auth_env_carries_base64_header():
+    """認證改走 env 帶 base64(extraHeader)：驗 header 格式正確、無尾換行，且 b64decode 可反推。"""
+    import base64
+
+    token = "secrettoken"
+    env = publisher.git_auth_env(token)
+    # 走 GIT_CONFIG_* env 注入 per-host extraHeader，token 不進 argv
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    value = env["GIT_CONFIG_VALUE_0"]
+    assert value.startswith("Authorization: Basic ")
+    header_b64 = value.rsplit(" ", 1)[-1]
+    # 釘死「-n 尾換行坑」：b64 內不得有換行
+    assert "\n" not in header_b64
+    # 反驗：解回來必須逐字等於 x-access-token:token
+    assert base64.b64decode(header_b64).decode() == f"x-access-token:{token}"
+    # token 明文不得出現在整包 env 的任一值
+    assert all(token not in v for v in env.values())
+
+
+def test_redact_masks_token_plain_and_base64():
+    """redact 須同時遮蔽 token 明文與其 base64 形式，杜絕「改乾淨 URL 卻從 header 漏 token」。"""
+    import base64
+
+    token = "secrettoken"
+    header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    leak = f"token={token} header=Authorization: Basic {header_b64}"
+    red = publisher.redact(leak, token)
+    assert token not in red
+    assert header_b64 not in red
+    assert "***" in red
 
 
 def test_pr_payload():
@@ -102,7 +136,7 @@ async def test_publish_not_configured(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_push_then_pr(monkeypatch, _configured):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
@@ -119,7 +153,7 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
 
 @pytest.mark.asyncio
 async def test_publish_push_fail(monkeypatch, _configured):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(
             command="git push",
             exit_code=1,
@@ -136,7 +170,7 @@ async def test_publish_push_fail(monkeypatch, _configured):
 
 @pytest.mark.asyncio
 async def test_publish_pr_fail_still_ok(monkeypatch, _configured):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
@@ -155,7 +189,7 @@ async def test_publish_pr_fail_still_ok(monkeypatch, _configured):
 
 @pytest.fixture
 def _ok_push_pr(monkeypatch):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
