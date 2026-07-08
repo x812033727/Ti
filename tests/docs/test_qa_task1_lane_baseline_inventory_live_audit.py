@@ -73,6 +73,14 @@ ROW_EVIDENCE = {
     "teardown": ["git worktree remove --force", "runner.git_worktree_remove"],
 }
 
+EXPECTED_CLAUDE_EXPERT_ROW = (
+    "| Claude expert | `ClaudeAgentOptions(..., hooks=..., sandbox=..., "
+    "cwd=str(cwd), model=...)`（`experts._build_client`） | 未在本層設定 env | 無 | "
+    "cwd 外寫入由 PreToolUse hook 擋；非 baseline manifest |"
+)
+
+EXPECTED_CLAUDE_AGENT_OPTIONS_ORDER = ["hooks", "sandbox", "cwd", "model"]
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -130,6 +138,16 @@ def _collect_python_symbols() -> set[str]:
     return symbols
 
 
+def _claude_agent_options_keyword_order() -> list[str]:
+    for node in ast.walk(_tree(EXPERTS)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "ClaudeAgentOptions":
+            return [keyword.arg for keyword in node.keywords if keyword.arg is not None]
+    raise AssertionError("找不到 ClaudeAgentOptions 呼叫")
+
+
 def _python_marker_resolves(path: Path, marker: str) -> bool:
     tree = _tree(path)
     class_match = re.fullmatch(r"class ([A-Za-z_][A-Za-z0-9_]*)", marker)
@@ -175,6 +193,22 @@ def test_comparison_table_has_16_complete_rows_with_no_manifest_claims() -> None
     for item, snippets in ROW_EVIDENCE.items():
         for snippet in snippets:
             assert snippet in by_item[item], f"{item} 缺少佐證片段: {snippet}"
+
+
+def test_claude_expert_inventory_row_matches_build_client_keyword_order() -> None:
+    lines = _read(INVENTORY).splitlines()
+    assert lines[26] == EXPECTED_CLAUDE_EXPERT_ROW
+
+    keyword_order = _claude_agent_options_keyword_order()
+    positions = [keyword_order.index(name) for name in EXPECTED_CLAUDE_AGENT_OPTIONS_ORDER]
+    assert positions == sorted(positions)
+
+    row = lines[26]
+    row_positions = [
+        row.index(f"{name}=" if name != "cwd" else "cwd=str(cwd)")
+        for name in EXPECTED_CLAUDE_AGENT_OPTIONS_ORDER
+    ]
+    assert row_positions == sorted(row_positions)
 
 
 def test_all_inventory_markers_and_parenthesized_symbols_resolve() -> None:
