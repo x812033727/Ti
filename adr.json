@@ -1,76 +1,6 @@
 {
   "entries": [
     {
-      "decision": "Breaking 條目時序語意鎖定「宣告已發生」——用現在完成式（「已改為 strict 預設，自 0.2.0 起生效」），禁止出現「下版才 enforce」「警告期後」等未來時序",
-      "rationale": "",
-      "rejected": "研究員兩階段過渡模板（與 config.py 第 695 行 strict 已成立矛盾）",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0099866
-    },
-    {
-      "decision": "warn 描述為「使用者側逃生艙」——「若非 root 環境，顯式設 TI_REQUIRE_CHOWN=warn 可延後遷移」，不承諾任何我們自己的緩衝期",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0099874
-    },
-    {
-      "decision": "錯值 fail-safe 行為（無法辨識值 → strict + warning）必須在 Breaking 條目內明示一行，防使用者誤以為打錯字會靜默降級",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0099878
-    },
-    {
-      "decision": "四要素順序固定（①行為變動 ②原因 ③before/after 遷移 ④生效版本），測試用 index 比相對位置而非整段字串比對，保留鑑別力且不過度僵化",
-      "rationale": "工程師已指出逐字比對會脆；index 比法維護成本低、改字不紅、但調換順序會紅",
-      "rejected": "",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.0099885
-    },
-    {
-      "decision": "本次不引入 semantic-release / git tag 自動化；在 CHANGELOG 或 DECISIONS 加「架構伏筆：」標注留接入點，非現行需求",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap6e640c84e9",
-      "created_at": 1781479134.009989
-    },
-    {
-      "decision": "`studio/__init__.py` F401 採 redundant-alias：`from . import secure_write as secure_write`，同行加 inline comment `# re-export; 'as' 是 ruff F401 慣用消法，請勿移除`",
-      "rationale": "comment 跟著 code 走，PR description 不會；防止新人善意刪掉成本最低",
-      "rejected": "加 `__all__` ——若原本無 `__all__`，`from studio import *` 語意改變，潛在 breaking，可逆性不足",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.446155
-    },
-    {
-      "decision": "E731 兩處 lambda 手動改為 if/else 內 `def op()`，不使用 `--unsafe-fixes`",
-      "rationale": "手動改強迫確認語意等價並留審計痕跡；本案 lambda 無參無 closure，語意已確認等價",
-      "rejected": "`--unsafe-fixes` 自動修——無審計痕跡，萬一有 closure 邊界 case 靜默改壞",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.4461575
-    },
-    {
-      "decision": "I001（import 排序）與 tests/ 未用 import（F401）用 `ruff check --fix` 處理，但必須分檔指定，禁止對整個 `studio/ tests/` 全域跑 `--fix`",
-      "rationale": "全域 `--fix` 會把邊界外的 safe fix 一起改掉，scope creep 無法防控",
-      "rejected": "`ruff check --fix studio/ tests/` 一鍵跑——改動面不可控",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.4461584
-    },
-    {
-      "decision": "E731 所在檔（`tests/autopilot/test_qa_task4_dualpath_parity.py`）必須從 `--fix` 的掃描範圍中排除，確認不與手改並行衝突後，#1~#4 才可並行執行；若無法排除則 #2 串行先行",
-      "rationale": "`--fix` 批次與手改 lambda 撞同一檔會產生 conflict，並行假設須先驗證",
-      "rejected": "",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.447529
-    },
-    {
-      "decision": "E741 變數重命名，以 `line` 作為首選錨點；若語意不符（非行內容）工程師可自裁，但須在 PR 說明改名原因",
-      "rationale": "給錨點降低 review 來回摩擦，不硬規定保留彈性",
-      "rejected": "完全「工程師自裁」不給錨點——多處 `l` 出現時容易命名不一致引發 review 往返",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.4475317
-    },
-    {
       "decision": "驗收前必須確認 `pyproject.toml` 的 `select` 包含 E、F、I 系列（即 E731、E741、I001 均在規則集內），再跑 `ruff check`；若規則未啟用，通過不代表有跑",
       "rationale": "ruff 通過但規則沒啟用等於假綠，需先排除",
       "rejected": "",
@@ -3499,6 +3429,76 @@
       "rejected": "",
       "session_id": "ap9209e78194",
       "created_at": 1783465064.113567
+    },
+    {
+      "decision": "認證改用 git config env 注入（`GIT_CONFIG_COUNT=1`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`）帶 base64 extraHeader",
+      "rationale": "「token 不進 argv/ps」是本任務安全本質，唯一能真正成立的做法；label 只遮 RunOutput.command，遮不掉 ps 短窗",
+      "rejected": "inline `-c http.extraHeader=`——其值本身即 argv 元素，一樣進 argv/ps 不合格",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.3137612
+    },
+    {
+      "decision": "`run_command_exec` 新增 `env: dict|None=None` 參數，僅 `env is not None` 時合併 `{**os.environ, **env}` 後傳入",
+      "rationale": "create_subprocess_exec 的 env 會取代整包環境，必須 merge os.environ；預設 None 維持繼承、向後相容，且是可複用的通用能力",
+      "rejected": "用 `os.environ` 全域改寫——多 session 併發下互相污染，是不可逆隱性 bug；亦否決預設 `env={}` 清掉繼承",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.3137746
+    },
+    {
+      "decision": "`remote_url(repo)` 移除 token 參數、回乾淨裸 URL `https://github.com/<repo>.git`，保留嚴格 repo 格式校驗與 `assert_repo_allowed` chokepoint",
+      "rationale": "乾淨 URL 不含 token；allowlist + 格式校驗防 repo 字串被拿去組惡意 URL；blast radius 僅 publisher 兩處 + 3 測試呼叫",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.3137765
+    },
+    {
+      "decision": "簽名破壞 `remote_url(repo, token)→remote_url(repo)` 連帶改 `test_publisher.py:48`、`test_owner_allowlist.py:113/119`，owner-allowlist 反向黑樣本（otherowner）必須保留",
+      "rationale": "反向黑樣本證明 chokepoint 沒隨簽名變動被弱化，防假綠",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.3137777
+    },
+    {
+      "decision": "新增純函式 `extra_header(token)` 與 `git_auth_env(token)`，base64 一律 `b64encode(f\"x-access-token:{token}\".encode()).decode()`（無尾換行），per-host key `http.https://github.com/.extraheader` 收斂作用域",
+      "rationale": "per-host key 對齊 actions/checkout，避免 header 隨重導向送到其他 host；純函式可單測釘死尾換行坑",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.313779
+    },
+    {
+      "decision": "`redact` 擴充遮 base64 形式，且必須用與 `git_auth_env` 完全相同的編碼（相同前綴、無尾換行）算出同一字串再 replace",
+      "rationale": "編碼不一致＝遮了對不上的值＝假遮罩；需補測試斷言 redact 真的把該 b64 換掉",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.3137813
+    },
+    {
+      "decision": "`_push`/`_push_base` 新增 `env` 透傳；fake_push／fake_push_base 替身統一用 `**kwargs` 收尾",
+      "rationale": "`**kwargs` 讓 6+ 檔測試替身對簽名擴充免疫，避免逐檔漏改造成 CI 綠/紅分歧",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.3137825
+    },
+    {
+      "decision": "守門測試釘兩件事——argv/command 不含 token 明文與 base64；`GIT_CONFIG_VALUE_0` 含正確無換行 base64 header，並斷言 env 確實到達子行程",
+      "rationale": "拆兩點才能同時證明「URL/argv 不洩密」與「認證有效」",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.3137841
+    },
+    {
+      "decision": "runner.py 與 publisher.py 均屬 Ti 核心，走 `x812033727/Ti` 核心 repo 獨立 PR，不混進專案 repo",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.313785
+    },
+    {
+      "decision": "移交待辦（不在本輪）——`GIT_CONFIG_COUNT` 需 git 2.31+，於註解寫一行最低版本假設；runner env 參數於未來 `sandbox=True` 場景時，bwrap 是否 `--clearenv` 吞掉 env 須另案確認",
+      "rationale": "本任務兩處 push 均 `sandbox=False`，不觸發 bwrap env 轉發問題，列為註記/待辦不阻擋本輪",
+      "rejected": "",
+      "session_id": "apa18103bfb3",
+      "created_at": 1783498899.313787
     }
   ]
 }

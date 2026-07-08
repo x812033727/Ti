@@ -2872,3 +2872,44 @@
 
 ## 回報值＝權威檔相對路徑字串 `docs/task3-authoritative-decision-2026-07-08.md`，由守門測試斷言可程式讀出
 - 時間：2026-07-08 06:57
+## 認證改用 git config env 注入（`GIT_CONFIG_COUNT=1`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`）帶 base64 extraHeader
+- 時間：2026-07-08 16:21
+- 理由：「token 不進 argv/ps」是本任務安全本質，唯一能真正成立的做法；label 只遮 RunOutput.command，遮不掉 ps 短窗
+- 否決方案：inline `-c http.extraHeader=`——其值本身即 argv 元素，一樣進 argv/ps 不合格
+
+## `run_command_exec` 新增 `env: dict|None=None` 參數，僅 `env is not None` 時合併 `{**os.environ, **env}` 後傳入
+- 時間：2026-07-08 16:21
+- 理由：create_subprocess_exec 的 env 會取代整包環境，必須 merge os.environ；預設 None 維持繼承、向後相容，且是可複用的通用能力
+- 否決方案：用 `os.environ` 全域改寫——多 session 併發下互相污染，是不可逆隱性 bug；亦否決預設 `env={}` 清掉繼承
+
+## `remote_url(repo)` 移除 token 參數、回乾淨裸 URL `https://github.com/<repo>.git`，保留嚴格 repo 格式校驗與 `assert_repo_allowed` chokepoint
+- 時間：2026-07-08 16:21
+- 理由：乾淨 URL 不含 token；allowlist + 格式校驗防 repo 字串被拿去組惡意 URL；blast radius 僅 publisher 兩處 + 3 測試呼叫
+
+## 簽名破壞 `remote_url(repo, token)→remote_url(repo)` 連帶改 `test_publisher.py:48`、`test_owner_allowlist.py:113/119`，owner-allowlist 反向黑樣本（otherowner）必須保留
+- 時間：2026-07-08 16:21
+- 理由：反向黑樣本證明 chokepoint 沒隨簽名變動被弱化，防假綠
+
+## 新增純函式 `extra_header(token)` 與 `git_auth_env(token)`，base64 一律 `b64encode(f"x-access-token:{token}".encode()).decode()`（無尾換行），per-host key `http.https://github.com/.extraheader` 收斂作用域
+- 時間：2026-07-08 16:21
+- 理由：per-host key 對齊 actions/checkout，避免 header 隨重導向送到其他 host；純函式可單測釘死尾換行坑
+
+## `redact` 擴充遮 base64 形式，且必須用與 `git_auth_env` 完全相同的編碼（相同前綴、無尾換行）算出同一字串再 replace
+- 時間：2026-07-08 16:21
+- 理由：編碼不一致＝遮了對不上的值＝假遮罩；需補測試斷言 redact 真的把該 b64 換掉
+
+## `_push`/`_push_base` 新增 `env` 透傳；fake_push／fake_push_base 替身統一用 `**kwargs` 收尾
+- 時間：2026-07-08 16:21
+- 理由：`**kwargs` 讓 6+ 檔測試替身對簽名擴充免疫，避免逐檔漏改造成 CI 綠/紅分歧
+
+## 守門測試釘兩件事——argv/command 不含 token 明文與 base64；`GIT_CONFIG_VALUE_0` 含正確無換行 base64 header，並斷言 env 確實到達子行程
+- 時間：2026-07-08 16:21
+- 理由：拆兩點才能同時證明「URL/argv 不洩密」與「認證有效」
+
+## runner.py 與 publisher.py 均屬 Ti 核心，走 `x812033727/Ti` 核心 repo 獨立 PR，不混進專案 repo
+- 時間：2026-07-08 16:21
+
+## 移交待辦（不在本輪）——`GIT_CONFIG_COUNT` 需 git 2.31+，於註解寫一行最低版本假設；runner env 參數於未來 `sandbox=True` 場景時，bwrap 是否 `--clearenv` 吞掉 env 須另案確認
+- 時間：2026-07-08 16:21
+- 理由：本任務兩處 push 均 `sandbox=False`，不觸發 bwrap env 轉發問題，列為註記/待辦不阻擋本輪
+
