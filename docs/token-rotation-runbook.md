@@ -71,10 +71,46 @@ Generate new token`，**沿用 `CLAUDE.md` 既定的 `GH_PAT` 四項規格，一
 | 3 | 到 UI `Delete` 舊 token | **人工** | 不可逆、無 API，只能 UI 手動 |
 | 掃描 | 跑殘留 token 掃描指令 | AI 可代勞 | 見「殘留 token 掃描」章節 |
 
-## 延伸章節
+## 殘留 token 掃描
 
-- **殘留 token 掃描**：輪替後如何掃 `history/*.jsonl` 與 session workspace 的殘留明文
-  （`gitleaks` 主指令 ＋ `grep -rnE` 零依賴 fallback，涵蓋 `ghp_/github_pat_/gho_/ghs_/ghr_`
-  全前綴）。
-- **輪替驗證 DoD**：`gh auth status` 或 `curl -H "Authorization: Bearer $GH_PAT"
-  https://api.github.com/user` 回 200 才算生效；到期／撤銷會在 `gh release create` 以 403 斷鏈。
+撤舊完成後（或懷疑外洩時），掃兩處殘留明文——**`history/*.jsonl`**（session 事件逐行存檔，
+token 可能混在工具輸出／commit log 等任意欄位，要全欄掃）與 **session workspace**（每個 session
+的沙箱工作目錄，可能有 untracked 殘留檔）。
+
+**主指令（成熟工具，掃檔案系統含 untracked）**：
+
+```bash
+gitleaks detect --no-git --source history/
+gitleaks detect --no-git --source <session-workspace-dir>
+```
+
+`--no-git` 掃檔案系統而非 git 物件，涵蓋未追蹤（untracked）檔——正是 workspace／history 殘留場景；
+`gitleaks` 內建 GitHub token 規則，可直接命中。
+
+**零依賴 fallback（無 `gitleaks` 時，純 `grep`）**，涵蓋所有 GitHub token 前綴
+`ghp_`（classic）、`github_pat_`（fine-grained）、`gho_`／`ghs_`／`ghr_`（OAuth／server／refresh）：
+
+```bash
+grep -rnE 'gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}' history/ <session-workspace-dir>
+```
+
+> ⚠️ pre-commit／`--all-files` 只掃 **git 追蹤檔**，會漏掉 workspace／history 的 untracked 殘留；
+> 掃殘留一律用上面的 `--no-git` / `grep -rnE` 直掃目錄，別靠 pre-commit。命中任何一筆都視為外洩，
+> 立刻回到本 runbook 頂端重跑輪替。
+
+## 輪替驗證 DoD
+
+新 token 寫入後**必須**通過下列判定才算「生效」，未過不得進入步驟 3（撤舊）：
+
+- **首選 `gh auth status`**（不把 token 放進命令列，較安全）：顯示已用新 `GH_PAT` 登入且帳號正確。
+- **無 `gh` 時**才退而用 `curl`（注意 token 會落入命令列與 shell history，用完清理）：
+
+  ```bash
+  curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $GH_PAT" https://api.github.com/user
+  ```
+
+  回 **`200`** 即為有效；回 `401`／`403` 表示 token 無效或權限不足。
+
+**斷鏈訊號**：`GH_PAT` 到期或被撤銷後，發佈鏈會在 `gh release create` 這一步以 **`403`** 失敗
+（呼應 `CLAUDE.md`「發佈鏈 DoD」）。看到 `gh release create` 403，第一件事就是檢查 `GH_PAT`
+是否過期／被撤，並依本 runbook 重新輪替。
