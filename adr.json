@@ -1,69 +1,6 @@
 {
   "entries": [
     {
-      "decision": "驗收三步驟順序不可顛倒：① `ruff check studio/ tests/`（exit 0）→ ② `python3 -m pytest tests/core/ -q`（≥ 既有 15 + 新增數量，無 error）→ ③ `git diff --stat` 人眼核對只出現 `tests/core/test_tools_dedup_task6.py` 一個新檔，不得有生產碼異動",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288762
-    },
-    {
-      "decision": "任務定性維持「驗收關閉、零 diff」——不產出任何生產碼異動。",
-      "rationale": "工程師實跑已證偽「HEAD 未修復」這個前提；ruff exit 0 + 2555 tests collected exit 0 + git diff 空，三項齊全。",
-      "rejected": "",
-      "session_id": "apf68745bd02",
-      "created_at": 1781485210.9092176
-    },
-    {
-      "decision": "防回歸唯一機制為 `from . import secure_write as secure_write` 的 redundant alias 語法觸發 ruff F401，且 ruff 必須在 CI pipeline 中執行；inline comment 不計入防護機制。",
-      "rationale": "工程師與高工一致指出 comment 不是硬約束、import 清理工具不讀註解；`X as X` 是 ruff 的豁免名單訊號而非 fix 對象，這才是機制。",
-      "rejected": "「collect 即驗」列為防線——collect 只跑 pytest，ruff 是另一條指令，兩者路徑不同；collect 綠不等於 ruff 綠，不可混稱「防護」。",
-      "session_id": "apf68745bd02",
-      "created_at": 1781485210.9092207
-    },
-    {
-      "decision": "驗收指令組由兩條擴充為三條，順序為：① `ruff check studio/ tests/`（exit 0）→ ② `python -c \"from studio import secure_write; print(secure_write)\"`（runtime import 無例外）→ ③ `python3 -m pytest --collect-only -q tests/`（exit 0, 0 collection error）。",
-      "rationale": "高工指出 collect 看不到 circular import 或 lazy load 導致的 runtime 炸點；第②條成本幾乎為零，覆蓋 collect 的盲點。",
-      "rejected": "只跑兩條指令——驗收範圍不完整，collect 過不等於 runtime import 正常。",
-      "session_id": "apf68745bd02",
-      "created_at": 1781485210.9092221
-    },
-    {
-      "decision": "關閉前必須執行 `git log --oneline studio/__init__.py` 確認有修復 commit 且日期早於研究員調研清單；若無此 commit 記錄，「真因為清單過期」假設不成立，需重新診斷。",
-      "rationale": "高工點出「HEAD 已修復」是推論而非工具輸出，需用 git log 實證才能閉環；若假設錯誤，整個零 diff 結論就崩。",
-      "rejected": "僅憑 ruff 綠就直接關閉——繞過了對假設前提的最小驗證，風險不對稱。",
-      "session_id": "apf68745bd02",
-      "created_at": 1781485210.9092228
-    },
-    {
-      "decision": "關閉說明文字中，防回歸機制段落只寫一句：「唯一防線 = `from . import secure_write as secure_write` 觸發 ruff F401，且 ruff 在 CI」，刪除 collect 即驗與 inline comment 的保護力描述。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf68745bd02",
-      "created_at": 1781485210.909224
-    },
-    {
-      "decision": "同義詞正規化拆成兩道 pass，不用單一扁平 dict + str.replace。",
-      "rationale": "ASCII 字串替換無邊界保護，`add`/`fix` 會命中 `address`/`prefix`/`fixture`，是設計表裡就收的詞，必須修正。",
-      "rejected": "單一 `_SYNONYM_CANONICAL` + `s.replace(syn, f\" {can} \")` 全串掃——會靜默汙染 ASCII 子字串，不可用。",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.6840463
-    },
-    {
-      "decision": "Pass 1（字串級，CJK 多字詞 → ASCII canonical）放在 `_normalize_for_dedup`，常數命名 `_SYNONYM_CJK_TO_CANONICAL`，替換前按 key 長度降冪排序（長詞優先）。",
-      "rationale": "CJK 詞（去重、修復等）在逐字切 token 前需提前展開為 ASCII，否則切後 token 是單字，Jaccard 無法對比；長詞優先避免 deduplication→dedup 被短者先截斷。",
-      "rejected": "",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.684051
-    },
-    {
-      "decision": "Pass 2（token 級，ASCII → ASCII canonical）在 `_tokenize_for_dedup` 切完後，對每個 token 做 `dict.get(tok, tok)`，常數命名 `_SYNONYM_ASCII_TO_CANONICAL`（如 fix/add/improve 的同義 ASCII 詞）。",
-      "rationale": "token 已是完整切割片段，`dict.get` 精確匹配，零子字串風險，不需 padding 也不需邊界正則。",
-      "rejected": "token 層用 str.replace——在 token 已是完整字串時 str.replace 與 dict.get 等效，但 dict.get 語意更清晰。",
-      "session_id": "ap4e4a649b70",
-      "created_at": 1781486353.6840527
-    },
-    {
       "decision": "不在 Pass 1 對 CJK 加邊界保護（正則 `\\b` 對 CJK 無效，且同義詞限 ≥2 字已足夠隔離）。在 `_SYNONYM_CJK_TO_CANONICAL` 上方加 docstring 警告：「字串級無邊界保護；同義詞請選 ≥2 字且辨識度高的詞，避免同義前綴（如不得加單字 `改`）。」",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3436,69 @@
       "rejected": "",
       "session_id": "ap54dcf0704c",
       "created_at": 1783532418.9229493
+    },
+    {
+      "decision": "本輪範圍鎖定「文件再稽核 + 防漂移」，只改 `studio/docs/lane_baseline_injection_inventory.md`，不建決策表、不落地 lane manifest、不改任何 symbol",
+      "rationale": "文件稽核膨脹成產品設計會讓 review 失焦、可逆性變差；決策表/manifest 是下一輪、走核心 repo 的獨立工作",
+      "rejected": "順手把決策表寫進 ARCHITECTURE/DECISIONS、或本輪一併落地 lane manifest",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.860561
+    },
+    {
+      "decision": "稽核資料流單向——程式碼為 SSOT、清單為被動鏡像；發現漂移一律改清單對齊碼，禁止反向改碼遷就清單",
+      "rationale": "保護依賴方向；`test_open_lane_and_worktree_startup_match_inventory` 已反向鎖原始碼片段（`env=`/`manifest` not in），雙向咬合是真閉環",
+      "rejected": "為讓清單好看而改動 orchestrator/runner symbol",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.860566
+    },
+    {
+      "decision": "清單 marker 以函式/類別 symbol 名為錨（如 `class LaneContext`/`async def _open_lane`），不用行號",
+      "rationale": "gate 用 AST `ast.get_source_segment` 抽 symbol 驗錨，行號跨檔無測試守護、一改即死鏈",
+      "rejected": "用行號或檔案偏移當錨",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.860567
+    },
+    {
+      "decision": "改動清單若動到 symbol 名，須同步更新 gate 的 `PYTHON_SOURCE_ANCHORS` 手維護白名單，收尾必跑 `tests/docs` 全綠確認錨點解析",
+      "rationale": "高工指出白名單是手維護的，改碼者容易漏改測試字典而非漏改清單，只看清單會假綠",
+      "rejected": "只核對清單內容、不跑測試就宣稱對齊",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.8605678
+    },
+    {
+      "decision": "`lane manifest` 保留為前瞻契約標註，對照表 `manifest 欄位` 欄全填「無」（由 `assert all(row[3]=='無')` 守住），並保留「現況＝顯式建構參數＋process-level config＋env 繼承、無 manifest 層」消歧句",
+      "rationale": "對齊業界「顯式 > env > manifest > DEFAULT」慣例並給下輪決策表錨點，同時擋住「誤讀成已落地」的假閉環",
+      "rejected": "刪掉 manifest 層只寫現況（下輪決策表失去錨點）",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.8605688
+    },
+    {
+      "decision": "`AUTOPILOT_REPO`→fail-closed、`TI_DISCUSS_MODE`→fail-open 兩個 repo 實例須明標為「fail 策略準則之類比佐證，非 lane 注入層現有行為」",
+      "rationale": "不標＝暗示 lane 注入已實作 fail 策略，屬假閉環；此點已有 `fail-closed 類比`/`不是 lane baseline 現有欄位` assert 背書",
+      "rejected": "直接把兩者寫成 lane 注入層現有 fail-open/closed 行為",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.86057
+    },
+    {
+      "decision": "驗證邊界＝`tests/docs` 為唯一 gate，本輪不新增守門測試；決策表 fail-open/closed 行為無測試覆蓋，列為移交待辦「lane 注入層落地後補守門測試對齊決策表」",
+      "rationale": "防漂移主要靠既有三支 gate + 人工 review，故文件措辭須直白無推論空間；缺口誠實暴露不粉飾",
+      "rejected": "假裝已有覆蓋、或本輪硬補與現況無對應的守門測試",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.8605704
+    },
+    {
+      "decision": "交付須自證對應——零漂移時明講「已再核對、零漂移」並貼出跑綠的 `tests/docs` 結果或 diff，不接受口頭宣稱",
+      "rationale": "排除假綠；輸出要能回指本次核對，不是「看起來對」",
+      "rejected": "只口頭說零漂移、不附證據",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.8605714
+    },
+    {
+      "decision": "決策表／ADR／ARCHITECTURE 互鏈屬 Ti 核心文件變更，走 `x812033727/Ti` 核心 repo 獨立 PR，不混入本輪稽核產出",
+      "rationale": "雙軌路由鐵則，核心框架文件不得混入專案 repo",
+      "rejected": "與本輪稽核清單同 PR 提交",
+      "session_id": "ap98e857129e",
+      "created_at": 1783536746.860572
     }
   ]
 }
