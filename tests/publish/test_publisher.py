@@ -282,7 +282,25 @@ async def test_publish_not_configured(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_push_then_pr(monkeypatch, _configured):
+    import base64
+
+    seen = {}
+
     async def fake_push(cwd, branch, url, **kwargs):
+        seen["url"] = url
+        seen["env"] = kwargs.get("env")
+        assert url == "https://github.com/o/r.git"
+        assert "x-access-token" not in url
+        assert "tok" not in url
+        env = kwargs["env"]
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+        value = env["GIT_CONFIG_VALUE_0"]
+        assert value.startswith("Authorization: Basic ")
+        header_b64 = value.rsplit(" ", 1)[-1]
+        assert "\n" not in header_b64
+        assert base64.b64decode(header_b64).decode() == "x-access-token:tok"
+        assert "tok" not in value
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
@@ -295,6 +313,8 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
     assert res.ok and res.pushed
     assert res.branch == "ti-studio/s1"
     assert res.pr_url.endswith("/pull/9")
+    assert seen["url"] == "https://github.com/o/r.git"
+    assert seen["env"]["GIT_CONFIG_VALUE_0"].startswith("Authorization: Basic ")
 
 
 @pytest.mark.asyncio
