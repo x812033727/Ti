@@ -9,6 +9,7 @@
 - `_open_lane()` 實際注入的是 worktree 路徑、branch 名稱、base commit、獨立 expert session suffix；沒有 lane 專屬 env，也沒有寫入 manifest（`studio/orchestrator.py`，marker: `async def _open_lane`）。
 - `_integrate_wave()` 只做序列化合併、notes flush、teardown 與降級重跑；沒有新增 env/manifest 注入（`studio/orchestrator.py`，marker: `async def _integrate_wave`）。
 - 目前所有 `TI_*` 都是 process-level config 讀取，不是 per-lane baseline；lane 子程序大多繼承父程序 env。
+- 本輪 #2 依 #1 結果再核對為零漂移，marker、欄位與表列維持現況；本次僅明確標記 no-op，`lane manifest` 層仍為前瞻契約、非現況。
 
 ## 逐項對照
 
