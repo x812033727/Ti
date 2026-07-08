@@ -1,104 +1,6 @@
 {
   "entries": [
     {
-      "decision": "驗收前必須確認 `pyproject.toml` 的 `select` 包含 E、F、I 系列（即 E731、E741、I001 均在規則集內），再跑 `ruff check`；若規則未啟用，通過不代表有跑",
-      "rationale": "ruff 通過但規則沒啟用等於假綠，需先排除",
-      "rejected": "",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.4475336
-    },
-    {
-      "decision": "驗收指令三步驟依序執行：① `ruff check studio/ tests/`（exit 0）→ ② `python3 -m pytest tests/ --collect-only -q`（≥472 筆無 error）→ ③ `git diff --stat` 人眼核對改動檔清單未越界",
-      "rationale": "collect-only 只證 import 不爆；`git diff --stat` 才能防 scope creep",
-      "rejected": "",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.447535
-    },
-    {
-      "decision": "改動邊界硬鎖「消 lint」——任何超出此邊界的改動（重構邏輯、清無關 code smell、補測試）一律拒絕進本 PR，PR description 須明文說明此限制",
-      "rationale": "",
-      "rejected": "順手清鄰近 code smell——lint 修正 PR 最常見的 scope creep 入口，一律擋掉",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.4475362
-    },
-    {
-      "decision": "禁止用 `# noqa` 作為本次任何違規的解法；本次所有 8 個違規均有等價合規寫法",
-      "rationale": "",
-      "rejected": "部分加 `# noqa` 快速過關——把 lint 債藏起來傳給下一個人",
-      "session_id": "ap6fcf65af64",
-      "created_at": 1781482055.447537
-    },
-    {
-      "decision": "三個任務合入**一個**新測試檔 `tests/core/test_tools_dedup_task6.py`，以 A/B/C section 分隔，不拆三個獨立檔",
-      "rationale": "task5 單檔三 section 已有先例；三個任務共用 `_run` / `_no_sandbox` 各寫一次而非三次，減少 ~2/3 樣板，維護成本下降；「可並行實作」指開發不互相阻塞，並非強制物理分檔",
-      "rejected": "三個獨立檔（工程師初提）——功能等價，但 fixture 三倍複製是確定的維護債，得不償失",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288424
-    },
-    {
-      "decision": "`_run` helper 在新檔中複製一次（`def _run(coro): asyncio.run(coro)`），不引入 conftest；於 PR description 明記「此為已知技術債，task3/task5/task6 各自持有一份，日後一次性遷移 conftest」",
-      "rationale": "",
-      "rejected": "立即移入 conftest（高工輕量建議）——改動邊界硬鎖「只加測試」，conftest 屬共用基礎設施，此 PR 修改會超出 scope",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288452
-    },
-    {
-      "decision": "`_no_sandbox` fixture 複製入新檔，docstring 說明「args drift 的斷言是副作用行數 == 2，要求 run_bash 真正落地，故必須關 sandbox」",
-      "rationale": "高工確認 args drift 選「行數 == 2」比「斷言 key 不同」意圖更直接，但這個選擇同時要求 sandbox 關閉才能讓 append 真正發生",
-      "rejected": "",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.128847
-    },
-    {
-      "decision": "**#1 命門硬鎖**：兩次 attempt 之間必須呼叫 `cache.new_attempt()`；test docstring 標注「若省略此呼叫，`_seen[base]` 不重置，attempt2 取到 `#1` ≠ `#0` → cache miss → `execute` 再跑一次 → `call_count==2` → spy 斷言直接紅」",
-      "rationale": "工程師點出的命門，設計文字提到 new_attempt 但未說清楚後果；實作者若只照抄 task3 模式、少一行呼叫，兩個斷言會各自紅掉但原因不明顯，提前標注可省 debug 時間",
-      "rejected": "",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.128848
-    },
-    {
-      "decision": "**#1 spy 作用域**：`with patch(\"studio.tools.execute\", wraps=tools.execute) as mock_execute:` context manager **包住 attempt1 + attempt2 整個序列**，並在 context 外補斷言 `mock_execute.call_count == 1` AND 檔案行數 == 1",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288493
-    },
-    {
-      "decision": "**#2 patch.object 啟動時序**：`with patch.object(cache, \"put\", wraps=cache.put) as mock_put:` 必須在 `cache.new_attempt()` 呼叫**之前**啟動；若反序，`wraps=cache.put` 求值時方法已被替換，出現 mock 包 mock 行為",
-      "rationale": "高工明確點出此時序風險，put 是 bound method，patch.object 在啟動時捕捉原始 reference，時序錯誤靜默不報錯但 wraps 語意破壞",
-      "rejected": "",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288505
-    },
-    {
-      "decision": "**#2 涵蓋三個冪等工具**：`write_file` / `read_file` / `web_fetch` 各一條測試，每條斷言 `mock_put.call_count == 0`；`web_fetch` 另 `monkeypatch.setattr(tools, \"_research_fetch\", fake_fetch)` 免真連線（同 task5 模式）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288722
-    },
-    {
-      "decision": "**#3 parametrize 三案**（確認定稿）：",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288729
-    },
-    {
-      "decision": "Case3 docstring 標注：「int vs str type drift 在 `json.dumps(sort_keys=True)` 層同理（digest 必異），但現有工具規格全 string、整數 command 會讓 runner 失敗，無法取得 2 個成功副作用，故以大小寫差異作 value content drift proxy；此測試驗的是『副作用多跑（at-least-once）』而非 hash 本身」",
-      "rationale": "",
-      "rejected": "直接傳整數 command 測 int/str type drift——執行必失敗，取不到兩個副作用計數，鑑別力反而更低",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288743
-    },
-    {
-      "decision": "新檔 docstring 或 PR description 標注「`patch(wraps=...)` 自動偵測 coroutine function 為 `AsyncMock` 需 Python ≥ 3.8；若跑更早版本須手動指定 `new_callable=AsyncMock`」",
-      "rationale": "",
-      "rejected": "加 `new_callable=AsyncMock` 防禦性寫死——不必要，現行 CI 環境已 3.8+，加了反而讓讀者誤以為自動偵測不可信",
-      "session_id": "apc943c58c6f",
-      "created_at": 1781483884.1288755
-    },
-    {
       "decision": "驗收三步驟順序不可顛倒：① `ruff check studio/ tests/`（exit 0）→ ② `python3 -m pytest tests/core/ -q`（≥ 既有 15 + 新增數量，無 error）→ ③ `git diff --stat` 人眼核對只出現 `tests/core/test_tools_dedup_task6.py` 一個新檔，不得有生產碼異動",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3401,104 @@
       "rejected": "",
       "session_id": "apa18103bfb3",
       "created_at": 1783498899.313787
+    },
+    {
+      "decision": "文件性質定位為「規範性契約（prescriptive）」，非描述既有實作",
+      "rationale": "LaneContext 現況只隔離 git worktree + 獨立專家團隊，無統一 env/manifest 注入層；不言明會讓文件看起來像已閉環，踩「假綠」教訓",
+      "rejected": "以描述既有實作（descriptive）語氣書寫",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229205
+    },
+    {
+      "decision": "技術選型＝純文件變更，只動 ARCHITECTURE.md 一子段 + DECISIONS.md 一條 ADR，零程式碼、零新測試、零新依賴、不新增掃描規則",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229276
+    },
+    {
+      "decision": "模組邊界＝ARCHITECTURE.md「任務並行」節 L107 後新增「baseline 注入契約」子段（不另開新章），DECISIONS.md 依既有時序 append 至檔尾，兩檔各單一寫入點",
+      "rationale": "子段內嵌維持 lane 敘事連貫、不製造孤兒段落",
+      "rejected": "另開獨立章節",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229295
+    },
+    {
+      "decision": "DECISIONS.md 新 ADR append 至檔尾，沿用既有「舊→新」單調時序",
+      "rationale": "現況首條 2026-06-13 最舊、往下堆新；插頂部會造成同檔雙時序並存，維護者易誤讀",
+      "rejected": "於檔案頂部新增 ADR",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.922931
+    },
+    {
+      "decision": "子段開頭第一句為 baseline 消歧句，明確區分本 baseline（lane 啟動設定基準：env + manifest）與 `runner.write_baseline_gitignore`（發佈前 .gitignore 淨化），同名不同源",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229393
+    },
+    {
+      "decision": "子段開頭除消歧句外，加顯式狀態標籤「狀態：前瞻契約，lane 注入層尚未落地」",
+      "rationale": "狀態標籤比把「前瞻」埋進敘述更防半年後接手者誤當已實作",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229412
+    },
+    {
+      "decision": "優先序寫成單一有序清單 `顯式注入 > env(TI_*) > lane manifest > 模組 DEFAULT`，註明與 `config.py`/`settings.py` 同一套語意（env 覆蓋檔案）",
+      "rationale": "對齊既有 SSOT 語意，避免另立 lane 專屬表述造成文件漂移",
+      "rejected": "為 lane 另立一套獨立優先序",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229424
+    },
+    {
+      "decision": "fail 策略分流準則＝安全/正確性關鍵項（密鑰、repo 路由、sandbox 開關）缺失/非法 → fail-closed（中止該 lane）；非關鍵增益項（可選旋鈕、可由 DEFAULT 推導者）→ fail-open（退回 DEFAULT + `log.warning`）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229436
+    },
+    {
+      "decision": "決策表為三欄（注入項類別｜缺失/非法時行為｜依據），每列標 fail-open/closed",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229443
+    },
+    {
+      "decision": "決策表須含 `AUTOPILOT_REPO`→closed、`TI_DISCUSS_MODE`→open 兩個 repo 實例，並於表註聲明「此為 fail 策略之準則類比佐證，非 lane 注入層現有行為」",
+      "rationale": "不標「類比」會讓讀者誤以為 lane 注入層已按此跑，屬假閉環",
+      "rejected": "直接把兩實例當作 lane 注入層現況呈現",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229457
+    },
+    {
+      "decision": "ADR 沿用 DECISIONS.md 既有「## 標題／時間／理由／否決方案」四段格式，時間戳用今日日期，不引入 Nygard/MADR 新模板；否決方案至少記「env/manifest 一刀切同一 fail 策略」與「另開獨立章節」",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.922947
+    },
+    {
+      "decision": "雙向互鏈以「節標題文字」為錨（非行號）——ARCHITECTURE 子段末「見 DECISIONS.md『<ADR 標題>』」，ADR 內反指「ARCHITECTURE.md『任務並行』節 baseline 注入契約子段」",
+      "rationale": "跨檔行號 `tests/docs` 管不到、一改即死鏈；標題文字穩定可逆",
+      "rejected": "以行號建立互鏈",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229476
+    },
+    {
+      "decision": "驗證邊界＝`tests/docs` 為唯一 gate，本輪不新增守門測試；決策表所述 fail-open/closed 行為尚無測試覆蓋，須於子段末與 ADR 明列為移交待辦「lane 注入層落地後補守門測試對齊決策表」（必要項，非裝飾）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229486
+    },
+    {
+      "decision": "路由歸屬＝ARCHITECTURE.md/DECISIONS.md 均屬 Ti 核心文件，此變更走 `x812033727/Ti` 核心 repo 獨立 PR，不混入專案 repo",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap54dcf0704c",
+      "created_at": 1783532418.9229493
     }
   ]
 }

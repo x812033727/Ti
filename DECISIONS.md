@@ -2913,3 +2913,11 @@
 - 時間：2026-07-08 16:21
 - 理由：本任務兩處 push 均 `sandbox=False`，不觸發 bwrap env 轉發問題，列為註記/待辦不阻擋本輪
 
+## lane baseline 注入契約：env/manifest 優先序與 fail-open/closed 分流策略
+- 時間：2026-07-09 01:40
+- 決策：並行 lane（`LaneContext` + git worktree）啟動設定基準（env + manifest）的注入層落地時，優先序固定為 `顯式注入 > env(TI_*) > lane manifest > 模組 DEFAULT`（env 覆蓋檔案，與 `config.py`/`settings.py` 同源）；缺失/非法時按注入項性質分流——安全/正確性關鍵項 fail-closed 中止該 lane，非關鍵增益項 fail-open 退回 `DEFAULT` + `log.warning`。契約細節與決策表見 ARCHITECTURE.md『任務並行』節「baseline 注入契約」子段。此 baseline 與 `runner.write_baseline_gitignore`（發佈前 .gitignore 淨化）同名不同源。
+- 狀態：前瞻契約，lane 注入層尚未落地；決策表所列 `AUTOPILOT_REPO`（fail-closed）、`TI_DISCUSS_MODE`（fail-open）為準則類比佐證，非現有 lane 注入行為。
+- 移交待辦：`lane 注入層落地後補守門測試對齊決策表`。
+- 理由：對齊 repo 既有 SSOT（env 覆蓋檔案、顯式注入優先），避免另立 lane 專屬表述造成文件漂移；fail 策略依失效後果分流而非一刀切。
+- 否決方案：env/manifest 一刀切同一 fail 策略；為 lane 另立獨立優先序；於 ARCHITECTURE 另開獨立章節而非內嵌子段。
+
