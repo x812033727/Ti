@@ -13,7 +13,7 @@ PYTHON_SOURCE_ANCHORS: dict[str, tuple[Path, str]] = {
     "class LaneContext": (ORCHESTRATOR, "LaneContext"),
     "async def _open_lane": (ORCHESTRATOR, "StudioSession._open_lane"),
     "async def _integrate_wave": (ORCHESTRATOR, "StudioSession._integrate_wave"),
-    "StudioSession.__init__": (ORCHESTRATOR, "StudioSession.__init__"),
+    "StudioSession._run": (ORCHESTRATOR, "StudioSession._run"),
     "StudioSession._run_waves": (ORCHESTRATOR, "StudioSession._run_waves"),
     "StudioSession._open_lane": (ORCHESTRATOR, "StudioSession._open_lane"),
     "runner.git_worktree_add": (RUNNER, "git_worktree_add"),

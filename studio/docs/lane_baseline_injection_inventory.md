@@ -14,7 +14,7 @@
 
 | 項目 | 實際來源與欄位 | env 注入 | manifest 欄位 | 缺失/失敗現況 |
 |---|---|---|---|---|
-| 主 lane context | `LaneContext("main", self.cwd, experts, self._critics, last_commit=self._last_commit)`（`StudioSession.__init__`） | 無 lane 專屬 env | 無 | 無 cwd 時並行關閉，走循序/測試路徑 |
+| 主 lane context | `LaneContext("main", self.cwd, experts, self._critics, last_commit=self._last_commit)`（`StudioSession._run`） | 無 lane 專屬 env | 無 | 無 cwd 時並行關閉，走循序/測試路徑 |
 | 並行開關 | `config.PARALLEL_TASKS_ENABLED` + `bool(self.cwd)` 決定是否開 lane（`StudioSession._run_waves`） | 由 process env `TI_PARALLEL_TASKS` 讀入 config；非 lane 注入 | 無 | 關閉或無 cwd 時退回單主 lane |
 | lane 切分數 | `_plan_lanes()` 依 `PARALLEL_LANES`、`LLM_MAX_CONCURRENCY`、wave 大小切分 | process env `TI_PARALLEL_LANES`、`TI_LLM_MAX_CONCURRENCY` 讀入 config；非 lane 注入 | 無 | 最少 1 條 lane，等同循序 |
 | branch 名稱 | `lane-{session_id}-{task_ids}`（`StudioSession._open_lane`） | 無 | 無 | branch 名稱交給 runner 驗證；失敗回 None |
