@@ -9,6 +9,28 @@ RUNNER = ROOT / "studio/runner.py"
 PROVIDERS = ROOT / "studio/providers.py"
 EXPERTS = ROOT / "studio/experts.py"
 
+PYTHON_SOURCE_ANCHORS: dict[str, tuple[Path, str]] = {
+    "class LaneContext": (ORCHESTRATOR, "LaneContext"),
+    "async def _open_lane": (ORCHESTRATOR, "StudioSession._open_lane"),
+    "async def _integrate_wave": (ORCHESTRATOR, "StudioSession._integrate_wave"),
+    "StudioSession.__init__": (ORCHESTRATOR, "StudioSession.__init__"),
+    "StudioSession._run_waves": (ORCHESTRATOR, "StudioSession._run_waves"),
+    "StudioSession._open_lane": (ORCHESTRATOR, "StudioSession._open_lane"),
+    "runner.git_worktree_add": (RUNNER, "git_worktree_add"),
+    "StudioSession._lane_worktree_path": (ORCHESTRATOR, "StudioSession._lane_worktree_path"),
+    "StudioSession._build_lane_experts": (ORCHESTRATOR, "StudioSession._build_lane_experts"),
+    "experts._build_client": (EXPERTS, "_build_client"),
+    "providers.CodexExpert._run_codex": (PROVIDERS, "CodexExpert._run_codex"),
+    "providers._codex_env": (PROVIDERS, "_codex_env"),
+    "providers.AntigravityExpert._run_antigravity": (
+        PROVIDERS,
+        "AntigravityExpert._run_antigravity",
+    ),
+    "StudioSession._integrate_wave": (ORCHESTRATOR, "StudioSession._integrate_wave"),
+    "StudioSession._flush_lane_notes": (ORCHESTRATOR, "StudioSession._flush_lane_notes"),
+    "runner.git_worktree_remove": (RUNNER, "git_worktree_remove"),
+}
+
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -56,6 +78,12 @@ def _section_table_rows(text: str, heading: str) -> list[list[str]]:
     return rows
 
 
+def _inventory_python_source_anchors(text: str) -> set[str]:
+    explicit_markers = set(re.findall(r"marker: `([^`]+)`", text))
+    parenthesized_symbols = set(re.findall(r"（`([^`]+)`）", text))
+    return explicit_markers | parenthesized_symbols
+
+
 def test_inventory_declares_current_scope_and_lane_context_fields() -> None:
     text = _read(INVENTORY)
     fields = _lane_context_fields()
@@ -65,6 +93,15 @@ def test_inventory_declares_current_scope_and_lane_context_fields() -> None:
     assert "顯式建構參數 + process-level config + env 繼承" in text
     for field in fields:
         assert f"`{field}`" in text, f"LaneContext 欄位未列入清單: {field}"
+
+
+def test_inventory_source_markers_resolve_to_existing_symbols() -> None:
+    text = _read(INVENTORY)
+    anchors = _inventory_python_source_anchors(text)
+
+    assert anchors == set(PYTHON_SOURCE_ANCHORS), f"文件程式錨點未同步: {sorted(anchors)}"
+    for anchor, (path, symbol) in PYTHON_SOURCE_ANCHORS.items():
+        assert _source_segment(path, symbol).strip(), f"程式錨點無法解析: {anchor}"
 
 
 def test_inventory_table_covers_each_injected_item_without_manifest_claims() -> None:

@@ -15,7 +15,7 @@
 | 項目 | 實際來源與欄位 | env 注入 | manifest 欄位 | 缺失/失敗現況 |
 |---|---|---|---|---|
 | 主 lane context | `LaneContext("main", self.cwd, experts, self._critics, last_commit=self._last_commit)`（`StudioSession.__init__`） | 無 lane 專屬 env | 無 | 無 cwd 時並行關閉，走循序/測試路徑 |
-| 並行開關 | `config.PARALLEL_TASKS_ENABLED` + `bool(self.cwd)` 決定是否開 lane（`StudioSession._run_parallel_wave`） | 由 process env `TI_PARALLEL_TASKS` 讀入 config；非 lane 注入 | 無 | 關閉或無 cwd 時退回單主 lane |
+| 並行開關 | `config.PARALLEL_TASKS_ENABLED` + `bool(self.cwd)` 決定是否開 lane（`StudioSession._run_waves`） | 由 process env `TI_PARALLEL_TASKS` 讀入 config；非 lane 注入 | 無 | 關閉或無 cwd 時退回單主 lane |
 | lane 切分數 | `_plan_lanes()` 依 `PARALLEL_LANES`、`LLM_MAX_CONCURRENCY`、wave 大小切分 | process env `TI_PARALLEL_LANES`、`TI_LLM_MAX_CONCURRENCY` 讀入 config；非 lane 注入 | 無 | 最少 1 條 lane，等同循序 |
 | branch 名稱 | `lane-{session_id}-{task_ids}`（`StudioSession._open_lane`） | 無 | 無 | branch 名稱交給 runner 驗證；失敗回 None |
 | worktree 路徑 | `<cwd>.lanes/<safe branch>`（`StudioSession._lane_worktree_path`） | 無 | 無 | 建立失敗時該 lane tasks 進 deferred |
@@ -24,8 +24,8 @@
 | lane context 建立 | `LaneContext(branch, wt, {}, branch=branch)`（`StudioSession._open_lane`） | 無 | 無 | `last_commit` 預設 None；無 baseline manifest 可補值 |
 | lane experts | `factory(role, f"{session_id}:{suffix}", cwd)` 鏡射主 experts（`StudioSession._build_lane_experts`） | 無 lane 專屬 env；只用建構參數傳 session suffix 與 cwd | 無 | factory 例外未在 `_open_lane()` 內轉降級，會往外拋；這不是 baseline 行為 |
 | Claude expert | `ClaudeAgentOptions(..., cwd=str(cwd), model=..., sandbox=..., hooks=...)`（`experts._build_client`） | 未在本層設定 env | 無 | cwd 外寫入由 PreToolUse hook 擋；非 baseline manifest |
-| Codex expert | 子程序 `cwd=str(self.cwd)`，`env=_codex_env()`（`providers.CodexExpert.run`） | `_codex_env()` 複製父 env；只有 `CODEX_HOME` 有值時額外設定（`providers._codex_env`） | 無 | `CODEX_HOME` 是 provider 全域設定，非 per-lane baseline |
-| Antigravity expert | 子程序 `cwd=str(self.cwd)`，`env=os.environ.copy()`（`providers.AntigravityExpert.run`） | 繼承父 env，無 lane 專屬 key | 無 | 無 provider 層 baseline manifest |
+| Codex expert | 子程序 `cwd=str(self.cwd)`，`env=_codex_env()`（`providers.CodexExpert._run_codex`） | `_codex_env()` 複製父 env；只有 `CODEX_HOME` 有值時額外設定（`providers._codex_env`） | 無 | `CODEX_HOME` 是 provider 全域設定，非 per-lane baseline |
+| Antigravity expert | 子程序 `cwd=str(self.cwd)`，`env=os.environ.copy()`（`providers.AntigravityExpert._run_antigravity`） | 繼承父 env，無 lane 專屬 key | 無 | 無 provider 層 baseline manifest |
 | runner 自測/指令 | `run_command_exec()` 的 `env=None` 時繼承父 env；只有呼叫端明傳 env 才合併 | lane 路徑沒有明傳 env | 無 | 沙箱缺失會 fail-closed，但那是 runner 安全策略，不是 lane baseline |
 | `_integrate_wave()` 合併 | 依 `lane_id` 排序合併、flush notes、teardown（`StudioSession._integrate_wave`） | 無 | 無 | lane crash、worktree deferred、merge conflict 都降級到主幹序列化重跑 |
 | notes 緩衝 | `notes_buffer` 波末 flush 到共享 `NOTES.md`（`StudioSession._flush_lane_notes`） | 無 | 無 | crash lane 會清掉 notes，避免不可信成果污染共享筆記 |
