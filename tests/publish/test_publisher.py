@@ -43,13 +43,15 @@ def test_branch_name_empty_fallback():
 
 
 def test_remote_url_and_redact(monkeypatch):
+    token = "secrettoken"
+    monkeypatch.setattr(config, "GITHUB_TOKEN", token)
     # remote_url 掛了 owner allowlist 護欄：放行本測試用的 owner
     monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"octo"}))
     url = publisher.remote_url("octo/repo")
     # 乾淨裸 URL：逐字不含 x-access-token 與 token 明文
     assert url == "https://github.com/octo/repo.git"
     assert "x-access-token" not in url
-    assert "secrettoken" not in url
+    assert token not in url
 
 
 def test_git_auth_env_carries_base64_header():
@@ -62,8 +64,10 @@ def test_git_auth_env_carries_base64_header():
     assert env["GIT_CONFIG_COUNT"] == "1"
     assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
     value = env["GIT_CONFIG_VALUE_0"]
-    assert value.startswith("Authorization: Basic ")
+    expected_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    assert value == f"Authorization: Basic {expected_b64}"
     header_b64 = value.rsplit(" ", 1)[-1]
+    assert header_b64 == expected_b64
     # 釘死「-n 尾換行坑」：b64 內不得有換行
     assert "\n" not in header_b64
     # 反驗：解回來必須逐字等於 x-access-token:token
