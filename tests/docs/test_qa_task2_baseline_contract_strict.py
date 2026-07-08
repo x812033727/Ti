@@ -48,7 +48,9 @@ def test_baseline_contract_is_nested_in_task_parallel_after_lane_context() -> No
 
     assert architecture.count(heading) == 1
     assert heading in task_parallel
-    assert task_parallel.index("每條支線（lane）由 `LaneContext` 隔離") < task_parallel.index(heading)
+    assert task_parallel.index("每條支線（lane）由 `LaneContext` 隔離") < task_parallel.index(
+        heading
+    )
     assert task_parallel.index("全域 `TI_LLM_MAX_CONCURRENCY`") < task_parallel.index(heading)
 
 

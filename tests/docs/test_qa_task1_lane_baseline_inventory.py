@@ -44,7 +44,10 @@ def _source_segment(path: Path, name: str) -> str:
         for node in tree.body:
             if isinstance(node, ast.ClassDef) and node.name == class_name:
                 for child in node.body:
-                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == func_name:
+                    if (
+                        isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and child.name == func_name
+                    ):
                         return ast.get_source_segment(src, child) or ""
     else:
         for node in tree.body:
