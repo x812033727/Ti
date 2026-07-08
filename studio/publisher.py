@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextvars
 import json
 import logging
@@ -145,16 +146,47 @@ def branch_name(session_id: str) -> str:
     return f"ti-studio/{safe}"
 
 
-def remote_url(repo: str, token: str) -> str:
-    """組出帶 token 的 push URL。護欄 chokepoint：owner 不在 allowlist → raise ValueError。"""
+def remote_url(repo: str) -> str:
+    """組出**乾淨裸 URL**（不含 token）作 push remote。認證改走 git_auth_env 的
+    http.extraHeader（token 不落 remote.url/config/argv）。護欄 chokepoint：
+    owner 不在 allowlist → raise ValueError。
+    """
     assert_repo_allowed(repo)
-    return f"https://x-access-token:{token}@github.com/{repo}.git"
+    return f"https://github.com/{repo}.git"
+
+
+def _auth_b64(token: str) -> str:
+    """base64(f"x-access-token:{token}")：b64encode 天生無尾換行（等價 echo -n），
+    釘死 `echo | base64` 多換行導致 header 失效的坑。"""
+    return base64.b64encode(f"x-access-token:{token}".encode()).decode()
+
+
+def extra_header(token: str) -> str:
+    """git http.extraHeader 的值：`Authorization: Basic <base64(x-access-token:token)>`。"""
+    return f"Authorization: Basic {_auth_b64(token)}"
+
+
+def git_auth_env(token: str) -> dict[str, str]:
+    """把認證 header 走 GIT_CONFIG_* env 注入 git（token 不進 argv/ps）。
+
+    等價於 `git -c http.https://github.com/.extraheader=...`，但值走 env 而非 argv，
+    ps 短窗也看不到 token。per-host key（github.com）收斂作用域，避免 header 隨
+    重導向送到其他 host。需 git 2.31+（GIT_CONFIG_COUNT 支援）。
+    """
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": extra_header(token),
+    }
 
 
 def redact(text: str, token: str | None = None) -> str:
+    """遮蔽 token 明文；同步遮蔽其 base64 形式（extraHeader 走 env，但值仍可能外洩到
+    日誌/錯誤訊息）。base64 用與 git_auth_env 完全相同的編碼（無尾換行）算出同一字串再遮。"""
     token = token or config.GITHUB_TOKEN
     if token and text:
         text = text.replace(token, "***")
+        text = text.replace(_auth_b64(token), "***")
     return text
 
 
@@ -349,9 +381,10 @@ def _api(path: str) -> str:
     return f"https://api.github.com/repos/{current_repo()}{path}"
 
 
-async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
-    # 全程走參數式 exec：branch/url 當單一 argv，免 shell 解析（防注入）；
-    # 且用簡短 label，避免帶 token 的 remote url 出現在 RunOutput.command。
+async def _push(cwd, branch: str, url: str, *, env: dict[str, str] | None = None) -> runner.RunOutput:
+    # 全程走參數式 exec：branch/url 當單一 argv，免 shell 解析（防注入）。
+    # url 為乾淨裸 URL（不含 token），故 remote.url 不洩密；認證走 env（extraHeader），
+    # 只在真正需要認證的 `git push` 帶 env，其餘本地 git 操作不需。
     await runner.run_command_exec(
         cwd, ["git", "branch", "-M", branch], timeout=30, sandbox=False, label="git branch"
     )
@@ -375,6 +408,7 @@ async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
         timeout=120,
         sandbox=False,
         label="git push",
+        env=env,
     )
 
 
@@ -394,14 +428,19 @@ def pr_failure_detail(status_code: int, body: str) -> str:
     return f"PR 建立失敗（{status_code}）：{body[:200]}"
 
 
-async def _push_base(cwd, base: str, url: str) -> runner.RunOutput:
-    """把 workspace HEAD 直接推成遠端 base 分支（空 repo 的首次發佈初始化）。"""
+async def _push_base(
+    cwd, base: str, url: str, *, env: dict[str, str] | None = None
+) -> runner.RunOutput:
+    """把 workspace HEAD 直接推成遠端 base 分支（空 repo 的首次發佈初始化）。
+
+    url 為乾淨裸 URL（不含 token），認證走 env 帶 extraHeader。"""
     return await runner.run_command_exec(
         cwd,
         ["git", "push", url, f"HEAD:refs/heads/{base}"],
         timeout=120,
         sandbox=False,
         label="git push (init base)",
+        env=env,
     )
 
 
@@ -788,7 +827,12 @@ async def _publish_inner(
                 False, "無法發佈：" + redact(state.partition(":")[2].strip() or state), repo=repo
             )
         if state == "empty":
-            init = await _push_base(cwd, config.PUBLISH_BASE, remote_url(repo, config.GITHUB_TOKEN))
+            init = await _push_base(
+                cwd,
+                config.PUBLISH_BASE,
+                remote_url(repo),
+                env=git_auth_env(config.GITHUB_TOKEN),
+            )
             if not init.ok:
                 return PublishResult(False, "首次發佈初始化失敗：" + redact(init.output), repo=repo)
             return PublishResult(
@@ -800,7 +844,7 @@ async def _publish_inner(
                 merged=True,
             )
 
-    push = await _push(cwd, branch, remote_url(repo, config.GITHUB_TOKEN))
+    push = await _push(cwd, branch, remote_url(repo), env=git_auth_env(config.GITHUB_TOKEN))
     if not push.ok:
         return PublishResult(False, "push 失敗：" + redact(push.output), branch=branch, repo=repo)
 
@@ -950,11 +994,14 @@ async def ci_failure_logs(repo: str, branch: str, ref: str) -> str:
 
 
 async def repush(cwd, branch: str) -> runner.RunOutput:
-    """把工程師修正後的 commit 重推同一分支（remote ti_publish 由初次 _push 已建好）。"""
+    """把工程師修正後的 commit 重推同一分支（remote ti_publish 由初次 _push 已建好）。
+
+    remote.url 現為乾淨裸 URL（不含 token），故重推同樣需帶 extraHeader 認證 env。"""
     return await runner.run_command_exec(
         cwd,
         ["git", "push", "ti_publish", branch],
         timeout=120,
         sandbox=False,
         label="git push",
+        env=git_auth_env(config.GITHUB_TOKEN),
     )
