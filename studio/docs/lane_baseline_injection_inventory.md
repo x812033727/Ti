@@ -24,7 +24,7 @@
 | git worktree 啟動 | `git worktree add -b <branch> <path> <base>`（`runner.git_worktree_add`） | `run_command_exec(..., sandbox=False)` 未傳 `env`，即繼承父 env | 無 | `git_worktree_add()` 回 False，orchestrator 廣播「並行降級」後主幹重跑 |
 | lane context 建立 | `LaneContext(branch, wt, {}, branch=branch)`（`StudioSession._open_lane`） | 無 | 無 | `last_commit` 預設 None；無 baseline manifest 可補值 |
 | lane experts | `factory(role, f"{session_id}:{suffix}", cwd)` 鏡射主 experts（`StudioSession._build_lane_experts`） | 無 lane 專屬 env；只用建構參數傳 session suffix 與 cwd | 無 | factory 例外未在 `_open_lane()` 內轉降級，會往外拋；這不是 baseline 行為 |
-| Claude expert | `ClaudeAgentOptions(..., cwd=str(cwd), model=..., sandbox=..., hooks=...)`（`experts._build_client`） | 未在本層設定 env | 無 | cwd 外寫入由 PreToolUse hook 擋；非 baseline manifest |
+| Claude expert | `ClaudeAgentOptions(..., hooks=..., sandbox=..., cwd=str(cwd), model=...)`（`experts._build_client`） | 未在本層設定 env | 無 | cwd 外寫入由 PreToolUse hook 擋；非 baseline manifest |
 | Codex expert | 子程序 `cwd=str(self.cwd)`，`env=_codex_env()`（`providers.CodexExpert._run_codex`） | `_codex_env()` 複製父 env；只有 `CODEX_HOME` 有值時額外設定（`providers._codex_env`） | 無 | `CODEX_HOME` 是 provider 全域設定，非 per-lane baseline |
 | Antigravity expert | 子程序 `cwd=str(self.cwd)`，`env=os.environ.copy()`（`providers.AntigravityExpert._run_antigravity`） | 繼承父 env，無 lane 專屬 key | 無 | 無 provider 層 baseline manifest |
 | runner 自測/指令 | `run_command_exec()` 的 `env=None` 時繼承父 env；只有呼叫端明傳 env 才合併 | lane 路徑沒有明傳 env | 無 | 沙箱缺失會 fail-closed，但那是 runner 安全策略，不是 lane baseline |
