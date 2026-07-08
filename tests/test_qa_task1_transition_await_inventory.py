@@ -51,13 +51,35 @@ def _boundary_line(markdown: str, label: str) -> str:
     return matches[0]
 
 
+def _inventory_line_with(text: str, marker: str) -> str:
+    matches = [line for line in text.splitlines() if marker in line]
+    assert matches, f"清單找不到邊界列：{marker}"
+    assert len(matches) == 1, f"邊界列必須唯一：{marker} -> {matches}"
+    return matches[0]
+
+
 def test_inventory_exists_and_defines_boundary():
     text = _read(INVENTORY)
+    src = _read(ORCHESTRATOR)
+    expected = {name: _line_with(src, needle) for name, needle in TRANSITION_ANCHORS.items()}
+
     assert text.splitlines()[0].strip() == "# 過渡段 await 定位清單"
     assert "lane 全收斂 -> demo 開始" in text
     assert "起點" in text and "await asyncio.gather(" in text
     assert "主要過渡段" in text and "await self._integrate_wave(" in text
     assert "終點" in text and "_stage_demo" in text
+
+    boundary_expectations = {
+        "- 起點": ("gather",),
+        "- 主要過渡段": ("integrate_call",),
+        "- 過渡段實作": ("integrate_def",),
+        "- 終點": ("stage_demo_def", "final_demo"),
+    }
+    for marker, anchor_names in boundary_expectations.items():
+        line = _inventory_line_with(text, marker)
+        for anchor_name in anchor_names:
+            expected_ref = f"studio/orchestrator.py:{expected[anchor_name]}"
+            assert expected_ref in line, f"{marker} 邊界行號漂移，應含 {expected_ref}：{line}"
 
 
 def test_boundary_lines_use_current_source_line_numbers():
