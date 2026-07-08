@@ -101,6 +101,21 @@ def test_architecture_and_adr_have_bidirectional_links_and_handoff_todo() -> Non
     assert "lane 注入層落地後補守門測試對齊決策表" in adr
 
 
+def test_decisions_has_no_baseline_design_note_drift() -> None:
+    decisions = _read(DECISIONS)
+    leaked_design_notes = [
+        "技術選型＝純文件變更",
+        "模組邊界＝ARCHITECTURE.md「任務並行」節",
+        "子段開頭第一句為 baseline 消歧句",
+        "決策表為三欄",
+        "雙向互鏈以「節標題文字」為錨",
+        "驗證邊界＝`tests/docs` 為唯一 gate",
+    ]
+
+    for note in leaked_design_notes:
+        assert note not in decisions
+
+
 def test_inventory_remains_descriptive_and_feeds_contract_decision_table() -> None:
     inventory = _read(INVENTORY)
 
