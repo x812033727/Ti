@@ -9,12 +9,13 @@
 - `_open_lane()` 實際注入的是 worktree 路徑、branch 名稱、base commit、獨立 expert session suffix；沒有 lane 專屬 env，也沒有寫入 manifest（`studio/orchestrator.py`，marker: `async def _open_lane`）。
 - `_integrate_wave()` 只做序列化合併、notes flush、teardown 與降級重跑；沒有新增 env/manifest 注入（`studio/orchestrator.py`，marker: `async def _integrate_wave`）。
 - 目前所有 `TI_*` 都是 process-level config 讀取，不是 per-lane baseline；lane 子程序大多繼承父程序 env。
+- 本輪 #2 依 #1 結果再核對為零漂移，marker、欄位與表列維持現況；本次僅明確標記 no-op，`lane manifest` 層仍為前瞻契約、非現況。
 
 ## 逐項對照
 
 | 項目 | 實際來源與欄位 | env 注入 | manifest 欄位 | 缺失/失敗現況 |
 |---|---|---|---|---|
-| 主 lane context | `LaneContext("main", self.cwd, experts, self._critics, last_commit=self._last_commit)`（`StudioSession.__init__`） | 無 lane 專屬 env | 無 | 無 cwd 時並行關閉，走循序/測試路徑 |
+| 主 lane context | `LaneContext("main", self.cwd, experts, self._critics, last_commit=self._last_commit)`（`StudioSession._run`） | 無 lane 專屬 env | 無 | 無 cwd 時並行關閉，走循序/測試路徑 |
 | 並行開關 | `config.PARALLEL_TASKS_ENABLED` + `bool(self.cwd)` 決定是否開 lane（`StudioSession._run_waves`） | 由 process env `TI_PARALLEL_TASKS` 讀入 config；非 lane 注入 | 無 | 關閉或無 cwd 時退回單主 lane |
 | lane 切分數 | `_plan_lanes()` 依 `PARALLEL_LANES`、`LLM_MAX_CONCURRENCY`、wave 大小切分 | process env `TI_PARALLEL_LANES`、`TI_LLM_MAX_CONCURRENCY` 讀入 config；非 lane 注入 | 無 | 最少 1 條 lane，等同循序 |
 | branch 名稱 | `lane-{session_id}-{task_ids}`（`StudioSession._open_lane`） | 無 | 無 | branch 名稱交給 runner 驗證；失敗回 None |
