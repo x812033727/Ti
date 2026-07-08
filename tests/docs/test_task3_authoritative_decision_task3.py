@@ -46,6 +46,7 @@ def test_task3_authoritative_decision_exists_once_and_reports_pinned_path():
 
 def test_task3_authoritative_decision_marks_five_rows_as_superseded_verbatim():
     text = TARGET.read_text(encoding="utf-8")
+    raw = TARGET.read_bytes()
 
     assert _table_rows(text) == [
         ("1", "778ced", MISSING_TOKEN, LOCATION_TOKEN, SUPERSEDED),
@@ -55,6 +56,10 @@ def test_task3_authoritative_decision_marks_five_rows_as_superseded_verbatim():
         ("5", MISSING_TOKEN, MISSING_TOKEN, LOCATION_TOKEN, SUPERSEDED),
     ]
     assert text.count(SUPERSEDED) == 5
+    assert "99f330…9d3b" in text
+    assert b"99f330\xe2\x80\xa69d3b" in raw, "省略號必須是 U+2026"
+    assert b"99f330...9d3b" not in raw, "不可把省略號改成三個句點"
+    assert not re.search(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])", text)
     assert "五列採固定占位契約，不查找、不展開、不推算。" in text
     assert "五列皆為 `訊息流明列值／查無 repo 實體檔`。" in text
 
