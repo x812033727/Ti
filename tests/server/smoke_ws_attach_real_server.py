@@ -86,7 +86,8 @@ async def main(port: int) -> int:
     )
 
     # 3) 全量對帳：ws1 + ws2 == JSONL（跨斷線無重複無遺漏）
-    async with httpx.AsyncClient() as http:
+    # trust_env=False：宿主可能設 SOCKS/HTTP proxy env，本機 loopback 冒煙絕不走 proxy。
+    async with httpx.AsyncClient(trust_env=False) as http:
         res = await http.get(f"{base}/api/history/{sid}/events", timeout=30)
         full = res.json().get("events", [])
     stitched = got1 + got2
