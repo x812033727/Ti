@@ -381,7 +381,9 @@ def _api(path: str) -> str:
     return f"https://api.github.com/repos/{current_repo()}{path}"
 
 
-async def _push(cwd, branch: str, url: str, *, env: dict[str, str] | None = None) -> runner.RunOutput:
+async def _push(
+    cwd, branch: str, url: str, *, env: dict[str, str] | None = None
+) -> runner.RunOutput:
     # 全程走參數式 exec：branch/url 當單一 argv，免 shell 解析（防注入）。
     # url 為乾淨裸 URL（不含 token），故 remote.url 不洩密；認證走 env（extraHeader），
     # 只在真正需要認證的 `git push` 帶 env，其餘本地 git 操作不需。

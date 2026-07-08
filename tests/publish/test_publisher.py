@@ -195,9 +195,7 @@ async def test_run_command_exec_env_reaches_child_without_entering_command(tmp_p
     header_b64 = env["GIT_CONFIG_VALUE_0"].rsplit(" ", 1)[-1]
     probe_env = {
         **env,
-        "EXPECTED_HEADER_SHA": hashlib.sha256(
-            env["GIT_CONFIG_VALUE_0"].encode()
-        ).hexdigest(),
+        "EXPECTED_HEADER_SHA": hashlib.sha256(env["GIT_CONFIG_VALUE_0"].encode()).hexdigest(),
     }
 
     probe = (
