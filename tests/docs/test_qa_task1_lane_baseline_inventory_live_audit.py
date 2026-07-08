@@ -154,9 +154,7 @@ def test_lane_context_fields_are_exact_and_documented_from_live_code() -> None:
     live_fields = _lane_context_fields()
     assert live_fields == EXPECTED_LANE_CONTEXT_FIELDS
 
-    line = next(
-        line for line in text.splitlines() if line.startswith("- `LaneContext` 現況只保存")
-    )
+    line = next(line for line in text.splitlines() if line.startswith("- `LaneContext` 現況只保存"))
     documented = set(re.findall(r"`([^`]+)`", line.split("：", 1)[1].split("（", 1)[0]))
     assert documented == live_fields
 
