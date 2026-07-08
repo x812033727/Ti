@@ -52,7 +52,7 @@ def test_task3_superseded_inventory_preserves_ellipsis_and_does_not_expand_hashe
 
     assert b"99f330\xe2\x80\xa69d3b" in raw, "省略號必須是 U+2026"
     assert b"99f330...9d3b" not in raw, "不可把省略號改成三個句點"
-    assert "禁止改成三個句點 `...`" in text
+    assert "禁止改成三個連續半形句點" in text
     assert "不得推算或借用 release-e2e 值" in text
     assert not re.search(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])", text)
 
