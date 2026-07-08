@@ -358,6 +358,7 @@ async def run_command_exec(
     timeout: int | None = None,
     sandbox: bool | None = None,
     label: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> RunOutput:
     """以參數式（argv list）執行指令，不經 /bin/sh，shell metacharacters 天然安全。
 
@@ -368,6 +369,12 @@ async def run_command_exec(
 
     label 為 RunOutput.command 的顯示標籤（如 "git commit"），預設取 argv[0]，
     不內插完整參數，避免多行訊息污染日誌。
+
+    env 為額外環境變數：僅 env is not None 時，以 {**os.environ, **env} 合併後傳入
+    子行程（create_subprocess_exec 的 env 會整包取代，故必須 merge 才不吞掉 PATH/HOME）；
+    預設 None＝繼承父行程環境，向後相容。用於把敏感資料（如 git extraHeader token）
+    走 env 傳遞、不落 argv/ps。注意：sandbox=True 時 bwrap 是否轉發 env 另案處理，
+    本專案 push 路徑均 sandbox=False。
     """
     if not argv:
         raise ValueError("run_command_exec 需要非空的 argv")
@@ -375,6 +382,7 @@ async def run_command_exec(
     use_sandbox = config.SANDBOX_ENABLED if sandbox is None else sandbox
     display = label or argv[0]
     preexec = _rlimit_preexec()
+    run_env = {**os.environ, **env} if env is not None else None
     if use_sandbox:
         if not config._sandbox_available():
             return _sandbox_blocked(display)
@@ -385,6 +393,7 @@ async def run_command_exec(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
             preexec_fn=preexec,
+            env=run_env,
         )
     else:
         proc = await asyncio.create_subprocess_exec(
@@ -394,6 +403,7 @@ async def run_command_exec(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
             preexec_fn=preexec,
+            env=run_env,
         )
     return await _finalize_proc(proc, display, timeout)
 

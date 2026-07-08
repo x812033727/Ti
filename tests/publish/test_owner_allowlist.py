@@ -110,13 +110,16 @@ def test_set_repo_override_empty_clears_without_guard(_default_allowlist):
 
 
 def test_remote_url_allows_allowlisted_owner(_default_allowlist):
-    url = publisher.remote_url("x812033727/Ti", "tok")
-    assert url == "https://x-access-token:tok@github.com/x812033727/Ti.git"
+    # remote_url 回乾淨裸 URL（不含 token）；認證改走 git_auth_env 的 extraHeader。
+    url = publisher.remote_url("x812033727/Ti")
+    assert url == "https://github.com/x812033727/Ti.git"
+    assert "x-access-token" not in url
 
 
 def test_remote_url_blocks_other_owner(_default_allowlist):
+    # 反向黑樣本：owner 不在 allowlist 仍須被 chokepoint 擋下（簽名變動未弱化護欄）。
     with pytest.raises(ValueError, match="allowlist"):
-        publisher.remote_url("otherowner/Ti", "tok")
+        publisher.remote_url("otherowner/Ti")
 
 
 # --- chokepoint 3：_ensure_repo --------------------------------------------
@@ -286,7 +289,7 @@ async def test_publish_new_repo_same_owner_allowed_end_to_end(
     _fake_httpx(monkeypatch, repo_status=404, create_status=201)
     seen = {}
 
-    async def fake_push_base(cwd, base, url):
+    async def fake_push_base(cwd, base, url, **kwargs):
         seen["url"] = url
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 

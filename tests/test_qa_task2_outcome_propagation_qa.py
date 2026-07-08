@@ -75,7 +75,7 @@ def _ready(monkeypatch):
     monkeypatch.setattr(runner, "git_init", _noop)
     monkeypatch.setattr(runner, "git_commit", _noop)
 
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
