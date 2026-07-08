@@ -44,9 +44,10 @@ Generate new token`，**沿用 `CLAUDE.md` 既定的 `GH_PAT` 四項規格，一
 1. 把新 token 寫進本機 `.env` 的 `GH_PAT=...`（或部署環境的對應設定），**人工操作**，明文不入版控
    （`.env` 已在 `.gitignore`）。
 2. 同步更新 repo secret `GH_PAT`（見步驟 1 第 4 點）。
-3. **立即驗證新 token 可用**（見「輪替驗證 DoD」章節的 `gh auth status` / `curl … /user` 回 200
-   判定）。**驗證通過前，絕不進入步驟 3。** 這步的「跑指令驗證」AI 可代勞，但寫入 `.env`／secret
-   的明文動作仍是人工。
+3. **立即驗證新 token 可用**（見「輪替驗證 DoD」章節；須用 `GH_TOKEN="$GH_PAT" gh auth status`
+   或 `curl … /user` 回 200 判定，**不可**裸跑 `gh auth status`——那只驗 keyring 舊 token，
+   會給出假綠燈）。**驗證通過前，絕不進入步驟 3。** 這步的「跑指令驗證」AI 可代勞，但寫入
+   `.env`／secret 的明文動作仍是人工。
 
 ### 步驟 3（實際最後做）：撤銷舊 token — 人工
 
@@ -67,7 +68,7 @@ Generate new token`，**沿用 `CLAUDE.md` 既定的 `GH_PAT` 四項規格，一
 |------|------|------|------|
 | 1 | 產生新 fine-grained PAT（勾權限、複製明文） | **人工** | 需登入帳號＋一次性明文，AI 不得持有 |
 | 1/2 | 更新 repo secret `GH_PAT`、寫入 `.env` | **人工** | 明文寫入，不入版控、不進對話 |
-| 2 | 跑 `gh auth status` / `curl … /user` 驗證新 token 生效 | AI 可代勞 | 只讀驗證，不碰明文即可執行 |
+| 2 | 跑 `GH_TOKEN="$GH_PAT" gh auth status` / `curl … /user` 驗證新 token 生效 | AI 可代勞 | 只讀驗證，不碰明文即可執行 |
 | 3 | 到 UI `Delete` 舊 token | **人工** | 不可逆、無 API，只能 UI 手動 |
 | 掃描 | 跑殘留 token 掃描指令 | AI 可代勞 | 見「殘留 token 掃描」章節 |
 
@@ -102,14 +103,32 @@ grep -rnE 'gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}' history/ <se
 
 新 token 寫入後**必須**通過下列判定才算「生效」，未過不得進入步驟 3（撤舊）：
 
-- **首選 `gh auth status`**（不把 token 放進命令列，較安全）：顯示已用新 `GH_PAT` 登入且帳號正確。
-- **無 `gh` 時**才退而用 `curl`（注意 token 會落入命令列與 shell history，用完清理）：
+- **首選：明確綁定新 token 的 `gh auth status`**（避免把 token 展開值放進 `curl` 命令列）：
+
+  ```bash
+  GH_TOKEN="$GH_PAT" gh auth status
+  ```
+
+  回報帳號與剛建立的 token 相符才算通過。**不可省略 `GH_TOKEN="$GH_PAT"`**——裸跑
+  `gh auth status` 只驗 keyring 裡的舊 token，**不讀 `GH_PAT`，會給出假綠燈**：舊 token
+  仍在 keyring 時顯示成功，卻根本沒驗到新值，下一步撤舊後仍會 403 斷鏈。
+
+- **無 `gh` CLI 時**才退而用 `curl`：
 
   ```bash
   curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $GH_PAT" https://api.github.com/user
   ```
 
-  回 **`200`** 即為有效；回 `401`／`403` 表示 token 無效或權限不足。
+  回 **`200`** 即 token 本身有效；回 `401`／`403` 表示無效或被撤。
+
+  > ⚠️ **`200` 只證身分有效，不證 scope**：`/user` 端點不驗 `Contents: Read and write` 權限，
+  > scope 設錯的 token 仍會在 `gh release create` 以 403 失敗。驗完 200 後，請再核對步驟 1 的
+  > 四項規格（Fine-grained、只選本 repo、Contents RW）確實套用，才真正閉環。
+
+  > ⚠️ **curl 洩漏面說明**：token 展開值出現在 **process argv**（`ps aux` /
+  > `/proc/<pid>/cmdline` 可見），而非 shell history 字面（history 只存 `$GH_PAT` 字串、非明文）。
+  > 用完建議 `history -d $(history 1 | awk '{print $1}')` 清除對應條目，
+  > 或改用 stdin 傳 header（`-H @-`）避免 argv 暴露。
 
 **斷鏈訊號**：`GH_PAT` 到期或被撤銷後，發佈鏈會在 `gh release create` 這一步以 **`403`** 失敗
 （呼應 `CLAUDE.md`「發佈鏈 DoD」）。看到 `gh release create` 403，第一件事就是檢查 `GH_PAT`
