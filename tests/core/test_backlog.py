@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from studio import backlog, config
@@ -99,6 +101,57 @@ def test_invalid_status_raises(state):
     t = backlog.add("x")
     with pytest.raises(ValueError):
         backlog.set_status(t["id"], "bogus")
+
+
+def _patch_task(task_id: int, **fields) -> None:
+    """直接改 backlog.json 任務欄位（設定 updated_at 以測近窗切片）。"""
+    p = backlog._path(None)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    for t in data["tasks"]:
+        if t["id"] == task_id:
+            t.update(fields)
+    p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def test_completion_stats_excludes_parked_and_pending(state):
+    """完成率分母只納 done+failed；parked（永不清）與 pending（未終局）都排除。"""
+    for i in range(3):
+        t = backlog.add(f"done-{i}")
+        backlog.set_status(t["id"], "done")
+    tf = backlog.add("failed-1")
+    backlog.set_status(tf["id"], "failed", note="討論未達完成")
+    tp = backlog.add("parked-1")
+    backlog.set_status(tp["id"], "parked", note="無變更")
+    backlog.add("pending-1")  # 未終局
+
+    cs = backlog.completion_stats()
+    assert cs["done"] == 3 and cs["failed"] == 1 and cs["total"] == 4, cs
+    assert cs["rate"] == 0.75, "3 done /(3 done + 1 failed)，parked/pending 不計入分母"
+
+
+def test_completion_stats_empty_is_none(state):
+    backlog.add("只有 pending")
+    cs = backlog.completion_stats()
+    assert cs == {"window": 50, "done": 0, "failed": 0, "total": 0, "rate": None}
+
+
+def test_completion_stats_recent_window_slices_by_updated_at(state):
+    """近窗只取 updated_at 最近的 window 筆——舊史不該灌水近況。"""
+    # 5 筆終局：舊的 3 筆 failed、近的 2 筆 done（以 updated_at 明確排序）
+    ids = []
+    for i in range(5):
+        t = backlog.add(f"t-{i}")
+        backlog.set_status(t["id"], "done" if i >= 3 else "failed", note="n")
+        ids.append(t["id"])
+    for rank, tid in enumerate(ids):
+        _patch_task(tid, updated_at=1000.0 + rank)  # rank 越大越新；最新兩筆(3,4)=done
+    cs = backlog.completion_stats(window=2)
+    assert cs["total"] == 2 and cs["done"] == 2 and cs["rate"] == 1.0, (
+        f"近 2 筆應只含最新的兩筆 done、不被舊 failed 拖低：{cs}"
+    )
+    # 全窗則含全部 5 筆：2 done / 5
+    allw = backlog.completion_stats(window=0)
+    assert allw["total"] == 5 and allw["done"] == 2 and allw["rate"] == 0.4
 
 
 def test_pause_switch(tmp_path, monkeypatch):
