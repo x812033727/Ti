@@ -1,15 +1,19 @@
-"""lint 閘門自動格式化（#249）：`ruff format --check` 紅時先寫回排版再重驗，不再整場退回。
+"""lint 閘門機器可修項自動修（#249 格式漂移 / #496·#364·#367 import 排序）：ruff 紅時先
+自動修再重驗，不再整場退回。
 
-背景：autopilot 任務 #249 連續三輪（每輪 1-2 小時）卡在同一道牆——專家產碼後 pytest 全綠，
-卻因純格式漂移（studio/appraisal.py 需 reformat）被 lint 閘門退回重試，為空格燒掉整場討論。
-格式是機器可修的確定性問題，閘門應自己修掉再重驗。
+背景：autopilot 任務 #249 連續三輪（每輪 1-2 小時）卡在格式漂移牆；#496/#364/#367 卡在
+import 排序（I001）——兩者都是機器可確定性修復的問題，閘門卻只對 `ruff format` 自動修、
+對 `ruff check` 一紅即退，白燒重試額度。此模組守護「format 寫回」與「check --fix」兩條
+自動修路徑，並以黑樣本證明判別力（非 safe-fixable 的 E402 修不掉照舊退回）。
 
 驗收矩陣（含黑樣本，證明判別力）：
 1. format --check 紅 → 自動 `ruff format` 寫回 → 重驗綠 → 閘門通過（不退回），log 繁中
    「格式已自動修正 N 檔」。
 2. 自動修後重驗仍紅 → 維持原退回行為（False + [lint] 前綴）。
 3. TI_LINT_AUTOFORMAT=0（config.LINT_AUTOFORMAT False）→ 完全不跑寫回，直接退回（舊行為）。
-4. `ruff check`（語意 lint）紅 → 不受影響照退，且絕不觸發寫回（自動修復僅限純排版）。
+4. `ruff check` 紅（safe-fixable，如 I001）→ 自動 `ruff check --fix` → 重驗綠 → 通過。
+   4b. --fix 後重驗仍紅（E402 非 safe-fixable）→ 維持退回（黑樣本）。
+   4c. 旋鈕關閉 → check 紅即退、不跑 --fix。
 5. config 旋鈕：預設開啟、進 reload()、env 可關。
 6. 寫回落點守護：run_one_task 中 _gate_lint 先於 _commit_push_merge；寫回是否真的進
    commit 由 test_qa_autoformat_writeback_committed.py 以真 git 路徑守護。
@@ -127,18 +131,79 @@ async def test_knob_off_restores_old_behavior(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 4) ruff check（語意 lint）紅 → 不受影響照退，且不觸發寫回
+# 4) ruff check 紅（safe-fixable）→ 自動 `ruff check --fix` → 重驗綠 → 通過
 # ---------------------------------------------------------------------------
 
+_CHK_FIX = "ruff check --fix"
 
-async def test_ruff_check_failure_unaffected(monkeypatch):
-    spy = SeqSpy({"ruff check": [(1, "F401 unused import")]})
+
+def _fix_calls(spy: SeqSpy) -> list[dict]:
+    """取出 `ruff check --fix` 呼叫（label 即 argv 帶 --fix）。"""
+    return [c for c in spy.calls if c["label"] == _CHK_FIX]
+
+
+async def test_check_fail_autofix_then_pass(monkeypatch, caplog):
+    spy = SeqSpy(
+        {
+            "ruff check": [
+                (1, "I001 [*] Import block is un-sorted or un-formatted\n  --> a.py:1:1"),
+                (0, "All checks passed!"),  # --fix 寫回後重驗綠
+            ],
+            _CHK_FIX: [(0, "Found 1 error (1 fixed, 0 remaining).")],
+        }
+    )
+    monkeypatch.setattr(runner, "run_command_exec", spy)
+    monkeypatch.setattr(config, "LINT_AUTOFORMAT", True)
+    with caplog.at_level(logging.INFO, logger="ti.autopilot"):
+        ok, out = await autopilot._gate_lint("/c")
+    assert ok is True, f"safe-fixable lint（I001 排序）應被自動修掉、閘門放行：{out!r}"
+    assert out == "[lint] ruff OK"
+    # --fix 確實跑過、同工作區、argv 正確（不帶 --unsafe-fixes）
+    fixes = _fix_calls(spy)
+    assert len(fixes) == 1, f"應恰跑一次 --fix：{spy.labels()}"
+    assert fixes[0]["argv"] == [sys.executable, "-m", "ruff", "check", "--fix", "."]
+    assert "--unsafe-fixes" not in fixes[0]["argv"], "只套 safe 修正，不得帶 --unsafe-fixes"
+    assert fixes[0]["cwd"] == "/c", "--fix 必須在同一工作區（後續 commit 才帶得上）"
+    # 時序：check 紅 → --fix → check 重驗綠 →（續）format --check（default 綠）
+    assert spy.labels() == [
+        "ruff probe",
+        "ruff check",
+        _CHK_FIX,
+        "ruff check",
+        _FMT_CHECK,
+    ]
+    assert "lint 已自動修正" in caplog.text, f"缺自動修正 log：{caplog.text!r}"
+
+
+# 4b) --fix 後重驗仍紅（非 safe-fixable）→ 維持退回（黑樣本）
+async def test_check_autofix_recheck_still_failing_falls_back(monkeypatch):
+    spy = SeqSpy(
+        {
+            "ruff check": [
+                (1, "E402 Module level import not at top of file"),
+                (1, "E402 Module level import not at top of file STILLRED"),  # --fix 修不掉
+            ],
+            _CHK_FIX: [(0, "Found 1 error (0 fixed, 1 remaining).")],
+        }
+    )
     monkeypatch.setattr(runner, "run_command_exec", spy)
     monkeypatch.setattr(config, "LINT_AUTOFORMAT", True)
     ok, out = await autopilot._gate_lint("/c")
+    assert ok is False, "E402 非 safe-fixable，--fix 修不掉須維持退回（autofix 不是無條件放行）"
+    assert out.startswith("[lint] ruff check 未過"), f"退回訊息走原格式：{out!r}"
+    assert "STILLRED" in out, "退回訊息應取重驗（最新一次）輸出"
+    assert len(_fix_calls(spy)) == 1, "--fix 只試一次，不無限重試"
+
+
+# 4c) 旋鈕關閉 → check 紅即退、不跑 --fix
+async def test_check_knob_off_no_autofix(monkeypatch):
+    spy = SeqSpy({"ruff check": [(1, "I001 unsorted imports")]})
+    monkeypatch.setattr(runner, "run_command_exec", spy)
+    monkeypatch.setattr(config, "LINT_AUTOFORMAT", False)
+    ok, out = await autopilot._gate_lint("/c")
     assert ok is False
-    assert out.startswith("[lint] ruff check 未過"), f"語意 lint 失敗訊息不變：{out!r}"
-    assert _write_calls(spy) == [], "語意 lint 失敗絕不可觸發自動格式化（不動程式邏輯）"
+    assert out.startswith("[lint] ruff check 未過")
+    assert _fix_calls(spy) == [], "旋鈕關閉時絕不可跑 --fix"
     assert spy.labels() == ["ruff probe", "ruff check"], "check 紅即止，不繼續跑 format"
 
 
