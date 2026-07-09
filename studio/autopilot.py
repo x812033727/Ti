@@ -187,6 +187,36 @@ async def _autoformat_recheck(clone: str, check_output: str) -> runner.RunOutput
     return recheck
 
 
+async def _autolint_recheck(clone: str, check_output: str) -> runner.RunOutput:
+    """`ruff check` 紅時的自動修復：`ruff check --fix` 寫回後重跑 `ruff check`。
+
+    背景：import 排序（I001）、未用 import（F401）這類是機器可確定性修復的，卻因自動
+    修復原本只掛在 `ruff format`、沒掛 `ruff check`，一路擋死到 3 次用罄（實例 #496/#364/
+    #367）。`ruff check --fix`（**不帶** --unsafe-fixes）預設只套 ruff 標記為 safe 的修正
+    ——語意保持、與 CI 跑的 `ruff check .`（同一 pin 版本）判定一致；重驗綠 → 視同通過
+    （寫回檔由後續 _commit_push_merge 的 `git add -A` 兜底 commit 帶上）。E402「import not
+    at top」等非 safe-fixable 規則 --fix 修不掉 → 重驗仍紅，回傳結果由呼叫端維持原退回
+    行為（真正該退回的照樣退，autofix 不是無條件放行）。
+    """
+    fix = await runner.run_command_exec(
+        clone,
+        [sys.executable, "-m", "ruff", "check", "--fix", "."],
+        timeout=120,
+        sandbox=True,
+        label="ruff check --fix",
+    )
+    recheck = await runner.run_command_exec(
+        clone,
+        [sys.executable, "-m", "ruff", "check", "."],
+        timeout=120,
+        sandbox=True,
+        label="ruff check",
+    )
+    if recheck.ok:
+        log.info("lint 已自動修正（ruff check --fix）：%s", (fix.output or "").strip()[:200])
+    return recheck
+
+
 async def _gate_lint(clone: str) -> tuple[bool, str]:
     """對齊 CI lint job：ruff check + ruff format --check。
 
@@ -194,9 +224,14 @@ async def _gate_lint(clone: str) -> tuple[bool, str]:
     main 卻在 GitHub CI 紅。此閘門補上。ruff 未安裝時 fail-open（只記警告不擋），避免
     部署環境缺 ruff 害死所有任務；裝了 ruff 才硬性把關。
 
-    `ruff format --check` 紅時（config.LINT_AUTOFORMAT 開啟，預設開）先 `ruff format`
-    寫回再重驗一次，綠了視同通過——純格式漂移不再退回整場討論（見 _autoformat_recheck）；
-    `ruff check`（語意 lint）行為完全不變，紅了照舊退回。
+    機器可修項自動修（config.LINT_AUTOFORMAT 開啟，預設開）：
+    - `ruff check` 紅時先 `ruff check --fix`（僅套 ruff 標記為 safe 的修正，如 I001
+      import 排序、F401 未用 import——皆語意保持）寫回再重驗，綠了視同通過（見
+      _autolint_recheck）；E402「import not at top」等 **非** safe-fixable 規則 --fix
+      修不掉，重驗照舊紅、照舊退回。
+    - `ruff format --check` 紅時先 `ruff format` 寫回再重驗（見 _autoformat_recheck）。
+    兩者重驗仍紅則維持原退回行為。背景：import 排序這類機器可確定性修復的問題，卻因
+    自動修只掛在 format、沒掛 check，一路擋死到 3 次用罄（實例 #496/#364/#367）。
     """
     probe = await runner.run_command_exec(
         clone,
@@ -213,9 +248,12 @@ async def _gate_lint(clone: str) -> tuple[bool, str]:
         ([sys.executable, "-m", "ruff", "format", "--check", "."], "ruff format --check"),
     ):
         r = await runner.run_command_exec(clone, argv, timeout=120, sandbox=True, label=name)
-        if not r.ok and name == "ruff format --check" and config.LINT_AUTOFORMAT:
-            # 純格式漂移是機器可修的：寫回排版重驗，綠了就不退回（詳見 _autoformat_recheck）。
-            r = await _autoformat_recheck(clone, r.output)
+        if not r.ok and config.LINT_AUTOFORMAT:
+            # 機器可修項先自動修再重驗，綠了就不退回整場討論（詳見各 _auto*_recheck）。
+            if name == "ruff check":
+                r = await _autolint_recheck(clone, r.output)
+            elif name == "ruff format --check":
+                r = await _autoformat_recheck(clone, r.output)
         if not r.ok:
             # 標籤計入截尾預算（與 _gate_tests/_gate_collect 一致，總長維持 ≤1200）。
             prefix = f"[lint] {name} 未過：\n"
@@ -1224,6 +1262,40 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
         )
 
 
+def _handle_discussion_incomplete(task: dict) -> None:
+    """討論未達完成且不可出貨時的收斂：有限次退回 pending 重試，用罄才永久 failed。
+
+    這是完成率最大的失敗桶（見完成率診斷）。舊行為是單發即永久 failed，但討論未收斂常
+    是暫時性的（turn timeout 讓 QA 文字缺通過字樣、provider 抖動、單一 wave flaky、critic
+    一時否決；LLM 非決定性，重跑常會過）——值得重試。上限 AUTOPILOT_DISCUSSION_MAX_ATTEMPTS
+    （預設 2，刻意 < 客觀閘門的 3，因每次重試燒一整場 session）。計數慣例與 _handle_gate_failure
+    一致（讀同一 task["attempts"]、attempts+1 判斷）。note 兩路徑皆保留「討論未達完成」子串，
+    讓既有分診（非 infra → 14 天 park）與看板/診斷分類無縫續接。
+    """
+    attempts = int(task.get("attempts") or 0)
+    cap = config.AUTOPILOT_DISCUSSION_MAX_ATTEMPTS
+    if attempts + 1 < cap:
+        backlog.set_status(
+            task["id"],
+            "pending",
+            attempts=attempts + 1,
+            note=f"討論未達完成，第 {attempts + 1} 次退回重試",
+        )
+        log.info(
+            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）",
+            task["id"],
+            attempts + 1,
+            cap,
+        )
+    else:
+        backlog.set_status(
+            task["id"],
+            "failed",
+            note=f"討論未達完成（連續 {cap} 次未收斂，放棄）",
+        )
+        log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄", task["id"], cap)
+
+
 # 執行中活動停滯 supervisor 的輪詢/寬限常數（秒）。
 _LIVENESS_POLL_S = 30.0  # supervisor 輪詢 events_mtime 的間隔
 _STALL_RECLAIM_S = 60.0  # 偵測停滯→取消 session.run 後，等待其收斂的寬限；逾時即放棄續跑
@@ -1444,8 +1516,9 @@ async def run_one_task(task: dict) -> None:
         shipped_with_limits = False
         if not result.get("completed"):
             if not result.get("shippable"):
-                backlog.set_status(task["id"], "failed", note="討論未達完成")
-                log.info("任務 #%s 未完成且不可出貨,標 failed", task["id"])
+                # 討論未收斂常是暫時性的（LLM 非決定性，重跑常會過）：有限次退回 pending
+                # 重試而非單發即永久 failed，用罄才放棄（詳見 _handle_discussion_incomplete）。
+                _handle_discussion_incomplete(task)
                 return
             shipped_with_limits = True
             log.info("任務 #%s 帶已知限制出貨,續走客觀閘門", task["id"])
