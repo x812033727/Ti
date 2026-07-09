@@ -1,0 +1,17 @@
+# 安裝：
+#   cp /opt/ti/deploy/ti-claude-token-refresh.py /usr/local/sbin/ && chmod +x /usr/local/sbin/ti-claude-token-refresh.py
+#   cp /opt/ti/deploy/ti-claude-token-refresh.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now ti-claude-token-refresh.timer
+# 觀察：journalctl -u ti-claude-token-refresh.service
+[Unit]
+Description=Periodically refresh non-active Claude OAuth tokens so dual-account rotation always sees their quota
+
+[Timer]
+OnBootSec=2min
+# Claude access token 壽命 ~8h、腳本剩 <3h 才換;每時 tick 給約 3 次窗內觸發,
+# 確保非在線帳號 token 過期前必被刷新,pick_account 恆能看到雙邊額度、不再死鎖。
+OnUnitActiveSec=1h
+Persistent=false
+
+[Install]
+WantedBy=timers.target

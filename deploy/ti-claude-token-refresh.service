@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh non-active Claude subscription OAuth tokens so dual-account rotation can always see their quota
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=HOME=/root
+# 只刷非在線帳號(在線帳號由 SDK 自刷);快過期才換。詳見腳本 docstring。
+ExecStart=/usr/local/sbin/ti-claude-token-refresh.py
+TimeoutStartSec=120
