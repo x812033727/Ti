@@ -43,7 +43,12 @@ def _source_files():
         if p.suffix not in _SCAN_EXTS:
             continue
         parts = set(p.parts)
-        if "tests" in parts or "__pycache__" in parts or ".venv" in parts:
+        # 跳過本機/驗證產物，避免 .qa-*、venv 或 site-packages 汙染 source 掃描。
+        if "tests" in parts or "__pycache__" in parts:
+            continue
+        if any(part.startswith(".qa-") or part.startswith(".qa_") for part in parts):
+            continue
+        if any("venv" in part for part in parts) or "site-packages" in parts:
             continue
         if "ti_studio.egg-info" in parts or ".git" in parts:
             continue
