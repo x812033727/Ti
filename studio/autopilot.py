@@ -1217,6 +1217,40 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
         )
 
 
+def _handle_discussion_incomplete(task: dict) -> None:
+    """討論未達完成且不可出貨時的收斂：有限次退回 pending 重試，用罄才永久 failed。
+
+    這是完成率最大的失敗桶（見完成率診斷）。舊行為是單發即永久 failed，但討論未收斂常
+    是暫時性的（turn timeout 讓 QA 文字缺通過字樣、provider 抖動、單一 wave flaky、critic
+    一時否決；LLM 非決定性，重跑常會過）——值得重試。上限 AUTOPILOT_DISCUSSION_MAX_ATTEMPTS
+    （預設 2，刻意 < 客觀閘門的 3，因每次重試燒一整場 session）。計數慣例與 _handle_gate_failure
+    一致（讀同一 task["attempts"]、attempts+1 判斷）。note 兩路徑皆保留「討論未達完成」子串，
+    讓既有分診（非 infra → 14 天 park）與看板/診斷分類無縫續接。
+    """
+    attempts = int(task.get("attempts") or 0)
+    cap = config.AUTOPILOT_DISCUSSION_MAX_ATTEMPTS
+    if attempts + 1 < cap:
+        backlog.set_status(
+            task["id"],
+            "pending",
+            attempts=attempts + 1,
+            note=f"討論未達完成，第 {attempts + 1} 次退回重試",
+        )
+        log.info(
+            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）",
+            task["id"],
+            attempts + 1,
+            cap,
+        )
+    else:
+        backlog.set_status(
+            task["id"],
+            "failed",
+            note=f"討論未達完成（連續 {cap} 次未收斂，放棄）",
+        )
+        log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄", task["id"], cap)
+
+
 # 執行中活動停滯 supervisor 的輪詢/寬限常數（秒）。
 _LIVENESS_POLL_S = 30.0  # supervisor 輪詢 events_mtime 的間隔
 _STALL_RECLAIM_S = 60.0  # 偵測停滯→取消 session.run 後，等待其收斂的寬限；逾時即放棄續跑
@@ -1437,8 +1471,9 @@ async def run_one_task(task: dict) -> None:
         shipped_with_limits = False
         if not result.get("completed"):
             if not result.get("shippable"):
-                backlog.set_status(task["id"], "failed", note="討論未達完成")
-                log.info("任務 #%s 未完成且不可出貨,標 failed", task["id"])
+                # 討論未收斂常是暫時性的（LLM 非決定性，重跑常會過）：有限次退回 pending
+                # 重試而非單發即永久 failed，用罄才放棄（詳見 _handle_discussion_incomplete）。
+                _handle_discussion_incomplete(task)
                 return
             shipped_with_limits = True
             log.info("任務 #%s 帶已知限制出貨,續走客觀閘門", task["id"])

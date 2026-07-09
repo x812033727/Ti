@@ -784,6 +784,12 @@ AUTOPILOT_NORTH_STAR = os.getenv(
 # 單一任務客觀閘門（lint/collect/test/merge）失敗時，重試同一任務的最大嘗試次數。
 # 達上限才標 failed；避免每次失敗就 spawn 一個措辭近似的「修復X」新任務造成 backlog 暴增。
 AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3"))
+# 「討論未達完成且不可出貨」時重試同一任務的最大嘗試次數（預設 2，刻意 < 客觀閘門的 3）。
+# 討論未收斂常是暫時性的（turn timeout 讓 QA 文字缺通過字樣、provider 抖動、單一 wave
+# flaky、critic 一時否決；LLM 非決定性，重跑常會過），值得有限次重試而非單發即永久 failed
+# ——那是完成率最大的失敗桶（見完成率診斷）。但每次重試燒一整場 1–4h session，故上限刻意
+# 壓低於閘門，避免對真的不可收斂任務空耗額度。達上限才標 failed（note 仍含「討論未達完成」）。
+AUTOPILOT_DISCUSSION_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_DISCUSSION_MAX_ATTEMPTS", "2"))
 # 額度感知節奏（quota gate）：主迴圈取任務前先查 provider 額度快照（provider_quota.snapshot
 # ＋ gate()），全部 provider 受限（未就緒/查詢異常/用量達門檻）時睡到最早重置再重查，取代
 # 「額度耗盡仍空轉把任務燒成 failed」。GATE=0 可關閉（維持舊行為）；MAX_SLEEP 為單次睡眠
