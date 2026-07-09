@@ -784,6 +784,12 @@ AUTOPILOT_NORTH_STAR = os.getenv(
 # 單一任務客觀閘門（lint/collect/test/merge）失敗時，重試同一任務的最大嘗試次數。
 # 達上限才標 failed；避免每次失敗就 spawn 一個措辭近似的「修復X」新任務造成 backlog 暴增。
 AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3"))
+# 「討論未達完成且不可出貨」時重試同一任務的最大嘗試次數（預設 2，刻意 < 客觀閘門的 3）。
+# 討論未收斂常是暫時性的（turn timeout 讓 QA 文字缺通過字樣、provider 抖動、單一 wave
+# flaky、critic 一時否決；LLM 非決定性，重跑常會過），值得有限次重試而非單發即永久 failed
+# ——那是完成率最大的失敗桶（見完成率診斷）。但每次重試燒一整場 1–4h session，故上限刻意
+# 壓低於閘門，避免對真的不可收斂任務空耗額度。達上限才標 failed（note 仍含「討論未達完成」）。
+AUTOPILOT_DISCUSSION_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_DISCUSSION_MAX_ATTEMPTS", "2"))
 # 額度感知節奏（quota gate）：主迴圈取任務前先查 provider 額度快照（provider_quota.snapshot
 # ＋ gate()），全部 provider 受限（未就緒/查詢異常/用量達門檻）時睡到最早重置再重查，取代
 # 「額度耗盡仍空轉把任務燒成 failed」。GATE=0 可關閉（維持舊行為）；MAX_SLEEP 為單次睡眠
@@ -862,10 +868,13 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 #   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
 #   0 = 停用（還原成無狀態評估）。
 AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
-# LINT_AUTOFORMAT：lint 閘門遇 `ruff format --check` 失敗時，先在同一工作區 `ruff format`
-#   寫回再重驗一次，重驗綠即視同通過（純格式漂移是機器可修的確定性問題，不值得把整場
-#   1-2 小時的討論退回重試；見任務 #249 連續三輪卡格式牆）。重驗仍紅、或 `ruff check`
-#   （語意 lint）失敗，維持原退回行為。預設開啟；設 0 恢復舊行為（format 一紅即退）。
+# LINT_AUTOFORMAT：lint 閘門遇「機器可修項」失敗時先自動修再重驗，重驗綠即視同通過
+#   （機器可確定性修復的問題不值得把整場 1-2 小時的討論退回重試；見任務 #249 卡格式牆、
+#   #496/#364/#367 卡 import 排序）。涵蓋兩類：
+#   - `ruff format --check` 紅 → `ruff format` 寫回重驗（純排版漂移）。
+#   - `ruff check` 紅 → `ruff check --fix`（僅 safe 修正，如 I001 import 排序、F401 未用
+#     import）寫回重驗；E402 等非 safe-fixable 規則修不掉、照舊退回。
+#   任一重驗仍紅維持原退回行為。預設開啟；設 0 恢復舊行為（任一 ruff 紅即退、絕不寫回）。
 LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
 
 # AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用詞集 Jaccard 相似度（autopilot._token_set_similarity，
