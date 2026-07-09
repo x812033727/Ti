@@ -465,7 +465,7 @@ async def _ensure_repo(repo: str, base: str) -> str:
     assert_repo_allowed(repo)
 
     headers = _headers()
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
         r = await client.get(f"https://api.github.com/repos/{repo}", headers=headers)
         if r.status_code == 200:
             # 既有 repo：只有已知發佈目標（AUTOPILOT_REPO／PUBLISH_REPO）可推。
@@ -505,7 +505,7 @@ async def _open_pr(payload: dict) -> tuple[bool, str]:
     import httpx
 
     headers = _headers()
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
         r = await client.post(_api("/pulls"), json=payload, headers=headers)
     if r.status_code in (200, 201):
         return True, r.json().get("html_url", "")
