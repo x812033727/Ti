@@ -774,14 +774,16 @@ if publish_repo and _repo_key(publish_repo) != repo_key:
 
 ### 唯一最終報告
 - 路徑：`/opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-28933251516.authority-report.md`
-- 報告 sha256（黃金比對值）：`cd8df729c29b70f5a91bcc4c9c6e5e99c349b11f078cc2d478c3e8646b41ddaf`
-- 生成腳本：`/opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/build_authority_report_28933251516.py`
+- 報告 sha256（黃金比對值，完整檔案含 sha 欄位）：`1b3da93c04f65b50c28080e27e45e4a2e0a486ed48b588b894a7b451df6d0857`
+- 報告 body sha256（嵌入 ## 本報告 sha256 欄位）：`92d439466aaf0eff0d40dca8ed6520f9bd42ed81fbf61876ffd9ad076bf349b8`
+- 生成腳本（Task #4 PM 指定入口）：`/opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/build_authority_report_28933251516.py`
 
 ### PM 驗算步驟
 ```bash
 python3 /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/build_authority_report_28933251516.py
+# stdout report_sha256 應為：92d439466aaf0eff0d40dca8ed6520f9bd42ed81fbf61876ffd9ad076bf349b8
 sha256sum /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-28933251516.authority-report.md
-# 輸出需為：cd8df729c29b70f5a91bcc4c9c6e5e99c349b11f078cc2d478c3e8646b41ddaf
+# 輸出需為：1b3da93c04f65b50c28080e27e45e4a2e0a486ed48b588b894a7b451df6d0857
 ```
 
 ### 報告核心內容摘要
