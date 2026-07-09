@@ -85,3 +85,4 @@ projects/
 tmp
 venv/
 workspaces/
+.ci-evidence/
