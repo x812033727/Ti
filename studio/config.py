@@ -868,10 +868,13 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 #   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
 #   0 = 停用（還原成無狀態評估）。
 AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
-# LINT_AUTOFORMAT：lint 閘門遇 `ruff format --check` 失敗時，先在同一工作區 `ruff format`
-#   寫回再重驗一次，重驗綠即視同通過（純格式漂移是機器可修的確定性問題，不值得把整場
-#   1-2 小時的討論退回重試；見任務 #249 連續三輪卡格式牆）。重驗仍紅、或 `ruff check`
-#   （語意 lint）失敗，維持原退回行為。預設開啟；設 0 恢復舊行為（format 一紅即退）。
+# LINT_AUTOFORMAT：lint 閘門遇「機器可修項」失敗時先自動修再重驗，重驗綠即視同通過
+#   （機器可確定性修復的問題不值得把整場 1-2 小時的討論退回重試；見任務 #249 卡格式牆、
+#   #496/#364/#367 卡 import 排序）。涵蓋兩類：
+#   - `ruff format --check` 紅 → `ruff format` 寫回重驗（純排版漂移）。
+#   - `ruff check` 紅 → `ruff check --fix`（僅 safe 修正，如 I001 import 排序、F401 未用
+#     import）寫回重驗；E402 等非 safe-fixable 規則修不掉、照舊退回。
+#   任一重驗仍紅維持原退回行為。預設開啟；設 0 恢復舊行為（任一 ruff 紅即退、絕不寫回）。
 LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
 
 # AUTOPILOT_DEDUP_RATIO：自我評估「提案進場」前，用詞集 Jaccard 相似度（autopilot._token_set_similarity，
