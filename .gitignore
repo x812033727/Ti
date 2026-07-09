@@ -51,6 +51,7 @@
 .pytest_cache/
 .qa-tmp/
 .qa-tmp-nopath/
+.tmp/
 .qa-venv/
 .qa_venv/
 .run/
