@@ -769,3 +769,27 @@ if publish_repo and _repo_key(publish_repo) != repo_key:
 - ⚠️ 重要校正（第2輪 critic 退回後定案）：驗收標準點名的「強化提案去重」vs「改善去重邏輯」僅共享「去重」、其餘字無交集，Jaccard **0.125 < 0.75，不在相似層範圍**（token 逐字法對「無共享詞同義改寫」的架構已知取捨，由第二道子系統廣度防線兜底）。以 `test_helper_known_limitation_no_shared_word_rewrite` 誠實釘住此邊界。
 - 代表性黑樣本改用**非退化換詞改寫**：done=「改善提案去重的相似度比對邏輯」、黑=「調整提案去重的相似度比對邏輯」（改善→調整，換詞非搬字序、非同義詞收斂），Jaccard≈0.786 ∈ [0.75,1.0)，被擋。避開先前「去重邏輯改善」Jaccard=1.0 的語序重排退化案例（critic 指出退化只證最弱情形）。測試已斷言 `ratio ≤ sim < 1.0` 鎖住非退化性。
 - 走離線假專家、不打外部 API；`pytest -k "dedup or discover or done"` 168 passed、ruff 全綠。
+
+## CI 蒐證任務 #4 完成：彙整單一權威報告（run 28933251516 / autopilot/task-277）
+
+### 唯一最終報告
+- 路徑：`/opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-28933251516.authority-report.md`
+- 報告自身完整性 hash 不寫入報告本體，避免自我指涉；唯一比對來源為 sidecar：`/opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-28933251516.authority-report.md.sha256`
+- 生成腳本：`/opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/build_authority_report_28933251516.py`
+
+### PM 驗算步驟
+```bash
+python3 /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/build_authority_report_28933251516.py
+sha256sum -c /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-28933251516.authority-report.md.sha256
+```
+
+### 報告核心內容摘要
+- **run id**：`28933251516`，分支 `autopilot/task-277`，時間 `2026-07-08T09:44:48Z`
+- **失敗測試**（唯一）：`tests/test_qa_task2_retry_doc_retained.py::test_retry_doc_pytest_contract_passes_with_expected_count`
+- **根因**：`.venv/bin/python` 在 `/home/runner/work/Ti/Ti/.venv/bin/python` 不存在（`python.exists()` = False）
+- 兩個 python 版本（3.11 / 3.12）均失敗，`lint` job 成功
+- log sha256：`ddad1c874602e8730cb15fa7e6c5d9b5be0c6f404dde8936fa891fdfa2121663`（9817 行）
+- 三證交叉行號：FAILED 行 5423（3.11）/ 9794（3.12）；摘要行 5427 / 9798；時間戳 `2026-07-08T09:47:26Z` / `09:47:36Z`
+
+### 應忽略殘檔
+主 worktree（`/opt/ti-autopilot-work/.ci-evidence/`）所有中間產物均為輔助，以 lane 報告為唯一最終依據。
