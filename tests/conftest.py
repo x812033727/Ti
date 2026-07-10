@@ -60,6 +60,11 @@ os.environ["TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL"] = "0"
 # 要測 lane 一律 monkeypatch.setattr(config, "AUTOPILOT_INVESTIGATION_LANE", True) 顯式開
 # ＋ stub Expert（見 test_investigation_lane.py）。
 os.environ["TI_AUTOPILOT_INVESTIGATION_LANE"] = "0"
+# 原生 auto-merge 與 open PR reconciler（autopilot）對整個測試樹關死：兩者會打真實
+# gh/GitHub API（pr merge --auto、pr view/list/close、_get_pr_status 的 httpx）——未 stub
+# 的舊路徑測試會被快窗輪詢拖死、reconciler 更可能動到真實 repo 的 open PR。
+# 要測它們一律 monkeypatch.setattr(config, "AUTOPILOT_AUTO_MERGE", True) 顯式開＋全面 stub。
+os.environ["TI_AUTOPILOT_AUTO_MERGE"] = "0"
 
 
 class ScopeRepo:
