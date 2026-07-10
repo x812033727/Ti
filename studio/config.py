@@ -1079,6 +1079,16 @@ def effort_for(role_key: str) -> str | None:
     return v if v in VALID_EFFORT else None
 
 
+# 專家閒置回收(效能強化 B1,僅 Claude 路徑):每個常駐專家=一個 SDK 子行程(RSS
+# 270-500MB),lane×角色疊加即 6-12GB 峰值。閒置超過此秒數的專家由 session reaper 斷線
+# 回收(client 重建,下次 speak 自動重連;對話脈絡歸零,由 NOTES/reflexion 補償)。
+# **預設 0=完全關閉(零行為改變)**;生產建議 900。EXEMPT=豁免角色 csv(pm 脈絡最值錢)。
+EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
+EXPERT_IDLE_STOP_EXEMPT = frozenset(
+    r.strip().lower() for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",") if r.strip()
+)
+
+
 # AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
 #   chamber：價值閘擋「沒價值的」、本上限擋「同源衍生太多的」，互補封住 discovered 迴圈灌水（修法②）。
@@ -1282,6 +1292,7 @@ def reload() -> None:
     global EXPERT_SKILLS, EXPERT_SKILLS_ROLES
     global CONVENTIONS_CARD
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
+    global EXPERT_IDLE_STOP_S, EXPERT_IDLE_STOP_EXEMPT
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1487,6 +1498,12 @@ def reload() -> None:
     CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
     EXPERT_EFFORT = os.getenv("TI_EXPERT_EFFORT", "").strip().lower()
     EXPERT_EFFORT_MAP = _parse_effort_map(os.getenv("TI_EXPERT_EFFORT_MAP", ""))
+    EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
+    EXPERT_IDLE_STOP_EXEMPT = frozenset(
+        r.strip().lower()
+        for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",")
+        if r.strip()
+    )
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
         "0",
         "false",
