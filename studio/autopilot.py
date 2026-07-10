@@ -2052,7 +2052,7 @@ def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
     這是完成率最大的失敗桶（見完成率診斷）。舊行為是單發即永久 failed，但討論未收斂常
     是暫時性的（turn timeout 讓 QA 文字缺通過字樣、provider 抖動、單一 wave flaky、critic
     一時否決；LLM 非決定性，重跑常會過）——值得重試。上限 AUTOPILOT_DISCUSSION_MAX_ATTEMPTS
-    （預設 2，刻意 < 客觀閘門的 3，因每次重試燒一整場 session）。計數慣例與 _handle_gate_failure
+    （預設 3，第五輪 C1 與客觀閘門對齊——cap=2 實測擋死 48% 的 failed）。計數慣例與 _handle_gate_failure
     一致（讀同一 task["attempts"]、attempts+1 判斷）。note 兩路徑皆保留「討論未達完成」子串，
     讓既有分診（非 infra → 14 天 park）與看板/診斷分類無縫續接。
     """
@@ -2516,11 +2516,13 @@ def _maybe_triage_failed() -> None:
     except Exception:  # noqa: BLE001 — 分診只是自癒輔助，失敗不得影響主迴圈
         log.exception("failed 自動分診失敗（忽略，不影響主迴圈）")
         return
-    if stats.get("retried") or stats.get("parked"):
+    if stats.get("retried") or stats.get("parked") or stats.get("revived"):
         log.info(
-            "failed 自動分診：%d 筆基礎設施型失敗退回 pending，%d 筆陳年失敗歸檔 parked",
+            "failed 自動分診：%d 筆基礎設施型失敗退回 pending，%d 筆陳年失敗歸檔 parked，"
+            "%d 筆討論未收斂冷卻復活",
             stats.get("retried", 0),
             stats.get("parked", 0),
+            stats.get("revived", 0),
         )
 
 
@@ -2751,8 +2753,21 @@ async def _reconcile_merging_tasks(repo: str) -> None:
                 await _run(
                     [*_GH, "pr", "close", str(pr), "-R", repo, "--delete-branch"], timeout=120
                 )
-                _handle_gate_failure(
-                    task, "merge", f"PR #{pr} 落後 main 追趕 {rounds} 輪仍未合併，關閉重排"
+                # 不走 _handle_gate_failure：BEHIND 耗盡是「main 動太快」而非任務缺陷
+                # （成品本身沒問題），計 attempts 會讓多 PR 排隊日的無辜任務被推向永久
+                # failed（第五輪 C1 誤傷修正）。退回 pending 重排、attempts 原封不動。
+                backlog.set_status(
+                    tid,
+                    "pending",
+                    behind_rounds=0,
+                    note=f"PR #{pr} 落後 main 追趕 {rounds} 輪仍未合併（main 高頻前進），"
+                    "關閉退回重排（不計 attempts）",
+                )
+                log.info(
+                    "任務 #%s 的 PR #%s BEHIND 追趕 %d 輪耗盡，關閉退回 pending（不計 attempts）",
+                    tid,
+                    pr,
+                    rounds,
                 )
                 continue
             if await publisher._update_branch(int(pr)):

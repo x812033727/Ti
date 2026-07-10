@@ -472,6 +472,12 @@ TRIAGE_RETRY_MAX = 10
 # 非基礎設施型 failed 滿此秒數仍未被處理即歸檔 parked（14 天）。
 TRIAGE_PARK_AFTER_S = 14 * 86400
 
+# 「討論未達完成」用罄 failed 的冷卻復活（第五輪 C1）：failed 滿此秒數且從未復活過
+# （discussion_revives 欄=0）→ 單次退回 pending 再給一輪機會。此桶佔 failed 48% 且
+# LLM 非決定性、換日重跑常會過；復活次數記在任務欄位而非 note（note 每次 set_status
+# 會被覆寫，用 note 標記會導致每 24h 無限復活）。
+TRIAGE_REVIVE_AFTER_S = 24 * 3600
+
 
 def triage_failed(*, state_dir: Path | None = None) -> dict:
     """failed 任務的確定性分診（純規則、無 LLM），回傳 {"retried": n, "parked": m}。
@@ -481,11 +487,15 @@ def triage_failed(*, state_dir: Path | None = None) -> dict:
          洗白成 parked。
       2. failed 且 note 命中 INFRA_FAILURE_RE 且 attempts < AUTOPILOT_TASK_MAX_ATTEMPTS
          → 重置 attempts、退回 pending 重試；單次至多 TRIAGE_RETRY_MAX 筆（取最近更新者）。
-      3. 其餘 failed（含「連續 N 次未過，放棄」「討論未達完成」等任務本身缺陷）滿
+      2b. failed 且 note 含「討論未達完成」且從未復活（discussion_revives=0）、冷卻滿
+         TRIAGE_REVIVE_AFTER_S（24h）且未滿 14 天 → 單次退回 pending 復活（attempts
+         歸零、discussion_revives+1 記在任務欄位防無限循環）；與規則 2 共用
+         TRIAGE_RETRY_MAX 配額。復活後再失敗 → 不再復活，走規則 3 的 14 天歸檔。
+      3. 其餘 failed（含「連續 N 次未過，放棄」等任務本身缺陷）滿
          TRIAGE_PARK_AFTER_S（14 天）→ 歸檔 parked，不再佔據失敗清單；未滿則維持
          failed 等待人工或後續分診。
     """
-    retried = parked = 0
+    retried = parked = revived = 0
     now = time.time()
     with _locked(state_dir):
         data = _load(state_dir, mutable=True)
@@ -505,6 +515,18 @@ def triage_failed(*, state_dir: Path | None = None) -> dict:
         ]
         infra.sort(key=lambda t: t.get("updated_at", 0), reverse=True)
         retry_ids = {t["id"] for t in infra[:TRIAGE_RETRY_MAX]}
+        discussion = [
+            t
+            for t in failed
+            if t["id"] not in retry_ids
+            and "討論未達完成" in (t.get("note") or "")
+            and not int(t.get("discussion_revives") or 0)
+            # 冷卻滿 24h 才復活;已滿 14 天的陳年失敗直接走規則 3 歸檔(不再折騰)。
+            and TRIAGE_REVIVE_AFTER_S <= now - float(t.get("updated_at") or 0) < TRIAGE_PARK_AFTER_S
+        ]
+        discussion.sort(key=lambda t: t.get("updated_at", 0), reverse=True)
+        revive_budget = max(0, TRIAGE_RETRY_MAX - len(retry_ids))
+        revive_ids = {t["id"] for t in discussion[:revive_budget]}
         for t in failed:
             if t["id"] in retry_ids:
                 t["status"] = "pending"
@@ -512,10 +534,17 @@ def triage_failed(*, state_dir: Path | None = None) -> dict:
                 t["updated_at"] = now
                 t["note"] = f"[triage] 基礎設施型失敗，重置重試；{(t.get('note') or '')[:300]}"
                 retried += 1
+            elif t["id"] in revive_ids:
+                t["status"] = "pending"
+                t["attempts"] = 0
+                t["discussion_revives"] = int(t.get("discussion_revives") or 0) + 1
+                t["updated_at"] = now
+                t["note"] = f"[triage] 討論未收斂冷卻復活（單次）；{(t.get('note') or '')[:300]}"
+                revived += 1
             elif now - float(t.get("updated_at") or 0) >= TRIAGE_PARK_AFTER_S:
                 t["status"] = "parked"
                 t["updated_at"] = now
                 parked += 1
-        if retried or parked:
+        if retried or parked or revived:
             _save(data, state_dir)
-    return {"retried": retried, "parked": parked}
+    return {"retried": retried, "parked": parked, "revived": revived}

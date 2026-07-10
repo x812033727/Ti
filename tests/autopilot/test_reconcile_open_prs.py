@@ -149,13 +149,18 @@ async def test_behind_triggers_update_branch_and_stays_merging(monkeypatch, stat
 @pytest.mark.asyncio
 async def test_behind_over_retry_cap_closes_and_requeues(monkeypatch, state):
     t = _merging_task(behind_rounds=2)  # == MERGE_BEHIND_RETRIES
+    before_attempts = int(_load(t["id"]).get("attempts") or 0)
     spy, updates, _ = _install(monkeypatch, {"pr view 42": _view_json(merge_state="BEHIND")})
 
     await autopilot._maybe_reconcile_open_prs()
 
     assert not updates, "達輪數上限不得再追"
     assert spy.called("pr close")
-    assert _load(t["id"])["status"] == "pending"
+    cur = _load(t["id"])
+    assert cur["status"] == "pending"
+    # 第五輪 C1 誤傷修正:BEHIND 耗盡=main 動太快非任務缺陷,不得計 attempts
+    assert int(cur.get("attempts") or 0) == before_attempts, "BEHIND 耗盡不計 attempts"
+    assert int(cur.get("behind_rounds") or 0) == 0, "重排前歸零追趕輪數"
 
 
 @pytest.mark.asyncio

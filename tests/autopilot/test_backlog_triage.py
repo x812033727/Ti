@@ -62,7 +62,7 @@ def _get(task_id: int) -> dict:
 def test_infra_failures_are_retried(state, note):
     t = _fail("基礎設施型失敗", note)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 1, "parked": 0}
+    assert stats == {"retried": 1, "parked": 0, "revived": 0}
     cur = _get(t["id"])
     assert cur["status"] == "pending"
     assert cur["attempts"] == 0  # attempts 重置
@@ -80,7 +80,8 @@ def test_infra_failures_are_retried(state, note):
 def test_non_infra_failures_are_not_retried(state, note):
     t = _fail("任務本身缺陷", note)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 0, "parked": 0}  # 未滿 14 天 → 維持 failed 不歸檔
+    # 未滿 14 天 → 不歸檔；「討論未達完成」未滿 24h 冷卻 → 也不復活
+    assert stats == {"retried": 0, "parked": 0, "revived": 0}
     assert _get(t["id"])["status"] == "failed"
 
 
@@ -112,7 +113,7 @@ def test_retry_capped_at_ten_most_recent(state):
 def test_stale_non_infra_failure_is_parked(state):
     t = _fail("放棄的任務", "[test] 連續 3 次未過，放棄", attempts=3, age_s=15 * 86400)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 0, "parked": 1}
+    assert stats == {"retried": 0, "parked": 1, "revived": 0}
     assert _get(t["id"])["status"] == "parked"
 
 
@@ -123,8 +124,8 @@ def test_stale_discussion_incomplete_is_parked(state):
 
 
 def test_fresh_failure_stays_failed(state):
-    t = _fail("剛失敗", "討論未達完成", age_s=86400)  # 1 天 < 14 天
-    assert backlog.triage_failed() == {"retried": 0, "parked": 0}
+    t = _fail("剛失敗", "討論未達完成", age_s=3600)  # 1 小時 < 24h 冷卻 < 14 天
+    assert backlog.triage_failed() == {"retried": 0, "parked": 0, "revived": 0}
     assert _get(t["id"])["status"] == "failed"
 
 
@@ -132,7 +133,7 @@ def test_stale_infra_failure_over_attempts_is_parked(state):
     """基礎設施 note 但 attempts 達上限：不重試；滿 14 天則走歸檔分支。"""
     t = _fail("重試耗盡的逾時", "(逾時 600s)", attempts=3, age_s=20 * 86400)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 0, "parked": 1}
+    assert stats == {"retried": 0, "parked": 1, "revived": 0}
     assert _get(t["id"])["status"] == "parked"
 
 
@@ -172,4 +173,50 @@ def test_counts_includes_parked_key(state):
 
 
 def test_triage_empty_backlog_is_noop(state):
-    assert backlog.triage_failed() == {"retried": 0, "parked": 0}
+    assert backlog.triage_failed() == {"retried": 0, "parked": 0, "revived": 0}
+
+
+# --- 規則 2b：討論未收斂冷卻復活（第五輪 C1）--------------------------------
+
+
+def test_discussion_incomplete_revived_once_after_cooldown(state):
+    t = _fail("討論沒完成", "討論未達完成（連續 3 次未收斂，放棄）", attempts=3, age_s=2 * 86400)
+    stats = backlog.triage_failed()
+    assert stats == {"retried": 0, "parked": 0, "revived": 1}
+    cur = _get(t["id"])
+    assert cur["status"] == "pending"
+    assert cur["attempts"] == 0, "復活附帶 attempts 歸零，才有完整一輪重試空間"
+    assert cur["discussion_revives"] == 1
+    assert "冷卻復活" in cur["note"]
+
+
+def test_discussion_incomplete_not_revived_twice(state):
+    """復活過一次（discussion_revives=1）再失敗 → 不再復活，等 14 天歸檔。"""
+    t = _fail("又沒收斂", "討論未達完成（連續 3 次未收斂，放棄）", age_s=2 * 86400)
+    _patch_task(t["id"], discussion_revives=1)
+    assert backlog.triage_failed()["revived"] == 0
+    assert _get(t["id"])["status"] == "failed"
+
+
+def test_stale_discussion_incomplete_parks_not_revives(state):
+    """已滿 14 天的陳年討論失敗直接歸檔，不再折騰復活。"""
+    t = _fail("陳年討論失敗", "討論未達完成", age_s=15 * 86400)
+    stats = backlog.triage_failed()
+    assert stats == {"retried": 0, "parked": 1, "revived": 0}
+    assert _get(t["id"])["status"] == "parked"
+
+
+def test_c1_config_defaults():
+    """第五輪 C1 預設值守門：討論重試與閘門對齊、BEHIND 追趕輪放寬（conftest 已清 TI_* env）。"""
+    src_defaults = (config.AUTOPILOT_DISCUSSION_MAX_ATTEMPTS, config.MERGE_BEHIND_RETRIES)
+    assert src_defaults == (3, 4)
+
+
+def test_revive_shares_retry_budget(state):
+    """復活與 infra 重試共用 TRIAGE_RETRY_MAX 配額：infra 佔滿即不復活。"""
+    for i in range(10):
+        _fail(f"逾時 {i}", "(逾時 600s)")
+    t = _fail("討論沒完成", "討論未達完成", age_s=2 * 86400)
+    stats = backlog.triage_failed()
+    assert stats["retried"] == 10 and stats["revived"] == 0
+    assert _get(t["id"])["status"] == "failed", "配額用罄留待下輪"
