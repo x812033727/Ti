@@ -1003,6 +1003,15 @@ AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1")
 # 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
 # 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
 AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+# 調查旁路併行(吞吐強化 δ):主 worker 跑完整管線時,背景線併行消化調查分流任務
+# (live 量測 pending 37% 符合、每筆 ~89s vs 完整管線 ~51min)。單線+與主迴圈共用
+# pause/quota 閘門+原子認領+獨立唯讀 clone。**預設 0 灰度**,穩定後翻 1。
+AUTOPILOT_INVESTIGATION_PARALLEL = os.getenv("TI_AUTOPILOT_INVESTIGATION_PARALLEL", "0") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 # AUTOPILOT_INVESTIGATION_REFUTE：調查結論的對抗性驗證（refuter）。單專家調查的已知風險是
 #   「自說自話」——結論寫得頭頭是道、證據卻對不上（reward hacking），而結論會進教訓庫污染
 #   長期記憶。開啟時（預設）結論標 done 前多一次廉價 MODEL_FAST 呼叫（providers.complete_once，
@@ -1289,6 +1298,7 @@ def reload() -> None:
     global AUTOPILOT_AUTO_MERGE, AUTOPILOT_MERGE_FAST_WAIT, AUTOPILOT_MERGE_MAX_AGE
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
+    global AUTOPILOT_INVESTIGATION_PARALLEL
     global AUTOPILOT_INVESTIGATION_REFUTE
     global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
 
@@ -1484,6 +1494,9 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+    AUTOPILOT_INVESTIGATION_PARALLEL = os.getenv(
+        "TI_AUTOPILOT_INVESTIGATION_PARALLEL", "0"
+    ) not in ("0", "false", "False", "")
     AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", "1") not in (
         "0",
         "false",

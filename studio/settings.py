@@ -588,6 +588,14 @@ FIELDS: tuple[Field, ...] = (
         group="Autopilot",
     ),
     Field(
+        "TI_AUTOPILOT_INVESTIGATION_PARALLEL",
+        "調查旁路併行（背景線併行消化調查任務;0=關,預設灰度）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="Autopilot",
+    ),
+    Field(
         "TI_AUTOPILOT_INVESTIGATION_TIMEOUT",
         "調查管線單次專家呼叫逾時（秒;空=1200）",
         placeholder="1200",
