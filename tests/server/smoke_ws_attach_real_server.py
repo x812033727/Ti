@@ -42,7 +42,7 @@ async def main(port: int) -> int:
     sid = ""
 
     # 1) 開場，收前幾筆後硬斷線（不送 stop——斷線不可等於停止）
-    ws1 = await websockets.connect(url, max_size=2**22)
+    ws1 = await websockets.connect(url, max_size=2**22, proxy=None)
     await ws1.send(json.dumps({"requirement": REQUIREMENT}))
     for _ in range(6):
         ev = json.loads(await asyncio.wait_for(ws1.recv(), timeout=60))
@@ -58,7 +58,7 @@ async def main(port: int) -> int:
     got2: list[dict] = []
     saw_attach_ok = False
     interjected = False
-    async with websockets.connect(url, max_size=2**22) as ws2:
+    async with websockets.connect(url, max_size=2**22, proxy=None) as ws2:
         await ws2.send(json.dumps({"attach": sid, "cursor": cursor}))
         for _ in range(3000):
             ev = json.loads(await asyncio.wait_for(ws2.recv(), timeout=60))

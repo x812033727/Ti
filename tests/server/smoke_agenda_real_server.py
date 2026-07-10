@@ -34,7 +34,7 @@ def check(cond: bool, label: str) -> None:
 async def main(port: int) -> int:
     base = f"http://127.0.0.1:{port}"
     evs: list[dict] = []
-    async with websockets.connect(f"ws://127.0.0.1:{port}/ws", max_size=2**22) as ws:
+    async with websockets.connect(f"ws://127.0.0.1:{port}/ws", max_size=2**22, proxy=None) as ws:
         await ws.send(json.dumps({"requirement": REQUIREMENT}))
         for _ in range(800):
             ev = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))

@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _real_server_client import assert_smoke_client_ok
 
 pytest.importorskip("websockets")
 pytest.importorskip("httpx")
@@ -93,9 +94,10 @@ def test_ws_attach_real_server(tmp_path):
             text=True,
             timeout=180,
         )
-        assert client.returncode == 0, (
-            f"WS 重掛真實 server 冒煙 FAIL（rc={client.returncode}）：\n"
-            f"{client.stdout}\n{client.stderr}\n--- server log ---\n{log.read_text()[-2000:]}"
+        assert_smoke_client_ok(
+            client,
+            "WS 重掛真實 server 冒煙",
+            log.read_text(encoding="utf-8", errors="replace")[-2000:],
         )
         assert "SMOKE PASS" in client.stdout
     finally:
