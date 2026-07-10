@@ -2600,14 +2600,13 @@ async def _maybe_boundary_redeploy() -> None:
         log.exception("任務邊界部署檢查失敗（忽略，不影響主迴圈）")
 
 
-# open PR reconciler 的節流（行程記憶體；重啟歸零＝重啟後第一輪就跑——正合「重啟前可能
-# 有任務卡在 merging」的場景，且跑在 next_pending 之前，堵住「PR 已合併但任務被退回
-# pending」的重複開工窗）。
-_RECONCILE_INTERVAL_S = 900.0
-# 節流起點＝行程啟動時刻：首輪 reconcile 延後一個完整間隔——它會打真實 gh API（view/list/
-# close/merge），短命行程（單元測試等）絕不可意外觸發（tests/conftest.py 另設
-# TI_AUTOPILOT_AUTO_MERGE=0 關死，雙保險）。代價僅是重啟後 merging 任務多等最多 15 分鐘。
-_last_reconcile_at = time.time()
+# open PR reconciler 的節流（行程記憶體）。間隔由 config.AUTOPILOT_RECONCILE_INTERVAL_S
+# 控制（預設 300，0=停用）；起點 0.0＝行程啟動後第一次檢查就真的跑。2026-07-11 事故教訓：
+# 起點原為 time.time()（意在防短命測試行程誤打真 gh），但重啟/execv 都把節流重新起算，
+# 疊上「只在任務邊界跑」——邊界 execv 搶在 reconcile 之前重載、新行程又被節流擋掉、下一
+# 任務跑數小時無邊界 → reconciler 整晚失能，3 筆 merging 卡 2-8 小時（PR 其實早已合併）。
+# 測試安全不靠這裡：tests/conftest.py 設 TI_AUTOPILOT_AUTO_MERGE=0 把入口關死。
+_last_reconcile_at = 0.0
 
 
 def _reconcile_gh_json(out: str) -> dict | list | None:
@@ -2641,14 +2640,33 @@ async def _maybe_reconcile_open_prs() -> None:
     global _last_reconcile_at
     if config.AUTOPILOT_DRYRUN or not config.AUTOPILOT_AUTO_MERGE:
         return
+    if config.AUTOPILOT_RECONCILE_INTERVAL_S <= 0:
+        return
     now = time.time()
-    if now - _last_reconcile_at < _RECONCILE_INTERVAL_S:
+    if now - _last_reconcile_at < config.AUTOPILOT_RECONCILE_INTERVAL_S:
         return
     _last_reconcile_at = now
     try:
         await _reconcile_open_prs()
     except Exception:  # noqa: BLE001 — reconciler 只是收斂輔助，失敗不得影響主迴圈
         log.exception("open PR reconcile 失敗（忽略，不影響主迴圈）")
+
+
+async def _reconciler_loop() -> None:
+    """open PR reconciler 常駐背景線（第五輪 P1）：收斂不再依賴任務邊界。
+
+    任務邊界的呼叫保留（同一節流，雙入口不重複跑）；本線每 60s 醒來讓
+    _maybe_reconcile_open_prs 依間隔自行決定——任務跑數小時期間，merging 任務照樣
+    被收斂（MERGED→done、BEHIND→update-branch），不再等到下個邊界（實測 2-8 小時）。
+    """
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await _maybe_reconcile_open_prs()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 背景線自身失敗不得影響主迴圈
+            log.exception("reconciler 背景線檢查失敗（忽略，下輪再試）")
 
 
 async def _reconcile_open_prs() -> None:
@@ -2665,7 +2683,12 @@ async def _reconcile_open_prs() -> None:
 
 
 async def _reconcile_merging_tasks(repo: str) -> None:
-    for task in backlog.list_tasks("merging"):
+    merging = backlog.list_tasks("merging")
+    if merging:
+        # pass 級可觀測：沒有這行時「reconciler 有沒有跑」在 journal 完全不可分辨
+        # （每筆動作各有 INFO，但全部跳過＝零輸出），2026-07-11 靜默失能即因此難診斷。
+        log.info("reconcile：核對 %d 筆 merging 任務", len(merging))
+    for task in merging:
         tid = task["id"]
         pr = task.get("pr")
         if not pr:
@@ -2687,7 +2710,9 @@ async def _reconcile_merging_tasks(repo: str) -> None:
         )
         data = _reconcile_gh_json(out) if rc == 0 else None
         if not isinstance(data, dict):
-            log.debug("reconcile：查 PR #%s 失敗（跳過本輪）：%s", pr, out[-200:])
+            # warning 而非 debug：gh 全掛時整個 pass 靜默失能曾以「零 log 零收斂」呈現
+            # （2026-07-11），生產 journal 必須看得見。
+            log.warning("reconcile：查 PR #%s 失敗（跳過本輪）：%s", pr, out[-200:])
             continue
         state = str(data.get("state") or "").upper()
         if state == "MERGED":
@@ -3539,10 +3564,12 @@ async def main() -> None:
         monitor = asyncio.create_task(_loop_monitor())
         sideline = asyncio.create_task(_investigation_sideline())
         notifier = asyncio.create_task(_watchdog_notifier())
+        reconciler = asyncio.create_task(_reconciler_loop())
     except AttributeError:
         monitor = None
         sideline = None
         notifier = None
+        reconciler = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -3555,7 +3582,7 @@ async def main() -> None:
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
     finally:
-        for aux in (monitor, sideline, notifier):
+        for aux in (monitor, sideline, notifier, reconciler):
             if aux is not None:
                 aux.cancel()
                 with contextlib.suppress(BaseException):
