@@ -27,6 +27,11 @@ def test_parse_run_command_unwraps_chained_inline_code_spans():
     assert runner.parse_run_command(text) == "echo A; echo B; echo C"
 
 
+def test_parse_run_command_normalizes_cjk_separated_inline_code_spans():
+    text = "完成\n執行指令: `echo A`、`echo B`、`echo C`"
+    assert runner.parse_run_command(text) == "echo A; echo B; echo C"
+
+
 def test_parse_run_command_keeps_shell_backtick_substitution():
     text = "完成\n執行指令: echo `printf A`"
     assert runner.parse_run_command(text) == "echo `printf A`"
