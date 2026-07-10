@@ -1,8 +1,7 @@
-from pathlib import Path
 import hashlib
 import re
 import subprocess
-
+from pathlib import Path
 
 REPO_ROOT = Path("/opt/ti-autopilot-work")
 ARTIFACT_DIR = REPO_ROOT / ".qa_artifacts" / "task1_retry_doc"
