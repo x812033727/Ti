@@ -37,6 +37,7 @@
       <button id="historyBtn" class="ghost" title="歷史 session">📜 歷史</button>
       <button id="metricsBtn" class="ghost" title="運維指標">📊 指標</button>
       <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
+      <button id="insightsBtn" class="ghost" title="洞察：趨勢/教訓庫/調查結論">💡 洞察</button>
       <span class="toolbar-sep" aria-hidden="true"></span>
       <button id="settingsBtn" class="ghost" title="設定">⚙️ 設定</button>
       <button id="themeBtn" class="ghost" title="主題：跟隨系統" aria-label="主題：跟隨系統">🌗</button>
@@ -223,6 +224,30 @@
   </div>
 
   <!-- 團隊（角色與討論小組管理） -->
+  <div id="insightsPanel" class="drawer glass hidden" role="dialog" aria-label="洞察">
+    <div class="drawer-head">
+      <h2>💡 洞察</h2>
+      <div class="drawer-actions">
+        <button id="insightsClose" class="ghost">✕</button>
+      </div>
+    </div>
+    <div class="insights-tabs team-tabs" role="tablist" aria-label="洞察分頁">
+      <button class="active" data-it="trend" role="tab" aria-selected="true">📊 趨勢</button>
+      <button data-it="lessons" role="tab" aria-selected="false">📚 教訓庫</button>
+      <button data-it="inv" role="tab" aria-selected="false">🔍 調查結論</button>
+    </div>
+    <div class="metrics-body team-body">
+      <div id="insTrend"><div id="insTrendBody"></div></div>
+      <div id="insLessons" class="hidden">
+        <input id="insLessonsSearch" type="text" placeholder="搜尋教訓(內文/需求)…" />
+        <ul id="insLessonsList" class="team-list"></ul>
+      </div>
+      <div id="insInvestigations" class="hidden">
+        <ul id="insInvList" class="team-list"></ul>
+      </div>
+    </div>
+  </div>
+
   <div id="teamPanel" class="drawer glass hidden" role="dialog" aria-label="團隊管理">
     <div class="drawer-head">
       <h2>👥 團隊</h2>
