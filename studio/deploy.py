@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
+import json
 import shutil
 import subprocess
+import time
 
 from . import config, runner
 
@@ -189,3 +191,63 @@ async def rollback(last_good: str) -> tuple[bool, str]:
         return False, msg
     ok, msg = await health_check()
     return ok, (f"回滾到 {last_good[:8]} 後 {msg}")
+
+
+# --- 部署漂移可觀測（完成率第三輪修法二A）----------------------------------
+
+# 模組級 TTL 快取：/api/autopilot 每次 poll 都 fork git 太重；30 秒內共用同一份快照。
+_drift_cache: dict = {"ts": 0.0, "data": None}
+_DRIFT_TTL_S = 30.0
+
+
+async def drift_stats() -> dict:
+    """部署漂移快照：{"disk_head", "origin_head", "behind", "deferred"}，30s TTL 快取。
+
+    純唯讀、不打網路：rev-parse/rev-list 只讀本地 refs，origin/<branch> 的新鮮度靠
+    autodeploy timer 與任務邊界檢查的 fetch 保鮮。behind＝磁碟碼落後 origin 的 commit 數
+    （0＝同步；None＝取不到，如 origin ref 尚不存在）。deferred＝autodeploy「有討論延後」
+    觀測檔（autodeploy-deferred.json，寫入端可後補；缺檔回 None）。任何 git 失敗回空欄
+    位，絕不拋——觀測面不得弄死 API。
+    """
+    now = time.time()
+    if _drift_cache["data"] is not None and now - _drift_cache["ts"] < _DRIFT_TTL_S:
+        return _drift_cache["data"]
+    deploy_dir = str(config.AUTOPILOT_DEPLOY_DIR)
+    branch = config.AUTOPILOT_BRANCH
+    disk = origin = ""
+    behind = None
+    try:
+        # 不用 current_head：它不檢查 rc，git 失敗時會把錯誤文字誤當 head。
+        rc, out = await _run(["git", "rev-parse", "HEAD"], cwd=deploy_dir, timeout=30)
+        if rc == 0:
+            disk = out.strip()
+        rc, out = await _run(["git", "rev-parse", f"origin/{branch}"], cwd=deploy_dir, timeout=30)
+        if rc == 0:
+            origin = out.strip()
+        if disk and origin:
+            rc, cnt = await _run(
+                ["git", "rev-list", "--count", f"HEAD..origin/{branch}"],
+                cwd=deploy_dir,
+                timeout=30,
+            )
+            if rc == 0 and cnt.strip().isdigit():
+                behind = int(cnt.strip())
+    except Exception:  # noqa: BLE001 — 觀測面不得弄死呼叫端
+        pass
+    deferred = None
+    try:
+        raw = (config.AUTOPILOT_STATE_DIR / "autodeploy-deferred.json").read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            deferred = parsed
+    except (OSError, ValueError):
+        deferred = None
+    data = {
+        "disk_head": disk[:12],
+        "origin_head": origin[:12],
+        "behind": behind,
+        "deferred": deferred,
+    }
+    _drift_cache["ts"] = now
+    _drift_cache["data"] = data
+    return data
