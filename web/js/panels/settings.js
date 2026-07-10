@@ -143,6 +143,12 @@ function groupId(name) {
   return "settings-group-" + String(name || "general").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
+// 組級提示:Autopilot 組的旋鈕由 ti-autopilot 行程消費,寫入 .env 後 web 行程 reload 但
+// autopilot 行程不會——需 restart 該服務才生效(挑任務空檔;暫停/恢復與派工模式不受影響)。
+const GROUP_NOTES = {
+  Autopilot: "此組寫入 .env 後需重啟 ti-autopilot 服務才對 autopilot 生效(請挑任務空檔);網頁互動討論不受影響。",
+};
+
 export function createSettingInput(f, row) {
   let input;
   if (f.kind === "select") {
@@ -177,6 +183,11 @@ export function createSettingInput(f, row) {
     }
     input.setAttribute("list", dl.id);
     row.appendChild(dl);
+  } else if (f.kind === "textarea") {
+    input = document.createElement("textarea");
+    input.rows = 3;
+    input.value = f.value || "";
+    input.placeholder = f.placeholder || "";
   } else {
     input = document.createElement("input");
     input.type = f.kind === "password" ? "password" : "text";
@@ -230,6 +241,12 @@ export function renderSettings(fields) {
     h.appendChild(title);
     h.appendChild(count);
     section.appendChild(h);
+    if (GROUP_NOTES[group.name]) {
+      const note = document.createElement("p");
+      note.className = "settings-group-note muted";
+      note.textContent = GROUP_NOTES[group.name];
+      section.appendChild(note);
+    }
     const grid = document.createElement("div");
     grid.className = "settings-grid";
     for (const f of group.fields) {
