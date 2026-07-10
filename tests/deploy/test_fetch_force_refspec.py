@@ -11,6 +11,18 @@ def _force_fetch(branch: str) -> list[str]:
     return ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"]
 
 
+def _assert_force_fetch_seen(calls: list[list[str]], branch: str) -> None:
+    expected = _force_fetch(branch)
+    assert expected in calls, f"missing force fetch argv {expected!r}; captured={calls!r}"
+
+
+def test_old_bare_fetch_black_sample_is_rejected():
+    branch = "deploy/test"
+
+    with pytest.raises(AssertionError):
+        _assert_force_fetch_seen([["git", "fetch", "origin", branch]], branch)
+
+
 @pytest.mark.asyncio
 async def test_autodeploy_fetch_uses_force_refspec(tmp_path, monkeypatch):
     branch = "deploy/test"
@@ -32,7 +44,7 @@ async def test_autodeploy_fetch_uses_force_refspec(tmp_path, monkeypatch):
     monkeypatch.setattr(autodeploy.deploy, "_run", fake_run)
 
     assert await autodeploy.run_once() == 0
-    assert _force_fetch(branch) in calls
+    _assert_force_fetch_seen(calls, branch)
 
 
 @pytest.mark.asyncio
@@ -62,7 +74,7 @@ async def test_redeploy_fetch_uses_force_refspec(tmp_path, monkeypatch):
     ok, _msg = await deploy.redeploy()
 
     assert ok is True
-    assert _force_fetch(branch) in calls
+    _assert_force_fetch_seen(calls, branch)
 
 
 @pytest.mark.asyncio
@@ -91,7 +103,7 @@ async def test_boundary_redeploy_check_fetch_uses_force_refspec(tmp_path, monkey
 
     await autopilot._maybe_boundary_redeploy()
 
-    assert _force_fetch(branch) in calls
+    _assert_force_fetch_seen(calls, branch)
 
 
 async def _async_value(value):
