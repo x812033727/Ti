@@ -4,7 +4,6 @@ import hashlib
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_DIR = ROOT / ".ci-evidence"
 REPORT = EVIDENCE_DIR / "ci-failure-authority-report.md"
@@ -45,7 +44,9 @@ def test_task3_ci_evidence_authority_acceptance_contract() -> None:
     failures: list[str] = []
 
     if not EVIDENCE_DIR.is_dir():
-        raise AssertionError("缺少 .ci-evidence/ 目錄，無法驗收 canonical 報告、原始 log 與 sidecar")
+        raise AssertionError(
+            "缺少 .ci-evidence/ 目錄，無法驗收 canonical 報告、原始 log 與 sidecar"
+        )
 
     entries = sorted(path.name for path in EVIDENCE_DIR.iterdir())
 
@@ -110,8 +111,6 @@ def test_task3_ci_evidence_authority_acceptance_contract() -> None:
     if SIDECAR.is_file():
         sha_result = _run(["sha256sum", "-c", SIDECAR.name], cwd=EVIDENCE_DIR)
         if sha_result.returncode != 0:
-            failures.append(
-                "sidecar sha256sum -c 未通過: " + sha_result.stdout.strip()
-            )
+            failures.append("sidecar sha256sum -c 未通過: " + sha_result.stdout.strip())
 
     assert not failures, "\n".join(failures)
