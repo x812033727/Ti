@@ -54,6 +54,12 @@ os.environ["TI_REQUIRE_CHOWN"] = "off"
 # monkeypatch.setattr(config, "AUTOPILOT_DEPLOY_CHECK_INTERVAL", ...) 顯式開。
 os.environ["TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL"] = "0"
 
+# 調查任務分流輕量管線（autopilot._run_investigation_task）對整個測試樹關死：分類器是
+# 寬鬆的標題正則，既有守護測試的假任務標題（「落檔測試」「收尾驗收：確認守門到位」…）
+# 會被誤分流——lane 會真的建 Expert（SDK/LLM 呼叫），CI 無 SDK 直接炸、本機會打真模型。
+# 要測 lane 一律 monkeypatch.setattr(config, "AUTOPILOT_INVESTIGATION_LANE", True) 顯式開
+# ＋ stub Expert（見 test_investigation_lane.py）。
+os.environ["TI_AUTOPILOT_INVESTIGATION_LANE"] = "0"
 # 原生 auto-merge 與 open PR reconciler（autopilot）對整個測試樹關死：兩者會打真實
 # gh/GitHub API（pr merge --auto、pr view/list/close、_get_pr_status 的 httpx）——未 stub
 # 的舊路徑測試會被快窗輪詢拖死、reconciler 更可能動到真實 repo 的 open PR。

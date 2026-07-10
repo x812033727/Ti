@@ -1261,6 +1261,184 @@ def _is_low_value_followup(title: str, detail: str = "") -> bool:
     return True
 
 
+# 調查訊號：任務標題/細節帶這些動詞/名詞＝「產出結論」型工作（調查/驗證/盤點/量測/診斷…），
+# 其正確完成判準是結論本身，不是 code diff。與 _FOLLOWUP_BUSYWORK_RE 聯集使用——證據儀式類
+# （sha256/權威/落檔）雖被價值閘擋在 followup 進場，但既有存量與其他來源仍會入場，一併分流。
+_INVESTIGATION_RE = re.compile(
+    r"調查|查明|查清|釐清|盤點|稽核|驗證|確認|複核|檢核|核對|量測|評估|診斷|分診|歸因|比對|證據"
+    r"|investigate|audit|verify|diagnose|measure",
+    re.IGNORECASE,
+)
+
+
+def _is_investigation_task(task: dict) -> bool:
+    """確定性分類：這個任務該走「調查分流輕量管線」嗎（完成率第三輪修法一）？
+
+    雙條件保守設計（與 _is_low_value_followup 同哲學、共用既有 regex）：
+    命中調查訊號（_INVESTIGATION_RE 或 _FOLLOWUP_BUSYWORK_RE）**且**無任何 code-work
+    豁免訊號（_FOLLOWUP_CODEWORK_RE）才分流；拿不準（有沾實作/修復/測試動詞）一律走
+    原多專家管線——分流錯過只是回到現狀，分流誤入有 `需改碼:` 安全閥退回，兩向皆有兜底。
+    task 帶 lane="full"（前次調查判定需改碼、已升級）者不再分流，防止乒乓迴圈。
+    """
+    if not config.AUTOPILOT_INVESTIGATION_LANE:
+        return False
+    if (task.get("lane") or "") == "full":
+        return False
+    text = f"{task.get('title') or ''}\n{task.get('detail') or ''}"
+    if not (_INVESTIGATION_RE.search(text) or _FOLLOWUP_BUSYWORK_RE.search(text)):
+        return False
+    if _FOLLOWUP_CODEWORK_RE.search(text):
+        return False
+    return True
+
+
+def _build_investigation_prompt(task: dict) -> str:
+    """組裝「單專家調查」prompt（純字串、無 LLM/網路，可單測；範式同 _build_split_prompt）。
+
+    關鍵設計（對治驗屍死因）：交付物＝結論文字本身，明令**禁止落檔**（$TMPDIR 落檔正是
+    「QA 換 shell 讀不到 → 每輪 FAIL 同因」的結構性死因）；強制 `證據:` 行防單專家自說自話；
+    `需人工:`/`需改碼:` 兩個結構化出口讓 AI 做不到/誤分類的任務走對的路，而非硬耗到 failed。
+    """
+    title = (task.get("title") or "").strip()
+    detail = (task.get("detail") or "").strip()
+    base = f"任務標題：{title}\n"
+    if detail:
+        base += f"任務細節：{detail}\n"
+    return (
+        "你是資深工程師，獨立完成以下這項「調查/驗證」型任務。交付物是**你的文字結論本身**"
+        "（會直接寫回任務看板與教訓庫），不是程式碼、不是檔案。\n\n"
+        f"{base}\n"
+        "要求：\n"
+        "1. 就地以唯讀方式調查（讀碼/grep/跑唯讀指令皆可），**不要修改任何檔案、不要把結論"
+        "落檔到 $TMPDIR 或任何路徑**——你的文字輸出就是唯一交付物。\n"
+        "2. 輸出格式（缺 `結論:` 即視為調查未完成）：\n"
+        "結論: <一段可獨立理解的結論：直接回答任務要查的問題，講清楚答案與根因>\n"
+        "證據: <支撐結論的關鍵證據，如 檔案:行號、指令與輸出摘要；可多行，每行以「證據:」開頭>\n"
+        "後續任務: <調查若發現需要改碼的具體工作，每行一項、動詞開頭；沒有就不列>\n"
+        "3. 若此任務 AI 做不到、必須人工處理（如換發 token、外部服務後台操作），改輸出一行：\n"
+        "需人工: <一句原因>\n"
+        "4. 若你判斷此任務其實必須實際改動程式碼才算完成（不是純調查），**不要動手改**，改輸出一行：\n"
+        "需改碼: <一句原因>\n"
+    )
+
+
+async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -> None:
+    """調查/驗證型任務的輕量管線：單專家一次 speak → 結構化結論寫回 backlog＋教訓庫。
+
+    不建 StudioSession、不過 lint/collect/test/merge 閘門——這類任務的完成判準是結論，
+    不是 code diff（驗屍：多專家管線對它們結構上不可能過，見 AUTOPILOT_INVESTIGATION_LANE）。
+    四個出口：
+      1. `結論:` ＋至少一行 `證據:` → done（note 帶結論摘要）；結論進 lessons、
+         `後續任務:` 走 _add_discovered_followups（與討論回填同一套防線＋扇出上限）。
+      2. `需人工:` → parked（AI 做不到，不再重燒 session）。
+      3. `需改碼:` → 退回 pending＋lane="full"（下輪走完整多專家管線），不消耗 attempts
+         ——誤分類安全閥，分類錯誤的成本只是多一輪等待。
+      4. 空輸出/缺結論/缺證據/逾時/例外 → 沿用 _handle_discussion_incomplete 既有重試語意。
+    audit 記 investigation_done|investigation_parked|investigation_escalated（無 PR、pr=None
+    不計每日預算）。任何未預期例外走出口 4，絕不讓分流弄死主迴圈。
+    """
+    from . import flow, lessons
+    from .experts import Expert
+    from .roles import SENIOR
+
+    log.info("任務 #%s 走調查分流輕量管線（單專家、不開 PR）", task["id"])
+    history.start_session(sid, f"[autopilot/調查] {task['title']}")
+    heartbeat = asyncio.create_task(_task_heartbeat(task["id"], sid))
+    text = ""
+    try:
+        ex = Expert(SENIOR, sid, Path(clone))
+
+        async def _noop(_ev):
+            return None
+
+        try:
+            text = await asyncio.wait_for(
+                ex.speak(_build_investigation_prompt(task), _noop),
+                timeout=config.AUTOPILOT_INVESTIGATION_TIMEOUT or None,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await ex.stop()
+    except Exception:  # noqa: BLE001 — 逾時/專家例外一律走「未收斂」重試出口，不冒泡
+        log.warning(
+            "任務 #%s 調查專家呼叫失敗/逾時，走討論未收斂重試語意", task["id"], exc_info=True
+        )
+        text = ""
+    finally:
+        heartbeat.cancel()
+        with contextlib.suppress(BaseException):
+            await heartbeat
+        with contextlib.suppress(Exception):
+            history.finish_session(sid)
+
+    parsed = flow.parse_investigation(text or "")
+
+    def _audit(outcome: str, detail: str) -> None:
+        if config.AUTOPILOT_DRYRUN:
+            return
+        _append_audit(
+            {
+                "ts": time.time(),
+                "task_id": task.get("id"),
+                "pr": None,  # 調查管線不開 PR，不計每日 PR 預算
+                "branch": "",
+                "head_sha": "",
+                "outcome": outcome,
+                "detail": detail[-400:],
+                "duration_s": round(time.time() - t0, 1),
+                "attempts": int(task.get("attempts") or 0),
+            }
+        )
+
+    if parsed["needs_human"]:
+        note = f"[調查] 需人工：{parsed['needs_human']}"
+        backlog.set_status(task["id"], "parked", note=note[:500])
+        _audit("investigation_parked", note)
+        log.info("任務 #%s 調查判定需人工，parked：%s", task["id"], parsed["needs_human"])
+        return
+    if parsed["needs_code"]:
+        # 升級回完整管線：不消耗 attempts（回填揀起前的值），lane="full" 防止再被分流。
+        note = f"[調查] 判定需改碼，升級回完整多專家管線：{parsed['needs_code']}"
+        backlog.set_status(
+            task["id"],
+            "pending",
+            lane="full",
+            attempts=int(task.get("attempts") or 0),
+            note=note[:500],
+        )
+        _audit("investigation_escalated", note)
+        log.info("任務 #%s 調查判定需改碼，退回完整管線重跑（不耗 attempts）", task["id"])
+        return
+    if parsed["conclusion"] and parsed["evidence"]:
+        summary = " ".join(parsed["conclusion"].split())
+        backlog.set_status(task["id"], "done", note=f"[調查結論] {summary[:400]}")
+        # 結論沉澱進教訓庫（固定模板但結論各異 → exact_only 防 difflib 近似去重誤殺）。
+        with contextlib.suppress(Exception):
+            lessons.add_many(
+                [f"調查結論（{task['title']}）：{summary[:500]}"],
+                session_id=sid,
+                requirement=task.get("title") or "",
+                source="investigation",
+                exact_only=True,
+            )
+        if parsed["followups"]:
+            with contextlib.suppress(Exception):
+                _add_discovered_followups(
+                    task, parsed["followups"], _pending_titles(), structured=True
+                )
+        _audit("investigation_done", summary)
+        log.info(
+            "任務 #%s 調查完成（結論 %d 字、證據 %d 行）",
+            task["id"],
+            len(summary),
+            len(parsed["evidence"]),
+        )
+        return
+    # 缺結論或缺證據（防單專家無憑據自說自話）：走既有「討論未達完成」有限重試語意。
+    why = "調查輸出缺「結論:」" if not parsed["conclusion"] else "調查結論缺「證據:」行"
+    _handle_discussion_incomplete(task, reason=why)
+
+
 def _screen_followups(items: list, existing_titles: list[str]) -> list:
     """討論回填的後續任務進場前，套與 `_evaluate_self` 相同的品質防線：近期完成去重 +
     良構性/價值閘（`_is_low_value_followup`）+ `_filter_pending_duplicates`（詞集相似度 + 子系統覆蓋廣度）。
@@ -1603,7 +1781,7 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
         )
 
 
-def _handle_discussion_incomplete(task: dict) -> None:
+def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
     """討論未達完成且不可出貨時的收斂：有限次退回 pending 重試，用罄才永久 failed。
 
     這是完成率最大的失敗桶（見完成率診斷）。舊行為是單發即永久 failed，但討論未收斂常
@@ -1615,26 +1793,30 @@ def _handle_discussion_incomplete(task: dict) -> None:
     """
     attempts = int(task.get("attempts") or 0)
     cap = config.AUTOPILOT_DISCUSSION_MAX_ATTEMPTS
+    # 裁決原因（(a)-lite）：PM 判「未完成」時輸出的 `原因: <一句根因>`。附進 note 讓分診
+    # 與人工回看有據；「討論未達完成」子串不動，既有分診/看板/診斷分類無縫續接。
+    why = f"（原因: {reason.strip()}）" if (reason or "").strip() else ""
     if attempts + 1 < cap:
         backlog.set_status(
             task["id"],
             "pending",
             attempts=attempts + 1,
-            note=f"討論未達完成，第 {attempts + 1} 次退回重試",
+            note=f"討論未達完成，第 {attempts + 1} 次退回重試{why}",
         )
         log.info(
-            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）",
+            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）%s",
             task["id"],
             attempts + 1,
             cap,
+            why,
         )
     else:
         backlog.set_status(
             task["id"],
             "failed",
-            note=f"討論未達完成（連續 {cap} 次未收斂，放棄）",
+            note=f"討論未達完成（連續 {cap} 次未收斂，放棄）{why}",
         )
-        log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄", task["id"], cap)
+        log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄%s", task["id"], cap, why)
 
 
 # 執行中活動停滯 supervisor 的輪詢/寬限常數（秒）。
@@ -1731,6 +1913,13 @@ async def run_one_task(task: dict) -> None:
 
     clone = await _prepare_clone()
     requirement = task["title"] + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
+
+    # 調查分流（完成率第三輪修法一）：調查/驗證型任務走單專家輕量管線，不進多專家
+    # session、不過 merge 閘門——其完成判準是結論而非 code diff。所有出口（含例外）
+    # 都在 _run_investigation_task 內終局處置（done/parked/升級退回/未收斂重試）。
+    if _is_investigation_task(task):
+        await _run_investigation_task(task, clone, sid, t0)
+        return
 
     history.start_session(sid, f"[autopilot] {task['title']}")
     turn_state: dict[str, object] = {
@@ -1862,7 +2051,8 @@ async def run_one_task(task: dict) -> None:
             if not result.get("shippable"):
                 # 討論未收斂常是暫時性的（LLM 非決定性，重跑常會過）：有限次退回 pending
                 # 重試而非單發即永久 failed，用罄才放棄（詳見 _handle_discussion_incomplete）。
-                _handle_discussion_incomplete(task)
+                # reason＝PM 驗收判「未完成」時的 `原因:` 裁決根因，附進 note 供分診/回看。
+                _handle_discussion_incomplete(task, reason=result.get("incomplete_reason") or "")
                 return
             shipped_with_limits = True
             log.info("任務 #%s 帶已知限制出貨,續走客觀閘門", task["id"])

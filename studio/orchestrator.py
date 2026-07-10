@@ -50,6 +50,7 @@ from .flow import (
     parse_followups as parse_followups,
     parse_followups_meta as parse_followups_meta,
     parse_help_request as parse_help_request,
+    parse_incomplete_reason as parse_incomplete_reason,
     parse_lessons as parse_lessons,
     parse_structured_tasks as parse_structured_tasks,
     parse_tasks as parse_tasks,
@@ -254,6 +255,9 @@ class StudioSession:
         self._demo = None
         self._done = False
         self._shippable = False
+        # PM 驗收判「未完成」時的 `原因:` 裁決根因（(a)-lite）：隨 run() 回傳給 autopilot，
+        # 讓「討論未達完成」的 note 帶結構化原因供分診/回看；完成時恆為空字串。
+        self._incomplete_reason = ""
         # 動態招募狀態：本場已招募人數（受 config.RECRUIT_MAX 上限）＋當前 provider 額度快照
         # （動態 stage 開頭查一次，供 PM 額度感知分派與招募自動重綁共用）。_recruit_factory 供測試
         # 注入 stub（簽名 (role, cwd, provider)→expert）；None 時走 providers.make_expert。
@@ -1016,6 +1020,7 @@ class StudioSession:
         """執行整場討論。回傳結果摘要供 autopilot 使用（前端走 broadcast，不需回傳值）。"""
         result = {
             "completed": False,
+            "incomplete_reason": "",
             "followups": [],
             "followup_items": [],
             "core_changes": [],
@@ -1133,6 +1138,7 @@ class StudioSession:
 
         return {
             "completed": self._done,
+            "incomplete_reason": self._incomplete_reason,
             "shippable": self._shippable,
             "followups": self._followups,
             "followup_items": self._followup_items,
@@ -3527,10 +3533,23 @@ class StudioSession:
         await self.broadcast(events.phase_change(self.session_id, "驗收", "PM 確認驗收標準"))
         verdict = await pm.speak(
             (await self._human_prefix()) + "請依驗收標準檢查目前工作目錄的成果，判斷是否完成"
-            "（輸出 `決議: 完成` 或 `決議: 未完成`）。",
+            "（輸出 `決議: 完成` 或 `決議: 未完成`；若判未完成，緊接一行 `原因: <一句根因>`，"
+            "講清楚卡在哪個具體環節）。",
             self.broadcast,
         )
         done = pm_done(verdict) and all_ok and not self._stop
+        # 裁決原因（(a)-lite）：未完成時抽 PM 的 `原因:` 供 autopilot 落 note；PM 沒給時，
+        # 以客觀狀態合成一句兜底（all_ok/demo_veto 是機器已知的根因，不該回報空白）。
+        if not done:
+            reason = parse_incomplete_reason(verdict)
+            if not reason:
+                if demo_veto:
+                    reason = "最終 Demo 實跑失敗（demo veto）"
+                elif not all_ok:
+                    reason = "有子任務未過三審（all_ok=False）"
+                elif self._stop:
+                    reason = "討論被中止"
+            self._incomplete_reason = reason
 
         # 最終驗收放行前的異議關卡：用 senior 視角（避開剛驗收表態的 pm）。
         if done:
@@ -3538,6 +3557,8 @@ class StudioSession:
                 self._main_ctx, "senior", "整體最終交付成果", "PM 宣告的驗收標準與整體需求"
             )
             done = critic_ok
+            if not done and not self._incomplete_reason:
+                self._incomplete_reason = "最終驗收異議成立（critic gate 翻盤）"
 
         await self.broadcast(events.phase_change(self.session_id, "檢討", "團隊進行回顧"))
         retro_prompt = (

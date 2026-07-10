@@ -986,6 +986,24 @@ AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1
     "",
 )
 
+# AUTOPILOT_INVESTIGATION_LANE：調查/驗證型任務分流輕量管線（完成率第三輪修法一）。
+#   驗屍 14 筆「討論未達完成」failed：9 筆是純調查/驗證/證據儀式型——這類任務的正確完成判準
+#   是「產出結構化結論」而非「code 過三審＋Demo」，卻被送進多專家全套管線：工程師把結論落檔
+#   到自己 sandbox 的 $TMPDIR、QA 換 shell 讀不到 → 每輪 FAIL 同因，結構上不可能過；researcher
+#   實際已產出高品質結論但整場被判 failed 全數丟棄，再被有限重試重燒一場（每場 ~100 分鐘）。
+#   開啟時（預設）：命中調查訊號且無 code-work 豁免訊號的任務改走單專家調查 → 結構化結論寫回
+#   backlog note＋教訓庫，不進 StudioSession 多專家討論、不經 lint/collect/test/merge 閘門。
+#   誤分類安全閥：專家輸出 `需改碼:` 即退回完整管線重跑（不消耗 attempts）。設 0 回復現行為。
+AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+# 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
+# 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
+AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+
 # AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
 #   chamber：價值閘擋「沒價值的」、本上限擋「同源衍生太多的」，互補封住 discovered 迴圈灌水（修法②）。
@@ -1182,6 +1200,7 @@ def reload() -> None:
     global AUTOPILOT_DEPLOY_CHECK_INTERVAL, AUTOPILOT_DEPLOY_FAIL_BACKOFF
     global AUTOPILOT_AUTO_MERGE, AUTOPILOT_MERGE_FAST_WAIT, AUTOPILOT_MERGE_MAX_AGE
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
+    global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1362,6 +1381,13 @@ def reload() -> None:
         "False",
         "",
     )
+    AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
         "0",
         "false",
