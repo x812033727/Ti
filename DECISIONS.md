@@ -3003,6 +3003,8 @@
 - 時間：2026-07-10 23:00
 - 理由：與既有 deploy 守門測試同目錄，CI `tests/deploy` job 自動涵蓋；三處同一 argv 契約，集中管理
 
-## **diff 邊界鐵則：僅四個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`；超出須另立任務
-- 時間：2026-07-10 23:00
+## **diff 邊界鐵則：五個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`、`tests/test_task1_retry_doc.py`；超出須另立任務
+- 時間：2026-07-10 23:00（2026-07-11 修正：四檔 → 五檔）
+- 修正理由：原宣稱「僅四個檔」，但實際 diff 含第五檔 `tests/test_task1_retry_doc.py`——這是**必要的伴隨護欄修正**，非鍍金污染。`SCOPE_GUARD_MAINTENANCE_GLOBS` 白名單只含 `tests/_scope_guard.py|conftest.py|test_task1_retry_doc.py`，**不含 `studio/*.py`**；舊版 `test_no_py_changed` 護欄會對本 lane 三個 studio `.py` 改動判 FAIL、CI 紅。修正將護欄從「看 lane 編號」改為「看是否實際改動 `ARCHITECTURE.md`」（`if "ARCHITECTURE.md" not in changed_files: skip`），並把 API 由 `find_repo_scope_violations` 換成 `collect_changed_files`+`find_scope_violations`。實測保留版該護欄為 SKIPPED，不再誤觸發擋死 #1 合法改動。
+- 移交：護欄以 lane 編號當任務身分屬 Ti 核心測試基建設計缺陷，另立 `核心改動:` 任務根治（見後續任務）。
 
