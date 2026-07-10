@@ -911,6 +911,8 @@ async def lessons_browse(q: str = "", limit: int = 50) -> JSONResponse:
         return {"lessons": items[:limit], "total": len(items)}
 
     return JSONResponse(await asyncio.to_thread(_query))
+
+
 class TaskActionBody(BaseModel):
     action: str = ""
     priority: int | None = None
