@@ -15,3 +15,15 @@
 .ap-add textarea { width: 100%; resize: vertical; margin-top: 4px; }
 .ap-add-row { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
 .ap-add-row select { flex: 0 0 auto; }
+
+/* 洞察面板(D1):趨勢長條沿用 bar+fill 手法 */
+.ins-trend-chart { display: flex; align-items: flex-end; gap: 3px; height: 140px; overflow-x: auto; padding: 8px 0; }
+.ins-trend-col { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 22px; height: 100%; }
+.ins-trend-bar { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 14px; flex: 1 1 auto; }
+.ins-trend-ok { background: var(--ok, #2f9e44); border-radius: 2px 2px 0 0; }
+.ins-trend-fail { background: var(--err, #e03131); border-radius: 2px 2px 0 0; }
+.ins-trend-date { font-size: 0.65em; opacity: 0.7; writing-mode: vertical-rl; }
+.ins-lesson-text { white-space: pre-wrap; word-break: break-word; }
+.ins-lesson-meta { font-size: 0.8em; }
+#insLessonsSearch { width: 100%; margin-bottom: 6px; }
+.digest-md { max-height: 60vh; overflow: auto; white-space: pre-wrap; }

@@ -18,6 +18,7 @@ import {
 } from "./js/panels/autopilot.js";
 import { openProjectPanel, closeProjectPanel, refreshProjectPanel } from "./js/panels/project.js";
 import { bindTeam } from "./js/panels/team.js";
+import { bindInsights } from "./js/panels/insights.js";
 import { loadGroupOptions } from "./js/panels/groups.js";
 import { openMetrics, closeMetrics, refreshMetrics } from "./js/panels/metrics.js";
 import {
@@ -81,6 +82,7 @@ bindSettings();
 bindTabs();
 bindDrawers();
 bindTeam();
+bindInsights();
 bindWorkflowEditor();
 initTheme();
 setMobileView("discussion");

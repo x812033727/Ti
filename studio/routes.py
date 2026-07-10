@@ -23,6 +23,8 @@ from . import (
     config,
     deploy,
     history,
+    insights,
+    lessons,
     projects,
     provider_quota,
     publisher,
@@ -877,6 +879,38 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
     return JSONResponse({"ok": True, "task": task})
+
+
+@router.get("/api/autopilot/audit-trend", dependencies=[Depends(auth.require_auth)])
+async def autopilot_audit_trend(days: int = 30) -> JSONResponse:
+    """audit.jsonl 每日 outcome 分佈與完成率趨勢(近 N 天,UTC 日;口徑=insights.OK/FAIL)。"""
+    return JSONResponse(await asyncio.to_thread(insights.audit_trend, days))
+
+
+@router.get("/api/autopilot/investigations", dependencies=[Depends(auth.require_auth)])
+async def autopilot_investigations(limit: int = 50) -> JSONResponse:
+    """調查任務結論清單(backlog note 前綴 + audit investigation_* join)。"""
+    return JSONResponse({"investigations": await asyncio.to_thread(insights.investigations, limit)})
+
+
+@router.get("/api/lessons", dependencies=[Depends(auth.require_auth)])
+async def lessons_browse(q: str = "", limit: int = 50) -> JSONResponse:
+    """教訓庫唯讀瀏覽:q=大小寫不敏感子字串(text+requirement),由新到舊。"""
+    limit = max(1, min(limit, 500))
+
+    def _query() -> dict:
+        items = list(reversed(lessons.all_lessons()))
+        needle = (q or "").strip().lower()
+        if needle:
+            items = [
+                it
+                for it in items
+                if needle in str(it.get("text", "")).lower()
+                or needle in str(it.get("requirement", "")).lower()
+            ]
+        return {"lessons": items[:limit], "total": len(items)}
+
+    return JSONResponse(await asyncio.to_thread(_query))
 
 
 @router.post("/api/autopilot/triage", dependencies=WRITE_DEPS)
