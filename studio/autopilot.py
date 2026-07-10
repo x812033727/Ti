@@ -2321,7 +2321,12 @@ async def _maybe_boundary_redeploy() -> None:
     try:
         deploy_dir = str(config.AUTOPILOT_DEPLOY_DIR)
         branch = config.AUTOPILOT_BRANCH
-        rc, out = await deploy._run(["git", "fetch", "origin", branch], cwd=deploy_dir, timeout=60)
+        # deploy_dir 是 origin 單向鏡像；force refspec 避免並行 fetch 的 ref CAS 競爭。
+        rc, out = await deploy._run(
+            ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+            cwd=deploy_dir,
+            timeout=60,
+        )
         if rc != 0:
             log.debug("邊界部署檢查 fetch 失敗（忽略）：%s", out[-200:])
             return
