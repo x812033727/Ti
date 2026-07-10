@@ -1,6 +1,6 @@
 """近期 merged 標題語料與疑似已實作 prefilter helper。
 
-只測 #1 的資料取得與純比對，不接 run_one_task 分流。
+涵蓋 #1 的資料取得與純比對，以及 #3 的黑白樣本邊界。
 """
 
 from __future__ import annotations
@@ -38,6 +38,54 @@ def test_prefilter_config_knobs_reload(monkeypatch):
     assert config.AUTOPILOT_PREFILTER_IMPLEMENTED is False
     assert config.AUTOPILOT_PREFILTER_RATIO == pytest.approx(0.91)
     assert config.AUTOPILOT_PREFILTER_LOOKBACK_DAYS == 14
+
+
+@pytest.mark.asyncio
+async def test_prefilter_miss_leaves_task_unchanged(tmp_path, monkeypatch):
+    task = {
+        "title": "Add merged title prefilter",
+        "lane": "qa",
+        "note": "seed",
+    }
+    before = dict(task)
+
+    async def _fake_corpus(clone, repo=None):
+        return ["Completely different merged title"]
+
+    monkeypatch.setattr(autopilot, "_recent_merged_title_corpus", _fake_corpus)
+
+    assert await autopilot._prefilter_implemented_match(task, str(tmp_path)) is None
+    assert task == before
+
+
+@pytest.mark.asyncio
+async def test_prefilter_short_title_bypasses_corpus_fetch(tmp_path, monkeypatch):
+    async def _boom(clone, repo=None):
+        raise AssertionError("短標題不應進入 merged title 語料查詢")
+
+    monkeypatch.setattr(autopilot, "_recent_merged_title_corpus", _boom)
+
+    assert (
+        await autopilot._prefilter_implemented_match({"title": "fix tests"}, str(tmp_path)) is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_prefilter_disabled_bypasses_corpus_fetch(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "AUTOPILOT_PREFILTER_IMPLEMENTED", False)
+
+    async def _boom(clone, repo=None):
+        raise AssertionError("總開關關閉時不應查詢 merged title 語料")
+
+    monkeypatch.setattr(autopilot, "_recent_merged_title_corpus", _boom)
+
+    assert (
+        await autopilot._prefilter_implemented_match(
+            {"title": "Add merged title prefilter"},
+            str(tmp_path),
+        )
+        is None
+    )
 
 
 def test_first_similar_implemented_title_uses_token_set_and_skips_short_titles():
