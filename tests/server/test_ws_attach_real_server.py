@@ -18,7 +18,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from _real_server_client import assert_smoke_client_ok
 
 pytest.importorskip("websockets")
