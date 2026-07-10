@@ -1045,6 +1045,40 @@ EXPERT_SKILLS_ROLES = frozenset(
 #   內容見 studio/conventions.py（≤30 行硬上限）。設 0 完全關閉。
 CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
 
+# 專家推理深度(SDK effort,僅 Claude 路徑):全域預設+per-role 覆寫。預設兩者皆空=不傳
+# (SDK 預設),零行為改變;要省額度時對審查/反思型角色降檔(如
+# TI_EXPERT_EFFORT_MAP="security:low,architect:medium,oneshot:low")。合法值 low/medium/
+# high/xhigh/max;非法值解析時略過並記 warning,不擋啟動。
+VALID_EFFORT = ("low", "medium", "high", "xhigh", "max")
+EXPERT_EFFORT = os.getenv("TI_EXPERT_EFFORT", "").strip().lower()
+
+
+def _parse_effort_map(raw: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for pair in (raw or "").split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        key, _, val = pair.partition(":")
+        key, val = key.strip().lower(), val.strip().lower()
+        if key and val in VALID_EFFORT:
+            out[key] = val
+        elif key:
+            logging.getLogger("ti.config").warning(
+                "TI_EXPERT_EFFORT_MAP 含非法 effort 值,已略過:%s", pair
+            )
+    return out
+
+
+EXPERT_EFFORT_MAP = _parse_effort_map(os.getenv("TI_EXPERT_EFFORT_MAP", ""))
+
+
+def effort_for(role_key: str) -> str | None:
+    """該角色生效的推理深度:per-role map > 全域 > None(SDK 預設)。"""
+    v = EXPERT_EFFORT_MAP.get((role_key or "").lower(), "") or EXPERT_EFFORT
+    return v if v in VALID_EFFORT else None
+
+
 # AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
 #   chamber：價值閘擋「沒價值的」、本上限擋「同源衍生太多的」，互補封住 discovered 迴圈灌水（修法②）。
@@ -1247,6 +1281,7 @@ def reload() -> None:
 
     global EXPERT_SKILLS, EXPERT_SKILLS_ROLES
     global CONVENTIONS_CARD
+    global EXPERT_EFFORT, EXPERT_EFFORT_MAP
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1450,6 +1485,8 @@ def reload() -> None:
         if r.strip()
     )
     CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
+    EXPERT_EFFORT = os.getenv("TI_EXPERT_EFFORT", "").strip().lower()
+    EXPERT_EFFORT_MAP = _parse_effort_map(os.getenv("TI_EXPERT_EFFORT_MAP", ""))
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
         "0",
         "false",
