@@ -22,6 +22,7 @@ from . import (
     claude_accounts,
     config,
     deploy,
+    digest,
     history,
     insights,
     lessons,
@@ -879,6 +880,17 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
     return JSONResponse({"ok": True, "task": task})
+
+
+@router.get("/api/autopilot/digest", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digest(days: int = 7) -> JSONResponse:
+    """週報 digest(純模板零 LLM,即時生成):成果/完成率對比/PR 清單/教訓/北極星。"""
+
+    def _build() -> dict:
+        d = digest.build_digest(days)
+        return {"digest": d, "markdown": digest.render_markdown(d)}
+
+    return JSONResponse(await asyncio.to_thread(_build))
 
 
 @router.get("/api/autopilot/audit-trend", dependencies=[Depends(auth.require_auth)])

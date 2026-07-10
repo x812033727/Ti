@@ -49,6 +49,7 @@
 | GET  | `/api/autopilot/audit-trend` | auth | ➖ | 唯讀：audit.jsonl 每日 outcome 分佈與完成率趨勢 |
 | GET  | `/api/autopilot/investigations` | auth | ➖ | 唯讀：調查任務結論清單（backlog note＋audit join） |
 | GET  | `/api/lessons` | auth | ➖ | 唯讀：教訓庫瀏覽（子字串搜尋） |
+| GET  | `/api/autopilot/digest` | auth | ➖ | 唯讀：週報 digest（audit/backlog/lessons 純模板彙整） |
 | GET  | `/api/history` | auth | ➖ | 讀取歷史列表 |
 | GET  | `/api/history/{session_id}/events` | auth | ➖ | 讀取單場事件 |
 | GET  | `/api/workspace/{session_id}/files` | auth | ➖ | 讀取工作區檔案清單 |
