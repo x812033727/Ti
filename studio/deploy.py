@@ -156,7 +156,12 @@ async def redeploy() -> tuple[bool, str]:
 
         last_good = await current_head(deploy_dir)
 
-        rc, out = await _run(["git", "fetch", "origin", branch], cwd=deploy_dir, timeout=120)
+        # deploy_dir 是 origin 單向鏡像；force refspec 避免並行 fetch 的 ref CAS 競爭。
+        rc, out = await _run(
+            ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+            cwd=deploy_dir,
+            timeout=120,
+        )
         if rc != 0:
             return False, f"git fetch 失敗：\n{out[-400:]}"
         rc, out = await _run(
