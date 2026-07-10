@@ -1130,6 +1130,10 @@ AUTOPILOT_FOLLOWUP_MAX_PER_TASK = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_PER_T
 #   「followup 生 followup 生 followup」的深鏈,與寬度上限一縱一橫共同封頂 discovered 扇出爆炸。
 #   3＝原始任務可衍生到第 3 代,之後止;0＝不限（恢復舊行為）。
 AUTOPILOT_FOLLOWUP_MAX_GEN = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", "3"))
+# AUTOPILOT_DISCOVERED_DAILY_CAP：每日（UTC）自產任務入列總量上限（source=discovered/eval
+#   合計）。價值閘擋「爛的」、寬度/代數閘擋「同源太多的」，此為總量閘——實測 pending 172
+#   筆中 85% 自產、產生速度 > 消化速度（~8/天），存量只增不減。20＝寬鬆日額；0＝不限。
+AUTOPILOT_DISCOVERED_DAILY_CAP = int(os.getenv("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", "20"))
 
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
@@ -1330,6 +1334,7 @@ def reload() -> None:
     global AUTOPILOT_LOOP_STALL_S, AUTOPILOT_RECONCILE_INTERVAL_S
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
+    global AUTOPILOT_DISCOVERED_DAILY_CAP
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1562,6 +1567,7 @@ def reload() -> None:
     AUTOPILOT_SPLIT_MAX_SUBTASKS = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", "4"))
     AUTOPILOT_FOLLOWUP_MAX_PER_TASK = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", "3"))
     AUTOPILOT_FOLLOWUP_MAX_GEN = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", "3"))
+    AUTOPILOT_DISCOVERED_DAILY_CAP = int(os.getenv("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", "20"))
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
     # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）
