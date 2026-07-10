@@ -801,6 +801,27 @@ class TaskBody(BaseModel):
     type: str = "improvement"
 
 
+def _todays_pr_used() -> int:
+    """UTC 當日已開 PR 數（audit.jsonl 中 pr 非空筆數）。autopilot._todays_pr_count 的
+    輕量鏡像——web 行程不 import autopilot（會拉整條 orchestrator/SDK 依賴鏈）。"""
+    import time as _time
+
+    path = config.AUTOPILOT_STATE_DIR / "audit.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+    day, n = _time.gmtime()[:3], 0
+    for line in lines:
+        try:
+            rec = json.loads(line)
+            if rec.get("pr") is not None and _time.gmtime(float(rec.get("ts", 0)))[:3] == day:
+                n += 1
+        except (ValueError, TypeError):
+            continue
+    return n
+
+
 @router.get("/api/autopilot", dependencies=[Depends(auth.require_auth)])
 async def autopilot_status() -> JSONResponse:
     # 心跳：autopilot 主迴圈每輪寫入的 status.json（state=idle/running/quota_sleep/
@@ -827,6 +848,11 @@ async def autopilot_status() -> JSONResponse:
             "repo": config.AUTOPILOT_REPO,
             "heartbeat": heartbeat,
             "dispatch_mode": "auto" if config.dispatch_auto() else "manual",
+            # 每日 PR 預算（功能第五輪 F4）：預算透明化——budget_sleep 前看板先看得到逼近。
+            "pr_budget": {
+                "used": await asyncio.to_thread(_todays_pr_used),
+                "cap": config.AUTOPILOT_DAILY_PR_BUDGET,
+            },
         }
     )
 
@@ -891,6 +917,21 @@ async def autopilot_digest(days: int = 7) -> JSONResponse:
         return {"digest": d, "markdown": digest.render_markdown(d)}
 
     return JSONResponse(await asyncio.to_thread(_build))
+
+
+@router.get("/api/autopilot/digests", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digests() -> JSONResponse:
+    """已落盤 digest 歷史清單（第五輪 F6：autopilot 每日排程寫檔，不再關掉即失）。"""
+    return JSONResponse({"digests": await asyncio.to_thread(digest.list_digests)})
+
+
+@router.get("/api/autopilot/digests/{name}", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digest_read(name: str) -> JSONResponse:
+    """讀單一落盤 digest；檔名白名單正則（digest-YYYY-MM-DD.md）擋路徑穿越。"""
+    md = await asyncio.to_thread(digest.read_digest, name)
+    if md is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    return JSONResponse({"name": name, "markdown": md})
 
 
 @router.get("/api/autopilot/audit-trend", dependencies=[Depends(auth.require_auth)])
@@ -989,6 +1030,10 @@ def _activity_snapshot(limit: int) -> dict:
                 ttft_s = usage.get("ttft_s")
                 if ttft_s is not None:
                     token_usage["ttft_s"] = ttft_s
+                # per-task 成本可見性（功能第五輪 F4）：history 已累計在 total 桶，補帶給 timeline。
+                cost_usd = (usage.get("total") or {}).get("cost_usd")
+                if cost_usd is not None:
+                    token_usage["cost_usd"] = cost_usd
                 row["token_usage"] = token_usage
         rows.append(row)
     return {"tasks": rows, "total": len(tasks)}

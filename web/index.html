@@ -138,8 +138,10 @@
         <div class="ap-status-actions">
           <button id="apToggle" class="ghost">暫停 / 恢復</button>
           <button id="apDispatchMode" class="ghost" title="auto＝PM 全權派工（限 claude/codex、模型自由）；手動＝系統規則裁決">派工：手動</button>
+          <button id="apTriage" class="ghost" title="立即分診 failed：基礎設施型退回重試、討論未收斂冷卻復活、陳年失敗歸檔">分診</button>
         </div>
       </div>
+      <div id="apDrift" class="ap-drift hidden"></div>
       <section class="ap-section">
         <div class="ap-section-head">📊 provider 額度</div>
         <div id="apQuota" class="ap-quota"></div>

@@ -50,9 +50,11 @@ from . import (
     claude_accounts,
     config,
     deploy,
+    digest,
     events,
     git_cred,
     history,
+    notify,
     provider_quota,
     publisher,
     runner,
@@ -2115,6 +2117,12 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
             gate_label,
             config.AUTOPILOT_TASK_MAX_ATTEMPTS,
         )
+        notify.send_bg(
+            "task_failed",
+            f"任務 #{task['id']} {gate_label} 重試用罄標 failed",
+            task_id=task["id"],
+            detail=str(task.get("title") or "")[:120],
+        )
 
 
 def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
@@ -2153,6 +2161,12 @@ def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
             note=_with_prefilter_note(task, f"討論未達完成（連續 {cap} 次未收斂，放棄）{why}"),
         )
         log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄%s", task["id"], cap, why)
+        notify.send_bg(
+            "task_failed",
+            f"任務 #{task['id']} 討論連續 {cap} 次未收斂標 failed",
+            task_id=task["id"],
+            detail=str(task.get("title") or "")[:120],
+        )
 
 
 # 執行中活動停滯 supervisor 的輪詢/寬限常數（秒）。
@@ -3656,11 +3670,13 @@ async def main() -> None:
         sideline = asyncio.create_task(_investigation_sideline())
         notifier = asyncio.create_task(_watchdog_notifier())
         reconciler = asyncio.create_task(_reconciler_loop())
+        digester = asyncio.create_task(_digest_scheduler())
     except AttributeError:
         monitor = None
         sideline = None
         notifier = None
         reconciler = None
+        digester = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -3673,7 +3689,7 @@ async def main() -> None:
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
     finally:
-        for aux in (monitor, sideline, notifier, reconciler):
+        for aux in (monitor, sideline, notifier, reconciler, digester):
             if aux is not None:
                 aux.cancel()
                 with contextlib.suppress(BaseException):
@@ -3682,6 +3698,9 @@ async def main() -> None:
 
 # 暫停狀態轉換旗標(行程記憶體):只在「進入/離開暫停」時各記一次 log,避免每 10s 刷屏。
 _paused_logged = False
+
+# 額度全受限通知旗標(行程記憶體):每個受限期只發一次 webhook(F2),恢復 usable 即重置。
+_quota_notified = False
 
 # 主迴圈心跳(穩定強化 β):每輪頂端/任務返回後更新。stall/hard 看門狗只包 session.run,
 # 「任務之間」(quota snapshot/reconciler/邊界部署/triage)是盲區——任一步無聲卡死即整台
@@ -3716,6 +3735,11 @@ async def _loop_monitor() -> None:
                     "疑似無聲卡死——等待 systemd watchdog 或人工介入",
                     idle_for,
                     config.AUTOPILOT_LOOP_STALL_S,
+                )
+                notify.send_bg(
+                    "loop_stall",
+                    f"主迴圈心跳停滯 {idle_for:.0f}s，疑似無聲卡死",
+                    idle_for=round(idle_for),
                 )
                 alerted = True
             elif not stalled:
@@ -3757,6 +3781,26 @@ async def _watchdog_notifier() -> None:
     while True:
         await asyncio.sleep(_WATCHDOG_PING_S)
         _sd_notify("WATCHDOG=1")
+
+
+async def _digest_scheduler() -> None:
+    """digest 每日落盤（第五輪 F6）：當日（UTC）檔不存在即產出寫入，不再「關掉面板即失」。
+
+    純本地模板（零 LLM、零網路），每小時醒來檢查一次即可；同日重寫冪等。任何失敗
+    log 後下輪再試，絕不影響主迴圈。
+    """
+    while True:
+        try:
+            existing = {d["name"] for d in await asyncio.to_thread(digest.list_digests)}
+            today = f"digest-{time.strftime('%Y-%m-%d', time.gmtime())}.md"
+            if today not in existing:
+                name = await asyncio.to_thread(digest.save_digest)
+                log.info("digest 已落盤：%s", name)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 排程器自身失敗不得影響主迴圈
+            log.debug("digest 落盤失敗（下輪再試）", exc_info=True)
+        await asyncio.sleep(3600)
 
 
 async def _pause_tick() -> None:
@@ -3885,8 +3929,18 @@ async def _main_loop(startup_sig: float) -> None:
                     quota,
                     sleep_s,
                 )
+                # 每個受限期只通知一次（醒來仍受限不重發；恢復 usable 後重置旗標）。
+                global _quota_notified
+                if not _quota_notified:
+                    _quota_notified = True
+                    notify.send_bg(
+                        "quota_exhausted",
+                        f"所有 provider 額度受限，休眠 {sleep_s:.0f}s 等重置",
+                        quota={k: v for k, v in quota.items() if v is not None},
+                    )
                 await asyncio.sleep(sleep_s)
                 continue
+            _quota_notified = False
 
         # 每日 PR 成本熔斷：達上限即睡到 UTC 跨日（夾 AUTOPILOT_QUOTA_MAX_SLEEP 上限，
         # 醒來重查），期間連 discovery（_evaluate_self）也不跑——省下註定無法出貨的

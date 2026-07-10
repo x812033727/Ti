@@ -108,6 +108,8 @@ def test_activity_aggregates_and_sorts_desc(client, state):
     assert done["token_usage"]["by_provider"]["claude"]["total"] == 150
     assert "claude-opus-4-8" in done["token_usage"]["by_model"]
     assert done["token_usage"]["ttft_s"] == pytest.approx(0.123)
+    # per-task 成本（第五輪 F4）：total 桶的 cost_usd 提升為 timeline 穩定欄位
+    assert done["token_usage"]["cost_usd"] == pytest.approx(0.5)
     # failed 任務：note/attempts/source 齊備；session meta 不存在 → 不虛構聚合欄位
     failed = by_id[ids["failed"]]
     assert failed["note"] == "討論未達完成"
