@@ -41,6 +41,7 @@ import uuid
 from asyncio import CancelledError
 from collections import Counter
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import (
@@ -69,6 +70,9 @@ secure_write_root = secure_write.secure_write_root
 
 _GH = ["gh"]
 _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
+_MERGED_TITLE_CACHE_TTL = 3600.0
+# 同一個 autopilot loop 內 token/repo 設定視為穩定；cache key 不含 token，避免每輪重打 API。
+_MERGED_TITLE_CACHE: dict[tuple[str, int], tuple[float, list[str]]] = {}
 # 自我重載：autopilot 跑討論依賴整個 studio 套件（orchestrator／experts／flow／providers…），
 # 故監看整包 studio/*.py 的 mtime——只盯少數檔會漏掉 orchestrator-only 的部署（如 #218），
 # 讓 autopilot 一直跑舊 orchestration 邏輯（self-reload 在任務之間做、安全）。
@@ -1179,6 +1183,171 @@ def _first_similar_title(title: str, corpus: Iterable[str]) -> str | None:
     return next(
         (e for e in corpus if _token_set_similarity(title, e) >= config.AUTOPILOT_DEDUP_RATIO),
         None,
+    )
+
+
+_MERGE_SUBJECT_RE = re.compile(
+    r"^(merge pull request #\d+\b|merge branch\b|merge remote-tracking branch\b)", re.IGNORECASE
+)
+
+
+def _enough_title_signal(title: str) -> bool:
+    """低資訊標題不參與「疑似已實作」判定，避免 `fix tests` 這類短句誤殺。"""
+    return len(_tokenize_for_dedup(title)) >= 3
+
+
+def _first_similar_implemented_title(
+    title: str,
+    merged_titles: Iterable[str],
+    *,
+    threshold: float | None = None,
+) -> str | None:
+    """回傳第一個與任務 title 相似的已 merged 標題；純比對，不讀 backlog/網路/git。
+
+    相似度複用 `_token_set_similarity`，並對任務標題與語料標題都套低資訊保護（token < 3
+    直接跳過）。threshold 預設讀 `AUTOPILOT_PREFILTER_RATIO`，測試可注入固定值。
+    """
+    threshold = config.AUTOPILOT_PREFILTER_RATIO if threshold is None else threshold
+    if threshold <= 0 or not _enough_title_signal(title):
+        return None
+    for merged in merged_titles:
+        if _enough_title_signal(merged) and _token_set_similarity(title, merged) >= threshold:
+            return merged
+    return None
+
+
+def _commit_message_title(message: str) -> str:
+    """從 git log 的 commit message 取可比對標題；GitHub merge subject 會跳過取 body PR title。"""
+    for line in message.splitlines():
+        title = line.strip()
+        if not title or _MERGE_SUBJECT_RE.match(title):
+            continue
+        return title
+    return ""
+
+
+def _extract_git_log_titles(log_output: str) -> list[str]:
+    """解析 `git log --format=%B%x00` 輸出為標題清單，維持 git log 由新到舊順序。"""
+    return _dedupe_titles(_commit_message_title(chunk) for chunk in log_output.split("\x00"))
+
+
+def _dedupe_titles(titles: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for title in titles:
+        clean = (title or "").replace("\r", " ").replace("\n", " ").strip()
+        if not clean:
+            continue
+        key = clean.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(clean)
+    return out
+
+
+def _parse_github_datetime(value: str) -> datetime | None:
+    with contextlib.suppress(ValueError):
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    return None
+
+
+async def _fetch_github_merged_titles(repo: str, since_days: int) -> list[str] | None:
+    """以 GitHub REST 取近期 merged PR title；None 代表 API 不可用，呼叫端應 fallback。"""
+    token = (config.GITHUB_TOKEN or "").strip()
+    repo = (repo or "").strip()
+    if not token or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        return None
+
+    try:
+        import httpx
+
+        cutoff = datetime.now(UTC) - timedelta(days=max(0, since_days))
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        params = {"state": "closed", "sort": "updated", "direction": "desc", "per_page": 100}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"https://api.github.com/repos/{repo}/pulls",
+                headers=headers,
+                params=params,
+            )
+        if resp.status_code != 200:
+            log.debug("merged PR 標題 API 不可用（status=%s），改用 git log", resp.status_code)
+            return None
+        rows = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("merged PR 標題 API 失敗，改用 git log：%s", exc)
+        return None
+
+    titles: list[str] = []
+    for pr in rows if isinstance(rows, list) else []:
+        if not isinstance(pr, dict):
+            continue
+        merged_at = pr.get("merged_at")
+        title = str(pr.get("title") or "").strip()
+        if not merged_at or not title:
+            continue
+        merged_dt = _parse_github_datetime(str(merged_at))
+        if merged_dt is not None and merged_dt >= cutoff:
+            titles.append(title)
+    return _dedupe_titles(titles)
+
+
+async def _fetch_git_log_merged_titles(clone: str, since_days: int) -> list[str]:
+    """離線 fallback：從本地 git log 取近期 commit/merge message 標題。
+
+    known-limitation：shallow clone、無歷史或非 git 目錄會回空清單，呼叫端因此放行（漏判優於誤殺）。
+    不使用 `--merges --oneline`，因 GitHub merge commit 的 subject 多半只有 PR 編號，真正 PR
+    title 在 body；`%B%x00` 才能穩定取到。
+    """
+    if since_days <= 0:
+        return []
+    rc, out = await _run(
+        ["git", "log", "--format=%B%x00", f"--since={since_days}.days.ago"],
+        cwd=clone,
+        timeout=30,
+    )
+    if rc != 0:
+        log.debug("git log merged 標題 fallback 失敗：%s", out[-200:])
+        return []
+    return _extract_git_log_titles(out)
+
+
+async def _fetch_merged_titles(clone: str, repo: str, since_days: int) -> list[str]:
+    """取近期已合併標題語料：GitHub merged PR title 優先，離線 fallback `git log`。
+
+    僅取 GitHub closed PR 第一頁（per_page=100）；活躍 repo 可能漏掉更舊 PR，但偏誤方向是
+    放行而非誤降級。結果快取 1 小時，避免同一輪多任務重複打 API。
+    """
+    repo = (repo or "").strip()
+    since_days = max(0, int(since_days))
+    key = (repo, since_days)
+    now = time.time()
+    cached = _MERGED_TITLE_CACHE.get(key)
+    if cached and now - cached[0] < _MERGED_TITLE_CACHE_TTL:
+        return list(cached[1])
+
+    titles = await _fetch_github_merged_titles(repo, since_days)
+    if titles is None:
+        titles = await _fetch_git_log_merged_titles(clone, since_days)
+    titles = _dedupe_titles(titles)
+    _MERGED_TITLE_CACHE[key] = (now, titles)
+    return list(titles)
+
+
+async def _recent_merged_title_corpus(clone: str, repo: str | None = None) -> list[str]:
+    """套 config 旋鈕取近期 merged title 語料；總開關關閉時直接回空。"""
+    if not config.AUTOPILOT_PREFILTER_IMPLEMENTED:
+        return []
+    return await _fetch_merged_titles(
+        clone,
+        repo or config.AUTOPILOT_REPO,
+        config.AUTOPILOT_PREFILTER_LOOKBACK_DAYS,
     )
 
 
