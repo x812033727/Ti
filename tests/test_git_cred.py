@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import sys
 
 import pytest
 
-from studio import config, git_cred
+from studio import config, git_cred, runner
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +48,51 @@ def test_make_env_scopes_to_github_and_overwrites_parent_indexes(monkeypatch):
     assert env["GIT_CONFIG_COUNT"] == "2"
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
     assert env["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+
+
+@pytest.mark.asyncio
+async def test_make_env_overrides_parent_git_config_when_merged(monkeypatch, tmp_path):
+    monkeypatch.setattr(git_cred, "_GIT_ENV_SUPPORTED", True)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.https://evil.example/.extraheader")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "Authorization: Basic old")
+    token = "secrettoken"
+
+    env = git_cred.make_env(token, url="https://github.com/owner/repo.git")
+    probe_env = {
+        **env,
+        "EXPECTED_HEADER_SHA": hashlib.sha256(env["GIT_CONFIG_VALUE_1"].encode()).hexdigest(),
+    }
+    probe = (
+        "import hashlib, os, sys\n"
+        "header = os.environ.get('GIT_CONFIG_VALUE_1', '')\n"
+        "ok = (\n"
+        "    os.environ.get('GIT_CONFIG_COUNT') == '2'\n"
+        "    and os.environ.get('GIT_CONFIG_KEY_0') == 'credential.helper'\n"
+        "    and os.environ.get('GIT_CONFIG_VALUE_0') == ''\n"
+        "    and os.environ.get('GIT_CONFIG_KEY_1') == 'http.https://github.com/.extraheader'\n"
+        "    and hashlib.sha256(header.encode()).hexdigest()\n"
+        "    == os.environ.get('EXPECTED_HEADER_SHA')\n"
+        ")\n"
+        "print('env-overridden' if ok else 'env-stale')\n"
+        "sys.exit(0 if ok else 1)\n"
+    )
+
+    out = await runner.run_command_exec(
+        tmp_path,
+        [sys.executable, "-c", probe],
+        timeout=10,
+        sandbox=False,
+        label="git cred env probe",
+        env=probe_env,
+    )
+
+    assert out.ok
+    assert out.output.strip() == "env-overridden"
+    assert out.command == "git cred env probe"
+    assert token not in out.command
+    assert token not in probe
+    assert base64.b64encode(f"x-access-token:{token}".encode()).decode() not in probe
 
 
 def test_make_env_returns_empty_when_git_config_env_unsupported(monkeypatch):

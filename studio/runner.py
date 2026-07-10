@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover - 僅非 POSIX 平台
     resource = None  # type: ignore[assignment]
 
-from . import config
+from . import config, git_cred
 
 log = logging.getLogger("ti.runner")
 
@@ -774,12 +774,12 @@ def is_valid_repo_url(url: str) -> bool:
     return bool(_REPO_RE.match((url or "").strip()))
 
 
-def build_clone_url(url: str, token: str | None) -> str:
-    """私有倉庫時把 token 注入 https URL；否則原樣回傳。"""
-    url = (url or "").strip()
-    if token and url.startswith("https://github.com/"):
-        return url.replace("https://", f"https://x-access-token:{token}@", 1)
-    return url
+def build_clone_url(url: str, token: str | None, *, legacy: bool) -> str:
+    """回傳 clone/fetch 用 URL；預設清掉 userinfo，legacy 才走舊 token-in-URL。"""
+    clean = git_cred.clean_url((url or "").strip())
+    if legacy and token and clean.startswith("https://github.com/"):
+        return clean.replace("https://", f"https://x-access-token:{token}@", 1)
+    return clean
 
 
 async def git_clone(
@@ -797,18 +797,23 @@ async def git_clone(
     """
     if not _git_available():
         return RunOutput("git clone", -1, "（環境沒有 git，無法 clone）", False)
-    authed = build_clone_url(url, token)
+    legacy = config.TI_GIT_CRED_LEGACY
+    clone_url = build_clone_url(url, token, legacy=legacy)
+    auth_env = git_cred.make_env(token, url=clone_url)
     parts = ["git", "clone"] + (["--depth", str(depth)] if depth else [])
     if branch and _BRANCH_RE.match(branch):
         parts += ["--branch", branch]
-    # 直接組 argv 走 exec，shell 不參與解析（authed url / branch 一律當純文字）。
-    # label 固定為 "git clone"，嚴禁帶含 token 的 authed，避免 token 寫進日誌。
-    argv = parts + [authed, "."]
-    result = await run_command_exec(dest, argv, timeout=180, sandbox=False, label="git clone")
+    # 直接組 argv 走 exec，shell 不參與解析（clone_url / branch 一律當純文字）。
+    # label 固定為 "git clone"，嚴禁帶含 token 的 URL，避免 token 寫進日誌。
+    argv = parts + [clone_url, "."]
+    run_kwargs = {"timeout": 180, "sandbox": False, "label": "git clone"}
+    if auth_env:
+        run_kwargs["env"] = auth_env
+    result = await run_command_exec(dest, argv, **run_kwargs)
     # 避免 token 出現在回報的指令 / 輸出裡（保持在遮蔽之後、return 之前）
     if token:
         result.output = result.output.replace(token, "***")
-    result.command = "git clone " + (url or "").strip()
+    result.command = "git clone " + git_cred.clean_url((url or "").strip())
     return result
 
 

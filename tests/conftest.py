@@ -11,9 +11,32 @@ import subprocess
 import sys
 from pathlib import Path
 
+import dotenv
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """本機有 xdist 時自動平行跑；CI/無外掛時維持原本串行。"""
+    if os.environ.get("CI"):
+        return
+    if config.getoption("collectonly", default=False):
+        return
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    if not all(hasattr(config.option, name) for name in ("numprocesses", "dist", "tx")):
+        return
+    if config.option.numprocesses is not None or config.option.dist != "no" or config.option.tx:
+        return
+    workers = min(os.cpu_count() or 1, 8)
+    if workers <= 1:
+        return
+    config.option.numprocesses = workers
+    config.option.dist = "load"
+    config.option.tx = ["popen"] * workers
+
 
 # --- 測試隔離（hermetic）：對齊乾淨 CI，隔絕執行環境殘留 ------------------------
 # studio.config 於 import 時讀 env 且會 load_dotenv()——python-dotenv 會從 config.py
@@ -25,8 +48,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 #    在它 import 前改掉 dotenv 模組屬性即可攔下，祖先目錄的 .env 不再漏進測試。
 #    （tests/settings 的子程序測試另起 process 跑真 server，不受此 in-process stub
 #    影響；該測試自行備份/還原 .env。）
-import dotenv
-
 dotenv.load_dotenv = lambda *args, **kwargs: False
 
 # 2) 清掉殘留的 TI_* 環境變數（含 TI_DISCUSS_*）：殘留值會讓既有測試默默改道

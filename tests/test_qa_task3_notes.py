@@ -60,6 +60,35 @@ def _experts(pm, eng, qa, senior):
     }
 
 
+def _notes_workflow():
+    return {
+        "name": "notes-test",
+        "description": "minimal notes integration flow",
+        "stages": [
+            {"type": "decompose"},
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                    {
+                        "type": "review",
+                        "mode": "parallel",
+                        "gate": [
+                            {"role": "qa", "verdict": "qa_passed"},
+                            {"role": "senior", "verdict": "senior_approved"},
+                        ],
+                    },
+                    {
+                        "type": "gate",
+                        "roles": ["pm"],
+                        "gate": [{"role": "pm", "verdict": "critic_blocks"}],
+                    },
+                ],
+            },
+        ],
+    }
+
+
 # === workspace 層：讀寫純函式 ==========================================
 
 
@@ -135,7 +164,13 @@ async def test_session_writes_notes_and_reads_back(tmp_path, monkeypatch):
         qa=["驗證: PASS"],
         senior=["決議: 核可"],
     )
-    session = StudioSession(sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid))
+    session = StudioSession(
+        sid,
+        broadcast,
+        experts=experts,
+        cwd=workspace.workspace_path(sid),
+        workflow=_notes_workflow(),
+    )
     await session.run("需求")
 
     # 1) 結束後 NOTES.md 實體存在
@@ -169,7 +204,13 @@ async def test_huddle_conclusion_written_to_notes(tmp_path, monkeypatch):
         qa=["驗證: FAIL"],
         senior=["決議: 退回"],
     )
-    session = StudioSession(sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid))
+    session = StudioSession(
+        sid,
+        broadcast,
+        experts=experts,
+        cwd=workspace.workspace_path(sid),
+        workflow=_notes_workflow(),
+    )
     await session.run("需求")
 
     notes = workspace.read_notes(sid)
@@ -197,7 +238,12 @@ async def test_critic_rejection_written_to_notes(tmp_path, monkeypatch):
     )
     critics = {"pm": StubExpert(BY_KEY["pm"], ["異議: 成立，缺少錯誤碼定義", "異議: 不成立"])}
     session = StudioSession(
-        sid, broadcast, experts=experts, cwd=workspace.workspace_path(sid), critics=critics
+        sid,
+        broadcast,
+        experts=experts,
+        cwd=workspace.workspace_path(sid),
+        critics=critics,
+        workflow=_notes_workflow(),
     )
     await session.run("需求")
 

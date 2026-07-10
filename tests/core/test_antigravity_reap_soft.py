@@ -37,8 +37,8 @@ async def test_reap_group_kills_by_pgid_after_leader_reaped(tmp_path):
         "/bin/sh",
         "-c",
         "sleep 30 & exit 0",  # 背景孫程序後 leader 立即退出
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
         start_new_session=True,
     )
     pgid = proc.pid

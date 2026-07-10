@@ -47,9 +47,16 @@ class ExecSpy:
         self._output = output
         self._ok = ok
 
-    async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None):
+    async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None, env=None):
         self.calls.append(
-            {"cwd": cwd, "argv": list(argv), "timeout": timeout, "sandbox": sandbox, "label": label}
+            {
+                "cwd": cwd,
+                "argv": list(argv),
+                "timeout": timeout,
+                "sandbox": sandbox,
+                "label": label,
+                "env": env,
+            }
         )
         return RunOutput(
             command=label or (argv[0] if argv else ""),
