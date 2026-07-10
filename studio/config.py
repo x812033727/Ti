@@ -1107,6 +1107,9 @@ def effort_for(role_key: str) -> str | None:
 # 主迴圈心跳停滯告警秒數(β):非暫停且無任務執行中,主迴圈 tick 逾此秒數未推進即
 # log.error(告警不自殺,自救交 systemd watchdog)。0=關。
 AUTOPILOT_LOOP_STALL_S = int(os.getenv("TI_AUTOPILOT_LOOP_STALL_S", "900"))
+# open PR reconciler 的節流間隔秒數(第五輪 P1):常駐背景線+任務邊界共用同一節流。
+# 0=停用 reconciler(邊界+背景皆不跑)。舊值 900 且只在任務邊界跑,實測 merging 卡 2-8h。
+AUTOPILOT_RECONCILE_INTERVAL_S = int(os.getenv("TI_AUTOPILOT_RECONCILE_INTERVAL_S", "300"))
 EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
 EXPERT_IDLE_STOP_EXEMPT = frozenset(
     r.strip().lower() for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",") if r.strip()
@@ -1320,7 +1323,7 @@ def reload() -> None:
     global CONVENTIONS_CARD
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
     global EXPERT_IDLE_STOP_S, EXPERT_IDLE_STOP_EXEMPT
-    global AUTOPILOT_LOOP_STALL_S
+    global AUTOPILOT_LOOP_STALL_S, AUTOPILOT_RECONCILE_INTERVAL_S
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1538,6 +1541,7 @@ def reload() -> None:
     EXPERT_EFFORT = os.getenv("TI_EXPERT_EFFORT", "").strip().lower()
     EXPERT_EFFORT_MAP = _parse_effort_map(os.getenv("TI_EXPERT_EFFORT_MAP", ""))
     AUTOPILOT_LOOP_STALL_S = int(os.getenv("TI_AUTOPILOT_LOOP_STALL_S", "900"))
+    AUTOPILOT_RECONCILE_INTERVAL_S = int(os.getenv("TI_AUTOPILOT_RECONCILE_INTERVAL_S", "300"))
     EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
     EXPERT_IDLE_STOP_EXEMPT = frozenset(
         r.strip().lower()
