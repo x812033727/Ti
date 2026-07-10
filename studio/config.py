@@ -948,6 +948,18 @@ LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "Fa
 #   僅作用於本次提案進場，不回溯刪改 backlog、不動 backlog 既有字串等值去重契約。
 AUTOPILOT_DEDUP_RATIO = 0.75
 
+# AUTOPILOT_PREFILTER_IMPLEMENTED：任務 pick 前的「疑似已實作」預篩總開關（#2 接線使用）。
+# 語料來自近期 merged PR 標題，無 token 或 API 不可用時退回本地 git log。命中後不丟棄任務，
+# 只降級走既有 investigation lane；因此這裡只放可即時調整的判定旋鈕。
+AUTOPILOT_PREFILTER_IMPLEMENTED = os.getenv("TI_AUTOPILOT_PREFILTER_IMPLEMENTED", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+AUTOPILOT_PREFILTER_RATIO = _env_float("TI_AUTOPILOT_PREFILTER_RATIO", 0.80)
+AUTOPILOT_PREFILTER_LOOKBACK_DAYS = _env_int("TI_AUTOPILOT_PREFILTER_LOOKBACK_DAYS", 60)
+
 # AUTOPILOT_SUBSYSTEM_MAX_PENDING：自我評估「提案進場」的第二道（廣度）防線 K。從標題以 regex 抽出
 #   「涉及子系統」（_extract_subsystems），若某子系統在現有 pending/in_progress 已達 K 筆，該子系統的
 #   新提案一律拒——避免 LLM 不換標題卻反覆對同一模組（backlog、discovery…）疊加任務（topic echo
@@ -1003,6 +1015,15 @@ AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1")
 # 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
 # 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
 AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+# 調查旁路併行(吞吐強化 δ):主 worker 跑完整管線時,背景線併行消化調查分流任務
+# (live 量測 pending 37% 符合、每筆 ~89s vs 完整管線 ~51min)。單線+與主迴圈共用
+# pause/quota 閘門+原子認領+獨立唯讀 clone。**預設 0 灰度**,穩定後翻 1。
+AUTOPILOT_INVESTIGATION_PARALLEL = os.getenv("TI_AUTOPILOT_INVESTIGATION_PARALLEL", "0") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 # AUTOPILOT_INVESTIGATION_REFUTE：調查結論的對抗性驗證（refuter）。單專家調查的已知風險是
 #   「自說自話」——結論寫得頭頭是道、證據卻對不上（reward hacking），而結論會進教訓庫污染
 #   長期記憶。開啟時（預設）結論標 done 前多一次廉價 MODEL_FAST 呼叫（providers.complete_once，
@@ -1288,7 +1309,10 @@ def reload() -> None:
     global AUTOPILOT_DEPLOY_CHECK_INTERVAL, AUTOPILOT_DEPLOY_FAIL_BACKOFF
     global AUTOPILOT_AUTO_MERGE, AUTOPILOT_MERGE_FAST_WAIT, AUTOPILOT_MERGE_MAX_AGE
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
+    global AUTOPILOT_PREFILTER_IMPLEMENTED, AUTOPILOT_PREFILTER_RATIO
+    global AUTOPILOT_PREFILTER_LOOKBACK_DAYS
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
+    global AUTOPILOT_INVESTIGATION_PARALLEL
     global AUTOPILOT_INVESTIGATION_REFUTE
     global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
 
@@ -1471,6 +1495,14 @@ def reload() -> None:
     AUTOPILOT_MERGE_MAX_AGE = int(os.getenv("TI_AUTOPILOT_MERGE_MAX_AGE", "7200"))
     # lint 閘門自動格式化（預設值須與檔頂宣告一致）
     LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
+    AUTOPILOT_PREFILTER_IMPLEMENTED = os.getenv("TI_AUTOPILOT_PREFILTER_IMPLEMENTED", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    AUTOPILOT_PREFILTER_RATIO = _env_float("TI_AUTOPILOT_PREFILTER_RATIO", 0.80)
+    AUTOPILOT_PREFILTER_LOOKBACK_DAYS = _env_int("TI_AUTOPILOT_PREFILTER_LOOKBACK_DAYS", 60)
     AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1") not in (
         "0",
         "false",
@@ -1484,6 +1516,9 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+    AUTOPILOT_INVESTIGATION_PARALLEL = os.getenv(
+        "TI_AUTOPILOT_INVESTIGATION_PARALLEL", "0"
+    ) not in ("0", "false", "False", "")
     AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", "1") not in (
         "0",
         "false",

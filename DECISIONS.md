@@ -3008,3 +3008,77 @@
 - 修正理由：原宣稱「僅四個檔」，但實際 diff 含第五檔 `tests/test_task1_retry_doc.py`——這是**必要的伴隨護欄修正**，非鍍金污染。`SCOPE_GUARD_MAINTENANCE_GLOBS` 白名單只含 `tests/_scope_guard.py|conftest.py|test_task1_retry_doc.py`，**不含 `studio/*.py`**；舊版 `test_no_py_changed` 護欄會對本 lane 三個 studio `.py` 改動判 FAIL、CI 紅。修正將護欄從「看 lane 編號」改為「看是否實際改動 `ARCHITECTURE.md`」（`if "ARCHITECTURE.md" not in changed_files: skip`），並把 API 由 `find_repo_scope_violations` 換成 `collect_changed_files`+`find_scope_violations`。實測保留版該護欄為 SKIPPED，不再誤觸發擋死 #1 合法改動。
 - 移交：護欄以 lane 編號當任務身分屬 Ti 核心測試基建設計缺陷，另立 `核心改動:` 任務根治（見後續任務）。
 
+## 所有 prefilter 邏輯集中於 `studio/autopilot.py`，不新增模組
+- 時間：2026-07-10 21:15
+- 理由：prefilter 是 pick 前同步判定，與 investigation lane、`_token_set_similarity`、`_tokenize_for_dedup` 同倉庫，跨模組界面為零
+- 否決方案：放 `flow.py`——flow.py 契約為無狀態純函式，async 取 merged 標題無法放入
+
+## 新增 `async def _fetch_merged_titles(clone: str, repo: str, since_days: int) -> list[str]`
+- 時間：2026-07-10 21:15
+- 理由：非同步才不阻塞 event loop，且 git fallback 需要 clone 路徑
+- 否決方案：同步版本（阻塞）；透過 `publisher` 模組（會造成循環 import）
+
+## 主路徑用 lazy `import httpx`，呼叫 `GET /repos/{owner}/{repo}/pulls?state=closed&per_page=100`，過濾 `merged_at != null` 且在 lookback 窗內
+- 時間：2026-07-10 21:15
+- 理由：httpx 已為現有依賴（`publisher.py` 慣例），lazy import 避免常駐記憶體
+- 否決方案：引入 PyGithub（新依賴，不值）
+
+## git fallback 用 `git log --format=%B%x00 --since=<n>.days.ago`，以 `\x00` 切割各 commit body，取每則 body 第一個非 merge-subject 的有效行作標題
+- 時間：2026-07-10 21:15
+- 理由：`--oneline` 下 GitHub merge commit subject 常是 `Merge pull request #…`，PR title 在 body 第一行；用 `%B%x00` 才能取到有效語意
+- 否決方案：`--merges --oneline`（常返回 merge subject 而非 PR title，語料雜訊大）
+
+## git fallback 在 shallow clone 或無歷史時回傳空 list，靜默放行（任務不降級）；在函式 docstring 明確標 known-limitation
+- 時間：2026-07-10 21:15
+- 理由：偏誤方向安全（漏判優於誤殺）；補測試「shallow clone 下 fallback 回空、任務不降級」
+
+## 模組級快取 `_MERGED_TITLE_CACHE: dict[tuple[str, int], tuple[float, list[str]]]`，key 為 `(repo, since_days)`，TTL 3600 秒
+- 時間：2026-07-10 21:15
+- 理由：型別具體、IDE 可靜態檢查；一 loop 內多任務共用同批 merged 標題，不重複打 API
+- 否決方案：`dict[str, ...]`（key 型別過鬆，工程師指正）
+
+## cache key 不含 token 狀態；同一 loop 內 token 穩定，影響可忽略；加一行注釋說明此假設
+- 時間：2026-07-10 21:15
+
+## httpx 僅取第一頁 `per_page=100`；活躍 repo 60 天 merged PR 可能 >100，漏舊 PR 導致漏判（放行，方向安全）；在函式 docstring 標 known-limitation，不分頁
+- 時間：2026-07-10 21:15
+- 否決方案：分頁全取（複雜度高，漏判代價低，不值）
+
+## 新增 3 個 config 旋鈕，於 `config.py` 頂層與 `reload()` 區塊兩處同步定義
+- 時間：2026-07-10 21:15
+
+## `AUTOPILOT_PREFILTER_RATIO` 獨立於 `AUTOPILOT_DEDUP_RATIO`（0.75），預設 0.80
+- 時間：2026-07-10 21:15
+- 理由：prefilter 誤殺代價（合法任務多一場 investigation + 一輪 pick 延遲）高於漏判代價；門檻拉高壓窄命中面
+- 否決方案：共用 DEDUP_RATIO（語意不同，後續分別調整才有意義）
+
+## 插入點為 `run_one_task` 中 `await _prepare_clone()` 之後、`_is_investigation_task()` 之前
+- 時間：2026-07-10 21:15
+- 理由：clone 路徑是 git fallback 必需；先於 investigation 路由才能接管降級決定
+
+## `backlog.annotate` 具名新增 `lane: str | None = None` 參數，僅 `lane is not None` 時寫入；函式內部 **不得** 接受 `**extra_fields`
+- 時間：2026-07-10 21:15
+- 理由：`annotate` 契約是「只補 note，不動 status/attempts」；裸 `t.update(**extra_fields)` 是後門，任何呼叫端傳 `status`/`attempts`/`id` 可靜默覆蓋關鍵欄位，擊穿保護語意
+- 否決方案：`**extra_fields` 無白名單擴展（高級工程師退回，最便宜時機是設計階段修）
+
+## 命中時呼叫 `backlog.annotate(task_id, note="[prefilter-implemented] 疑似已實作，匹配 merged: {title}", lane="prefilter-implemented")`，再路由 `_run_investigation_task`；命中不得靜默
+- 時間：2026-07-10 21:15
+
+## anti-ping-pong 沿用既有機制：`lane="full"` 時跳過 prefilter；investigation 判「需改碼:」→ 退回 `pending + lane="full"` → 下輪走全管線不再降級
+- 時間：2026-07-10 21:15
+- 否決方案：新增獨立 `lane="prefilter-skip"` 旗標（重複語意）
+
+## 低資訊保護：`len(_tokenize_for_dedup(title)) < 3` 時跳過比對，不降級
+- 時間：2026-07-10 21:15
+- 否決方案：`len(title.split()) < 3`（CJK 不靠空格分詞，分詞已有現成函式）
+
+## `VALID_TYPES` 維持不變，不新增 `"verification"` 型別；降級走既有 investigation lane
+- 時間：2026-07-10 21:15
+- 否決方案：新增型別（需動 backlog 驗證 + 所有消費端，複雜度不值可讀性收益）
+
+## 零新依賴，禁 `rapidfuzz`；相似度一律複用 `_token_set_similarity`（詞集 Jaccard，CJK 已處理）
+- 時間：2026-07-10 21:15
+- 否決方案：rapidfuzz（現有輪子在短標題場景等效，加依賴增部署與審查成本）
+
+## #3 測試必含以下五個黑白樣本：① 命中 → 降級為 investigation；② 未命中 → 任務不動；③ token < 3 → 不誤殺；④ 總開關關閉 → 整段旁路；⑤ 無 GH token / shallow clone → fallback 回空、不炸不誤殺
+- 時間：2026-07-10 21:15

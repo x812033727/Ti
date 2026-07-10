@@ -293,6 +293,30 @@ def list_tasks(status: str | None = None, *, state_dir: Path | None = None) -> l
     return tasks
 
 
+def claim_next(predicate, *, state_dir: Path | None = None) -> dict | None:
+    """原子認領:單一 _locked() 內找第一筆滿足 predicate 的 pending 任務並就地標
+    in_progress(attempts+1,與 set_status 語意一致),回傳任務或 None。
+
+    為什麼需要:next_pending 只讀不改,認領靠呼叫端事後 set_status——單線無妨,但旁路
+    併行線(調查 sideline)與主迴圈同時取任務會 TOCTOU 撿到同一筆。predicate 在鎖內
+    執行,須為純函式(不得再進 backlog,否則 flock 重入死鎖)。
+    排序與 next_pending 一致(priority 先、同級 created_at 早者先)。
+    """
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        pend = [t for t in data["tasks"] if t["status"] == "pending"]
+        pend.sort(key=lambda t: (t.get("priority", DEFAULT_PRIORITY), t["created_at"]))
+        for t in pend:
+            if not predicate(t):
+                continue
+            t["status"] = "in_progress"
+            t["attempts"] = t.get("attempts", 0) + 1
+            t["updated_at"] = time.time()
+            _save(data, state_dir)
+            return t
+        return None
+
+
 def next_pending(*, state_dir: Path | None = None) -> dict | None:
     """取優先級最高（P0 先）、同級內最早建立、仍 pending 的任務（不改狀態）。
 
@@ -323,8 +347,14 @@ def set_status(
         return None
 
 
-def annotate(task_id: int, note: str, *, state_dir: Path | None = None) -> dict | None:
-    """只補 note（與 updated_at），不動 status/attempts。
+def annotate(
+    task_id: int,
+    note: str,
+    *,
+    state_dir: Path | None = None,
+    lane: str | None = None,
+) -> dict | None:
+    """只補 note（可選 lane）與 updated_at，不動 status/attempts。
 
     與 set_status 區隔的原因：set_status(id, "in_progress") 會 attempts +1——為了補一句
     稽核註記而重呼叫會燒掉閘門重試額度。分診/稽核類「純備註」一律走本函式。
@@ -334,6 +364,8 @@ def annotate(task_id: int, note: str, *, state_dir: Path | None = None) -> dict 
         for t in data["tasks"]:
             if t["id"] == task_id:
                 t["note"] = note
+                if lane is not None:
+                    t["lane"] = lane
                 t["updated_at"] = time.time()
                 _save(data, state_dir)
                 return t

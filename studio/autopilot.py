@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import sys
 import time
 import uuid
@@ -41,6 +42,7 @@ import uuid
 from asyncio import CancelledError
 from collections import Counter
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import (
@@ -69,6 +71,11 @@ secure_write_root = secure_write.secure_write_root
 
 _GH = ["gh"]
 _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
+_MERGED_TITLE_CACHE_TTL = 3600.0
+# 同一個 autopilot loop 內 token/repo 設定視為穩定；cache key 不含 token，避免每輪重打 API。
+_MERGED_TITLE_CACHE: dict[tuple[str, int], tuple[float, list[str]]] = {}
+_PREFILTER_IMPLEMENTED_LANE = "prefilter-implemented"
+_PREFILTER_IMPLEMENTED_NOTE = "[prefilter-implemented]"
 # 自我重載：autopilot 跑討論依賴整個 studio 套件（orchestrator／experts／flow／providers…），
 # 故監看整包 studio/*.py 的 mtime——只盯少數檔會漏掉 orchestrator-only 的部署（如 #218），
 # 讓 autopilot 一直跑舊 orchestration 邏輯（self-reload 在任務之間做、安全）。
@@ -107,9 +114,14 @@ def _self_sig() -> float:
 # --- working clone -------------------------------------------------------
 
 
-async def _prepare_clone() -> str:
-    """確保 working clone 存在且重置到 origin/<branch> 的乾淨狀態。回傳路徑。"""
-    work = str(config.AUTOPILOT_WORK_DIR)
+async def _prepare_clone(work_dir: str | None = None) -> str:
+    """確保 working clone 存在且重置到 origin/<branch> 的乾淨狀態。回傳路徑。
+
+    work_dir 預設主 clone(AUTOPILOT_WORK_DIR);調查旁路線傳獨立目錄(-inv)——調查
+    唯讀,但主 worker 每任務 reset --hard+clean 會抽換檔案,共用 clone 會讓旁路的
+    Expert 讀取不一致。
+    """
+    work = str(work_dir or config.AUTOPILOT_WORK_DIR)
     url = f"https://github.com/{config.AUTOPILOT_REPO}.git"
     branch = config.AUTOPILOT_BRANCH
     if not (Path(work) / ".git").exists():
@@ -1182,6 +1194,207 @@ def _first_similar_title(title: str, corpus: Iterable[str]) -> str | None:
     )
 
 
+_MERGE_SUBJECT_RE = re.compile(
+    r"^(merge pull request #\d+\b|merge branch\b|merge remote-tracking branch\b)", re.IGNORECASE
+)
+
+
+def _enough_title_signal(title: str) -> bool:
+    """低資訊標題不參與「疑似已實作」判定，避免 `fix tests` 這類短句誤殺。"""
+    return len(_tokenize_for_dedup(title)) >= 3
+
+
+def _first_similar_implemented_title(
+    title: str,
+    merged_titles: Iterable[str],
+    *,
+    threshold: float | None = None,
+) -> str | None:
+    """回傳第一個與任務 title 相似的已 merged 標題；純比對，不讀 backlog/網路/git。
+
+    相似度複用 `_token_set_similarity`，並對任務標題與語料標題都套低資訊保護（token < 3
+    直接跳過）。threshold 預設讀 `AUTOPILOT_PREFILTER_RATIO`，測試可注入固定值。
+    """
+    threshold = config.AUTOPILOT_PREFILTER_RATIO if threshold is None else threshold
+    if threshold <= 0 or not _enough_title_signal(title):
+        return None
+    for merged in merged_titles:
+        if _enough_title_signal(merged) and _token_set_similarity(title, merged) >= threshold:
+            return merged
+    return None
+
+
+def _with_prefilter_note(task: dict, note: str, *, limit: int = 500) -> str:
+    """prefilter 分流後保留匹配 merged title，避免後續調查出口覆寫稽核線索。"""
+    existing = str(task.get("note") or "").strip()
+    if (task.get("lane") or "") == _PREFILTER_IMPLEMENTED_LANE and existing.startswith(
+        _PREFILTER_IMPLEMENTED_NOTE
+    ):
+        # 重試或多出口共用時避免把同一段 prefilter note 重複拼回去。
+        note = existing if note.startswith(existing) else f"{existing}\n{note}"
+    return note[:limit]
+
+
+def _sanitize_prefilter_title(title: str, *, limit: int = 200) -> str:
+    """把外部 merged title 壓成單行短字串，降低 prompt marker 偽造風險。"""
+    cleaned = re.sub(r"\s+", " ", str(title)).strip()
+    if len(cleaned) > limit:
+        return cleaned[:limit].rstrip()
+    return cleaned
+
+
+def _commit_message_title(message: str) -> str:
+    """從 git log 的 commit message 取可比對標題；GitHub merge subject 會跳過取 body PR title。"""
+    for line in message.splitlines():
+        title = line.strip()
+        if not title or _MERGE_SUBJECT_RE.match(title):
+            continue
+        return title
+    return ""
+
+
+def _extract_git_log_titles(log_output: str) -> list[str]:
+    """解析 `git log --format=%B%x00` 輸出為標題清單，維持 git log 由新到舊順序。"""
+    return _dedupe_titles(_commit_message_title(chunk) for chunk in log_output.split("\x00"))
+
+
+def _dedupe_titles(titles: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for title in titles:
+        clean = (title or "").replace("\r", " ").replace("\n", " ").strip()
+        if not clean:
+            continue
+        key = clean.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(clean)
+    return out
+
+
+def _parse_github_datetime(value: str) -> datetime | None:
+    with contextlib.suppress(ValueError):
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    return None
+
+
+async def _fetch_github_merged_titles(repo: str, since_days: int) -> list[str] | None:
+    """以 GitHub REST 取近期 merged PR title；None 代表 API 不可用，呼叫端應 fallback。"""
+    token = (config.GITHUB_TOKEN or "").strip()
+    repo = (repo or "").strip()
+    if not token or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        return None
+
+    try:
+        import httpx
+
+        cutoff = datetime.now(UTC) - timedelta(days=max(0, since_days))
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        params = {"state": "closed", "sort": "updated", "direction": "desc", "per_page": 100}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"https://api.github.com/repos/{repo}/pulls",
+                headers=headers,
+                params=params,
+            )
+        if resp.status_code != 200:
+            log.debug("merged PR 標題 API 不可用（status=%s），改用 git log", resp.status_code)
+            return None
+        rows = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("merged PR 標題 API 失敗，改用 git log：%s", exc)
+        return None
+
+    titles: list[str] = []
+    for pr in rows if isinstance(rows, list) else []:
+        if not isinstance(pr, dict):
+            continue
+        merged_at = pr.get("merged_at")
+        title = str(pr.get("title") or "").strip()
+        if not merged_at or not title:
+            continue
+        merged_dt = _parse_github_datetime(str(merged_at))
+        if merged_dt is not None and merged_dt >= cutoff:
+            titles.append(title)
+    return _dedupe_titles(titles)
+
+
+async def _fetch_git_log_merged_titles(clone: str, since_days: int) -> list[str]:
+    """離線 fallback：從本地 git log 取近期 commit/merge message 標題。
+
+    known-limitation：shallow clone、無歷史或非 git 目錄會回空清單，呼叫端因此放行（漏判優於誤殺）。
+    不使用 `--merges --oneline`，因 GitHub merge commit 的 subject 多半只有 PR 編號，真正 PR
+    title 在 body；`%B%x00` 才能穩定取到。
+    """
+    if since_days <= 0:
+        return []
+    rc, out = await _run(
+        ["git", "log", "--format=%B%x00", f"--since={since_days}.days.ago"],
+        cwd=clone,
+        timeout=30,
+    )
+    if rc != 0:
+        log.debug("git log merged 標題 fallback 失敗：%s", out[-200:])
+        return []
+    return _extract_git_log_titles(out)
+
+
+async def _fetch_merged_titles(clone: str, repo: str, since_days: int) -> list[str]:
+    """取近期已合併標題語料：GitHub merged PR title 優先，離線 fallback `git log`。
+
+    僅取 GitHub closed PR 第一頁（per_page=100）；活躍 repo 可能漏掉更舊 PR，但偏誤方向是
+    放行而非誤降級。結果快取 1 小時，避免同一輪多任務重複打 API。
+    """
+    repo = (repo or "").strip()
+    since_days = max(0, int(since_days))
+    key = (repo, since_days)
+    now = time.time()
+    cached = _MERGED_TITLE_CACHE.get(key)
+    if cached and now - cached[0] < _MERGED_TITLE_CACHE_TTL:
+        return list(cached[1])
+
+    titles = await _fetch_github_merged_titles(repo, since_days)
+    if titles is None:
+        titles = await _fetch_git_log_merged_titles(clone, since_days)
+    titles = _dedupe_titles(titles)
+    _MERGED_TITLE_CACHE[key] = (now, titles)
+    return list(titles)
+
+
+async def _recent_merged_title_corpus(clone: str, repo: str | None = None) -> list[str]:
+    """套 config 旋鈕取近期 merged title 語料；總開關關閉時直接回空。"""
+    if not config.AUTOPILOT_PREFILTER_IMPLEMENTED:
+        return []
+    return await _fetch_merged_titles(
+        clone,
+        repo or config.AUTOPILOT_REPO,
+        config.AUTOPILOT_PREFILTER_LOOKBACK_DAYS,
+    )
+
+
+async def _prefilter_implemented_match(task: dict, clone: str) -> str | None:
+    """pick 後、跑完整管線前檢查任務是否疑似已由近期 merged PR 實作。"""
+    if not config.AUTOPILOT_PREFILTER_IMPLEMENTED:
+        return None
+    if (task.get("lane") or "") == "full":
+        return None
+    title = str(task.get("title") or "")
+    if not _enough_title_signal(title):
+        return None
+    try:
+        corpus = await _recent_merged_title_corpus(clone)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("疑似已實作 prefilter 失敗，放行完整管線：%s", exc)
+        return None
+    return _first_similar_implemented_title(title, corpus)
+
+
 def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
     """進場 pre-filter：兩道互補防線，皆只作用於本次提案進場，皆不回溯刪改 backlog、不動
     `backlog._is_duplicate` 的字串等值去重契約。第一道相似度用 `_token_set_similarity`
@@ -1304,6 +1517,9 @@ def _build_investigation_prompt(task: dict) -> str:
     base = f"任務標題：{title}\n"
     if detail:
         base += f"任務細節：{detail}\n"
+    note = (task.get("note") or "").strip()
+    if note:
+        base += f"任務備註：{note}\n"
     return (
         "你是資深工程師，獨立完成以下這項「調查/驗證」型任務。交付物是**你的文字結論本身**"
         "（會直接寫回任務看板與教訓庫），不是程式碼、不是檔案。\n\n"
@@ -1426,7 +1642,7 @@ async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -
 
     if parsed["needs_human"]:
         note = f"[調查] 需人工：{parsed['needs_human']}"
-        backlog.set_status(task["id"], "parked", note=note[:500])
+        backlog.set_status(task["id"], "parked", note=_with_prefilter_note(task, note))
         _audit("investigation_parked", note)
         log.info("任務 #%s 調查判定需人工，parked：%s", task["id"], parsed["needs_human"])
         return
@@ -1438,7 +1654,7 @@ async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -
             "pending",
             lane="full",
             attempts=int(task.get("attempts") or 0),
-            note=note[:500],
+            note=_with_prefilter_note(task, note),
         )
         _audit("investigation_escalated", note)
         log.info("任務 #%s 調查判定需改碼，退回完整管線重跑（不耗 attempts）", task["id"])
@@ -1458,7 +1674,9 @@ async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -
             log.info("任務 #%s 調查結論被反駁，退回重查：%s", task["id"], refuted[:160])
             _handle_discussion_incomplete(task, reason=f"調查結論被反駁：{refuted[:160]}")
             return
-        backlog.set_status(task["id"], "done", note=f"[調查結論] {summary[:400]}")
+        backlog.set_status(
+            task["id"], "done", note=_with_prefilter_note(task, f"[調查結論] {summary[:400]}")
+        )
         # 結論沉澱進教訓庫（固定模板但結論各異 → exact_only 防 difflib 近似去重誤殺）。
         with contextlib.suppress(Exception):
             lessons.add_many(
@@ -1848,7 +2066,7 @@ def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
             task["id"],
             "pending",
             attempts=attempts + 1,
-            note=f"討論未達完成，第 {attempts + 1} 次退回重試{why}",
+            note=_with_prefilter_note(task, f"討論未達完成，第 {attempts + 1} 次退回重試{why}"),
         )
         log.info(
             "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）%s",
@@ -1861,7 +2079,7 @@ def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
         backlog.set_status(
             task["id"],
             "failed",
-            note=f"討論未達完成（連續 {cap} 次未收斂，放棄）{why}",
+            note=_with_prefilter_note(task, f"討論未達完成（連續 {cap} 次未收斂，放棄）{why}"),
         )
         log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄%s", task["id"], cap, why)
 
@@ -1960,6 +2178,24 @@ async def run_one_task(task: dict) -> None:
 
     clone = await _prepare_clone()
     requirement = task["title"] + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
+
+    matched_implemented_title = await _prefilter_implemented_match(task, clone)
+    if matched_implemented_title:
+        matched_note_title = _sanitize_prefilter_title(matched_implemented_title)
+        note = f"{_PREFILTER_IMPLEMENTED_NOTE} 疑似已實作，匹配 merged: {matched_note_title}"
+        backlog.annotate(
+            task["id"],
+            note[:500],
+            lane=_PREFILTER_IMPLEMENTED_LANE,
+        )
+        routed_task = {**task, "note": note[:500], "lane": _PREFILTER_IMPLEMENTED_LANE}
+        log.info(
+            "任務 #%s 命中疑似已實作 prefilter，轉調查分流：%s",
+            task["id"],
+            matched_note_title,
+        )
+        await _run_investigation_task(routed_task, clone, sid, t0)
+        return
 
     # 調查分流（完成率第三輪修法一）：調查/驗證型任務走單專家輕量管線，不進多專家
     # session、不過 merge 閘門——其完成判準是結論而非 code diff。所有出口（含例外）
@@ -2906,6 +3142,8 @@ def _write_status(
         "current_expert": current_expert,
         "turn_started_at": turn_started_at,
         "running_commit": _running_commit[:12] or None,
+        # 調查旁路線(δ):目前旁路在跑的任務;None=旁路閒置/未啟用。看板據此顯示第二行。
+        "sideline": _sideline_task_info,
     }
     try:
         config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -3289,6 +3527,9 @@ async def _prepare_execv_reload() -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     log.info("autopilot 啟動（dryrun=%s, repo=%s）", config.AUTOPILOT_DRYRUN, config.AUTOPILOT_REPO)
+    # Type=notify 啟動握手:不發 READY systemd 會判啟動失敗,故放 main 最早期、任何可能
+    # 耗時的步驟(git/部署檢查)之前。execv 自我重載後 NOTIFY_SOCKET 保留,會再發一次(無害)。
+    _sd_notify("READY=1")
     # 啟動時擷取一次「執行中程式碼」的 commit（磁碟 HEAD 可能已被 reset 但行程未重載，
     # 兩者語意不同）；隨 status.json 供 /api/autopilot 顯示部署漂移。失敗留空不擋啟動。
     global _running_commit
@@ -3301,8 +3542,12 @@ async def main() -> None:
         # 加值監督,建不起來不擋啟動(既有 main-loop 測試以 SimpleNamespace stub 本模組的
         # asyncio、只給 sleep——monitor 對它們是雜訊,缺 create_task 即靜默跳過)。
         monitor = asyncio.create_task(_loop_monitor())
+        sideline = asyncio.create_task(_investigation_sideline())
+        notifier = asyncio.create_task(_watchdog_notifier())
     except AttributeError:
         monitor = None
+        sideline = None
+        notifier = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -3315,10 +3560,11 @@ async def main() -> None:
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
     finally:
-        if monitor is not None:
-            monitor.cancel()
-            with contextlib.suppress(BaseException):
-                await monitor
+        for aux in (monitor, sideline, notifier):
+            if aux is not None:
+                aux.cancel()
+                with contextlib.suppress(BaseException):
+                    await aux
 
 
 # 暫停狀態轉換旗標(行程記憶體):只在「進入/離開暫停」時各記一次 log,避免每 10s 刷屏。
@@ -3367,6 +3613,39 @@ async def _loop_monitor() -> None:
             log.debug("loop monitor 檢查失敗(忽略)", exc_info=True)
 
 
+# systemd watchdog 對接(穩定強化 γ):β 的 loop monitor 只告警不自殺,真正自救交
+# systemd——unit 換 Type=notify+WatchdogSec=300,行程每 60s 送 WATCHDOG=1,連續漏
+# 5 次(整個行程無聲凍結,含 event loop 卡死)即被 systemd 殺掉再 Restart=always 拉起。
+_WATCHDOG_PING_S = 60
+
+
+def _sd_notify(msg: str) -> None:
+    """零依賴 sd_notify:往 NOTIFY_SOCKET(unix datagram)送一則通知。
+
+    非 systemd 環境(測試/手動執行)無此環境變數 → 靜默 no-op;socket 任何失敗也
+    只 debug log 不冒泡——通知是加值,絕不影響主迴圈。@ 開頭為 abstract socket。
+    """
+    addr = os.environ.get("NOTIFY_SOCKET", "")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.connect(addr)
+            s.sendall(msg.encode())
+    except OSError:
+        log.debug("sd_notify 送出失敗(忽略):%s", msg, exc_info=True)
+
+
+async def _watchdog_notifier() -> None:
+    """每 60s 送 WATCHDOG=1。**暫停中也送**——paused 是活著,不該被 systemd 誤殺;
+    「假活」(event loop 卡死)本 task 也動不了,ping 自然斷,正是 watchdog 要抓的。"""
+    while True:
+        await asyncio.sleep(_WATCHDOG_PING_S)
+        _sd_notify("WATCHDOG=1")
+
+
 async def _pause_tick() -> None:
     """暫停中的一輪空轉——必須可觀測(2026-07-10 事故:pause 後 status.json 凍結在
     上一筆 running #293,53 分鐘死寂被誤判成「看門狗失效的卡死」並觸發人工重啟)。
@@ -3390,6 +3669,63 @@ def _note_resumed() -> None:
     if _paused_logged:
         log.info("autopilot 已恢復(pause 檔移除),繼續取任務")
         _paused_logged = False
+
+
+# 調查旁路線的狀態(行程記憶體):目前在跑的旁路任務(供 status.json sideline 子欄)。
+_sideline_task_info: dict | None = None
+
+
+async def _investigation_sideline() -> None:
+    """調查任務旁路併行線(吞吐強化 δ,預設關):主 worker 跑完整管線(~51min/場)時,
+    本線併行消化調查分流任務(~89s/筆;live 量測 pending 37% 符合)。
+
+    設計邊界:單線一次一筆(+1 LLM 併發);與主迴圈共用 pause/quota 閘門(暫停或額度
+    受限即不取);認領走 backlog.claim_next(單一 flock 內 filter+標 in_progress,消
+    與主迴圈的 TOCTOU);clone 用獨立唯讀目錄(AUTOPILOT_WORK_DIR+"-inv")避免主 worker
+    reset --hard 抽換檔案。任何例外 log+continue,絕不影響主迴圈;停機隨 main cancel,
+    in_progress 由既有 stale recovery 收斂。
+    """
+    global _sideline_task_info
+    inv_dir = str(config.AUTOPILOT_WORK_DIR) + "-inv"
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if not config.AUTOPILOT_INVESTIGATION_PARALLEL:
+                continue
+            if not config.AUTOPILOT_INVESTIGATION_LANE:
+                continue
+            if config.autopilot_paused() or _shutdown_requested:
+                continue
+            # 額度閘門:與主迴圈同一判定(provider_quota.gate);snapshot 有 SWR 快取,
+            # 60s 一次的旁路輪詢幾乎都命中快取、不重打 API。全受限即不取任務。
+            if config.AUTOPILOT_QUOTA_GATE:
+                try:
+                    snap = await asyncio.to_thread(provider_quota.snapshot)
+                    usable, _reset = provider_quota.gate(snap)
+                    if not usable:
+                        continue
+                except Exception:  # noqa: BLE001 — 額度查詢失敗寧可保守跳過本輪
+                    continue
+            task = backlog.claim_next(_is_investigation_task)
+            if task is None:
+                continue
+            log.info("旁路線認領調查任務 #%s:%s", task["id"], task["title"][:60])
+            t0 = time.time()
+            sid = f"apinv{uuid.uuid4().hex[:8]}"
+            _sideline_task_info = {
+                "task_id": task["id"],
+                "title": task["title"][:80],
+                "started_at": t0,
+            }
+            try:
+                clone = await _prepare_clone(inv_dir)
+                await _run_investigation_task(task, clone, sid, t0)
+            finally:
+                _sideline_task_info = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 旁路線絕不影響主迴圈
+            log.exception("調查旁路線本輪失敗(忽略,60s 後重試)")
 
 
 async def _main_loop(startup_sig: float) -> None:

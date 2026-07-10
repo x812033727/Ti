@@ -3499,6 +3499,132 @@
       "rejected": "",
       "session_id": "apeb88e51698",
       "created_at": 1783695627.5955229
+    },
+    {
+      "decision": "所有 prefilter 邏輯集中於 `studio/autopilot.py`，不新增模組",
+      "rationale": "prefilter 是 pick 前同步判定，與 investigation lane、`_token_set_similarity`、`_tokenize_for_dedup` 同倉庫，跨模組界面為零",
+      "rejected": "放 `flow.py`——flow.py 契約為無狀態純函式，async 取 merged 標題無法放入",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.553138
+    },
+    {
+      "decision": "新增 `async def _fetch_merged_titles(clone: str, repo: str, since_days: int) -> list[str]`",
+      "rationale": "非同步才不阻塞 event loop，且 git fallback 需要 clone 路徑",
+      "rejected": "同步版本（阻塞）；透過 `publisher` 模組（會造成循環 import）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.553143
+    },
+    {
+      "decision": "主路徑用 lazy `import httpx`，呼叫 `GET /repos/{owner}/{repo}/pulls?state=closed&per_page=100`，過濾 `merged_at != null` 且在 lookback 窗內",
+      "rationale": "httpx 已為現有依賴（`publisher.py` 慣例），lazy import 避免常駐記憶體",
+      "rejected": "引入 PyGithub（新依賴，不值）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531442
+    },
+    {
+      "decision": "git fallback 用 `git log --format=%B%x00 --since=<n>.days.ago`，以 `\\x00` 切割各 commit body，取每則 body 第一個非 merge-subject 的有效行作標題",
+      "rationale": "`--oneline` 下 GitHub merge commit subject 常是 `Merge pull request #…`，PR title 在 body 第一行；用 `%B%x00` 才能取到有效語意",
+      "rejected": "`--merges --oneline`（常返回 merge subject 而非 PR title，語料雜訊大）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531454
+    },
+    {
+      "decision": "git fallback 在 shallow clone 或無歷史時回傳空 list，靜默放行（任務不降級）；在函式 docstring 明確標 known-limitation",
+      "rationale": "偏誤方向安全（漏判優於誤殺）；補測試「shallow clone 下 fallback 回空、任務不降級」",
+      "rejected": "",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531478
+    },
+    {
+      "decision": "模組級快取 `_MERGED_TITLE_CACHE: dict[tuple[str, int], tuple[float, list[str]]]`，key 為 `(repo, since_days)`，TTL 3600 秒",
+      "rationale": "型別具體、IDE 可靜態檢查；一 loop 內多任務共用同批 merged 標題，不重複打 API",
+      "rejected": "`dict[str, ...]`（key 型別過鬆，工程師指正）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.553149
+    },
+    {
+      "decision": "cache key 不含 token 狀態；同一 loop 內 token 穩定，影響可忽略；加一行注釋說明此假設",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531497
+    },
+    {
+      "decision": "httpx 僅取第一頁 `per_page=100`；活躍 repo 60 天 merged PR 可能 >100，漏舊 PR 導致漏判（放行，方向安全）；在函式 docstring 標 known-limitation，不分頁",
+      "rationale": "",
+      "rejected": "分頁全取（複雜度高，漏判代價低，不值）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531502
+    },
+    {
+      "decision": "新增 3 個 config 旋鈕，於 `config.py` 頂層與 `reload()` 區塊兩處同步定義",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.553151
+    },
+    {
+      "decision": "`AUTOPILOT_PREFILTER_RATIO` 獨立於 `AUTOPILOT_DEDUP_RATIO`（0.75），預設 0.80",
+      "rationale": "prefilter 誤殺代價（合法任務多一場 investigation + 一輪 pick 延遲）高於漏判代價；門檻拉高壓窄命中面",
+      "rejected": "共用 DEDUP_RATIO（語意不同，後續分別調整才有意義）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531518
+    },
+    {
+      "decision": "插入點為 `run_one_task` 中 `await _prepare_clone()` 之後、`_is_investigation_task()` 之前",
+      "rationale": "clone 路徑是 git fallback 必需；先於 investigation 路由才能接管降級決定",
+      "rejected": "",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531526
+    },
+    {
+      "decision": "`backlog.annotate` 具名新增 `lane: str | None = None` 參數，僅 `lane is not None` 時寫入；函式內部 **不得** 接受 `**extra_fields`",
+      "rationale": "`annotate` 契約是「只補 note，不動 status/attempts」；裸 `t.update(**extra_fields)` 是後門，任何呼叫端傳 `status`/`attempts`/`id` 可靜默覆蓋關鍵欄位，擊穿保護語意",
+      "rejected": "`**extra_fields` 無白名單擴展（高級工程師退回，最便宜時機是設計階段修）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.553153
+    },
+    {
+      "decision": "命中時呼叫 `backlog.annotate(task_id, note=\"[prefilter-implemented] 疑似已實作，匹配 merged: {title}\", lane=\"prefilter-implemented\")`，再路由 `_run_investigation_task`；命中不得靜默",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531535
+    },
+    {
+      "decision": "anti-ping-pong 沿用既有機制：`lane=\"full\"` 時跳過 prefilter；investigation 判「需改碼:」→ 退回 `pending + lane=\"full\"` → 下輪走全管線不再降級",
+      "rationale": "",
+      "rejected": "新增獨立 `lane=\"prefilter-skip\"` 旗標（重複語意）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531542
+    },
+    {
+      "decision": "低資訊保護：`len(_tokenize_for_dedup(title)) < 3` 時跳過比對，不降級",
+      "rationale": "",
+      "rejected": "`len(title.split()) < 3`（CJK 不靠空格分詞，分詞已有現成函式）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531547
+    },
+    {
+      "decision": "`VALID_TYPES` 維持不變，不新增 `\"verification\"` 型別；降級走既有 investigation lane",
+      "rationale": "",
+      "rejected": "新增型別（需動 backlog 驗證 + 所有消費端，複雜度不值可讀性收益）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531554
+    },
+    {
+      "decision": "零新依賴，禁 `rapidfuzz`；相似度一律複用 `_token_set_similarity`（詞集 Jaccard，CJK 已處理）",
+      "rationale": "",
+      "rejected": "rapidfuzz（現有輪子在短標題場景等效，加依賴增部署與審查成本）",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.553156
+    },
+    {
+      "decision": "#3 測試必含以下五個黑白樣本：① 命中 → 降級為 investigation；② 未命中 → 任務不動；③ token < 3 → 不誤殺；④ 總開關關閉 → 整段旁路；⑤ 無 GH token / shallow clone → fallback 回空、不炸不誤殺",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap73fa9dd999",
+      "created_at": 1783689318.5531564
     }
   ]
 }
