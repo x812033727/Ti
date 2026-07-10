@@ -3293,6 +3293,12 @@ async def main() -> None:
     _install_signal_handlers()
 
     try:
+        # 加值監督,建不起來不擋啟動(既有 main-loop 測試以 SimpleNamespace stub 本模組的
+        # asyncio、只給 sleep——monitor 對它們是雜訊,缺 create_task 即靜默跳過)。
+        monitor = asyncio.create_task(_loop_monitor())
+    except AttributeError:
+        monitor = None
+    try:
         await _main_loop(startup_sig)
     except CancelledError:
         if not _shutdown_requested:
@@ -3303,10 +3309,57 @@ async def main() -> None:
         if _read_status().get("state") != "stopped":
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
+    finally:
+        if monitor is not None:
+            monitor.cancel()
+            with contextlib.suppress(BaseException):
+                await monitor
 
 
 # 暫停狀態轉換旗標(行程記憶體):只在「進入/離開暫停」時各記一次 log,避免每 10s 刷屏。
 _paused_logged = False
+
+# 主迴圈心跳(穩定強化 β):每輪頂端/任務返回後更新。stall/hard 看門狗只包 session.run,
+# 「任務之間」(quota snapshot/reconciler/邊界部署/triage)是盲區——任一步無聲卡死即整台
+# 停擺且無 log(2026-07-10 盲區調查)。_loop_monitor 據此告警;自救交 systemd watchdog(γ)。
+_loop_tick_at = time.time()
+_task_running = False
+
+
+def _loop_tick() -> None:
+    global _loop_tick_at
+    _loop_tick_at = time.time()
+
+
+async def _loop_monitor() -> None:
+    """主迴圈心跳監督(告警不自殺):非暫停、非任務執行中,且 tick 逾
+    TI_AUTOPILOT_LOOP_STALL_S 未推進 → log.error(每個停滯期只吼一次)。"""
+    alerted = False
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if not config.AUTOPILOT_LOOP_STALL_S:
+                continue
+            idle_for = time.time() - _loop_tick_at
+            stalled = (
+                idle_for > config.AUTOPILOT_LOOP_STALL_S
+                and not _task_running
+                and not config.autopilot_paused()
+            )
+            if stalled and not alerted:
+                log.error(
+                    "主迴圈心跳停滯 %.0fs(>%ds):任務之間的某一步(quota/reconcile/部署檢查)"
+                    "疑似無聲卡死——等待 systemd watchdog 或人工介入",
+                    idle_for,
+                    config.AUTOPILOT_LOOP_STALL_S,
+                )
+                alerted = True
+            elif not stalled:
+                alerted = False
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 監督器自身失敗不得影響主迴圈
+            log.debug("loop monitor 檢查失敗(忽略)", exc_info=True)
 
 
 async def _pause_tick() -> None:
@@ -3340,6 +3393,7 @@ async def _main_loop(startup_sig: float) -> None:
         # 絕不再取新任務（否則要等 systemd 90s 後 SIGKILL 硬殺）。
         if _shutdown_requested:
             raise CancelledError()
+        _loop_tick()
         if config.autopilot_paused():
             await _pause_tick()
             continue
@@ -3417,6 +3471,8 @@ async def _main_loop(startup_sig: float) -> None:
             continue
 
         _write_status("running", task_id=task.get("id"), quota=quota)
+        global _task_running
+        _task_running = True
         try:
             await run_one_task(task)
         except AutopilotTaskStalled as exc:
@@ -3439,6 +3495,8 @@ async def _main_loop(startup_sig: float) -> None:
             backlog.set_status(task["id"], "failed", note=f"{type(exc).__name__}: {exc}")
 
         # 部署後若自身程式碼有更新 → 重載自己,避免跑舊邏輯
+        _task_running = False
+        _loop_tick()
         if not config.AUTOPILOT_DRYRUN and _self_sig() != startup_sig:
             log.info("偵測到 autopilot 自身程式碼更新,os.execv 重載")
             await _prepare_execv_reload()
