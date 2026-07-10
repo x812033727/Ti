@@ -52,6 +52,7 @@ from . import (
     deploy,
     digest,
     events,
+    git_cred,
     history,
     notify,
     provider_quota,
@@ -72,7 +73,6 @@ log = logging.getLogger("ti.autopilot")
 secure_write_root = secure_write.secure_write_root
 
 _GH = ["gh"]
-_GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
 _MERGED_TITLE_CACHE_TTL = 3600.0
 # 同一個 autopilot loop 內 token/repo 設定視為穩定；cache key 不含 token，避免每輪重打 API。
 _MERGED_TITLE_CACHE: dict[tuple[str, int], tuple[float, list[str]]] = {}
@@ -83,13 +83,19 @@ _PREFILTER_IMPLEMENTED_NOTE = "[prefilter-implemented]"
 # 讓 autopilot 一直跑舊 orchestration 邏輯（self-reload 在任務之間做、安全）。
 
 
-async def _run(cmd: list[str], cwd: str | None = None, timeout: int = 600) -> tuple[int, str]:
+async def _run(
+    cmd: list[str],
+    cwd: str | None = None,
+    timeout: int = 600,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,
+        env=env,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -97,6 +103,24 @@ async def _run(cmd: list[str], cwd: str | None = None, timeout: int = 600) -> tu
         runner.kill_process_group(proc)
         return -1, f"(逾時 {timeout}s)"
     return proc.returncode if proc.returncode is not None else -1, out.decode("utf-8", "replace")
+
+
+def _git_cred_argv() -> list[str]:
+    """git 認證注入 argv：共用 `git_cred` SSOT。移除舊 gh CLI helper 依賴。
+
+    預設（新機制＋git 2.31+）回 []，認證改走 `_git_cred_env` 的 GIT_CONFIG_* env；
+    legacy 閥開啟或 git <2.31 時回 `-c http.extraHeader=...` fallback（token 在 argv 短窗可見）。
+    origin 恆為 github.com AUTOPILOT_REPO，url 省略採 github per-host 注入。
+    """
+    return git_cred.git_cred_argv(config.GITHUB_TOKEN)
+
+
+def _git_cred_env() -> dict[str, str] | None:
+    """git 認證注入 env：`config.GITHUB_TOKEN` 走 GIT_CONFIG_* extraheader（token 不進 argv/ps），
+    與 os.environ 合併後回傳。無 token／legacy／git <2.31 時回 None（維持 `_run` 繼承 os.environ 的原行為，
+    認證由 `_git_cred_argv` argv fallback 承接）。"""
+    extra = git_cred.make_env(config.GITHUB_TOKEN)
+    return {**os.environ, **extra} if extra else None
 
 
 def _self_sig() -> float:
@@ -128,10 +152,17 @@ async def _prepare_clone(work_dir: str | None = None) -> str:
     branch = config.AUTOPILOT_BRANCH
     if not (Path(work) / ".git").exists():
         Path(work).parent.mkdir(parents=True, exist_ok=True)
-        rc, out = await _run(["git", *_GIT_CRED, "clone", url, work], timeout=300)
+        rc, out = await _run(
+            ["git", *_git_cred_argv(), "clone", url, work], timeout=300, env=_git_cred_env()
+        )
         if rc != 0:
             raise RuntimeError(f"clone 失敗：{out[-400:]}")
-    await _run(["git", *_GIT_CRED, "fetch", "origin", branch], cwd=work, timeout=120)
+    await _run(
+        ["git", *_git_cred_argv(), "fetch", "origin", branch],
+        cwd=work,
+        timeout=120,
+        env=_git_cred_env(),
+    )
     await _run(["git", "checkout", "-q", branch], cwd=work, timeout=60)
     await _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=work, timeout=60)
     await _run(["git", "clean", "-fdq"], cwd=work, timeout=60)
@@ -573,9 +604,10 @@ async def _reclaim_stale_branch(clone: str, repo: str, branch: str) -> tuple[boo
             )
         return True, "已關閉殘留 open PR 並刪除分支"
     rc, out = await _run(
-        ["git", *_GIT_CRED, "push", "origin", "--delete", branch],
+        ["git", *_git_cred_argv(), "push", "origin", "--delete", branch],
         cwd=clone,
         timeout=120,
+        env=_git_cred_env(),
     )
     if rc != 0:
         return False, _merge_fail_note(
@@ -672,9 +704,10 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         #   rc==0 且有輸出：遠端已存在同名分支（task 重跑或殘留），預設中止；FORCE_PUSH 為真才放行覆寫。
         #   rc==0 且空輸出：遠端不存在，放行。
         rc, out = await _run(
-            ["git", *_GIT_CRED, "ls-remote", "--heads", "origin", branch],
+            ["git", *_git_cred_argv(), "ls-remote", "--heads", "origin", branch],
             cwd=clone,
             timeout=60,
+            env=_git_cred_env(),
         )
         if rc != 0:
             return False, _merge_fail_note(
@@ -726,9 +759,10 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
                 f"origin={push_url.strip() or '(empty)'} autopilot={repo}"
             )
         rc, out = await _run(
-            ["git", *_GIT_CRED, "push", *push_flags, "-u", "origin", branch],
+            ["git", *_git_cred_argv(), "push", *push_flags, "-u", "origin", branch],
             cwd=clone,
             timeout=180,
+            env=_git_cred_env(),
         )
         if rc != 0:
             return False, _merge_fail_note(f"push 失敗：{out[-400:]}", out)

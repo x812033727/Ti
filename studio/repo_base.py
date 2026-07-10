@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, events, runner
+from . import config, events, git_cred, runner
 
 # 這些字樣代表「遠端拿不到指定分支」而非本地/憑證問題：repo 不存在、空 repo、
 # 或 base 分支不存在。此時從空白開始是預期路徑（首次發佈由 publisher._ensure_repo
@@ -73,10 +73,19 @@ def _redact(text: str, token: str | None) -> str:
     return text
 
 
-async def _git(cwd: Path, argv: list[str], label: str, timeout: int = 30) -> runner.RunOutput:
+async def _git(
+    cwd: Path,
+    argv: list[str],
+    label: str,
+    timeout: int = 30,
+    env: dict[str, str] | None = None,
+) -> runner.RunOutput:
     # 基底同步是確定性基礎建設（非 agent 指令），與 git_init/_push 同款 sandbox=False；
     # label 固定短字串，帶 token 的 URL 絕不進 RunOutput.command。
-    return await runner.run_command_exec(cwd, argv, timeout=timeout, sandbox=False, label=label)
+    kwargs = {"timeout": timeout, "sandbox": False, "label": label}
+    if env:
+        kwargs["env"] = env
+    return await runner.run_command_exec(cwd, argv, **kwargs)
 
 
 async def workspace_state(path: Path | str) -> str:
@@ -139,8 +148,15 @@ async def sync_workspace(
         )
 
     # unborn / has_history：fetch 遠端 base（fetch 直接用 URL，不持久化帶 token 的 remote）。
-    authed = runner.build_clone_url(url, token)
-    fetch = await _git(root, ["git", "fetch", authed, f"refs/heads/{base}"], "git fetch", 120)
+    fetch_url = runner.build_clone_url(url, token, legacy=config.TI_GIT_CRED_LEGACY)
+    fetch_env = git_cred.make_env(token, url=fetch_url)
+    fetch = await _git(
+        root,
+        ["git", "fetch", fetch_url, f"refs/heads/{base}"],
+        "git fetch",
+        120,
+        env=fetch_env or None,
+    )
     if not fetch.ok:
         return SyncResult(
             "remote_unavailable",

@@ -19,16 +19,13 @@ import pytest
 
 from studio import autopilot, config
 
-# 對齊 autopilot 模組常數，用於精確 argv 比對
-_GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
-
 
 class RunSpy:
     def __init__(self, overrides=None):
         self.overrides = overrides or {}
         self.calls: list[list[str]] = []
 
-    async def __call__(self, cmd, cwd=None, timeout=600):
+    async def __call__(self, cmd, cwd=None, timeout=600, **kwargs):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
         for key, val in self.overrides.items():
@@ -73,6 +70,9 @@ def _safe_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
     monkeypatch.setattr(config, "AUTOPILOT_RECLAIM_BRANCH", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", "main")
+    monkeypatch.setattr(config, "GITHUB_TOKEN", "qa-task8-token")
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
+    monkeypatch.setattr(autopilot.git_cred, "_GIT_ENV_SUPPORTED", True)
 
 
 def _install(monkeypatch, overrides):
@@ -89,14 +89,14 @@ _HAS_CHANGE = {"rev-list --count": (0, "1")}
 
 @pytest.mark.asyncio
 async def test_lsremote_argv_is_exact(monkeypatch):
-    """ls-remote 指令必須精確為 git <cred> ls-remote --heads origin <branch>。"""
+    """ls-remote 指令必須精確為 git ls-remote --heads origin <branch>。"""
     task = {"id": "123", "title": "t", "detail": ""}
     branch = "autopilot/task-123"
     spy = _install(monkeypatch, {**_HAS_CHANGE})  # 遠端不存在 → 放行
     await autopilot._commit_push_merge("/clone", task)
 
     argv = spy.first_with("ls-remote")
-    expected = ["git", *_GIT_CRED, "ls-remote", "--heads", "origin", branch]
+    expected = ["git", "ls-remote", "--heads", "origin", branch]
     assert argv == expected, f"ls-remote argv 不符：{argv}"
 
 

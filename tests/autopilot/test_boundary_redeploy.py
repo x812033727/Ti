@@ -121,9 +121,9 @@ async def test_throttle_interval(state, monkeypatch):
     calls = {"n": 0}
     orig = stub.run
 
-    async def counting_run(cmd, cwd=None, timeout=600):
+    async def counting_run(cmd, cwd=None, timeout=600, **kwargs):
         calls["n"] += 1
-        return await orig(cmd, cwd=cwd, timeout=timeout)
+        return await orig(cmd, cwd=cwd, timeout=timeout, **kwargs)
 
     monkeypatch.setattr(deploy, "_run", counting_run)
     await autopilot._maybe_boundary_redeploy()

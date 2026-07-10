@@ -3082,3 +3082,50 @@
 
 ## #3 測試必含以下五個黑白樣本：① 命中 → 降級為 investigation；② 未命中 → 任務不動；③ token < 3 → 不誤殺；④ 總開關關閉 → 整段旁路；⑤ 無 GH token / shallow clone → fallback 回空、不炸不誤殺
 - 時間：2026-07-10 21:15
+## `make_env(token: str | None, url: str | None = None) -> dict[str, str]`；url 提供且 host 非 `github.com` 時回空 dict；url 為 None 時仍產生 github.com per-host env（key 已釘死 host，不跨域）
+- 時間：2026-07-11 03:03
+- 理由：集中 host 判斷於 SSOT，caller 不重複；url=None 安全，因 key 本身限定 `http.https://github.com/`
+- 否決方案：caller 自行判斷再決定是否呼叫 make_env（責任分散，易漏）
+
+## autopilot `_GIT_CRED` 替換必須附 `realgit` marker 的 clone/fetch 閉環測試，驗證 `config.GITHUB_TOKEN` 對 CORE_REPO 可通；push env dict 透傳由單元測試 assert（mock push）；`config.py` 文件明載「`GITHUB_TOKEN` 須持有 `AUTOPILOT_REPO` write 權限」
+- 時間：2026-07-11 03:03
+- 理由：gh CLI helper 走 gh 憑證、env token 走 PAT，兩者 scope 不等價，不能只靠 assert dict 內容
+- 否決方案：只靠單元測試斷言 env dict 結構（無法驗證 CORE_REPO 真實認證可用）
+
+## `scrub_remote(repo_path)` 呼叫點固定為兩處 — ①`runner.git_clone` 成功後（legacy=False）；②`repo_base.sync_workspace` fetch 成功後（legacy=False）；不做一次性 migration 工具，不在 import 或 config reload 時觸發
+- 時間：2026-07-11 03:03
+- 理由：接點對應「token 可能寫入 .git/config 的操作」，精確貼緊污染來源
+- 否決方案：caller 自行決定觸發時機（分散易漏）；一次性 migration（legacy 情境可能持續出現）
+
+## git 版本偵測採 module 層級 `_GIT_ENV_SUPPORTED: bool | None = None` 快取；首次呼叫 `make_env` 時 lazy 偵測，不在 import 時做 subprocess
+- 時間：2026-07-11 03:03
+- 理由：import 時做 subprocess 是隱藏副作用；無 git 環境（CI collect-only）會炸；lazy 讓測試可 monkeypatch
+- 否決方案：module import 時立即偵測（副作用難控、import 期異常難追）
+
+## `build_clone_url(url, token, *, legacy: bool) -> str`，legacy 為顯式必填關鍵字參數；caller（`runner.git_clone`）自行讀 `config.TI_GIT_CRED_LEGACY` 後傳入
+- 時間：2026-07-11 03:03
+- 理由：純函式不讀 config，可在任何 config 狀態下直接單元測試
+- 否決方案：函式內部讀 `config.TI_GIT_CRED_LEGACY`（破壞可測性，引入隱式 config 依賴）
+
+## `make_env` 固定使用索引 0；文件明載「假設父環境無 `GIT_CONFIG_*`」；caller 以 `{**os.environ, **make_env(token)}` merge；#2 測試補一條「父環境已帶 `GIT_CONFIG_COUNT=1` 時 make_env 覆蓋 KEY_0/VALUE_0」的行為樣本
+- 時間：2026-07-11 03:03
+- 理由：動態累加父環境 COUNT 引入 os.environ 讀取副作用，複雜且難測；Ti 執行環境父 env 無 GIT_CONFIG_* 可接受此假設
+- 否決方案：動態讀父環境 COUNT 再累加（stateful、測試難、副作用）
+
+## `git_cred_argv` 回傳的 `-c http.extraHeader=...` 所有呼叫點的 label 必須是固定短字串；#2/#3 測試 assert `RunOutput.command` 不含 base64 encoded token
+- 時間：2026-07-11 03:03
+- 理由：RunOutput.command 進 history/broadcast，base64 token 等同明文洩漏
+
+## `git_cred.py` 包含 `_auth_b64`（私有）與 `make_env`、`clean_url`、`git_cred_argv`（公開）；`publisher.git_auth_env` 改委派 `git_cred.make_env`；`publisher.redact` 改 import `git_cred._auth_b64` 以維持 base64 遮蔽邏輯一致
+- 時間：2026-07-11 03:03
+- 理由：編碼邏輯集中於 SSOT 不重複；publisher 只負責 redact 語義，不重算 base64
+- 否決方案：publisher 保留自己的 `_auth_b64` 副本（兩份邏輯若日後修改會分叉）；git_cred import publisher（循環依賴風險）
+
+## `config.py` 的 `TI_GIT_CRED_LEGACY` 定義旁加 comment `# 下線判準：連續兩個 minor release 無 legacy=True 生產回報 → 刪閥`；不設固定日期
+- 時間：2026-07-11 03:03
+- 理由：以版本為單位比日期更貼近實際 review 時機；comment 記錄判準避免死碼化
+- 否決方案：不設任何判準（legacy 永久殘留）；固定日期（到期無人看等於沒設）
+
+## `repo_base._redact` 與 `publisher.redact` 均保留，各自防守自身輸出路徑，不合併
+- 時間：2026-07-11 03:03
+
