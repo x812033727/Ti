@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import claude_accounts, claude_usage, config, conventions, events, llm_caller, tools
+from . import claude_accounts, claude_usage, config, conventions, events, lint, llm_caller, tools
 from .roles import Role, effective_tools
 
 logger = logging.getLogger(__name__)
@@ -230,6 +230,44 @@ def _make_fs_guard_hook(cwd: Path):
     return pre_tool_use
 
 
+# 寫時 lint 只掛在「會改 .py 內容」的三個工具上（NotebookEdit 是 ipynb、刻意不含）。
+_LINT_TOOLS = ("Write", "Edit", "MultiEdit")
+
+
+def _make_lint_hook(cwd: Path):
+    """產生綁定該專家 cwd 的 PostToolUse hook：寫入/編輯 .py 後就地 ruff 修復＋回饋殘餘違規。
+
+    治「lint 事後才紅」（#249/#496/#364/#367 連續三輪各燒 1-2 小時只為空格）：問題在寫檔
+    的當下被修掉/回饋，不再穿越整場 session 到收尾閘門才爆。回饋走 additionalContext
+    （溫和注入，不用 block——寫檔已成功，標成失敗只會誤導）；lint.lint_file 內部 fail-open
+    （非 .py/無 ruff/逾時/例外一律 None），hook 這層再兜一層，絕不擋工具流程。
+    """
+    root = Path(cwd)
+
+    async def post_tool_use(input_data, tool_use_id, context):
+        try:
+            tool_name = (input_data or {}).get("tool_name", "")
+            if tool_name not in _LINT_TOOLS:  # matcher 已過濾，這裡是防禦性雙保險
+                return {}
+            data = (input_data or {}).get("tool_input", {}) or {}
+            raw = str(data.get("file_path") or "")
+            if not raw:
+                return {}
+            feedback = await lint.lint_file(root, raw)
+            if feedback:
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PostToolUse",
+                        "additionalContext": feedback,
+                    }
+                }
+        except Exception:  # noqa: BLE001 — 寫時 lint 絕不能弄死工具呼叫
+            logger.debug("lint hook 失敗（靜默放行）", exc_info=True)
+        return {}
+
+    return post_tool_use
+
+
 def _scoped_exhausted(model: str, models_usage: dict, threshold: float) -> bool:
     """該 claude 模型是否撞上「按模型 scoped」週限。
 
@@ -364,6 +402,18 @@ async def _emit_claude_token_usage(
     )
 
 
+def _expert_hooks(cwd: Path) -> dict:
+    """組專家的 hooks 設定：PreToolUse FS guard 恆在；寫時 lint（PostToolUse）受旋鈕保護。"""
+    from claude_agent_sdk import HookMatcher
+
+    hooks: dict = {"PreToolUse": [HookMatcher(matcher=None, hooks=[_make_fs_guard_hook(cwd)])]}
+    if config.EXPERT_LINT_HOOK:
+        hooks["PostToolUse"] = [
+            HookMatcher(matcher="Write|Edit|MultiEdit", hooks=[_make_lint_hook(cwd)], timeout=60)
+        ]
+    return hooks
+
+
 # 專家技能白名單(單一真相,測試與 _build_client 共用):名稱=SKILL.md name/目錄名,
 # 檔案在 repo 的 .claude/skills/(working clone 自然帶著;外部專案 cwd 無此目錄=無害)。
 EXPERT_SKILLS_LIST = ("ti-shipping", "ti-investigation")
@@ -401,7 +451,7 @@ def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
     # providers.py 的 AsyncOpenAI(...) 另行顯式設 max_retries=0 才能達到同等的「單層退避」語意
     # （該對應義務由 OpenAI 路徑各自落實）。
     """
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
     return ClaudeSDKClient(
         options=ClaudeAgentOptions(
@@ -411,7 +461,8 @@ def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
             can_use_tool=_auto_allow_tool,
             # PreToolUse hook 把寫檔限制在該專家的 cwd 內（並行 lane 隔離的真正防線；
             # can_use_tool 對預先允許的寫檔工具不觸發，見 _make_fs_guard_hook 說明）。
-            hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_make_fs_guard_hook(cwd)])]},
+            # PostToolUse hook（受旋鈕保護）＝寫時 lint：.py 寫入後就地 ruff 修復＋回饋。
+            hooks=_expert_hooks(cwd),
             sandbox=config.expert_sandbox_settings(),
             cwd=str(cwd),
             model=model or _model_for(role),

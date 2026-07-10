@@ -1016,6 +1016,15 @@ AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", 
     "",
 )
 
+# EXPERT_LINT_HOOK：寫時 lint——Claude 專家每次 Write/Edit .py 後（PostToolUse hook）與
+#   OpenAI 相容專家 write_file/edit_file 後，自動 `ruff check --fix`（safe-only）＋
+#   `ruff format`，殘餘違規以文字回饋讓專家當場修。治「lint 事後才紅」：#249/#496/#364/
+#   #367 連續三輪各燒 1-2 小時只為空格（見 autopilot._gate_lint docstring）。fail-open：
+#   非 .py／無 ruff（外部非 Python 專案）／逾時／例外一律靜默放行，絕不擋寫檔。設 0 關閉。
+EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
+# 寫時 lint 單一 ruff 命令的逾時秒數（每次寫檔最多三支命令：check --fix / format / check）。
+EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+
 # EXPERT_SKILLS：Claude 專家的 skills 漸進揭露(SKILL.md)——出貨自檢/調查輸出契約等程序
 #   知識放 .claude/skills/,專家需要時經 Skill 工具載入,不占常駐 system prompt。
 #   **預設 0(灰度)**:SDK 一設 skills 會把 setting_sources 從「全載」改窄(experts._skills_options
@@ -1234,6 +1243,8 @@ def reload() -> None:
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_INVESTIGATION_REFUTE
+    global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
+
     global EXPERT_SKILLS, EXPERT_SKILLS_ROLES
     global CONVENTIONS_CARD
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
@@ -1429,6 +1440,9 @@ def reload() -> None:
         "False",
         "",
     )
+    EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
+    EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+
     EXPERT_SKILLS = os.getenv("TI_EXPERT_SKILLS", "0") not in ("0", "false", "False", "")
     EXPERT_SKILLS_ROLES = frozenset(
         r.strip()
