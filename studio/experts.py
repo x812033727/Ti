@@ -414,6 +414,25 @@ def _expert_hooks(cwd: Path) -> dict:
     return hooks
 
 
+# 專家技能白名單(單一真相,測試與 _build_client 共用):名稱=SKILL.md name/目錄名,
+# 檔案在 repo 的 .claude/skills/(working clone 自然帶著;外部專案 cwd 無此目錄=無害)。
+EXPERT_SKILLS_LIST = ("ti-shipping", "ti-investigation")
+
+
+def _skills_options(role: Role) -> dict:
+    """組 skills 相關的 ClaudeAgentOptions 欄位(受旋鈕保護,預設關)。
+
+    只給會用到的角色(EXPERT_SKILLS_ROLES,預設 engineer/senior/qa)。列名白名單而非
+    "all"——"all" 會把任何塞進 clone 的技能全開,面太大。**顯式鎖 setting_sources=
+    ["project"]**:SDK 一設 skills 就會自動把 setting_sources 改成 ["user","project"],
+    會誤吃主機 user 層(~/.claude/skills)技能、丟掉 local;只吃 working clone 自帶的
+    project 層是刻意的隔離決策。
+    """
+    if not config.EXPERT_SKILLS or role.key not in config.EXPERT_SKILLS_ROLES:
+        return {}
+    return {"skills": list(EXPERT_SKILLS_LIST), "setting_sources": ["project"]}
+
+
 def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
     """建立該專家的 ClaudeSDKClient。
 
@@ -448,6 +467,8 @@ def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
             cwd=str(cwd),
             model=model or _model_for(role),
             max_turns=config.MAX_TURNS_PER_TURN,
+            # skills(預設關):見 _skills_options——技能漸進揭露,程序知識不占常駐 prompt。
+            **_skills_options(role),
         )
     )
 
