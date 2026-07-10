@@ -90,7 +90,6 @@ $ timeout 60 bash scripts/verify_token_rotation.sh --scan history/ .
 [scan] skip 不存在目標: history/
 [scan] gitleaks not found; using grep fallback
 [scan] grep fallback 未發現殘留 token（掃描: .）
-# exit=0
 ```
 
 狀態：AI 可代勞段已執行；本工作區無 `history/` 目錄，已明確記錄 skip，workspace `.` 掃描未命中。
@@ -115,10 +114,10 @@ $ timeout 60 bash scripts/verify_token_rotation.sh --report
 - 步驟 1（發新）與步驟 3（撤舊）待人工於 GitHub UI 完成，AI 不代行。
 - 步驟 2b 首選 GH_TOKEN="$GH_PAT" gh auth status；若走 curl，回 200 只證身分有效、不證 scope；需人工回 runbook 核對四項規格才閉環。
 - 先發後撤：新 token 未通過 --verify 前，絕不撤舊（會 403 斷鏈）。
-# exit=0
 ```
 
 狀態：AI 可代勞段已執行；報表明示步驟 1/3 待人工、curl 200 不證 scope。
+本輪重跑結果：`--scan` 已完成且僅見 `history/` 缺失 skip；`--report` 已完成且明示步驟 1 與步驟 3 仍待人工於 GitHub UI。
 
 ## 人工 / AI 分界（總表）
 
