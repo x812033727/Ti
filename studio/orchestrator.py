@@ -528,6 +528,37 @@ class StudioSession:
             self._experts = _build_experts(self.session_id, self.cwd)
         return self._experts
 
+    async def _idle_reaper(self) -> None:
+        """背景回收閒置專家(B1):每 60s 掃描,閒置逾 EXPERT_IDLE_STOP_S 即 release。
+
+        只處理有 idle_for/release 介面的專家(Claude Expert;其他 provider 無常駐子行程,
+        duck-typing 跳過);豁免 EXPERT_IDLE_STOP_EXEMPT(預設 pm,脈絡最值錢);in-flight
+        由 release() 自身防護。任何例外吞掉——回收是加值不是依賴,絕不弄死 session。
+        """
+        while True:
+            await asyncio.sleep(60)
+            try:
+                seen: list = []
+                for ctx in self._lane_ctxs:
+                    seen += list(ctx.experts.values())
+                    seen += list((ctx.critics or {}).values())
+                seen += list((self._experts or {}).values())
+                for ex in dict.fromkeys(seen):
+                    role_key = getattr(getattr(ex, "role", None), "key", "").lower()
+                    if role_key in config.EXPERT_IDLE_STOP_EXEMPT:
+                        continue
+                    idle_for = getattr(ex, "idle_for", None)
+                    release = getattr(ex, "release", None)
+                    if idle_for is None or release is None:
+                        continue
+                    if idle_for() > config.EXPERT_IDLE_STOP_S:
+                        await release()
+                        log.info("閒置回收專家 %s(>%ds)", role_key, config.EXPERT_IDLE_STOP_S)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — 回收失敗不得影響 session
+                log.debug("idle reaper 掃描失敗(忽略)", exc_info=True)
+
     # --- 異議檢查（critic）-------------------------------------------------
     def _get_critic(self, ctx: LaneContext, role_key: str) -> ExpertLike | None:
         """取得指定視角的獨立 critic expert（綁定到傳入 lane 的 cwd/critics）。
@@ -535,16 +566,20 @@ class StudioSession:
         優先用該 lane 已注入/建立的 critics（測試/離線）；否則在有 cwd 時以獨立 session 建一個
         新實例，確保不污染該 lane 主 experts 的對話與 calls 序號。都無法取得時回 None（放行）。
         """
-        if ctx.critics is not None:
-            return ctx.critics.get(role_key)
+        # 已有該視角的 critic 即複用;dict 存在但缺此 role 時要「補建併入」而非回 None——
+        # 舊寫法 `ctx.critics = {role_key: critic}` 整個覆蓋,第二種視角永遠拿到 None 靜默
+        # 放行(critic gate 形同虛設,2026-07-10 效能檢討時發現)。測試/離線注入的 critics
+        # (無 cwd)維持原語意:缺席=放行。
+        if ctx.critics is not None and role_key in ctx.critics:
+            return ctx.critics[role_key]
         # 離線示範未注入 critics 時不走真 provider（無金鑰），直接放行不報錯。
         if ctx.cwd is None or config.OFFLINE_MODE:
-            return None
+            return None if ctx.critics is None else ctx.critics.get(role_key)
         from .providers import make_expert
         from .roles import BY_KEY
 
         critic = make_expert(BY_KEY[role_key], f"{self.session_id}:critic:{role_key}", ctx.cwd)
-        ctx.critics = {role_key: critic}
+        ctx.critics = {**(ctx.critics or {}), role_key: critic}
         return critic
 
     async def _critic_gate(
@@ -1035,6 +1070,9 @@ class StudioSession:
         if self.cwd is not None:
             runner.write_baseline_gitignore(self.cwd)
         self._t0_run = time.monotonic()  # 軟性時間預算計時基準
+        # 專家閒置回收 reaper(B1,預設關):每 60s 掃全 lane 專家,閒置逾 TTL 且非發言中即
+        # release(斷線回收 SDK 子行程;下次 speak 自動重連)。豁免角色見 config。
+        reaper = asyncio.create_task(self._idle_reaper()) if config.EXPERT_IDLE_STOP_S > 0 else None
         try:
             result = await self._run(requirement)
         except Exception as exc:  # noqa: BLE001 — 任何錯誤都回報給前端而非崩潰
@@ -1051,6 +1089,12 @@ class StudioSession:
                 )
             await self.broadcast(events.error(self.session_id, f"{type(exc).__name__}: {exc}"))
         finally:
+            if reaper is not None:
+                reaper.cancel()
+                try:
+                    await reaper
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001 — reaper 收尾絕不影響回收
+                    pass
             # 回收所有 lane（含 main）的專家與 critic；安全網涵蓋 main_ctx 尚未建立但
             # experts 已 build 的情況。以實例身分去重（同一實例可能同時在數處被引用）。
             to_stop: list[ExpertLike] = []

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -586,6 +587,9 @@ class Expert:
         self._model = model  # 非空＝per-task 派工／招募指定的模型覆寫；空＝沿用 _model_for
         self._client = self._new_client()
         self._connected = False
+        # 閒置回收(B1)用:最後活動時刻與 in-flight 旗標(reaper 絕不回收發言中的專家)。
+        self._last_used = time.monotonic()
+        self._in_flight = False
 
     def effective_model(self) -> str:
         """實際生效的模型（覆寫優先，否則角色模型槽）——供任務結果（task_result）顯示。"""
@@ -617,6 +621,24 @@ class Expert:
                 self._best_effort_kill_subprocess()
             finally:
                 self._connected = False
+
+    def idle_for(self) -> float:
+        """距最後活動的秒數(發言中恆 0——reaper 判斷用)。"""
+        if self._in_flight:
+            return 0.0
+        return time.monotonic() - self._last_used
+
+    async def release(self) -> None:
+        """閒置回收:斷線+重建 client(下次 speak 經 start() 冪等自動重連)。
+
+        對話脈絡歸零——與 _abort_turn 重建 client 同語義,由 NOTES/reflexion 補償;
+        SDK 子行程(RSS 270-500MB)隨 disconnect 結束,這是回收的全部意義。
+        發言中(in-flight)呼叫為 no-op(防 reaper 競態)。
+        """
+        if self._in_flight:
+            return
+        await self.stop()
+        self._client = self._new_client()
 
     def _best_effort_kill_subprocess(self) -> None:
         """disconnect() 逾時後的兜底：盡力對 SDK 內部子程序送 SIGKILL（整個 process group）。
@@ -650,9 +672,13 @@ class Expert:
         """
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
+        self._last_used = time.monotonic()
+        self._in_flight = True
         try:
             return await self._speak_with_retries(prompt, broadcast)
         finally:
+            self._in_flight = False
+            self._last_used = time.monotonic()
             await broadcast(events.expert_status(self.session_id, r.key, "idle"))
 
     async def _speak_with_retries(self, prompt: str, broadcast: Broadcast) -> str:
