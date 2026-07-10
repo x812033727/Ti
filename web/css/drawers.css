@@ -167,6 +167,14 @@
 .ap-chip.ttft { color: var(--good); border-color: rgba(45, 212, 167, .35); }
 .ap-chip.ap-pr { color: var(--info); border-color: rgba(89, 183, 255, .35); text-decoration: none; }
 .ap-chip.ap-pr:hover { background: var(--surface-3); }
+.ap-chip.cost { color: var(--warn); border-color: rgba(255, 193, 94, .35); }
+/* 部署漂移橫幅（F1）：已合併 ≠ 已上線的警示，隱藏時零占位 */
+.ap-drift {
+  padding: 8px 14px; font-size: 12.5px; line-height: 1.5;
+  background: rgba(255, 193, 94, .12); border: 1px solid rgba(255, 193, 94, .4);
+  border-radius: var(--r-md); color: var(--warn);
+}
+.ap-drift.hidden { display: none; }
 .ap-item-note { margin-top: 3px; font-size: 11.5px; overflow-wrap: anywhere; }
 .ap-item-note.bad { color: var(--bad); }
 .ap-item-score { margin-top: 3px; font-size: 11.5px; }
