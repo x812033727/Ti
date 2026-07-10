@@ -1747,6 +1747,39 @@ def _screen_followups(items: list, existing_titles: list[str]) -> list:
     return out
 
 
+def _discovered_added_today(now: float | None = None) -> int:
+    """今天（UTC）已入列的自產任務數（source=discovered/eval，依 created_at 判日）。
+
+    供每日自產上限（AUTOPILOT_DISCOVERED_DAILY_CAP）計數：pending 172 筆中 85% 是
+    系統自產、產生速度 > 消化速度（吞吐 ~8/天），品質閘擋「爛的」、此上限擋「好但
+    太多的」——縱橫閘之外的總量閘（第五輪 C2）。
+    """
+    day = time.gmtime(now if now is not None else time.time())[:3]
+    return sum(
+        1
+        for t in backlog.list_tasks()
+        if t.get("source") in ("discovered", "eval")
+        and time.gmtime(float(t.get("created_at") or 0))[:3] == day
+    )
+
+
+def _discovered_budget_left(kind: str, want: int) -> int:
+    """每日自產上限的剩餘配額（0=旋鈕停用時回 want 不設限）；超額丟棄記 log 留痕。"""
+    cap = config.AUTOPILOT_DISCOVERED_DAILY_CAP
+    if not cap or want <= 0:
+        return want
+    left = max(0, cap - _discovered_added_today())
+    if left < want:
+        log.info(
+            "%s 達每日自產上限（%d/天），丟棄 %d/%d 個提案（明日 UTC 重置）",
+            kind,
+            cap,
+            want - left,
+            want,
+        )
+    return left
+
+
 def _add_discovered_followups(
     task: dict, raw: list, existing_titles: list[str], *, structured: bool
 ) -> int:
@@ -1775,6 +1808,8 @@ def _add_discovered_followups(
     items = _screen_followups(raw, existing_titles)
     cap = config.AUTOPILOT_FOLLOWUP_MAX_PER_TASK
     capped = items[:cap] if cap else items
+    # 每日自產總量閘（第五輪 C2）：品質/寬度閘之後最後套用，超額當日丟棄。
+    capped = capped[: _discovered_budget_left("討論 followup", len(capped))]
     child_gen = parent_gen + 1
     if structured:
         added = backlog.add_items(capped, source="discovered", gen=child_gen)
@@ -1830,6 +1865,8 @@ async def _evaluate_self(clone: str) -> int:
     # 進場 pre-filter：丟掉與目前 pending/in_progress 高相似（語意相近）的提案，與 prompt 注入的
     # 禁止清單對齊（同一 titles 快照）。不動 backlog._is_duplicate 的字串等值去重契約，兩者互補。
     tasks = _filter_pending_duplicates(tasks, titles)
+    # 每日自產總量閘（第五輪 C2）：與討論 followup 共用同一配額。
+    tasks = tasks[: _discovered_budget_left("自我評估", len(tasks))]
     n = backlog.add_many(tasks, source="eval")
     # 留痕：兩道進場過濾（done 去重 + pending pre-filter）共丟棄多少提案——讓「源頭擋掉多少瑣碎/重複」
     # 可觀測，而非無聲 log.debug 消失（與 improver._discover 的丟棄留痕對齊）。
