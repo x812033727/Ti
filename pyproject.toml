@@ -39,7 +39,6 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
-    "pytest-xdist>=3.0",
     # 精確鎖定：linter/formatter 跨版本格式判定會分歧，須與 CI 及 .pre-commit-config.yaml
     # 的 rev 同版。釘 0.14.4（非當前最新）以對齊 CI workflow 既有的 `pip install ruff==0.14.4`，
     # 升版時三端須一併更新並重跑 ruff format --check。
@@ -54,7 +53,6 @@ openai = [
 packages = ["studio"]
 
 [tool.pytest.ini_options]
-addopts = "-n auto"
 asyncio_mode = "auto"
 # 把專案根目錄釘上 sys.path，讓 `from studio import ...` 在 bare `pytest`（非
 # `python3 -m pytest`）下也能解析——後者才會自動把 cwd 加入 sys.path，前者不會。
