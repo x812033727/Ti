@@ -10,3 +10,10 @@
 @import url("css/settings.css");
 @import url("css/components.css");
 @import url("css/responsive.css");
+
+/* backlog 手動操作(C1) */
+.ap-bl-item { display: flex; align-items: center; gap: 6px; }
+.ap-bl-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-bl-actions { display: inline-flex; gap: 4px; flex: 0 0 auto; align-items: center; }
+.ap-bl-btn { padding: 1px 6px; font-size: 0.85em; }
+.ap-bl-actions select { font-size: 0.85em; }
