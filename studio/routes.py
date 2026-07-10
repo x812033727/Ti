@@ -911,6 +911,22 @@ async def lessons_browse(q: str = "", limit: int = 50) -> JSONResponse:
         return {"lessons": items[:limit], "total": len(items)}
 
     return JSONResponse(await asyncio.to_thread(_query))
+class TaskActionBody(BaseModel):
+    action: str = ""
+    priority: int | None = None
+    note: str = ""
+
+
+@router.post("/api/autopilot/task/{task_id}/action", dependencies=WRITE_DEPS)
+async def autopilot_task_action(task_id: int, body: TaskActionBody) -> JSONResponse:
+    """看板手動操作單一任務:retry/park/unpark/priority(護欄與語意見 backlog.apply_action)。"""
+    task, err = await asyncio.to_thread(
+        backlog.apply_action, task_id, body.action, priority=body.priority, note=body.note
+    )
+    if task is not None:
+        return JSONResponse({"ok": True, "task": task})
+    status = 404 if err.startswith("不存在") else (409 if err.startswith("不可") else 400)
+    return JSONResponse({"ok": False, "detail": err}, status_code=status)
 
 
 @router.post("/api/autopilot/triage", dependencies=WRITE_DEPS)

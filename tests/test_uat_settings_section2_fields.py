@@ -155,6 +155,16 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_ADR": ["TI_ADR", "架構決策記錄"],
         "TI_RESEARCH_TOOLS": ["TI_RESEARCH_TOOLS", "即時研究"],
         "TI_DISCUSS_MODE": ["TI_DISCUSS_MODE", "討論模式"],
+        # 效能/功能四包強化(2026-07-10)新增的 0/1 select:非法值由 update() 的 options
+        # 白名單一律忽略,與其他布林 select 同一條防線。
+        "TI_LINT_AUTOFORMAT": ["TI_LINT_AUTOFORMAT"],
+        "TI_EXPERT_LINT_HOOK": ["TI_EXPERT_LINT_HOOK"],
+        "TI_CONVENTIONS_CARD": ["TI_CONVENTIONS_CARD"],
+        "TI_EXPERT_SKILLS": ["TI_EXPERT_SKILLS"],
+        "TI_AUTOPILOT_AUTO_MERGE": ["TI_AUTOPILOT_AUTO_MERGE"],
+        "TI_AUTOPILOT_WORKFLOW_TRIAGE": ["TI_AUTOPILOT_WORKFLOW_TRIAGE"],
+        "TI_AUTOPILOT_INVESTIGATION_LANE": ["TI_AUTOPILOT_INVESTIGATION_LANE"],
+        "TI_AUTOPILOT_INVESTIGATION_REFUTE": ["TI_AUTOPILOT_INVESTIGATION_REFUTE"],
     }
     assert {f.env for f in selects} == set(checks), "select 欄與預期不符，請更新測試"
     # 非法案例段落：含『非法』字樣的列

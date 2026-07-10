@@ -20,7 +20,8 @@ from .secretfile import write_secret_file
 class Field:
     env: str
     label: str
-    kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）
+    kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）| textarea
+    numeric: bool = False  # True＝非空值必須可 int() 解析,否則拒收(防 config.reload 的 int() 炸)
     secret: bool = False
     options: tuple[str, ...] = ()
     placeholder: str = ""
@@ -513,6 +514,100 @@ FIELDS: tuple[Field, ...] = (
         placeholder="3",
         group="進階",
     ),
+    # --- 進階:專家層新機制(web 行程也消費,存檔後下次討論生效) ---
+    Field(
+        "TI_LINT_AUTOFORMAT",
+        "autopilot lint 閘門自動修復（ruff format/check --fix safe;0=閘門紅直接退回）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_EXPERT_LINT_HOOK",
+        "寫時 lint（專家寫入 .py 當下 ruff 修復+違規回饋;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_CONVENTIONS_CARD",
+        "專家慣例卡（執行環境慣例注入 system prompt;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_EXPERT_SKILLS",
+        "專家 skills 技能包（.claude/skills 漸進揭露,僅 Claude 專家;預設 0 灰度）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    # --- Autopilot 組(⚠️消費端是 ti-autopilot 行程:存檔後需 systemctl restart ti-autopilot 才生效) ---
+    Field(
+        "TI_AUTOPILOT_NORTH_STAR",
+        "北極星（長期目標,注入自評與找問題 prompt;空=用內建預設句）",
+        kind="textarea",
+        placeholder="持續提升 Ti 程式品質；強化 agent 間與跨 provider 溝通協作效能",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_AUTO_MERGE",
+        "原生 auto-merge（開 PR 後交 GitHub 背景合併+reconciler 收斂;0=回同步等 CI）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_WORKFLOW_TRIAGE",
+        "任務開場 PM 流程分診（快速模式/預設流程;0=一律預設流程）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_INVESTIGATION_LANE",
+        "調查任務分流輕量管線（單專家出結論,不進多專家/merge 閘門;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_INVESTIGATION_REFUTE",
+        "調查結論對抗性驗證（done 前一次廉價呼叫試圖推翻;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_INVESTIGATION_TIMEOUT",
+        "調查管線單次專家呼叫逾時（秒;空=1200）",
+        placeholder="1200",
+        numeric=True,
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK",
+        "衍生任務扇出寬度上限（單任務一場最多回填幾個 followup;0=不限;空=3）",
+        placeholder="3",
+        numeric=True,
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_FOLLOWUP_MAX_GEN",
+        "衍生任務血緣代數上限（斷 followup 生 followup 深鏈;0=不限;空=3）",
+        placeholder="3",
+        numeric=True,
+        group="Autopilot",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}
@@ -560,6 +655,14 @@ def update(payload: dict) -> dict:
             continue  # 秘密留空＝不變更
         if f.kind == "select" and f.options and val not in f.options:
             continue  # 不接受非法選項
+        if f.numeric and val:
+            try:
+                int(val)
+            except ValueError:
+                continue  # 非法數值不落檔:config.reload() 的 int(os.getenv(...)) 會炸
+        if f.kind == "textarea":
+            # .env 單行格式:多行文字摺成空白(北極星語意上一段話即可)
+            val = " ".join(val.split())
         write_secret_file(path, key, val)
         os.environ[key] = val
     config.reload()
