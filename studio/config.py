@@ -1016,6 +1016,19 @@ AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", 
     "",
 )
 
+# EXPERT_SKILLS：Claude 專家的 skills 漸進揭露(SKILL.md)——出貨自檢/調查輸出契約等程序
+#   知識放 .claude/skills/,專家需要時經 Skill 工具載入,不占常駐 system prompt。
+#   **預設 0(灰度)**:SDK 一設 skills 會把 setting_sources 從「全載」改窄(experts._skills_options
+#   已顯式鎖 ["project"] 隔離 user/local 層),行為面有變化,先灰度觀察再翻 1。
+#   只影響 Claude 專家(OpenAI/Codex/Antigravity 無 Skill 工具)。
+EXPERT_SKILLS = os.getenv("TI_EXPERT_SKILLS", "0") not in ("0", "false", "False", "")
+# 哪些角色啟用 skills(csv):預設寫碼/審查三角——PM/架構師不寫碼,researcher 用不到出貨程序。
+EXPERT_SKILLS_ROLES = frozenset(
+    r.strip()
+    for r in os.getenv("TI_EXPERT_SKILLS_ROLES", "engineer,senior,qa").split(",")
+    if r.strip()
+)
+
 # CONVENTIONS_CARD：專家慣例卡——把執行環境慣例（.venv/bin/python 強制、timeout 前綴、
 #   別重複整檔重讀/重跑 git status、禁落檔 $TMPDIR）附進每位專家 system prompt 尾端，
 #   cwd 是 Ti repo 時另附測試/lint/config 速查。治「慣例只寫在 CLAUDE.md 但專家沒被注入、
@@ -1221,6 +1234,7 @@ def reload() -> None:
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_INVESTIGATION_REFUTE
+    global EXPERT_SKILLS, EXPERT_SKILLS_ROLES
     global CONVENTIONS_CARD
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
@@ -1414,6 +1428,12 @@ def reload() -> None:
         "false",
         "False",
         "",
+    )
+    EXPERT_SKILLS = os.getenv("TI_EXPERT_SKILLS", "0") not in ("0", "false", "False", "")
+    EXPERT_SKILLS_ROLES = frozenset(
+        r.strip()
+        for r in os.getenv("TI_EXPERT_SKILLS_ROLES", "engineer,senior,qa").split(",")
+        if r.strip()
     )
     CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
