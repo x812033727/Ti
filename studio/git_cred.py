@@ -7,6 +7,8 @@ import re
 import subprocess
 from urllib.parse import urlsplit, urlunsplit
 
+from studio import config
+
 _GITHUB_EXTRAHEADER_KEY = "http.https://github.com/.extraheader"
 _MIN_GIT_CONFIG_ENV = (2, 31, 0)
 _GIT_VERSION_RE = re.compile(r"git version (\d+)\.(\d+)(?:\.(\d+))?")
@@ -71,7 +73,7 @@ def make_env(token: str | None, url: str | None = None) -> dict[str, str]:
     The generated config starts at index 0 and intentionally overwrites any parent
     GIT_CONFIG_* values when callers merge via ``{**os.environ, **make_env(...)}``.
     """
-    if not token or not _github_url(url) or not _git_env_supported():
+    if not token or config.TI_GIT_CRED_LEGACY or not _github_url(url) or not _git_env_supported():
         return {}
     return {
         "GIT_CONFIG_COUNT": "2",
@@ -83,8 +85,14 @@ def make_env(token: str | None, url: str | None = None) -> dict[str, str]:
 
 
 def git_cred_argv(token: str | None, url: str | None = None) -> list[str]:
-    """Fallback argv config for Git versions without GIT_CONFIG_* env support."""
-    if not token or not _github_url(url) or _git_env_supported():
+    """Fallback argv config.
+
+    This puts a reversible base64 Authorization header in process argv where ps
+    can see it, so keep it limited to legacy/fallback paths.
+    """
+    if not token or not _github_url(url):
+        return []
+    if not config.TI_GIT_CRED_LEGACY and _git_env_supported():
         return []
     return [
         "-c",

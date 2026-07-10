@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import base64
 
+import pytest
+
 from studio import config, git_cred
+
+
+@pytest.fixture(autouse=True)
+def _git_cred_legacy_off(monkeypatch):
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
 
 
 def test_make_env_clears_helpers_before_github_extraheader(monkeypatch):
@@ -62,6 +69,30 @@ def test_git_cred_argv_is_only_for_unsupported_git(monkeypatch):
         f"http.https://github.com/.extraheader=Authorization: Basic {expected_b64}",
     ]
     assert git_cred.git_cred_argv(token, url="https://example.com/owner/repo.git") == []
+
+
+def test_git_cred_legacy_flag_disables_env_and_forces_argv_without_git_probe(
+    monkeypatch,
+):
+    token = "legacy-secret"
+    expected_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+
+    def fail_git_probe(*args, **kwargs):
+        raise AssertionError("legacy mode must not probe git version")
+
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
+    monkeypatch.setattr(git_cred, "_GIT_ENV_SUPPORTED", None)
+    monkeypatch.setattr(git_cred.subprocess, "run", fail_git_probe)
+
+    assert git_cred.make_env(token) == {}
+    assert git_cred.git_cred_argv(token) == [
+        "-c",
+        "credential.helper=",
+        "-c",
+        f"http.https://github.com/.extraheader=Authorization: Basic {expected_b64}",
+    ]
+    assert "base64" in (git_cred.git_cred_argv.__doc__ or "")
+    assert "ps" in (git_cred.git_cred_argv.__doc__ or "")
 
 
 def test_clean_url_removes_userinfo_without_touching_path_query_or_fragment():
