@@ -1121,6 +1121,37 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
     return final
 
 
+def _screen_followups(items: list, existing_titles: list[str]) -> list:
+    """討論回填的後續任務進場前，套與 `_evaluate_self` 相同的品質防線：近期完成去重 +
+    `_filter_pending_duplicates`（詞集相似度 + 子系統覆蓋廣度）。
+
+    修 discovered 路徑的不對稱（見完成率診斷）：`source="eval"` 的自我發掘走完整 pre-filter，
+    但 `run_one_task` 尾端把討論 followup 直接 `add_items`/`add_many`（source="discovered"），
+    完全繞過品質閘——「收尾驗收/QA pass/release-e2e-closure」這類 no-op 元任務、與排隊/近期
+    已完成高度重疊的提案因此灌爆 backlog（191 pending 在長）。此處是三個 retro emitter 匯流的
+    單一 choke point，一次補上即全數涵蓋。
+
+    items 可為結構化 dict（{title, detail?, ...}）或純標題字串；回傳保留原型別、原順序的子集。
+    """
+    if not items:
+        return items
+
+    def _title_of(it) -> str:
+        return (it.get("title", "") if isinstance(it, dict) else str(it)).strip()
+
+    done = _recent_done_titles()
+    fresh = [it for it in items if _title_of(it) and _title_of(it) not in done]
+    # _filter_pending_duplicates 回傳的是 fresh 標題的「保序子集」；以雙指標消費以支援重複標題。
+    kept_titles = _filter_pending_duplicates([_title_of(it) for it in fresh], existing_titles)
+    remaining = list(kept_titles)
+    out: list = []
+    for it in fresh:
+        if remaining and remaining[0] == _title_of(it):
+            remaining.pop(0)
+            out.append(it)
+    return out
+
+
 async def _evaluate_self(clone: str) -> int:
     """backlog 空時，用一位資深專家審視 Ti 自身並產出改善任務。回傳新增數。
 
@@ -1483,13 +1514,24 @@ async def run_one_task(task: dict) -> None:
                 history.finish_session(sid)
                 clear_turn_status()
 
-        # 回饋：討論發現的後續任務寫回 backlog（優先含 priority/type 的結構化版本）
+        # 回饋：討論發現的後續任務寫回 backlog（優先含 priority/type 的結構化版本）。
+        # 進場前套與 _evaluate_self 相同的品質防線（近期完成去重 + 相似度/子系統廣度
+        # pre-filter），修 discovered 路徑繞過品質閘、灌爆 backlog 的不對稱（見 _screen_followups）。
+        existing_titles = _pending_titles()
         if result.get("followup_items"):
-            added = backlog.add_items(result["followup_items"], source="discovered")
-            log.info("從討論新增 %d 個後續任務", added)
+            raw = result["followup_items"]
+            items = _screen_followups(raw, existing_titles)
+            added = backlog.add_items(items, source="discovered")
+            log.info(
+                "從討論新增 %d 個後續任務（提案 %d、品質過濾後 %d）", added, len(raw), len(items)
+            )
         elif result.get("followups"):
-            added = backlog.add_many(result["followups"], source="discovered")
-            log.info("從討論新增 %d 個後續任務", added)
+            raw = result["followups"]
+            items = _screen_followups(raw, existing_titles)
+            added = backlog.add_many(items, source="discovered")
+            log.info(
+                "從討論新增 %d 個後續任務（提案 %d、品質過濾後 %d）", added, len(raw), len(items)
+            )
         # autopilot 的 working clone 本身就是核心 repo（config.CORE_REPO），判定的核心改動經同一個
         # 收斂點路由（與 improver/ws 共用，含近期完成去重，避免做完又重排），以 source="core" 標記。
         core_added = backlog.route_core_changes(result.get("core_changes") or [])
