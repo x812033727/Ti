@@ -91,9 +91,14 @@ def _forbid_real_subprocess(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _base_config(monkeypatch):
-    """預設安全側：非 dryrun、非 force、非 admin。"""
+    """預設安全側：非 dryrun、非 force、非 admin。
+
+    RECLAIM_BRANCH 固定 False：本檔守護 ls-remote 防覆寫的「中止」舊語意（逃生門），
+    認領新路徑（預設開）由 test_reclaim_stale_branch.py 覆蓋。
+    """
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
+    monkeypatch.setattr(config, "AUTOPILOT_RECLAIM_BRANCH", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", "main")
 
 
