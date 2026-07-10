@@ -167,11 +167,11 @@ def git_auth_env(token: str) -> dict[str, str]:
 
 def redact(text: str, token: str | None = None) -> str:
     """遮蔽 token 明文；同步遮蔽其 base64 形式（extraHeader 走 env，但值仍可能外洩到
-    日誌/錯誤訊息）。base64 走 git_cred._auth_b64（與注入完全相同的編碼、無尾換行）算出同一字串再遮。"""
+    日誌/錯誤訊息）。base64 走 git_cred.auth_b64（與注入完全相同的編碼、無尾換行）算出同一字串再遮。"""
     token = token or config.GITHUB_TOKEN
     if token and text:
         text = text.replace(token, "***")
-        text = text.replace(git_cred._auth_b64(token), "***")
+        text = text.replace(git_cred.auth_b64(token), "***")
     return text
 
 

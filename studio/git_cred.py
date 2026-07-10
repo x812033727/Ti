@@ -15,12 +15,21 @@ _GIT_VERSION_RE = re.compile(r"git version (\d+)\.(\d+)(?:\.(\d+))?")
 _GIT_ENV_SUPPORTED: bool | None = None
 
 
-def _auth_b64(token: str) -> str:
+def auth_b64(token: str) -> str:
+    """base64(f"x-access-token:{token}")：b64encode 天生無尾換行（等價 echo -n）。
+
+    公開 API：`publisher.redact` 等消費端跨模組遮蔽 token 的 base64 形式時委派此函式，
+    確保「注入」與「遮蔽」用同一份編碼（避免兩份邏輯日後分叉）。
+    """
     return base64.b64encode(f"x-access-token:{token}".encode()).decode()
 
 
+# 舊私有名保留為別名（既有 import 相容）；新程式碼一律用公開的 auth_b64。
+_auth_b64 = auth_b64
+
+
 def _extra_header(token: str) -> str:
-    return f"Authorization: Basic {_auth_b64(token)}"
+    return f"Authorization: Basic {auth_b64(token)}"
 
 
 def _parse_git_version(output: str) -> tuple[int, int, int] | None:
@@ -102,4 +111,4 @@ def git_cred_argv(token: str | None, url: str | None = None) -> list[str]:
     ]
 
 
-__all__ = ["clean_url", "git_cred_argv", "make_env"]
+__all__ = ["auth_b64", "clean_url", "git_cred_argv", "make_env"]

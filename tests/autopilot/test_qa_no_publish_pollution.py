@@ -19,7 +19,7 @@ class RunSpy:
         self.calls: list[list[str]] = []
         self.origin = origin or f"https://github.com/{_AUTOPILOT_REPO}.git"
 
-    async def __call__(self, cmd, cwd=None, timeout=600):
+    async def __call__(self, cmd, cwd=None, timeout=600, **kwargs):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
         if "remote get-url --push origin" in joined:

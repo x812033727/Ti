@@ -32,7 +32,6 @@ def _merge_flow_merged(monkeypatch):
     monkeypatch.setattr(publisher, "_merge_flow", _merged)
 
 
-_GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
 _ROOT = REPO_ROOT
 _TASK = {"id": "9", "title": "t", "detail": ""}
 _BRANCH = "autopilot/task-9"
@@ -43,7 +42,7 @@ class RunSpy:
         self.overrides = overrides or {}
         self.calls: list[list[str]] = []
 
-    async def __call__(self, cmd, cwd=None, timeout=600):
+    async def __call__(self, cmd, cwd=None, timeout=600, **kwargs):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
         for key, val in self.overrides.items():
@@ -73,6 +72,9 @@ def _forbid_real_subprocess(monkeypatch):
 def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", "main")
+    monkeypatch.setattr(config, "GITHUB_TOKEN", "qa-task9-token")
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
+    monkeypatch.setattr(autopilot.git_cred, "_GIT_ENV_SUPPORTED", True)
 
 
 def _install(monkeypatch, overrides):
@@ -93,7 +95,7 @@ async def test_force_off_exact_argv(monkeypatch):
     spy = _install(monkeypatch, {**_HAS_CHANGE})  # 遠端不存在
     ok, _ = await autopilot._commit_push_merge("/clone", _TASK)
     assert ok is True
-    assert spy.push_argv == ["git", *_GIT_CRED, "push", "-u", "origin", _BRANCH]
+    assert spy.push_argv == ["git", "push", "-u", "origin", _BRANCH]
 
 
 # === 旗標開啟時 push argv 精確含 lease + if-includes ==================
@@ -110,7 +112,6 @@ async def test_force_on_exact_argv(monkeypatch):
     assert ok is True
     assert spy.push_argv == [
         "git",
-        *_GIT_CRED,
         "push",
         "--force-with-lease",
         "--force-if-includes",
