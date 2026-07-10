@@ -1016,6 +1016,15 @@ AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", 
     "",
 )
 
+# EXPERT_LINT_HOOK：寫時 lint——Claude 專家每次 Write/Edit .py 後（PostToolUse hook）與
+#   OpenAI 相容專家 write_file/edit_file 後，自動 `ruff check --fix`（safe-only）＋
+#   `ruff format`，殘餘違規以文字回饋讓專家當場修。治「lint 事後才紅」：#249/#496/#364/
+#   #367 連續三輪各燒 1-2 小時只為空格（見 autopilot._gate_lint docstring）。fail-open：
+#   非 .py／無 ruff（外部非 Python 專案）／逾時／例外一律靜默放行，絕不擋寫檔。設 0 關閉。
+EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
+# 寫時 lint 單一 ruff 命令的逾時秒數（每次寫檔最多三支命令：check --fix / format / check）。
+EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+
 # AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
 #   chamber：價值閘擋「沒價值的」、本上限擋「同源衍生太多的」，互補封住 discovered 迴圈灌水（修法②）。
@@ -1214,6 +1223,7 @@ def reload() -> None:
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_INVESTIGATION_REFUTE
+    global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1407,6 +1417,8 @@ def reload() -> None:
         "False",
         "",
     )
+    EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
+    EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
         "0",
         "false",
