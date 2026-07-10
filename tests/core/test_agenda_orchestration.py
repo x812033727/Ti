@@ -69,6 +69,13 @@ def test_agenda_prompt_rules_microrules():
     assert "探索型議題允許單子題、不硬拆" in AGENDA_PROMPT_RULES
     assert "子題: <標題> | <一句描述> | <成功準則>" in AGENDA_PROMPT_RULES
     assert "負責: <role_key>" in AGENDA_PROMPT_RULES
+    # 並行引導(第五輪 P2):任務/依賴語法必須明確定義(舊版寫「照上述格式」但上文沒定義,
+    # PM 慣性輸出線性依賴鏈→實測 lanes_max 幾乎全為 1),並要求獨立子任務優先。
+    assert "任務: #<id> <標題>" in AGENDA_PROMPT_RULES
+    assert "依賴: #<後> -> #<前>" in AGENDA_PROMPT_RULES
+    assert "依賴僅在真有產出先後時才標" in AGENDA_PROMPT_RULES
+    assert "不要另立「補測試」「複核」尾任務串成流水線" in AGENDA_PROMPT_RULES
+    assert "互不依賴" in AGENDA_PROMPT_RULES and "同一波次並行執行" in AGENDA_PROMPT_RULES
     # {keys} 注入本場出席角色白名單
     formatted = AGENDA_PROMPT_RULES.format(keys="pm, engineer, senior")
     assert "限定下列其一：pm, engineer, senior" in formatted
