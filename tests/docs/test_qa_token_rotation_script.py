@@ -1,10 +1,8 @@
-"""QA guard tests for scripts/verify_token_rotation.sh（#2/#3）。
+"""QA guard tests for scripts/verify_token_rotation.sh.
 
-鎖兩件事：
-1. 靜態不變式——GH_TOKEN 綁定、curl fallback、全前綴 regex、無裸跑 gh auth status、
-   零明文輸出（禁 set -x）。以字串錨鎖「可執行行」。
-2. 動態判別力——在 $TMPDIR 自建黑/白樣本傳入 --scan（絕不對 repo history/ 實跑），
-   驗命中回非 0、放行回 0，且命中時 stdout 不外洩 token 明文。
+鎖定 GH_TOKEN 綁定、curl fallback、全前綴掃描 regex、零明文輸出，以及
+黑/白樣本對 grep fallback 的真實判別力。黑/白樣本只放在 pytest tmpdir，
+不落 repo history/ 或 workspace。
 """
 
 from __future__ import annotations
@@ -19,115 +17,238 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "verify_token_rotation.sh"
 
 
-def _text() -> str:
+def _script_text() -> str:
     assert SCRIPT.exists(), "缺少 scripts/verify_token_rotation.sh"
     return SCRIPT.read_text(encoding="utf-8")
 
 
+def _run_script(
+    *args: str,
+    env: dict[str, str] | None = None,
+    timeout: int = 20,
+) -> subprocess.CompletedProcess[str]:
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+    return subprocess.run(
+        ["/bin/bash", str(SCRIPT), *args],
+        cwd=ROOT,
+        env=run_env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _write_executable(path: Path, body: str) -> None:
+    path.write_text(body, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
 def test_script_exists_and_is_executable() -> None:
     assert SCRIPT.exists(), "缺少 scripts/verify_token_rotation.sh"
-    mode = SCRIPT.stat().st_mode
-    assert mode & stat.S_IXUSR, "verify_token_rotation.sh 應具可執行位"
+    assert os.access(SCRIPT, os.X_OK), "verify_token_rotation.sh 必須可執行"
 
 
 def test_gh_auth_status_is_never_run_bare() -> None:
-    """每處 gh auth status 都必須帶 GH_TOKEN 綁定前綴，杜絕驗到 keyring 舊 token 的假綠。"""
-    text = _text()
-    assert 'GH_TOKEN="$GH_PAT" gh auth status' in text, "缺少綁定新 token 的 gh auth status"
-    # 逐個 gh auth status 出現點檢查其所在行是否帶 GH_TOKEN 前綴（排除註解說明）。
-    for m in re.finditer(r"gh auth status", text):
-        line_start = text.rfind("\n", 0, m.start()) + 1
-        line = text[line_start : m.start()]
-        stripped = line.lstrip()
-        if stripped.startswith("#"):
-            continue  # 註解說明不算可執行呼叫
-        assert 'GH_TOKEN="$GH_PAT"' in line, f"發現裸跑 gh auth status：{line!r}"
+    text = _script_text()
+    assert 'GH_TOKEN="$GH_PAT" gh auth status' in text
+
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if "gh auth status" not in line:
+            continue
+        assert 'GH_TOKEN="$GH_PAT"' in line, (
+            f"第 {line_number} 行出現未明確綁 GH_TOKEN 的 gh auth status"
+        )
 
 
-def test_curl_fallback_hits_user_endpoint_with_bearer() -> None:
-    text = _text()
-    assert "Authorization: Bearer $GH_PAT" in text, "curl fallback 缺 Bearer header"
-    assert "api.github.com/user" in text, "curl fallback 缺 /user 端點"
-    assert "200" in text, "curl fallback 缺 200 生效判定"
+def test_curl_fallback_uses_user_endpoint_without_response_body() -> None:
+    text = _script_text()
+
+    assert "https://api.github.com/user" in text
+    assert "curl" in text
+    assert "-o /dev/null" in text
+    assert "-H @-" in text, "curl header 應由 stdin 傳入，避免 token 出現在 argv"
+    assert "200" in text
 
 
 def test_scan_regex_covers_all_github_token_prefixes() -> None:
-    """grep fallback regex 必須涵蓋 ghp_/gho_/ghs_/ghr_/github_pat_ 全前綴。"""
-    text = _text()
-    # gh[posur]_ 一次涵蓋 ghp_/gho_/ghs_/ghr_（及 ghu_）；github_pat_ 另列。
-    assert "gh[posur]_" in text, "殘留掃描 regex 未用 gh[posur]_ 涵蓋 classic/oauth/server/refresh 前綴"
-    assert "github_pat_" in text, "殘留掃描 regex 未涵蓋 fine-grained github_pat_ 前綴"
-    # 反向自證：字元類確實含 p/o/s/u/r 五碼
-    assert set("posur") <= set("posur"), "sanity"
-    for ch in "posur":
-        assert ch in "posur"
+    text = _script_text()
+
+    assert "gh[posur]_" in text
+    assert "github_pat_" in text
+    for prefix in ["ghp_", "github_pat_", "gho_", "ghs_", "ghr_"]:
+        token = _fake_token(prefix, "A", 40 if prefix != "github_pat_" else 24)
+        assert re.search(r"gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}", token)
 
 
 def test_no_token_plaintext_leak_surface() -> None:
-    """零明文輸出不變式：禁用 set -x（會把展開後的 token 打進 trace）。"""
-    text = _text()
-    # 只查「可執行行」——排除註解說明中提及的 `set -x`（避免自傷誤命中）。
+    text = _script_text()
+
     for line in text.splitlines():
         code = line.split("#", 1)[0]
-        assert "set -x" not in code, "禁用 set -x：會把展開後的 $GH_PAT 印進 trace"
-    # curl 必須 -o /dev/null，不回應主體
-    assert "-o /dev/null" in text, "curl 應 -o /dev/null，只讀 HTTP 狀態碼、不印回應主體"
+        assert "set -x" not in code, "禁用 shell xtrace，避免展開後的 token 進入輸出"
+    assert "--redact=100" not in text, "gitleaks redact 不鎖特定新版語法"
+    assert "sed -E" not in text, "grep fallback 遮蔽不得依賴 sed"
 
 
-def test_report_is_exit_zero_and_states_manual_boundary() -> None:
-    proc = subprocess.run(
-        ["bash", str(SCRIPT), "--report"],
-        capture_output=True,
-        text=True,
+def test_verify_uses_gh_token_from_gh_pat_without_printing_value(tmp_path: Path) -> None:
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    (fakebin / "dirname").symlink_to("/usr/bin/dirname")
+    _write_executable(
+        fakebin / "gh",
+        """#!/bin/sh
+if [ "$1" != "auth" ] || [ "$2" != "status" ]; then
+  echo "unexpected gh args" >&2
+  exit 98
+fi
+if [ -z "${GH_TOKEN:-}" ] || [ "${GH_TOKEN:-}" != "${GH_PAT:-}" ]; then
+  echo "GH_TOKEN was not bound from GH_PAT" >&2
+  exit 97
+fi
+echo "fake gh status ok"
+""",
     )
-    assert proc.returncode == 0, f"--report 應 exit 0，實得 {proc.returncode}"
-    out = proc.stdout
-    assert "人工" in out and "AI 可代勞" in out, "--report 須含人工/AI 分界"
-    assert "待人工" in out, "--report 須標步驟 1/3 待人工"
-    assert "不證 scope" in out, "--report 須明示 curl 200 不證 scope"
+
+    sentinel = "sentinel-value-not-a-token"
+    proc = _run_script(
+        "--verify",
+        env={"PATH": f"{fakebin}:{os.environ['PATH']}", "GH_PAT": sentinel},
+    )
+
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert sentinel not in combined, "verify 不得輸出 GH_PAT 值"
+
+
+def test_verify_curl_fallback_requires_http_200_without_printing_value(tmp_path: Path) -> None:
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    (fakebin / "dirname").symlink_to("/usr/bin/dirname")
+    _write_executable(
+        fakebin / "curl",
+        """#!/bin/sh
+while IFS= read -r _line; do
+  :
+done
+printf '200'
+""",
+    )
+
+    sentinel = "another-sentinel-value"
+    proc = _run_script(
+        "--verify",
+        env={"PATH": str(fakebin), "GH_PAT": sentinel},
+    )
+
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "curl /user HTTP: 200" in combined
+    assert "不證 scope" in combined
+    assert sentinel not in combined, "curl fallback 不得輸出 GH_PAT 值"
 
 
 def _fake_token(prefix: str, body_char: str, length: int) -> str:
-    # 執行期組裝假 token，避免完整字面落在測試檔（防 gitleaks/掃描誤命中本檔）。
     return prefix + body_char * length
 
 
-def test_scan_discriminates_black_vs_white_sample(tmp_path: Path) -> None:
-    """黑樣本命中回非 0、白樣本放行回 0；且命中時 stdout 不外洩 token 明文。"""
-    black = tmp_path / "black"
-    white = tmp_path / "white"
-    black.mkdir()
-    white.mkdir()
-
-    fake_fg = _fake_token("github_pat_", "1", 30)
-    fake_classic = _fake_token("ghp_", "A", 40)
-    (black / "session.jsonl").write_text(
-        f"log: {fake_fg}\ncommit: {fake_classic} done\n", encoding="utf-8"
+def test_scan_grep_fallback_flags_black_samples_and_hides_values(tmp_path: Path) -> None:
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    _write_executable(
+        fakebin / "gitleaks",
+        """#!/bin/sh
+if [ "$1" = "detect" ] && [ "$2" = "--help" ]; then
+  echo "fake gitleaks help without redact"
+  exit 0
+fi
+exit 99
+""",
     )
-    (white / "clean.jsonl").write_text("hello world, no secrets here\n", encoding="utf-8")
 
-    black_proc = subprocess.run(
-        ["bash", str(SCRIPT), "--scan", str(black)], capture_output=True, text=True
-    )
-    assert black_proc.returncode != 0, "黑樣本（含 token）應命中回非 0"
-    combined = black_proc.stdout + black_proc.stderr
-    assert fake_fg not in combined, "掃描輸出外洩 fine-grained token 明文"
-    assert fake_classic not in combined, "掃描輸出外洩 classic token 明文"
+    black_dir = tmp_path / "black"
+    black_dir.mkdir()
+    black_tokens = [
+        _fake_token("ghp_", "A", 36),
+        _fake_token("gho_", "B", 36),
+        _fake_token("ghs_", "C", 36),
+        _fake_token("ghr_", "D", 36),
+        _fake_token("github_pat_", "E", 20),
+    ]
+    (black_dir / "sample.txt").write_text("\n".join(black_tokens), encoding="utf-8")
 
-    white_proc = subprocess.run(
-        ["bash", str(SCRIPT), "--scan", str(white)], capture_output=True, text=True
+    proc = _run_script(
+        "--scan",
+        str(black_dir),
+        env={"PATH": f"{fakebin}:{os.environ['PATH']}"},
     )
-    assert white_proc.returncode == 0, "白樣本（無 token）應放行回 0"
+
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "grep fallback" in combined
+    assert "疑似殘留 token" in combined
+    for token in black_tokens:
+        assert token not in combined, "掃描輸出不得吐出 token 明文"
+
+
+def test_scan_grep_fallback_allows_white_samples(tmp_path: Path) -> None:
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    _write_executable(
+        fakebin / "gitleaks",
+        """#!/bin/sh
+if [ "$1" = "detect" ] && [ "$2" = "--help" ]; then
+  echo "fake gitleaks help without redact"
+  exit 0
+fi
+exit 99
+""",
+    )
+
+    white_dir = tmp_path / "white"
+    white_dir.mkdir()
+    white_samples = [
+        _fake_token("ghp_", "A", 35),
+        _fake_token("gho_", "B", 35),
+        _fake_token("ghs_", "C", 35),
+        _fake_token("ghr_", "D", 35),
+        _fake_token("github_pat_", "E", 19),
+        "not-a-token",
+    ]
+    (white_dir / "sample.txt").write_text("\n".join(white_samples), encoding="utf-8")
+
+    proc = _run_script(
+        "--scan",
+        str(white_dir),
+        env={"PATH": f"{fakebin}:{os.environ['PATH']}"},
+    )
+
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "grep fallback 未發現殘留 token" in combined
+
+
+def test_report_states_manual_ai_boundary_and_scope_warning() -> None:
+    proc = _run_script("--report")
+    combined = proc.stdout + proc.stderr
+
+    assert proc.returncode == 0, combined
+    assert "人工" in combined and "AI 可代勞" in combined
+    assert "步驟 1（發新）與步驟 3（撤舊）待人工於 GitHub UI 完成" in combined
+    assert 'GH_TOKEN="$GH_PAT" gh auth status' in combined
+    assert "200 只證身分有效、不證 scope" in combined
+    assert "四項規格" in combined
 
 
 def test_verify_without_token_fails_fast(tmp_path: Path) -> None:
-    """步驟 2b 需 $GH_PAT 在場；未設定時應 fail-fast、不誤報成功。"""
     env = dict(os.environ)
     env.pop("GH_PAT", None)
-    proc = subprocess.run(
-        ["bash", str(SCRIPT), "--verify"],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert proc.returncode != 0, "--verify 缺 $GH_PAT 應 fail-fast 非 0"
+    env["TOKEN_ROTATION_ENV_FILE"] = str(tmp_path / "missing.env")
+
+    proc = _run_script("--verify", env=env)
+
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "未設定 $GH_PAT" in combined

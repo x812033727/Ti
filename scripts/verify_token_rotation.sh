@@ -1,107 +1,211 @@
 #!/usr/bin/env bash
 # GH_PAT 輪替輔助工具：驗證新 token / 殘留 token 掃描 / 人工-AI 分界報表。
 #
-# 規格唯一權威：docs/token-rotation-runbook.md。本腳本「不」內嵌四項 PAT 規格文字，
+# 規格唯一權威：docs/token-rotation-runbook.md。本腳本不內嵌四項 PAT 規格文字，
 # 只在 --report 指引人工回 runbook 核對，避免第二份 SSOT 漂移。
-#
-# 安全不變式（守門測試 tests/docs/test_qa_token_rotation_script.py 鎖定）：
-#   token 明文單向流入、永不流出——全腳本零明文輸出路徑，禁用 `set -x`，
-#   curl 只讀回 HTTP 狀態碼，殘留掃描只報「檔名+筆數」並遮蔽命中內容。
-#
-# exit code 契約：--report 恆 0；--scan 命中殘留回非 0（2）；--verify 依驗證結果。
 set -uo pipefail
 
-# 殘留 GitHub token 前綴（與 runbook 一致，全系列）：
-#   ghp_（classic）/ gho_ ghs_ ghr_（OAuth/server/refresh）以 gh[posur]_ 涵蓋；
-#   github_pat_（fine-grained）另列。
+if [[ $- == *x* ]]; then
+  set +x
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOKEN_RE='gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}'
 
 usage() {
   cat <<'EOF'
-用法: verify_token_rotation.sh <--verify | --scan [目錄...] | --report>
-  --verify   驗證新 GH_PAT 是否生效（需 $GH_PAT 在場；步驟 2b）
-  --scan     殘留 token 掃描（預設 history/；可加傳 workspace 目錄）
+用法: bash scripts/verify_token_rotation.sh <--verify | --scan [目錄...] | --report>
+  --verify   驗證新 GH_PAT 是否生效；首選 GH_TOKEN="$GH_PAT" gh auth status
+  --scan     殘留 token 掃描；gitleaks --no-git 優先，無法安全遮蔽時退 grep fallback
   --report   輸出人工/AI 分界狀態表（恆 exit 0）
 EOF
 }
 
+load_gh_pat() {
+  if [ -n "${GH_PAT:-}" ]; then
+    return 0
+  fi
+
+  local env_file="${TOKEN_ROTATION_ENV_FILE:-${ROOT_DIR}/.env}"
+  if [ ! -r "$env_file" ]; then
+    return 1
+  fi
+
+  local line value
+  line="$(grep -m1 -E '^(export[[:space:]]+)?GH_PAT=' "$env_file" || true)"
+  if [ -z "$line" ]; then
+    return 1
+  fi
+
+  value="${line#export }"
+  value="${value#GH_PAT=}"
+  value="${value%$'\r'}"
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="${value:1:${#value}-2}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+
+  if [ -z "$value" ]; then
+    return 1
+  fi
+
+  export GH_PAT="$value"
+}
+
 cmd_verify() {
-  if [ -z "${GH_PAT:-}" ]; then
+  if ! load_gh_pat; then
     echo "[verify] 未設定 \$GH_PAT：步驟 2b 需人工在場提供新 token 環境變數" >&2
     return 3
   fi
+
   if command -v gh >/dev/null 2>&1; then
-    # 首選：綁定新 token 再驗，避免驗到 keyring 舊 token（假綠）。
+    # 綁定新 token 再驗：GH_TOKEN="$GH_PAT" gh auth status，避免驗到 keyring 舊值。
     if GH_TOKEN="$GH_PAT" gh auth status >/dev/null 2>&1; then
-      echo "[verify] gh 驗證（已綁定新 token）：PASS"
+      echo "[verify] gh 驗證已綁定 GH_TOKEN：PASS"
       echo "[verify] 提醒：PASS 僅證身分；scope 需人工回 runbook 核對四項規格"
       return 0
     fi
-    echo "[verify] gh 驗證（已綁定新 token）：FAIL" >&2
+    echo "[verify] gh 驗證已綁定 GH_TOKEN：FAIL" >&2
     return 1
   fi
-  # 無 gh CLI 時才退 curl；-o /dev/null 只讀回 HTTP 狀態碼，不印 token/回應主體。
-  local code
-  code="$(curl -sS -o /dev/null -w '%{http_code}' \
-    -H "Authorization: Bearer $GH_PAT" https://api.github.com/user 2>/dev/null || echo 000)"
-  echo "[verify] curl /user HTTP: $code"
-  if [ "$code" = "200" ]; then
-    echo "[verify] 200 只證身分有效、不證 scope：需人工回 runbook 核對四項規格（Fine-grained / 只選本 repo / Contents RW / 到期日）才閉環"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "[verify] 找不到 gh 或 curl，無法驗證" >&2
+    return 3
+  fi
+
+  local http_code
+  http_code="$(
+    printf 'Authorization: Bearer %s\n' "$GH_PAT" \
+      | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- https://api.github.com/user 2>/dev/null
+  )"
+  if [ -z "$http_code" ]; then
+    http_code="000"
+  fi
+
+  echo "[verify] curl /user HTTP: $http_code"
+  if [ "$http_code" = "200" ]; then
+    echo "[verify] 200 只證身分有效、不證 scope；需人工回 runbook 核對四項規格才閉環"
     return 0
   fi
-  echo "[verify] 非 200（$code）：token 無效或被撤" >&2
+
+  echo "[verify] 非 200（$http_code）：token 無效、權限異常或已撤銷" >&2
   return 1
 }
 
-cmd_scan() {
-  local dirs=("$@")
-  if [ "${#dirs[@]}" -eq 0 ]; then dirs=(history/); fi
-  local targets=()
-  local d
-  for d in "${dirs[@]}"; do
-    [ -e "$d" ] && targets+=("$d")
-  done
-  if [ "${#targets[@]}" -eq 0 ]; then
-    echo "[scan] 無可掃描目標（傳入目錄不存在）：$*"
+default_scan_targets() {
+  if [ -d "${ROOT_DIR}/history" ]; then
+    printf '%s\n' "${ROOT_DIR}/history"
+  fi
+  printf '%s\n' "$ROOT_DIR"
+}
+
+gitleaks_can_redact() {
+  command -v gitleaks >/dev/null 2>&1 \
+    && gitleaks detect --help 2>/dev/null | grep -q -- '--redact'
+}
+
+scan_with_gitleaks() {
+  local target="$1"
+  if gitleaks detect --no-git --redact --source "$target" >/dev/null 2>&1; then
     return 0
   fi
-  # 主工具：gitleaks 優先（--no-git 掃檔案系統含 untracked，內建 GitHub token 規則）。
-  if command -v gitleaks >/dev/null 2>&1; then
-    local hit=0
-    for d in "${targets[@]}"; do
-      if ! gitleaks detect --no-git --source "$d" >/dev/null 2>&1; then
-        echo "[scan] gitleaks 命中殘留於: $d"
-        hit=1
+  return 2
+}
+
+scan_with_grep() {
+  local target="$1"
+  local files=()
+  local file count
+
+  while IFS= read -r file; do
+    [ -n "$file" ] && files+=("$file")
+  done < <(
+    grep -IRlE \
+      --exclude-dir=.git \
+      --exclude-dir=.venv \
+      --exclude-dir=node_modules \
+      --exclude-dir=__pycache__ \
+      "$TOKEN_RE" \
+      -- "$target" 2>/dev/null || true
+  )
+
+  if [ "${#files[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  for file in "${files[@]}"; do
+    count="$(grep -IEo "$TOKEN_RE" -- "$file" 2>/dev/null | wc -l | tr -d '[:space:]')"
+    [ -n "$count" ] || count=0
+    echo "[scan] 疑似殘留 token: $file（$count 筆；內容已遮蔽，請人工安全檢視）"
+  done
+  return 2
+}
+
+cmd_scan() {
+  local input_targets=("$@")
+  local targets=()
+  local target result failures=0 scanned=0
+
+  if [ "${#input_targets[@]}" -eq 0 ]; then
+    mapfile -t input_targets < <(default_scan_targets)
+  fi
+
+  for target in "${input_targets[@]}"; do
+    if [ -e "$target" ]; then
+      targets+=("$target")
+    else
+      echo "[scan] skip 不存在目標: $target"
+    fi
+  done
+
+  if [ "${#targets[@]}" -eq 0 ]; then
+    echo "[scan] 無可掃描目標"
+    return 0
+  fi
+
+  if gitleaks_can_redact; then
+    for target in "${targets[@]}"; do
+      scanned=1
+      if scan_with_gitleaks "$target"; then
+        echo "[scan] gitleaks 未發現殘留 token（掃描: $target）"
+      else
+        echo "[scan] gitleaks 命中疑似殘留 token: $target（輸出已遮蔽）" >&2
+        failures=1
       fi
     done
-    if [ "$hit" -ne 0 ]; then
-      echo "[scan] 命中殘留 token，立即回 runbook 頂端重跑輪替" >&2
-      return 2
+  else
+    if command -v gitleaks >/dev/null 2>&1; then
+      echo "[scan] gitleaks 無可確認的 --redact 支援，改用 grep fallback 避免明文輸出"
+    else
+      echo "[scan] gitleaks not found; using grep fallback"
     fi
-    echo "[scan] gitleaks 未發現殘留 token（掃描: ${targets[*]}）"
+    for target in "${targets[@]}"; do
+      scanned=1
+      result=0
+      scan_with_grep "$target" || result=$?
+      if [ "$result" -eq 0 ]; then
+        echo "[scan] grep fallback 未發現殘留 token（掃描: $target）"
+      else
+        echo "[scan] grep fallback 命中疑似殘留 token: $target" >&2
+        failures=1
+      fi
+    done
+  fi
+
+  if [ "$scanned" -eq 0 ]; then
+    echo "[scan] 無可掃描目標"
     return 0
   fi
-  # 零依賴 fallback：grep 全前綴；-l 只取檔名、-c 只取筆數，永不印命中行（零明文外洩）。
-  local total=0
-  local f n
-  for d in "${targets[@]}"; do
-    while IFS= read -r f; do
-      [ -z "$f" ] && continue
-      n="$(grep -acE "$TOKEN_RE" "$f" 2>/dev/null || echo 0)"
-      echo "[scan] 疑似殘留 token: $f（$n 筆；內容已遮蔽，請人工安全檢視）"
-      total=$((total + 1))
-    done < <(grep -rlE "$TOKEN_RE" "$d" 2>/dev/null || true)
-  done
-  if [ "$total" -ne 0 ]; then
-    echo "[scan] 命中 $total 個檔含疑似殘留 token，立即回 runbook 頂端重跑輪替" >&2
+  if [ "$failures" -ne 0 ]; then
+    echo "[scan] 命中殘留 token，立即回 runbook 頂端重跑輪替" >&2
     return 2
   fi
-  echo "[scan] grep fallback 未發現殘留 token（掃描: ${targets[*]}）"
   return 0
 }
 
 cmd_report() {
-  # 恆 exit 0；純狀態表，不呼叫 gh/curl、不觸碰任何明文。
   cat <<'EOF'
 == GH_PAT 輪替 人工/AI 分界狀態表 ==
 規格唯一權威：docs/token-rotation-runbook.md（本表不內嵌四項 PAT 規格）
@@ -116,7 +220,7 @@ cmd_report() {
 
 明示事項：
 - 步驟 1（發新）與步驟 3（撤舊）待人工於 GitHub UI 完成，AI 不代行。
-- 步驟 2b 若走 curl，回 200 只證身分有效、不證 scope；需人工回 runbook 核對四項規格才閉環。
+- 步驟 2b 首選 GH_TOKEN="$GH_PAT" gh auth status；若走 curl，回 200 只證身分有效、不證 scope；需人工回 runbook 核對四項規格才閉環。
 - 先發後撤：新 token 未通過 --verify 前，絕不撤舊（會 403 斷鏈）。
 EOF
   return 0
@@ -125,11 +229,30 @@ EOF
 main() {
   local sub="${1:-}"
   case "$sub" in
-    --verify) shift; cmd_verify "$@"; return $? ;;
-    --scan)   shift; cmd_scan "$@";   return $? ;;
-    --report) shift; cmd_report "$@"; return $? ;;
-    -h | --help | "") usage; return 0 ;;
-    *) echo "未知子命令: $sub" >&2; usage; return 64 ;;
+    --verify)
+      shift
+      cmd_verify "$@"
+      ;;
+    --scan)
+      shift
+      cmd_scan "$@"
+      ;;
+    --report)
+      shift
+      if [ "$#" -ne 0 ]; then
+        usage >&2
+        return 64
+      fi
+      cmd_report
+      ;;
+    -h|--help|"")
+      usage
+      ;;
+    *)
+      echo "未知子命令: $sub" >&2
+      usage >&2
+      return 64
+      ;;
   esac
 }
 
