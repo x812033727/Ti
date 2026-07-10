@@ -467,6 +467,9 @@ def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
             cwd=str(cwd),
             model=model or _model_for(role),
             max_turns=config.MAX_TURNS_PER_TURN,
+            # 推理深度(None=SDK 預設,零行為改變):唯一建構點,自動涵蓋 roster/lane/
+            # critic/voter/oneshot(反思可用 TI_EXPERT_EFFORT_MAP="oneshot:low" 降檔)。
+            effort=config.effort_for(role.key),
             # skills(預設關):見 _skills_options——技能漸進揭露,程序知識不占常駐 prompt。
             **_skills_options(role),
         )
