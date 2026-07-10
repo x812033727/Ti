@@ -42,6 +42,11 @@ export async function refreshAutopilot() {
     const st = await (await fetch("/api/autopilot")).json();
     if (st.repo) apRepo = st.repo;
     const c = st.counts || {};
+    // 近窗完成率（後端 completion_stats：done/(done+failed)，排除 parked/pending）。
+    // 舊後端無此欄時容錯不顯示；rate 為 null（無終局任務）時顯示「—」。
+    const cs = st.completion || {};
+    const rateStr =
+      cs.rate == null ? (cs.total ? "—" : "") : `完成率 ${Math.round(cs.rate * 100)}%（近 ${cs.total}）・`;
     // 心跳：/api/autopilot 的巢狀 heartbeat 物件（autopilot 主迴圈寫 status.json：
     // state=idle/running/quota_sleep、task_id、sleep_until）；兼容頂層欄位，缺省時容錯不顯示。
     const hbObj = st.heartbeat || {};
@@ -53,7 +58,7 @@ export async function refreshAutopilot() {
     if (hbObj.task_id) hb += `（任務 #${hbObj.task_id}）`;
     if (hbSleep) hb += `（休眠至 ${new Date(hbSleep * 1000).toLocaleTimeString()}）`;
     $("#apState").textContent =
-      `${st.paused ? "⏸ 已暫停" : "▶ 執行中"}　待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
+      `${st.paused ? "⏸ 已暫停" : "▶ 執行中"}　${rateStr}待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
       `完成 ${c.done || 0}・失敗 ${c.failed || 0}${c.parked ? `・停放 ${c.parked}` : ""}` +
       `${st.dryrun ? "　(dryrun)" : ""}${hb}`;
     $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
