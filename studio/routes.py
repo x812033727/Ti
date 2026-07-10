@@ -7,6 +7,7 @@ WebSocket 與應用組裝分別在 ws.py / server.py。
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 
 from fastapi import APIRouter, Depends, Request
@@ -416,11 +417,23 @@ async def history_list() -> JSONResponse:
 
 
 @router.get("/api/history/{session_id}/events", dependencies=[Depends(auth.require_auth)])
-async def history_events(session_id: str) -> JSONResponse:
+async def history_events(session_id: str, offset: int = 0, limit: int = 0) -> JSONResponse:
+    """session 事件（預設全量——前端重播依賴全量，向後相容）；offset/limit 可選分頁。
+
+    limit<=0＝不設限。以 iter_events+islice 惰性切片，避免大 session（數千事件）在只要
+    尾段時仍整檔物化；讀檔丟 to_thread 不卡 event loop。
+    """
     meta = history.get_meta(session_id)
     if meta is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    return JSONResponse({"meta": meta, "events": history.load_events(session_id)})
+    offset = max(0, offset)
+
+    def _slice() -> list[dict]:
+        it = history.iter_events(session_id)
+        stop = offset + limit if limit > 0 else None
+        return list(itertools.islice(it, offset, stop))
+
+    return JSONResponse({"meta": meta, "events": await asyncio.to_thread(_slice)})
 
 
 @router.delete("/api/history/{session_id}", dependencies=[Depends(auth.require_auth)])
@@ -779,6 +792,10 @@ async def workflows_delete(name: str) -> JSONResponse:
 class TaskBody(BaseModel):
     title: str = ""
     detail: str = ""
+    # 完整下任務表單(功能強化 C2):priority/type 防線沿用 backlog.add 既有的
+    # _clamp_priority/_norm_type,routes 不重複驗證;舊 client 只送 title 行為不變。
+    priority: int = 1
+    type: str = "improvement"
 
 
 @router.get("/api/autopilot", dependencies=[Depends(auth.require_auth)])
@@ -795,10 +812,10 @@ async def autopilot_status() -> JSONResponse:
     return JSONResponse(
         {
             "paused": config.autopilot_paused(),
-            "counts": backlog.counts(),
-            # 近窗完成率（done/(done+failed)，排除 parked/pending）——counts 的終身數字會被
-            # 舊史與永不清的 parked 灌水/拖低,此欄反映真實近況。
-            "completion": backlog.completion_stats(),
+            # counts+completion 一次載入(backlog.overview):舊寫法每次輪詢連打三發全量 parse。
+            # completion=近窗完成率(done/(done+failed),排除 parked/pending)——counts 的終身
+            # 數字會被舊史與永不清的 parked 灌水/拖低,此欄反映真實近況。
+            **(await asyncio.to_thread(backlog.overview)),
             # 部署漂移觀測（30s TTL 快取）：disk_head/origin_head/behind；autopilot 行程
             # 「執行中」的 commit 在 heartbeat.running_commit（status.json）。已合併修法
             # 是否真的進了執行碼，看板據此可判（完成率第三輪修法二A）。
@@ -849,7 +866,14 @@ async def autopilot_dispatch_mode(body: DispatchModeBody) -> JSONResponse:
 
 @router.post("/api/autopilot/task", dependencies=WRITE_DEPS)
 async def autopilot_add_task(body: TaskBody) -> JSONResponse:
-    task = backlog.add(body.title, body.detail, source="manual")
+    # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
+    task = backlog.add(
+        body.title,
+        body.detail[:4000],
+        source="manual",
+        priority=body.priority,
+        item_type=body.type,
+    )
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
     return JSONResponse({"ok": True, "task": task})

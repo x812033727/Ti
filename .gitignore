@@ -36,7 +36,11 @@
 .Python
 .bash_profile
 .bashrc
+# .claude/ 整體不追蹤(本地 settings/hookify 屬個人環境),但 skills 技能包是產品的一部分
+# (working clone 要帶著給專家用),顯式豁免。
 .claude/
+!.claude/skills/
+!.claude/skills/**
 .coverage
 .coverage.*
 .eggs/

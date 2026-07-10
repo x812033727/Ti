@@ -10,3 +10,8 @@
 @import url("css/settings.css");
 @import url("css/components.css");
 @import url("css/responsive.css");
+
+/* 完整下任務表單(C2):detail textarea 滿寬,priority/type/按鈕一列 */
+.ap-add textarea { width: 100%; resize: vertical; margin-top: 4px; }
+.ap-add-row { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
+.ap-add-row select { flex: 0 0 auto; }
