@@ -47,6 +47,13 @@ for _k in [k for k in os.environ if k.startswith("TI_") and not k.startswith("TI
 # (config, "REQUIRE_CHOWN", ...)／require_chown= 參數 override 以驗證 strict/warn/off 三態。
 os.environ["TI_REQUIRE_CHOWN"] = "off"
 
+# 任務邊界部署自查（autopilot._maybe_boundary_redeploy）對整個測試樹關死：它會真的
+# `git fetch`＋`deploy.redeploy()`（reset --hard + pip install + systemctl restart）——
+# 任何未 stub deploy 的主迴圈測試若觸發，會把測試工作區 hard-reset、重啟真實服務
+# （2026-07-10 實際發生過：開發工作區被自己的測試 reset 掉）。要測它的行為一律
+# monkeypatch.setattr(config, "AUTOPILOT_DEPLOY_CHECK_INTERVAL", ...) 顯式開。
+os.environ["TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL"] = "0"
+
 
 class ScopeRepo:
     def __init__(self, path: Path) -> None:
