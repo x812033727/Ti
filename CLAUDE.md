@@ -221,6 +221,15 @@ release-smoke` 驗收鏈，留待專門供應鏈硬化任務處理。
 ### shell 偵測腳本的可攜性
 沿用 rg→grep fallback 範式時，正則限 **ERE**，禁用 lookbehind/PCRE（grep `-P` 非 GNU 環境沒有）。fallback 環境可能連 `sed`/`awk` 都沒有——剝字串改用純 grep（如「白名單優先交替、`grep -oE` 抽片段」），別引入 sed 破壞可攜性。
 
+## 資安審查員 — 長期經驗
+
+從「憑證輪替工作單」資安審查場提煉，作為安全閘門時固定沿用：
+
+1. **審文件型交付也要實跑驗證其安全宣稱，不看文字下結論**。文件若聲稱「`.env` 已在 `.gitignore`」「無 token 明文」，必實 `grep .gitignore`／`grep -E '<token 前綴正則>' <file>` 兌現，避免給人虛假安全感。文件不是程式碼不代表可略讀放行——宣稱要能實查對應。
+2. **核可要鎖死範圍，不讓「安全核可」溢出到未審的相鄰攻擊面**。工作單引用了 `docs/token-rotation-runbook.md` 與 `scripts/verify_token_rotation.sh`（`--verify`/`--scan`/`--report`），我只審了 markdown 本身，就明講「核可僅限本文件、不延伸到所引用腳本/runbook」，並把那支腳本列為待另案審查的移交（實跑前需補審指令注入/明文落地）。否則「文件過了」會被誤讀成「整條輪替鏈都安全」。
+3. **憑證輪替工作單的資安檢查清單（可複用）**：①先發後撤順序鎖死，新值驗證通過前絕不撤舊（誤撤斷鏈＝403）；②明文絕不進對話/版控/工具輸出，貼證欄位只收 exit code/HTTP 碼/帳號名等非敏感回報；③最小權限 PAT＝本 repo + 僅 `Contents: Read and write` + 設到期日；④人工/AI 分界照「是否接觸明文、是否不可逆帳號操作」切，AI 只做唯讀掃描/報表、不代持明文；⑤驗證指令 `gh auth status` 不可裸跑（驗 keyring 舊值會假綠），`/user` 200 只證身分不證 scope。
+4. **`Authorization: Bearer $TOKEN` 的 curl 是低度但真實的明文洩漏點**：token 會在 process args 與 shell history 展開，共用主機 `ps` 可見。優先推環境變數式（`GH_TOKEN=... gh auth status`）；curl 僅列 fallback。此類單人主機下的低度風險列「跟進建議」而非退回理由——聚焦真實風險，不為挑剔而退。
+
 ## 向高級工程師學習（跨任務通用的協作習慣）
 
 從與高工的協作中，值得我之後固定沿用：
