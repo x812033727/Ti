@@ -17,7 +17,7 @@ import os
 import time
 from pathlib import Path
 
-from . import config, events, llm_caller, runner, tools
+from . import config, conventions, events, llm_caller, runner, tools
 from .expert_wrap import with_timing
 from .experts import _make_retry_observer as make_retry_observer, make_retry_config
 from .roles import Role, effective_tools
@@ -171,7 +171,7 @@ class CodexExpert:
     """
 
     def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
-        self.role = role
+        self.role = conventions.apply(role, cwd)  # 慣例卡（見 studio/conventions.py）
         self.session_id = session_id
         self.cwd = cwd
         self._model_override = model
@@ -584,7 +584,7 @@ class AntigravityExpert:
     """
 
     def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
-        self.role = role
+        self.role = conventions.apply(role, cwd)  # 慣例卡（見 studio/conventions.py）
         self.session_id = session_id
         self.cwd = cwd
         self._model_override = model
@@ -857,6 +857,7 @@ class OpenAIExpert:
         model: str,
         provider: str = "openai",
     ):
+        role = conventions.apply(role, cwd)  # 慣例卡（見 studio/conventions.py）
         self.role = role
         self.session_id = session_id
         self.cwd = cwd

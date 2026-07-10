@@ -1003,6 +1003,47 @@ AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1")
 # 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
 # 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
 AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+# AUTOPILOT_INVESTIGATION_REFUTE：調查結論的對抗性驗證（refuter）。單專家調查的已知風險是
+#   「自說自話」——結論寫得頭頭是道、證據卻對不上（reward hacking），而結論會進教訓庫污染
+#   長期記憶。開啟時（預設）結論標 done 前多一次廉價 MODEL_FAST 呼叫（providers.complete_once，
+#   永不 raise），專職試圖推翻：推得翻 → 不標 done，走「討論未達完成」重試（note 帶破綻）；
+#   推不翻/refuter 壞掉/離線 → 照常 done（寧放勿殺，refuter 是加值防線不是依賴）。
+#   調查任務量低、每筆只多一次 FAST 呼叫，額度成本可忽略。設 0 關閉。
+AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+
+# EXPERT_LINT_HOOK：寫時 lint——Claude 專家每次 Write/Edit .py 後（PostToolUse hook）與
+#   OpenAI 相容專家 write_file/edit_file 後，自動 `ruff check --fix`（safe-only）＋
+#   `ruff format`，殘餘違規以文字回饋讓專家當場修。治「lint 事後才紅」：#249/#496/#364/
+#   #367 連續三輪各燒 1-2 小時只為空格（見 autopilot._gate_lint docstring）。fail-open：
+#   非 .py／無 ruff（外部非 Python 專案）／逾時／例外一律靜默放行，絕不擋寫檔。設 0 關閉。
+EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
+# 寫時 lint 單一 ruff 命令的逾時秒數（每次寫檔最多三支命令：check --fix / format / check）。
+EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+
+# EXPERT_SKILLS：Claude 專家的 skills 漸進揭露(SKILL.md)——出貨自檢/調查輸出契約等程序
+#   知識放 .claude/skills/,專家需要時經 Skill 工具載入,不占常駐 system prompt。
+#   **預設 0(灰度)**:SDK 一設 skills 會把 setting_sources 從「全載」改窄(experts._skills_options
+#   已顯式鎖 ["project"] 隔離 user/local 層),行為面有變化,先灰度觀察再翻 1。
+#   只影響 Claude 專家(OpenAI/Codex/Antigravity 無 Skill 工具)。
+EXPERT_SKILLS = os.getenv("TI_EXPERT_SKILLS", "0") not in ("0", "false", "False", "")
+# 哪些角色啟用 skills(csv):預設寫碼/審查三角——PM/架構師不寫碼,researcher 用不到出貨程序。
+EXPERT_SKILLS_ROLES = frozenset(
+    r.strip()
+    for r in os.getenv("TI_EXPERT_SKILLS_ROLES", "engineer,senior,qa").split(",")
+    if r.strip()
+)
+
+# CONVENTIONS_CARD：專家慣例卡——把執行環境慣例（.venv/bin/python 強制、timeout 前綴、
+#   別重複整檔重讀/重跑 git status、禁落檔 $TMPDIR）附進每位專家 system prompt 尾端，
+#   cwd 是 Ti repo 時另附測試/lint/config 速查。治「慣例只寫在 CLAUDE.md 但專家沒被注入、
+#   每場重教且不遵守」（實證：同場混用三種直譯器寫法、git status 64 次/場）。
+#   內容見 studio/conventions.py（≤30 行硬上限）。設 0 完全關閉。
+CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
 
 # AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
@@ -1201,6 +1242,11 @@ def reload() -> None:
     global AUTOPILOT_AUTO_MERGE, AUTOPILOT_MERGE_FAST_WAIT, AUTOPILOT_MERGE_MAX_AGE
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
+    global AUTOPILOT_INVESTIGATION_REFUTE
+    global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
+
+    global EXPERT_SKILLS, EXPERT_SKILLS_ROLES
+    global CONVENTIONS_CARD
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1388,6 +1434,22 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+    AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
+    EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+
+    EXPERT_SKILLS = os.getenv("TI_EXPERT_SKILLS", "0") not in ("0", "false", "False", "")
+    EXPERT_SKILLS_ROLES = frozenset(
+        r.strip()
+        for r in os.getenv("TI_EXPERT_SKILLS_ROLES", "engineer,senior,qa").split(",")
+        if r.strip()
+    )
+    CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
         "0",
         "false",

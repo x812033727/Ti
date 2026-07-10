@@ -66,6 +66,11 @@ os.environ["TI_AUTOPILOT_INVESTIGATION_LANE"] = "0"
 # 要測它們一律 monkeypatch.setattr(config, "AUTOPILOT_AUTO_MERGE", True) 顯式開＋全面 stub。
 os.environ["TI_AUTOPILOT_AUTO_MERGE"] = "0"
 
+# 寫時 lint（studio/lint.py）對整個測試樹關死：它會對剛寫入的 .py 真跑 ruff 子程序——
+# 既有工具測試的 fixture 檔會被自動格式化（實證：print(1) 被補換行害斷言紅）、拖慢全樹。
+# 要測它一律 monkeypatch.setattr(config, "EXPERT_LINT_HOOK", True)（見 test_expert_lint_hook.py）。
+os.environ["TI_EXPERT_LINT_HOOK"] = "0"
+
 
 class ScopeRepo:
     def __init__(self, path: Path) -> None:

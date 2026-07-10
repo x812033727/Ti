@@ -1322,6 +1322,40 @@ def _build_investigation_prompt(task: dict) -> str:
     )
 
 
+_REFUTER_SYSTEM = """你是嚴格的審稿人（refuter），唯一職責是試圖推翻一份調查結論。
+
+只審兩件事：
+1. 證據是否真的支撐結論——證據與結論無關、檔案:行號明顯對不上主題、或證據只是重述結論本身，都算推得翻。
+2. 結論是否回答了任務要查的問題——答非所問、只描述過程沒有給出答案，也算推得翻。
+
+你不需要重做調查，也不要求證據窮盡；只在結論有明顯破綻時才判成立。**拿不準一律判不成立**
+（寧放勿殺——誤殺合法結論的代價是整場重查）。
+
+輸出最後一行固定格式（擇一）：
+反駁: 成立 <一句具體破綻>
+反駁: 不成立"""
+
+
+async def _refute_investigation(task: dict, parsed: dict, clone: str, sid: str) -> str:
+    """調查結論的對抗性驗證：一次廉價 MODEL_FAST 呼叫（providers.complete_once，永不
+    raise），試圖推翻結論。回傳破綻字串（非空＝反駁成立）；旋鈕關閉、refuter 判不成立、
+    離線/壞輸出/逾時一律回空字串（寧放勿殺，見 AUTOPILOT_INVESTIGATION_REFUTE）。"""
+    from . import flow, providers
+
+    if not config.AUTOPILOT_INVESTIGATION_REFUTE:
+        return ""
+    evidence = "\n".join(f"證據: {e}" for e in parsed["evidence"])
+    user = (
+        f"任務標題：{(task.get('title') or '').strip()}\n"
+        + (f"任務細節：{(task.get('detail') or '').strip()}\n" if task.get("detail") else "")
+        + f"\n待審結論：\n{parsed['conclusion']}\n\n附帶證據：\n{evidence}\n"
+    )
+    text = await providers.complete_once(
+        _REFUTER_SYSTEM, user, session_id=f"{sid}:refute", cwd=Path(clone)
+    )
+    return flow.parse_refutation(text or "")
+
+
 async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -> None:
     """調查/驗證型任務的輕量管線：單專家一次 speak → 結構化結論寫回 backlog＋教訓庫。
 
@@ -1411,6 +1445,19 @@ async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -
         return
     if parsed["conclusion"] and parsed["evidence"]:
         summary = " ".join(parsed["conclusion"].split())
+        # 對抗性驗證（refuter）：標 done 前派一次廉價呼叫專職試圖推翻——單專家調查的
+        # 已知風險是結論頭頭是道、證據對不上（reward hacking），而結論會進教訓庫污染
+        # 長期記憶。推得翻 → 不標 done，走既有重試語意（note 帶破綻，重查有據）；
+        # 推不翻/refuter 壞掉 → 照常 done（寧放勿殺）。外層 suppress：refuter 是加值
+        # 防線不是依賴，任何例外都不得擋住合法結論。
+        refuted = ""
+        with contextlib.suppress(Exception):
+            refuted = await _refute_investigation(task, parsed, clone, sid)
+        if refuted:
+            _audit("investigation_refuted", refuted)
+            log.info("任務 #%s 調查結論被反駁，退回重查：%s", task["id"], refuted[:160])
+            _handle_discussion_incomplete(task, reason=f"調查結論被反駁：{refuted[:160]}")
+            return
         backlog.set_status(task["id"], "done", note=f"[調查結論] {summary[:400]}")
         # 結論沉澱進教訓庫（固定模板但結論各異 → exact_only 防 difflib 近似去重誤殺）。
         with contextlib.suppress(Exception):
