@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import sys
 import time
 import uuid
@@ -113,9 +114,14 @@ def _self_sig() -> float:
 # --- working clone -------------------------------------------------------
 
 
-async def _prepare_clone() -> str:
-    """確保 working clone 存在且重置到 origin/<branch> 的乾淨狀態。回傳路徑。"""
-    work = str(config.AUTOPILOT_WORK_DIR)
+async def _prepare_clone(work_dir: str | None = None) -> str:
+    """確保 working clone 存在且重置到 origin/<branch> 的乾淨狀態。回傳路徑。
+
+    work_dir 預設主 clone(AUTOPILOT_WORK_DIR);調查旁路線傳獨立目錄(-inv)——調查
+    唯讀,但主 worker 每任務 reset --hard+clean 會抽換檔案,共用 clone 會讓旁路的
+    Expert 讀取不一致。
+    """
+    work = str(work_dir or config.AUTOPILOT_WORK_DIR)
     url = f"https://github.com/{config.AUTOPILOT_REPO}.git"
     branch = config.AUTOPILOT_BRANCH
     if not (Path(work) / ".git").exists():
@@ -3107,7 +3113,8 @@ def _write_status(
 ) -> None:
     """心跳：把當前狀態原子寫入 ``<AUTOPILOT_STATE_DIR>/status.json``。
 
-    state ∈ {"idle", "running", "quota_sleep", "budget_sleep", "rotate_restart", "stopped"}；
+    state ∈ {"idle", "running", "paused", "quota_sleep", "budget_sleep", "rotate_restart", "stopped"}；
+    paused＝pause 檔存在、主迴圈刻意空轉(非卡死,每 10s 刷新 updated_at);
     /api/autopilot 讀此檔回報「迴圈還活著、正在做什麼、睡到何時、各 provider 用量」。
     帳號輪替時 quota 另帶 ``rotated_to``（切換目標 label）；budget_sleep＝每日 PR 預算
     已滿睡到 UTC 跨日；stopped＝收到停機訊號優雅結束（非死鎖）。
@@ -3130,6 +3137,8 @@ def _write_status(
         "current_expert": current_expert,
         "turn_started_at": turn_started_at,
         "running_commit": _running_commit[:12] or None,
+        # 調查旁路線(δ):目前旁路在跑的任務;None=旁路閒置/未啟用。看板據此顯示第二行。
+        "sideline": _sideline_task_info,
     }
     try:
         config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -3513,6 +3522,9 @@ async def _prepare_execv_reload() -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     log.info("autopilot 啟動（dryrun=%s, repo=%s）", config.AUTOPILOT_DRYRUN, config.AUTOPILOT_REPO)
+    # Type=notify 啟動握手:不發 READY systemd 會判啟動失敗,故放 main 最早期、任何可能
+    # 耗時的步驟(git/部署檢查)之前。execv 自我重載後 NOTIFY_SOCKET 保留,會再發一次(無害)。
+    _sd_notify("READY=1")
     # 啟動時擷取一次「執行中程式碼」的 commit（磁碟 HEAD 可能已被 reset 但行程未重載，
     # 兩者語意不同）；隨 status.json 供 /api/autopilot 顯示部署漂移。失敗留空不擋啟動。
     global _running_commit
@@ -3521,6 +3533,16 @@ async def main() -> None:
     startup_sig = _self_sig()
     _install_signal_handlers()
 
+    try:
+        # 加值監督,建不起來不擋啟動(既有 main-loop 測試以 SimpleNamespace stub 本模組的
+        # asyncio、只給 sleep——monitor 對它們是雜訊,缺 create_task 即靜默跳過)。
+        monitor = asyncio.create_task(_loop_monitor())
+        sideline = asyncio.create_task(_investigation_sideline())
+        notifier = asyncio.create_task(_watchdog_notifier())
+    except AttributeError:
+        monitor = None
+        sideline = None
+        notifier = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -3532,6 +3554,173 @@ async def main() -> None:
         if _read_status().get("state") != "stopped":
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
+    finally:
+        for aux in (monitor, sideline, notifier):
+            if aux is not None:
+                aux.cancel()
+                with contextlib.suppress(BaseException):
+                    await aux
+
+
+# 暫停狀態轉換旗標(行程記憶體):只在「進入/離開暫停」時各記一次 log,避免每 10s 刷屏。
+_paused_logged = False
+
+# 主迴圈心跳(穩定強化 β):每輪頂端/任務返回後更新。stall/hard 看門狗只包 session.run,
+# 「任務之間」(quota snapshot/reconciler/邊界部署/triage)是盲區——任一步無聲卡死即整台
+# 停擺且無 log(2026-07-10 盲區調查)。_loop_monitor 據此告警;自救交 systemd watchdog(γ)。
+_loop_tick_at = time.time()
+_task_running = False
+
+
+def _loop_tick() -> None:
+    global _loop_tick_at
+    _loop_tick_at = time.time()
+
+
+async def _loop_monitor() -> None:
+    """主迴圈心跳監督(告警不自殺):非暫停、非任務執行中,且 tick 逾
+    TI_AUTOPILOT_LOOP_STALL_S 未推進 → log.error(每個停滯期只吼一次)。"""
+    alerted = False
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if not config.AUTOPILOT_LOOP_STALL_S:
+                continue
+            idle_for = time.time() - _loop_tick_at
+            stalled = (
+                idle_for > config.AUTOPILOT_LOOP_STALL_S
+                and not _task_running
+                and not config.autopilot_paused()
+            )
+            if stalled and not alerted:
+                log.error(
+                    "主迴圈心跳停滯 %.0fs(>%ds):任務之間的某一步(quota/reconcile/部署檢查)"
+                    "疑似無聲卡死——等待 systemd watchdog 或人工介入",
+                    idle_for,
+                    config.AUTOPILOT_LOOP_STALL_S,
+                )
+                alerted = True
+            elif not stalled:
+                alerted = False
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 監督器自身失敗不得影響主迴圈
+            log.debug("loop monitor 檢查失敗(忽略)", exc_info=True)
+
+
+# systemd watchdog 對接(穩定強化 γ):β 的 loop monitor 只告警不自殺,真正自救交
+# systemd——unit 換 Type=notify+WatchdogSec=300,行程每 60s 送 WATCHDOG=1,連續漏
+# 5 次(整個行程無聲凍結,含 event loop 卡死)即被 systemd 殺掉再 Restart=always 拉起。
+_WATCHDOG_PING_S = 60
+
+
+def _sd_notify(msg: str) -> None:
+    """零依賴 sd_notify:往 NOTIFY_SOCKET(unix datagram)送一則通知。
+
+    非 systemd 環境(測試/手動執行)無此環境變數 → 靜默 no-op;socket 任何失敗也
+    只 debug log 不冒泡——通知是加值,絕不影響主迴圈。@ 開頭為 abstract socket。
+    """
+    addr = os.environ.get("NOTIFY_SOCKET", "")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.connect(addr)
+            s.sendall(msg.encode())
+    except OSError:
+        log.debug("sd_notify 送出失敗(忽略):%s", msg, exc_info=True)
+
+
+async def _watchdog_notifier() -> None:
+    """每 60s 送 WATCHDOG=1。**暫停中也送**——paused 是活著,不該被 systemd 誤殺;
+    「假活」(event loop 卡死)本 task 也動不了,ping 自然斷,正是 watchdog 要抓的。"""
+    while True:
+        await asyncio.sleep(_WATCHDOG_PING_S)
+        _sd_notify("WATCHDOG=1")
+
+
+async def _pause_tick() -> None:
+    """暫停中的一輪空轉——必須可觀測(2026-07-10 事故:pause 後 status.json 凍結在
+    上一筆 running #293,53 分鐘死寂被誤判成「看門狗失效的卡死」並觸發人工重啟)。
+
+    進入暫停的第一輪:記 log+收斂殘留 in_progress(看板不停在假 running);每輪
+    `_write_status("paused")` 刷新 updated_at——外部監控據此區分「刻意暫停」與「真卡死」。
+    """
+    global _paused_logged
+    if not _paused_logged:
+        log.info("autopilot 已暫停(pause 檔存在),主迴圈空轉待恢復")
+        _paused_logged = True
+        with contextlib.suppress(Exception):
+            _recover_stale_in_progress()
+    _write_status("paused")
+    await asyncio.sleep(10)
+
+
+def _note_resumed() -> None:
+    """離開暫停時記一次 log(冪等;非暫停期間為 no-op)。"""
+    global _paused_logged
+    if _paused_logged:
+        log.info("autopilot 已恢復(pause 檔移除),繼續取任務")
+        _paused_logged = False
+
+
+# 調查旁路線的狀態(行程記憶體):目前在跑的旁路任務(供 status.json sideline 子欄)。
+_sideline_task_info: dict | None = None
+
+
+async def _investigation_sideline() -> None:
+    """調查任務旁路併行線(吞吐強化 δ,預設關):主 worker 跑完整管線(~51min/場)時,
+    本線併行消化調查分流任務(~89s/筆;live 量測 pending 37% 符合)。
+
+    設計邊界:單線一次一筆(+1 LLM 併發);與主迴圈共用 pause/quota 閘門(暫停或額度
+    受限即不取);認領走 backlog.claim_next(單一 flock 內 filter+標 in_progress,消
+    與主迴圈的 TOCTOU);clone 用獨立唯讀目錄(AUTOPILOT_WORK_DIR+"-inv")避免主 worker
+    reset --hard 抽換檔案。任何例外 log+continue,絕不影響主迴圈;停機隨 main cancel,
+    in_progress 由既有 stale recovery 收斂。
+    """
+    global _sideline_task_info
+    inv_dir = str(config.AUTOPILOT_WORK_DIR) + "-inv"
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if not config.AUTOPILOT_INVESTIGATION_PARALLEL:
+                continue
+            if not config.AUTOPILOT_INVESTIGATION_LANE:
+                continue
+            if config.autopilot_paused() or _shutdown_requested:
+                continue
+            # 額度閘門:與主迴圈同一判定(provider_quota.gate);snapshot 有 SWR 快取,
+            # 60s 一次的旁路輪詢幾乎都命中快取、不重打 API。全受限即不取任務。
+            if config.AUTOPILOT_QUOTA_GATE:
+                try:
+                    snap = await asyncio.to_thread(provider_quota.snapshot)
+                    usable, _reset = provider_quota.gate(snap)
+                    if not usable:
+                        continue
+                except Exception:  # noqa: BLE001 — 額度查詢失敗寧可保守跳過本輪
+                    continue
+            task = backlog.claim_next(_is_investigation_task)
+            if task is None:
+                continue
+            log.info("旁路線認領調查任務 #%s:%s", task["id"], task["title"][:60])
+            t0 = time.time()
+            sid = f"apinv{uuid.uuid4().hex[:8]}"
+            _sideline_task_info = {
+                "task_id": task["id"],
+                "title": task["title"][:80],
+                "started_at": t0,
+            }
+            try:
+                clone = await _prepare_clone(inv_dir)
+                await _run_investigation_task(task, clone, sid, t0)
+            finally:
+                _sideline_task_info = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 旁路線絕不影響主迴圈
+            log.exception("調查旁路線本輪失敗(忽略,60s 後重試)")
 
 
 async def _main_loop(startup_sig: float) -> None:
@@ -3540,9 +3729,11 @@ async def _main_loop(startup_sig: float) -> None:
         # 絕不再取新任務（否則要等 systemd 90s 後 SIGKILL 硬殺）。
         if _shutdown_requested:
             raise CancelledError()
+        _loop_tick()
         if config.autopilot_paused():
-            await asyncio.sleep(10)
+            await _pause_tick()
             continue
+        _note_resumed()
 
         # 額度閘門：取任務前先確認至少一個 provider 還有額度；全受限就睡到最早重置
         # （夾在 [60, AUTOPILOT_QUOTA_MAX_SLEEP]）後 continue 重查，避免額度耗盡時
@@ -3616,6 +3807,8 @@ async def _main_loop(startup_sig: float) -> None:
             continue
 
         _write_status("running", task_id=task.get("id"), quota=quota)
+        global _task_running
+        _task_running = True
         try:
             await run_one_task(task)
         except AutopilotTaskStalled as exc:
@@ -3638,6 +3831,8 @@ async def _main_loop(startup_sig: float) -> None:
             backlog.set_status(task["id"], "failed", note=f"{type(exc).__name__}: {exc}")
 
         # 部署後若自身程式碼有更新 → 重載自己,避免跑舊邏輯
+        _task_running = False
+        _loop_tick()
         if not config.AUTOPILOT_DRYRUN and _self_sig() != startup_sig:
             log.info("偵測到 autopilot 自身程式碼更新,os.execv 重載")
             await _prepare_execv_reload()

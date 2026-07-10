@@ -107,6 +107,10 @@ def _account_rate_limits(acct: dict, rl: dict | None) -> dict | None:
     return {**rl, "error": "stale_label"}
 
 
+# 單一 provider 額度探測的硬上限(秒):見 _fetch 內註解。
+_PROBE_TIMEOUT_S = 30.0
+
+
 def _fetch() -> dict:
     """同步聚合各 provider 的「即時剩餘額度」（阻塞 I/O，耗時＝最慢一家 provider）。
 
@@ -131,7 +135,14 @@ def _fetch() -> dict:
     claude_accts = claude_accounts.list_accounts() if claude_on else []
     # 各 rate-limit 查詢彼此獨立、皆為阻塞 I/O（各 60s 快取）；並行跑使端點延遲取「最慢
     # 一家」而非「總和」，配合 antigravity 已移除 12s 子程序，明顯改善前端轉圈。
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4 + len(claude_accts)) as ex:
+    # 每個探測 result 都設硬上限(_PROBE_TIMEOUT_S):各 provider 模組內部雖各有 8-12s
+    # httpx timeout,但只要日後任一探測漏掉,無上限的 f.result() 會讓 snapshot() 在
+    # autopilot 主迴圈(quota gate)無限卡死且無 log——主迴圈「任務之間」沒有看門狗,
+    # 這類阻塞等於整台停擺(2026-07-10 主迴圈盲區調查結論)。逾時該家記 None(=不可用,
+    # 呼叫端本就容錯),executor 以 shutdown(wait=False, cancel_futures=True) 非阻塞退出,
+    # 不等卡死的探測執行緒。
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=4 + len(claude_accts))
+    try:
         f_claude = ex.submit(claude_usage.fetch_rate_limits) if claude_on else None
         f_codex = ex.submit(codex_usage.fetch_rate_limits) if codex_on else None
         f_minimax = ex.submit(minimax_usage.fetch_rate_limits) if minimax_on else None
@@ -140,19 +151,36 @@ def _fetch() -> dict:
             (a, ex.submit(claude_usage.fetch_rate_limits, cred_file=Path(a["cred_file"])))
             for a in claude_accts
         ]
-        claude_rl = f_claude.result() if f_claude else None
-        codex_rl = f_codex.result() if f_codex else None
-        minimax_rl = f_minimax.result() if f_minimax else None
-        agy_status = f_agy.result()
+
+        def _bounded(fut, label: str):
+            if fut is None:
+                return None
+            try:
+                return fut.result(timeout=_PROBE_TIMEOUT_S)
+            except concurrent.futures.TimeoutError:
+                log.warning(
+                    "provider 額度探測逾時(%ss):%s——本輪視為不可用", _PROBE_TIMEOUT_S, label
+                )
+                return None
+            except Exception:  # noqa: BLE001 — 單一探測失敗不得拖垮整份快照
+                log.debug("provider 額度探測失敗:%s", label, exc_info=True)
+                return None
+
+        claude_rl = _bounded(f_claude, "claude")
+        codex_rl = _bounded(f_codex, "codex")
+        minimax_rl = _bounded(f_minimax, "minimax")
+        agy_status = _bounded(f_agy, "antigravity") or {}
         claude_accounts_out = [
             {
                 "label": a["label"],
                 "subscription": a.get("subscription"),
                 "active": a.get("active", False),
-                "rate_limits": _account_rate_limits(a, fut.result()),
+                "rate_limits": _account_rate_limits(a, _bounded(fut, f"claude:{a['label']}")),
             }
             for a, fut in f_accts
         ]
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
     providers = [
         {
             "key": "claude",

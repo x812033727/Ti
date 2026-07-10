@@ -1015,6 +1015,15 @@ AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1")
 # 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
 # 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
 AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+# 調查旁路併行(吞吐強化 δ):主 worker 跑完整管線時,背景線併行消化調查分流任務
+# (live 量測 pending 37% 符合、每筆 ~89s vs 完整管線 ~51min)。單線+與主迴圈共用
+# pause/quota 閘門+原子認領+獨立唯讀 clone。**預設 0 灰度**,穩定後翻 1。
+AUTOPILOT_INVESTIGATION_PARALLEL = os.getenv("TI_AUTOPILOT_INVESTIGATION_PARALLEL", "0") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 # AUTOPILOT_INVESTIGATION_REFUTE：調查結論的對抗性驗證（refuter）。單專家調查的已知風險是
 #   「自說自話」——結論寫得頭頭是道、證據卻對不上（reward hacking），而結論會進教訓庫污染
 #   長期記憶。開啟時（預設）結論標 done 前多一次廉價 MODEL_FAST 呼叫（providers.complete_once，
@@ -1095,6 +1104,9 @@ def effort_for(role_key: str) -> str | None:
 # 270-500MB),lane×角色疊加即 6-12GB 峰值。閒置超過此秒數的專家由 session reaper 斷線
 # 回收(client 重建,下次 speak 自動重連;對話脈絡歸零,由 NOTES/reflexion 補償)。
 # **預設 0=完全關閉(零行為改變)**;生產建議 900。EXEMPT=豁免角色 csv(pm 脈絡最值錢)。
+# 主迴圈心跳停滯告警秒數(β):非暫停且無任務執行中,主迴圈 tick 逾此秒數未推進即
+# log.error(告警不自殺,自救交 systemd watchdog)。0=關。
+AUTOPILOT_LOOP_STALL_S = int(os.getenv("TI_AUTOPILOT_LOOP_STALL_S", "900"))
 EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
 EXPERT_IDLE_STOP_EXEMPT = frozenset(
     r.strip().lower() for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",") if r.strip()
@@ -1300,6 +1312,7 @@ def reload() -> None:
     global AUTOPILOT_PREFILTER_IMPLEMENTED, AUTOPILOT_PREFILTER_RATIO
     global AUTOPILOT_PREFILTER_LOOKBACK_DAYS
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
+    global AUTOPILOT_INVESTIGATION_PARALLEL
     global AUTOPILOT_INVESTIGATION_REFUTE
     global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
 
@@ -1307,6 +1320,7 @@ def reload() -> None:
     global CONVENTIONS_CARD
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
     global EXPERT_IDLE_STOP_S, EXPERT_IDLE_STOP_EXEMPT
+    global AUTOPILOT_LOOP_STALL_S
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1502,6 +1516,9 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+    AUTOPILOT_INVESTIGATION_PARALLEL = os.getenv(
+        "TI_AUTOPILOT_INVESTIGATION_PARALLEL", "0"
+    ) not in ("0", "false", "False", "")
     AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", "1") not in (
         "0",
         "false",
@@ -1520,6 +1537,7 @@ def reload() -> None:
     CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
     EXPERT_EFFORT = os.getenv("TI_EXPERT_EFFORT", "").strip().lower()
     EXPERT_EFFORT_MAP = _parse_effort_map(os.getenv("TI_EXPERT_EFFORT_MAP", ""))
+    AUTOPILOT_LOOP_STALL_S = int(os.getenv("TI_AUTOPILOT_LOOP_STALL_S", "900"))
     EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
     EXPERT_IDLE_STOP_EXEMPT = frozenset(
         r.strip().lower()

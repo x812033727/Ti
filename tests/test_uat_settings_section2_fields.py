@@ -165,6 +165,7 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_AUTOPILOT_WORKFLOW_TRIAGE": ["TI_AUTOPILOT_WORKFLOW_TRIAGE"],
         "TI_AUTOPILOT_INVESTIGATION_LANE": ["TI_AUTOPILOT_INVESTIGATION_LANE"],
         "TI_AUTOPILOT_INVESTIGATION_REFUTE": ["TI_AUTOPILOT_INVESTIGATION_REFUTE"],
+        "TI_AUTOPILOT_INVESTIGATION_PARALLEL": ["TI_AUTOPILOT_INVESTIGATION_PARALLEL"],
     }
     assert {f.env for f in selects} == set(checks), "select 欄與預期不符，請更新測試"
     # 非法案例段落：含『非法』字樣的列
