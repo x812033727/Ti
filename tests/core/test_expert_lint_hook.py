@@ -16,10 +16,27 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 
 import pytest
 
 from studio import config, experts, lint
+
+
+def _install_fake_sdk(monkeypatch):
+    """CI 無 claude_agent_sdk:_expert_hooks 會在呼叫時 import HookMatcher,裝假模組
+    (範式同 tests/test_experts.py;HookMatcher 需吃 timeout kwarg——真 SDK 有此欄位)。"""
+    mod = types.ModuleType("claude_agent_sdk")
+
+    class HookMatcher:
+        def __init__(self, matcher=None, hooks=None, timeout=None):
+            self.matcher = matcher
+            self.hooks = hooks or []
+            self.timeout = timeout
+
+    mod.HookMatcher = HookMatcher
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", mod)
 
 
 @pytest.fixture(autouse=True)
@@ -134,6 +151,7 @@ def test_resolve_ruff_falls_back_to_module_or_none(tmp_path, monkeypatch):
 
 
 def test_expert_hooks_wiring_knob_on_and_off(tmp_path, monkeypatch):
+    _install_fake_sdk(monkeypatch)
     hooks = experts._expert_hooks(tmp_path)
     assert "PreToolUse" in hooks, "FS guard 恆在"
     assert hooks["PostToolUse"][0].matcher == "Write|Edit|MultiEdit"
