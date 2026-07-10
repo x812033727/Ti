@@ -22,6 +22,34 @@ def _script_text() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 
 
+def _script_token_re() -> re.Pattern[str]:
+    match = re.search(r"^TOKEN_RE='([^']+)'$", _script_text(), re.MULTILINE)
+    assert match, "腳本缺少單一 TOKEN_RE 定義"
+    return re.compile(match.group(1))
+
+
+def _executable_shell_lines(text: str) -> list[tuple[int, str]]:
+    lines: list[tuple[int, str]] = []
+    heredoc_end: str | None = None
+
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if heredoc_end is not None:
+            if stripped == heredoc_end:
+                heredoc_end = None
+            continue
+
+        heredoc = re.search(r"<<-?\s*'?([A-Za-z0-9_]+)'?", line)
+        if heredoc:
+            heredoc_end = heredoc.group(1)
+
+        code = line.split("#", 1)[0].strip()
+        if code:
+            lines.append((line_number, code))
+
+    return lines
+
+
 def _run_script(
     *args: str,
     env: dict[str, str] | None = None,
@@ -55,11 +83,11 @@ def test_gh_auth_status_is_never_run_bare() -> None:
     text = _script_text()
     assert 'GH_TOKEN="$GH_PAT" gh auth status' in text
 
-    for line_number, line in enumerate(text.splitlines(), start=1):
+    for line_number, line in _executable_shell_lines(text):
         if "gh auth status" not in line:
             continue
         assert 'GH_TOKEN="$GH_PAT"' in line, (
-            f"第 {line_number} 行出現未明確綁 GH_TOKEN 的 gh auth status"
+            f"第 {line_number} 行可執行路徑出現未明確綁 GH_TOKEN 的 gh auth status"
         )
 
 
@@ -75,12 +103,13 @@ def test_curl_fallback_uses_user_endpoint_without_response_body() -> None:
 
 def test_scan_regex_covers_all_github_token_prefixes() -> None:
     text = _script_text()
+    token_re = _script_token_re()
 
     assert "gh[posur]_" in text
     assert "github_pat_" in text
     for prefix in ["ghp_", "github_pat_", "gho_", "ghs_", "ghr_"]:
         token = _fake_token(prefix, "A", 40 if prefix != "github_pat_" else 24)
-        assert re.search(r"gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}", token)
+        assert token_re.search(token), f"TOKEN_RE 未涵蓋 {prefix}"
 
 
 def test_no_token_plaintext_leak_surface() -> None:
