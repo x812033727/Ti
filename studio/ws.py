@@ -192,13 +192,16 @@ async def _attach_session(websocket: WebSocket, data: dict) -> None:
         if hub.live_only:
             # improve umbrella 無單一 JSONL：不補放、只接即時事件（cursor 忽略、sent=0
             # 讓佇列事件全數通過）。斷線期間的事件可從各輪歷史查看。
-            past: list[dict] = []
             sent = 0
         else:
-            past = history.load_events(sid)  # ……後拍快照：快照必涵蓋訂閱前全部事件
-            for d in past[cursor:]:
-                await websocket.send_json(d)
-            sent = len(past)
+            # ……後拍快照：快照必涵蓋訂閱前全部事件。改 iter_events 串流(O(1) 記憶體)——
+            # 大 session 事件檔可達數百 KB/數千筆,load_events 一次物化在每次 reconnect
+            # 都是白燒;逐筆跳過 cursor 前、逐筆送,sent 語意與 len(load_events()) 逐字等價。
+            sent = 0
+            for i, d in enumerate(history.iter_events(sid)):
+                if i >= cursor:
+                    await websocket.send_json(d)
+                sent = i + 1
         # attach_ok 是 ws 層訊息（沿既有 raw error dict 先例），不進 events.py 契約；
         # cursor 回傳權威計數，讓前端事件計數器與伺服器校準。
         await websocket.send_json(
