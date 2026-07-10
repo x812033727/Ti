@@ -775,6 +775,23 @@ AUTOPILOT_TASK_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TASK_TIMEOUT", "3600"))
 # 否則會誤殺慢但活著的 turn。預設 2400（40min）＝ TURN_HARD_TIMEOUT 之上留 600s headroom，
 # 且 < AUTOPILOT_TASK_TIMEOUT(3600) 以更早自癒。0＝停用（退回僅硬牆逾時）。
 AUTOPILOT_STALL_TIMEOUT = int(os.getenv("TI_AUTOPILOT_STALL_TIMEOUT", "2400"))
+
+# AUTOPILOT_TIMEOUT_AUTOSPLIT：硬牆逾時任務（多半範圍太大跑不完）不再無聲 parked 等人工拆，而是交
+#   資深專家自動拆成數個更小、可獨立出貨的子任務再排回 backlog、原任務歸檔 parked（完成率第二輪修法
+#   ⑤，對治 7200s 硬牆下的 parked 死水）。0＝關，恢復舊行為（僅 parked 待人工）。以 split_depth 逐代
+#   計數＋MAX_DEPTH 封頂,根治「子任務又太大又逾時、無限自我拆分」的爆炸。
+AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+# 自動拆分的最大代數：任務帶 split_depth（拆分產物 = 父 depth+1）；達此上限的逾時任務不再自動拆、
+#   維持 parked 待人工，避免無限拆分。2＝原任務可被拆一次、其子任務再逾時可再拆一次,之後止步。
+AUTOPILOT_SPLIT_MAX_DEPTH = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_DEPTH", "2"))
+# 單次拆分最多產出的子任務數（過濾/去重後再截斷），避免一次灌太多。
+AUTOPILOT_SPLIT_MAX_SUBTASKS = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", "4"))
+
 # 本工作室長期目標（北極星）：注入 autopilot 自評與 improver「找問題」的 discovery prompt，
 # 讓自主提案可追溯到一致的長期方向（單一真相在此，消費端一律讀 config）。空字串＝不注入。
 AUTOPILOT_NORTH_STAR = os.getenv(
@@ -1111,6 +1128,7 @@ def reload() -> None:
     global AUTOPILOT_DAILY_PR_BUDGET
     global AUTOPILOT_WORKFLOW_TRIAGE, AUTOPILOT_TRIAGE_TIMEOUT
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
+    global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1279,6 +1297,14 @@ def reload() -> None:
         "False",
         "",
     )
+    AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    AUTOPILOT_SPLIT_MAX_DEPTH = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_DEPTH", "2"))
+    AUTOPILOT_SPLIT_MAX_SUBTASKS = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", "4"))
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
     # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）

@@ -1250,6 +1250,120 @@ async def _evaluate_self(clone: str) -> int:
     return n
 
 
+def _build_split_prompt(task: dict) -> str:
+    """組裝「把逾時任務拆小」的 prompt（純字串、無 LLM/網路，可單測）。
+
+    逾時多半＝範圍太大跑不完。要專家把原任務拆成數個**更小、可各自獨立出貨**的子任務,每個都要有
+    明確客觀的完成判準,且合起來仍覆蓋原目標。刻意要求「拆到能在一場 session 內做完」以斷開逾時循環。
+    """
+    title = (task.get("title") or "").strip()
+    detail = (task.get("detail") or "").strip()
+    n = config.AUTOPILOT_SPLIT_MAX_SUBTASKS
+    base = f"原任務標題：{title}\n"
+    if detail:
+        base += f"原任務細節：{detail}\n"
+    return (
+        "以下這個任務因為範圍太大、在時間硬牆內跑不完而逾時。請你把它拆解成數個**更小、可各自"
+        "獨立出貨**的子任務，讓每一個都能在單一一場工作 session 內完成。\n\n"
+        f"{base}\n"
+        f"要求：\n"
+        f"1. 產出 2～{n} 個子任務，合起來仍覆蓋原任務目標，但各自範圍明顯更小。\n"
+        "2. 每個子任務都要有**明確、客觀、可驗證的完成判準**（能改動程式碼並通過測試/lint），"
+        "不要產出純驗收/純報告/純落檔這類沒有實質產出的元任務。\n"
+        "3. 子任務之間盡量獨立、可分別合併，避免硬相依。\n\n"
+        "輸出格式：每行一個子任務，以「任務: 」開頭，例如\n任務: 重構 X 模組的 Y 函式並補單測\n"
+    )
+
+
+async def _autosplit_task(clone: str, task: dict) -> list[str]:
+    """逾時任務（範圍太大）交資深專家拆成更小、可獨立出貨的子任務。回傳過濾後的子任務標題清單。
+
+    子任務只套「良構性/價值閘」（`_is_low_value_followup`）剔除無價值元任務子項，並剔除 parse_tasks 空
+    回應 fallback「實作需求」與原任務標題原封回填，再截斷到 `AUTOPILOT_SPLIT_MAX_SUBTASKS`。刻意不走
+    `_screen_followups` 全套（其子系統上限/對父任務相似度去重會誤殺合法子任務——拆分本就刻意產出多個
+    同子系統、與父任務相近的更小項）。拆不出東西＝回空，交呼叫端退回 parked。純檔案 IO 外殼，LLM 由
+    Expert 承擔。
+    """
+    from .experts import Expert
+    from .roles import SENIOR
+
+    sid = f"ap-split-{uuid.uuid4().hex[:8]}"
+    ex = Expert(SENIOR, sid, Path(clone))
+
+    async def _noop(_ev):
+        return None
+
+    prompt = _build_split_prompt(task)
+    try:
+        text = await ex.speak(prompt, _noop)
+    finally:
+        with contextlib.suppress(Exception):
+            await ex.stop()
+    # 只套「良構性/價值閘」剔除無價值元任務子項，並剔除 parse_tasks 空 fallback「實作需求」與原任務
+    # 標題原封回填。刻意**不**走 `_screen_followups` 全套：其子系統覆蓋上限（K）與對父任務的相似度去重
+    # 會誤殺合法子任務——拆分本就刻意產出多個同子系統、且與父任務相近的更小項。佇列既有的等值重複交
+    # `backlog.add` 的字串等值去重自然擋掉，無須在此重做。
+    orig = (task.get("title") or "").strip()
+    out: list[str] = []
+    for t in parse_tasks(text):
+        t = t.strip()
+        if not t or t == "實作需求" or t == orig or _is_low_value_followup(t):
+            continue
+        out.append(t)
+    return out[: config.AUTOPILOT_SPLIT_MAX_SUBTASKS]
+
+
+async def _handle_task_timeout(task: dict) -> None:
+    """硬牆逾時任務處理：能自動拆分就拆成更小子任務再排、原任務歸檔 parked；否則維持舊 parked 行為
+    （關閉、達拆分深度上限、或拆不出東西/拆分失敗時）。與 `_main_loop` 的 TimeoutError 分支解耦以利單測。
+
+    infinite-split 防護：任務帶 `split_depth`（拆分產物＝父 depth+1）；達 `AUTOPILOT_SPLIT_MAX_DEPTH`
+    即不再自動拆。拆分過程任何例外都吞掉並退回 parked——單一任務逾時處理不得弄死主迴圈。
+    """
+    tid = task["id"]
+    depth = int(task.get("split_depth", 0) or 0)
+    reached_depth = depth >= config.AUTOPILOT_SPLIT_MAX_DEPTH
+    children: list[int] = []
+    if config.AUTOPILOT_TIMEOUT_AUTOSPLIT and not config.AUTOPILOT_DRYRUN and not reached_depth:
+        try:
+            clone = await _prepare_clone()
+            for title in await _autosplit_task(clone, task):
+                child = backlog.add(
+                    title,
+                    detail=f"（由逾時任務 #{tid} 自動拆分，範圍更小以在單場 session 內完成）",
+                    source="split",
+                    item_type=task.get("type", "improvement"),
+                )
+                if child:
+                    # split_depth 逐代累計，封頂 infinite-split（backlog.add 無此欄位，經 set_status 補寫）。
+                    backlog.set_status(child["id"], "pending", split_depth=depth + 1)
+                    children.append(child["id"])
+        except Exception:  # noqa: BLE001 — 拆分失敗只退回 parked，不得中斷主迴圈
+            log.exception("任務 #%s 逾時自動拆分失敗，退回 parked", tid)
+
+    if children:
+        refs = "、".join(f"#{c}" for c in children)
+        backlog.set_status(
+            tid,
+            "parked",
+            note=f"逾時（{config.AUTOPILOT_TASK_TIMEOUT}s）已自動拆為 {refs}（原任務歸檔）",
+        )
+        log.info("任務 #%s 逾時，自動拆為 %d 個子任務：%s", tid, len(children), refs)
+    else:
+        note = (
+            f"逾時且已達自動拆分深度上限（{config.AUTOPILOT_SPLIT_MAX_DEPTH}）——需人工拆分或縮小範圍"
+            if reached_depth
+            else f"task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s — 需拆分或縮小範圍"
+        )
+        backlog.set_status(tid, "parked", note=note)
+        log.warning(
+            "任務 #%s 逾時（%ss），標 parked（%s）",
+            tid,
+            config.AUTOPILOT_TASK_TIMEOUT,
+            "達深度上限" if reached_depth else "未自動拆分",
+        )
+
+
 # --- PM workflow 分診 -----------------------------------------------------
 
 _TRIAGE_SYSTEM = """你是 Ti 工作室的專案經理（PM），負責在任務開場前選擇本場討論的流程骨架。
@@ -2584,19 +2698,10 @@ async def _main_loop(startup_sig: float) -> None:
             )
             log.warning("任務 #%s 執行中停滯逾時，標 failed 待分診重試", task.get("id"))
         except TimeoutError:
-            # 任務級 timeout ≠ 任務本身壞死：多半是範圍太大跑不完。標 parked（而非 failed
-            # 死路）讓 backlog 分診看得見、待拆分後重排；session 軟性時間預算已讓多數場次
-            # 在硬砍前優雅收斂，落到這裡的是真正超支的少數。
-            backlog.set_status(
-                task["id"],
-                "parked",
-                note=f"task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s — 需拆分或縮小範圍",
-            )
-            log.warning(
-                "任務 #%s 逾時（%ss），標 parked 待分診拆分",
-                task.get("id"),
-                config.AUTOPILOT_TASK_TIMEOUT,
-            )
+            # 任務級 timeout ≠ 任務本身壞死：多半是範圍太大跑不完。交 _handle_task_timeout：能自動
+            # 拆成更小子任務再排就拆（原任務歸檔 parked），否則維持舊 parked 行為（而非 failed 死路）
+            # 讓 backlog 看得見。session 軟性時間預算已讓多數場次在硬砍前優雅收斂，落到這裡是超支的少數。
+            await _handle_task_timeout(task)
         except Exception as exc:  # noqa: BLE001 — 單一任務出錯不該弄死整個迴圈
             log.exception("任務 #%s 例外", task.get("id"))
             backlog.set_status(task["id"], "failed", note=f"{type(exc).__name__}: {exc}")
