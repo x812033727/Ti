@@ -347,8 +347,14 @@ def set_status(
         return None
 
 
-def annotate(task_id: int, note: str, *, state_dir: Path | None = None) -> dict | None:
-    """只補 note（與 updated_at），不動 status/attempts。
+def annotate(
+    task_id: int,
+    note: str,
+    *,
+    state_dir: Path | None = None,
+    lane: str | None = None,
+) -> dict | None:
+    """只補 note（可選 lane）與 updated_at，不動 status/attempts。
 
     與 set_status 區隔的原因：set_status(id, "in_progress") 會 attempts +1——為了補一句
     稽核註記而重呼叫會燒掉閘門重試額度。分診/稽核類「純備註」一律走本函式。
@@ -358,6 +364,8 @@ def annotate(task_id: int, note: str, *, state_dir: Path | None = None) -> dict 
         for t in data["tasks"]:
             if t["id"] == task_id:
                 t["note"] = note
+                if lane is not None:
+                    t["lane"] = lane
                 t["updated_at"] = time.time()
                 _save(data, state_dir)
                 return t

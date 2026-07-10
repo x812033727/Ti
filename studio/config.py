@@ -948,6 +948,18 @@ LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "Fa
 #   僅作用於本次提案進場，不回溯刪改 backlog、不動 backlog 既有字串等值去重契約。
 AUTOPILOT_DEDUP_RATIO = 0.75
 
+# AUTOPILOT_PREFILTER_IMPLEMENTED：任務 pick 前的「疑似已實作」預篩總開關（#2 接線使用）。
+# 語料來自近期 merged PR 標題，無 token 或 API 不可用時退回本地 git log。命中後不丟棄任務，
+# 只降級走既有 investigation lane；因此這裡只放可即時調整的判定旋鈕。
+AUTOPILOT_PREFILTER_IMPLEMENTED = os.getenv("TI_AUTOPILOT_PREFILTER_IMPLEMENTED", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+AUTOPILOT_PREFILTER_RATIO = _env_float("TI_AUTOPILOT_PREFILTER_RATIO", 0.80)
+AUTOPILOT_PREFILTER_LOOKBACK_DAYS = _env_int("TI_AUTOPILOT_PREFILTER_LOOKBACK_DAYS", 60)
+
 # AUTOPILOT_SUBSYSTEM_MAX_PENDING：自我評估「提案進場」的第二道（廣度）防線 K。從標題以 regex 抽出
 #   「涉及子系統」（_extract_subsystems），若某子系統在現有 pending/in_progress 已達 K 筆，該子系統的
 #   新提案一律拒——避免 LLM 不換標題卻反覆對同一模組（backlog、discovery…）疊加任務（topic echo
@@ -1297,6 +1309,8 @@ def reload() -> None:
     global AUTOPILOT_DEPLOY_CHECK_INTERVAL, AUTOPILOT_DEPLOY_FAIL_BACKOFF
     global AUTOPILOT_AUTO_MERGE, AUTOPILOT_MERGE_FAST_WAIT, AUTOPILOT_MERGE_MAX_AGE
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
+    global AUTOPILOT_PREFILTER_IMPLEMENTED, AUTOPILOT_PREFILTER_RATIO
+    global AUTOPILOT_PREFILTER_LOOKBACK_DAYS
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_INVESTIGATION_PARALLEL
     global AUTOPILOT_INVESTIGATION_REFUTE
@@ -1481,6 +1495,14 @@ def reload() -> None:
     AUTOPILOT_MERGE_MAX_AGE = int(os.getenv("TI_AUTOPILOT_MERGE_MAX_AGE", "7200"))
     # lint 閘門自動格式化（預設值須與檔頂宣告一致）
     LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
+    AUTOPILOT_PREFILTER_IMPLEMENTED = os.getenv("TI_AUTOPILOT_PREFILTER_IMPLEMENTED", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    AUTOPILOT_PREFILTER_RATIO = _env_float("TI_AUTOPILOT_PREFILTER_RATIO", 0.80)
+    AUTOPILOT_PREFILTER_LOOKBACK_DAYS = _env_int("TI_AUTOPILOT_PREFILTER_LOOKBACK_DAYS", 60)
     AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1") not in (
         "0",
         "false",
