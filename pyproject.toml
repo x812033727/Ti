@@ -39,7 +39,6 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
-    "pytest-xdist>=3.8",
     # 精確鎖定：linter/formatter 跨版本格式判定會分歧，須與 CI 及 .pre-commit-config.yaml
     # 的 rev 同版。釘 0.14.4（非當前最新）以對齊 CI workflow 既有的 `pip install ruff==0.14.4`，
     # 升版時三端須一併更新並重跑 ruff format --check。
@@ -59,7 +58,6 @@ asyncio_mode = "auto"
 # `python3 -m pytest`）下也能解析——後者才會自動把 cwd 加入 sys.path，前者不會。
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = ["-n", "auto"]
 markers = [
     "realgit: 走本機真 git（file:// URL，零網路）的整合測試，豁免「禁真子程序」保險絲",
 ]
