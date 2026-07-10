@@ -16,7 +16,7 @@
 2. 開啟瀏覽器，進入 <http://localhost:8000>。
 3. 完成登入（如系統要求帳號／密碼）。
 4. 點右上角 **⚙️ 設定** 按鈕，開啟設定面板。
-5. 確認面板內欄位依分組顯示：**一般 / Claude / OpenAI / MiniMax / Gemini / Codex / Antigravity / 混用（每角色 provider） / GitHub / 並行 / 進階**，下方另有 **重新部署** 與 **變更密碼** 區。
+5. 確認面板內欄位依分組顯示：**一般 / Claude / OpenAI / MiniMax / Gemini / Codex / Antigravity / 混用（每角色 provider） / GitHub / 並行 / 進階 / Autopilot**，下方另有 **重新部署** 與 **變更密碼** 區。
 
 > 備註：設定會寫入伺服器的 `.env`，儲存後下次討論即生效。秘密欄位（API Key／Token）只顯示「是否已設定」，不會顯示明文。
 
@@ -59,7 +59,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 1.1 | 頁面載入與現值顯示 | 在已登入頁面點右上角「⚙️ 設定」按鈕 | 設定面板（彈窗）出現，左側有分類導覽，右側顯示 provider 狀態與額度、設定表單與「儲存」按鈕，右上角有「✕」關閉鈕 | | | |
 | 1.2 | 頁面載入與現值顯示 | 觀察面板剛開啟到表單出現的瞬間 | 表單載入時短暫出現「載入中…」字樣，額度區短暫顯示「載入 provider 狀態與額度中…」，隨後被實際內容取代 | | | 載入很快時可能一閃即過，屬正常 |
-| 1.3 | 分組導覽 | 由左側分類導覽與右側分組標題由上往下看 | 依序出現分組：「一般」→「Claude」→「OpenAI」→「MiniMax」→「Gemini」→「Codex」→「Antigravity」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」 | | | |
+| 1.3 | 分組導覽 | 由左側分類導覽與右側分組標題由上往下看 | 依序出現分組：「一般」→「Claude」→「OpenAI」→「MiniMax」→「Gemini」→「Codex」→「Antigravity」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」→「Autopilot」（Autopilot 組頂部有「需重啟 ti-autopilot 服務才生效」的組級提示） | | | |
 | 1.4 | 分組導覽 | 點左側任一分類（例如 Codex 或 Antigravity） | 右側內容捲到對應分組；被點選分類呈現目前選取狀態 | | | |
 | 1.5 | 搜尋設定 | 在搜尋框輸入 provider、模型名稱或環境變數（例如 `codex` 或 `TI_PROVIDER`），再清空搜尋 | 只顯示符合關鍵字的設定列與分組；清空後所有設定列恢復顯示，版面不破裂 | | | |
 | 1.6 | 額度與狀態 | 看設定表單上方的「Provider 狀態與額度」區 | 顯示目前啟用 provider、各 provider 可用／需確認／未設定狀態、近 5 小時／近 7 天／近 30 天 Ti 本機 token/call 用量；Antigravity 登入時可看到可列出的模型；不顯示 API Key、OAuth token 或任何秘密明文 | | | 官方訂閱剩餘額度若 CLI 未提供穩定 API，僅顯示狀態與本機用量 |
@@ -117,7 +117,7 @@
 | 2.21e | Antigravity 模型欄（combo）／CLI 欄／Sandbox 欄 | 「Antigravity 主力模型」從建議清單選 Gemini 3.5 Flash (High) 儲存，再手動輸入 `agy models` 列出的清單外名稱儲存；「Antigravity CLI 執行檔」做正常值／清空／超長；「Antigravity Sandbox」「Antigravity 自動核准工具權限」選 0／1，另用 `POST /api/settings` 送非法值：`TI_ANTIGRAVITY_SANDBOX=2`、`TI_ANTIGRAVITY_SKIP_PERMISSIONS=2` 後重開面板 | combo 兩種方式皆可存、不限建議清單；CLI 執行檔可輸入／清空／儲存且版面不變形；兩個 0/1 欄合法選項可儲存、非法值被後端忽略並維持原本合法值 | | | combo＋文字＋select：登入／額度沿用伺服器 `agy` |
 | 2.22 | 進階流程開關（select 0/1，低風險） | 對「需求澄清／卡關討論／異議檢查／共用筆記／跨場次教訓／反思記憶／子進程資源上限／知識沉澱／產品藍圖／架構決策記錄／實作中即時研究」任一下拉，於 0 與 1 間切換並儲存 | 可切換並儲存成功；重開顯示所選值（下次討論生效） | | | 0/1 正常值 |
 | 2.23 | 客觀驗收閘門／單輪自我精修／架構討論模式（select 固定選項） | 「客觀驗收閘門」選 0／1／strict，「單輪自我精修」選 0～3，「架構討論模式」選 legacy／round_robin／parallel，分別儲存 | 閘門可在 0、1、strict 間切換；自我精修可選 0～3；討論模式可在三選項間切換；皆儲存成功、重開顯示所選值 | | | 正常值＋邊界（固定選項集） |
-| 2.24 | 進階組非法選項（後端白名單） | 用 `POST /api/settings` 送非法值：`TI_CLARIFY`／`TI_HUDDLE`／`TI_TASK_HELP`（中途求助）／`TI_CRITIC`／`TI_NOTES`／`TI_LESSONS`／`TI_REFLEXION`／`TI_RLIMITS`／`TI_KNOWLEDGE`／`TI_BLUEPRINT`／`TI_ADR`／`TI_RESEARCH_TOOLS`（即時研究）非 0/1、`TI_OBJECTIVE_GATE` 非 0/1/strict、`TI_SELF_REFINE_ITERS` 非 0～3、`TI_DISCUSS_MODE`（架構討論模式）非 legacy/round_robin/parallel，後重開面板 | 非法值一律被後端忽略，各進階開關（含需求澄清／中途求助／閘門／自我精修／討論模式／資源上限／知識沉澱／產品藍圖／架構決策記錄／即時研究）維持原值 | | | 非法值：後端白名單擋下 |
+| 2.24 | 進階組非法選項（後端白名單） | 用 `POST /api/settings` 送非法值：`TI_CLARIFY`／`TI_HUDDLE`／`TI_TASK_HELP`（中途求助）／`TI_CRITIC`／`TI_NOTES`／`TI_LESSONS`／`TI_REFLEXION`／`TI_RLIMITS`／`TI_KNOWLEDGE`／`TI_BLUEPRINT`／`TI_ADR`／`TI_RESEARCH_TOOLS`（即時研究）非 0/1、`TI_OBJECTIVE_GATE` 非 0/1/strict、`TI_SELF_REFINE_ITERS` 非 0～3、`TI_DISCUSS_MODE`（架構討論模式）非 legacy/round_robin/parallel、`TI_LINT_AUTOFORMAT`／`TI_EXPERT_LINT_HOOK`／`TI_CONVENTIONS_CARD`／`TI_EXPERT_SKILLS`／`TI_AUTOPILOT_AUTO_MERGE`／`TI_AUTOPILOT_WORKFLOW_TRIAGE`／`TI_AUTOPILOT_INVESTIGATION_LANE`／`TI_AUTOPILOT_INVESTIGATION_REFUTE` 非 0/1，後重開面板 | 非法值一律被後端忽略，各進階開關（含需求澄清／中途求助／閘門／自我精修／討論模式／資源上限／知識沉澱／產品藍圖／架構決策記錄／即時研究）維持原值 | | | 非法值：後端白名單擋下 |
 | 2.25 | 角色模型欄（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_MODEL_PM`／`TI_MODEL_ENGINEER`／`TI_MODEL_QA`／`TI_MODEL_SENIOR`／`TI_MODEL_RESEARCHER`／`TI_MODEL_ARCHITECT`／`TI_MODEL_SECURITY`／`TI_MODEL_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色模型維持原值（auto＝沿用主力/快速規則）；帶「（推薦）」尾綴的選項與「✨ 套用推薦模型」按鈕可一鍵填入推薦配置 | | | 非法值：後端白名單擋下 |
 | 2.26 | 每角色 provider 混用（select，8 欄，正常） | 在「混用（每角色 provider）」分組把某角色（如「工程師 provider」）選 antigravity、另一角色（如「專案經理 provider」）選 gemini，其餘留 auto，儲存 | 可逐角色選 auto／claude／openai／minimax／gemini／codex／antigravity 並儲存；重開顯示所選值（auto＝沿用上方全域 Provider，達成 Claude／MiniMax／Gemini／Codex／Antigravity 混用） | | | 正常值＋邊界（固定選項集） |
 | 2.27 | 每角色 provider 混用（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_PROVIDER_PM`／`TI_PROVIDER_ENGINEER`／`TI_PROVIDER_QA`／`TI_PROVIDER_SENIOR`／`TI_PROVIDER_RESEARCHER`／`TI_PROVIDER_ARCHITECT`／`TI_PROVIDER_SECURITY`／`TI_PROVIDER_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色 provider 維持原值（auto＝沿用全域） | | | 非法值：後端白名單擋下 |

@@ -15,3 +15,7 @@
 .ap-add textarea { width: 100%; resize: vertical; margin-top: 4px; }
 .ap-add-row { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
 .ap-add-row select { flex: 0 0 auto; }
+
+/* 設定面板(C3):textarea 欄與組級提示 */
+.set-row textarea { width: 100%; resize: vertical; font: inherit; }
+.settings-group-note { margin: 2px 0 8px; font-size: 0.85em; }
