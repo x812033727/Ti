@@ -945,6 +945,17 @@ AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1
     "",
 )
 
+# AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
+#   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
+#   chamber：價值閘擋「沒價值的」、本上限擋「同源衍生太多的」，互補封住 discovered 迴圈灌水（修法②）。
+#   3＝一場討論最多回填 3 個後續；0＝不限（恢復舊行為）。
+AUTOPILOT_FOLLOWUP_MAX_PER_TASK = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", "3"))
+# AUTOPILOT_FOLLOWUP_MAX_GEN：discovered followup 的「血緣代數」上限（seed/manual/eval=0，父任務的
+#   followup=父+1）。父任務 gen 已達此上限時，其 discovered followup 一律不入場（留痕丟棄）——斷開
+#   「followup 生 followup 生 followup」的深鏈,與寬度上限一縱一橫共同封頂 discovered 扇出爆炸。
+#   3＝原始任務可衍生到第 3 代,之後止;0＝不限（恢復舊行為）。
+AUTOPILOT_FOLLOWUP_MAX_GEN = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", "3"))
+
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
 def env_bool(name: str, default: bool) -> bool:
@@ -1129,6 +1140,7 @@ def reload() -> None:
     global AUTOPILOT_WORKFLOW_TRIAGE, AUTOPILOT_TRIAGE_TIMEOUT
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
+    global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1305,6 +1317,8 @@ def reload() -> None:
     )
     AUTOPILOT_SPLIT_MAX_DEPTH = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_DEPTH", "2"))
     AUTOPILOT_SPLIT_MAX_SUBTASKS = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", "4"))
+    AUTOPILOT_FOLLOWUP_MAX_PER_TASK = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", "3"))
+    AUTOPILOT_FOLLOWUP_MAX_GEN = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", "3"))
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
     # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）
