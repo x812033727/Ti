@@ -1,3 +1,10 @@
+## 驗收校正：`origin/main` 驗證改看內容，不再假設 `e1911a05..origin/main` 只含 PR #398
+
+- `tests/deploy/test_fetch_force_refspec.py` 的 helper 與黑樣本已是正確內容證據；驗收重點維持在檔案存在、pytest 綠、ruff 綠、porcelain 空。
+- `origin/main` 已含 PR #398 的內容，但實際是 `5185f252` 這類 squash/新 commit 形態，`550799cc` 不會是祖先關係。
+- `origin/main` 在 PR #398 之後又往前有 #399-#402；任何把 `e1911a05..origin/main` 解讀成「只會看到 #398」的判定都已過時。
+- 後續驗收只看內容證據與測試結果，不再用 commit ancestry 當通過條件。
+
 ## 任務 #1 完成：新增 `studio/discussion.py` 通用 DiscussionEngine：支援任意 N 個角色（ExpertLike 介面）、`round_robin`（依序）與 `parallel`（同輪並行、輪間同步，asyncio.gather＋複用 `_llm_semaphore()` 節流）兩種模式；context 餵法為「議題＋上一輪全員發言＋自己的歷史發言」而非全史重播；回傳結構化 transcript（輪次/角色/全文）
 
 ## 任務 #2 完成：實作互相回應與反諂媚機制：發言 prompt 要求 `回應 @角色名: 同意|反對 ＋理由` 結構化引用、且「至少指出一個可挑戰點，無異議須說明為何」；在 discussion.py 加 `parse_mentions()` 解析發言中的 @引用為結構化記錄（防禦式：格式不符整段視為無引用，不 silent 錯位）
