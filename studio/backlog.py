@@ -229,6 +229,62 @@ def _is_duplicate(tasks: list[dict], title: str) -> bool:
     )
 
 
+# 手動操作的合法 action 與各自允許的來源狀態(功能強化 C1)。
+# in_progress/merging 不可 park/retry:進行中任務的狀態機由 runner/reconciler 持有,
+# 人工改寫會與其收尾 set_status 互相踩踏(merging 更會讓 reconciler 找不到任務收斂 PR)。
+_MANUAL_ACTIONS: dict[str, tuple[str, ...]] = {
+    "retry": ("failed", "parked"),
+    "park": ("pending", "failed"),
+    "unpark": ("parked",),
+    "priority": ("pending", "in_progress", "merging", "done", "failed", "parked"),
+}
+
+
+def apply_action(
+    task_id: int,
+    action: str,
+    *,
+    priority: int | None = None,
+    note: str = "",
+    state_dir: Path | None = None,
+) -> tuple[dict | None, str]:
+    """看板手動操作:retry/park/unpark/priority。回 (task, "") 或 (None, 錯誤訊息)。
+
+    整段檢查+變更都在單一 _locked() 內(仿 triage_failed 鎖內改法)——狀態檢查與寫入拆
+    兩步會與 autopilot 主迴圈的 set_status 產生 TOCTOU。刻意不重入 set_status:其
+    in_progress 時 attempts+1 的語意不適用人工操作;retry/unpark 明確歸零 attempts
+    (parked/failed 多為 attempts 燒滿的歸檔,不歸零會立即再判死)。錯誤訊息開頭固定:
+    「不支援」→400、「不存在」→404、「不可」→409(routes 據此映射狀態碼)。
+    """
+    if action not in _MANUAL_ACTIONS:
+        return None, f"不支援的 action:{action}"
+    if action == "priority" and priority is None:
+        return None, "不支援:priority 動作需帶 priority 欄位"
+    extra = (note or "").strip()[:500]
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for t in data["tasks"]:
+            if t["id"] != task_id:
+                continue
+            if t["status"] not in _MANUAL_ACTIONS[action]:
+                return None, f"不可對 {t['status']} 任務執行 {action}"
+            if action == "priority":
+                t["priority"] = _clamp_priority(priority)
+                if extra:
+                    t["note"] = f"[手動] {extra}"
+            else:
+                target = {"retry": "pending", "park": "parked", "unpark": "pending"}[action]
+                t["status"] = target
+                if action in ("retry", "unpark"):
+                    t["attempts"] = 0
+                label = {"retry": "重試", "park": "歸檔", "unpark": "取回"}[action]
+                t["note"] = f"[手動] {label}" + (f":{extra}" if extra else "")
+            t["updated_at"] = time.time()
+            _save(data, state_dir)
+            return t, ""
+        return None, f"不存在的任務:{task_id}"
+
+
 def list_tasks(status: str | None = None, *, state_dir: Path | None = None) -> list[dict]:
     data = _load(state_dir)
     tasks = data["tasks"]

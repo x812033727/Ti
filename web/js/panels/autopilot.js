@@ -1,6 +1,7 @@
 // Autopilot 自主迴圈面板：狀態列、backlog、額度迷你條、績效榜、動態 timeline。
 import { $, appendTextEl, toast } from "../dom.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { openConfirmModal } from "../components/modal.js";
 
 // 迷你狀態：縮成一條狀態列（手機浮在分頁列上方、桌機右下小卡），輕量輪詢保持計數新鮮
 let apMiniTimer = null;
@@ -73,8 +74,10 @@ export async function refreshAutopilot() {
     ul.innerHTML = "";
     (list.tasks || []).slice().reverse().forEach((t) => {
       const li = document.createElement("li");
+      li.className = "ap-bl-item";
       const icon = AP_STATUS_ICON[t.status] || "•";
-      li.textContent = `${icon} #${t.id} ${t.title}　[${t.source}]`;
+      appendTextEl(li, "span", "ap-bl-text", `${icon} #${t.id} ${t.title}　[${t.source}]`);
+      li.appendChild(buildTaskActions(t));
       ul.appendChild(li);
     });
   } catch (e) {
@@ -277,6 +280,57 @@ export async function toggleDispatchMode() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode: next }),
   });
+  await refreshAutopilot();
+}
+
+// 看板手動操作(C1):依任務狀態渲染 retry/park/unpark 小按鈕 + P0/P1/P2 優先級 select。
+// in_progress/merging 由 runner/reconciler 持有狀態機,只給改優先級(park/retry 後端也會 409)。
+function buildTaskActions(t) {
+  const box = document.createElement("span");
+  box.className = "ap-bl-actions";
+  const sel = document.createElement("select");
+  sel.title = "優先級";
+  [["0", "P0"], ["1", "P1"], ["2", "P2"]].forEach(([v, label]) => {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = label;
+    if (String(t.priority ?? 1) === v) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", () => taskAction(t.id, "priority", { priority: parseInt(sel.value, 10) }));
+  box.appendChild(sel);
+  const mk = (label, action, opts = {}) => {
+    const b = document.createElement("button");
+    b.className = "ghost ap-bl-btn";
+    b.textContent = label;
+    b.title = opts.title || label;
+    b.addEventListener("click", async () => {
+      if (opts.confirm) {
+        const ok = await openConfirmModal({ title: opts.confirm, message: `#${t.id} ${t.title}`, danger: true });
+        if (!ok) return;
+      }
+      taskAction(t.id, action);
+    });
+    box.appendChild(b);
+  };
+  if (t.status === "failed" || t.status === "parked") mk("重試", "retry", { title: "退回 pending 並歸零重試次數" });
+  if (t.status === "pending" || t.status === "failed") mk("歸檔", "park", { confirm: "歸檔此任務?" });
+  if (t.status === "parked") mk("取回", "unpark", { title: "取回為 pending" });
+  return box;
+}
+
+export async function taskAction(id, action, extra = {}) {
+  const r = await fetch(`/api/autopilot/task/${id}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...extra }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    toast(d.detail || `${action} 失敗`, "err");
+  } else {
+    toast(`#${id} ${action} 完成`);
+  }
   await refreshAutopilot();
 }
 

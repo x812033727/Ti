@@ -879,6 +879,24 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     return JSONResponse({"ok": True, "task": task})
 
 
+class TaskActionBody(BaseModel):
+    action: str = ""
+    priority: int | None = None
+    note: str = ""
+
+
+@router.post("/api/autopilot/task/{task_id}/action", dependencies=WRITE_DEPS)
+async def autopilot_task_action(task_id: int, body: TaskActionBody) -> JSONResponse:
+    """看板手動操作單一任務:retry/park/unpark/priority(護欄與語意見 backlog.apply_action)。"""
+    task, err = await asyncio.to_thread(
+        backlog.apply_action, task_id, body.action, priority=body.priority, note=body.note
+    )
+    if task is not None:
+        return JSONResponse({"ok": True, "task": task})
+    status = 404 if err.startswith("不存在") else (409 if err.startswith("不可") else 400)
+    return JSONResponse({"ok": False, "detail": err}, status_code=status)
+
+
 @router.post("/api/autopilot/triage", dependencies=WRITE_DEPS)
 async def autopilot_triage() -> JSONResponse:
     """failed 任務確定性分診（無 LLM）：基礎設施型失敗退回 pending、陳年失敗歸檔 parked。"""

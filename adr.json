@@ -1,97 +1,6 @@
 {
   "entries": [
     {
-      "decision": "`make_retry_config()` 目前住在 `experts.py`（業務層）卻被 `providers.py`（基礎設施層）反向 import，此依賴方向反轉列為具名技術債，以 backlog 工單追蹤，不靠 ARCHITECTURE.md「伏筆」二字承載。",
-      "rationale": "文字伏筆沒有觸發機制，容易在後續迭代中消失；工單有狀態、有觸發條件才可追蹤。",
-      "rejected": "繼續只靠 ARCHITECTURE.md 備注——高工指出「伏筆」無觸發器，風險在第三個 provider 接入前被遺忘。",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.9554977
-    },
-    {
-      "decision": "上述 backlog 工單的觸發條件為「第三個 provider 接入時」；屆時將 `make_retry_config()` 遷移至 `llm_caller.py`（provider 無關的 retry 骨幹），消除反向依賴。",
-      "rationale": "遷移時機與動因明確，不提前搬動避免無謂改動；`llm_caller.py` 本就是 provider 無關層，是正確的落點。",
-      "rejected": "",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.9554992
-    },
-    {
-      "decision": "守護測試 `test_task1_retry_doc.py` 是 ARCHITECTURE.md 的活文件護欄，後續任何文件或符號改動必須同步維護測試，兩端不得獨立異動。",
-      "rationale": "行號錨若文件重排會脆（工程師已指出），但此屬維護紀律而非設計缺陷，不阻擋本次關閉。",
-      "rejected": "",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.9555006
-    },
-    {
-      "decision": "`test_as_kwargs_packs_three_keys` 的 `body[:600]` magic number 列為低優先技術債備忘，不阻擋本次關閉；後續可改為動態計算函式體長度上限。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apbf5fb99777",
-      "created_at": 1781489976.9555016
-    },
-    {
-      "decision": "空 diff 交付基準 = `cc46ccb`（E741+I001 修復）已合入 `main`，程式碼 `.py` diff 為空、本任務無源碼變更；`task-4` 分支唯一差異為本 ADR 文件自身，確認非假綠。",
-      "rationale": "工程師要求「能追 commit」；`cc46ccb` 在 `main` branch 可查，任何人執行 `git log main --oneline | grep cc46ccb` 可重現此結論。",
-      "rejected": "僅憑「diff 為空」聲稱關閉但無 commit 錨點——彼時假綠無從分辨。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.734962
-    },
-    {
-      "decision": "E741 處置 = 改名 `l → line`，禁止 `# noqa: E741`。",
-      "rationale": "改名零成本且語意更清晰；`noqa` 是壓警告符號，屬引入技術債，只保留給 stub 等無控制權場景。",
-      "rejected": "`# noqa: E741` 在有控制權的自有檔案上使用。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.7349672
-    },
-    {
-      "decision": "Import 排序 = `ruff check --fix` 自動修，禁手動排序。",
-      "rationale": "手排易漏、製造無意義 review 噪音；工具排序是事實標準，已修結果可被 `ruff check .` 幂等驗證。",
-      "rejected": "手動調整 import 順序（人工判斷與 ruff 規則不一定等價）。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.734969
-    },
-    {
-      "decision": "CHANGELOG 語氣 = 即刻生效逃生艙式（`TI_REQUIRE_CHOWN=warn`），禁 deprecation 過渡警告語氣。",
-      "rationale": "`strict` 已是當下預設，非未來計劃；「過渡期將在 X.Y 移除」語氣屬誤導，讓用戶誤判仍有緩衝。",
-      "rejected": "「下個 major 版本移除」deprecation 語氣——與已成立事實不符。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.7349706
-    },
-    {
-      "decision": "四要素規範正本住在 `test_release_note_breaking.py` 的模組 docstring，不另立 CONTRIBUTING.md 副本。",
-      "rationale": "測試已含六點說明（行為變動／原因／before-after／生效版本／反向黑樣本／README 互指），定義與斷言共存，後人看測試就能理解規範；雙寫副本必然分歧。高工「憑什麼知道要寫哪四樣」的問題，答案是「看這個測試的 docstring」。",
-      "rejected": "在 CONTRIBUTING.md 另寫一份四要素說明（兩份真相來源，長期維護必漂移）。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.734972
-    },
-    {
-      "decision": "測試斷言模式 = 讀真實 CHANGELOG.md 解析關鍵字順序，禁止在測試裡硬編 CHANGELOG 副本。",
-      "rationale": "測試已採 `CHANGELOG = ROOT / \"CHANGELOG.md\"` 讀檔，四要素以 `index` 比相對順序而非逐字比對；改字不紅、調換順序才紅——這正是工程師要求的「真護欄」，已就位。",
-      "rejected": "測試裡硬編一份預期字串副本（CHANGELOG 改動後測試永遠不紅，等同假護欄）。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.734973
-    },
-    {
-      "decision": "CHANGELOG 的 release pipeline 曝光（tag notes / email banner）列為跟進待辦，不阻擋本次交付。",
-      "rationale": "高工指出「逃生艙不曝光等同不存在」屬正當風險；但 release pipeline 配置超出本次任務邊界，強行納入會擴大範圍且引入 CI/CD 依賴。觸發條件：下次 `0.2.0` tag 打出前由 DevOps 確認 tag notes 包含 CHANGELOG 頂層 Breaking Changes 區塊。",
-      "rejected": "以「文件已寫」替代「pipeline 曝光確認」——靜默升級用戶不讀 CHANGELOG，逃生艙形同虛設。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.7349741
-    },
-    {
-      "decision": "「守護測試與 CHANGELOG 不得獨立異動」維護紀律，以 PR checklist 顯式條目承載，由 reviewer 強制勾選，跟進待辦補入 `CONTRIBUTING.md`。",
-      "rationale": "工程師已點名此為人治約束，遲早會漏；但技術上測試讀檔已消除最大漏洞（hardcoded 副本）。剩餘風險是「有人加新格式要求但忘改測試」，這只能靠 checklist 而非純技術手段覆蓋。",
-      "rejected": "靠「大家記得同步」但無明確觸發機制——已被工程師點名為不可持續做法。",
-      "session_id": "ap0b96479ba9",
-      "created_at": 1781490862.7349753
-    },
-    {
-      "decision": "`_gate_lint` 三個 return 點全數加 `[lint]` 前綴——`\"[lint] ruff 缺失，略過 lint 閘門\"`、`f\"[lint] {name} 未過：...\"`、`\"[lint] ruff OK\"`。",
-      "rationale": "失敗訊息比成功訊息更需要標籤；只改 \"ruff OK\" 一條會讓最關鍵的失敗路徑反而漏標，前綴意義喪失一半。",
-      "rejected": "只改成功 return——失敗路徑無標籤，與「一眼辨層」目標矛盾。",
-      "session_id": "ap9ec5a10a77",
-      "created_at": 1781492399.0821006
-    },
-    {
       "decision": "`_gate_collect_without_sdk` 與 `_gate_tests` 各自單一 return，加 `\"[collect] \"` / `\"[test] \"` 前綴於 output str 頭部即可；bool 邏輯不動。",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3408,97 @@
       "rejected": "",
       "session_id": "ap0245692bd6",
       "created_at": 1783539910.1730897
+    },
+    {
+      "decision": "技術選型採純 bash 腳本、零新依賴（gitleaks 僅 `--no-git` 可選、grep fallback 為主軸）",
+      "rationale": "驗證/掃描本質是 gh/curl/grep 的 shell 動作，bash 最貼合；此腳本不進 orchestrator 資料流、不 import studio，是獨立運維工具",
+      "rejected": "Python wrapper（雖與 repo 主語言一致，但只多一層 subprocess 表面，一致性收益低於直接性）",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377096
+    },
+    {
+      "decision": "腳本切為 `--verify`/`--scan`/`--report` 三個互不耦合子命令，各自可獨立執行、無共享狀態",
+      "rationale": "三段執行前提不同——`--verify` 需人在場有 `$GH_PAT`，`--scan`/`--report` 無 token 也能跑；解耦讓 #4 在無 token 時仍能完成",
+      "rejected": "一鍵全跑組合模式（會逼無 token 的 #4 卡在 `--verify`）",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377158
+    },
+    {
+      "decision": "掃描目錄參數化（預設 `history/`、workspace-dir 由參數傳入），不寫死絕對路徑",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.937717
+    },
+    {
+      "decision": "依賴方向固定為單向「腳本 → runbook」——腳本不內嵌四項 PAT 規格文字，僅在 `--report` 輸出「請人工核對 runbook 四項規格」指引",
+      "rationale": "內嵌規格會製造第二份 SSOT，runbook 改動後腳本漏改即漂移",
+      "rejected": "腳本自帶完整規格說明（看似方便，實則雙來源）",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.937718
+    },
+    {
+      "decision": "token 明文資料流為單向流入、永不流出——腳本內零明文輸出路徑，禁用 `set -x`、`curl -H` 不得被 log 印出，可 grep 自證，守門測試鎖此不變式",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377189
+    },
+    {
+      "decision": "守門測試置於 `tests/docs/test_qa_token_rotation_script.py`，以字串錨鎖定（`GH_TOKEN=` 綁定、curl fallback、全前綴 regex、無裸跑 `gh auth status`）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377196
+    },
+    {
+      "decision": "字串錨須精準鎖「可執行行」，排除註解/heredoc/`--report` 指引文字中的 `gh auth status` 說明範例，避免自傷誤觸",
+      "rationale": "高工指出 `--report` 說明文字含 `gh auth status` 字樣會誤觸「須帶 GH_TOKEN 前綴」錨",
+      "rejected": "全文粗鎖 `gh auth status`（會把說明範例當違規）",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.93772
+    },
+    {
+      "decision": "不使用 AST 鎖，沿用字串錨——這是 shell 非 Python，同源於既有「示例順序不上 AST」的可逆性理由",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377205
+    },
+    {
+      "decision": "守門測試絕不對 repo `history/` 實跑；黑/白樣本一律在 `$TMPDIR` 自建掃描目標傳入 `--scan`，只驗判別力、不依賴 repo 狀態",
+      "rationale": "repo `history/` 已有大量真實 `pjd*.jsonl`，對它實跑會讓測試隨 log 內容脆化、變慢（教訓庫「臨時檔不落被掃目錄」翻版）",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377213
+    },
+    {
+      "decision": "「對真實 repo `history/` 實跑一次殘留掃描」列為 #4 的證據項，結果併入 `--report` 唯讀摘要呈現，不靠守門測試順帶掃",
+      "rationale": "session 事件存檔殘留 token 屬真陽性安全發現，非誤報；與守門測試的「只驗判別力」須徹底分開",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.937722
+    },
+    {
+      "decision": "exit code 契約——`--report` 恆 0、`--scan` 命中殘留回非 0、`--verify` 依驗證結果；`--scan` 命中須併入 `--report` 摘要，不得靜默",
+      "rationale": "本輪不接 CI，`history/` 若有既存命中須靠 `--report` 被看見（無 silent 截斷）",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377227
+    },
+    {
+      "decision": "本輪不新增 CI gate、不動 `ci.yml`——守門測試落 `tests/docs`，既有 test job 自動涵蓋",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377232
+    },
+    {
+      "decision": "本輪 #4 僅執行 `--scan`/`--report` 並回填證據，`--verify` 與步驟 1（發新）、步驟 3（撤舊）明確標示待人工於 GitHub UI 完成",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap775c4036fe",
+      "created_at": 1783672304.9377236
     }
   ]
 }
