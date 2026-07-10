@@ -1121,9 +1121,49 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
     return final
 
 
+# discovered followup 的「證據儀式」訊號：無會改動程式碼的客觀完成判準的自我指涉 meta 任務特徵
+# （收尾驗收/權威證據檔/closure 報告/sha256 落檔/重跑並回報…）。命中任一僅代表「疑似 busywork」，
+# 需再經 _is_low_value_followup 確認「同時缺 code-work 訊號」才丟棄。與去重防線（F）互補：去重擋
+# 「重複」，本閘擋「全新但同樣沒價值」。
+_FOLLOWUP_BUSYWORK_RE = re.compile(
+    r"收尾驗收|驗收\s*pass|QA\s*pass|權威(證據|報告|判定|聲明|宣告)?"
+    r"|sha256|落(檔|盤)|closure|閉環|重驗|複核|蒐證|凍結|handoff|evidence"
+    r"|報告檔|慣例(說明|定義)|\$TMPDIR|(重跑|再跑|重新執行).{0,20}(回報|確認|驗收|附上)",
+    re.IGNORECASE,
+)
+
+# code-work 豁免訊號：任一實作/修復/測試/守門動詞即視為「有會改碼的交付」→ 一律保留（保守：寧放勿殺，
+# 只要沾一點真實工作就不誤殺）。只讓「純落檔/純重跑回報/純寫慣例文件/純產 evidence」落網。
+_FOLLOWUP_CODEWORK_RE = re.compile(
+    r"實作|實做|實裝|修復|修正|修掉|重構|改造"
+    r"|新增.{0,6}(功能|測試|守門|欄位|API|按鈕|旗標|參數|防護)"
+    r"|補.{0,4}測試|加.{0,6}(測試|守門|檢查|防護|timeout)|守門測試|斷言"
+    r"|implement|refactor|\bfix(es|ed)?\b",
+    re.IGNORECASE,
+)
+
+
+def _is_low_value_followup(title: str, detail: str = "") -> bool:
+    """良構性/價值閘：命中「證據儀式」busywork 訊號 AND 缺任何 code-work 訊號 → 判低價值（丟棄）。
+
+    雙條件刻意保守：只要標題/detail 帶任一實作/修復/測試/守門動詞即豁免（偏向寧放勿殺），只狙擊
+    「純落檔/純重跑回報/純寫慣例文件/純產 evidence」這類**無會改動程式碼的客觀完成判準**的自我指涉
+    meta 任務——它們正是「討論永不收斂／生成檔 lint 修不掉／零-diff merge」三個失敗桶的共同上游
+    （見完成率第二輪診斷）。`AUTOPILOT_FOLLOWUP_VALUE_GATE=0` 可即時停用、恢復舊行為。
+    """
+    if not config.AUTOPILOT_FOLLOWUP_VALUE_GATE:
+        return False
+    text = f"{title}\n{detail}"
+    if not _FOLLOWUP_BUSYWORK_RE.search(text):
+        return False
+    if _FOLLOWUP_CODEWORK_RE.search(text):
+        return False
+    return True
+
+
 def _screen_followups(items: list, existing_titles: list[str]) -> list:
     """討論回填的後續任務進場前，套與 `_evaluate_self` 相同的品質防線：近期完成去重 +
-    `_filter_pending_duplicates`（詞集相似度 + 子系統覆蓋廣度）。
+    良構性/價值閘（`_is_low_value_followup`）+ `_filter_pending_duplicates`（詞集相似度 + 子系統覆蓋廣度）。
 
     修 discovered 路徑的不對稱（見完成率診斷）：`source="eval"` 的自我發掘走完整 pre-filter，
     但 `run_one_task` 尾端把討論 followup 直接 `add_items`/`add_many`（source="discovered"），
@@ -1139,13 +1179,25 @@ def _screen_followups(items: list, existing_titles: list[str]) -> list:
     def _title_of(it) -> str:
         return (it.get("title", "") if isinstance(it, dict) else str(it)).strip()
 
+    def _detail_of(it) -> str:
+        return it.get("detail", "") if isinstance(it, dict) else ""
+
     done = _recent_done_titles()
     fresh = [it for it in items if _title_of(it) and _title_of(it) not in done]
-    # _filter_pending_duplicates 回傳的是 fresh 標題的「保序子集」；以雙指標消費以支援重複標題。
-    kept_titles = _filter_pending_duplicates([_title_of(it) for it in fresh], existing_titles)
+    # 良構性/價值閘（第三道）：丟掉「證據儀式」無會改碼客觀完成判準的自我指涉 meta busywork
+    # ——去重防線擋不掉「全新但同樣沒價值」的提案（見完成率第二輪診斷）。
+    gated = [it for it in fresh if not _is_low_value_followup(_title_of(it), _detail_of(it))]
+    if len(gated) < len(fresh):
+        log.info(
+            "followup 價值閘丟棄 %d/%d 個低價值 meta 提案（收尾驗收/evidence/落檔 類無改碼判準）",
+            len(fresh) - len(gated),
+            len(fresh),
+        )
+    # _filter_pending_duplicates 回傳的是 gated 標題的「保序子集」；以雙指標消費以支援重複標題。
+    kept_titles = _filter_pending_duplicates([_title_of(it) for it in gated], existing_titles)
     remaining = list(kept_titles)
     out: list = []
-    for it in fresh:
+    for it in gated:
         if remaining and remaining[0] == _title_of(it):
             remaining.pop(0)
             out.append(it)

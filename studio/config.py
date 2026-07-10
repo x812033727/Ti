@@ -911,6 +911,23 @@ assert AUTOPILOT_SUBSYSTEM_MAX < AUTOPILOT_SUBSYSTEM_MAX_PENDING, (
     "AUTOPILOT_SUBSYSTEM_MAX（軟提示門檻）必須 < AUTOPILOT_SUBSYSTEM_MAX_PENDING（進場硬擋門檻）"
 )
 
+# AUTOPILOT_FOLLOWUP_VALUE_GATE：discovered followup 進場的「良構性/價值閘」（完成率第二輪診斷）。
+#   前輪三大失敗桶（討論不收斂/lint/零-diff）皆為症狀，真正上游是 autopilot 自我衍生的「收尾驗收/
+#   權威證據檔/closure 報告/sha256 落檔/重跑並回報」這類**無會改動程式碼的客觀完成判準**的自我指涉
+#   meta 任務——它們同時灌三桶（ill-posed 討論永不收斂、生成檔 from __future__/E402 lint 修不掉、零-diff
+#   merge）。去重防線（F 的 _filter_pending_duplicates）擋不掉「全新但同樣沒價值」的 busywork（例：定義
+#   body_sha256 的 jq 換行慣例）。此閘是 F 的延伸：在 _screen_followups 內加第三道，對命中「證據儀式」
+#   訊號**且**不含任何實作/修復/重構等會改碼動詞的提案，於進場時丟棄。刻意採「命中 busywork 訊號 AND
+#   缺 code-work 訊號」的雙條件（見 autopilot._is_low_value_followup）：任何實作/測試/守門訊號即豁免保留，
+#   偏向「寧可放行、不誤殺」的保守方向。純標題/detail 正則、stdlib-only、僅作用於本次進場，不回溯刪改
+#   backlog、不動字串等值去重契約。預留 env kill-switch（實測若在 prod 誤殺可即時關）。
+AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
 def env_bool(name: str, default: bool) -> bool:
@@ -1093,7 +1110,7 @@ def reload() -> None:
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP, QUOTA_STALE_MAX
     global AUTOPILOT_DAILY_PR_BUDGET
     global AUTOPILOT_WORKFLOW_TRIAGE, AUTOPILOT_TRIAGE_TIMEOUT
-    global LINT_AUTOFORMAT
+    global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1256,6 +1273,12 @@ def reload() -> None:
     AUTOPILOT_TRIAGE_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TRIAGE_TIMEOUT", "60"))
     # lint 閘門自動格式化（預設值須與檔頂宣告一致）
     LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
+    AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
     # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）
