@@ -52,13 +52,36 @@ def _locked():
         lock.close()
 
 
-def _load() -> dict:
+# 唯讀 mtime 快取(同 backlog 範式):lessons.json 生產 ~268KB,context()/all_lessons()
+# 每場注入都全量 parse。寫路徑 mutable=True 繞過、_save 後刷新;快取物件唯讀共享。
+_read_cache: dict[str, tuple[tuple[int, int], dict]] = {}
+
+
+def _stat_sig(p: Path) -> tuple[int, int] | None:
+    try:
+        st = p.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _load(*, mutable: bool = False) -> dict:
     p = _path()
     if not p.is_file():
         return {"lessons": []}
+    key = str(p)
+    if not mutable:
+        sig = _stat_sig(p)
+        cached = _read_cache.get(key)
+        if sig is not None and cached is not None and cached[0] == sig:
+            return cached[1]
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("lessons"), list):
+            if not mutable:
+                sig = _stat_sig(p)
+                if sig is not None:
+                    _read_cache[key] = (sig, data)
             return data
     except (OSError, json.JSONDecodeError):
         pass
@@ -70,6 +93,9 @@ def _save(data: dict) -> None:
     tmp = _path().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(_path())
+    sig = _stat_sig(_path())
+    if sig is not None:
+        _read_cache[str(_path())] = (sig, data)
 
 
 def _is_fuzzy_duplicate(text: str, existing: list[str]) -> bool:
@@ -107,7 +133,7 @@ def add_many(
     if not cleaned:
         return 0
     with _locked():
-        data = _load()
+        data = _load(mutable=True)
         existing_texts = [
             text for item in data["lessons"] if (text := item.get("text", "").strip())
         ]
@@ -205,7 +231,7 @@ def _bump_use_count(texts: list[str]) -> None:
     if not wanted:
         return
     with _locked():
-        data = _load()
+        data = _load(mutable=True)
         changed = False
         for item in data["lessons"]:
             if item.get("text", "").strip() in wanted:
@@ -275,7 +301,7 @@ async def distill(*, session_id: str = "", cwd=None) -> int:
         return 0
     # 1) 鎖內讀快照 + 前置閘
     with _locked():
-        data = _load()
+        data = _load(mutable=True)
         last = data.get("meta", {}).get("last_distill_at", 0)
         snapshot = [
             it.get("text", "")
@@ -308,7 +334,7 @@ async def distill(*, session_id: str = "", cwd=None) -> int:
 
     # 4) 套用（重新進鎖；防併發重複套用：last_distill_at 變動代表他人已蒸餾過）
     with _locked():
-        data = _load()
+        data = _load(mutable=True)
         if data.get("meta", {}).get("last_distill_at", 0) != last:
             return 0
         snap_set = set(snapshot)

@@ -77,14 +77,42 @@ def _locked(state_dir: Path | None):
         lock.close()
 
 
-def _load(state_dir: Path | None) -> dict:
+# 唯讀路徑的 mtime 快取：list_tasks/counts/next_pending/completion_stats 每次全量
+# parse(生產 ~210KB/377 筆)太重,且 /api/autopilot 每次輪詢連打三發。以
+# (st_mtime_ns, st_size) 雙訊號判新鮮(同秒連寫靠 ns+size 分辨);跨程序(web 與
+# autopilot 各自行程)各自快取、各自以檔案訊號失效,一致性由磁碟為準。
+# 契約:快取物件是**唯讀共享**——唯讀消費端不得就地變更;寫路徑(_locked 內)一律
+# mutable=True 繞過快取直讀最新,_save 後同步刷新,天然拿不到共享物件。
+_read_cache: dict[str, tuple[tuple[int, int], dict]] = {}
+
+
+def _stat_sig(p: Path) -> tuple[int, int] | None:
+    try:
+        st = p.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _load(state_dir: Path | None, *, mutable: bool = False) -> dict:
     p = _path(state_dir)
     if not p.is_file():
         return {"seq": 0, "tasks": []}
+    key = str(p)
+    if not mutable:
+        sig = _stat_sig(p)
+        cached = _read_cache.get(key)
+        if sig is not None and cached is not None and cached[0] == sig:
+            return cached[1]
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"seq": 0, "tasks": []}
+    if not mutable:
+        sig = _stat_sig(p)
+        if sig is not None:
+            _read_cache[key] = (sig, data)
+    return data
 
 
 def _save(data: dict, state_dir: Path | None) -> None:
@@ -95,6 +123,10 @@ def _save(data: dict, state_dir: Path | None) -> None:
         _path(state_dir),
         json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
     )
+    # 寫後刷新唯讀快取:寫方持有的 data 即最新內容(呼叫端慣例=改完即 _save,不再變更)。
+    sig = _stat_sig(_path(state_dir))
+    if sig is not None:
+        _read_cache[str(_path(state_dir))] = (sig, data)
 
 
 def add(
@@ -121,7 +153,7 @@ def add(
     if not title:
         return None
     with _locked(state_dir):
-        data = _load(state_dir)
+        data = _load(state_dir, mutable=True)
         if _is_duplicate(data["tasks"], title):
             return None
         data["seq"] += 1
@@ -222,7 +254,7 @@ def set_status(
     if status not in VALID_STATUS:
         raise ValueError(f"invalid status: {status}")
     with _locked(state_dir):
-        data = _load(state_dir)
+        data = _load(state_dir, mutable=True)
         for t in data["tasks"]:
             if t["id"] == task_id:
                 t["status"] = status
@@ -242,7 +274,7 @@ def annotate(task_id: int, note: str, *, state_dir: Path | None = None) -> dict 
     稽核註記而重呼叫會燒掉閘門重試額度。分診/稽核類「純備註」一律走本函式。
     """
     with _locked(state_dir):
-        data = _load(state_dir)
+        data = _load(state_dir, mutable=True)
         for t in data["tasks"]:
             if t["id"] == task_id:
                 t["note"] = note
@@ -281,6 +313,28 @@ def completion_stats(window: int = 50, *, state_dir: Path | None = None) -> dict
         "total": total,
         "rate": (done / total) if total else None,
     }
+
+
+def overview(window: int = 50, *, state_dir: Path | None = None) -> dict:
+    """一次載入同時給 counts+completion(供 /api/autopilot——舊寫法每次輪詢連打三發全量
+    parse)。口徑與 counts()/completion_stats() 逐字段等價(守護測試以等價 oracle 釘死)。"""
+    tasks = _load(state_dir)["tasks"]
+    c = {st: 0 for st in VALID_STATUS}
+    for t in tasks:
+        c[t["status"]] = c.get(t["status"], 0) + 1
+    terminal = [t for t in tasks if t.get("status") in ("done", "failed")]
+    terminal.sort(key=lambda t: t.get("updated_at", 0), reverse=True)
+    recent = terminal[:window] if window > 0 else terminal
+    done = sum(1 for t in recent if t["status"] == "done")
+    total = len(recent)
+    completion = {
+        "window": window,
+        "done": done,
+        "failed": total - done,
+        "total": total,
+        "rate": (done / total) if total else None,
+    }
+    return {"counts": c, "completion": completion}
 
 
 def recent_done_titles(limit: int, *, state_dir: Path | None = None) -> set[str]:
@@ -346,7 +400,7 @@ def triage_failed(*, state_dir: Path | None = None) -> dict:
     retried = parked = 0
     now = time.time()
     with _locked(state_dir):
-        data = _load(state_dir)
+        data = _load(state_dir, mutable=True)
         for t in data["tasks"]:
             if t.get("status") == "cancelled":
                 # legacy 非法值：set_status 會 raise，故在鎖內直接改 dict 洗白。
