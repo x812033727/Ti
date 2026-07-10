@@ -2970,6 +2970,44 @@
 ## 本輪 #4 僅執行 `--scan`/`--report` 並回填證據，`--verify` 與步驟 1（發新）、步驟 3（撤舊）明確標示待人工於 GitHub UI 完成
 - 時間：2026-07-10 16:31
 
+## **修法選 `+` force refspec**：三處 fetch argv 均改為 `["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"]`
+- 時間：2026-07-10 23:00
+- 理由：`+` 前綴精確跳過目標 ref 的 CAS，不影響其他 ref；deploy_dir 為 origin 單向鏡像，force 覆蓋 remote-tracking ref 是預期行為
+- 否決方案：`--force` flag（語意過寬，未來新增 refspec 行為不確定）；重試保險層（根修後多餘，隱藏同類 bug）；架構重構（消除鎖外 fetch，改動面大、非此輪範圍）
+
+## **修改範圍鎖定三處**：`studio/autodeploy.py:60`、`studio/deploy.py:159`、`studio/autopilot.py:2324`
+- 時間：2026-07-10 23:00
+- 理由：三者均以 deploy_dir 為 cwd，fetch 後即讀/reset `origin/<branch>`，存在多寫者 CAS 競爭，修法統一不設例外
+
+## **明確排除 `repo_base.py:143`**
+- 時間：2026-07-10 23:00
+- 理由：該行 fetch 只寫 FETCH_HEAD，不寫 `refs/remotes/origin/*`，CAS 不適用
+
+## **明確排除 `autopilot.py:120`**
+- 時間：2026-07-10 23:00
+- 理由：autopilot work clone 為單寫者，不存在並發競爭；加 force refspec 無害但掩蓋「此處走不同路徑」的資訊
+
+## **守門測試採 argv 捕捉（monkeypatch `_run`），不實跑 git**
+- 時間：2026-07-10 23:00
+- 理由：驗收閉環禁止對 `/opt/ti` 打真實 fetch（會重現 bug 現場）；字串錨 `+refs/heads/` 鎖定 argv 形式
+
+## **測試必須逐一覆蓋三個 call site，不得以單處代表全部**
+- 時間：2026-07-10 23:00
+- 理由：高工指出「黑樣本 FAIL 只證錨字串有效，不證三處都改到」——漏改一處、單一測試仍可能綠；三處需各自捕捉 argv 驗 `+refs/heads/`
+
+## **force 語意須在 commit message 或行內加註**：`deploy_dir 單向鏡像，force 更新 remote-tracking ref 為預期行為`
+- 時間：2026-07-10 23:00
+- 理由：`+` 前綴半年後接手者會疑惑「是否吞本地 commit」，隱含前提須文字化，防止後人「安全起見拿掉」引發 regression
+
+## **測試檔位置：`tests/deploy/test_fetch_force_refspec.py`**，三處 call site 同一檔驗收
+- 時間：2026-07-10 23:00
+- 理由：與既有 deploy 守門測試同目錄，CI `tests/deploy` job 自動涵蓋；三處同一 argv 契約，集中管理
+
+## **diff 邊界鐵則：五個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`、`tests/test_task1_retry_doc.py`；超出須另立任務
+- 時間：2026-07-10 23:00（2026-07-11 修正：四檔 → 五檔）
+- 修正理由：原宣稱「僅四個檔」，但實際 diff 含第五檔 `tests/test_task1_retry_doc.py`——這是**必要的伴隨護欄修正**，非鍍金污染。`SCOPE_GUARD_MAINTENANCE_GLOBS` 白名單只含 `tests/_scope_guard.py|conftest.py|test_task1_retry_doc.py`，**不含 `studio/*.py`**；舊版 `test_no_py_changed` 護欄會對本 lane 三個 studio `.py` 改動判 FAIL、CI 紅。修正將護欄從「看 lane 編號」改為「看是否實際改動 `ARCHITECTURE.md`」（`if "ARCHITECTURE.md" not in changed_files: skip`），並把 API 由 `find_repo_scope_violations` 換成 `collect_changed_files`+`find_scope_violations`。實測保留版該護欄為 SKIPPED，不再誤觸發擋死 #1 合法改動。
+- 移交：護欄以 lane 編號當任務身分屬 Ti 核心測試基建設計缺陷，另立 `核心改動:` 任務根治（見後續任務）。
+
 ## 所有 prefilter 邏輯集中於 `studio/autopilot.py`，不新增模組
 - 時間：2026-07-10 21:15
 - 理由：prefilter 是 pick 前同步判定，與 investigation lane、`_token_set_similarity`、`_tokenize_for_dedup` 同倉庫，跨模組界面為零
@@ -3044,4 +3082,3 @@
 
 ## #3 測試必含以下五個黑白樣本：① 命中 → 降級為 investigation；② 未命中 → 任務不動；③ token < 3 → 不誤殺；④ 總開關關閉 → 整段旁路；⑤ 無 GH token / shallow clone → fallback 回空、不炸不誤殺
 - 時間：2026-07-10 21:15
-

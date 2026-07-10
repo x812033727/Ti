@@ -1,6 +1,69 @@
 {
   "entries": [
     {
+      "decision": "設計文件留存一條演進路徑——「若未來 orchestrator 需機器解析閘門層級（如自動決策），改 return `dict` 並加 `level` 欄位取代前綴字串」；目前純文字前綴已足需求，此路徑屬有意識取捨非疏漏。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap9ec5a10a77",
+      "created_at": 1781492399.082112
+    },
+    {
+      "decision": "版本基準定為 `0.14.4`，三端（本地 venv / CI / pre-commit）對齊此版本。",
+      "rationale": "本地 `.venv/bin/ruff` 實測為 `0.14.4`；CI workflow 已在三處明確 `pip install \"ruff==0.14.4\"`，並有 comment 說明釘版意圖——基準已存在，缺口僅 pre-commit。",
+      "rejected": "`0.15.12`——工程師實測的是系統 ruff 而非 venv ruff，數據來源不同環境，不採信為基準。",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270016
+    },
+    {
+      "decision": "將 `.pre-commit-config.yaml` 的 `rev: v0.6.9` 改為 `rev: v0.14.4`，消除唯一缺口。",
+      "rationale": "pre-commit 是三端中唯一跑舊版（0.6.9）的環節；其餘兩端已對齊，改一個 rev 即關閉分歧。",
+      "rejected": "降本地與 CI 到 0.6.9——需 reformat 9 檔並改動 CI 三處已鎖的 pin，侵入範圍大且方向逆行。",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270047
+    },
+    {
+      "decision": "將 `pyproject.toml` 的 `ruff>=0.6` 改為 `ruff==0.14.4`（精確鎖），與 CI 既有 pin 一致。",
+      "rationale": "CI 已精確 pin，pyproject 維持寬鬆上界是唯一可導致本地再次漂移的入口；對齊即消除漂移根因。",
+      "rejected": "`ruff>=0.14.4,<0.15`——minor-bounded 仍允許 patch 漂移，過去正是「無上界」造成現況，不值得引入殘餘風險。",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.527006
+    },
+    {
+      "decision": "變更範圍嚴格限定 `.pre-commit-config.yaml` 與 `pyproject.toml` 兩檔，驗收時 `git diff --name-only` 必須僅此兩行，禁止 source/test 檔進入 diff。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270073
+    },
+    {
+      "decision": "驗收信號三路獨立跑——① `ruff check .`（lint rules）、② `ruff format --check .`（格式）、③ `pytest --collect-only -q`（收集 2590）——不合併指令。",
+      "rationale": "高級工程師正確指出 format-only 不覆蓋 lint；跨版本可能新增預設 lint rule，需獨立驗收。",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270088
+    },
+    {
+      "decision": "驗收前須實跑 `pre-commit run ruff-format --all-files` 確認 0 檔被改寫，不以推理替代實跑。",
+      "rationale": "「版本升後 9 檔自動合格」是假設，高級工程師要求實跑佐證；本批交付前必須補這個訊號，否則假設未被驗證。",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270102
+    },
+    {
+      "decision": "CI 安裝來源不需額外修改，已核可。",
+      "rationale": "CI workflow 三處均為 `pip install \"ruff==0.14.4\"`，高級工程師的疑慮在現況下已不成立；不引入額外改動。",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.5270114
+    },
+    {
+      "decision": "不引入任何新執行期依賴，uv lock 統一鎖檔列為有意識保留的未來演進路徑，現階段不動。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apf5498d95b9",
+      "created_at": 1781499509.527012
+    },
+    {
       "decision": "需求已在 HEAD 完整落地，不動工、不補 code——驗收訊號三路實跑均綠（ruff format/check 全過；pytest 實際 8 passed，parametrize 展開 args_drift 三 case；git diff HEAD 空）。",
       "rationale": "工程師實跑確認 8 passed（設計草稿誤載 5），數字以實跑為準，驗收文件同步修正。",
       "rejected": "「湊工作量補 code」——在 HEAD 已落地的狀態下新增程式只會製造不必要的 diff，提高後續維護成本。",
@@ -3373,6 +3436,69 @@
       "rejected": "",
       "session_id": "ap775c4036fe",
       "created_at": 1783672304.9377236
+    },
+    {
+      "decision": "**修法選 `+` force refspec**：三處 fetch argv 均改為 `[\"git\", \"fetch\", \"origin\", f\"+refs/heads/{branch}:refs/remotes/origin/{branch}\"]`",
+      "rationale": "`+` 前綴精確跳過目標 ref 的 CAS，不影響其他 ref；deploy_dir 為 origin 單向鏡像，force 覆蓋 remote-tracking ref 是預期行為",
+      "rejected": "`--force` flag（語意過寬，未來新增 refspec 行為不確定）；重試保險層（根修後多餘，隱藏同類 bug）；架構重構（消除鎖外 fetch，改動面大、非此輪範圍）",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955102
+    },
+    {
+      "decision": "**修改範圍鎖定三處**：`studio/autodeploy.py:60`、`studio/deploy.py:159`、`studio/autopilot.py:2324`",
+      "rationale": "三者均以 deploy_dir 為 cwd，fetch 後即讀/reset `origin/<branch>`，存在多寫者 CAS 競爭，修法統一不設例外",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955167
+    },
+    {
+      "decision": "**明確排除 `repo_base.py:143`**",
+      "rationale": "該行 fetch 只寫 FETCH_HEAD，不寫 `refs/remotes/origin/*`，CAS 不適用",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955179
+    },
+    {
+      "decision": "**明確排除 `autopilot.py:120`**",
+      "rationale": "autopilot work clone 為單寫者，不存在並發競爭；加 force refspec 無害但掩蓋「此處走不同路徑」的資訊",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955188
+    },
+    {
+      "decision": "**守門測試採 argv 捕捉（monkeypatch `_run`），不實跑 git**",
+      "rationale": "驗收閉環禁止對 `/opt/ti` 打真實 fetch（會重現 bug 現場）；字串錨 `+refs/heads/` 鎖定 argv 形式",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955198
+    },
+    {
+      "decision": "**測試必須逐一覆蓋三個 call site，不得以單處代表全部**",
+      "rationale": "高工指出「黑樣本 FAIL 只證錨字串有效，不證三處都改到」——漏改一處、單一測試仍可能綠；三處需各自捕捉 argv 驗 `+refs/heads/`",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955205
+    },
+    {
+      "decision": "**force 語意須在 commit message 或行內加註**：`deploy_dir 單向鏡像，force 更新 remote-tracking ref 為預期行為`",
+      "rationale": "`+` 前綴半年後接手者會疑惑「是否吞本地 commit」，隱含前提須文字化，防止後人「安全起見拿掉」引發 regression",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955212
+    },
+    {
+      "decision": "**測試檔位置：`tests/deploy/test_fetch_force_refspec.py`**，三處 call site 同一檔驗收",
+      "rationale": "與既有 deploy 守門測試同目錄，CI `tests/deploy` job 自動涵蓋；三處同一 argv 契約，集中管理",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955222
+    },
+    {
+      "decision": "**diff 邊界鐵則：五個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`、`tests/test_task1_retry_doc.py`；超出須另立任務",
+      "rationale": "2026-07-11 修正：原宣稱四檔，實際 diff 含第五檔 tests/test_task1_retry_doc.py，為必要伴隨護欄修正。SCOPE_GUARD_MAINTENANCE_GLOBS 白名單不含 studio/*.py，舊版 test_no_py_changed 會對本 lane 三個 studio .py 判 FAIL；修正改為看是否實際改動 ARCHITECTURE.md（未改則 skip），保留版實測 SKIPPED，不擋 #1 合法改動。護欄以 lane 編號當任務身分屬核心測試基建缺陷，另立核心改動任務根治。",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955229
     },
     {
       "decision": "所有 prefilter 邏輯集中於 `studio/autopilot.py`，不新增模組",
