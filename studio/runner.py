@@ -433,7 +433,8 @@ def detect_entrypoint(cwd: Path | str) -> str | None:
 
 _INLINE_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _LEADING_INLINE_CODE_SPAN_RE = re.compile(r"^`+([^`\n]+)`+")
-_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>]+$")
+_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>,，、。]+$")
+_SHELL_INLINE_CODE_SEPARATOR_RE = re.compile(r"[;&|()<>]")
 _EXPLANATORY_COMMAND_TAIL_RE = re.compile(r"^(?:[（(，,。:：#]|//)")
 
 
@@ -449,19 +450,27 @@ def _unwrap_markdown_command_spans(raw: str) -> str | None:
     if len(spans) == 1 and spans[0].span() == (0, len(raw)):
         return spans[0].group(1).strip()
 
+    def _command_separator(outside: str) -> str:
+        if not outside:
+            return outside
+        if _SHELL_INLINE_CODE_SEPARATOR_RE.search(outside):
+            return outside
+        return "; " if outside.strip() else outside
+
     pieces: list[str] = []
     pos = 0
     for span in spans:
         outside = raw[pos : span.start()]
         if outside and not _INLINE_CODE_SEPARATOR_RE.fullmatch(outside):
             return None
-        pieces.append(outside)
+        pieces.append(_command_separator(outside))
         pieces.append(span.group(1).strip())
         pos = span.end()
 
     tail = raw[pos:]
     if tail and not _INLINE_CODE_SEPARATOR_RE.fullmatch(tail):
         return None
+    pieces.append(_command_separator(tail))
     return "".join(pieces).strip()
 
 
