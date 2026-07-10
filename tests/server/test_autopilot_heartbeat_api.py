@@ -49,6 +49,30 @@ def test_autopilot_status_includes_heartbeat(client, tmp_path):
     assert data["heartbeat"] == hb
 
 
+def test_autopilot_status_exposes_pr_budget(client, tmp_path):
+    """每日 PR 預算（第五輪 F4）：used=UTC 當日 audit 內 pr 非空筆數、cap=config 值；
+    無 audit 檔 used=0；壞行/非當日/pr 空皆不計。"""
+    import time as _time
+
+    now = _time.time()
+    rows = [
+        {"ts": now, "task_id": 1, "outcome": "merged", "pr": 11},
+        {"ts": now, "task_id": 2, "outcome": "merge_pending", "pr": 12},
+        {"ts": now, "task_id": 3, "outcome": "no_changes", "pr": None},  # 無 PR 不計
+        {"ts": now - 2 * 86400, "task_id": 4, "outcome": "merged", "pr": 13},  # 非當日不計
+    ]
+    (tmp_path / "audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n壞行不是 json\n", encoding="utf-8"
+    )
+    data = client.get("/api/autopilot").json()
+    assert data["pr_budget"] == {"used": 2, "cap": config.AUTOPILOT_DAILY_PR_BUDGET}
+
+
+def test_autopilot_status_pr_budget_without_audit(client):
+    data = client.get("/api/autopilot").json()
+    assert data["pr_budget"]["used"] == 0
+
+
 def test_autopilot_status_corrupt_heartbeat_is_null(client, tmp_path):
     (tmp_path / "status.json").write_text("{壞掉的 json", encoding="utf-8")
     data = client.get("/api/autopilot").json()
