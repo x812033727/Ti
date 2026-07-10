@@ -58,10 +58,17 @@ export async function refreshAutopilot() {
     if (hbState) hb += `　心跳 ${hbState}`;
     if (hbObj.task_id) hb += `（任務 #${hbObj.task_id}）`;
     if (hbSleep) hb += `（休眠至 ${new Date(hbSleep * 1000).toLocaleTimeString()}）`;
+    // 調查旁路（δ）：status.json 的 sideline 子欄，執行中才有值。
+    const sl = hbObj.sideline;
+    if (sl && sl.task_id) hb += `　旁路 #${sl.task_id}${sl.title ? ` ${sl.title}` : ""}`;
+    // 每日 PR 預算透明化（F4）：舊後端無此欄時容錯不顯示。
+    const pb = st.pr_budget || {};
+    const pbStr = pb.cap ? `・今日 PR ${pb.used ?? 0}/${pb.cap}` : "";
     $("#apState").textContent =
       `${st.paused ? "⏸ 已暫停" : "▶ 執行中"}　${rateStr}待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
-      `完成 ${c.done || 0}・失敗 ${c.failed || 0}${c.parked ? `・停放 ${c.parked}` : ""}` +
+      `完成 ${c.done || 0}・失敗 ${c.failed || 0}${c.parked ? `・停放 ${c.parked}` : ""}${pbStr}` +
       `${st.dryrun ? "　(dryrun)" : ""}${hb}`;
+    renderDriftBanner(st.deploy, hbObj);
     $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
     $("#apToggle").dataset.paused = st.paused ? "1" : "0";
     // 派工模式雙態鈕（舊後端無 dispatch_mode 欄位時容錯視為手動）。
@@ -89,6 +96,48 @@ export async function refreshAutopilot() {
   await refreshApQuota();
   await refreshApAppraisal();
   await refreshApActivity();
+}
+
+// --- 部署漂移橫幅（F1）：已合併 ≠ 已上線,這是完成率事故的盲點 --------------
+// deploy=drift_stats（disk_head/origin_head/behind/deferred）；running_commit=行程
+// 執行中的碼（status.json）。三態:磁碟落後 origin / 行程落後磁碟(未重載) / 同步隱藏。
+function renderDriftBanner(deploy, heartbeat) {
+  const box = $("#apDrift");
+  if (!box) return;
+  const d = deploy || {};
+  const parts = [];
+  if (Number(d.behind) > 0) {
+    const defer = d.deferred && d.deferred.deferrals ? `（autodeploy 已延後 ${d.deferred.deferrals} 次）` : "";
+    parts.push(`磁碟碼落後 origin ${d.behind} 個 commit${defer}`);
+  }
+  const running = (heartbeat || {}).running_commit || "";
+  if (running && d.disk_head && !String(d.disk_head).startsWith(running)) {
+    parts.push(`行程尚未重載新碼（跑 ${String(running).slice(0, 8)}，磁碟 ${String(d.disk_head).slice(0, 8)}）`);
+  }
+  if (!parts.length) {
+    box.classList.add("hidden");
+    box.textContent = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  box.textContent = `🚀 部署漂移：${parts.join("；")}——已合併的修法尚未進執行碼`;
+}
+
+// --- 一鍵分診（F3）：POST /api/autopilot/triage,回報三桶統計 -----------------
+export async function triageFailedNow() {
+  try {
+    const r = await fetch("/api/autopilot/triage", { method: "POST" });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      toast(d.detail || "分診失敗", "err");
+      return;
+    }
+    const s = d.stats || d;
+    toast(`分診完成：重試 ${s.retried ?? 0}・復活 ${s.revived ?? 0}・歸檔 ${s.parked ?? 0}`);
+  } catch (e) {
+    toast("分診失敗", "err");
+  }
+  await refreshAutopilot();
 }
 
 // --- 績效榜（讀 /api/appraisals：per provider 平均分/樣本數/QA 通過率）--------
@@ -234,6 +283,12 @@ export async function refreshApActivity(heartbeat = apHeartbeat) {
       if (ttftRaw != null) {
         const ttft = Number(ttftRaw);
         if (Number.isFinite(ttft)) apChip(chips, `TTFT ${ttft.toFixed(3)}s`, "ttft");
+      }
+      // per-task 成本（F4）：history 累計的 cost_usd，缺欄（舊後端/無計價）容錯不顯示。
+      const costRaw = tu.cost_usd;
+      if (costRaw != null) {
+        const cost = Number(costRaw);
+        if (Number.isFinite(cost) && cost > 0) apChip(chips, `$${cost.toFixed(2)}`, "cost");
       }
       if (t.pr) {
         const a = document.createElement("a");
