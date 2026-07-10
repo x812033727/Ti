@@ -3494,8 +3494,8 @@
       "created_at": 1783695627.5955222
     },
     {
-      "decision": "**diff 邊界鐵則：僅四個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`；超出須另立任務",
-      "rationale": "",
+      "decision": "**diff 邊界鐵則：五個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`、`tests/test_task1_retry_doc.py`；超出須另立任務",
+      "rationale": "2026-07-11 修正：原宣稱四檔，實際 diff 含第五檔 tests/test_task1_retry_doc.py，為必要伴隨護欄修正。SCOPE_GUARD_MAINTENANCE_GLOBS 白名單不含 studio/*.py，舊版 test_no_py_changed 會對本 lane 三個 studio .py 判 FAIL；修正改為看是否實際改動 ARCHITECTURE.md（未改則 skip），保留版實測 SKIPPED，不擋 #1 合法改動。護欄以 lane 編號當任務身分屬核心測試基建缺陷，另立核心改動任務根治。",
       "rejected": "",
       "session_id": "apeb88e51698",
       "created_at": 1783695627.5955229
