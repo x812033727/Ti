@@ -799,6 +799,10 @@ async def autopilot_status() -> JSONResponse:
             # 近窗完成率（done/(done+failed)，排除 parked/pending）——counts 的終身數字會被
             # 舊史與永不清的 parked 灌水/拖低,此欄反映真實近況。
             "completion": backlog.completion_stats(),
+            # 部署漂移觀測（30s TTL 快取）：disk_head/origin_head/behind；autopilot 行程
+            # 「執行中」的 commit 在 heartbeat.running_commit（status.json）。已合併修法
+            # 是否真的進了執行碼，看板據此可判（完成率第三輪修法二A）。
+            "deploy": await deploy.drift_stats(),
             "dryrun": config.AUTOPILOT_DRYRUN,
             "repo": config.AUTOPILOT_REPO,
             "heartbeat": heartbeat,
