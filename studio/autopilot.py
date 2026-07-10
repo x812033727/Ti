@@ -476,13 +476,54 @@ class MergeResult(tuple):
     （不設 __slots__：tuple 子類不支援非空 __slots__，屬性走一般 __dict__。）
     """
 
-    def __new__(cls, ok: bool, msg: str, *, pr_number: int | None = None, branch: str = ""):
+    def __new__(
+        cls,
+        ok: bool,
+        msg: str,
+        *,
+        pr_number: int | None = None,
+        branch: str = "",
+        no_changes: bool = False,
+    ):
         self = super().__new__(cls, (ok, msg))
         return self
 
-    def __init__(self, ok: bool, msg: str, *, pr_number: int | None = None, branch: str = ""):
+    def __init__(
+        self,
+        ok: bool,
+        msg: str,
+        *,
+        pr_number: int | None = None,
+        branch: str = "",
+        no_changes: bool = False,
+    ):
         self.pr_number = pr_number
         self.branch = branch
+        # no_changes=True：專家跑完但零 diff（無 commit 可合併）。這不是「合併失敗」而是
+        # 「沒有可出貨的變更」——呼叫端據此把任務收斂為 parked no-op（不燒重試、不進失敗桶），
+        # 而非走 _handle_gate_failure 白燒 3 次 session（見完成率診斷：PR 階段 16/22 為此類）。
+        self.no_changes = no_changes
+
+
+# 網路層「暫時性」失敗特徵（DNS/連線/5xx/逾時）：merge 階段（ls-remote/push/開 PR）遇這類
+# ——非任務缺陷、非認證/權限實質失敗——附 infra 標記，讓 backlog.triage_failed 在達重試上限後
+# 自動重排（對齊既有「逾時→triage 重試」行為）。刻意「不」涵蓋認證/權限字樣（permission
+# denied / 403 / authentication failed / could not read Username），那類是實質失敗、達上限即
+# 永久 failed（附 infra 標記會讓 triage 無限重排）。
+_NETWORK_TRANSIENT_RE = re.compile(
+    r"could not resolve host|unable to access|"
+    r"connection (?:timed out|reset|refused)|operation timed out|"
+    r"temporar(?:ily|y) (?:unavailable|failure)|\b50[234]\b|timed out|逾時",
+    re.IGNORECASE,
+)
+
+
+def _merge_fail_note(msg: str, out: str) -> str:
+    """merge 階段失敗訊息：偵測到網路暫時性特徵時附「unreachable」標記（INFRA_FAILURE_RE 命中
+    → triage 自動重排）；認證/權限等實質失敗不附，達上限即永久 failed。"""
+    if _NETWORK_TRANSIENT_RE.search(out or ""):
+        return f"{msg}｜unreachable（網路暫時性，可分診重試）"
+    return msg
 
 
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
@@ -544,7 +585,9 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             timeout=30,
         )
         if diff.strip() in ("", "0"):
-            return False, "沒有產生任何變更（無 commit 可合併）"
+            # 零 diff：不是合併失敗，而是「沒有可出貨的變更」。以 no_changes 旗標讓呼叫端
+            # 收斂為 parked no-op（不燒重試、不落入失敗桶），而非白燒 3 次 session。
+            return MergeResult(False, "沒有產生任何變更（無 commit 可合併）", no_changes=True)
 
         if config.AUTOPILOT_DRYRUN:
             return True, f"[dryrun] 會 push {branch} 並 squash-merge 進 {config.AUTOPILOT_BRANCH}"
@@ -559,7 +602,9 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             timeout=60,
         )
         if rc != 0:
-            return False, f"ls-remote 檢查失敗（無法確認遠端狀態，已中止）：{out[-400:]}"
+            return False, _merge_fail_note(
+                f"ls-remote 檢查失敗（無法確認遠端狀態，已中止）：{out[-400:]}", out
+            )
         if out.strip() and not config.AUTOPILOT_FORCE_PUSH:
             return False, (
                 f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
@@ -604,7 +649,7 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             timeout=180,
         )
         if rc != 0:
-            return False, f"push 失敗：{out[-400:]}"
+            return False, _merge_fail_note(f"push 失敗：{out[-400:]}", out)
         body = f"autopilot 自動產生：{task['title']}\n\n{task.get('detail', '')}".strip()
         rc, out = await _run(
             [
@@ -626,7 +671,7 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             timeout=120,
         )
         if rc != 0:
-            return False, f"開 PR 失敗：{out[-400:]}"
+            return False, _merge_fail_note(f"開 PR 失敗：{out[-400:]}", out)
 
         # 取 PR 編號供 publisher 協調器使用；取不到就明確失敗，絕不 fall-through 盲合（避免合到沒等 CI）。
         rc, out = await _run(
@@ -1512,8 +1557,10 @@ async def run_one_task(task: dict) -> None:
         # commit / push / squash-merge 進 main
         merge_res = await _commit_push_merge(clone, task)
         merged, msg = merge_res
+        no_changes = getattr(merge_res, "no_changes", False)
         # 結構化審計：成功與失敗都記（失敗也燒了成本、審計要能回溯）；dryrun 不落檔。
         # pr 非空＝實際開出 PR（計入每日預算）；push 前就被擋（無 PR）→ pr=None，記錄不計數。
+        # no_changes 走獨立 outcome，不污染 merge_failed 桶（診斷分類與看板據此分流）。
         if not config.AUTOPILOT_DRYRUN:
             rc_sha, head_sha = await _run(["git", "rev-parse", "HEAD"], cwd=clone, timeout=30)
             _append_audit(
@@ -1523,12 +1570,20 @@ async def run_one_task(task: dict) -> None:
                     "pr": getattr(merge_res, "pr_number", None),
                     "branch": getattr(merge_res, "branch", ""),
                     "head_sha": head_sha.strip() if rc_sha == 0 else "",
-                    "outcome": "merged" if merged else "merge_failed",
+                    "outcome": "no_changes"
+                    if no_changes
+                    else ("merged" if merged else "merge_failed"),
                     "detail": msg[-400:],
                     "duration_s": round(time.time() - t0, 1),
                     "attempts": int(task.get("attempts") or 0),
                 }
             )
+        if no_changes:
+            # 零 diff＝沒有可出貨的變更（多為收尾驗收/QA 類元任務，本就無事可做）：收斂為
+            # parked no-op——不燒重試（省下重跑整場 session）、不落失敗桶（非任務缺陷）。
+            backlog.set_status(task["id"], "parked", note="無變更可出貨（no-op，非失敗）")
+            log.info("任務 #%s 零 diff，收斂為 parked no-op（不重試）", task["id"])
+            return
         if not merged:
             _handle_gate_failure(task, "merge", msg)
             return
