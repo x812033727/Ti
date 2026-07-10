@@ -2161,6 +2161,82 @@ def _maybe_triage_failed() -> None:
         )
 
 
+# 任務邊界部署漂移自查的節流/退避（行程記憶體）。節流起點＝行程啟動時刻：首查延後一個
+# 完整間隔——重啟多半「因為」剛部署（execv/redeploy），啟動即查必然無 drift 白燒 fetch；
+# 也讓短命行程（單元測試等）天然不觸發此「會真的 fetch/reset/restart」的重動作
+# （tests/conftest.py 另設 TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL=0 關死，雙保險）。
+_last_deploy_check_at = time.time()
+_deploy_backoff_until = 0.0
+
+
+async def _maybe_boundary_redeploy() -> None:
+    """任務邊界的部署漂移自查（完成率第三輪修法二A）：解 autodeploy 部署飢餓。
+
+    autodeploy timer 只在「無進行中討論」時 pull+restart，而 autopilot 連續跑任務時討論
+    幾乎總在進行——部署窗口極少，已合併的修法長時間「紙上上線」（實測 #369/#370 合併後
+    數小時進不了執行碼）；autopilot 的 execv 自我重載又要磁碟碼先變才觸發，雞生蛋。
+    此函式掛在主迴圈任務邊界（此刻保證無 autopilot 自己的討論）：節流間隔內 fetch 比對
+    origin/<branch>，有 drift 且無「手動」討論（busy_sessions）→ 就地 deploy.redeploy()
+    （deploy.lock 已防與 timer 互撞），成功且自身碼有變即走既有 execv 重載序列，讓下一場
+    任務直接跑新碼。失敗（redeploy 已自動回滾）→ 退避 AUTOPILOT_DEPLOY_FAIL_BACKOFF ＋
+    回填修復任務，**不 _pause**——壞 commit 非本任務產物，暫停會把整個迴圈陪葬；autodeploy
+    timer 原邏輯仍在，雙保險。全程 try/except，任何失敗不得弄死主迴圈（同 triage 慣例）。
+    """
+    global _last_deploy_check_at, _deploy_backoff_until
+    if config.AUTOPILOT_DRYRUN or not config.AUTOPILOT_DEPLOY_CHECK_INTERVAL:
+        return
+    now = time.time()
+    if now < _deploy_backoff_until:
+        return
+    if now - _last_deploy_check_at < config.AUTOPILOT_DEPLOY_CHECK_INTERVAL:
+        return
+    _last_deploy_check_at = now
+    try:
+        deploy_dir = str(config.AUTOPILOT_DEPLOY_DIR)
+        branch = config.AUTOPILOT_BRANCH
+        rc, out = await deploy._run(["git", "fetch", "origin", branch], cwd=deploy_dir, timeout=60)
+        if rc != 0:
+            log.debug("邊界部署檢查 fetch 失敗（忽略）：%s", out[-200:])
+            return
+        disk = await deploy.current_head(deploy_dir)
+        rc, origin_head = await deploy._run(
+            ["git", "rev-parse", f"origin/{branch}"], cwd=deploy_dir, timeout=30
+        )
+        origin_head = origin_head.strip()
+        if rc != 0 or not disk or not origin_head or disk == origin_head:
+            return
+        # 有手動討論進行中（非 autopilot 的 session）→ 交還 autodeploy timer，不打斷使用者。
+        if history.busy_sessions(config.DEPLOY_STALE_AFTER):
+            log.info(
+                "任務邊界偵測到部署漂移（%s→%s）但有進行中討論，交還 autodeploy timer",
+                disk[:8],
+                origin_head[:8],
+            )
+            return
+        log.info("任務邊界偵測到部署漂移（%s→%s），就地重佈", disk[:8], origin_head[:8])
+        pre_sig = _self_sig()
+        ok, dmsg = await deploy.redeploy()
+        if not ok:
+            _deploy_backoff_until = time.time() + config.AUTOPILOT_DEPLOY_FAIL_BACKOFF
+            log.warning(
+                "任務邊界重佈失敗（退避 %ds 後再試）：%s",
+                config.AUTOPILOT_DEPLOY_FAIL_BACKOFF,
+                dmsg,
+            )
+            with contextlib.suppress(Exception):
+                backlog.add("修復導致重佈失敗的 regression", detail=dmsg, source="discovered")
+            return
+        log.info("任務邊界重佈成功：%s", dmsg)
+        # redeploy 已 reset 磁碟碼：自身 studio/*.py 有變即原地 execv（鏡射主迴圈既有重載
+        # 序列），下一場任務直接跑新碼；只有 web/靜態變更時不重載（服務端已由 redeploy 重啟）。
+        if not config.AUTOPILOT_DRYRUN and _self_sig() != pre_sig:
+            log.info("邊界重佈帶入 autopilot 自身程式碼更新，os.execv 重載")
+            await _prepare_execv_reload()
+            os.execv(sys.executable, [sys.executable, "-m", "studio.autopilot"])
+    except Exception:  # noqa: BLE001 — 邊界部署只是自癒輔助，失敗不得影響主迴圈
+        log.exception("任務邊界部署檢查失敗（忽略，不影響主迴圈）")
+
+
 def _recover_stale_in_progress() -> None:
     """把沒有活躍 history session 的 in_progress 任務放回 pending，並掃除幽靈 running meta。
 
@@ -2485,6 +2561,7 @@ def _write_status(
         "workers": workers,
         "current_expert": current_expert,
         "turn_started_at": turn_started_at,
+        "running_commit": _running_commit[:12] or None,
     }
     try:
         config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2509,6 +2586,9 @@ def _read_status() -> dict:
     except (OSError, ValueError):
         return {}
 
+
+# 執行中程式碼的 commit（main() 啟動時擷取一次；execv 重載後自然更新）。
+_running_commit = ""
 
 _STATUS_UNSET = object()
 
@@ -2865,6 +2945,11 @@ async def _prepare_execv_reload() -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     log.info("autopilot 啟動（dryrun=%s, repo=%s）", config.AUTOPILOT_DRYRUN, config.AUTOPILOT_REPO)
+    # 啟動時擷取一次「執行中程式碼」的 commit（磁碟 HEAD 可能已被 reset 但行程未重載，
+    # 兩者語意不同）；隨 status.json 供 /api/autopilot 顯示部署漂移。失敗留空不擋啟動。
+    global _running_commit
+    with contextlib.suppress(Exception):
+        _running_commit = await deploy.current_head(str(config.AUTOPILOT_DEPLOY_DIR))
     startup_sig = _self_sig()
     _install_signal_handlers()
 
@@ -2946,6 +3031,9 @@ async def _main_loop(startup_sig: float) -> None:
 
         _maybe_triage_failed()
         _recover_stale_in_progress()
+        # 任務邊界部署自查：放在取任務之前——此刻保證無 autopilot 討論，是 autodeploy
+        # 飢餓下唯一可靠的部署窗口（成功且自身碼有變會 execv，不返回）。
+        await _maybe_boundary_redeploy()
         task = backlog.next_pending()
         if task is None:
             _write_status("idle", quota=quota)

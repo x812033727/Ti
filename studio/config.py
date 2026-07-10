@@ -893,6 +893,16 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
     "False",
     "",
 )
+# AUTOPILOT_DEPLOY_CHECK_INTERVAL：任務邊界部署漂移自查（完成率第三輪修法二A）。autodeploy
+#   timer 只在「無進行中討論」時 pull+restart——autopilot 連續跑任務時討論幾乎總在進行，部署
+#   窗口極少，已合併的修法會長時間「紙上上線」（execv 自我重載也要磁碟碼先變，雞生蛋）。
+#   主迴圈在任務邊界（此刻保證無 autopilot 討論）每隔此秒數 fetch 比對 origin/<branch>，
+#   有 drift 且無手動討論即就地 deploy.redeploy()＋execv 重載。0＝關閉（回舊行為，只靠 timer；
+#   tests/conftest.py 對整個測試樹設 0——此檢查會真的 fetch/reset/restart，絕不可在測試觸發）。
+AUTOPILOT_DEPLOY_CHECK_INTERVAL = int(os.getenv("TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL", "300"))
+# 邊界重佈失敗（已自動回滾）後的退避秒數：避免壞 commit 讓每輪任務邊界都白燒一次 redeploy；
+# autodeploy timer 原邏輯仍在，雙保險。
+AUTOPILOT_DEPLOY_FAIL_BACKOFF = int(os.getenv("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", "1800"))
 # AUTOPILOT_EVAL_MEMORY：自我評估時回饋「近期成敗」給資深專家的筆數（每類 done/failed 各取
 #   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
 #   0 = 停用（還原成無狀態評估）。
@@ -1168,6 +1178,7 @@ def reload() -> None:
     global AUTOPILOT_QUOTA_GATE, AUTOPILOT_QUOTA_MAX_SLEEP, QUOTA_STALE_MAX
     global AUTOPILOT_DAILY_PR_BUDGET
     global AUTOPILOT_WORKFLOW_TRIAGE, AUTOPILOT_TRIAGE_TIMEOUT
+    global AUTOPILOT_DEPLOY_CHECK_INTERVAL, AUTOPILOT_DEPLOY_FAIL_BACKOFF
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
@@ -1332,6 +1343,8 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_TRIAGE_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TRIAGE_TIMEOUT", "60"))
+    AUTOPILOT_DEPLOY_CHECK_INTERVAL = int(os.getenv("TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL", "300"))
+    AUTOPILOT_DEPLOY_FAIL_BACKOFF = int(os.getenv("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", "1800"))
     # lint 閘門自動格式化（預設值須與檔頂宣告一致）
     LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
     AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1") not in (
