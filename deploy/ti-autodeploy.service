@@ -1,0 +1,15 @@
+[Unit]
+Description=Ti Studio auto-deploy: pull origin/main + restart ti.service when new commits land and no discussion is running
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/ti
+# 納管版：邏輯在 repo 的 studio/autodeploy.py（可測、合併即生效），取代不受版控的
+# /usr/local/sbin/ti-autodeploy.py。安裝/更新（一次性人工步驟）：
+#   cp deploy/ti-autodeploy.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now ti-autodeploy.timer
+ExecStart=/opt/ti/.venv/bin/python -m studio.autodeploy
+TimeoutStartSec=900
