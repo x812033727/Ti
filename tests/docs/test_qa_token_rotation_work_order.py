@@ -9,9 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNBOOK = ROOT / "docs" / "token-rotation-runbook.md"
 WORK_ORDER = ROOT / "docs" / "evidence" / "token-rotation-2026-07-10.md"
 
-TOKEN_SECRET_RE = re.compile(
-    r"(?:ghp|gho|ghs|ghr)_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}"
-)
+TOKEN_SECRET_RE = re.compile(r"(?:ghp|gho|ghs|ghr)_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}")
 
 
 def _text(path: Path) -> str:

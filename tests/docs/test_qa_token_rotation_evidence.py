@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "docs" / "evidence" / "token-rotation-2026-07-10.md"
 
