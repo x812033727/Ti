@@ -919,6 +919,21 @@ async def autopilot_digest(days: int = 7) -> JSONResponse:
     return JSONResponse(await asyncio.to_thread(_build))
 
 
+@router.get("/api/autopilot/digests", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digests() -> JSONResponse:
+    """已落盤 digest 歷史清單（第五輪 F6：autopilot 每日排程寫檔，不再關掉即失）。"""
+    return JSONResponse({"digests": await asyncio.to_thread(digest.list_digests)})
+
+
+@router.get("/api/autopilot/digests/{name}", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digest_read(name: str) -> JSONResponse:
+    """讀單一落盤 digest；檔名白名單正則（digest-YYYY-MM-DD.md）擋路徑穿越。"""
+    md = await asyncio.to_thread(digest.read_digest, name)
+    if md is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    return JSONResponse({"name": name, "markdown": md})
+
+
 @router.get("/api/autopilot/audit-trend", dependencies=[Depends(auth.require_auth)])
 async def autopilot_audit_trend(days: int = 30) -> JSONResponse:
     """audit.jsonl 每日 outcome 分佈與完成率趨勢(近 N 天,UTC 日;口徑=insights.OK/FAIL)。"""

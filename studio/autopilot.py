@@ -50,6 +50,7 @@ from . import (
     claude_accounts,
     config,
     deploy,
+    digest,
     events,
     history,
     notify,
@@ -3635,11 +3636,13 @@ async def main() -> None:
         sideline = asyncio.create_task(_investigation_sideline())
         notifier = asyncio.create_task(_watchdog_notifier())
         reconciler = asyncio.create_task(_reconciler_loop())
+        digester = asyncio.create_task(_digest_scheduler())
     except AttributeError:
         monitor = None
         sideline = None
         notifier = None
         reconciler = None
+        digester = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -3652,7 +3655,7 @@ async def main() -> None:
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
     finally:
-        for aux in (monitor, sideline, notifier, reconciler):
+        for aux in (monitor, sideline, notifier, reconciler, digester):
             if aux is not None:
                 aux.cancel()
                 with contextlib.suppress(BaseException):
@@ -3744,6 +3747,26 @@ async def _watchdog_notifier() -> None:
     while True:
         await asyncio.sleep(_WATCHDOG_PING_S)
         _sd_notify("WATCHDOG=1")
+
+
+async def _digest_scheduler() -> None:
+    """digest 每日落盤（第五輪 F6）：當日（UTC）檔不存在即產出寫入，不再「關掉面板即失」。
+
+    純本地模板（零 LLM、零網路），每小時醒來檢查一次即可；同日重寫冪等。任何失敗
+    log 後下輪再試，絕不影響主迴圈。
+    """
+    while True:
+        try:
+            existing = {d["name"] for d in await asyncio.to_thread(digest.list_digests)}
+            today = f"digest-{time.strftime('%Y-%m-%d', time.gmtime())}.md"
+            if today not in existing:
+                name = await asyncio.to_thread(digest.save_digest)
+                log.info("digest 已落盤：%s", name)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 排程器自身失敗不得影響主迴圈
+            log.debug("digest 落盤失敗（下輪再試）", exc_info=True)
+        await asyncio.sleep(3600)
 
 
 async def _pause_tick() -> None:

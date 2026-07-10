@@ -114,12 +114,44 @@ async function showDigest() {
     const pre = document.createElement("pre");
     pre.className = "digest-md";
     pre.textContent = d.markdown || "(空)";
+    let shown = d.markdown || "";
+    // 歷史（F6）：autopilot 每日落盤的 digest 檔清單；選了就載入該日內容（「即時」=現算）。
+    const sel = document.createElement("select");
+    sel.className = "digest-history";
+    try {
+      const hist = await (await fetch("/api/autopilot/digests")).json();
+      const items = hist.digests || [];
+      const live = document.createElement("option");
+      live.value = "";
+      live.textContent = "即時（近 7 天）";
+      sel.appendChild(live);
+      items.forEach((it) => {
+        const o = document.createElement("option");
+        o.value = it.name;
+        o.textContent = it.name.replace(/^digest-|\.md$/g, "");
+        sel.appendChild(o);
+      });
+      sel.onchange = async () => {
+        try {
+          if (!sel.value) {
+            const fresh = await (await fetch("/api/autopilot/digest?days=7")).json();
+            shown = fresh.markdown || "";
+          } else {
+            const one = await (await fetch(`/api/autopilot/digests/${encodeURIComponent(sel.value)}`)).json();
+            shown = one.markdown || "";
+          }
+          pre.textContent = shown || "(空)";
+        } catch { toast("載入失敗", "err"); }
+      };
+      if (items.length <= 0) sel.classList.add("hidden");
+    } catch { sel.classList.add("hidden"); }
     const actions = document.createElement("div");
     actions.className = "form-modal-actions";
+    actions.appendChild(sel);
     const copy = document.createElement("button");
     copy.textContent = "複製";
     copy.onclick = async () => {
-      try { await navigator.clipboard.writeText(d.markdown || ""); toast("已複製"); } catch { toast("複製失敗", "err"); }
+      try { await navigator.clipboard.writeText(shown); toast("已複製"); } catch { toast("複製失敗", "err"); }
     };
     const close = document.createElement("button");
     close.className = "ghost";

@@ -6,9 +6,11 @@ delta 以「前一個等長窗」對照(前窗超出 audit 保留期時 prev=Non
 
 from __future__ import annotations
 
+import re
 import time
+from pathlib import Path
 
-from . import backlog, config, insights, lessons
+from . import backlog, config, insights, lessons, secure_write
 from .release_note import pyproject_version
 
 
@@ -122,3 +124,48 @@ def render_markdown(digest: dict) -> str:
     if not digest["lessons_top"]:
         lines.append("- (無)")
     return "\n".join(lines)
+
+
+# --- 落盤與歷史(第五輪 F6):digest 不再「關掉面板即失」------------------------
+
+# 檔名固定 digest-YYYY-MM-DD.md(UTC 日):正則同時是 read_digest 的路徑穿越防線
+# (只有命中的檔名才會被讀,../ 之類一律 None)。
+_NAME_RE = re.compile(r"^digest-\d{4}-\d{2}-\d{2}\.md$")
+
+
+def _digests_dir() -> Path:
+    return config.AUTOPILOT_STATE_DIR / "digests"
+
+
+def save_digest(days: int = 7, now: float | None = None) -> str:
+    """產出並落盤當日(UTC)的 digest 檔,回傳檔名;同日重呼叫覆寫(冪等)。"""
+    ts = time.time() if now is None else now
+    name = f"digest-{_utc_date(ts)}.md"
+    d = _digests_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    secure_write.secure_write_root(d / name, render_markdown(build_digest(days)).encode("utf-8"))
+    return name
+
+
+def list_digests() -> list[dict]:
+    """已落盤 digest 清單(新→舊):[{name, mtime}]。目錄不存在=空清單。"""
+    d = _digests_dir()
+    out = []
+    try:
+        for p in d.iterdir():
+            if _NAME_RE.match(p.name):
+                out.append({"name": p.name, "mtime": p.stat().st_mtime})
+    except OSError:
+        return []
+    out.sort(key=lambda x: x["name"], reverse=True)
+    return out
+
+
+def read_digest(name: str) -> str | None:
+    """讀單一 digest 內容;檔名不合法(路徑穿越)或不存在回 None。"""
+    if not _NAME_RE.match(name or ""):
+        return None
+    try:
+        return (_digests_dir() / name).read_text(encoding="utf-8")
+    except OSError:
+        return None
