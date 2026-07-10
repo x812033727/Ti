@@ -1224,8 +1224,17 @@ def _with_prefilter_note(task: dict, note: str, *, limit: int = 500) -> str:
     if (task.get("lane") or "") == _PREFILTER_IMPLEMENTED_LANE and existing.startswith(
         _PREFILTER_IMPLEMENTED_NOTE
     ):
+        # 重試或多出口共用時避免把同一段 prefilter note 重複拼回去。
         note = existing if note.startswith(existing) else f"{existing}\n{note}"
     return note[:limit]
+
+
+def _sanitize_prefilter_title(title: str, *, limit: int = 200) -> str:
+    """把外部 merged title 壓成單行短字串，降低 prompt marker 偽造風險。"""
+    cleaned = re.sub(r"\s+", " ", str(title)).strip()
+    if len(cleaned) > limit:
+        return cleaned[:limit].rstrip()
+    return cleaned
 
 
 def _commit_message_title(message: str) -> str:
@@ -2166,7 +2175,8 @@ async def run_one_task(task: dict) -> None:
 
     matched_implemented_title = await _prefilter_implemented_match(task, clone)
     if matched_implemented_title:
-        note = f"{_PREFILTER_IMPLEMENTED_NOTE} 疑似已實作，匹配 merged: {matched_implemented_title}"
+        matched_note_title = _sanitize_prefilter_title(matched_implemented_title)
+        note = f"{_PREFILTER_IMPLEMENTED_NOTE} 疑似已實作，匹配 merged: {matched_note_title}"
         backlog.annotate(
             task["id"],
             note[:500],
@@ -2176,7 +2186,7 @@ async def run_one_task(task: dict) -> None:
         log.info(
             "任務 #%s 命中疑似已實作 prefilter，轉調查分流：%s",
             task["id"],
-            matched_implemented_title,
+            matched_note_title,
         )
         await _run_investigation_task(routed_task, clone, sid, t0)
         return
