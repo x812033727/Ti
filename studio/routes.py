@@ -792,6 +792,10 @@ async def workflows_delete(name: str) -> JSONResponse:
 class TaskBody(BaseModel):
     title: str = ""
     detail: str = ""
+    # 完整下任務表單(功能強化 C2):priority/type 防線沿用 backlog.add 既有的
+    # _clamp_priority/_norm_type,routes 不重複驗證;舊 client 只送 title 行為不變。
+    priority: int = 1
+    type: str = "improvement"
 
 
 @router.get("/api/autopilot", dependencies=[Depends(auth.require_auth)])
@@ -862,7 +866,14 @@ async def autopilot_dispatch_mode(body: DispatchModeBody) -> JSONResponse:
 
 @router.post("/api/autopilot/task", dependencies=WRITE_DEPS)
 async def autopilot_add_task(body: TaskBody) -> JSONResponse:
-    task = backlog.add(body.title, body.detail, source="manual")
+    # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
+    task = backlog.add(
+        body.title,
+        body.detail[:4000],
+        source="manual",
+        priority=body.priority,
+        item_type=body.type,
+    )
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
     return JSONResponse({"ok": True, "task": task})

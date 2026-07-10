@@ -149,7 +149,20 @@
       </section>
       <div class="ap-add">
         <input id="apTaskTitle" type="text" placeholder="新增一個自我改善任務（標題）" />
-        <button id="apAddBtn">加任務</button>
+        <textarea id="apTaskDetail" rows="2" placeholder="細節/驗收條件（選填）"></textarea>
+        <div class="ap-add-row">
+          <select id="apTaskPriority" title="優先級">
+            <option value="1" selected>P1 一般</option>
+            <option value="0">P0 必須</option>
+            <option value="2">P2 加分</option>
+          </select>
+          <select id="apTaskType" title="類型">
+            <option value="improvement" selected>改良</option>
+            <option value="feature">功能</option>
+            <option value="bug">缺陷</option>
+          </select>
+          <button id="apAddBtn">加任務</button>
+        </div>
       </div>
       <section class="ap-section">
         <div class="ap-section-head">📈 工作室動態</div>
