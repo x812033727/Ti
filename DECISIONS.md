@@ -2920,3 +2920,53 @@
 - 移交待辦：`lane 注入層落地後補守門測試對齊決策表`。
 - 理由：對齊 repo 既有 SSOT（env 覆蓋檔案、顯式注入優先），避免另立 lane 專屬表述造成文件漂移；fail 策略依失效後果分流而非一刀切。
 - 否決方案：env/manifest 一刀切同一 fail 策略；為 lane 另立獨立優先序；於 ARCHITECTURE 另開獨立章節而非內嵌子段。
+## 技術選型採純 bash 腳本、零新依賴（gitleaks 僅 `--no-git` 可選、grep fallback 為主軸）
+- 時間：2026-07-10 16:31
+- 理由：驗證/掃描本質是 gh/curl/grep 的 shell 動作，bash 最貼合；此腳本不進 orchestrator 資料流、不 import studio，是獨立運維工具
+- 否決方案：Python wrapper（雖與 repo 主語言一致，但只多一層 subprocess 表面，一致性收益低於直接性）
+
+## 腳本切為 `--verify`/`--scan`/`--report` 三個互不耦合子命令，各自可獨立執行、無共享狀態
+- 時間：2026-07-10 16:31
+- 理由：三段執行前提不同——`--verify` 需人在場有 `$GH_PAT`，`--scan`/`--report` 無 token 也能跑；解耦讓 #4 在無 token 時仍能完成
+- 否決方案：一鍵全跑組合模式（會逼無 token 的 #4 卡在 `--verify`）
+
+## 掃描目錄參數化（預設 `history/`、workspace-dir 由參數傳入），不寫死絕對路徑
+- 時間：2026-07-10 16:31
+
+## 依賴方向固定為單向「腳本 → runbook」——腳本不內嵌四項 PAT 規格文字，僅在 `--report` 輸出「請人工核對 runbook 四項規格」指引
+- 時間：2026-07-10 16:31
+- 理由：內嵌規格會製造第二份 SSOT，runbook 改動後腳本漏改即漂移
+- 否決方案：腳本自帶完整規格說明（看似方便，實則雙來源）
+
+## token 明文資料流為單向流入、永不流出——腳本內零明文輸出路徑，禁用 `set -x`、`curl -H` 不得被 log 印出，可 grep 自證，守門測試鎖此不變式
+- 時間：2026-07-10 16:31
+
+## 守門測試置於 `tests/docs/test_qa_token_rotation_script.py`，以字串錨鎖定（`GH_TOKEN=` 綁定、curl fallback、全前綴 regex、無裸跑 `gh auth status`）
+- 時間：2026-07-10 16:31
+
+## 字串錨須精準鎖「可執行行」，排除註解/heredoc/`--report` 指引文字中的 `gh auth status` 說明範例，避免自傷誤觸
+- 時間：2026-07-10 16:31
+- 理由：高工指出 `--report` 說明文字含 `gh auth status` 字樣會誤觸「須帶 GH_TOKEN 前綴」錨
+- 否決方案：全文粗鎖 `gh auth status`（會把說明範例當違規）
+
+## 不使用 AST 鎖，沿用字串錨——這是 shell 非 Python，同源於既有「示例順序不上 AST」的可逆性理由
+- 時間：2026-07-10 16:31
+
+## 守門測試絕不對 repo `history/` 實跑；黑/白樣本一律在 `$TMPDIR` 自建掃描目標傳入 `--scan`，只驗判別力、不依賴 repo 狀態
+- 時間：2026-07-10 16:31
+- 理由：repo `history/` 已有大量真實 `pjd*.jsonl`，對它實跑會讓測試隨 log 內容脆化、變慢（教訓庫「臨時檔不落被掃目錄」翻版）
+
+## 「對真實 repo `history/` 實跑一次殘留掃描」列為 #4 的證據項，結果併入 `--report` 唯讀摘要呈現，不靠守門測試順帶掃
+- 時間：2026-07-10 16:31
+- 理由：session 事件存檔殘留 token 屬真陽性安全發現，非誤報；與守門測試的「只驗判別力」須徹底分開
+
+## exit code 契約——`--report` 恆 0、`--scan` 命中殘留回非 0、`--verify` 依驗證結果；`--scan` 命中須併入 `--report` 摘要，不得靜默
+- 時間：2026-07-10 16:31
+- 理由：本輪不接 CI，`history/` 若有既存命中須靠 `--report` 被看見（無 silent 截斷）
+
+## 本輪不新增 CI gate、不動 `ci.yml`——守門測試落 `tests/docs`，既有 test job 自動涵蓋
+- 時間：2026-07-10 16:31
+
+## 本輪 #4 僅執行 `--scan`/`--report` 並回填證據，`--verify` 與步驟 1（發新）、步驟 3（撤舊）明確標示待人工於 GitHub UI 完成
+- 時間：2026-07-10 16:31
+

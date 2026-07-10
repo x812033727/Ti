@@ -17,3 +17,7 @@
 .ap-bl-actions { display: inline-flex; gap: 4px; flex: 0 0 auto; align-items: center; }
 .ap-bl-btn { padding: 1px 6px; font-size: 0.85em; }
 .ap-bl-actions select { font-size: 0.85em; }
+/* 完整下任務表單(C2):detail textarea 滿寬,priority/type/按鈕一列 */
+.ap-add textarea { width: 100%; resize: vertical; margin-top: 4px; }
+.ap-add-row { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
+.ap-add-row select { flex: 0 0 auto; }

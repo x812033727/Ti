@@ -1,5 +1,5 @@
 // Autopilot 自主迴圈面板：狀態列、backlog、額度迷你條、績效榜、動態 timeline。
-import { $, appendTextEl } from "../dom.js";
+import { $, appendTextEl, toast } from "../dom.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal } from "../components/modal.js";
 
@@ -337,11 +337,22 @@ export async function taskAction(id, action, extra = {}) {
 export async function addAutopilotTask() {
   const title = $("#apTaskTitle").value.trim();
   if (!title) return;
-  await fetch("/api/autopilot/task", {
+  const detail = ($("#apTaskDetail")?.value || "").trim();
+  const priority = parseInt($("#apTaskPriority")?.value ?? "1", 10);
+  const type = $("#apTaskType")?.value || "improvement";
+  const r = await fetch("/api/autopilot/task", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, detail, priority, type }),
   });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    toast(d.detail || "新增失敗", "err");
+    return;
+  }
   $("#apTaskTitle").value = "";
+  if ($("#apTaskDetail")) $("#apTaskDetail").value = "";
+  if ($("#apTaskPriority")) $("#apTaskPriority").value = "1";
+  if ($("#apTaskType")) $("#apTaskType").value = "improvement";
   await refreshAutopilot();
 }
