@@ -103,11 +103,16 @@ def add(
     priority: int = DEFAULT_PRIORITY,
     item_type: str = "improvement",
     effort: str = "",
+    gen: int = 0,
 ) -> dict | None:
     """新增一筆 pending 任務，回傳該任務；title 為空或重複則回 None。
 
     priority（0=P0 必須 ~ 2=P2 加分，越小越優先）與 item_type/effort 為可選的
     結構化欄位；舊呼叫端不傳即取預設值，行為不變。
+
+    gen＝衍生代數（討論 discovered followup 的血緣深度，seed/manual/eval=0，父任務的 followup=父+1）；
+    供 autopilot 對「單一任務衍生扇出/血緣深度」設上限，封住 discovered 迴圈灌水（完成率修法②）。
+    只在 >0 時落欄位，保持既有任務 dict 形狀不變、與現存 backlog 相容（讀取端一律 `.get("gen", 0)`）。
     """
     title = (title or "").strip()
     if not title:
@@ -131,28 +136,39 @@ def add(
             "updated_at": time.time(),
             "session_id": None,
         }
+        if gen:
+            task["gen"] = int(gen)
         data["tasks"].append(task)
         _save(data, state_dir)
         return task
 
 
 def add_many(
-    titles: list[str], source: str = "discovered", *, state_dir: Path | None = None
+    titles: list[str],
+    source: str = "discovered",
+    *,
+    state_dir: Path | None = None,
+    gen: int = 0,
 ) -> int:
-    """批次新增（去重），回傳實際新增數。"""
+    """批次新增（去重），回傳實際新增數。gen 見 `add`（衍生代數，供扇出/血緣上限）。"""
     n = 0
     for t in titles:
-        if add(t, source=source, state_dir=state_dir):
+        if add(t, source=source, state_dir=state_dir, gen=gen):
             n += 1
     return n
 
 
 def add_items(
-    items: list[dict], source: str = "discovered", *, state_dir: Path | None = None
+    items: list[dict],
+    source: str = "discovered",
+    *,
+    state_dir: Path | None = None,
+    gen: int = 0,
 ) -> int:
     """批次新增結構化任務（{title, detail?, priority?, type?, effort?}），回傳實際新增數。
 
     與 add_many 並列：消費端解析出優先級/類型時走這裡，純標題清單仍走 add_many。
+    gen 見 `add`（衍生代數，供扇出/血緣上限）。
     """
     n = 0
     for it in items:
@@ -164,6 +180,7 @@ def add_items(
             priority=it.get("priority", DEFAULT_PRIORITY),
             item_type=it.get("type", "improvement"),
             effort=it.get("effort", ""),
+            gen=gen,
         ):
             n += 1
     return n

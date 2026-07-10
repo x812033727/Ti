@@ -1204,6 +1204,50 @@ def _screen_followups(items: list, existing_titles: list[str]) -> list:
     return out
 
 
+def _add_discovered_followups(
+    task: dict, raw: list, existing_titles: list[str], *, structured: bool
+) -> int:
+    """把討論 discovered followup 回填 backlog，套「衍生扇出限制」（完成率修法②）。回傳實際新增數。
+
+    兩道上限與價值閘互補、共同封住 discovered 迴圈灌水（echo chamber）：
+    - **血緣代數（縱）**：父任務 gen 已達 `AUTOPILOT_FOLLOWUP_MAX_GEN` → 其 followup 一律不入場（留痕
+      丟棄），斷開「followup 生 followup」深鏈。子任務 gen＝父+1，隨 backlog.add 落欄位。
+    - **扇出寬度（橫）**：品質防線（`_screen_followups`：近期完成去重 + 價值閘 + 相似度/子系統廣度）後，
+      再截斷到 `AUTOPILOT_FOLLOWUP_MAX_PER_TASK`，單一任務一場最多回填這麼多後續。
+    兩上限任一為 0＝該維度不限（恢復舊行為）。
+    """
+    if not raw:
+        return 0
+    parent_gen = int(task.get("gen", 0) or 0)
+    max_gen = config.AUTOPILOT_FOLLOWUP_MAX_GEN
+    if max_gen and parent_gen >= max_gen:
+        log.info(
+            "任務 #%s 已達 followup 血緣代數上限（gen=%d≥%d），丟棄 %d 個後續提案（斷深鏈）",
+            task.get("id"),
+            parent_gen,
+            max_gen,
+            len(raw),
+        )
+        return 0
+    items = _screen_followups(raw, existing_titles)
+    cap = config.AUTOPILOT_FOLLOWUP_MAX_PER_TASK
+    capped = items[:cap] if cap else items
+    child_gen = parent_gen + 1
+    if structured:
+        added = backlog.add_items(capped, source="discovered", gen=child_gen)
+    else:
+        added = backlog.add_many(capped, source="discovered", gen=child_gen)
+    log.info(
+        "從討論新增 %d 個後續任務（提案 %d、品質過濾後 %d、寬度上限丟棄 %d、gen=%d）",
+        added,
+        len(raw),
+        len(items),
+        len(items) - len(capped),
+        child_gen,
+    )
+    return added
+
+
 async def _evaluate_self(clone: str) -> int:
     """backlog 空時，用一位資深專家審視 Ti 自身並產出改善任務。回傳新增數。
 
@@ -1685,19 +1729,11 @@ async def run_one_task(task: dict) -> None:
         # pre-filter），修 discovered 路徑繞過品質閘、灌爆 backlog 的不對稱（見 _screen_followups）。
         existing_titles = _pending_titles()
         if result.get("followup_items"):
-            raw = result["followup_items"]
-            items = _screen_followups(raw, existing_titles)
-            added = backlog.add_items(items, source="discovered")
-            log.info(
-                "從討論新增 %d 個後續任務（提案 %d、品質過濾後 %d）", added, len(raw), len(items)
+            _add_discovered_followups(
+                task, result["followup_items"], existing_titles, structured=True
             )
         elif result.get("followups"):
-            raw = result["followups"]
-            items = _screen_followups(raw, existing_titles)
-            added = backlog.add_many(items, source="discovered")
-            log.info(
-                "從討論新增 %d 個後續任務（提案 %d、品質過濾後 %d）", added, len(raw), len(items)
-            )
+            _add_discovered_followups(task, result["followups"], existing_titles, structured=False)
         # autopilot 的 working clone 本身就是核心 repo（config.CORE_REPO），判定的核心改動經同一個
         # 收斂點路由（與 improver/ws 共用，含近期完成去重，避免做完又重排），以 source="core" 標記。
         core_added = backlog.route_core_changes(result.get("core_changes") or [])
