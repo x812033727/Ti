@@ -271,6 +271,23 @@ def parse_triage_reason(text: str) -> str:
     return _last_match(text, r"理由\s*[:：]\s*(.+)") or ""
 
 
+def parse_refutation(text: str) -> str:
+    """解析調查結論 refuter 輸出：`反駁: 成立 <一句破綻>` 回破綻字串（非空＝反駁成立）。
+
+    `反駁: 不成立`、無標記、空輸出一律回空字串——**寧放勿殺**：refuter 是加值防線不是
+    依賴，它壞掉/離線/忘了格式都不得擋住合法結論（與價值閘同哲學）。只抽字串不做語意判斷。
+    """
+    m = _last_match(text, r"反駁\s*[:：]\s*(.+)")
+    if not m:
+        return ""
+    if m.startswith("不成立"):
+        return ""
+    if m.startswith("成立"):
+        reason = m[len("成立") :].strip(" ,，、:：-—")
+        return reason or "反駁成立（refuter 未附破綻說明）"
+    return ""
+
+
 def parse_incomplete_reason(text: str) -> str:
     """從 PM 驗收輸出抽出 `原因: <一句根因>`（判「未完成」時的裁決原因）；無標記回空字串。
 

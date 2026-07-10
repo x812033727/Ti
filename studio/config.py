@@ -1003,6 +1003,18 @@ AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1")
 # 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
 # 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
 AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+# AUTOPILOT_INVESTIGATION_REFUTE：調查結論的對抗性驗證（refuter）。單專家調查的已知風險是
+#   「自說自話」——結論寫得頭頭是道、證據卻對不上（reward hacking），而結論會進教訓庫污染
+#   長期記憶。開啟時（預設）結論標 done 前多一次廉價 MODEL_FAST 呼叫（providers.complete_once，
+#   永不 raise），專職試圖推翻：推得翻 → 不標 done，走「討論未達完成」重試（note 帶破綻）；
+#   推不翻/refuter 壞掉/離線 → 照常 done（寧放勿殺，refuter 是加值防線不是依賴）。
+#   調查任務量低、每筆只多一次 FAST 呼叫，額度成本可忽略。設 0 關閉。
+AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 
 # AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
@@ -1201,6 +1213,7 @@ def reload() -> None:
     global AUTOPILOT_AUTO_MERGE, AUTOPILOT_MERGE_FAST_WAIT, AUTOPILOT_MERGE_MAX_AGE
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
+    global AUTOPILOT_INVESTIGATION_REFUTE
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1388,6 +1401,12 @@ def reload() -> None:
         "",
     )
     AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+    AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
         "0",
         "false",
