@@ -6,7 +6,6 @@ import subprocess
 
 import pytest
 from _pytest.outcomes import Failed
-
 from _real_server_client import LOOPBACK_REFUSED_SKIP_REASON, assert_smoke_client_ok
 
 
