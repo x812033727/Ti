@@ -2,5 +2,5 @@
 
 本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:
 
-- [ ] 撰寫輪替工作單 `docs/evidence/token-rotation-2026-07-10.md`：把 runbook 三步驟展開為可勾選清單（順序鎖死先發後撤）、逐步標人工/AI、留驗證輸出貼證欄位
-- [ ] 驗證收尾：跑 `tests/server/` 全量＋`ruff check .`，貼跑綠輸出自證，`git status tests/` 確認無範圍外殘跡
+- [ ] 修改三處 fetch argv 為 force refspec：`studio/autodeploy.py:60`、`studio/deploy.py:159`、`studio/autopilot.py:2324` 均改為 `["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"]`，不動其他邏輯
+- [ ] 執行驗收閉環：跑全套測試與 ruff check/format --check 均綠，確認 `git status --porcelain` 之 diff 僅含 #1 三檔與 #2 測試檔，並確認 `repo_base.py`、`autopilot.py:120` 未被動到

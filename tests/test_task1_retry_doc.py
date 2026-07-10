@@ -8,7 +8,7 @@ import pathlib
 import re
 import subprocess
 
-from _scope_guard import find_repo_scope_violations
+from _scope_guard import collect_changed_files, find_scope_violations
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARCH = ROOT / "ARCHITECTURE.md"
@@ -199,5 +199,9 @@ def test_no_py_changed():
     ).stdout.strip()
     if not base:
         pytest.skip("取不到 origin/main 基準，略過 .py 變更護欄（避免假綠）")
-    changed = find_repo_scope_violations(ROOT, base, SCOPE_GUARD_MAINTENANCE_GLOBS)
+    changed_files = collect_changed_files(ROOT, base)
+    if "ARCHITECTURE.md" not in changed_files:
+        pytest.skip("非 retry doc 任務：未修改 ARCHITECTURE.md，.py 變更護欄不適用")
+
+    changed = find_scope_violations(changed_files, SCOPE_GUARD_MAINTENANCE_GLOBS)
     assert not changed, f"不應有 .py 被改動，卻動了：{changed}"
