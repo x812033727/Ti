@@ -107,9 +107,14 @@ def _self_sig() -> float:
 # --- working clone -------------------------------------------------------
 
 
-async def _prepare_clone() -> str:
-    """確保 working clone 存在且重置到 origin/<branch> 的乾淨狀態。回傳路徑。"""
-    work = str(config.AUTOPILOT_WORK_DIR)
+async def _prepare_clone(work_dir: str | None = None) -> str:
+    """確保 working clone 存在且重置到 origin/<branch> 的乾淨狀態。回傳路徑。
+
+    work_dir 預設主 clone(AUTOPILOT_WORK_DIR);調查旁路線傳獨立目錄(-inv)——調查
+    唯讀,但主 worker 每任務 reset --hard+clean 會抽換檔案,共用 clone 會讓旁路的
+    Expert 讀取不一致。
+    """
+    work = str(work_dir or config.AUTOPILOT_WORK_DIR)
     url = f"https://github.com/{config.AUTOPILOT_REPO}.git"
     branch = config.AUTOPILOT_BRANCH
     if not (Path(work) / ".git").exists():
@@ -2901,6 +2906,8 @@ def _write_status(
         "current_expert": current_expert,
         "turn_started_at": turn_started_at,
         "running_commit": _running_commit[:12] or None,
+        # 調查旁路線(δ):目前旁路在跑的任務;None=旁路閒置/未啟用。看板據此顯示第二行。
+        "sideline": _sideline_task_info,
     }
     try:
         config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -3296,8 +3303,10 @@ async def main() -> None:
         # 加值監督,建不起來不擋啟動(既有 main-loop 測試以 SimpleNamespace stub 本模組的
         # asyncio、只給 sleep——monitor 對它們是雜訊,缺 create_task 即靜默跳過)。
         monitor = asyncio.create_task(_loop_monitor())
+        sideline = asyncio.create_task(_investigation_sideline())
     except AttributeError:
         monitor = None
+        sideline = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -3310,10 +3319,11 @@ async def main() -> None:
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
     finally:
-        if monitor is not None:
-            monitor.cancel()
-            with contextlib.suppress(BaseException):
-                await monitor
+        for aux in (monitor, sideline):
+            if aux is not None:
+                aux.cancel()
+                with contextlib.suppress(BaseException):
+                    await aux
 
 
 # 暫停狀態轉換旗標(行程記憶體):只在「進入/離開暫停」時各記一次 log,避免每 10s 刷屏。
@@ -3385,6 +3395,63 @@ def _note_resumed() -> None:
     if _paused_logged:
         log.info("autopilot 已恢復(pause 檔移除),繼續取任務")
         _paused_logged = False
+
+
+# 調查旁路線的狀態(行程記憶體):目前在跑的旁路任務(供 status.json sideline 子欄)。
+_sideline_task_info: dict | None = None
+
+
+async def _investigation_sideline() -> None:
+    """調查任務旁路併行線(吞吐強化 δ,預設關):主 worker 跑完整管線(~51min/場)時,
+    本線併行消化調查分流任務(~89s/筆;live 量測 pending 37% 符合)。
+
+    設計邊界:單線一次一筆(+1 LLM 併發);與主迴圈共用 pause/quota 閘門(暫停或額度
+    受限即不取);認領走 backlog.claim_next(單一 flock 內 filter+標 in_progress,消
+    與主迴圈的 TOCTOU);clone 用獨立唯讀目錄(AUTOPILOT_WORK_DIR+"-inv")避免主 worker
+    reset --hard 抽換檔案。任何例外 log+continue,絕不影響主迴圈;停機隨 main cancel,
+    in_progress 由既有 stale recovery 收斂。
+    """
+    global _sideline_task_info
+    inv_dir = str(config.AUTOPILOT_WORK_DIR) + "-inv"
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if not config.AUTOPILOT_INVESTIGATION_PARALLEL:
+                continue
+            if not config.AUTOPILOT_INVESTIGATION_LANE:
+                continue
+            if config.autopilot_paused() or _shutdown_requested:
+                continue
+            # 額度閘門:與主迴圈同一判定(provider_quota.gate);snapshot 有 SWR 快取,
+            # 60s 一次的旁路輪詢幾乎都命中快取、不重打 API。全受限即不取任務。
+            if config.AUTOPILOT_QUOTA_GATE:
+                try:
+                    snap = await asyncio.to_thread(provider_quota.snapshot)
+                    usable, _reset = provider_quota.gate(snap)
+                    if not usable:
+                        continue
+                except Exception:  # noqa: BLE001 — 額度查詢失敗寧可保守跳過本輪
+                    continue
+            task = backlog.claim_next(_is_investigation_task)
+            if task is None:
+                continue
+            log.info("旁路線認領調查任務 #%s:%s", task["id"], task["title"][:60])
+            t0 = time.time()
+            sid = f"apinv{uuid.uuid4().hex[:8]}"
+            _sideline_task_info = {
+                "task_id": task["id"],
+                "title": task["title"][:80],
+                "started_at": t0,
+            }
+            try:
+                clone = await _prepare_clone(inv_dir)
+                await _run_investigation_task(task, clone, sid, t0)
+            finally:
+                _sideline_task_info = None
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 旁路線絕不影響主迴圈
+            log.exception("調查旁路線本輪失敗(忽略,60s 後重試)")
 
 
 async def _main_loop(startup_sig: float) -> None:
