@@ -903,6 +903,25 @@ AUTOPILOT_DEPLOY_CHECK_INTERVAL = int(os.getenv("TI_AUTOPILOT_DEPLOY_CHECK_INTER
 # 邊界重佈失敗（已自動回滾）後的退避秒數：避免壞 commit 讓每輪任務邊界都白燒一次 redeploy；
 # autodeploy timer 原邏輯仍在，雙保險。
 AUTOPILOT_DEPLOY_FAIL_BACKOFF = int(os.getenv("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", "1800"))
+# AUTOPILOT_AUTO_MERGE：開 PR 後掛 GitHub 原生 auto-merge（完成率第三輪修法二B）。舊同步
+#   路徑阻塞等 CI（PUBLISH_CI_TIMEOUT=600s）：被中斷＝殘留 open PR＋任務被自己的殘留擋死；
+#   CI 慢於 600s＝關 PR 丟掉整份成品。掛 auto-merge 後短窗輪詢（AUTOPILOT_MERGE_FAST_WAIT），
+#   窗滿任務標 merging 續跑下一場，由主迴圈 reconciler（每 15 分鐘）收斂：MERGED→done、
+#   BEHIND→update-branch（main 保護 strict:true 的必要配套）、CI 紅/衝突→關 PR 退回、
+#   逾齡（AUTOPILOT_MERGE_MAX_AGE）→退回重排；並認領/清理孤兒 autopilot PR。
+#   需 repo 開 Allow auto-merge（已確認開啟）。設 0＝完全回到同步等 CI 舊路徑。
+AUTOPILOT_AUTO_MERGE = os.getenv("TI_AUTOPILOT_AUTO_MERGE", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+# auto-merge 掛上後的短窗輪詢秒數（多數 CI 幾分鐘內綠，窗內合併＝與舊成功路徑等價）；
+# 0＝掛上即走（任務直接標 merging）。
+AUTOPILOT_MERGE_FAST_WAIT = int(os.getenv("TI_AUTOPILOT_MERGE_FAST_WAIT", "180"))
+# merging 任務等待背景合併的最長秒數：逾齡由 reconciler 關 PR 退回重排（note 帶「逾時」
+# 命中 INFRA_FAILURE_RE，triage 可自動重排）。
+AUTOPILOT_MERGE_MAX_AGE = int(os.getenv("TI_AUTOPILOT_MERGE_MAX_AGE", "7200"))
 # AUTOPILOT_EVAL_MEMORY：自我評估時回饋「近期成敗」給資深專家的筆數（每類 done/failed 各取
 #   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
 #   0 = 停用（還原成無狀態評估）。
@@ -966,6 +985,24 @@ AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1
     "False",
     "",
 )
+
+# AUTOPILOT_INVESTIGATION_LANE：調查/驗證型任務分流輕量管線（完成率第三輪修法一）。
+#   驗屍 14 筆「討論未達完成」failed：9 筆是純調查/驗證/證據儀式型——這類任務的正確完成判準
+#   是「產出結構化結論」而非「code 過三審＋Demo」，卻被送進多專家全套管線：工程師把結論落檔
+#   到自己 sandbox 的 $TMPDIR、QA 換 shell 讀不到 → 每輪 FAIL 同因，結構上不可能過；researcher
+#   實際已產出高品質結論但整場被判 failed 全數丟棄，再被有限重試重燒一場（每場 ~100 分鐘）。
+#   開啟時（預設）：命中調查訊號且無 code-work 豁免訊號的任務改走單專家調查 → 結構化結論寫回
+#   backlog note＋教訓庫，不進 StudioSession 多專家討論、不經 lint/collect/test/merge 閘門。
+#   誤分類安全閥：專家輸出 `需改碼:` 即退回完整管線重跑（不消耗 attempts）。設 0 回復現行為。
+AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
+# 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
+# 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
+AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
 
 # AUTOPILOT_FOLLOWUP_MAX_PER_TASK：單一任務完成後，討論 discovered followup 的「扇出寬度」上限——
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
@@ -1161,7 +1198,9 @@ def reload() -> None:
     global AUTOPILOT_DAILY_PR_BUDGET
     global AUTOPILOT_WORKFLOW_TRIAGE, AUTOPILOT_TRIAGE_TIMEOUT
     global AUTOPILOT_DEPLOY_CHECK_INTERVAL, AUTOPILOT_DEPLOY_FAIL_BACKOFF
+    global AUTOPILOT_AUTO_MERGE, AUTOPILOT_MERGE_FAST_WAIT, AUTOPILOT_MERGE_MAX_AGE
     global LINT_AUTOFORMAT, AUTOPILOT_FOLLOWUP_VALUE_GATE
+    global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
@@ -1326,6 +1365,14 @@ def reload() -> None:
     AUTOPILOT_TRIAGE_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TRIAGE_TIMEOUT", "60"))
     AUTOPILOT_DEPLOY_CHECK_INTERVAL = int(os.getenv("TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL", "300"))
     AUTOPILOT_DEPLOY_FAIL_BACKOFF = int(os.getenv("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", "1800"))
+    AUTOPILOT_AUTO_MERGE = os.getenv("TI_AUTOPILOT_AUTO_MERGE", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    AUTOPILOT_MERGE_FAST_WAIT = int(os.getenv("TI_AUTOPILOT_MERGE_FAST_WAIT", "180"))
+    AUTOPILOT_MERGE_MAX_AGE = int(os.getenv("TI_AUTOPILOT_MERGE_MAX_AGE", "7200"))
     # lint 閘門自動格式化（預設值須與檔頂宣告一致）
     LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
     AUTOPILOT_FOLLOWUP_VALUE_GATE = os.getenv("TI_AUTOPILOT_FOLLOWUP_VALUE_GATE", "1") not in (
@@ -1334,6 +1381,13 @@ def reload() -> None:
         "False",
         "",
     )
+    AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1") not in (
+        "0",
+        "false",
+        "False",
+        "",
+    )
+    AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
     AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") not in (
         "0",
         "false",

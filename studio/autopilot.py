@@ -484,6 +484,7 @@ class MergeResult(tuple):
         pr_number: int | None = None,
         branch: str = "",
         no_changes: bool = False,
+        auto_merge_pending: bool = False,
     ):
         self = super().__new__(cls, (ok, msg))
         return self
@@ -496,9 +497,14 @@ class MergeResult(tuple):
         pr_number: int | None = None,
         branch: str = "",
         no_changes: bool = False,
+        auto_merge_pending: bool = False,
     ):
         self.pr_number = pr_number
         self.branch = branch
+        # auto_merge_pending=True：PR 已開、GitHub 原生 auto-merge 已掛上，但快窗內 CI 尚未
+        # 收斂——PR 留在遠端由 GitHub 背景合併，呼叫端把任務標 merging 交 reconciler 收尾，
+        # 不關 PR、不算失敗（成品不再因 CI 慢於等待窗而被丟棄）。
+        self.auto_merge_pending = auto_merge_pending
         # no_changes=True：專家跑完但零 diff（無 commit 可合併）。這不是「合併失敗」而是
         # 「沒有可出貨的變更」——呼叫端據此把任務收斂為 parked no-op（不燒重試、不進失敗桶），
         # 而非走 _handle_gate_failure 白燒 3 次 session（見完成率診斷：PR 階段 16/22 為此類）。
@@ -562,6 +568,23 @@ async def _reclaim_stale_branch(clone: str, repo: str, branch: str) -> tuple[boo
             f"認領殘留分支 {branch} 失敗（刪除遠端分支未成，已中止）：{out[-400:]}", out
         )
     return True, "已刪除殘留遠端分支"
+
+
+async def _fast_wait_auto_merge(pr_number: int) -> bool:
+    """auto-merge 掛上後的短窗輪詢（完成率第三輪修法二B）。
+
+    多數 CI 幾分鐘內就綠：窗內（AUTOPILOT_MERGE_FAST_WAIT 秒）合併完成即回 True，行為與
+    既有同步路徑等價但等待短得多；窗滿仍未合併回 False——PR 留在遠端由 GitHub 背景合併，
+    呼叫端把任務標 merging 交 reconciler 收尾。快窗只回答「已合併了嗎」：真衝突/CI 紅/
+    被關閉等一律留給 reconciler 統一處置（那裡有完整分支）。FAST_WAIT=0＝掛上即走。
+    """
+    deadline = time.time() + max(config.AUTOPILOT_MERGE_FAST_WAIT, 0)
+    while time.time() < deadline:
+        data = await publisher._get_pr_status(pr_number, retries=0)
+        if data and data.get("merged"):
+            return True
+        await asyncio.sleep(config.PUBLISH_CI_INTERVAL)
+    return False
 
 
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
@@ -728,6 +751,37 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             pr_number = int(out.strip())
         except (TypeError, ValueError):
             return False, f"無法取得 PR 編號（已開 PR 但解析失敗，未合併）：{out[-400:]}"
+
+        # 原生 auto-merge（完成率第三輪修法二B，預設開）：把「等 CI→合併」交還 GitHub——
+        # 舊同步路徑阻塞等 CI 最長 600s，期間被 SIGTERM/execv 打斷＝殘留 open PR；CI 慢於
+        # 600s ＝關 PR 丟掉整份成品重跑。掛上 auto-merge 後短窗輪詢：窗內合併＝原成功路徑
+        # 零改動；窗滿仍 pending＝不關 PR、回 auto_merge_pending，任務標 merging 續跑下一場，
+        # 由 reconciler 收尾（strict:true 的 BEHIND 也在那裡 update-branch 解鎖）。
+        # 掛失敗（PR 已 clean 可直合、API 錯、repo 未開 allow_auto_merge）→ 回退同步路徑，行為不變。
+        if config.AUTOPILOT_AUTO_MERGE:
+            rc, out = await _run(
+                [*_GH, "pr", "merge", str(pr_number), "-R", repo, "--auto", "--squash"],
+                cwd=clone,
+                timeout=60,
+            )
+            if rc == 0:
+                if await _fast_wait_auto_merge(pr_number):
+                    return MergeResult(
+                        True,
+                        f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}"
+                        f"（auto-merge，CI 綠後由 GitHub 合併）",
+                        pr_number=pr_number,
+                        branch=branch,
+                    )
+                return MergeResult(
+                    False,
+                    f"auto-merge 已掛上 PR #{pr_number}，CI 未於快窗內收斂——"
+                    f"留待 GitHub 背景合併（reconciler 收尾）",
+                    pr_number=pr_number,
+                    branch=branch,
+                    auto_merge_pending=True,
+                )
+            log.warning("掛 auto-merge 失敗（回退同步等 CI 路徑）：%s", (out or "").strip()[-200:])
 
         # 等 CI 綠後才合併：複用 publisher 已測過的合併協調器（每輪「查狀態→等 CI→合併」，
         # behind/stale 會 _update_branch 後重試）。入口已把目標 repo 覆寫成 AUTOPILOT_REPO，
@@ -1207,6 +1261,184 @@ def _is_low_value_followup(title: str, detail: str = "") -> bool:
     return True
 
 
+# 調查訊號：任務標題/細節帶這些動詞/名詞＝「產出結論」型工作（調查/驗證/盤點/量測/診斷…），
+# 其正確完成判準是結論本身，不是 code diff。與 _FOLLOWUP_BUSYWORK_RE 聯集使用——證據儀式類
+# （sha256/權威/落檔）雖被價值閘擋在 followup 進場，但既有存量與其他來源仍會入場，一併分流。
+_INVESTIGATION_RE = re.compile(
+    r"調查|查明|查清|釐清|盤點|稽核|驗證|確認|複核|檢核|核對|量測|評估|診斷|分診|歸因|比對|證據"
+    r"|investigate|audit|verify|diagnose|measure",
+    re.IGNORECASE,
+)
+
+
+def _is_investigation_task(task: dict) -> bool:
+    """確定性分類：這個任務該走「調查分流輕量管線」嗎（完成率第三輪修法一）？
+
+    雙條件保守設計（與 _is_low_value_followup 同哲學、共用既有 regex）：
+    命中調查訊號（_INVESTIGATION_RE 或 _FOLLOWUP_BUSYWORK_RE）**且**無任何 code-work
+    豁免訊號（_FOLLOWUP_CODEWORK_RE）才分流；拿不準（有沾實作/修復/測試動詞）一律走
+    原多專家管線——分流錯過只是回到現狀，分流誤入有 `需改碼:` 安全閥退回，兩向皆有兜底。
+    task 帶 lane="full"（前次調查判定需改碼、已升級）者不再分流，防止乒乓迴圈。
+    """
+    if not config.AUTOPILOT_INVESTIGATION_LANE:
+        return False
+    if (task.get("lane") or "") == "full":
+        return False
+    text = f"{task.get('title') or ''}\n{task.get('detail') or ''}"
+    if not (_INVESTIGATION_RE.search(text) or _FOLLOWUP_BUSYWORK_RE.search(text)):
+        return False
+    if _FOLLOWUP_CODEWORK_RE.search(text):
+        return False
+    return True
+
+
+def _build_investigation_prompt(task: dict) -> str:
+    """組裝「單專家調查」prompt（純字串、無 LLM/網路，可單測；範式同 _build_split_prompt）。
+
+    關鍵設計（對治驗屍死因）：交付物＝結論文字本身，明令**禁止落檔**（$TMPDIR 落檔正是
+    「QA 換 shell 讀不到 → 每輪 FAIL 同因」的結構性死因）；強制 `證據:` 行防單專家自說自話；
+    `需人工:`/`需改碼:` 兩個結構化出口讓 AI 做不到/誤分類的任務走對的路，而非硬耗到 failed。
+    """
+    title = (task.get("title") or "").strip()
+    detail = (task.get("detail") or "").strip()
+    base = f"任務標題：{title}\n"
+    if detail:
+        base += f"任務細節：{detail}\n"
+    return (
+        "你是資深工程師，獨立完成以下這項「調查/驗證」型任務。交付物是**你的文字結論本身**"
+        "（會直接寫回任務看板與教訓庫），不是程式碼、不是檔案。\n\n"
+        f"{base}\n"
+        "要求：\n"
+        "1. 就地以唯讀方式調查（讀碼/grep/跑唯讀指令皆可），**不要修改任何檔案、不要把結論"
+        "落檔到 $TMPDIR 或任何路徑**——你的文字輸出就是唯一交付物。\n"
+        "2. 輸出格式（缺 `結論:` 即視為調查未完成）：\n"
+        "結論: <一段可獨立理解的結論：直接回答任務要查的問題，講清楚答案與根因>\n"
+        "證據: <支撐結論的關鍵證據，如 檔案:行號、指令與輸出摘要；可多行，每行以「證據:」開頭>\n"
+        "後續任務: <調查若發現需要改碼的具體工作，每行一項、動詞開頭；沒有就不列>\n"
+        "3. 若此任務 AI 做不到、必須人工處理（如換發 token、外部服務後台操作），改輸出一行：\n"
+        "需人工: <一句原因>\n"
+        "4. 若你判斷此任務其實必須實際改動程式碼才算完成（不是純調查），**不要動手改**，改輸出一行：\n"
+        "需改碼: <一句原因>\n"
+    )
+
+
+async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -> None:
+    """調查/驗證型任務的輕量管線：單專家一次 speak → 結構化結論寫回 backlog＋教訓庫。
+
+    不建 StudioSession、不過 lint/collect/test/merge 閘門——這類任務的完成判準是結論，
+    不是 code diff（驗屍：多專家管線對它們結構上不可能過，見 AUTOPILOT_INVESTIGATION_LANE）。
+    四個出口：
+      1. `結論:` ＋至少一行 `證據:` → done（note 帶結論摘要）；結論進 lessons、
+         `後續任務:` 走 _add_discovered_followups（與討論回填同一套防線＋扇出上限）。
+      2. `需人工:` → parked（AI 做不到，不再重燒 session）。
+      3. `需改碼:` → 退回 pending＋lane="full"（下輪走完整多專家管線），不消耗 attempts
+         ——誤分類安全閥，分類錯誤的成本只是多一輪等待。
+      4. 空輸出/缺結論/缺證據/逾時/例外 → 沿用 _handle_discussion_incomplete 既有重試語意。
+    audit 記 investigation_done|investigation_parked|investigation_escalated（無 PR、pr=None
+    不計每日預算）。任何未預期例外走出口 4，絕不讓分流弄死主迴圈。
+    """
+    from . import flow, lessons
+    from .experts import Expert
+    from .roles import SENIOR
+
+    log.info("任務 #%s 走調查分流輕量管線（單專家、不開 PR）", task["id"])
+    history.start_session(sid, f"[autopilot/調查] {task['title']}")
+    heartbeat = asyncio.create_task(_task_heartbeat(task["id"], sid))
+    text = ""
+    try:
+        ex = Expert(SENIOR, sid, Path(clone))
+
+        async def _noop(_ev):
+            return None
+
+        try:
+            text = await asyncio.wait_for(
+                ex.speak(_build_investigation_prompt(task), _noop),
+                timeout=config.AUTOPILOT_INVESTIGATION_TIMEOUT or None,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await ex.stop()
+    except Exception:  # noqa: BLE001 — 逾時/專家例外一律走「未收斂」重試出口，不冒泡
+        log.warning(
+            "任務 #%s 調查專家呼叫失敗/逾時，走討論未收斂重試語意", task["id"], exc_info=True
+        )
+        text = ""
+    finally:
+        heartbeat.cancel()
+        with contextlib.suppress(BaseException):
+            await heartbeat
+        with contextlib.suppress(Exception):
+            history.finish_session(sid)
+
+    parsed = flow.parse_investigation(text or "")
+
+    def _audit(outcome: str, detail: str) -> None:
+        if config.AUTOPILOT_DRYRUN:
+            return
+        _append_audit(
+            {
+                "ts": time.time(),
+                "task_id": task.get("id"),
+                "pr": None,  # 調查管線不開 PR，不計每日 PR 預算
+                "branch": "",
+                "head_sha": "",
+                "outcome": outcome,
+                "detail": detail[-400:],
+                "duration_s": round(time.time() - t0, 1),
+                "attempts": int(task.get("attempts") or 0),
+            }
+        )
+
+    if parsed["needs_human"]:
+        note = f"[調查] 需人工：{parsed['needs_human']}"
+        backlog.set_status(task["id"], "parked", note=note[:500])
+        _audit("investigation_parked", note)
+        log.info("任務 #%s 調查判定需人工，parked：%s", task["id"], parsed["needs_human"])
+        return
+    if parsed["needs_code"]:
+        # 升級回完整管線：不消耗 attempts（回填揀起前的值），lane="full" 防止再被分流。
+        note = f"[調查] 判定需改碼，升級回完整多專家管線：{parsed['needs_code']}"
+        backlog.set_status(
+            task["id"],
+            "pending",
+            lane="full",
+            attempts=int(task.get("attempts") or 0),
+            note=note[:500],
+        )
+        _audit("investigation_escalated", note)
+        log.info("任務 #%s 調查判定需改碼，退回完整管線重跑（不耗 attempts）", task["id"])
+        return
+    if parsed["conclusion"] and parsed["evidence"]:
+        summary = " ".join(parsed["conclusion"].split())
+        backlog.set_status(task["id"], "done", note=f"[調查結論] {summary[:400]}")
+        # 結論沉澱進教訓庫（固定模板但結論各異 → exact_only 防 difflib 近似去重誤殺）。
+        with contextlib.suppress(Exception):
+            lessons.add_many(
+                [f"調查結論（{task['title']}）：{summary[:500]}"],
+                session_id=sid,
+                requirement=task.get("title") or "",
+                source="investigation",
+                exact_only=True,
+            )
+        if parsed["followups"]:
+            with contextlib.suppress(Exception):
+                _add_discovered_followups(
+                    task, parsed["followups"], _pending_titles(), structured=True
+                )
+        _audit("investigation_done", summary)
+        log.info(
+            "任務 #%s 調查完成（結論 %d 字、證據 %d 行）",
+            task["id"],
+            len(summary),
+            len(parsed["evidence"]),
+        )
+        return
+    # 缺結論或缺證據（防單專家無憑據自說自話）：走既有「討論未達完成」有限重試語意。
+    why = "調查輸出缺「結論:」" if not parsed["conclusion"] else "調查結論缺「證據:」行"
+    _handle_discussion_incomplete(task, reason=why)
+
+
 def _screen_followups(items: list, existing_titles: list[str]) -> list:
     """討論回填的後續任務進場前，套與 `_evaluate_self` 相同的品質防線：近期完成去重 +
     良構性/價值閘（`_is_low_value_followup`）+ `_filter_pending_duplicates`（詞集相似度 + 子系統覆蓋廣度）。
@@ -1549,7 +1781,7 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
         )
 
 
-def _handle_discussion_incomplete(task: dict) -> None:
+def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
     """討論未達完成且不可出貨時的收斂：有限次退回 pending 重試，用罄才永久 failed。
 
     這是完成率最大的失敗桶（見完成率診斷）。舊行為是單發即永久 failed，但討論未收斂常
@@ -1561,26 +1793,30 @@ def _handle_discussion_incomplete(task: dict) -> None:
     """
     attempts = int(task.get("attempts") or 0)
     cap = config.AUTOPILOT_DISCUSSION_MAX_ATTEMPTS
+    # 裁決原因（(a)-lite）：PM 判「未完成」時輸出的 `原因: <一句根因>`。附進 note 讓分診
+    # 與人工回看有據；「討論未達完成」子串不動，既有分診/看板/診斷分類無縫續接。
+    why = f"（原因: {reason.strip()}）" if (reason or "").strip() else ""
     if attempts + 1 < cap:
         backlog.set_status(
             task["id"],
             "pending",
             attempts=attempts + 1,
-            note=f"討論未達完成，第 {attempts + 1} 次退回重試",
+            note=f"討論未達完成，第 {attempts + 1} 次退回重試{why}",
         )
         log.info(
-            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）",
+            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）%s",
             task["id"],
             attempts + 1,
             cap,
+            why,
         )
     else:
         backlog.set_status(
             task["id"],
             "failed",
-            note=f"討論未達完成（連續 {cap} 次未收斂，放棄）",
+            note=f"討論未達完成（連續 {cap} 次未收斂，放棄）{why}",
         )
-        log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄", task["id"], cap)
+        log.info("任務 #%s 討論連續 %d 次未達完成，標 failed 放棄%s", task["id"], cap, why)
 
 
 # 執行中活動停滯 supervisor 的輪詢/寬限常數（秒）。
@@ -1677,6 +1913,13 @@ async def run_one_task(task: dict) -> None:
 
     clone = await _prepare_clone()
     requirement = task["title"] + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
+
+    # 調查分流（完成率第三輪修法一）：調查/驗證型任務走單專家輕量管線，不進多專家
+    # session、不過 merge 閘門——其完成判準是結論而非 code diff。所有出口（含例外）
+    # 都在 _run_investigation_task 內終局處置（done/parked/升級退回/未收斂重試）。
+    if _is_investigation_task(task):
+        await _run_investigation_task(task, clone, sid, t0)
+        return
 
     history.start_session(sid, f"[autopilot] {task['title']}")
     turn_state: dict[str, object] = {
@@ -1808,7 +2051,8 @@ async def run_one_task(task: dict) -> None:
             if not result.get("shippable"):
                 # 討論未收斂常是暫時性的（LLM 非決定性，重跑常會過）：有限次退回 pending
                 # 重試而非單發即永久 failed，用罄才放棄（詳見 _handle_discussion_incomplete）。
-                _handle_discussion_incomplete(task)
+                # reason＝PM 驗收判「未完成」時的 `原因:` 裁決根因，附進 note 供分診/回看。
+                _handle_discussion_incomplete(task, reason=result.get("incomplete_reason") or "")
                 return
             shipped_with_limits = True
             log.info("任務 #%s 帶已知限制出貨,續走客觀閘門", task["id"])
@@ -1848,6 +2092,7 @@ async def run_one_task(task: dict) -> None:
         merge_res = await _commit_push_merge(clone, task)
         merged, msg = merge_res
         no_changes = getattr(merge_res, "no_changes", False)
+        auto_pending = getattr(merge_res, "auto_merge_pending", False)
         # 結構化審計：成功與失敗都記（失敗也燒了成本、審計要能回溯）；dryrun 不落檔。
         # pr 非空＝實際開出 PR（計入每日預算）；push 前就被擋（無 PR）→ pr=None，記錄不計數。
         # no_changes 走獨立 outcome，不污染 merge_failed 桶（診斷分類與看板據此分流）。
@@ -1862,7 +2107,11 @@ async def run_one_task(task: dict) -> None:
                     "head_sha": head_sha.strip() if rc_sha == 0 else "",
                     "outcome": "no_changes"
                     if no_changes
-                    else ("merged" if merged else "merge_failed"),
+                    else (
+                        "merged"
+                        if merged
+                        else ("merge_pending" if auto_pending else "merge_failed")
+                    ),
                     "detail": msg[-400:],
                     "duration_s": round(time.time() - t0, 1),
                     "attempts": int(task.get("attempts") or 0),
@@ -1873,6 +2122,27 @@ async def run_one_task(task: dict) -> None:
             # parked no-op——不燒重試（省下重跑整場 session）、不落失敗桶（非任務缺陷）。
             backlog.set_status(task["id"], "parked", note="無變更可出貨（no-op，非失敗）")
             log.info("任務 #%s 零 diff，收斂為 parked no-op（不重試）", task["id"])
+            return
+        if auto_pending:
+            # auto-merge 已掛上、PR 留在遠端由 GitHub 背景合併：任務標 merging（非終局，
+            # completion_stats 天然排除），autopilot 立即續跑下一場——不阻塞、不關 PR、
+            # 不算失敗。reconciler（_maybe_reconcile_open_prs）週期收斂：MERGED→done、
+            # BEHIND→update-branch、CI 紅/衝突→關 PR 退回、逾齡→退回重排。audit 已記
+            # merge_pending（pr 欄照帶——PR 確實開了，計入每日預算；reconciler 補記的
+            # merged 用 pr_ref 欄避免雙計）。
+            backlog.set_status(
+                task["id"],
+                "merging",
+                pr=getattr(merge_res, "pr_number", None),
+                merged_branch=getattr(merge_res, "branch", ""),
+                merge_armed_at=time.time(),
+                note="auto-merge 已掛上，待 CI 綠由 GitHub 背景合併",
+            )
+            log.info(
+                "任務 #%s 標 merging（PR #%s auto-merge 背景合併，reconciler 收尾）",
+                task["id"],
+                getattr(merge_res, "pr_number", None),
+            )
             return
         if not merged:
             _handle_gate_failure(task, "merge", msg)
@@ -2045,6 +2315,217 @@ async def _maybe_boundary_redeploy() -> None:
             os.execv(sys.executable, [sys.executable, "-m", "studio.autopilot"])
     except Exception:  # noqa: BLE001 — 邊界部署只是自癒輔助，失敗不得影響主迴圈
         log.exception("任務邊界部署檢查失敗（忽略，不影響主迴圈）")
+
+
+# open PR reconciler 的節流（行程記憶體；重啟歸零＝重啟後第一輪就跑——正合「重啟前可能
+# 有任務卡在 merging」的場景，且跑在 next_pending 之前，堵住「PR 已合併但任務被退回
+# pending」的重複開工窗）。
+_RECONCILE_INTERVAL_S = 900.0
+# 節流起點＝行程啟動時刻：首輪 reconcile 延後一個完整間隔——它會打真實 gh API（view/list/
+# close/merge），短命行程（單元測試等）絕不可意外觸發（tests/conftest.py 另設
+# TI_AUTOPILOT_AUTO_MERGE=0 關死，雙保險）。代價僅是重啟後 merging 任務多等最多 15 分鐘。
+_last_reconcile_at = time.time()
+
+
+def _reconcile_gh_json(out: str) -> dict | list | None:
+    """gh --json 輸出的容錯解析：壞 JSON 回 None（呼叫端跳過該筆，不炸 reconciler）。"""
+    try:
+        return json.loads(out)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rollup_has_failure(rollup: list | None) -> bool:
+    """statusCheckRollup 是否含實質失敗（FAILURE/TIMED_OUT/CANCELLED）。
+
+    rollup 常含 push＋pull_request 兩組同名 check；任一失敗即視為 CI 紅——寧可保守關 PR
+    退回重跑，也不讓紅 PR 掛著 auto-merge 空等到逾齡。空/None＝無法判定，交逾齡兜底。
+    """
+    for c in rollup or []:
+        if str(c.get("conclusion") or "").upper() in ("FAILURE", "TIMED_OUT", "CANCELLED"):
+            return True
+    return False
+
+
+async def _maybe_reconcile_open_prs() -> None:
+    """每 _RECONCILE_INTERVAL_S 收斂一次 open PR 與 merging 任務（完成率第三輪修法二B）。
+
+    auto-merge 把「等 CI→合併」交還 GitHub 後，任務生命週期多了「merging」懸置態；加上
+    中斷殘留的孤兒 PR（歷史缺口：全庫原本沒有任何人回頭認領 open PR）——本函式是兩者的
+    唯一收斂點。分診/回收同儕（_maybe_triage_failed / _recover_stale_in_progress）節流
+    慣例照抄；全程容錯，gh/網路失敗只 log，絕不弄死主迴圈。
+    """
+    global _last_reconcile_at
+    if config.AUTOPILOT_DRYRUN or not config.AUTOPILOT_AUTO_MERGE:
+        return
+    now = time.time()
+    if now - _last_reconcile_at < _RECONCILE_INTERVAL_S:
+        return
+    _last_reconcile_at = now
+    try:
+        await _reconcile_open_prs()
+    except Exception:  # noqa: BLE001 — reconciler 只是收斂輔助，失敗不得影響主迴圈
+        log.exception("open PR reconcile 失敗（忽略，不影響主迴圈）")
+
+
+async def _reconcile_open_prs() -> None:
+    """兩趟收斂：Pass 1 逐筆核對 merging 任務的 PR 終態；Pass 2 認領/清理孤兒 autopilot PR。"""
+    repo = (config.AUTOPILOT_REPO or "").strip()
+    if not repo:
+        return
+    token = publisher.set_repo_override(repo)
+    try:
+        await _reconcile_merging_tasks(repo)
+        await _reconcile_orphan_prs(repo)
+    finally:
+        publisher.reset_repo_override(token)
+
+
+async def _reconcile_merging_tasks(repo: str) -> None:
+    for task in backlog.list_tasks("merging"):
+        tid = task["id"]
+        pr = task.get("pr")
+        if not pr:
+            backlog.set_status(tid, "pending", note="merging 無 PR 紀錄（異常），退回重排")
+            log.warning("任務 #%s merging 但無 PR 紀錄，退回 pending", tid)
+            continue
+        rc, out = await _run(
+            [
+                *_GH,
+                "pr",
+                "view",
+                str(pr),
+                "-R",
+                repo,
+                "--json",
+                "state,mergeStateStatus,statusCheckRollup",
+            ],
+            timeout=60,
+        )
+        data = _reconcile_gh_json(out) if rc == 0 else None
+        if not isinstance(data, dict):
+            log.debug("reconcile：查 PR #%s 失敗（跳過本輪）：%s", pr, out[-200:])
+            continue
+        state = str(data.get("state") or "").upper()
+        if state == "MERGED":
+            # 成果已進 main：補記 audit（用 pr_ref 而非 pr——_todays_pr_count 以 pr 欄計
+            # 每日預算，開 PR 當下的 merge_pending 已計過一次，這裡再帶 pr 會雙計）。
+            backlog.set_status(tid, "done", note="auto-merge 背景合併完成（reconciler 收斂）")
+            _append_audit(
+                {
+                    "ts": time.time(),
+                    "task_id": tid,
+                    "pr": None,
+                    "pr_ref": pr,
+                    "branch": task.get("merged_branch", ""),
+                    "head_sha": "",
+                    "outcome": "merged",
+                    "reconciled": True,
+                    "detail": "auto-merge 背景合併完成",
+                    "duration_s": None,
+                    "attempts": int(task.get("attempts") or 0),
+                }
+            )
+            log.info("任務 #%s 的 PR #%s 已由 auto-merge 合併，收斂 done", tid, pr)
+            continue
+        if state == "CLOSED":
+            _handle_gate_failure(task, "merge", f"PR #{pr} 被外部關閉未合併")
+            await _delete_remote_branch(repo, task.get("merged_branch", ""))
+            continue
+        # OPEN
+        ms = str(data.get("mergeStateStatus") or "").upper()
+        if ms == "BEHIND":
+            # main 保護 strict:true（要求分支與 base 同步）下，auto-merge 會卡 BEHIND 永不
+            # 觸發——GitHub 不自動 update。這條 update-branch 是 auto-merge 方案的必要配套：
+            # 更新後 CI 重跑、綠了 auto-merge 自然觸發。輪數上限防「main 高頻前進」下無限追。
+            rounds = int(task.get("behind_rounds") or 0)
+            if rounds >= config.MERGE_BEHIND_RETRIES:
+                await _run(
+                    [*_GH, "pr", "close", str(pr), "-R", repo, "--delete-branch"], timeout=120
+                )
+                _handle_gate_failure(
+                    task, "merge", f"PR #{pr} 落後 main 追趕 {rounds} 輪仍未合併，關閉重排"
+                )
+                continue
+            if await publisher._update_branch(int(pr)):
+                backlog.set_status(tid, "merging", behind_rounds=rounds + 1)
+                log.info(
+                    "任務 #%s 的 PR #%s BEHIND，已 update-branch（第 %d 輪）", tid, pr, rounds + 1
+                )
+            continue
+        if ms == "DIRTY" or _rollup_has_failure(data.get("statusCheckRollup")):
+            # 真衝突或 CI 紅：auto-merge 永不觸發，關 PR 退回（走既有 gate failure 重試語意）。
+            await _run([*_GH, "pr", "close", str(pr), "-R", repo, "--delete-branch"], timeout=120)
+            reason = "真衝突（DIRTY）" if ms == "DIRTY" else "CI 失敗"
+            _handle_gate_failure(task, "merge", f"PR #{pr} {reason}，已關閉退回")
+            continue
+        # CI 仍在跑/狀態未收斂：未逾齡就留待下輪；逾齡＝CI 卡死或 runner 出問題，關閉退回
+        # （note 帶「逾時」命中 INFRA_FAILURE_RE，triage 可自動重排）。
+        armed_at = float(task.get("merge_armed_at") or 0)
+        if armed_at and time.time() - armed_at > config.AUTOPILOT_MERGE_MAX_AGE:
+            await _run([*_GH, "pr", "close", str(pr), "-R", repo, "--delete-branch"], timeout=120)
+            _handle_gate_failure(
+                task,
+                "merge",
+                f"PR #{pr} 等待 CI 逾時（>{config.AUTOPILOT_MERGE_MAX_AGE}s），已關閉退回",
+            )
+
+
+async def _reconcile_orphan_prs(repo: str) -> None:
+    """認領/清理孤兒 autopilot PR：開了但沒有任何 merging 任務指向它（中斷殘留）。"""
+    rc, out = await _run(
+        [*_GH, "pr", "list", "-R", repo, "--state", "open", "--json", "number,headRefName"],
+        timeout=60,
+    )
+    data = _reconcile_gh_json(out) if rc == 0 else None
+    if not isinstance(data, list):
+        return
+    tracked = {str(t.get("pr")) for t in backlog.list_tasks("merging")}
+    tasks_by_id = {str(t["id"]): t for t in backlog.list_tasks()}
+    for item in data:
+        branch = str(item.get("headRefName") or "")
+        number = item.get("number")
+        m = re.fullmatch(r"autopilot/task-(\d+)", branch)
+        if not m or number is None or str(number) in tracked:
+            continue
+        task = tasks_by_id.get(m.group(1))
+        if task is None or task.get("status") in ("done", "parked"):
+            # 任務已終局/不存在：PR 是純殘留，關閉清理（順帶解除 ls-remote 認領負擔）。
+            await _run(
+                [*_GH, "pr", "close", str(number), "-R", repo, "--delete-branch"], timeout=120
+            )
+            log.info("孤兒 PR #%s（%s）無對應在途任務，已關閉清理", number, branch)
+            continue
+        if task.get("status") in ("pending", "failed"):
+            # 崩潰殘留但成品還在：掛 auto-merge 認領、任務改 merging——不重做整場 session。
+            rc, out = await _run(
+                [*_GH, "pr", "merge", str(number), "-R", repo, "--auto", "--squash"],
+                timeout=60,
+            )
+            if rc == 0:
+                backlog.set_status(
+                    task["id"],
+                    "merging",
+                    pr=number,
+                    merged_branch=branch,
+                    merge_armed_at=time.time(),
+                    note=f"reconciler 認領殘留 PR #{number}（掛 auto-merge）",
+                )
+                log.info("認領孤兒 PR #%s → 任務 #%s 改 merging", number, task["id"])
+            else:
+                log.debug("孤兒 PR #%s 掛 auto-merge 失敗（留待下輪）：%s", number, out[-200:])
+        # in_progress：任務正在跑，PR 可能是它自己剛開的——不動。
+
+
+async def _delete_remote_branch(repo: str, branch: str) -> None:
+    """盡力刪遠端殘留分支（gh api）；失敗只 log——分支殘留會被 ls-remote 認領路徑兜底。"""
+    if not branch:
+        return
+    rc, out = await _run(
+        [*_GH, "api", "-X", "DELETE", f"repos/{repo}/git/refs/heads/{branch}"], timeout=60
+    )
+    if rc != 0:
+        log.debug("刪除遠端分支 %s 失敗（忽略）：%s", branch, out[-200:])
 
 
 def _recover_stale_in_progress() -> None:
@@ -2844,6 +3325,9 @@ async def _main_loop(startup_sig: float) -> None:
         # 任務邊界部署自查：放在取任務之前——此刻保證無 autopilot 討論，是 autodeploy
         # 飢餓下唯一可靠的部署窗口（成功且自身碼有變會 execv，不返回）。
         await _maybe_boundary_redeploy()
+        # open PR reconciler：放在取任務之前——「PR 已合併但任務被退回 pending」的場景
+        # 要先收斂成 done，堵住重複開工。
+        await _maybe_reconcile_open_prs()
         task = backlog.next_pending()
         if task is None:
             _write_status("idle", quota=quota)

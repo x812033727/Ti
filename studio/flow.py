@@ -271,6 +271,59 @@ def parse_triage_reason(text: str) -> str:
     return _last_match(text, r"理由\s*[:：]\s*(.+)") or ""
 
 
+def parse_incomplete_reason(text: str) -> str:
+    """從 PM 驗收輸出抽出 `原因: <一句根因>`（判「未完成」時的裁決原因）；無標記回空字串。
+
+    讓 autopilot 的「討論未達完成」失敗 note 帶上結構化根因（供 triage 分診與人工回看），
+    而非只有一句無資訊量的「未收斂」。只抽字串，不做語意判斷。
+    """
+    return _last_match(text, r"原因\s*[:：]\s*(.+)") or ""
+
+
+# 調查輸出的區塊終止標記：`結論:` 之後遇到任一這些行前綴即視為結論段結束。
+_INVESTIGATION_STOP_RE = re.compile(r"^\s*(證據|後續任務|需人工|需改碼|教訓|任務)\s*[:：]")
+
+
+def parse_investigation(text: str) -> dict:
+    """解析單專家「調查/驗證」任務的結構化輸出（autopilot 調查分流輕量管線用）。
+
+    回傳 dict：
+      - conclusion：`結論:` 起、至下一個已知行前綴（證據/後續任務/需人工/需改碼/教訓/任務）
+        或文末的多行結論全文（strip 後）；無標記＝空字串（代表調查失敗，呼叫端走重試）。
+      - evidence：所有 `證據:` 行內容（list，保序）。
+      - needs_human：`需人工: <原因>`（AI 做不到、須人工處理）；無＝空字串。
+      - needs_code：`需改碼: <原因>`（判定須實際改碼才算完成，應升級回完整管線）；無＝空字串。
+      - followups：`後續任務:` 行（沿用 parse_followups_meta，含 priority/type 標籤）。
+
+    純字串解析、stdlib-only；政策（done/parked/升級）由呼叫端 autopilot 判斷。
+    """
+    lines = text.splitlines()
+    conclusion_parts: list[str] = []
+    collecting = False
+    for line in lines:
+        m = re.match(r"^\s*結論\s*[:：]\s*(.*)$", line)
+        if m:
+            # 以最後一個 `結論:` 為準（與 _last_match 的「取最後」慣例一致）
+            conclusion_parts = [m.group(1).strip()]
+            collecting = True
+            continue
+        if collecting:
+            if _INVESTIGATION_STOP_RE.match(line):
+                collecting = False
+                continue
+            conclusion_parts.append(line.rstrip())
+    conclusion = "\n".join(conclusion_parts).strip()
+    return {
+        "conclusion": conclusion,
+        "evidence": [
+            m.strip() for m in re.findall(r"^\s*證據\s*[:：]\s*(.+)$", text, re.M) if m.strip()
+        ],
+        "needs_human": _last_match(text, r"需人工\s*[:：]\s*(.+)") or "",
+        "needs_code": _last_match(text, r"需改碼\s*[:：]\s*(.+)") or "",
+        "followups": parse_followups_meta(text),
+    }
+
+
 # --- 結論彙整解析（共識／分歧／未決／行動） -------------------------------
 
 # 四前綴 → 結構化鍵；順序即輸出 dict 鍵順序。

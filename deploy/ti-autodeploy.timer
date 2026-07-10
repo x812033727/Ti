@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically run Ti Studio auto-deploy poller
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
