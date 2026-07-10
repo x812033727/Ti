@@ -526,6 +526,44 @@ def _merge_fail_note(msg: str, out: str) -> str:
     return msg
 
 
+async def _reclaim_stale_branch(clone: str, repo: str, branch: str) -> tuple[bool, str]:
+    """認領遠端殘留的同名任務分支，讓被中斷的任務重跑時能照常出貨。
+
+    殘留成因：前次執行在「等 CI→合併」期間被中斷（SIGTERM/execv 重載/crash），PR 與分支
+    留在遠端；重跑走到 push 前防呆撞見同名分支，舊行為一律中止＝任務被自己的殘留永久擋死
+    （分支名由 task id 決定，殘留必屬本任務前次執行，認領不會動到別的任務）。
+    處置：有 open PR → `gh pr close --delete-branch` 一併收掉；無 open PR（從未開出/已關閉/
+    已合併但分支殘留）→ 直接刪遠端分支。刪除失敗（網路/權限）回 (False, 原因) 由呼叫端維持
+    既有中止語意（fail-safe 不變），原因經 _merge_fail_note 標記讓暫時性失敗可分診重試。
+    """
+    rc, state = await _run(
+        [*_GH, "pr", "view", branch, "-R", repo, "--json", "state", "-q", ".state"],
+        cwd=clone,
+        timeout=60,
+    )
+    if rc == 0 and state.strip().upper() == "OPEN":
+        rc, out = await _run(
+            [*_GH, "pr", "close", "-R", repo, branch, "--delete-branch"],
+            cwd=clone,
+            timeout=120,
+        )
+        if rc != 0:
+            return False, _merge_fail_note(
+                f"認領殘留分支 {branch} 失敗（關閉殘留 PR 未成，已中止）：{out[-400:]}", out
+            )
+        return True, "已關閉殘留 open PR 並刪除分支"
+    rc, out = await _run(
+        ["git", *_GIT_CRED, "push", "origin", "--delete", branch],
+        cwd=clone,
+        timeout=120,
+    )
+    if rc != 0:
+        return False, _merge_fail_note(
+            f"認領殘留分支 {branch} 失敗（刪除遠端分支未成，已中止）：{out[-400:]}", out
+        )
+    return True, "已刪除殘留遠端分支"
+
+
 async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
     """把成果開分支、push、squash-merge 進 main。dryrun 只回報。
 
@@ -606,10 +644,17 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
                 f"ls-remote 檢查失敗（無法確認遠端狀態，已中止）：{out[-400:]}", out
             )
         if out.strip() and not config.AUTOPILOT_FORCE_PUSH:
-            return False, (
-                f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
-                f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
-            )
+            if not config.AUTOPILOT_RECLAIM_BRANCH:
+                return False, (
+                    f"遠端已存在同名分支 {branch}，為避免覆寫已中止；"
+                    f"如確認要覆寫殘留分支，設 TI_AUTOPILOT_FORCE_PUSH=1"
+                )
+            # 認領殘留分支（B-4）：殘留必屬本任務前次被中斷的執行，關舊 PR/刪舊分支後
+            # 照常走「push→開新 PR」，任務不再被自己的殘留永久擋死。失敗維持中止語意。
+            reclaimed, note = await _reclaim_stale_branch(clone, repo, branch)
+            if not reclaimed:
+                return False, note
+            log.info("任務 #%s 認領殘留分支 %s：%s", task["id"], branch, note)
 
         # 第二道防線（與上方 ls-remote 防覆寫各自獨立）：merge 進 main 前，主動查「合併目標
         # AUTOPILOT_BRANCH」的保護狀態。放在 push 之前——unknown 時 fail-safe 中止且尚未 push，
@@ -713,12 +758,13 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         )
         # 用 MergeResult 攜帶 pr_number：PR 已實際開出（燒了 CI/API 成本），audit 與每日
         # PR 預算需計入；解包仍是 (False, msg)，既有呼叫端不受影響。
-        return MergeResult(
-            False,
-            f"CI 未過或合併失敗（{outcome.value if hasattr(outcome, 'value') else outcome}）：{detail}",
-            pr_number=pr_number,
-            branch=branch,
-        )
+        fail_msg = f"CI 未過或合併失敗（{outcome.value if hasattr(outcome, 'value') else outcome}）：{detail}"
+        # 分診閉環（B-5）：等 CI 逾時／API·網路錯誤是暫時性 infra 問題（非本任務程式碼缺陷），
+        # 附 unreachable 標記讓 backlog.triage_failed（INFRA_FAILURE_RE）在達重試上限後自動重排；
+        # CI 紅（ci_failed）／真衝突／被保護擋下是實質失敗，刻意不附（附了會無限重排）。
+        if outcome in (publisher.MergeOutcome.TIMEOUT, publisher.MergeOutcome.ERROR):
+            fail_msg += "｜unreachable（網路暫時性，可分診重試）"
+        return MergeResult(False, fail_msg, pr_number=pr_number, branch=branch)
     finally:
         publisher.reset_repo_override(token)
 

@@ -857,6 +857,18 @@ AUTOPILOT_DRYRUN = os.getenv("TI_AUTOPILOT_DRYRUN", "0") not in ("0", "false", "
 # AUTOPILOT_FORCE_PUSH：預設非強制推送；遠端已存在同名分支會中止。設 1 才略過中止並改用
 #   `git push --force-with-lease --force-if-includes`（覆寫殘留分支用，絕不用裸 -f）。
 AUTOPILOT_FORCE_PUSH = os.getenv("TI_AUTOPILOT_FORCE_PUSH", "0") not in ("0", "false", "False", "")
+# AUTOPILOT_RECLAIM_BRANCH：遠端殘留同名任務分支（前次執行在「等 CI→合併」期間被中斷而留下）
+#   不再一律中止，改自動認領：殘留 open PR 先關閉、殘留分支刪除，然後照常推送。分支名由
+#   task id 決定，殘留必屬同一任務的前次執行，認領不會動到別的任務；零 diff 檢查在認領之前，
+#   「前次已合併、本次無新內容」會先收斂成 no_changes，認領不會覆蓋已合併成果。與 FORCE_PUSH
+#   的差異：FORCE_PUSH 是覆寫同一分支（force push），認領是刪舊開新、不需 force。
+#   設 0 恢復「偵測到殘留即中止」的舊行為（任務會被自己的殘留永久擋死，需人工清理）。
+AUTOPILOT_RECLAIM_BRANCH = os.getenv("TI_AUTOPILOT_RECLAIM_BRANCH", "1") not in (
+    "0",
+    "false",
+    "False",
+    "",
+)
 # PUBLISH_BYPASS_INFRA_CI：自動合併等 CI 時，若 CI「失敗」其實是基礎設施/帳務秒掛
 #   （所有失敗 check 在數秒內 conclusion=failure、零步驟執行，如 GitHub Actions 命中
 #   spending limit）而非程式碼問題，則繞過此「等 CI→紅就保留待人工」的自設閘直接合併。

@@ -78,6 +78,9 @@ def _forbid_real_subprocess(monkeypatch):
 @pytest.fixture(autouse=True)
 def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
+    # RECLAIM_BRANCH 固定 False：本檔守護 FORCE_PUSH × 遠端狀態矩陣的「中止」舊不變式
+    # （逃生門），認領新路徑（預設開）由 test_reclaim_stale_branch.py 覆蓋。
+    monkeypatch.setattr(config, "AUTOPILOT_RECLAIM_BRANCH", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", "main")
 
 

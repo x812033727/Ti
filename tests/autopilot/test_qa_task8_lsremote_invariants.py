@@ -66,8 +66,12 @@ def _forbid_real_subprocess(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _safe_config(monkeypatch):
+    # RECLAIM_BRANCH 固定 False：本檔釘死的是「遠端已存在同名分支＝中止、零寫入」的
+    # 舊不變式（逃生門語意）。認領新路徑（預設開，會關舊 PR/刪舊分支後照常出貨）由
+    # test_reclaim_stale_branch.py 覆蓋。
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
+    monkeypatch.setattr(config, "AUTOPILOT_RECLAIM_BRANCH", False)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", "main")
 
 
