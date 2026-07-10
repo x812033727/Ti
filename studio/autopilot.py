@@ -2877,7 +2877,8 @@ def _write_status(
 ) -> None:
     """心跳：把當前狀態原子寫入 ``<AUTOPILOT_STATE_DIR>/status.json``。
 
-    state ∈ {"idle", "running", "quota_sleep", "budget_sleep", "rotate_restart", "stopped"}；
+    state ∈ {"idle", "running", "paused", "quota_sleep", "budget_sleep", "rotate_restart", "stopped"}；
+    paused＝pause 檔存在、主迴圈刻意空轉(非卡死,每 10s 刷新 updated_at);
     /api/autopilot 讀此檔回報「迴圈還活著、正在做什麼、睡到何時、各 provider 用量」。
     帳號輪替時 quota 另帶 ``rotated_to``（切換目標 label）；budget_sleep＝每日 PR 預算
     已滿睡到 UTC 跨日；stopped＝收到停機訊號優雅結束（非死鎖）。
@@ -3304,6 +3305,35 @@ async def main() -> None:
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
 
 
+# 暫停狀態轉換旗標(行程記憶體):只在「進入/離開暫停」時各記一次 log,避免每 10s 刷屏。
+_paused_logged = False
+
+
+async def _pause_tick() -> None:
+    """暫停中的一輪空轉——必須可觀測(2026-07-10 事故:pause 後 status.json 凍結在
+    上一筆 running #293,53 分鐘死寂被誤判成「看門狗失效的卡死」並觸發人工重啟)。
+
+    進入暫停的第一輪:記 log+收斂殘留 in_progress(看板不停在假 running);每輪
+    `_write_status("paused")` 刷新 updated_at——外部監控據此區分「刻意暫停」與「真卡死」。
+    """
+    global _paused_logged
+    if not _paused_logged:
+        log.info("autopilot 已暫停(pause 檔存在),主迴圈空轉待恢復")
+        _paused_logged = True
+        with contextlib.suppress(Exception):
+            _recover_stale_in_progress()
+    _write_status("paused")
+    await asyncio.sleep(10)
+
+
+def _note_resumed() -> None:
+    """離開暫停時記一次 log(冪等;非暫停期間為 no-op)。"""
+    global _paused_logged
+    if _paused_logged:
+        log.info("autopilot 已恢復(pause 檔移除),繼續取任務")
+        _paused_logged = False
+
+
 async def _main_loop(startup_sig: float) -> None:
     while True:
         # 停機旗標兜底：取消若在某處被吞（競態）而迴圈還在轉，這裡立即補上停機路徑，
@@ -3311,8 +3341,9 @@ async def _main_loop(startup_sig: float) -> None:
         if _shutdown_requested:
             raise CancelledError()
         if config.autopilot_paused():
-            await asyncio.sleep(10)
+            await _pause_tick()
             continue
+        _note_resumed()
 
         # 額度閘門：取任務前先確認至少一個 provider 還有額度；全受限就睡到最早重置
         # （夾在 [60, AUTOPILOT_QUOTA_MAX_SLEEP]）後 continue 重查，避免額度耗盡時
