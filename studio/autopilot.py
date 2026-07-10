@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import sys
 import time
 import uuid
@@ -3291,6 +3292,9 @@ async def _prepare_execv_reload() -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     log.info("autopilot 啟動（dryrun=%s, repo=%s）", config.AUTOPILOT_DRYRUN, config.AUTOPILOT_REPO)
+    # Type=notify 啟動握手:不發 READY systemd 會判啟動失敗,故放 main 最早期、任何可能
+    # 耗時的步驟(git/部署檢查)之前。execv 自我重載後 NOTIFY_SOCKET 保留,會再發一次(無害)。
+    _sd_notify("READY=1")
     # 啟動時擷取一次「執行中程式碼」的 commit（磁碟 HEAD 可能已被 reset 但行程未重載，
     # 兩者語意不同）；隨 status.json 供 /api/autopilot 顯示部署漂移。失敗留空不擋啟動。
     global _running_commit
@@ -3304,9 +3308,11 @@ async def main() -> None:
         # asyncio、只給 sleep——monitor 對它們是雜訊,缺 create_task 即靜默跳過)。
         monitor = asyncio.create_task(_loop_monitor())
         sideline = asyncio.create_task(_investigation_sideline())
+        notifier = asyncio.create_task(_watchdog_notifier())
     except AttributeError:
         monitor = None
         sideline = None
+        notifier = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -3319,7 +3325,7 @@ async def main() -> None:
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
     finally:
-        for aux in (monitor, sideline):
+        for aux in (monitor, sideline, notifier):
             if aux is not None:
                 aux.cancel()
                 with contextlib.suppress(BaseException):
@@ -3370,6 +3376,39 @@ async def _loop_monitor() -> None:
             raise
         except Exception:  # noqa: BLE001 — 監督器自身失敗不得影響主迴圈
             log.debug("loop monitor 檢查失敗(忽略)", exc_info=True)
+
+
+# systemd watchdog 對接(穩定強化 γ):β 的 loop monitor 只告警不自殺,真正自救交
+# systemd——unit 換 Type=notify+WatchdogSec=300,行程每 60s 送 WATCHDOG=1,連續漏
+# 5 次(整個行程無聲凍結,含 event loop 卡死)即被 systemd 殺掉再 Restart=always 拉起。
+_WATCHDOG_PING_S = 60
+
+
+def _sd_notify(msg: str) -> None:
+    """零依賴 sd_notify:往 NOTIFY_SOCKET(unix datagram)送一則通知。
+
+    非 systemd 環境(測試/手動執行)無此環境變數 → 靜默 no-op;socket 任何失敗也
+    只 debug log 不冒泡——通知是加值,絕不影響主迴圈。@ 開頭為 abstract socket。
+    """
+    addr = os.environ.get("NOTIFY_SOCKET", "")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.connect(addr)
+            s.sendall(msg.encode())
+    except OSError:
+        log.debug("sd_notify 送出失敗(忽略):%s", msg, exc_info=True)
+
+
+async def _watchdog_notifier() -> None:
+    """每 60s 送 WATCHDOG=1。**暫停中也送**——paused 是活著,不該被 systemd 誤殺;
+    「假活」(event loop 卡死)本 task 也動不了,ping 自然斷,正是 watchdog 要抓的。"""
+    while True:
+        await asyncio.sleep(_WATCHDOG_PING_S)
+        _sd_notify("WATCHDOG=1")
 
 
 async def _pause_tick() -> None:
