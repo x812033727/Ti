@@ -49,7 +49,7 @@ def _patch_machinery(monkeypatch, tmp_path):
     async def _gate_ok(clone):
         return (True, "")
 
-    async def _run(cmd, cwd=None, timeout=600):
+    async def _run(cmd, cwd=None, timeout=600, **kwargs):
         if "rev-parse" in cmd:
             return (0, "abc1234\n")
         return (0, "")

@@ -30,7 +30,7 @@ class RunSpy:
         self.overrides = overrides or {}
         self.calls: list[list[str]] = []
 
-    async def __call__(self, cmd, cwd=None, timeout=600):
+    async def __call__(self, cmd, cwd=None, timeout=600, **kwargs):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
         for key, val in self.overrides.items():
@@ -200,7 +200,7 @@ async def test_run_one_task_marks_merging_on_auto_merge_pending(monkeypatch, tmp
     monkeypatch.setattr(autopilot, "_append_audit", lambda rec: audits.append(rec))
     monkeypatch.setattr(autopilot, "_handle_gate_failure", lambda *a, **k: gate_failures.append(a))
 
-    async def fake_run(cmd, cwd=None, timeout=600):
+    async def fake_run(cmd, cwd=None, timeout=600, **kwargs):
         return (0, "abc123\n")
 
     monkeypatch.setattr(autopilot, "_run", fake_run)

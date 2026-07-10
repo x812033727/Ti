@@ -9,6 +9,12 @@ from studio import config, publisher, runner
 # --- 純邏輯 -------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _git_env_supported(monkeypatch):
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
+    monkeypatch.setattr(publisher.git_cred, "_GIT_ENV_SUPPORTED", True)
+
+
 def test_is_configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "")
     monkeypatch.setattr(config, "PUBLISH_REPO", "")
@@ -60,10 +66,12 @@ def test_git_auth_env_carries_base64_header():
 
     token = "secrettoken"
     env = publisher.git_auth_env(token)
-    # 走 GIT_CONFIG_* env 注入 per-host extraHeader，token 不進 argv
-    assert env["GIT_CONFIG_COUNT"] == "1"
-    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
-    value = env["GIT_CONFIG_VALUE_0"]
+    # 走 GIT_CONFIG_* env 注入；先清空 credential.helper，再掛 per-host extraHeader。
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
+    assert env["GIT_CONFIG_VALUE_0"] == ""
+    assert env["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    value = env["GIT_CONFIG_VALUE_1"]
     expected_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     assert value == f"Authorization: Basic {expected_b64}"
     header_b64 = value.rsplit(" ", 1)[-1]
@@ -189,21 +197,25 @@ async def test_push_base_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_
 async def test_run_command_exec_env_reaches_child_without_entering_command(tmp_path):
     """實跑子行程確認 env 到達；預期值只用 hash 比對，避免 token/b64 進 argv。"""
     import hashlib
+    import sys
 
     token = "secrettoken"
     env = publisher.git_auth_env(token)
-    header_b64 = env["GIT_CONFIG_VALUE_0"].rsplit(" ", 1)[-1]
+    header_b64 = env["GIT_CONFIG_VALUE_1"].rsplit(" ", 1)[-1]
     probe_env = {
         **env,
-        "EXPECTED_HEADER_SHA": hashlib.sha256(env["GIT_CONFIG_VALUE_0"].encode()).hexdigest(),
+        "EXPECTED_HEADER_SHA": hashlib.sha256(env["GIT_CONFIG_VALUE_1"].encode()).hexdigest(),
     }
 
     probe = (
         "import hashlib, os, sys\n"
-        "value = os.environ.get('GIT_CONFIG_VALUE_0', '')\n"
+        "value = os.environ.get('GIT_CONFIG_VALUE_1', '')\n"
         "ok = (\n"
-        "    os.environ.get('GIT_CONFIG_COUNT') == '1'\n"
+        "    os.environ.get('GIT_CONFIG_COUNT') == '2'\n"
         "    and os.environ.get('GIT_CONFIG_KEY_0') == "
+        "'credential.helper'\n"
+        "    and os.environ.get('GIT_CONFIG_VALUE_0') == ''\n"
+        "    and os.environ.get('GIT_CONFIG_KEY_1') == "
         "'http.https://github.com/.extraheader'\n"
         "    and hashlib.sha256(value.encode()).hexdigest()\n"
         "    == os.environ.get('EXPECTED_HEADER_SHA')\n"
@@ -213,7 +225,7 @@ async def test_run_command_exec_env_reaches_child_without_entering_command(tmp_p
     )
     out = await runner.run_command_exec(
         tmp_path,
-        ["python3", "-c", probe],
+        [sys.executable, "-c", probe],
         timeout=10,
         sandbox=False,
         label="env probe",
@@ -291,9 +303,11 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
         assert "x-access-token" not in url
         assert "tok" not in url
         env = kwargs["env"]
-        assert env["GIT_CONFIG_COUNT"] == "1"
-        assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
-        value = env["GIT_CONFIG_VALUE_0"]
+        assert env["GIT_CONFIG_COUNT"] == "2"
+        assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
+        assert env["GIT_CONFIG_VALUE_0"] == ""
+        assert env["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+        value = env["GIT_CONFIG_VALUE_1"]
         assert value.startswith("Authorization: Basic ")
         header_b64 = value.rsplit(" ", 1)[-1]
         assert "\n" not in header_b64
@@ -312,7 +326,7 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
     assert res.branch == "ti-studio/s1"
     assert res.pr_url.endswith("/pull/9")
     assert seen["url"] == "https://github.com/o/r.git"
-    assert seen["env"]["GIT_CONFIG_VALUE_0"].startswith("Authorization: Basic ")
+    assert seen["env"]["GIT_CONFIG_VALUE_1"].startswith("Authorization: Basic ")
 
 
 @pytest.mark.asyncio

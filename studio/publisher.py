@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextvars
 import json
 import logging
@@ -25,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-from . import config, runner
+from . import config, git_cred, runner
 from .repo_ident import repo_key, repo_owner
 
 log = logging.getLogger("ti.publisher")
@@ -155,38 +154,24 @@ def remote_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 
 
-def _auth_b64(token: str) -> str:
-    """base64(f"x-access-token:{token}")：b64encode 天生無尾換行（等價 echo -n），
-    釘死 `echo | base64` 多換行導致 header 失效的坑。"""
-    return base64.b64encode(f"x-access-token:{token}".encode()).decode()
-
-
-def extra_header(token: str) -> str:
-    """git http.extraHeader 的值：`Authorization: Basic <base64(x-access-token:token)>`。"""
-    return f"Authorization: Basic {_auth_b64(token)}"
-
-
 def git_auth_env(token: str) -> dict[str, str]:
     """把認證 header 走 GIT_CONFIG_* env 注入 git（token 不進 argv/ps）。
 
-    等價於 `git -c http.https://github.com/.extraheader=...`，但值走 env 而非 argv，
-    ps 短窗也看不到 token。per-host key（github.com）收斂作用域，避免 header 隨
-    重導向送到其他 host。需 git 2.31+（GIT_CONFIG_COUNT 支援）。
-    """
-    return {
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-        "GIT_CONFIG_VALUE_0": extra_header(token),
-    }
+    委派 SSOT `git_cred.make_env`：token 走 GIT_CONFIG_* env（等價
+    `git -c http.https://github.com/.extraheader=...` 但值走 env 而非 argv，ps 短窗
+    也看不到 token），per-host key（github.com）收斂作用域，並先清空系統 credential.helper。
+    legacy 閥開啟或 git <2.31 時回 {}，此時 push 由呼叫端的 `git_cred.git_cred_argv`
+    argv fallback 承接認證（見 `_push`/`_push_base`/`repush`）。"""
+    return git_cred.make_env(token)
 
 
 def redact(text: str, token: str | None = None) -> str:
     """遮蔽 token 明文；同步遮蔽其 base64 形式（extraHeader 走 env，但值仍可能外洩到
-    日誌/錯誤訊息）。base64 用與 git_auth_env 完全相同的編碼（無尾換行）算出同一字串再遮。"""
+    日誌/錯誤訊息）。base64 走 git_cred.auth_b64（與注入完全相同的編碼、無尾換行）算出同一字串再遮。"""
     token = token or config.GITHUB_TOKEN
     if token and text:
         text = text.replace(token, "***")
-        text = text.replace(_auth_b64(token), "***")
+        text = text.replace(git_cred.auth_b64(token), "***")
     return text
 
 
@@ -406,7 +391,7 @@ async def _push(
     )
     return await runner.run_command_exec(
         cwd,
-        ["git", "push", "-u", "ti_publish", branch],
+        ["git", *git_cred.git_cred_argv(config.GITHUB_TOKEN), "push", "-u", "ti_publish", branch],
         timeout=120,
         sandbox=False,
         label="git push",
@@ -438,7 +423,13 @@ async def _push_base(
     url 為乾淨裸 URL（不含 token），認證走 env 帶 extraHeader。"""
     return await runner.run_command_exec(
         cwd,
-        ["git", "push", url, f"HEAD:refs/heads/{base}"],
+        [
+            "git",
+            *git_cred.git_cred_argv(config.GITHUB_TOKEN),
+            "push",
+            url,
+            f"HEAD:refs/heads/{base}",
+        ],
         timeout=120,
         sandbox=False,
         label="git push (init base)",
@@ -1001,7 +992,7 @@ async def repush(cwd, branch: str) -> runner.RunOutput:
     remote.url 現為乾淨裸 URL（不含 token），故重推同樣需帶 extraHeader 認證 env。"""
     return await runner.run_command_exec(
         cwd,
-        ["git", "push", "ti_publish", branch],
+        ["git", *git_cred.git_cred_argv(config.GITHUB_TOKEN), "push", "ti_publish", branch],
         timeout=120,
         sandbox=False,
         label="git push",

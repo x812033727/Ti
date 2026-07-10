@@ -47,7 +47,7 @@ def _merging_task(pr=42):
 def _install_run(monkeypatch, result):
     calls: list[list[str]] = []
 
-    async def fake_run(cmd, cwd=None, timeout=600):
+    async def fake_run(cmd, cwd=None, timeout=600, **kwargs):
         calls.append(list(cmd))
         return result
 

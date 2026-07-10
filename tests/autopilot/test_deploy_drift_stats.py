@@ -27,7 +27,7 @@ def state(tmp_path, monkeypatch):
 def _stub_git(monkeypatch, *, head="a" * 40, origin="b" * 40, behind="3", fail=False):
     calls: list[str] = []
 
-    async def _run(cmd, cwd=None, timeout=600):
+    async def _run(cmd, cwd=None, timeout=600, **kwargs):
         joined = " ".join(cmd)
         calls.append(joined)
         if fail:
