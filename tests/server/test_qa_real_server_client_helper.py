@@ -12,7 +12,9 @@ from _real_server_client import LOOPBACK_REFUSED_SKIP_REASON, assert_smoke_clien
 HERE = Path(__file__).resolve().parent
 
 
-def _client(stdout: str = "", stderr: str = "", returncode: int = 1) -> subprocess.CompletedProcess[str]:
+def _client(
+    stdout: str = "", stderr: str = "", returncode: int = 1
+) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
         args=["python", "tests/server/smoke_agenda_real_server.py", "9"],
         returncode=returncode,
