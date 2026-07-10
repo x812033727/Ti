@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import claude_accounts, claude_usage, config, events, llm_caller, tools
+from . import claude_accounts, claude_usage, config, conventions, events, llm_caller, tools
 from .roles import Role, effective_tools
 
 logger = logging.getLogger(__name__)
@@ -502,6 +502,9 @@ async def stream_to_events(
 
 class Expert:
     def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
+        # 慣例卡：執行環境慣例附進 system prompt（依 cwd 分層、無工具角色跳過、冪等）。
+        # 在 __init__ 注入而非 make_expert——涵蓋 autopilot 直接建構的路徑（調查分流/自評/拆分）。
+        role = conventions.apply(role, cwd)
         self.role = role
         self.session_id = session_id
         self._cwd = cwd  # 逾時斷線後重建 client 需要
