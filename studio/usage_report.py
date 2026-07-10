@@ -59,8 +59,7 @@ def _usage_for(meta: dict) -> dict | None:
     sid = meta.get("session_id")
     if not sid:
         return None
-    events = history.load_events(sid)
-    derived = history._derive_token_usage(events)
+    derived = history._derive_token_usage(history.load_events(sid))
     return derived if derived["total"]["calls"] else None
 
 
