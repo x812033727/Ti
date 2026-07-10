@@ -796,6 +796,9 @@ async def autopilot_status() -> JSONResponse:
         {
             "paused": config.autopilot_paused(),
             "counts": backlog.counts(),
+            # 近窗完成率（done/(done+failed)，排除 parked/pending）——counts 的終身數字會被
+            # 舊史與永不清的 parked 灌水/拖低,此欄反映真實近況。
+            "completion": backlog.completion_stats(),
             "dryrun": config.AUTOPILOT_DRYRUN,
             "repo": config.AUTOPILOT_REPO,
             "heartbeat": heartbeat,

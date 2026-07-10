@@ -31,6 +31,9 @@ def test_autopilot_status_without_heartbeat_is_null(client):
     # 既有欄位維持不變
     assert data["paused"] is False
     assert "counts" in data and "dryrun" in data and "repo" in data
+    # 近窗完成率欄位（排除 parked/pending）：無終局任務時 rate=None、total=0
+    assert "completion" in data
+    assert data["completion"]["rate"] is None and data["completion"]["total"] == 0
 
 
 def test_autopilot_status_includes_heartbeat(client, tmp_path):

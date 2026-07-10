@@ -51,7 +51,13 @@ def test_write_baseline_gitignore_merges_and_preserves(tmp_path):
     runner.write_baseline_gitignore(tmp_path)
     body = gi.read_text(encoding="utf-8")
     assert "my_custom_dir/" in body, "既有內容須保留"
-    assert ".venv/" in body and "*.db" in body and ".claude/" in body and ".mcp.json" in body
+    assert (
+        ".venv/" in body
+        and "*.db" in body
+        and ".claude/" in body
+        and ".mcp.json" in body
+        and ".tmp/" in body
+    )
     # 冪等:重複呼叫不重覆灌
     runner.write_baseline_gitignore(tmp_path)
     assert gi.read_text(encoding="utf-8").count(".venv/") == 1
@@ -74,6 +80,8 @@ async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
     (main_repo / ".bashrc").write_text("", encoding="utf-8")
     (main_repo / ".mcp.json").write_text("", encoding="utf-8")
     (main_repo / ".idea").write_text("", encoding="utf-8")  # 沙箱可能建 0-byte 檔(非目錄)
+    (main_repo / ".tmp").mkdir()
+    (main_repo / ".tmp" / "cache.txt").write_text("cache\n", encoding="utf-8")
     (main_repo / ".venv").mkdir()
     (main_repo / ".venv" / "pyvenv.cfg").write_text("home=/x\n", encoding="utf-8")
     (main_repo / ".claude").mkdir()
@@ -85,6 +93,7 @@ async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
         await runner.run_command_exec(main_repo, ["git", "ls-files"], sandbox=False)
     ).output
     assert ".venv/pyvenv.cfg" in tracked_before and "data.db" in tracked_before
+    assert ".tmp/cache.txt" in tracked_before
 
     await runner.git_sanitize_workspace(main_repo)
     await runner.git_commit(main_repo, "sanitized")
@@ -96,6 +105,7 @@ async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
         "data.db",
         ".bashrc",
         ".mcp.json",
+        ".tmp/cache.txt",
         ".claude/settings.json",
         ".idea",
     ):
@@ -104,7 +114,7 @@ async def test_git_sanitize_workspace_untracks_junk(tmp_path, main_repo):
     assert "app.py" in tracked and "base.txt" in tracked
     # baseline 樣式併入 .gitignore
     gi = (main_repo / ".gitignore").read_text(encoding="utf-8")
-    assert ".venv/" in gi and "*.db" in gi and ".claude/" in gi
+    assert ".venv/" in gi and "*.db" in gi and ".claude/" in gi and ".tmp/" in gi
 
 
 @pytest.mark.asyncio
