@@ -238,6 +238,30 @@ def counts(*, state_dir: Path | None = None) -> dict:
     return c
 
 
+def completion_stats(window: int = 50, *, state_dir: Path | None = None) -> dict:
+    """近 window 筆『終局』任務(done/failed)的完成率，供看板顯示真實近況。
+
+    刻意只納 done+failed 為分母,排除:
+      - `parked`：永不清除的歸檔態(逾時待拆分、no-op、14 天陳年 failed),留在分母會把
+        暫時性損失長期往下拖(見完成率診斷);park 也非「當下一次派工的成敗」。
+      - `pending`/`in_progress`：尚未終局。
+    再取 updated_at 最近的 window 筆——終身數字會被早期歷史灌水,近窗才反映現況。
+    window<=0 表示不設窗(全部終局任務)。rate 於無終局任務時為 None(前端顯示「—」)。
+    """
+    terminal = [t for t in _load(state_dir)["tasks"] if t.get("status") in ("done", "failed")]
+    terminal.sort(key=lambda t: t.get("updated_at", 0), reverse=True)
+    recent = terminal[:window] if window > 0 else terminal
+    done = sum(1 for t in recent if t["status"] == "done")
+    total = len(recent)
+    return {
+        "window": window,
+        "done": done,
+        "failed": total - done,
+        "total": total,
+        "rate": (done / total) if total else None,
+    }
+
+
 def recent_done_titles(limit: int, *, state_dir: Path | None = None) -> set[str]:
     """近期已完成任務的標題集合（取最新 N 筆），供「找問題／自我評估」去重過濾。"""
     if limit <= 0:
