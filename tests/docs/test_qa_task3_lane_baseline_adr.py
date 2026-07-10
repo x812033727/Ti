@@ -40,7 +40,9 @@ def test_task3_adr_is_single_append_at_decisions_tail() -> None:
     decisions = _read(DECISIONS)
 
     assert decisions.count(f"## {ADR_TITLE}") == 1
-    assert decisions.rstrip().endswith(_adr_section().strip())
+    # 放寬過期尾鎖：原 endswith(舊 ADR 區塊) 把 DECISIONS.md 檔尾永久鎖死，任何後續合法
+    # ADR append 都必紅（守門自身缺陷）。改為存在性鎖，配合上方 count == 1 仍鎖「存在且唯一」。
+    assert _adr_section().strip() in decisions
 
 
 def test_task3_adr_keeps_existing_decision_format_and_records_contract() -> None:

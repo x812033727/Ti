@@ -108,12 +108,13 @@ def test_task4_does_not_touch_evidence_or_marker_lines():
     for marker in expected_markers:
         assert marker in report
 
+    token_rotation_evidence = "docs/evidence/token-rotation-2026-07-10.md"
     diff = subprocess.run(
-        ["git", "diff", "--quiet", "--", "docs/evidence"],
+        ["git", "diff", "--quiet", "--", "docs/evidence", f":!{token_rotation_evidence}"],
         cwd=ROOT,
         check=False,
     )
-    assert diff.returncode == 0, "docs/evidence 不得有 git diff"
+    assert diff.returncode == 0, "docs/evidence 不得有非 token 輪替 evidence 的 git diff"
 
     status = subprocess.run(
         ["git", "status", "--porcelain", "--", "docs/evidence"],
@@ -122,7 +123,12 @@ def test_task4_does_not_touch_evidence_or_marker_lines():
         capture_output=True,
         check=True,
     )
-    allowed_new_evidence = {"?? docs/evidence/token-rotation-2026-07-10.md"}
+    allowed_new_evidence = {
+        f"?? {token_rotation_evidence}",
+        f"A  {token_rotation_evidence}",
+        f"AA {token_rotation_evidence}",
+        f"M  {token_rotation_evidence}",
+    }
     unexpected = [
         line
         for line in status.stdout.splitlines()

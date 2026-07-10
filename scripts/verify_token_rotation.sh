@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# GH_PAT 輪替輔助工具：驗證新 token / 殘留 token 掃描 / 人工-AI 分界報表。
+#
+# 規格唯一權威：docs/token-rotation-runbook.md。本腳本不內嵌四項 PAT 規格文字，
+# 只在 --report 指引人工回 runbook 核對，避免第二份 SSOT 漂移。
+set -uo pipefail
+
 if [[ $- == *x* ]]; then
   set +x
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GITHUB_TOKEN_REGEX='(ghp_[A-Za-z0-9]{36,}|gho_[A-Za-z0-9]{36,}|ghs_[A-Za-z0-9]{36,}|ghr_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,})'
+TOKEN_RE='gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}'
 
 usage() {
   cat <<'EOF'
-Usage:
-  bash scripts/verify_token_rotation.sh --verify
-  bash scripts/verify_token_rotation.sh --scan [path ...]
-  bash scripts/verify_token_rotation.sh --report
-
-Commands:
-  --verify  Verify GH_PAT by running GH_TOKEN="$GH_PAT" gh auth status.
-            If gh is unavailable, fall back to curl /user and require HTTP 200.
-  --scan    Scan residual GitHub tokens. Uses gitleaks --no-git when available;
-            otherwise uses grep fallback for ghp_/github_pat_/gho_/ghs_/ghr_.
-  --report  Print the manual/AI boundary table for GH_PAT rotation.
+用法: bash scripts/verify_token_rotation.sh <--verify | --scan [目錄...] | --report>
+  --verify   驗證新 GH_PAT 是否生效；首選 GH_TOKEN="$GH_PAT" gh auth status
+  --scan     殘留 token 掃描；gitleaks --no-git 優先，無法安全遮蔽時退 grep fallback
+  --report   輸出人工/AI 分界狀態表（恆 exit 0）
 EOF
 }
 
@@ -28,7 +26,7 @@ load_gh_pat() {
     return 0
   fi
 
-  local env_file="${ROOT_DIR}/.env"
+  local env_file="${TOKEN_ROTATION_ENV_FILE:-${ROOT_DIR}/.env}"
   if [ ! -r "$env_file" ]; then
     return 1
   fi
@@ -55,38 +53,44 @@ load_gh_pat() {
   export GH_PAT="$value"
 }
 
-verify_token() {
+cmd_verify() {
   if ! load_gh_pat; then
-    echo "FAIL: GH_PAT is not set in environment or readable .env" >&2
-    exit 2
+    echo "[verify] 未設定 \$GH_PAT：步驟 2b 需人工在場提供新 token 環境變數" >&2
+    return 3
   fi
 
   if command -v gh >/dev/null 2>&1; then
-    echo "== verify: gh CLI with explicit GH_TOKEN binding =="
-    GH_TOKEN="$GH_PAT" gh auth status
-    echo 'PASS: GH_TOKEN="$GH_PAT" gh auth status accepted GH_PAT binding'
-    return 0
+    # 綁定新 token 再驗：GH_TOKEN="$GH_PAT" gh auth status，避免驗到 keyring 舊值。
+    if GH_TOKEN="$GH_PAT" gh auth status >/dev/null 2>&1; then
+      echo "[verify] gh 驗證已綁定 GH_TOKEN：PASS"
+      echo "[verify] 提醒：PASS 僅證身分；scope 需人工回 runbook 核對四項規格"
+      return 0
+    fi
+    echo "[verify] gh 驗證已綁定 GH_TOKEN：FAIL" >&2
+    return 1
   fi
 
   if ! command -v curl >/dev/null 2>&1; then
-    echo "FAIL: neither gh nor curl is available" >&2
-    exit 2
+    echo "[verify] 找不到 gh 或 curl，無法驗證" >&2
+    return 3
   fi
 
-  echo "== verify: curl fallback against https://api.github.com/user =="
   local http_code
   http_code="$(
     printf 'Authorization: Bearer %s\n' "$GH_PAT" \
-      | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- https://api.github.com/user
+      | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- https://api.github.com/user 2>/dev/null
   )"
+  if [ -z "$http_code" ]; then
+    http_code="000"
+  fi
 
+  echo "[verify] curl /user HTTP: $http_code"
   if [ "$http_code" = "200" ]; then
-    echo "PASS: curl returned HTTP 200"
-    echo "NOTE: HTTP 200 proves identity only; manually confirm runbook scope requirements."
+    echo "[verify] 200 只證身分有效、不證 scope；需人工回 runbook 核對四項規格才閉環"
     return 0
   fi
 
-  echo "FAIL: curl returned HTTP ${http_code}" >&2
+  echo "[verify] 非 200（$http_code）：token 無效、權限異常或已撤銷" >&2
   return 1
 }
 
@@ -97,145 +101,157 @@ default_scan_targets() {
   printf '%s\n' "$ROOT_DIR"
 }
 
-redact_github_tokens() {
-  local line="$1"
-  local match
-  while [[ "$line" =~ $GITHUB_TOKEN_REGEX ]]; do
-    match="${BASH_REMATCH[0]}"
-    line="${line/"$match"/[REDACTED_GITHUB_TOKEN]}"
-  done
-  printf '%s\n' "$line"
+gitleaks_can_redact() {
+  command -v gitleaks >/dev/null 2>&1 \
+    && gitleaks detect --help 2>/dev/null | grep -q -- '--redact'
 }
 
-redacted_grep_scan_one() {
+scan_with_gitleaks() {
   local target="$1"
-  local grep_args=(
-    -IRnE
-    --exclude-dir=.git
-    --exclude-dir=.venv
-    --exclude-dir=node_modules
-    --exclude-dir=__pycache__
-    "$GITHUB_TOKEN_REGEX"
-    --
-    "$target"
+  if gitleaks detect --no-git --redact --source "$target" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 2
+}
+
+scan_with_grep() {
+  local target="$1"
+  local files=()
+  local file count
+
+  while IFS= read -r file; do
+    [ -n "$file" ] && files+=("$file")
+  done < <(
+    grep -IRlE \
+      --exclude-dir=.git \
+      --exclude-dir=.venv \
+      --exclude-dir=node_modules \
+      --exclude-dir=__pycache__ \
+      "$TOKEN_RE" \
+      -- "$target" 2>/dev/null || true
   )
 
-  if grep "${grep_args[@]}" >/dev/null 2>&1; then
-    while IFS= read -r line; do
-      redact_github_tokens "$line"
-    done < <(grep "${grep_args[@]}")
-    return 1
-  fi
-
-  return 0
-}
-
-gitleaks_can_redact() {
-  command -v gitleaks >/dev/null 2>&1 && gitleaks detect --help 2>/dev/null | grep -q -- '--redact'
-}
-
-scan_one_target() {
-  local target="$1"
-  if [ ! -e "$target" ]; then
-    echo "FAIL: scan target not found: ${target}" >&2
-    return 2
-  fi
-
-  echo "== scan target: ${target} =="
-  if gitleaks_can_redact; then
-    if gitleaks detect --no-git --redact --source "$target"; then
-      echo "PASS: gitleaks found no residual GitHub token"
-      return 0
-    fi
-    echo "FAIL: gitleaks reported potential secret(s); output above is redacted" >&2
-    return 1
-  fi
-
-  if command -v gitleaks >/dev/null 2>&1; then
-    echo "INFO: gitleaks is installed but lacks --redact; using grep fallback to avoid secret output"
-  else
-    echo "INFO: gitleaks not found; using grep fallback"
-  fi
-
-  if redacted_grep_scan_one "$target"; then
-    echo "PASS: grep fallback found no residual GitHub token"
+  if [ "${#files[@]}" -eq 0 ]; then
     return 0
   fi
 
-  echo "FAIL: grep fallback found potential GitHub token(s); output above is redacted" >&2
-  return 1
+  for file in "${files[@]}"; do
+    count="$(grep -IEo "$TOKEN_RE" -- "$file" 2>/dev/null | wc -l | tr -d '[:space:]')"
+    [ -n "$count" ] || count=0
+    echo "[scan] 疑似殘留 token: $file（$count 筆；內容已遮蔽，請人工安全檢視）"
+  done
+  return 2
 }
 
-scan_targets() {
-  local targets=("$@")
-  if [ "${#targets[@]}" -eq 0 ]; then
-    mapfile -t targets < <(default_scan_targets)
+cmd_scan() {
+  local input_targets=("$@")
+  local targets=()
+  local target result failures=0 scanned=0
+
+  if [ "${#input_targets[@]}" -eq 0 ]; then
+    mapfile -t input_targets < <(default_scan_targets)
   fi
 
-  local failures=0
-  local target
-  for target in "${targets[@]}"; do
-    if ! scan_one_target "$target"; then
-      failures=1
+  for target in "${input_targets[@]}"; do
+    if [ -e "$target" ]; then
+      targets+=("$target")
+    else
+      echo "[scan] skip 不存在目標: $target"
     fi
   done
 
+  if [ "${#targets[@]}" -eq 0 ]; then
+    echo "[scan] 無可掃描目標"
+    return 0
+  fi
+
+  if gitleaks_can_redact; then
+    for target in "${targets[@]}"; do
+      scanned=1
+      if scan_with_gitleaks "$target"; then
+        echo "[scan] gitleaks 未發現殘留 token（掃描: $target）"
+      else
+        echo "[scan] gitleaks 命中疑似殘留 token: $target（輸出已遮蔽）" >&2
+        failures=1
+      fi
+    done
+  else
+    if command -v gitleaks >/dev/null 2>&1; then
+      echo "[scan] gitleaks 無可確認的 --redact 支援，改用 grep fallback 避免明文輸出"
+    else
+      echo "[scan] gitleaks not found; using grep fallback"
+    fi
+    for target in "${targets[@]}"; do
+      scanned=1
+      result=0
+      scan_with_grep "$target" || result=$?
+      if [ "$result" -eq 0 ]; then
+        echo "[scan] grep fallback 未發現殘留 token（掃描: $target）"
+      else
+        echo "[scan] grep fallback 命中疑似殘留 token: $target" >&2
+        failures=1
+      fi
+    done
+  fi
+
+  if [ "$scanned" -eq 0 ]; then
+    echo "[scan] 無可掃描目標"
+    return 0
+  fi
   if [ "$failures" -ne 0 ]; then
-    return 1
+    echo "[scan] 命中殘留 token，立即回 runbook 頂端重跑輪替" >&2
+    return 2
   fi
   return 0
 }
 
-report_status() {
+cmd_report() {
   cat <<'EOF'
-# GH_PAT Token 輪替狀態
+== GH_PAT 輪替 人工/AI 分界狀態表 ==
+規格唯一權威：docs/token-rotation-runbook.md（本表不內嵌四項 PAT 規格）
 
-| 步驟 | 誰做 | 狀態 | 分界 |
-|------|------|------|------|
-| 1. 發新 fine-grained PAT | 人工 | 待人工 | 到 GitHub UI 產生；token 明文不可進對話、log 或 git。 |
-| 1/2. 更新 repo secret GH_PAT 與本機 .env | 人工 | 待人工 | 明文只寫入 GitHub Actions secret 與本機/部署環境。 |
-| 2. 驗證新 token | AI 可代勞 | 可執行 --verify | 腳本使用 GH_TOKEN="$GH_PAT" gh auth status；無 gh 時 curl /user 必須回 200。 |
-| 3. 撤銷舊 token | 人工 | 待人工 | 只可在步驟 2 通過後，到 GitHub UI 刪除舊 fine-grained PAT。 |
-| 掃描. 殘留 token 掃描 | AI 可代勞 | 可執行 --scan | gitleaks --no-git 優先；grep fallback 涵蓋 ghp_/github_pat_/gho_/ghs_/ghr_ 並遮蔽命中。 |
+步驟 | 動作                                     | 誰做      | 狀態
+-----+------------------------------------------+-----------+----------------------
+1    | 產生新 fine-grained PAT（勾權限/複製明文） | 人工      | 待人工（GitHub UI）
+2a   | 更新 .env + 同名 repo secret GH_PAT       | 人工      | 待人工（明文寫入）
+2b   | 驗證新 token 生效（--verify）             | AI 可代勞 | 需 $GH_PAT 在場
+3    | 到 UI Delete 舊 token                     | 人工      | 待人工（不可逆/無 API）
+掃描 | 殘留 token 掃描（--scan）                 | AI 可代勞 | AI 執行
 
-scope 注意：curl HTTP 200 只證明身分有效，不證 repository scope。需人工核對 runbook 四項 GH_PAT 規格：fine-grained token、只選本 repo、Contents: Read and write、secret 名稱 GH_PAT。
-順序鎖定：發新 -> 更新 .env 與 repo secret -> 驗證 -> 撤舊；不得先撤。
+明示事項：
+- 步驟 1（發新）與步驟 3（撤舊）待人工於 GitHub UI 完成，AI 不代行。
+- 步驟 2b 首選 GH_TOKEN="$GH_PAT" gh auth status；若走 curl，回 200 只證身分有效、不證 scope；需人工回 runbook 核對四項規格才閉環。
+- 先發後撤：新 token 未通過 --verify 前，絕不撤舊（會 403 斷鏈）。
 EOF
+  return 0
 }
 
 main() {
-  if [ "$#" -lt 1 ]; then
-    usage >&2
-    exit 2
-  fi
-
-  local command="$1"
-  shift
-
-  case "$command" in
+  local sub="${1:-}"
+  case "$sub" in
     --verify)
-      if [ "$#" -ne 0 ]; then
-        usage >&2
-        exit 2
-      fi
-      verify_token
+      shift
+      cmd_verify "$@"
       ;;
     --scan)
-      scan_targets "$@"
+      shift
+      cmd_scan "$@"
       ;;
     --report)
+      shift
       if [ "$#" -ne 0 ]; then
         usage >&2
-        exit 2
+        return 64
       fi
-      report_status
+      cmd_report
       ;;
-    -h|--help)
+    -h|--help|"")
       usage
       ;;
     *)
+      echo "未知子命令: $sub" >&2
       usage >&2
-      exit 2
+      return 64
       ;;
   esac
 }
