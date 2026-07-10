@@ -71,6 +71,9 @@ def _no_subprocess(monkeypatch):
 def _base_cfg(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_FORCE_PUSH", False)
+    # RECLAIM_BRANCH 固定 False：本檔守護「遠端已存在同名分支＝中止」舊不變式（逃生門），
+    # 認領新路徑（預設開）由 test_reclaim_stale_branch.py 覆蓋。
+    monkeypatch.setattr(config, "AUTOPILOT_RECLAIM_BRANCH", False)
     monkeypatch.setattr(config, "AUTOPILOT_REPO", "owner/repo")
     # owner allowlist 護欄：放行本檔測試用的 owner
     monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"owner"}))
