@@ -27,7 +27,10 @@ from . import config, secure_write
 # module-level alias 兼顧可被測試 monkeypatch。
 secure_write_root = secure_write.secure_write_root
 
-VALID_STATUS = ("pending", "in_progress", "done", "failed", "parked")
+# merging＝PR 已開、GitHub 原生 auto-merge 已掛上、等 CI 綠背景合併（完成率第三輪修法二B）。
+# 非終局：completion_stats 天然排除；_recover_stale_in_progress 只掃 in_progress 不誤傷；
+# 由 autopilot._maybe_reconcile_open_prs 週期收斂成 done / pending / failed。
+VALID_STATUS = ("pending", "in_progress", "merging", "done", "failed", "parked")
 
 # 任務類型：功能缺口 / 缺陷 / 一般改良。來源外的值一律正規化成 improvement。
 VALID_TYPES = ("feature", "bug", "improvement")
@@ -187,9 +190,10 @@ def add_items(
 
 
 def _is_duplicate(tasks: list[dict], title: str) -> bool:
-    """同標題且仍 pending/in_progress 視為重複，避免回饋迴圈讓 backlog 暴增。"""
+    """同標題且仍 pending/in_progress/merging 視為重複，避免回饋迴圈讓 backlog 暴增。"""
     return any(
-        t["title"].strip() == title and t["status"] in ("pending", "in_progress") for t in tasks
+        t["title"].strip() == title and t["status"] in ("pending", "in_progress", "merging")
+        for t in tasks
     )
 
 

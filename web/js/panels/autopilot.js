@@ -35,7 +35,7 @@ export async function expandAutopilot() {
 // autopilot 目標 repo（PR 連結用）；由 /api/autopilot 回應更新，取不到時退回核心 repo。
 let apRepo = "x812033727/Ti";
 let apHeartbeat = {};
-export const AP_STATUS_ICON = { pending: "🕓", in_progress: "⚙️", done: "✅", failed: "❌", parked: "🅿️" };
+export const AP_STATUS_ICON = { pending: "🕓", in_progress: "⚙️", merging: "🔀", done: "✅", failed: "❌", parked: "🅿️" };
 
 export async function refreshAutopilot() {
   try {
