@@ -54,7 +54,7 @@ async def test_spy_path_has_zero_side_effects(monkeypatch, tmp_path):
     """
     calls = []
 
-    async def spy(cwd, argv, timeout=None, sandbox=None, label=None):
+    async def spy(cwd, argv, timeout=None, sandbox=None, label=None, env=None):
         calls.append(argv)
         return runner.RunOutput("git clone (fake)", 0, "ok", False)
 

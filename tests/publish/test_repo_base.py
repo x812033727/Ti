@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from studio import config, repo_base, runner
+from studio import config, git_cred, repo_base, runner
 
 TOKEN = "ghp_SECRETtoken1234567890"
 
@@ -29,8 +29,10 @@ class ExecSpy:
         self.calls: list[dict] = []
         self.outputs: dict[str, tuple[int, str]] = {}  # argv[1] -> (exit_code, output)
 
-    async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None):
-        self.calls.append({"cwd": cwd, "argv": list(argv), "sandbox": sandbox, "label": label})
+    async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None, env=None):
+        self.calls.append(
+            {"cwd": cwd, "argv": list(argv), "sandbox": sandbox, "label": label, "env": env}
+        )
         code, out = self.outputs.get(argv[1], (0, ""))
         return runner.RunOutput(
             command=label or argv[0], exit_code=code, output=out, timed_out=False
@@ -64,6 +66,8 @@ def spy(monkeypatch):
     monkeypatch.setattr(config, "ENABLE_GIT", True)
     monkeypatch.setattr(config, "GITHUB_TOKEN", TOKEN)
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
+    monkeypatch.setattr(git_cred, "_GIT_ENV_SUPPORTED", True)
     return s
 
 
@@ -82,7 +86,7 @@ async def test_ensure_base_skips_when_disabled(spy, tmp_path, monkeypatch, knob)
 
 
 async def test_pristine_clone_argv_full_depth_with_token(spy, tmp_path):
-    """全新 workspace：完整 clone（無 --depth）、--branch base、token 注入、label 無 URL。"""
+    """全新 workspace：完整 clone、--branch base、token 走 env、label 無 URL。"""
     ws = tmp_path / "ws"
     r = await repo_base.ensure_base(ws, "me/product")
     assert r.status == "cloned" and r.based and not r.fatal
@@ -93,7 +97,10 @@ async def test_pristine_clone_argv_full_depth_with_token(spy, tmp_path):
     assert "--depth" not in argv  # 基底要完整歷史（merge-base 判定/git log）
     idx = argv.index("--branch")
     assert argv[idx + 1] == "main"
-    assert f"https://x-access-token:{TOKEN}@github.com/me/product" in argv
+    assert "https://github.com/me/product" in argv
+    assert not any(TOKEN in p or "x-access-token:" in p for p in argv)
+    assert clones[0]["env"]["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    assert TOKEN not in "".join(clones[0]["env"].values())
     assert clones[0]["label"] == "git clone"  # token URL 絕不進 label
     assert clones[0]["sandbox"] is False  # clone 需網路，沙箱預設斷網
 
@@ -119,7 +126,7 @@ async def test_pristine_clone_error_is_fatal_and_redacted(spy, tmp_path):
 
 
 async def test_fetch_label_and_detail_carry_no_token(spy, tmp_path):
-    """has_history 路徑的 fetch：URL（含 token）只進 argv，label 固定短字串。"""
+    """has_history 路徑的 fetch：乾淨 URL 進 argv，token 只走 env。"""
     ws = tmp_path / "ws"
     (ws / ".git").mkdir(parents=True)  # 偽 .git；rev-parse 由 spy 回 ok → has_history
     (ws / "a.txt").write_text("x", encoding="utf-8")
@@ -130,8 +137,45 @@ async def test_fetch_label_and_detail_carry_no_token(spy, tmp_path):
     fetches = spy.by_sub("fetch")
     assert len(fetches) == 1
     assert fetches[0]["label"] == "git fetch"
-    assert f"https://x-access-token:{TOKEN}@github.com/me/product" in fetches[0]["argv"]
+    assert "https://github.com/me/product" in fetches[0]["argv"]
+    assert not any(TOKEN in p or "x-access-token:" in p for p in fetches[0]["argv"])
+    assert fetches[0]["env"]["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    assert TOKEN not in "".join(fetches[0]["env"].values())
     assert all(TOKEN not in (c["label"] or "") for c in spy.calls)
+
+
+async def test_fetch_legacy_uses_token_url(spy, tmp_path, monkeypatch):
+    """legacy 閥開啟時，fetch 回退舊 token-in-URL。"""
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
+    ws = tmp_path / "ws"
+    (ws / ".git").mkdir(parents=True)
+    (ws / "a.txt").write_text("x", encoding="utf-8")
+
+    r = await repo_base.ensure_base(ws, "me/product")
+
+    assert r.status == "up_to_date" and r.based
+    fetch = spy.by_sub("fetch")[0]
+    assert f"https://x-access-token:{TOKEN}@github.com/me/product" in fetch["argv"]
+    assert not fetch["env"]
+
+
+async def test_fetch_non_github_host_does_not_add_credentials(spy, tmp_path):
+    ws = tmp_path / "ws"
+    (ws / ".git").mkdir(parents=True)
+    (ws / "a.txt").write_text("x", encoding="utf-8")
+
+    r = await repo_base.sync_workspace(
+        ws,
+        "https://example.com/me/product",
+        "main",
+        token=TOKEN,
+    )
+
+    assert r.status == "up_to_date" and r.based
+    fetch = spy.by_sub("fetch")[0]
+    assert "https://example.com/me/product" in fetch["argv"]
+    assert not any(TOKEN in p or "x-access-token:" in p for p in fetch["argv"])
+    assert not fetch["env"]
 
 
 async def test_fetch_failure_is_nonfatal(spy, tmp_path):
