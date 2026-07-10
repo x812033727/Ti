@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ $- == *x* ]]; then
+  set +x
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GITHUB_TOKEN_REGEX='(ghp_[A-Za-z0-9]{36,}|gho_[A-Za-z0-9]{36,}|ghs_[A-Za-z0-9]{36,}|ghr_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,})'
@@ -74,7 +77,7 @@ verify_token() {
   local http_code
   http_code="$(
     printf 'Authorization: Bearer %s\n' "$GH_PAT" \
-      | curl -sS -o /dev/null -w '%{http_code}' -H @- https://api.github.com/user
+      | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- https://api.github.com/user
   )"
 
   if [ "$http_code" = "200" ]; then
@@ -94,6 +97,16 @@ default_scan_targets() {
   printf '%s\n' "$ROOT_DIR"
 }
 
+redact_github_tokens() {
+  local line="$1"
+  local match
+  while [[ "$line" =~ $GITHUB_TOKEN_REGEX ]]; do
+    match="${BASH_REMATCH[0]}"
+    line="${line/"$match"/[REDACTED_GITHUB_TOKEN]}"
+  done
+  printf '%s\n' "$line"
+}
+
 redacted_grep_scan_one() {
   local target="$1"
   local grep_args=(
@@ -108,8 +121,9 @@ redacted_grep_scan_one() {
   )
 
   if grep "${grep_args[@]}" >/dev/null 2>&1; then
-    grep "${grep_args[@]}" \
-      | sed -E "s/${GITHUB_TOKEN_REGEX}/[REDACTED_GITHUB_TOKEN]/g"
+    while IFS= read -r line; do
+      redact_github_tokens "$line"
+    done < <(grep "${grep_args[@]}")
     return 1
   fi
 
@@ -129,7 +143,7 @@ scan_one_target() {
 
   echo "== scan target: ${target} =="
   if gitleaks_can_redact; then
-    if gitleaks detect --no-git --redact=100 --source "$target"; then
+    if gitleaks detect --no-git --redact --source "$target"; then
       echo "PASS: gitleaks found no residual GitHub token"
       return 0
     fi

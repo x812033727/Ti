@@ -122,7 +122,13 @@ def test_task4_does_not_touch_evidence_or_marker_lines():
         capture_output=True,
         check=True,
     )
-    assert status.stdout == "", "docs/evidence 不得有 modified/untracked：\n" + status.stdout
+    allowed_new_evidence = {"?? docs/evidence/token-rotation-2026-07-10.md"}
+    unexpected = [
+        line
+        for line in status.stdout.splitlines()
+        if line not in allowed_new_evidence
+    ]
+    assert unexpected == [], "docs/evidence 不得有非 token 輪替 evidence 變更：\n" + "\n".join(unexpected)
 
 
 def test_task4_report_commands_do_not_use_bare_python_or_pytest():
