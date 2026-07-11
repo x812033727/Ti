@@ -9,8 +9,15 @@ from studio import config, publisher, runner
 # --- 純邏輯 -------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _git_env_supported(monkeypatch):
+def _force_modern_git_auth(monkeypatch):
+    """顯式鎖定 modern-git 路徑（git ≥ 2.31 + GIT_CONFIG_* env 注入）。
+
+    原本是 autouse fixture `_git_env_supported`，語意是「繞過 argv 斷言」
+    （autouse 讓 git_cred_argv 回 [] 使 token 不進 argv）。
+    publisher._push/_push_base/repush 移除 argv splice 後，語意改為「明確測試
+    modern-git 路徑」——各測試改為**顯式呼叫**，避免環境中 git < 2.31 時
+    git_auth_env 回 {} 導致 env 斷言退化為假綠。
+    """
     monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
     monkeypatch.setattr(publisher.git_cred, "_GIT_ENV_SUPPORTED", True)
 
@@ -60,10 +67,11 @@ def test_remote_url_and_redact(monkeypatch):
     assert token not in url
 
 
-def test_git_auth_env_carries_base64_header():
+def test_git_auth_env_carries_base64_header(monkeypatch):
     """認證改走 env 帶 base64(extraHeader)：驗 header 格式正確、無尾換行，且 b64decode 可反推。"""
     import base64
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     # 走 GIT_CONFIG_* env 注入；先清空 credential.helper，再掛 per-host extraHeader。
@@ -102,6 +110,7 @@ async def test_push_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_path)
     """_push 必須只在 git push 帶 extraHeader env，且 argv/command 不含 token 或 b64。"""
     import base64
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
@@ -152,6 +161,7 @@ async def test_push_base_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_
     """首次發佈初始化 base 也必須走 env，不可把 header 塞進 argv。"""
     import base64
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
@@ -194,11 +204,12 @@ async def test_push_base_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_run_command_exec_env_reaches_child_without_entering_command(tmp_path):
+async def test_run_command_exec_env_reaches_child_without_entering_command(monkeypatch, tmp_path):
     """實跑子行程確認 env 到達；預期值只用 hash 比對，避免 token/b64 進 argv。"""
     import hashlib
     import sys
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     header_b64 = env["GIT_CONFIG_VALUE_1"].rsplit(" ", 1)[-1]
@@ -267,6 +278,7 @@ def test_merge_payload():
 
 @pytest.fixture
 def _configured(monkeypatch):
+    _force_modern_git_auth(monkeypatch)
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")

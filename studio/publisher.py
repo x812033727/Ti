@@ -160,8 +160,8 @@ def git_auth_env(token: str) -> dict[str, str]:
     委派 SSOT `git_cred.make_env`：token 走 GIT_CONFIG_* env（等價
     `git -c http.https://github.com/.extraheader=...` 但值走 env 而非 argv，ps 短窗
     也看不到 token），per-host key（github.com）收斂作用域，並先清空系統 credential.helper。
-    legacy 閥開啟或 git <2.31 時回 {}，此時 push 由呼叫端的 `git_cred.git_cred_argv`
-    argv fallback 承接認證（見 `_push`/`_push_base`/`repush`）。"""
+    legacy 閥開啟或 git <2.31 時回 {}；publisher push 仍只帶乾淨 push 指令，
+    遠端缺認證時以 403 fail-closed。"""
     return git_cred.make_env(token)
 
 
@@ -391,7 +391,7 @@ async def _push(
     )
     return await runner.run_command_exec(
         cwd,
-        ["git", *git_cred.git_cred_argv(config.GITHUB_TOKEN), "push", "-u", "ti_publish", branch],
+        ["git", "push", "-u", "ti_publish", branch],
         timeout=120,
         sandbox=False,
         label="git push",
@@ -425,7 +425,6 @@ async def _push_base(
         cwd,
         [
             "git",
-            *git_cred.git_cred_argv(config.GITHUB_TOKEN),
             "push",
             url,
             f"HEAD:refs/heads/{base}",
@@ -992,7 +991,7 @@ async def repush(cwd, branch: str) -> runner.RunOutput:
     remote.url 現為乾淨裸 URL（不含 token），故重推同樣需帶 extraHeader 認證 env。"""
     return await runner.run_command_exec(
         cwd,
-        ["git", *git_cred.git_cred_argv(config.GITHUB_TOKEN), "push", "ti_publish", branch],
+        ["git", "push", "ti_publish", branch],
         timeout=120,
         sandbox=False,
         label="git push",
