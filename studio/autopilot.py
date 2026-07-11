@@ -1951,9 +1951,9 @@ def _build_split_prompt(task: dict) -> str:
 
 
 # 逾時未拆分 parked note 的固定前綴：note 產生（見下方 _handle_task_timeout）與 backlog.triage_failed
-# 的 Rule 1 退回解析、以及本檔 Rule 2 揀選 regex 均引用此常數。⚠️ 此字串被 backlog.triage 跨模組解析，
+# 的 Rule 1 退回解析、以及本檔 Rule 2 揀選 regex 均引用此常數。此字串被 backlog.triage 跨模組解析，
 # 勿自行修改；深度上限變體 note 不含此前綴，天然不被 Rule 1/Rule 2 揀走（交人工）。
-_TIMEOUT_NOTE_PREFIX = "task timeout after"
+_TIMEOUT_NOTE_PREFIX = backlog.TIMEOUT_NOTE_PREFIX
 _TIMEOUT_NOTE_RE = re.compile(rf"{re.escape(_TIMEOUT_NOTE_PREFIX)} (\d+)s")
 
 
@@ -2047,6 +2047,7 @@ async def _handle_task_timeout(task: dict) -> None:
         note = (
             f"逾時且已達自動拆分深度上限（{config.AUTOPILOT_SPLIT_MAX_DEPTH}）——需人工拆分或縮小範圍"
             if reached_depth
+            # 此 marker 被 backlog.triage_failed 解析，勿改成另一個字串來源。
             else f"{_TIMEOUT_NOTE_PREFIX} {config.AUTOPILOT_TASK_TIMEOUT}s — 需拆分或縮小範圍"
         )
         backlog.set_status(tid, "parked", note=note)

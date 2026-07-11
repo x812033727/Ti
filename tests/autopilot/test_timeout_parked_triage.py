@@ -15,6 +15,10 @@ import pytest
 from studio import autopilot, backlog, config
 
 
+class _Stop(BaseException):
+    """跳出 `_main_loop` 無限迴圈用；繼承 BaseException 避免被 except Exception 吃掉。"""
+
+
 @pytest.fixture
 def state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
@@ -220,3 +224,39 @@ async def test_disabled_or_dryrun_noop(state, monkeypatch):
     orig = _reload(t["id"])
     assert orig.get("split_done") is not True
     assert fake.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_main_loop_runs_rule2_before_fetching_pending(state, monkeypatch):
+    """主迴圈合約：Rule 2 與 failed triage 同在取 pending 前觸發，且順序穩定。"""
+    calls: list[str] = []
+
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_GATE", False)
+    monkeypatch.setattr(config, "autopilot_paused", lambda: False)
+    monkeypatch.setattr(autopilot, "_shutdown_requested", False)
+    monkeypatch.setattr(autopilot, "_daily_pr_budget_exceeded", lambda: False)
+    monkeypatch.setattr(autopilot, "_maybe_triage_failed", lambda: calls.append("failed"))
+
+    async def fake_timeout_triage():
+        calls.append("timeout_parked")
+
+    async def fake_boundary_redeploy():
+        calls.append("boundary")
+
+    async def fake_reconcile():
+        calls.append("reconcile")
+
+    def fake_next_pending():
+        calls.append("next_pending")
+        raise _Stop
+
+    monkeypatch.setattr(autopilot, "_maybe_triage_timeout_parked", fake_timeout_triage)
+    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: calls.append("recover"))
+    monkeypatch.setattr(autopilot, "_maybe_boundary_redeploy", fake_boundary_redeploy)
+    monkeypatch.setattr(autopilot, "_maybe_reconcile_open_prs", fake_reconcile)
+    monkeypatch.setattr(autopilot.backlog, "next_pending", fake_next_pending)
+
+    with pytest.raises(_Stop):
+        await autopilot._main_loop(startup_sig=0.0)
+
+    assert calls == ["failed", "timeout_parked", "recover", "boundary", "reconcile", "next_pending"]

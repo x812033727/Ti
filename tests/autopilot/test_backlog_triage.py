@@ -2,7 +2,7 @@
 
 涵蓋：基礎設施型失敗退回 pending（正反案）、attempts 上限擋重試、單次 10 筆上限、
 陳年失敗歸檔 parked（14 天門檻）、legacy status "cancelled" 洗白、parked 不被
-next_pending 撿走、counts 含 parked 鍵。
+next_pending 撿走、timeout parked 在上限調高後單次退回、counts 含 parked 鍵。
 """
 
 from __future__ import annotations
@@ -28,6 +28,19 @@ def _fail(title: str, note: str, *, attempts: int = 1, age_s: float = 0) -> dict
     backlog.set_status(t["id"], "failed", note=note, attempts=attempts)
     if age_s:
         _patch_task(t["id"], updated_at=time.time() - age_s)
+    return t
+
+
+def _park_timeout(title: str, timeout_s: int, **fields) -> dict:
+    """造一筆 autopilot timeout parked 任務。"""
+    t = backlog.add(title)
+    backlog.set_status(
+        t["id"],
+        "parked",
+        note=f"task timeout after {timeout_s}s — 需拆分或縮小範圍",
+        attempts=3,
+        **fields,
+    )
     return t
 
 
@@ -62,7 +75,7 @@ def _get(task_id: int) -> dict:
 def test_infra_failures_are_retried(state, note):
     t = _fail("基礎設施型失敗", note)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 1, "parked": 0, "revived": 0}
+    assert stats == {"retried": 1, "parked": 0, "revived": 0, "unparked": 0}
     cur = _get(t["id"])
     assert cur["status"] == "pending"
     assert cur["attempts"] == 0  # attempts 重置
@@ -81,7 +94,7 @@ def test_non_infra_failures_are_not_retried(state, note):
     t = _fail("任務本身缺陷", note)
     stats = backlog.triage_failed()
     # 未滿 14 天 → 不歸檔；「討論未達完成」未滿 24h 冷卻 → 也不復活
-    assert stats == {"retried": 0, "parked": 0, "revived": 0}
+    assert stats == {"retried": 0, "parked": 0, "revived": 0, "unparked": 0}
     assert _get(t["id"])["status"] == "failed"
 
 
@@ -113,7 +126,7 @@ def test_retry_capped_at_ten_most_recent(state):
 def test_stale_non_infra_failure_is_parked(state):
     t = _fail("放棄的任務", "[test] 連續 3 次未過，放棄", attempts=3, age_s=15 * 86400)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 0, "parked": 1, "revived": 0}
+    assert stats == {"retried": 0, "parked": 1, "revived": 0, "unparked": 0}
     assert _get(t["id"])["status"] == "parked"
 
 
@@ -125,7 +138,7 @@ def test_stale_discussion_incomplete_is_parked(state):
 
 def test_fresh_failure_stays_failed(state):
     t = _fail("剛失敗", "討論未達完成", age_s=3600)  # 1 小時 < 24h 冷卻 < 14 天
-    assert backlog.triage_failed() == {"retried": 0, "parked": 0, "revived": 0}
+    assert backlog.triage_failed() == {"retried": 0, "parked": 0, "revived": 0, "unparked": 0}
     assert _get(t["id"])["status"] == "failed"
 
 
@@ -133,7 +146,7 @@ def test_stale_infra_failure_over_attempts_is_parked(state):
     """基礎設施 note 但 attempts 達上限：不重試；滿 14 天則走歸檔分支。"""
     t = _fail("重試耗盡的逾時", "(逾時 600s)", attempts=3, age_s=20 * 86400)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 0, "parked": 1, "revived": 0}
+    assert stats == {"retried": 0, "parked": 1, "revived": 0, "unparked": 0}
     assert _get(t["id"])["status"] == "parked"
 
 
@@ -173,7 +186,71 @@ def test_counts_includes_parked_key(state):
 
 
 def test_triage_empty_backlog_is_noop(state):
-    assert backlog.triage_failed() == {"retried": 0, "parked": 0, "revived": 0}
+    assert backlog.triage_failed() == {"retried": 0, "parked": 0, "revived": 0, "unparked": 0}
+
+
+# --- 規則 4：timeout parked 上限調高後 → pending 單次重試 -------------------
+
+
+def test_timeout_parked_is_unparked_when_current_timeout_is_higher(state, monkeypatch):
+    monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", 7200)
+    t = _park_timeout("舊 timeout 任務", 3600)
+
+    stats = backlog.triage_failed()
+
+    assert stats == {"retried": 0, "parked": 0, "revived": 0, "unparked": 1}
+    cur = _get(t["id"])
+    assert cur["status"] == "pending"
+    assert cur["attempts"] == 0
+    assert cur["timeout_retried"] is True
+    assert "timeout 上限已由 3600s 調高至 7200s" in cur["note"]
+
+
+@pytest.mark.parametrize(
+    ("title", "note", "fields"),
+    [
+        ("上限相同", "task timeout after 7200s — 需拆分或縮小範圍", {}),
+        ("上限更低", "task timeout after 9000s — 需拆分或縮小範圍", {}),
+        ("已重試過", "task timeout after 3600s — 需拆分或縮小範圍", {"timeout_retried": True}),
+        ("已拆分過", "task timeout after 3600s — 需拆分或縮小範圍", {"split_done": True}),
+        ("非 timeout note", "人工歸檔，等需求確認", {}),
+        ("深度上限 note", "逾時且已達自動拆分深度上限（2）——需人工拆分或縮小範圍", {}),
+    ],
+)
+def test_timeout_parked_unpark_black_samples(state, monkeypatch, title, note, fields):
+    monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", 7200)
+    t = backlog.add(title)
+    backlog.set_status(t["id"], "parked", note=note, attempts=3, **fields)
+
+    stats = backlog.triage_failed()
+
+    assert stats["unparked"] == 0
+    assert _get(t["id"])["status"] == "parked"
+
+
+def test_timeout_unpark_capped_at_five(state, monkeypatch):
+    monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", 7200)
+    ids = [_park_timeout(f"timeout parked {i}", 3600)["id"] for i in range(6)]
+
+    stats = backlog.triage_failed()
+
+    assert stats["unparked"] == backlog.TRIAGE_UNPARK_MAX == 5
+    statuses = [_get(tid)["status"] for tid in ids]
+    assert statuses.count("pending") == 5
+    assert statuses.count("parked") == 1
+
+
+def test_timeout_unpark_budget_independent_from_failed_retry_budget(state, monkeypatch):
+    monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", 7200)
+    for i in range(backlog.TRIAGE_RETRY_MAX + 1):
+        _fail(f"infra {i}", "(逾時 600s)")
+    for i in range(backlog.TRIAGE_UNPARK_MAX + 1):
+        _park_timeout(f"timeout parked {i}", 3600)
+
+    stats = backlog.triage_failed()
+
+    assert stats["retried"] == backlog.TRIAGE_RETRY_MAX
+    assert stats["unparked"] == backlog.TRIAGE_UNPARK_MAX
 
 
 # --- 規則 2b：討論未收斂冷卻復活（第五輪 C1）--------------------------------
@@ -182,7 +259,7 @@ def test_triage_empty_backlog_is_noop(state):
 def test_discussion_incomplete_revived_once_after_cooldown(state):
     t = _fail("討論沒完成", "討論未達完成（連續 3 次未收斂，放棄）", attempts=3, age_s=2 * 86400)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 0, "parked": 0, "revived": 1}
+    assert stats == {"retried": 0, "parked": 0, "revived": 1, "unparked": 0}
     cur = _get(t["id"])
     assert cur["status"] == "pending"
     assert cur["attempts"] == 0, "復活附帶 attempts 歸零，才有完整一輪重試空間"
@@ -202,7 +279,7 @@ def test_stale_discussion_incomplete_parks_not_revives(state):
     """已滿 14 天的陳年討論失敗直接歸檔，不再折騰復活。"""
     t = _fail("陳年討論失敗", "討論未達完成", age_s=15 * 86400)
     stats = backlog.triage_failed()
-    assert stats == {"retried": 0, "parked": 1, "revived": 0}
+    assert stats == {"retried": 0, "parked": 1, "revived": 0, "unparked": 0}
     assert _get(t["id"])["status"] == "parked"
 
 
