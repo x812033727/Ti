@@ -17,9 +17,10 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_restart(monkeypatch):
+def _no_real_restart(monkeypatch, tmp_path):
     """確保測試永遠不會真的 exec 掉行程；並讓 exec 前的 import smoke 預設通過
     （個別測試可再覆寫成失敗）。"""
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
 
     async def _smoke_ok():
