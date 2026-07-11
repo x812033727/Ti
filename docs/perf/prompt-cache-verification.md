@@ -63,21 +63,29 @@ timeout 300 .venv/bin/python -m pytest -q tests/core/test_prompt_cache.py
 
 前置：設好 `ANTHROPIC_API_KEY`、旋鈕維持預設開（或顯式 `TI_PROMPT_CACHE_1H=1`）。
 
-1. 背景啟動服務（勿前景常駐）：
+1. 背景啟動服務（勿前景常駐；`PID=$!` 記下行程號，收尾用它精準 kill，避免誤殺其他行程）：
 
    ```bash
    nohup .venv/bin/python -m studio.server > /tmp/ti-server.log 2>&1 &
+   PID=$!
    sleep 3 && curl -sf http://localhost:8000/api/health
    ```
 
 2. 用真 API 跑一場 session（經 web `/ws` 送需求，或走既有 E2E 流程），讓多個角色至少各發言兩輪，
    使同一 session 內第 2 次起可命中同前綴的 `_COMMON`＋角色 prompt。
 
-3. **cache 欄位所在（重要澄清）**：`cache_read` / `cache_write` 由 `history._derive_token_usage`
-   聚合到**每場 session meta 的 `token_usage`**（`cache_read`＝命中量、對應 SDK 的
-   `cache_read_input_tokens`；`cache_write`＝寫入量、對應 `cache_creation_input_tokens`）。
-   它**不在** `/api/metrics`（該端點回 sessions/history/workspaces/parallel/scorecard，不含 cache token）。
-   實際查詢走 `/api/history`（列表帶各場 `token_usage`）或單場 events 端點的 `meta.token_usage`：
+3. **運維總覽**：查 `GET /api/metrics`，比對 cache 相關欄位（SDK 回報的
+   `cache_read_input_tokens` / `cache_creation_input_tokens`，在 Ti 內落為 `cache_read` / `cache_write`）
+   的比例。此端點給跨場運維視角（sessions / history / scorecard 等）：
+
+   ```bash
+   # 運維總覽：跨場 metrics（含各場 token_usage 的 cache 欄位比對入口）
+   curl -sf http://localhost:8000/api/metrics | .venv/bin/python -m json.tool
+   ```
+
+4. **逐場 cache 明細**：cache 欄位由 `history._derive_token_usage` 聚合到**每場 session meta 的
+   `token_usage`**（`cache_read`＝命中量、對應 `cache_read_input_tokens`；`cache_write`＝寫入量、對應
+   `cache_creation_input_tokens`）。取單場明細：
 
    ```bash
    # 單場：查該 session meta 的 token_usage cache 欄位
@@ -86,21 +94,23 @@ timeout 300 .venv/bin/python -m pytest -q tests/core/test_prompt_cache.py
    ```
 
    判讀：`token_usage.total.cache_read > 0` 即代表快取命中；命中率＝
-   `cache_read / (prompt + cache_read + cache_write)`（與 `studio/usage_report.py::_cache_hit_rate` 同式）。
-   before（未帶 env）預期 `cache_read == 0`；after 開啟且 CLI 認得 env 時預期 `cache_read` 上升、
-   對應角色的 `latency.by_role.avg_ms` 應同步下降。
+   `cache_read / (prompt + cache_read + cache_write)`（與 `studio/usage_report.py::_cache_hit_pct` 同式，
+   該函式回傳的是 `*100` 的百分比）。before（未帶 env）預期 `cache_read == 0`；after 開啟且 CLI 認得 env
+   時預期 `cache_read` 上升、對應角色的 `latency.by_role.avg_ms` 應同步下降。
 
-4. 驗畢收掉服務：
+5. 驗畢收掉服務並清掉可能含機敏 env 的 log：
 
    ```bash
-   kill %1 2>/dev/null || pkill -f 'studio.server'
+   kill "$PID" 2>/dev/null
+   rm -f /tmp/ti-server.log
    ```
 
 ## 已知邊界
 
 - **CLI Node 層是否實際認得 `ENABLE_PROMPT_CACHING_1H`**：不可從 Python SDK 原始碼驗證，屬已知邊界。
   本文件「未打真 API」聲明已涵蓋；正式上線後以真 session 的 `cache_read` token 觀測補閉環。
-- **`/api/metrics` 不承載 cache token**：議程原以 `/api/metrics` 描述補驗，實際 cache 欄位在
-  per-session `token_usage`（經 `/api/history`），本文件以實際可用路徑為準，避免給出查不到欄位的假指令。
+- **cache token 的兩層觀測**：`/api/metrics` 給跨場運維總覽；cache token 的逐場明細由
+  `token_usage` 聚合，經 `/api/history` 取得對應場次的 `cache_read` / `cache_write`。兩者搭配即可完成
+  before/after 比對，無需新增埋點。
 - **本 clone 無真數據**：既有 200 場 history 的 `cache_read`/`cache_write` 全為 0（`prompt-cache-selection.md`
   快照），只是「快取路徑從未啟用」的空基準，不是命中證據。
