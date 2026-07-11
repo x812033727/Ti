@@ -80,6 +80,9 @@ def rotate_env(monkeypatch):
     monkeypatch.setattr(config, "claude_cli_logged_in", lambda: True)
     # 重複排程防護的模組級旗標歸零，避免測試間洩漏（正式行程由重啟自然歸零）。
     monkeypatch.setattr(autopilot, "_rotate_scheduled_at", None)
+    # 釘選（手動模式）預設不存在＝自動模式；警告節流旗標一併歸零防測試間洩漏。
+    monkeypatch.setattr(autopilot.claude_accounts, "pinned_label", lambda: None)
+    monkeypatch.setattr(autopilot, "_pin_warn_label", None)
     monkeypatch.setattr(autopilot.history, "busy_sessions", lambda _stale: [])
     monkeypatch.setattr(
         autopilot.claude_accounts, "switch", lambda label: calls.append(("switch", label))
@@ -310,6 +313,102 @@ def test_rotate_switch_failure_does_not_raise(rotate_env, monkeypatch):
     assert rotate_env == []  # restart 不得被呼叫
 
 
+# --- 釘選（手動模式）：凍結自動輪替 + 任務空檔代切 ---------------------------
+
+
+def test_rotate_frozen_when_pinned(rotate_env, monkeypatch):
+    """pin 存在 → 即使負載條件本會觸發輪替也整段凍結（不切、不排程、不查決策）。"""
+    monkeypatch.setattr(autopilot.claude_accounts, "pinned_label", lambda: "B")
+    snap = _snap([_acct("A", 10.0), _acct("B", 96.0, active=True)])
+    assert autopilot._maybe_rotate_claude_account(snap) is None
+    assert rotate_env == []
+
+
+def test_rotate_scoped_rescue_frozen_when_pinned(rotate_env, monkeypatch):
+    """pin 凍結含 scoped 救援層：在線 Fable 撞滿、另帳號新鮮，仍不切（硬凍結語意）。"""
+    monkeypatch.setattr(autopilot.claude_accounts, "pinned_label", lambda: "A")
+    snap = _snap([_acct("A", 60.0, active=True, fable=100.0), _acct("B", 0.0, fable=0.0)])
+    assert autopilot._maybe_rotate_claude_account(snap) is None
+    assert rotate_env == []
+
+
+@pytest.fixture
+def pin_env(rotate_env, monkeypatch):
+    """釘選代切情境：pin=A、在線 B、目標憑證檔存在；回傳 rotate_env 的呼叫紀錄。"""
+    monkeypatch.setattr(autopilot.claude_accounts, "pinned_label", lambda: "A")
+    monkeypatch.setattr(autopilot.claude_accounts, "active_label", lambda: "B")
+    monkeypatch.setattr(autopilot.claude_accounts, "label_exists", lambda label: True)
+    return rotate_env
+
+
+def test_pinned_apply_switches_at_idle(pin_env):
+    """pin=A ≠ 在線 B、無討論進行中 → 先 switch("A") 再排程重啟（與輪替同順序）。"""
+    assert autopilot._maybe_apply_pinned_account() == "A"
+    assert pin_env == [("switch", "A"), ("restart",)]
+
+
+def test_pinned_apply_noop_when_no_pin(rotate_env):
+    assert autopilot._maybe_apply_pinned_account() is None
+    assert rotate_env == []
+
+
+def test_pinned_apply_noop_when_already_active(pin_env, monkeypatch):
+    """pin==在線 → 已達成使用者意圖，不動作（重啟回來後即此路徑，防重複切換）。"""
+    monkeypatch.setattr(autopilot.claude_accounts, "active_label", lambda: "A")
+    assert autopilot._maybe_apply_pinned_account() is None
+    assert pin_env == []
+
+
+def test_pinned_apply_defers_when_busy(pin_env, monkeypatch):
+    """有進行中討論 → 本輪不切（排隊語意：等任務空檔，busy 判定沿用輪替 SSOT）。"""
+    monkeypatch.setattr(autopilot.history, "busy_sessions", lambda _stale: [{"session_id": "s1"}])
+    assert autopilot._maybe_apply_pinned_account() is None
+    assert pin_env == []
+
+
+def test_pinned_apply_reschedule_guard(pin_env):
+    """已排程重啟未滿護欄窗 → 不重複切換/排程（與輪替共用 _rotate_scheduled_at）。"""
+    assert autopilot._maybe_apply_pinned_account() == "A"
+    assert autopilot._maybe_apply_pinned_account() is None
+    assert pin_env == [("switch", "A"), ("restart",)]
+
+
+@pytest.mark.parametrize(
+    "attr,value",
+    [
+        ("PROVIDER", "codex"),
+        ("has_api_key", lambda: True),
+        ("claude_cli_logged_in", lambda: False),
+    ],
+)
+def test_pinned_apply_non_claude_subscription_noop(pin_env, monkeypatch, attr, value):
+    """非「claude 訂閱模式」→ 不動作（pin 只對訂閱憑證切換有意義）。"""
+    monkeypatch.setattr(config, attr, value)
+    assert autopilot._maybe_apply_pinned_account() is None
+    assert pin_env == []
+
+
+def test_pinned_apply_missing_cred_warns_once(pin_env, monkeypatch, caplog):
+    """釘選 label 憑證檔不存在 → warning＋忽略（不切、不刪 pin）；同 label 只警告一次。"""
+    monkeypatch.setattr(autopilot.claude_accounts, "label_exists", lambda label: False)
+    with caplog.at_level("WARNING", logger="ti.autopilot"):
+        assert autopilot._maybe_apply_pinned_account() is None
+        assert autopilot._maybe_apply_pinned_account() is None
+    assert pin_env == []
+    assert caplog.text.count("釘選帳號 A 的憑證檔不存在") == 1  # 節流：不逐輪刷 log
+
+
+def test_pinned_apply_switch_failure_does_not_raise(pin_env, monkeypatch):
+    """switch 炸掉 → 只留 log 回 None，不排程重啟、不往外拋（主迴圈安全）。"""
+
+    def boom(_label):
+        raise ValueError("找不到帳號的憑證檔")
+
+    monkeypatch.setattr(autopilot.claude_accounts, "switch", boom)
+    assert autopilot._maybe_apply_pinned_account() is None
+    assert pin_env == []
+
+
 # --- config：新設定進 config.py + reload() ----------------------------------
 
 
@@ -447,6 +546,33 @@ async def test_main_loop_rotate_disabled_falls_through(rotate_env, state_dir, mo
 
     assert rotate_env == []  # 不得 switch/restart
     assert [t["id"] for t in taken] == [3]
+
+
+async def test_main_loop_applies_pin_before_gate_even_when_rotate_off(
+    pin_env, state_dir, monkeypatch
+):
+    """釘選代切在 gate 之前且不受 CLAUDE_ROTATE/quota gate 開關影響（使用者顯式指令）：
+    CLAUDE_ROTATE=0 也切、切換當輪不查額度快照、心跳寫 rotate_restart 含 pinned_to。"""
+    monkeypatch.setattr(config, "CLAUDE_ROTATE", False)
+    monkeypatch.setattr(
+        autopilot.provider_quota,
+        "snapshot",
+        lambda: pytest.fail("釘選代切應在 gate 之前，本輪不得查額度快照"),
+    )
+    monkeypatch.setattr(
+        autopilot.backlog, "next_pending", lambda: pytest.fail("釘選切換後本輪不得取任務")
+    )
+    sleeps: list[float] = []
+    _stub_asyncio(monkeypatch, sleeps)
+
+    with pytest.raises(_Stop):
+        await autopilot.main()
+
+    assert pin_env == [("switch", "A"), ("restart",)]
+    assert sleeps == [autopilot._ROTATE_RESTART_SLEEP]
+    status = _read_status(state_dir)
+    assert status["state"] == "rotate_restart"
+    assert status["quota"]["pinned_to"] == "A"
 
 
 async def test_main_loop_busy_discussion_no_rotation(rotate_env, state_dir, monkeypatch):

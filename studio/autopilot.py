@@ -3203,6 +3203,62 @@ def _rotate_log_detail(usages: dict, active: str | None, target: str) -> str:
     return f"{reset_txt}；負載 {target} {f(lt)}/{active or '?'} {f(la)}"
 
 
+# 釘選 label 憑證檔缺失的警告節流：同 label 只警告一次，防主迴圈每輪刷 log。
+_pin_warn_label: str | None = None
+
+
+def _maybe_apply_pinned_account() -> str | None:
+    """使用者釘選帳號 ≠ 在線時，於任務空檔代為切換＋排程服務重啟，回目標 label；否則 None。
+
+    釘選（手動模式）由 UI 寫 ``claude_accounts`` 的 pin 檔：閒置時 UI 端點直接切換；
+    忙碌時（backlog 有 in_progress 任務）UI 只寫 pin「排隊」，由本函式在主迴圈代行——
+    busy 判定沿用自動輪替的 ``history.busy_sessions``（活的討論才算，任務邊界空檔即可切，
+    這正是排隊要等的時機）。刻意獨立於 ``_maybe_rotate_claude_account``：
+
+    - 排隊切換是使用者顯式指令，不受 ``config.CLAUDE_ROTATE`` 與 quota gate 開關影響
+      （輪替只在 gate 區塊內被呼叫，gate 關閉時排隊仍須被執行）；
+    - 不需要額度快照——只讀 pin 檔與在線 label 兩個檔案。
+
+    釘選 label 的憑證檔不存在 → log.warning（同 label 節流一次）並忽略，**不**自動刪
+    pin 檔（檔案可能被使用者手動補回；破壞性動作留給人）。任何失敗只留 log，絕不炸
+    autopilot 主迴圈。
+    """
+    global _rotate_scheduled_at, _pin_warn_label
+    try:
+        pinned = claude_accounts.pinned_label()
+        if not pinned:
+            return None
+        if config.PROVIDER != "claude" or config.has_api_key() or not config.claude_cli_logged_in():
+            return None
+        if pinned == claude_accounts.active_label():
+            return None
+        if (
+            _rotate_scheduled_at is not None
+            and time.time() - _rotate_scheduled_at < _ROTATE_RESCHEDULE_GUARD_S
+        ):
+            return None
+        if not claude_accounts.label_exists(pinned):
+            if _pin_warn_label != pinned:
+                _pin_warn_label = pinned
+                log.warning(
+                    "釘選帳號 %s 的憑證檔不存在，忽略釘選（解除釘選或補回憑證檔後恢復）",
+                    pinned,
+                )
+            return None
+        running = history.busy_sessions(config.DEPLOY_STALE_AFTER)
+        if running:
+            log.info("釘選切換：有 %d 場進行中討論，本輪不切換（目標 %s）", len(running), pinned)
+            return None
+        claude_accounts.switch(pinned)
+        deploy.schedule_service_restart()
+        _rotate_scheduled_at = time.time()
+        log.info("釘選切換：已於任務空檔切至帳號 %s，已排程重啟服務使新憑證生效", pinned)
+        return pinned
+    except Exception:  # noqa: BLE001 — 釘選代切與輪替同準則,失敗不得弄死主迴圈
+        log.exception("釘選帳號切換失敗（忽略，不影響主迴圈）")
+        return None
+
+
 def _maybe_rotate_claude_account(snap: dict) -> str | None:
     """Claude 訂閱雙帳號自動輪替：需要切換時換帳號＋排程服務重啟，回目標 label；否則 None。
 
@@ -3211,6 +3267,9 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
     （差 ≥ margin）；帳號負載＝5h/7d 兩窗取最大，全部達上限交給 quota gate——規則 SSOT
     見其 docstring）；本函式只負責前置防護與副作用：
 
+    - 使用者釘選帳號（``claude_accounts.pinned_label``，手動模式）→ 整段凍結（含
+      scoped 救援層）；釘選目標 ≠ 在線的切換由 ``_maybe_apply_pinned_account`` 代行，
+      釘選帳號額度耗盡交給既有 quota gate 睡到重置（硬凍結語意：使用者自選）；
     - ``config.CLAUDE_ROTATE`` 關閉、或非「claude 訂閱模式」（provider 非 claude／走
       API key／CLI 未登入）→ 直接不輪替；
     - 已排程輪替重啟未滿 ``_ROTATE_RESCHEDULE_GUARD_S`` 秒 → 不重複切換/排程（同一
@@ -3224,6 +3283,9 @@ def _maybe_rotate_claude_account(snap: dict) -> str | None:
     """
     global _rotate_scheduled_at
     try:
+        if claude_accounts.pinned_label():
+            log.debug("帳號輪替：使用者已釘選帳號（手動模式），凍結自動輪替")
+            return None
         if not config.CLAUDE_ROTATE:
             return None
         if config.PROVIDER != "claude" or config.has_api_key() or not config.claude_cli_logged_in():
@@ -4088,6 +4150,18 @@ async def _main_loop(startup_sig: float) -> None:
             await _pause_tick()
             continue
         _note_resumed()
+
+        # 使用者釘選帳號（手動模式）≠ 在線 → 於任務空檔代為切換。刻意放在 quota gate
+        # 之前且不受其開關影響：排隊切換是使用者顯式指令，gate 關閉時也要執行。
+        pinned_to = _maybe_apply_pinned_account()
+        if pinned_to:
+            _write_status(
+                "rotate_restart",
+                sleep_until=time.time() + _ROTATE_RESTART_SLEEP,
+                quota={"pinned_to": pinned_to},
+            )
+            await asyncio.sleep(_ROTATE_RESTART_SLEEP)
+            continue
 
         # 額度閘門：取任務前先確認至少一個 provider 還有額度；全受限就睡到最早重置
         # （夾在 [60, AUTOPILOT_QUOTA_MAX_SLEEP]）後 continue 重查，避免額度耗盡時

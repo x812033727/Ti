@@ -455,3 +455,56 @@ def test_scoped_used_pct_none_when_no_match_or_bad_input():
         claude_accounts.scoped_used_pct("claude-fable-5", {"Fable": {"used_percentage": None}})
         is None
     )
+
+
+# --- pin（手動模式釘選）------------------------------------------------------
+
+
+def test_pinned_label_missing_or_illegal_returns_none(_isolate):
+    tmp = _isolate
+    assert claude_accounts.pinned_label() is None  # 無 pin 檔＝自動模式
+    _write(tmp, ".credentials.pin", "../etc")
+    assert claude_accounts.pinned_label() is None  # 非法內容視同無釘選
+
+
+def test_set_pinned_writes_and_reads_back(_isolate):
+    tmp = _isolate
+    claude_accounts.set_pinned("A")
+    assert (tmp / ".credentials.pin").read_text(encoding="utf-8") == "A"
+    assert claude_accounts.pinned_label() == "A"
+    claude_accounts.set_pinned("B")  # 覆寫＝last-write-wins
+    assert claude_accounts.pinned_label() == "B"
+
+
+def test_set_pinned_none_clears_even_when_missing(_isolate):
+    tmp = _isolate
+    claude_accounts.set_pinned(None)  # pin 檔不存在也不得炸
+    claude_accounts.set_pinned("A")
+    claude_accounts.set_pinned(None)
+    assert not (tmp / ".credentials.pin").exists()
+    assert claude_accounts.pinned_label() is None
+
+
+def test_set_pinned_illegal_label_raises(_isolate):
+    with pytest.raises(ValueError):
+        claude_accounts.set_pinned("../etc")
+
+
+def test_label_exists_requires_valid_label_and_file(_isolate):
+    tmp = _isolate
+    assert claude_accounts.label_exists("A") is False  # 憑證檔不存在
+    _write(tmp, ".credentials.acct-A.json", _cred("tA"))
+    assert claude_accounts.label_exists("A") is True
+    assert claude_accounts.label_exists("../etc") is False  # 非法 label 不碰檔案系統
+
+
+def test_list_accounts_reports_pinned(_isolate):
+    tmp = _isolate
+    _write(tmp, ".credentials.acct-A.json", _cred("tA"))
+    _write(tmp, ".credentials.acct-B.json", _cred("tB"))
+    by = {a["label"]: a for a in claude_accounts.list_accounts()}
+    assert by["A"]["pinned"] is False and by["B"]["pinned"] is False  # 無 pin 全 False
+    claude_accounts.set_pinned("B")
+    by = {a["label"]: a for a in claude_accounts.list_accounts()}
+    assert by["B"]["pinned"] is True
+    assert by["A"]["pinned"] is False

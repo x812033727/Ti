@@ -236,9 +236,11 @@ _provider_quota_snapshot = provider_quota.snapshot
 
 # --- Claude 多帳號切換（受保護）----------------------------------------
 class ClaudeAccountSwitch(BaseModel):
-    """POST /api/claude-account/switch 的請求本體。"""
+    """POST /api/claude-account/switch 的請求本體。``queue``＝忙碌時改排隊（寫 pin，
+    由 autopilot 在任務空檔代切），而非回 409。"""
 
     label: str
+    queue: bool = False
 
 
 # 重啟排程本體已抽到 deploy.schedule_service_restart（autopilot 自動輪替共用同一 SSOT）；
@@ -248,10 +250,13 @@ _schedule_service_restart = deploy.schedule_service_restart
 
 @router.post("/api/claude-account/switch", dependencies=WRITE_DEPS)
 async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
-    """切換 Claude 在線訂閱帳號（換憑證檔 + 重啟服務使新認證生效）。
+    """切換 Claude 在線訂閱帳號（換憑證檔 + 重啟服務使新認證生效）＝進入手動模式。
 
     認證在 SDK 啟動時載入記憶體，換檔後須重啟 ti.service/ti-autopilot 才生效；重啟會中斷
-    互動討論與 autopilot 任務，故先擋下「進行中」狀態（回 409），閒置才放行。
+    互動討論與 autopilot 任務，故「進行中」狀態不立即切換：``queue=False`` 回 409（附
+    ``queueable: true`` 供前端提示可排隊）；``queue=True`` 寫 pin 檔回 202，由 autopilot
+    的 ``_maybe_apply_pinned_account`` 在任務空檔代切。成功切換（立即或排隊）都會釘選
+    目標帳號＝凍結自動輪替（手動選擇不再被政策切回）；解除見 DELETE /api/claude-account/pin。
     """
     busy: list[str] = []
     if ws.active_session_count() > 0:
@@ -260,15 +265,38 @@ async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
     if in_prog:
         busy.append(f"autopilot 有 {len(in_prog)} 個任務進行中")
     if busy:
-        return JSONResponse({"ok": False, "error": "busy", "reasons": busy}, status_code=409)
+        if body.queue:
+            if not claude_accounts.label_exists(body.label):
+                return JSONResponse(
+                    {"ok": False, "error": f"找不到帳號 {body.label} 的憑證檔"},
+                    status_code=400,
+                )
+            claude_accounts.set_pinned(body.label)
+            return JSONResponse(
+                {"ok": True, "queued": True, "label": body.label, "reasons": busy},
+                status_code=202,
+            )
+        return JSONResponse(
+            {"ok": False, "error": "busy", "reasons": busy, "queueable": True},
+            status_code=409,
+        )
 
     try:
         claude_accounts.switch(body.label)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
+    claude_accounts.set_pinned(body.label)  # 手動切換＝釘選（switch 成功才寫）
     _schedule_service_restart()
-    return JSONResponse({"ok": True, "label": body.label, "restarting": True})
+    return JSONResponse({"ok": True, "label": body.label, "restarting": True, "pinned": True})
+
+
+@router.delete("/api/claude-account/pin", dependencies=WRITE_DEPS)
+async def claude_account_unpin() -> JSONResponse:
+    """解除帳號釘選＝回自動模式：恢復自動輪替；排隊中的切換一併取消。無需重啟
+    （輪替在 autopilot 下輪額度檢查自然接手）。"""
+    claude_accounts.set_pinned(None)
+    return JSONResponse({"ok": True, "pinned": None})
 
 
 # --- 角色管理（受保護）--------------------------------------------------

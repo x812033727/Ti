@@ -175,6 +175,7 @@ def _fetch() -> dict:
                 "label": a["label"],
                 "subscription": a.get("subscription"),
                 "active": a.get("active", False),
+                "pinned": a.get("pinned", False),
                 "rate_limits": _account_rate_limits(a, _bounded(fut, f"claude:{a['label']}")),
             }
             for a, fut in f_accts
@@ -202,6 +203,13 @@ def _fetch() -> dict:
             "rate_limits": claude_rl,
             # 多帳號額度與在線標記；單帳號（無標籤檔）時為 []，前端退回上面的單一 rate_limits。
             "accounts": claude_accounts_out,
+            # 帳號分配模式：manual＝使用者釘選（pin 檔存在，凍結自動輪替）；auto＝v4 政策
+            # 自動輪替。enabled 反映 TI_CLAUDE_ROTATE 開關，前端據此渲染模式列。
+            "rotate": {
+                "enabled": config.CLAUDE_ROTATE,
+                "mode": "manual" if (_pinned := claude_accounts.pinned_label()) else "auto",
+                "pinned": _pinned,
+            },
         },
         {
             "key": "codex",
