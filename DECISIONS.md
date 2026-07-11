@@ -3231,3 +3231,52 @@
 ## 範圍外兩項以 `後續任務:` marker 在 #4 輸出中登記，不在本輪實作
 - 時間：2026-07-11 11:36
 
+## Rule 1 「值得重試」語意定義 — N（note 內 `task timeout after Ns` 的秒數，等於 park 當時的 `AUTOPILOT_TASK_TIMEOUT`）< `config.AUTOPILOT_TASK_TIMEOUT`（當前值）時，表示操作者事後調高了上限，原任務值得原樣重試；N ≥ 當前值（含相等）則重試也白搭，交 Rule 2 拆分
+- 時間：2026-07-11 14:22
+- 理由：note 內秒數即 park 時的上限值（autopilot.py:2031 寫死），若兩值相等則 Rule 1 恆 false 形成死碼；唯有「當前 > park 當時」才有重試意義
+- 否決方案：「N 與任意固定常數比較」——脫離操作者調高上限的實際語意，形同任意閾值，可維護性差
+
+## Rule 1 實作位置 — 擴充 `backlog.triage_failed()` 同一 `_locked()` 區塊掃 `status=="parked"` 任務；在 `_locked()` 頂端加單行 marker 函式說明「此字串由 autopilot.py 產生，解析耦合，勿獨立修改」
+- 時間：2026-07-11 14:22
+- 理由：確定性、無 LLM、與 failed 掃描共鎖，可隨 `/api/autopilot/triage` 手動觸發；注意 autopilot.py 深度上限變體（`逾時且已達自動拆分深度上限…`）不含 `task timeout after` marker，天然不匹配、自動跳過
+- 否決方案：在 autopilot async 主迴圈另開函式處理 Rule 1——不需 LLM 卻佔 async slot，且無法隨手動 triage 觸發
+
+## Rule 1 退回欄位組 — 同時設 `status="pending"`、`timeout_retried=True`、`attempts=0`、`updated_at=now`；`attempts` 重置避免任務被 attempt 上限立即再卡死
+- 時間：2026-07-11 14:22
+- 理由：工程師實查確認 `set_status()` 支援額外欄位；`attempts` 若不重置，剛退回即觸發上限判斷等於無效 unpark
+- 否決方案：只設 `timeout_retried=True` 不重置 attempts——退回即死，Rule 1 形同空操作
+
+## Rule 2 split_depth 繼承 — Rule 2 直接將原 parked task 原封傳入 `_autosplit_task()`，不自行 +1；函式內部（autopilot.py:1999/2014）已讀 `task["split_depth"]` 並對 children 設 `depth+1`，封頂自動生效
+- 時間：2026-07-11 14:22
+- 理由：自行 +1 再傳入會 double increment，提早撞 `AUTOPILOT_SPLIT_MAX_DEPTH`
+- 否決方案：傳 `split_depth=父+1`——與現有函式契約衝突，造成 double increment
+
+## Rule 2 child 建立邏輯 — 完整重用 `_autosplit_task()`（含 child dict 建立＋`backlog.add_items`），不在 `_maybe_triage_timeout_parked()` 複製一份；原任務維持 `parked`，另呼叫 `backlog.set_status` 加 `split_done=True`、note 改為「已自動拆為 #X…」
+- 時間：2026-07-11 14:22
+- 理由：避免與 `_handle_task_timeout()` 產生雙份 autosplit child 建立邏輯，維護成本翻倍
+- 否決方案：在新函式內手刻 child dict 建立——邏輯重複，日後 `_autosplit_task` 格式變動只改一處另一處靜默落差
+
+## Rule 2 實作位置 — 新增 async `_maybe_triage_timeout_parked()`，掛在 autopilot 主迴圈頂端（`_maybe_triage_failed` 同位置），每輪最多 1 筆（模組常數）；揀選條件：`parked` + note 含 `task timeout after` + 無 `split_done` + Rule 1 不適用
+- 時間：2026-07-11 14:22
+- 否決方案：統一放 backlog.triage_failed() 處理 Rule 2——triage 是同步 file-lock，不能含 LLM 呼叫
+
+## 互斥欄位 — `timeout_retried`（bool）與 `split_done`（bool）存 task dict 欄位；Rule 1 進入條件檢查 `無 timeout_retried 且無 split_done`，Rule 2 進入條件檢查 `無 split_done`；同一筆任務不可能被兩規則同輪處理
+- 時間：2026-07-11 14:22
+- 否決方案：用 note 前綴標記狀態——`set_status()` 每次覆寫 note，欄位才能跨輪持久
+
+## marker 字串共用常數 — 在 `studio/autopilot.py` 頂端定義 `_TIMEOUT_NOTE_PREFIX = "task timeout after"`，note 產生（2031 行）與 backlog 解析 regex 均引用此常數；autopilot.py 產生處加反向備註「此字串被 backlog.triage 解析，勿自行修改」
+- 時間：2026-07-11 14:22
+- 理由：防跨模組隱性耦合靜默斷裂；高工建議，成本極低
+- 否決方案：兩端各自硬寫字串靠人工守護——字串變動時只改一處、另一處靜默失效
+
+## 護欄常數 — `TRIAGE_UNPARK_MAX = 5`（Rule 1 單輪上限）與每輪拆 1 筆（Rule 2）均為模組常數，不進 `config.py`
+- 時間：2026-07-11 14:22
+- 理由：省兩處同步成本（config.py 頂端 + reload() 區塊），這兩值是防爆閥非營運旋鈕
+- 否決方案：加入 config 旋鈕——兩處同步踩坑機率高，且操作者幾乎不需動態調整
+
+## API 透傳 — `triage_failed()` 回傳 dict 加 `unparked` 計數；routes.py 已直接展開 stats，只補 assert 測試斷言，不改簽名；既有精準比對 `triage_failed()` dict 的測試一併更新
+- 時間：2026-07-11 14:22
+
+## 測試必要黑樣本 — 深度上限變體 note（`逾時且已達自動拆分深度上限…`）需補黑樣本，確認天然不匹配 `task timeout after` 而被跳過；`timeout_retried=True` 不退、N ≥ 現行上限不退、`split_done=True` 兩規則均跳過各補對應黑樣本
+- 時間：2026-07-11 14:22
+
