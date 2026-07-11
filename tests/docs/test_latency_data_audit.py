@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DOC = ROOT / "docs" / "latency-data-audit.md"
@@ -33,6 +32,12 @@ def _token_usage_event_count(paths: list[Path]) -> int:
     return total
 
 
+def _declared_int(text: str, pattern: str) -> int:
+    match = re.search(pattern, text)
+    assert match, f"report is missing declared number for pattern: {pattern}"
+    return int(match.group(1))
+
+
 def test_latency_data_audit_doc_exists_and_has_reproducible_commands():
     text = DOC.read_text(encoding="utf-8")
 
@@ -49,41 +54,34 @@ def test_latency_data_audit_doc_exists_and_has_reproducible_commands():
 def test_latency_data_audit_numbers_match_history_zero_state():
     """驗證報告宣稱數字與 history/ 實際資料一致。
 
-    history/ 已 gitignore（執行期資料），lane worktree 及 CI 環境通常不存在。
-    缺失時跳過本測試；在含真實 session 資料的主工作目錄執行可完整驗證。
+    任務要求是「實查本工作目錄」，不能在資料缺失或筆數不符時跳過；
+    否則報告可宣稱 200 筆但 lane 只含 0/6 筆仍被放行。
     """
     meta_paths = _history_meta_paths()
     jsonl_paths = _history_jsonl_paths()
-
-    if len(meta_paths) < 200:
-        pytest.skip(
-            f"history/ 僅含 {len(meta_paths)} 筆 meta（需 200）；"
-            "history/ 已 gitignore（執行期資料），lane worktree 及 CI 環境不含此目錄，"
-            "請在含 200 場 history 的主工作目錄執行以完整驗證。"
-        )
-
     text = DOC.read_text(encoding="utf-8")
     metas = [_load_json(path) for path in meta_paths]
 
-    assert len(metas) == 200
-    assert len(jsonl_paths) == 200
+    assert _declared_int(text, r"meta 總數:\s*(\d+)") == len(metas)
+    assert _declared_int(text, r"jsonl 總數:\s*(\d+)") == len(jsonl_paths)
 
     latency_total_counts = [
         meta.get("latency", {}).get("total", {}).get("count", 0) for meta in metas
     ]
-    assert latency_total_counts == [0] * 200
+    assert _declared_int(text, r"latency\.total\.count == 0:\s*(\d+)") == len(
+        [count for count in latency_total_counts if count == 0]
+    )
+    assert _declared_int(text, r"latency\.total\.count\s+> 0:\s*(\d+)") == len(
+        [count for count in latency_total_counts if count > 0]
+    )
+    assert latency_total_counts == [0] * len(metas)
     assert all(not meta.get("latency", {}).get("by_role") for meta in metas)
     assert all(not meta.get("latency", {}).get("by_model") for meta in metas)
     assert all(not meta.get("latency", {}).get("by_provider") for meta in metas)
     assert all(meta.get("token_usage", {}).get("total", {}).get("calls", 0) == 0 for meta in metas)
-    assert _token_usage_event_count(jsonl_paths) == 0
-
-    assert "meta 總數: 200" in text
-    assert "latency.total.count == 0: 200" in text
-    assert "latency.total.count  > 0: 0" in text
-    assert "jsonl 總數: 200" in text
-    assert "token_usage 事件數: 0" in text
-    assert "**200 / 200**" in text
+    assert _declared_int(text, r"token_usage 事件數:\s*(\d+)") == _token_usage_event_count(
+        jsonl_paths
+    )
 
 
 def test_latency_data_audit_declares_research_basis_after_invalid_data():
