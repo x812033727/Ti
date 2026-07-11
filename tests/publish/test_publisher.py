@@ -10,6 +10,14 @@ from studio import config, publisher, runner
 
 
 def _force_modern_git_auth(monkeypatch):
+    """顯式鎖定 modern-git 路徑（git ≥ 2.31 + GIT_CONFIG_* env 注入）。
+
+    原本是 autouse fixture `_git_env_supported`，語意是「繞過 argv 斷言」
+    （autouse 讓 git_cred_argv 回 [] 使 token 不進 argv）。
+    publisher._push/_push_base/repush 移除 argv splice 後，語意改為「明確測試
+    modern-git 路徑」——各測試改為**顯式呼叫**，避免環境中 git < 2.31 時
+    git_auth_env 回 {} 導致 env 斷言退化為假綠。
+    """
     monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
     monkeypatch.setattr(publisher.git_cred, "_GIT_ENV_SUPPORTED", True)
 
