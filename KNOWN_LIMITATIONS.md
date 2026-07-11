@@ -2,4 +2,5 @@
 
 本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:
 
-- [ ] 實作已落盤憑證 scrub：下次 git 操作前偵測 `.git/config` remote URL 含自產 token pattern 並以 `set-url` 改寫（不 remove、寧漏勿誤刪）；legacy 閥開啟時跳過 scrub 的專屬黑白測試
+- [ ] 修改 tests/deploy/test_redeploy.py 的 autouse fixture，補 mock `deploy._deploy_lock`（contextmanager 假鎖 yield True）
+- [ ] 修改 tests/deploy/test_redeploy_qa.py 的 autouse fixture，補 mock `deploy._deploy_lock`（同 #1 修法）

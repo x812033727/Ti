@@ -3204,3 +3204,30 @@
 - 否決方案 A：全局關閉（所有 client 均 `trust_env=False`）——破壞企業 proxy / 自訂 CA 路由，外網呼叫在受管環境斷線，代價高於防禦效益。
 - 否決方案 B：全局開放（所有 client 均維持預設）——loopback smoke client 在 CI 有 proxy env 時假紅，干擾測試可信度，屬可預防的誤報。
 
+## 隔離方式改為 `monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)`，三檔各自 autouse fixture 加一行，不引入 fake contextmanager
+- 時間：2026-07-11 11:36
+- 理由：`tmp_path` 在 xdist 下 per-worker 唯一，lock 檔天然隔離；與 `test_deploy_lock.py` 現有模式一致，維護者只需理解一種隔離手法；保留真實 lock 行為，負向路徑（鎖被佔用→「另一個部署進行中」）未來仍可測
+- 否決方案：`@contextlib.contextmanager` fake lock yield True——三檔各塞一份 contextmanager 造成重複，且永遠 yield True 靜默遮蔽負向路徑，降低測試覆蓋的誠實性
+
+## setattr 目標用 `config.AUTOPILOT_STATE_DIR`，不用 `redeploy.deploy.config.AUTOPILOT_STATE_DIR`
+- 時間：2026-07-11 11:36
+- 理由：三檔已有 `from studio import config`，直接 setattr `config` 模組屬性，程式碼最短；`deploy.config`、`redeploy.config`、`config` 三者為同一物件，效果等價
+- 否決方案：`redeploy.deploy.config`——鏈式路徑較長，且在 `config` 已被 import 的情況下多此一舉
+
+## `_no_real_restart(monkeypatch)` 的簽名改為 `_no_real_restart(monkeypatch, tmp_path)`，新增 `tmp_path` 參數，pytest 內建 fixture 不須另行 import
+- 時間：2026-07-11 11:36
+- 理由：pytest 原生支援 autouse fixture 宣告多個 fixture 參數，無需額外設定
+
+## 三檔各自不新增任何 import（不加 `contextlib`、不加 `import deploy`），現有 import 已足夠
+- 時間：2026-07-11 11:36
+
+## 驗收指令採 `timeout 300 bash -c 'for i in 1 2 3; do .venv/bin/python -m pytest -q tests/deploy/ || exit 1; done'`，timeout 包住整個 shell loop
+- 時間：2026-07-11 11:36
+- 理由：xdist 鎖競爭是機率性的，三輪全綠才足以排除偶然通過；`exit 1` 確保任一輪紅立即中止
+
+## 產品碼零 diff——本輪 diff 僅限 `tests/deploy/` 三個測試檔，驗收以 `git diff HEAD -- studio/` 空為必要條件
+- 時間：2026-07-11 11:36
+
+## 範圍外兩項以 `後續任務:` marker 在 #4 輸出中登記，不在本輪實作
+- 時間：2026-07-11 11:36
+
