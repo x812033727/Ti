@@ -25,11 +25,11 @@ export async function redeployNow() {
   try {
     const r = await (await fetch("/api/redeploy", { method: "POST" })).json();
     status.className = "redeploy-status " + (r.ok ? "ok" : "fail");
-    status.textContent = (r.ok ? "♻️ " : "⚠️ ") + (r.detail || "");
+    status.textContent = r.detail || "";
   } catch (e) {
     // 重啟成功時連線會中斷，請求可能無法正常回傳——這通常代表已在重啟。
     status.className = "redeploy-status muted";
-    status.textContent = "♻️ 已送出重新部署，服務可能正在重啟，稍後重新整理頁面。";
+    status.textContent = "已送出重新部署，服務可能正在重啟，稍後重新整理頁面。";
   }
   btn.disabled = false;
   btn.textContent = prev;

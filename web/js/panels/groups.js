@@ -147,7 +147,7 @@ export async function loadGroupOptions() {
     for (const g of groupsCache) {
       const opt = document.createElement("option");
       opt.value = g.name;
-      opt.textContent = `👥 ${g.name}（${(g.role_keys || []).length} 人）`;
+      opt.textContent = `${g.name}（${(g.role_keys || []).length} 人）`;
       sel.appendChild(opt);
     }
     if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;

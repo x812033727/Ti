@@ -27,6 +27,7 @@ const document = {
   querySelector: () => makeEl(),
   querySelectorAll: () => [],
   createElement: () => makeEl(),
+  createElementNS: () => makeEl(),
   createTextNode: () => makeEl(),
   getElementById: () => makeEl(),
   body: makeEl(),

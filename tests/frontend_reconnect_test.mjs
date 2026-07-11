@@ -21,6 +21,9 @@ class RecEl {
   querySelectorAll() { return []; }
   querySelector() { return new RecEl('div'); }
   addEventListener() {}
+  setAttribute(k, v) { (this._attrs ||= {})[k] = v; }
+  getAttribute(k) { return (this._attrs || {})[k]; }
+  _descendants() { return this.children.flatMap((c) => [c, ...(c._descendants ? c._descendants() : [])]); }
   focus() {}
 }
 
@@ -42,6 +45,7 @@ Object.assign(globalThis, {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
     createElement: (t) => new RecEl(t),
+    createElementNS: (_ns, t) => new RecEl(t),
     createTextNode: () => new RecEl('text'),
     getElementById: () => new RecEl('div'),
     body: new RecEl('body'),

@@ -53,6 +53,7 @@ const document = {
   querySelector: (s) => $(s),
   querySelectorAll: () => [],
   createElement: (t) => new RecEl(t),
+  createElementNS: (_ns, t) => new RecEl(t),
   createTextNode: () => new RecEl('text'),
   getElementById: () => new RecEl('div'),
   body: new RecEl('body'),

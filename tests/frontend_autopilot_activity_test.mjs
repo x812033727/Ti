@@ -53,6 +53,7 @@ Object.assign(globalThis, {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
     createElement: (t) => new RecEl(t),
+    createElementNS: (_ns, t) => new RecEl(t),
     createTextNode: (t) => {
       const el = new RecEl("text");
       el.textContent = t;

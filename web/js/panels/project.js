@@ -1,5 +1,5 @@
 // 專案面板（藍圖 + 改良待辦）與專案 CRUD（建立/刪除/目標 repo/中斷恢復）。
-import { $, toast } from "../dom.js";
+import { $, icon, toast } from "../dom.js";
 import { openFormModal, openConfirmModal } from "../components/modal.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { loadProjects, onProjectChange } from "./deck.js";
@@ -67,10 +67,13 @@ export async function openProjectPanel() {
 
 export function closeProjectPanel() { closeDrawer("#projectPanel"); }
 
-function projLine(text, cls) {
+function projLine(text, cls, iconName) {
   const div = document.createElement("div");
   if (cls) div.className = cls;
-  div.textContent = text;
+  if (iconName) div.appendChild(icon(iconName, "icon sys-ic"));
+  const span = document.createElement("span");
+  span.textContent = text;
+  div.appendChild(span);
   return div;
 }
 
@@ -83,7 +86,7 @@ export async function refreshProjectPanel() {
     const d = await (await fetch(`/api/projects/${pid}`)).json();
     body.innerHTML = "";
     const p = d.project || {};
-    body.appendChild(projLine(`📦 ${p.name || pid}`, "proj-name"));
+    body.appendChild(projLine(p.name || pid, "proj-name", "box"));
 
     // 目標 repo＝工作基底＋發佈目標：workspace 全新時下一場討論先 clone 它當基底
     // （專家在你指定的程式碼上修改），成果推分支開 PR；已同源則每場快轉到遠端 base。
@@ -132,9 +135,9 @@ export async function refreshProjectPanel() {
     const tasks = d.backlog || [];
     if (!tasks.length) body.appendChild(projLine("（空）", "muted"));
     for (const t of tasks) {
-      const icon = { pending: "🕓", in_progress: "⚙️", done: "✅", failed: "❌" }[t.status] || "•";
+      const ic = { pending: "clock", in_progress: "refresh", done: "check", failed: "x" }[t.status];
       const typ = TYPE_LABEL[t.type] || TYPE_LABEL.improvement;
-      const li = projLine(`${icon} #${t.id} ${t.title}　[${typ}・${t.source}]`, "proj-task");
+      const li = projLine(`#${t.id} ${t.title}　[${typ}・${t.source}]`, "proj-task", ic);
       const tag = document.createElement("span");
       tag.className = `prio prio-${t.priority ?? 1}`;
       tag.textContent = PRIO_LABEL[t.priority ?? 1] || "P1";
@@ -142,13 +145,13 @@ export async function refreshProjectPanel() {
       body.appendChild(li);
     }
 
-    // 中斷恢復：有任務卡在 ⚙️ 進行中時顯示。正常運行中按下會被後端 409 擋掉（無害），
+    // 中斷恢復：有任務卡在「進行中」時顯示。正常運行中按下會被後端 409 擋掉（無害），
     // 真正中斷（服務重啟／行程被殺）時則重置殘留並自動重啟持續改良。
     if (tasks.some((t) => t.status === "in_progress")) {
       const btn = document.createElement("button");
       btn.id = "projectRecover";
       btn.className = "ghost";
-      btn.textContent = "🛟 恢復中斷的改良";
+      btn.textContent = "恢復中斷的改良";
       btn.title = "服務重啟或行程中斷後：把卡在進行中的任務重置回待辦，並重新啟動持續改良迴圈";
       btn.onclick = () => recoverProject(pid);
       body.appendChild(btn);
@@ -161,7 +164,7 @@ export async function refreshProjectPanel() {
       const stopB = document.createElement("button");
       stopB.id = "projectStop";
       stopB.className = "ghost";
-      stopB.textContent = "⏹ 停止執行";
+      stopB.textContent = "停止執行";
       stopB.title = "對這個專案進行中的討論／持續改良迴圈送停止指令（在安全點收尾）";
       stopB.onclick = () => stopProject(pid);
       actions.appendChild(stopB);
@@ -169,7 +172,7 @@ export async function refreshProjectPanel() {
     const delB = document.createElement("button");
     delB.id = "projectDelete";
     delB.className = "ghost danger";
-    delB.textContent = "🗑 刪除專案";
+    delB.textContent = "刪除專案";
     delB.title = "刪除專案 meta、改良待辦、藍圖與 workspace 程式碼（歷史紀錄保留）；進行中需先停止";
     delB.onclick = () => deleteProject(pid, p.name || pid);
     actions.appendChild(delB);
@@ -240,13 +243,12 @@ export async function setProjectPublishRepo(pid, current) {
     // 若該專案正選在啟動列，同步更新啟動列上的目標 repo 標籤
     if ($("#projectSelect").value === pid) {
       const repoTag = $("#projectRepo");
-      if (v) {
-        repoTag.textContent = `🎯 ${v}`;
-        repoTag.classList.remove("unset");
-      } else {
-        repoTag.textContent = "🎯 目標 repo 未設定（點此設定）";
-        repoTag.classList.add("unset");
-      }
+      repoTag.innerHTML = "";
+      repoTag.appendChild(icon("target", "icon sys-ic"));
+      const span = document.createElement("span");
+      span.textContent = v || "目標 repo 未設定（點此設定）";
+      repoTag.appendChild(span);
+      repoTag.classList.toggle("unset", !v);
       repoTag.onclick = () => setProjectPublishRepo(pid, v);
     }
   } catch (e) {

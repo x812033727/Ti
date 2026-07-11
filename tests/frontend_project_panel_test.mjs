@@ -19,6 +19,9 @@ class RecEl {
   querySelectorAll() { return []; }
   querySelector() { return new RecEl('div'); }
   addEventListener() {}
+  setAttribute(k, v) { (this._attrs ||= {})[k] = v; }
+  getAttribute(k) { return (this._attrs || {})[k]; }
+  _descendants() { return this.children.flatMap((c) => [c, ...(c._descendants ? c._descendants() : [])]); }
 }
 
 const els = new Map();
@@ -55,6 +58,7 @@ Object.assign(globalThis, {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
     createElement: (t) => new RecEl(t),
+    createElementNS: (_ns, t) => new RecEl(t),
     createTextNode: () => new RecEl('text'),
     getElementById: () => new RecEl('div'),
     body: new RecEl('body'),
@@ -74,9 +78,12 @@ $('#projectSelect').value = 'p1';
 await ctx.refreshProjectPanel();
 
 const body = $('#projectBody');
+// projLine 現在把文字放進 <span> 子節點（前面可帶 SVG 狀態圖示）——
+// 聚合自身與所有後代的 textContent 當該列文字。
 const texts = body.children.map((c) => {
   const badge = c.children?.[0]?.className?.startsWith?.('prio') ? c.children[0].textContent : '';
-  return badge + c.textContent;
+  const kids = (c._descendants ? c._descendants() : []).map((d) => d.textContent || '').join('');
+  return badge + (c.textContent || '') + kids;
 });
 
 function expect(cond, msg) {
@@ -90,7 +97,13 @@ const p2 = texts.findIndex((t) => t.startsWith('P2') && t.includes('加分功能
 expect(p0 !== -1 && p2 !== -1 && p0 < p2, '藍圖功能應按 P0→P2 排序且帶優先級徽章');
 expect(texts.some((t) => t.includes('M1 核心可用')), '應渲染里程碑');
 expect(texts.some((t) => t.startsWith('P0') && t.includes('緊急修復') && t.includes('缺陷')), 'backlog 列應含優先級徽章與類型');
-expect(texts.some((t) => t.includes('✅ #1 普通改良')), 'backlog 列應含狀態圖示');
+// 狀態圖示改為 SVG sprite：done 任務應帶 <use href="#i-check">
+const doneLine = body.children.find((c) =>
+  (c._descendants ? c._descendants() : []).some((d) => (d.textContent || '').includes('#1 普通改良')));
+expect(doneLine, 'backlog 應渲染 #1 普通改良');
+const doneIcon = doneLine._descendants().find(
+  (d) => d.tag === 'use' && String(d.getAttribute('href') || '').includes('i-check'));
+expect(doneIcon, 'backlog 完成任務應帶 i-check 狀態圖示');
 
 console.log('OK: 專案面板渲染藍圖與排序 backlog 正常');
 process.exit(0);
