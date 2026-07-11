@@ -93,7 +93,8 @@ async def test_sideline_claims_and_runs_investigation(monkeypatch, sideline_on, 
         assert str(work_dir).endswith("-inv"), "旁路必須用獨立 -inv clone"
         return str(tmp_path / "inv")
 
-    async def fake_run(task, clone, sid, t0):
+    async def fake_run(task, clone, sid, t0, *, sideline=False):
+        assert sideline is True, "旁路呼叫必須帶 sideline=True(心跳 liveness_only)"
         ran.append((task["id"], autopilot._sideline_task_info))
         backlog.set_status(task["id"], "done", note="[調查結論] ok")
 
