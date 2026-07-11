@@ -1062,6 +1062,11 @@ EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "
 # 寫時 lint 單一 ruff 命令的逾時秒數（每次寫檔最多三支命令：check --fix / format / check）。
 EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
 
+# PROMPT_CACHE_1H：Claude Agent SDK subprocess 的 1h prompt caching 開關。預設開；
+# 只透過 ClaudeAgentOptions.env 傳單鍵給 CLI，SDK 會與 parent env merge，不會清空
+# ANTHROPIC_API_KEY 等既有環境變數。
+PROMPT_CACHE_1H = os.getenv("TI_PROMPT_CACHE_1H", "1") not in ("0", "false", "False", "")
+
 # EXPERT_SKILLS：Claude 專家的 skills 漸進揭露(SKILL.md)——出貨自檢/調查輸出契約等程序
 #   知識放 .claude/skills/,專家需要時經 Skill 工具載入,不占常駐 system prompt。
 #   **預設 0(灰度)**:SDK 一設 skills 會把 setting_sources 從「全載」改窄(experts._skills_options
@@ -1347,6 +1352,7 @@ def reload() -> None:
     global AUTOPILOT_INVESTIGATION_REFUTE
     global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
 
+    global PROMPT_CACHE_1H
     global EXPERT_SKILLS, EXPERT_SKILLS_ROLES
     global CONVENTIONS_CARD
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
@@ -1566,6 +1572,8 @@ def reload() -> None:
     )
     EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
     EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+
+    PROMPT_CACHE_1H = os.getenv("TI_PROMPT_CACHE_1H", "1") not in ("0", "false", "False", "")
 
     EXPERT_SKILLS = os.getenv("TI_EXPERT_SKILLS", "0") not in ("0", "false", "False", "")
     EXPERT_SKILLS_ROLES = frozenset(
