@@ -6,7 +6,7 @@
 //               options: [{value,label,hint?}]（select/radio/checkboxes 用）, rows（textarea 用） }
 // type ∈ "text" | "textarea" | "select" | "radio" | "checkboxes"；未給＝text。
 // onValidate(values) 回傳錯誤字串＝擋下送出並顯示；回傳空值＝放行。
-import { $ } from "../dom.js";
+import { $, icon } from "../dom.js";
 
 export function openFormModal({ title, hint, fields, submitLabel = "確定", onValidate }) {
   return new Promise((resolve) => {
@@ -25,7 +25,7 @@ export function openFormModal({ title, hint, fields, submitLabel = "確定", onV
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "ghost";
-    closeBtn.textContent = "✕";
+    closeBtn.appendChild(icon("x"));
     closeBtn.setAttribute("aria-label", "取消並關閉");
     head.appendChild(h); head.appendChild(closeBtn);
     form.appendChild(head);
@@ -108,7 +108,7 @@ export function openConfirmModal({ title, message, confirmLabel = "確定", dang
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "ghost";
-    closeBtn.textContent = "✕";
+    closeBtn.appendChild(icon("x"));
     closeBtn.setAttribute("aria-label", "取消並關閉");
     head.appendChild(h); head.appendChild(closeBtn);
     dlg.appendChild(head);

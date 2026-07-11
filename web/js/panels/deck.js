@@ -1,5 +1,5 @@
 // 啟動列（command-deck）：開始/停止鈕狀態、收合列、專案與動態流程下拉。
-import { $ } from "../dom.js";
+import { $, icon } from "../dom.js";
 import { createProjectFlow, deleteProject, setProjectPublishRepo } from "./project.js";
 import { setView } from "./dashboard.js";
 
@@ -24,7 +24,7 @@ export function setDeckCollapsed(collapsed) {
   document.querySelector(".command-deck").classList.toggle("collapsed", collapsed);
   if (collapsed) {
     const req = $("#requirement").value.trim();
-    $("#deckSummary").textContent = req || ($("#improveChk").checked ? "♻️ 持續改良中…" : "（無需求）");
+    $("#deckSummary").textContent = req || ($("#improveChk").checked ? "持續改良中…" : "（無需求）");
   }
 }
 
@@ -40,12 +40,12 @@ export async function loadProjects() {
       const opt = document.createElement("option");
       opt.value = p.id;
       const b = p.backlog || {};
-      opt.textContent = `📦 ${p.name}` + (b.pending ? `（待辦 ${b.pending}）` : "");
+      opt.textContent = p.name + (b.pending ? `（待辦 ${b.pending}）` : "");
       sel.appendChild(opt);
     }
     const add = document.createElement("option");
     add.value = "__new__";
-    add.textContent = "➕ 新增專案…";
+    add.textContent = "＋ 新增專案…";
     sel.appendChild(add);
     if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
   } catch (e) { /* 忽略 */ }
@@ -63,7 +63,7 @@ export async function loadWorkflows() {
       const opt = document.createElement("option");
       opt.value = w.name;
       const n = (w.stages || []).length;
-      opt.textContent = `🧭 ${w.name}` + (n ? `（${n} 階段）` : "");
+      opt.textContent = w.name + (n ? `（${n} 階段）` : "");
       opt.title = w.description || "";
       sel.appendChild(opt);
     }
@@ -78,11 +78,11 @@ export function updateStartLabel(pending) {
   const isProj = pid && pid !== "__new__";
   const improve = $("#improveChk").checked && isProj;
   if (improve) {
-    startBtn.textContent = "♻️ 繼續改良";
+    startBtn.textContent = "繼續改良";
     startBtn.title = "在此專案上繼續：消化改良待辦／自動找問題，持續改良直到你按停止" +
       (pending ? `（待辦 ${pending} 項）` : "（需求可留空）");
   } else if (isProj) {
-    startBtn.textContent = "▶️ 繼續專案";
+    startBtn.textContent = "繼續專案";
     startBtn.title = "用下方需求在此專案上再開一場討論（沿用專案程式碼與目標 repo）";
   } else {
     startBtn.textContent = "開始討論";
@@ -108,11 +108,18 @@ export async function onProjectChange() {
     return;
   }
   // 既有專案：一次性 repo 欄對專案無作用 → 收起，改顯示專案目標 repo；預設「繼續改良」
+  const setRepoTag = (text) => {
+    repoTag.innerHTML = "";
+    repoTag.appendChild(icon("target", "icon sys-ic"));
+    const span = document.createElement("span");
+    span.textContent = text;
+    repoTag.appendChild(span);
+  };
   repoInput.classList.add("hidden");
   $("#improveChk").checked = true;
   repoTag.classList.remove("hidden");
   repoTag.classList.remove("unset");
-  repoTag.textContent = "🎯 載入中…";
+  setRepoTag("載入中…");
   delBtn.classList.remove("hidden");
   delBtn.onclick = () => deleteProject(pid, pid); // 名稱載入後改用真名
   updateStartLabel();
@@ -123,16 +130,16 @@ export async function onProjectChange() {
       (t) => t.status === "pending" || t.status === "in_progress",
     ).length;
     if (p.publish_repo) {
-      repoTag.textContent = `🎯 ${p.publish_repo}`;
+      setRepoTag(p.publish_repo);
     } else {
-      repoTag.textContent = "🎯 目標 repo 未設定（點此設定）";
+      setRepoTag("目標 repo 未設定（點此設定）");
       repoTag.classList.add("unset");
     }
     repoTag.onclick = () => setProjectPublishRepo(pid, p.publish_repo || "");
     delBtn.onclick = () => deleteProject(pid, p.name || pid);
     updateStartLabel(pending);
   } catch (e) {
-    repoTag.textContent = "🎯 無法載入專案 repo（點此設定）";
+    setRepoTag("無法載入專案 repo（點此設定）");
     repoTag.classList.add("unset");
     repoTag.onclick = () => setProjectPublishRepo(pid, "");
   }

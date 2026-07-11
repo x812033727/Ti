@@ -12,8 +12,8 @@ import { openConfirmModal } from "../components/modal.js";
 import { stopReconnect } from "../ws.js";
 
 export const STATUS_LABEL = {
-  running: "⏳ 執行中", completed: "✅ 完成", incomplete: "⚠️ 未達標",
-  stopped: "⏹ 已停止", error: "❌ 錯誤",
+  running: "執行中", completed: "完成", incomplete: "未達標",
+  stopped: "已停止", error: "錯誤",
 };
 
 export async function openHistory() {
@@ -41,8 +41,8 @@ export function renderHistory(sessions) {
         <div class="h-meta"><span class="h-status status-${s.status}">${STATUS_LABEL[s.status] || s.status}</span>
           <span>${s.n_events || 0} 事件</span><span>${when}</span></div>
       </button>
-      ${s.status === "running" ? '<button class="h-stop" type="button" title="停止這場進行中的討論（在安全點收尾）">⏹</button>' : ""}
-      <button class="h-del" type="button" title="刪除此 session（含產出檔案）">🗑</button>`;
+      ${s.status === "running" ? '<button class="h-stop" type="button" title="停止這場進行中的討論（在安全點收尾）"><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg></button>' : ""}
+      <button class="h-del" type="button" title="刪除此 session（含產出檔案）"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg></button>`;
     li.querySelector(".h-req").textContent = s.requirement || "(無需求)";
     li.querySelector(".h-main").onclick = () => replaySession(s.session_id);
     const stopB = li.querySelector(".h-stop");
@@ -84,7 +84,7 @@ export async function deleteSession(sid, status) {
 export async function cleanupCompleted() {
   if (!(await openConfirmModal({
     title: "清除已完成",
-    message: "清除所有「✅ 已完成」的 session？產出檔案也會一併刪除，無法復原。",
+    message: "清除所有「已完成」的 session？產出檔案也會一併刪除，無法復原。",
     confirmLabel: "清除",
     danger: true,
   }))) return;
@@ -107,7 +107,7 @@ export async function replaySession(sid) {
     const data = await (await fetch(`/api/history/${sid}/events`)).json();
     events = data.events || [];
     requirement = (data.meta && data.meta.requirement) || "";
-  } catch (e) { addSystem("⚠️ 無法載入此 session"); return; }
+  } catch (e) { addSystem("無法載入此 session", "", "alert"); return; }
 
   // 直接一次把整段歷史渲染完，畫面停在最底（最新）；要看過程往上滑即可。
   // replaying 旗標維持為 true，讓 handleEvent 的 done case 不會替歷史 session 補出發佈鈕。
@@ -116,10 +116,10 @@ export async function replaySession(sid) {
   setRunning(false);
   clearStream();
   clearBoard();
-  addSystem("📜 歷史紀錄：" + (requirement || sid));
+  addSystem("歷史紀錄：" + (requirement || sid), "", "clock");
   for (let i = 0; i < events.length; i++) handleEvent(events[i]);
   state.replaying = false;
-  setPhase("📜 歷史紀錄");
+  setPhase("歷史紀錄");
   scrollStream();
 }
 

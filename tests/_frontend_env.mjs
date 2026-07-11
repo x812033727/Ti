@@ -93,6 +93,8 @@ export function install(fetchImpl) {
       querySelector: (s) => $(s),
       querySelectorAll: () => [],
       createElement: (t) => new RecEl(t),
+      // SVG 圖示（dom.js icon()）走 createElementNS：stub 一律回 RecEl，忽略 namespace
+      createElementNS: (_ns, t) => new RecEl(t),
       createTextNode: (t) => { const e = new RecEl('text'); e.textContent = t; return e; },
       getElementById: () => new RecEl('div'),
       body,

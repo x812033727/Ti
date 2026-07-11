@@ -105,6 +105,12 @@
   opacity: .88;
   overflow-wrap: anywhere;
 }
+/* 系統行/結果行的行內圖示：縮小對齊文字基線，與文字留 6px 呼吸 */
+.sys-ic {
+  width: 13px; height: 13px;
+  margin-right: 6px;
+  vertical-align: -2.5px;
+}
 
 /* 階段切換分隔線：前後 hairline 漸層線，一眼可辨流程推進 */
 .sys.phase {
