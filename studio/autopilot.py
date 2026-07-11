@@ -3678,6 +3678,8 @@ async def _prepare_execv_reload() -> None:
     # 區域 import 取真 asyncio：模組級 asyncio 可能被主迴圈測試 stub 掉。
     import asyncio as aio
 
+    # execv 不會回來,main 的 finally 不會跑——旁路調查的收尾必須在這裡做。
+    _requeue_sideline_task("execv 重載")
     loop = aio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):
         with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
@@ -3725,6 +3727,8 @@ async def main() -> None:
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
     finally:
+        # 先收尾旁路調查再 cancel:sideline 的 finally 會清掉 _sideline_task_info。
+        _requeue_sideline_task("優雅停機")
         for aux in (monitor, sideline, notifier, reconciler, digester):
             if aux is not None:
                 aux.cancel()
@@ -3866,6 +3870,35 @@ def _note_resumed() -> None:
 
 # 調查旁路線的狀態(行程記憶體):目前在跑的旁路任務(供 status.json sideline 子欄)。
 _sideline_task_info: dict | None = None
+
+
+def _requeue_sideline_task(reason: str) -> None:
+    """execv 重載/優雅停機腰斬旁路調查前,把它顯式退回 pending 並退還本輪 attempts。
+
+    腰斬本身是既有設計(部署不等調查,stale reaper 兜底);但不收尾的成本有二:任務
+    留 in_progress 等 reaper(至多 DEPLOY_STALE_AFTER 延遲),且 claim_next 的
+    attempts+1 白燒——重載一天數次、旁路近全時忙碌,同一任務被斬幾次就會被錯誤
+    parked(2026-07-11 08:46 execv 腰斬 #490 實證)。冪等:旁路已寫終局(done/parked/
+    pending)則 no-op;必須在 cancel 旁路 task 之前呼叫(其 finally 會清 info)。
+    任何失敗吞掉交 reaper 兜底,絕不影響重載/停機路徑。
+    """
+    info = _sideline_task_info
+    if not info:
+        return
+    tid = info.get("task_id")
+    try:
+        cur = next((t for t in backlog.list_tasks("in_progress") if t["id"] == tid), None)
+        if cur is None:
+            return
+        backlog.set_status(
+            tid,
+            "pending",
+            attempts=max(0, int(cur.get("attempts") or 1) - 1),
+            note=f"{reason}腰斬旁路調查,退回重排(退還本輪 attempts)",
+        )
+        log.warning("%s:旁路調查任務 #%s 退回 pending(attempts 退還)", reason, tid)
+    except Exception:  # noqa: BLE001 — 收尾失敗交既有 stale reaper 兜底,不得影響呼叫路徑
+        log.exception("旁路任務 #%s 退回 pending 失敗(交 stale reaper 兜底)", tid)
 
 
 async def _investigation_sideline() -> None:
