@@ -816,3 +816,32 @@ sha256sum -c /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-2
 ### 範圍外移交
 - 後續任務: [P2/chore] test_redeploy_qa.py import_smoke 改 mock subprocess，消除真實 python -c 外部依賴
 - 後續任務: [P2/chore] autopilot.py:161 _prepare_work_tree 裸 fetch 補 force refspec 測試
+
+## QA 重驗任務 #4：字面指令不可執行，fallback 行為驗證全綠
+
+### 驗收環境
+- 日期：2026-07-11
+- lane：`/opt/ti-autopilot-work.lanes/lane-ap600504a989-4`
+- 驗收前 HEAD：`e569e47fbb9ef3d4ad5af3789f16664494d3fb63`
+- lane 內 `.venv/bin/python`：不存在
+- fallback Python：`/opt/ti-autopilot-work/.venv/bin/python`（Python 3.12.3）
+
+### 實跑證據
+- `timeout 60 .venv/bin/python -m pytest tests/deploy/ -q`：RC=127，`timeout: failed to run command '.venv/bin/python': No such file or directory`
+- `timeout 300 /opt/ti-autopilot-work/.venv/bin/python -m pytest tests/deploy/ -q`：
+  - round 1：39 passed in 1.78s
+  - round 2：39 passed in 2.27s
+  - round 3：39 passed in 1.79s
+- `timeout 300 /opt/ti-autopilot-work/.venv/bin/python -m pytest -q --collect-only tests/deploy/test_fetch_force_refspec.py`：4 tests collected
+- 單檔驗證：
+  - `tests/deploy/test_redeploy.py`：8 passed
+  - `tests/deploy/test_redeploy_qa.py`：9 passed
+  - `tests/deploy/test_web_redeploy_qa.py`：9 passed
+- `timeout 300 /opt/ti-autopilot-work/.venv/bin/python -m ruff check .`：All checks passed
+- `timeout 300 /opt/ti-autopilot-work/.venv/bin/python -m ruff format --check .`：527 files already formatted
+- `git diff --name-only HEAD -- studio/`：空
+- `git status --porcelain`：空（本段證據落檔前）
+
+### QA 判定
+- FAIL：本輪指定字面指令 `timeout 300 .venv/bin/python -m pytest tests/deploy/ -q` 在此 lane 不可執行。
+- FAIL：三檔 fixture 合約不一致；`test_redeploy.py` 與 `test_web_redeploy_qa.py` 仍使用 fake `_deploy_lock`，`test_redeploy_qa.py` 則使用 `AUTOPILOT_STATE_DIR=tmp_path`。
