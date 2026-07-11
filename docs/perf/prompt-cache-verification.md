@@ -74,18 +74,9 @@ timeout 300 .venv/bin/python -m pytest -q tests/core/test_prompt_cache.py
 2. 用真 API 跑一場 session（經 web `/ws` 送需求，或走既有 E2E 流程），讓多個角色至少各發言兩輪，
    使同一 session 內第 2 次起可命中同前綴的 `_COMMON`＋角色 prompt。
 
-3. **運維總覽**：查 `GET /api/metrics`，比對 cache 相關欄位（SDK 回報的
-   `cache_read_input_tokens` / `cache_creation_input_tokens`，在 Ti 內落為 `cache_read` / `cache_write`）
-   的比例。此端點給跨場運維視角（sessions / history / scorecard 等）：
-
-   ```bash
-   # 運維總覽：跨場 metrics（含各場 token_usage 的 cache 欄位比對入口）
-   curl -sf http://localhost:8000/api/metrics | .venv/bin/python -m json.tool
-   ```
-
-4. **逐場 cache 明細**：cache 欄位由 `history._derive_token_usage` 聚合到**每場 session meta 的
-   `token_usage`**（`cache_read`＝命中量、對應 `cache_read_input_tokens`；`cache_write`＝寫入量、對應
-   `cache_creation_input_tokens`）。取單場明細：
+3. **逐場 cache 明細（主要補驗路徑）**：cache 欄位由 `history._derive_token_usage` 聚合到**每場
+   session meta 的 `token_usage`**（`cache_read`＝命中量、對應 `cache_read_input_tokens`；
+   `cache_write`＝寫入量、對應 `cache_creation_input_tokens`）。取單場明細：
 
    ```bash
    # 單場：查該 session meta 的 token_usage cache 欄位
@@ -98,7 +89,13 @@ timeout 300 .venv/bin/python -m pytest -q tests/core/test_prompt_cache.py
    該函式回傳的是 `*100` 的百分比）。before（未帶 env）預期 `cache_read == 0`；after 開啟且 CLI 認得 env
    時預期 `cache_read` 上升、對應角色的 `latency.by_role.avg_ms` 應同步下降。
 
-5. 驗畢收掉服務並清掉可能含機敏 env 的 log：
+   > **已知缺口**：`GET /api/metrics` 目前走 `history.aggregate_scorecard()`，**不聚合 token_usage**，
+   > 因此 `cache_read` / `cache_write` 不會出現在該端點的回應。cache token 的逐場明細只能
+   > 從 `GET /api/history/<SESSION_ID>/events` 的 `meta.token_usage.total` 取得。
+   >
+   > 後續任務: [P1/feature] /api/metrics 聚合 token_usage（含 cache_read/cache_write），供跨場 cache 命中率觀測
+
+4. 驗畢收掉服務並清掉可能含機敏 env 的 log：
 
    ```bash
    kill "$PID" 2>/dev/null
@@ -109,8 +106,9 @@ timeout 300 .venv/bin/python -m pytest -q tests/core/test_prompt_cache.py
 
 - **CLI Node 層是否實際認得 `ENABLE_PROMPT_CACHING_1H`**：不可從 Python SDK 原始碼驗證，屬已知邊界。
   本文件「未打真 API」聲明已涵蓋；正式上線後以真 session 的 `cache_read` token 觀測補閉環。
-- **cache token 的兩層觀測**：`/api/metrics` 給跨場運維總覽；cache token 的逐場明細由
-  `token_usage` 聚合，經 `/api/history` 取得對應場次的 `cache_read` / `cache_write`。兩者搭配即可完成
-  before/after 比對，無需新增埋點。
+- **cache token 觀測路徑**：cache token 的逐場明細由 `history._derive_token_usage` 聚合到
+  per-session meta，經 `GET /api/history/<SESSION_ID>/events` 取得 `meta.token_usage.total`
+  的 `cache_read` / `cache_write`；這是唯一可靠的補驗路徑，無需新增埋點。
+  `/api/metrics` 目前不聚合 cache 欄位（已知缺口，見上方步驟 3）。
 - **本 clone 無真數據**：既有 200 場 history 的 `cache_read`/`cache_write` 全為 0（`prompt-cache-selection.md`
   快照），只是「快取路徑從未啟用」的空基準，不是命中證據。
