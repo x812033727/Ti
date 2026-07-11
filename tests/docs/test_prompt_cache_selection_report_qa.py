@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
 import pytest
 
+from scripts.aggregate_history_meta import aggregate_history_meta
 from studio import config, conventions
 from studio.roles import BUILTIN_ROLES
 
@@ -13,45 +13,6 @@ ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "docs" / "perf" / "prompt-cache-selection.md"
 
 SONNET_OPUS_CACHE_FLOOR = 1024
-TOKEN_FIELDS = ("prompt", "completion", "total", "cost_usd", "calls", "cache_read", "cache_write")
-LATENCY_FIELDS = ("count", "sum_ms", "max_ms")
-
-
-def _has_nonzero(value) -> bool:
-    if isinstance(value, dict):
-        return any(_has_nonzero(v) for v in value.values())
-    if isinstance(value, list):
-        return any(_has_nonzero(v) for v in value)
-    return bool(value)
-
-
-def _history_aggregate(root: Path) -> dict:
-    metas = [
-        json.loads(path.read_text(encoding="utf-8")) for path in sorted(root.glob("*.meta.json"))
-    ]
-    token_total = {field: 0 for field in TOKEN_FIELDS}
-    latency_total = {field: 0 for field in LATENCY_FIELDS}
-    nonzero = []
-
-    for meta in metas:
-        usage = (meta.get("token_usage") or {}).get("total") or {}
-        latency = (meta.get("latency") or {}).get("total") or {}
-        for field in TOKEN_FIELDS:
-            token_total[field] += usage.get(field, 0) or 0
-        for field in LATENCY_FIELDS:
-            latency_total[field] += latency.get(field, 0) or 0
-        if _has_nonzero(meta.get("token_usage")) or _has_nonzero(meta.get("latency")):
-            nonzero.append(meta.get("session_id") or "<missing-session-id>")
-
-    return {
-        "root": str(root),
-        "meta_files": len(metas),
-        "with_latency": sum(1 for meta in metas if "latency" in meta),
-        "with_token_usage": sum(1 for meta in metas if "token_usage" in meta),
-        "latency_total": latency_total,
-        "token_usage_total": token_total,
-        "nonzero_meta_files": nonzero,
-    }
 
 
 def _claude_tool_schema() -> str:
@@ -93,8 +54,14 @@ def test_report_contains_required_selection_claims() -> None:
     text = REPORT.read_text(encoding="utf-8")
 
     required_fragments = [
+        "## 證據快照",
         "200 場",
         "全為 0",
+        "/opt/ti-autopilot-work/history",
+        "--history-root",
+        '"meta_files": 200',
+        '"cache_read": 0',
+        '"cache_write": 0',
         "無真 API",
         "命中證據 N/A",
         "研究調研",
@@ -106,21 +73,21 @@ def test_report_contains_required_selection_claims() -> None:
     assert not missing, f"選題報告缺少必要聲明: {missing}"
 
 
-def test_history_200_all_zero_evidence_is_reproducible_in_workspace() -> None:
-    aggregate = _history_aggregate(config.HISTORY_ROOT)
+def test_history_all_zero_evidence_is_reproducible_when_data_exists() -> None:
+    aggregate = aggregate_history_meta(config.HISTORY_ROOT)
 
-    if not config.HISTORY_ROOT.exists() or aggregate["meta_files"] == 0:
+    if aggregate["meta_files"] == 0:
         pytest.skip(
-            "history 是 .gitignore 排除的本機執行資料；"
-            f"此 workspace 無可重跑 meta，實際聚合={aggregate}"
+            f"本 workspace 無 history 數據（{aggregate['history_root']}）；"
+            "證據以報告快照為準（200 場全零）；有數據的部署環境可重跑以兌現"
         )
 
-    assert aggregate["meta_files"] == 200, f"meta 檔數不是 200: {aggregate}"
-    assert aggregate["with_latency"] == 200, f"不是每場都有 latency: {aggregate}"
-    assert aggregate["with_token_usage"] == 200, f"不是每場都有 token_usage: {aggregate}"
-    assert aggregate["latency_total"] == {"count": 0, "sum_ms": 0, "max_ms": 0}, aggregate
-    assert aggregate["token_usage_total"] == {field: 0 for field in TOKEN_FIELDS}, aggregate
-    assert aggregate["nonzero_meta_files"] == [], aggregate
+    # 有數據時：驗「非零 meta 不存在」與「cache 欄位全零」；不釘場數（場數隨執行增長）
+    assert aggregate["nonzero_meta_files"] == [], (
+        f"存在非零 latency/token_usage 的 meta：{aggregate['nonzero_meta_files']}"
+    )
+    assert aggregate["token_usage_total"]["cache_read"] == 0, aggregate
+    assert aggregate["token_usage_total"]["cache_write"] == 0, aggregate
 
 
 def test_shortest_role_prompt_proxy_exceeds_sonnet_opus_cache_floor() -> None:

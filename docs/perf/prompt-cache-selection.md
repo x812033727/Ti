@@ -6,61 +6,21 @@
 
 因此本輪只選一項改善：啟用 Claude prompt caching env。命中證據目前是 N/A；上線後應以真 session 的 `/api/metrics` cache 欄位補驗。
 
-## History Meta 聚合
+## 證據快照
 
-`history/` 是 `.gitignore` 排除的本機執行資料，不隨 lane 版控。本文件採用 PM 開場查核的樣本結論：200 場 meta 全部含 `latency`，但 `latency` 與 `token_usage` 所有加總欄位皆為 0。本 lane 於 2026-07-11 查核 `config.HISTORY_ROOT=/opt/ti-autopilot-work.lanes/lane-ap884b8f9ffc-1/history`，目錄不存在，因此未重造或補寫假資料。
+`history/` 是 `.gitignore` 排除的本機執行資料，不隨 lane 版控。以下快照取自主工作目錄 `/opt/ti-autopilot-work/history`：200 場 meta 全部含 `latency`，但 `latency` 與 `token_usage` 所有加總欄位皆為 0。本 lane 於 2026-07-11 查核 `config.HISTORY_ROOT=/opt/ti-autopilot-work.lanes/lane-ap884b8f9ffc-1/history`，目錄不存在，因此未重造或補寫假資料；lane/CI 的空 history 只代表空資料基準，不是 200 場樣本重現。
 
 可重跑聚合指令：
 
 ```bash
-timeout 60 .venv/bin/python - <<'PY'
-import json
-import os
-from pathlib import Path
-
-root = Path(os.getenv("TI_HISTORY_ROOT", "history"))
-metas = []
-for path in sorted(root.glob("*.meta.json")):
-    metas.append(json.loads(path.read_text(encoding="utf-8")))
-
-def nz(value):
-    if isinstance(value, dict):
-        return any(nz(v) for v in value.values())
-    if isinstance(value, list):
-        return any(nz(v) for v in value)
-    return bool(value)
-
-token_fields = ("prompt", "completion", "total", "cost_usd", "calls", "cache_read", "cache_write")
-token_total = {k: 0 for k in token_fields}
-latency_total = {"count": 0, "sum_ms": 0, "max_ms": 0}
-nonzero = []
-
-for meta in metas:
-    usage = ((meta.get("token_usage") or {}).get("total") or {})
-    latency = ((meta.get("latency") or {}).get("total") or {})
-    for key in token_fields:
-        token_total[key] += usage.get(key, 0) or 0
-    for key in latency_total:
-        latency_total[key] += latency.get(key, 0) or 0
-    if nz(meta.get("token_usage")) or nz(meta.get("latency")):
-        nonzero.append(meta.get("session_id"))
-
-print(json.dumps({
-    "history_root": str(root),
-    "meta_files": len(metas),
-    "with_latency": sum(1 for m in metas if "latency" in m),
-    "with_token_usage": sum(1 for m in metas if "token_usage" in m),
-    "latency_total": latency_total,
-    "token_usage_total": token_total,
-    "nonzero_meta_files": nonzero,
-}, ensure_ascii=False, indent=2))
-PY
+timeout 60 .venv/bin/python -m scripts.aggregate_history_meta --history-root /opt/ti-autopilot-work/history
 ```
 
-PM 開場查核摘要：
+快照輸出：
 
 ```json
 {
+  "history_root": "/opt/ti-autopilot-work/history",
   "meta_files": 200,
   "with_latency": 200,
   "with_token_usage": 200,
