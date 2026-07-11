@@ -1950,6 +1950,13 @@ def _build_split_prompt(task: dict) -> str:
     )
 
 
+# 逾時未拆分 parked note 的固定前綴：note 產生（見下方 _handle_task_timeout）與 backlog.triage_failed
+# 的 Rule 1 退回解析、以及本檔 Rule 2 揀選 regex 均引用此常數。⚠️ 此字串被 backlog.triage 跨模組解析，
+# 勿自行修改；深度上限變體 note 不含此前綴，天然不被 Rule 1/Rule 2 揀走（交人工）。
+_TIMEOUT_NOTE_PREFIX = "task timeout after"
+_TIMEOUT_NOTE_RE = re.compile(rf"{re.escape(_TIMEOUT_NOTE_PREFIX)} (\d+)s")
+
+
 async def _autosplit_task(clone: str, task: dict) -> list[str]:
     """逾時任務（範圍太大）交資深專家拆成更小、可獨立出貨的子任務。回傳過濾後的子任務標題清單。
 
@@ -1988,6 +1995,28 @@ async def _autosplit_task(clone: str, task: dict) -> list[str]:
     return out[: config.AUTOPILOT_SPLIT_MAX_SUBTASKS]
 
 
+async def _autosplit_and_enqueue(clone: str, task: dict) -> list[int]:
+    """逾時任務交專家拆成更小子任務並入列 pending（`split_depth`＝父 depth+1，封頂由此逐代累計）。
+    回傳 child id 清單。child 建立邏輯的**唯一**實作，`_handle_task_timeout`（新逾時）與
+    `_maybe_triage_timeout_parked`（Rule 2 歷史 parked 分診）共用，避免雙份 child dict 建立邏輯漂移。
+    """
+    tid = task["id"]
+    depth = int(task.get("split_depth", 0) or 0)
+    children: list[int] = []
+    for title in await _autosplit_task(clone, task):
+        child = backlog.add(
+            title,
+            detail=f"（由逾時任務 #{tid} 自動拆分，範圍更小以在單場 session 內完成）",
+            source="split",
+            item_type=task.get("type", "improvement"),
+        )
+        if child:
+            # split_depth 逐代累計，封頂 infinite-split（backlog.add 無此欄位，經 set_status 補寫）。
+            backlog.set_status(child["id"], "pending", split_depth=depth + 1)
+            children.append(child["id"])
+    return children
+
+
 async def _handle_task_timeout(task: dict) -> None:
     """硬牆逾時任務處理：能自動拆分就拆成更小子任務再排、原任務歸檔 parked；否則維持舊 parked 行為
     （關閉、達拆分深度上限、或拆不出東西/拆分失敗時）。與 `_main_loop` 的 TimeoutError 分支解耦以利單測。
@@ -2002,17 +2031,7 @@ async def _handle_task_timeout(task: dict) -> None:
     if config.AUTOPILOT_TIMEOUT_AUTOSPLIT and not config.AUTOPILOT_DRYRUN and not reached_depth:
         try:
             clone = await _prepare_clone()
-            for title in await _autosplit_task(clone, task):
-                child = backlog.add(
-                    title,
-                    detail=f"（由逾時任務 #{tid} 自動拆分，範圍更小以在單場 session 內完成）",
-                    source="split",
-                    item_type=task.get("type", "improvement"),
-                )
-                if child:
-                    # split_depth 逐代累計，封頂 infinite-split（backlog.add 無此欄位，經 set_status 補寫）。
-                    backlog.set_status(child["id"], "pending", split_depth=depth + 1)
-                    children.append(child["id"])
+            children = await _autosplit_and_enqueue(clone, task)
         except Exception:  # noqa: BLE001 — 拆分失敗只退回 parked，不得中斷主迴圈
             log.exception("任務 #%s 逾時自動拆分失敗，退回 parked", tid)
 
@@ -2028,7 +2047,7 @@ async def _handle_task_timeout(task: dict) -> None:
         note = (
             f"逾時且已達自動拆分深度上限（{config.AUTOPILOT_SPLIT_MAX_DEPTH}）——需人工拆分或縮小範圍"
             if reached_depth
-            else f"task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s — 需拆分或縮小範圍"
+            else f"{_TIMEOUT_NOTE_PREFIX} {config.AUTOPILOT_TASK_TIMEOUT}s — 需拆分或縮小範圍"
         )
         backlog.set_status(tid, "parked", note=note)
         log.warning(
@@ -2629,6 +2648,93 @@ def _maybe_triage_failed() -> None:
             stats.get("parked", 0),
             stats.get("revived", 0),
         )
+
+
+# Rule 2（歷史 timeout-parked 自動拆分）每輪最多處理筆數：防 backlog 洪水的防爆閥，非營運旋鈕，
+# 比照 backlog.TRIAGE_* 用模組常數（不進 config.py，省兩處同步成本）。
+_TIMEOUT_SPLIT_PER_ROUND = 1
+
+
+def _timeout_parked_candidates() -> list[dict]:
+    """揀 Rule 2 可自動拆分的 timeout-parked 任務。
+
+    條件（與 Rule 1 互斥、不搶其活）：`status=="parked"` + note 含 `_TIMEOUT_NOTE_PREFIX` +
+    **無** `split_done`（未被本規則處理過）+ **Rule 1 不適用**——即「已被 Rule 1 退回重試過
+    （`timeout_retried=True`）」或「park 當時的上限 N ≥ 現行 `AUTOPILOT_TASK_TIMEOUT`（調高上限也白搭）」。
+    Rule 1 適用者（未重試過且 N < 現行上限＝操作者調高了上限、值得原樣重試）留給 `backlog.triage_failed`
+    退回 pending，這裡不搶。深度上限變體 note 不含前綴，天然不入選。
+    """
+    cur = int(config.AUTOPILOT_TASK_TIMEOUT)
+    out: list[dict] = []
+    for t in backlog.list_tasks(status="parked"):
+        if t.get("split_done"):
+            continue
+        m = _TIMEOUT_NOTE_RE.search(t.get("note") or "")
+        if not m:
+            continue
+        rule1_applicable = not t.get("timeout_retried") and int(m.group(1)) < cur
+        if rule1_applicable:
+            continue
+        out.append(t)
+    return out
+
+
+async def _maybe_triage_timeout_parked() -> None:
+    """Rule 2：每輪挑至多 `_TIMEOUT_SPLIT_PER_ROUND` 筆 Rule 1 退不了的 timeout-parked，交專家自動拆分。
+
+    掛主迴圈頂端（`_maybe_triage_failed` 同位置）。與 Rule 1（確定性退回，無 LLM）分工：這裡走
+    `_autosplit_task` 有 LLM 呼叫，故放 async。原任務一律維持 `parked` 並設 `split_done=True`
+    ——不論拆成功/拆空/達深度上限/例外，處理過就標記，確保**下輪不再被揀走**（防無限循環的唯一收斂點）。
+    整段吞例外：單筆拆分失敗不得弄死主迴圈（同 triage 慣例）。
+    """
+    if config.AUTOPILOT_DRYRUN or not config.AUTOPILOT_TIMEOUT_AUTOSPLIT:
+        return
+    try:
+        candidates = _timeout_parked_candidates()
+    except Exception:  # noqa: BLE001 — 分診只是自癒輔助，失敗不得影響主迴圈
+        log.exception("timeout-parked 分診揀選失敗（忽略，不影響主迴圈）")
+        return
+
+    for task in candidates[:_TIMEOUT_SPLIT_PER_ROUND]:
+        tid = task["id"]
+        depth = int(task.get("split_depth", 0) or 0)
+        if depth >= config.AUTOPILOT_SPLIT_MAX_DEPTH:
+            # 達拆分深度上限：不再自動拆，標 split_done 防重揀，note 導向人工。
+            backlog.set_status(
+                tid,
+                "parked",
+                split_done=True,
+                note=f"逾時且已達自動拆分深度上限（{config.AUTOPILOT_SPLIT_MAX_DEPTH}）——需人工拆分或縮小範圍",
+            )
+            log.info("timeout-parked #%s 已達深度上限，標 split_done 待人工", tid)
+            continue
+        try:
+            clone = await _prepare_clone()
+            children = await _autosplit_and_enqueue(clone, task)
+        except Exception:  # noqa: BLE001 — 單筆拆分失敗只標記，不得中斷主迴圈
+            log.exception("timeout-parked 任務 #%s 自動拆分失敗，標 split_done 待人工", tid)
+            backlog.set_status(
+                tid, "parked", split_done=True, note="逾時任務自動拆分失敗——需人工拆分或縮小範圍"
+            )
+            continue
+        if children:
+            refs = "、".join(f"#{c}" for c in children)
+            backlog.set_status(
+                tid,
+                "parked",
+                split_done=True,
+                note=f"逾時任務已自動拆為 {refs}（原任務歸檔，Rule 2 分診）",
+            )
+            log.info("timeout-parked #%s 自動拆為 %d 個子任務：%s", tid, len(children), refs)
+        else:
+            # 拆不出有效子任務（全雜訊/busywork）：標 split_done 防重複打 LLM，導向人工。
+            backlog.set_status(
+                tid,
+                "parked",
+                split_done=True,
+                note="逾時任務拆不出有效子任務——需人工拆分或縮小範圍",
+            )
+            log.warning("timeout-parked #%s 拆不出子任務，標 split_done 待人工", tid)
 
 
 # 任務邊界部署漂移自查的節流/退避（行程記憶體）。節流起點＝行程啟動時刻：首查延後一個
@@ -4046,6 +4152,8 @@ async def _main_loop(startup_sig: float) -> None:
             continue
 
         _maybe_triage_failed()
+        # Rule 2：Rule 1（triage_failed）退不了的歷史 timeout-parked，每輪挑 1 筆交專家自動拆分。
+        await _maybe_triage_timeout_parked()
         _recover_stale_in_progress()
         # 任務邊界部署自查：放在取任務之前——此刻保證無 autopilot 討論，是 autodeploy
         # 飢餓下唯一可靠的部署窗口（成功且自身碼有變會 execv，不返回）。
