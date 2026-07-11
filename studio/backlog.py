@@ -300,11 +300,12 @@ def claim_next(predicate, *, state_dir: Path | None = None) -> dict | None:
     為什麼需要:next_pending 只讀不改,認領靠呼叫端事後 set_status——單線無妨,但旁路
     併行線(調查 sideline)與主迴圈同時取任務會 TOCTOU 撿到同一筆。predicate 在鎖內
     執行,須為純函式(不得再進 backlog,否則 flock 重入死鎖)。
-    排序與 next_pending 一致(priority 先、同級 created_at 早者先)。
+    排序與 next_pending 一致(priority 先、同級 created_at 早者先);retry_after
+    在未來者跳過(重試冷卻,見 _retry_ready)。
     """
     with _locked(state_dir):
         data = _load(state_dir, mutable=True)
-        pend = [t for t in data["tasks"] if t["status"] == "pending"]
+        pend = [t for t in data["tasks"] if t["status"] == "pending" and _retry_ready(t)]
         pend.sort(key=lambda t: (t.get("priority", DEFAULT_PRIORITY), t["created_at"]))
         for t in pend:
             if not predicate(t):
@@ -317,12 +318,23 @@ def claim_next(predicate, *, state_dir: Path | None = None) -> dict | None:
         return None
 
 
+def _retry_ready(t: dict) -> bool:
+    """重試冷卻閘:retry_after(epoch)在未來的 pending 不揀——立即重抓會把 attempts
+    在同一個 provider 劣化窗口內燒光(2026-07-11 09:24 實證)。欄位缺失/非數值＝無冷卻
+    (舊資料完全不受影響);到點後自然恢復可揀,無需任何清理。"""
+    try:
+        return float(t.get("retry_after") or 0) <= time.time()
+    except (TypeError, ValueError):
+        return True
+
+
 def next_pending(*, state_dir: Path | None = None) -> dict | None:
     """取優先級最高（P0 先）、同級內最早建立、仍 pending 的任務（不改狀態）。
 
-    舊資料無 priority 欄位時以 P1 解讀，故純舊資料下順序與先前 FIFO 完全一致。
+    舊資料無 priority 欄位時以 P1 解讀，故純舊資料下順序與先前 FIFO 完全一致;
+    retry_after 在未來者跳過(重試冷卻,見 _retry_ready)。
     """
-    pend = [t for t in _load(state_dir)["tasks"] if t["status"] == "pending"]
+    pend = [t for t in _load(state_dir)["tasks"] if t["status"] == "pending" and _retry_ready(t)]
     pend.sort(key=lambda t: (t.get("priority", DEFAULT_PRIORITY), t["created_at"]))
     return pend[0] if pend else None
 

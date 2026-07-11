@@ -1741,7 +1741,17 @@ async def _run_investigation_task(
         )
         return
     # 缺結論或缺證據（防單專家無憑據自說自話）：走既有「討論未達完成」有限重試語意。
+    # 原始輸出頭段必須留痕：調查線事件走 _noop 丟棄（history 0 events），缺結論時若不記
+    # 這行,事後完全無從驗屍「到底回了什麼」——2026-07-11 09:24 劣化窗口（SDK 2-4 秒回
+    # 垃圾、12 場連環 incomplete、4 任務 attempts 燒光冤死）的診斷就卡在這裡。
     why = "調查輸出缺「結論:」" if not parsed["conclusion"] else "調查結論缺「證據:」行"
+    log.warning(
+        "任務 #%s 調查輸出無法解析（%s，len=%d）：%.200s",
+        task["id"],
+        why,
+        len(text or ""),
+        " ".join((text or "(空)").split()) or "(空)",
+    )
     _handle_discussion_incomplete(task, reason=why)
 
 
@@ -2146,17 +2156,22 @@ def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
     # 與人工回看有據；「討論未達完成」子串不動，既有分診/看板/診斷分類無縫續接。
     why = f"（原因: {reason.strip()}）" if (reason or "").strip() else ""
     if attempts + 1 < cap:
-        backlog.set_status(
-            task["id"],
-            "pending",
-            attempts=attempts + 1,
-            note=_with_prefilter_note(task, f"討論未達完成，第 {attempts + 1} 次退回重試{why}"),
-        )
+        fields: dict = {
+            "attempts": attempts + 1,
+            "note": _with_prefilter_note(task, f"討論未達完成，第 {attempts + 1} 次退回重試{why}"),
+        }
+        # 重試冷卻：立即重抓會把 attempts 在同一個 provider 劣化窗口內燒光（2026-07-11
+        # 09:24 實證:調查線 3 attempts 3 分鐘內用罄、4 任務冤死）。retry_after 由
+        # next_pending/claim_next 尊重,把重試錯開到窗口之外。
+        if config.AUTOPILOT_RETRY_COOLDOWN_S > 0:
+            fields["retry_after"] = time.time() + config.AUTOPILOT_RETRY_COOLDOWN_S
+        backlog.set_status(task["id"], "pending", **fields)
         log.info(
-            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次）%s",
+            "任務 #%s 討論未達完成，退回 pending 重試（第 %d/%d 次，冷卻 %ds）%s",
             task["id"],
             attempts + 1,
             cap,
+            max(0, config.AUTOPILOT_RETRY_COOLDOWN_S),
             why,
         )
     else:
