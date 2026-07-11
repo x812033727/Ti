@@ -12,11 +12,12 @@
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config, redeploy, runner
+from studio import config, deploy, redeploy, runner
 
 # 在 autouse fixture 之前（模組載入時）保存原始函式，供直接測試。
 _ORIG_SCHEDULE_RESTART = redeploy.schedule_restart
@@ -33,6 +34,12 @@ def client():
 @pytest.fixture(autouse=True)
 def _no_real_restart(monkeypatch):
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
+
+    @contextmanager
+    def _fake_lock():
+        yield True
+
+    monkeypatch.setattr(deploy, "_deploy_lock", _fake_lock)
 
 
 # --- pull_main ------------------------------------------------------
