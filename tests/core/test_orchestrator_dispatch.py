@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import config, events, provider_quota
+from studio import config, events, lessons, provider_quota
 from studio.orchestrator import LaneContext, StudioSession
 from studio.roles import BY_KEY, Role
 
@@ -363,6 +363,12 @@ async def test_auto_mode_adopts_hint_at_92_percent(monkeypatch):
 @pytest.mark.asyncio
 async def test_stage_decompose_auto_mode_prompt(monkeypatch):
     """auto 模式拆解 prompt：全權說明、provider 只列兩家、額度摘要不出現子集外的家。"""
+
+    async def no_appraisals(_self):
+        return {}
+
+    monkeypatch.setattr(lessons, "context", lambda **_kwargs: "")
+    monkeypatch.setattr(StudioSession, "_appraisal_perf", no_appraisals)
     monkeypatch.setattr(provider_quota, "snapshot", _auto_snapshot)
     monkeypatch.setattr(config, "dispatch_auto", lambda: True)
     s, experts, _ = _session(pm_scripts=["任務: #1 甲\n派工: #1 codex gpt-5.5"])
