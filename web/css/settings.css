@@ -214,6 +214,27 @@
   font-size: var(--fs-0);
   padding: 2px 8px;
 }
+/* 帳號分配模式列（單一控制點：自動輪替 / 各帳號手動釘選） */
+.quota-account-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.quota-mode-btn {
+  font-size: var(--fs-0);
+  padding: 2px 10px;
+}
+.quota-mode-btn.on {
+  border-color: rgba(110,121,255,.55);
+  color: var(--text);
+  opacity: 1;
+}
+.quota-mode-btn.on:disabled {
+  cursor: default;
+}
+.quota-pin-warn {
+  color: var(--warn);
+}
 .quota-account .quota-ratelimits {
   border-bottom: none;
   padding-bottom: 0;

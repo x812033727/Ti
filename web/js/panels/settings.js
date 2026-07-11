@@ -387,11 +387,69 @@ function rateLimitBlock(rl) {
   return wrap;
 }
 
-function claudeAccountsBlock(accounts) {
-  // 每個 Claude 訂閱帳號一塊：標題（帳號 + 訂閱類型）、在線標記或切換鈕、官方額度條。
+function accountModeRow(accounts, rotate) {
+  // 帳號分配模式列（單一控制點）：「自動輪替」＋每帳號一鈕。pin 檔存在＝手動模式
+  // （釘選帳號高亮、自動鈕變成可按的恢復鈕）；否則自動模式（自動鈕高亮）。
+  const manual = rotate.mode === "manual";
+  const row = document.createElement("div");
+  row.className = "quota-account-modes";
+  const autoBtn = document.createElement("button");
+  autoBtn.type = "button";
+  autoBtn.className = `ghost quota-mode-btn${manual ? "" : " on"}`;
+  autoBtn.textContent = "🔄 自動輪替";
+  if (!rotate.enabled) {
+    autoBtn.disabled = true;
+    autoBtn.title = ".env 已停用自動輪替（TI_CLAUDE_ROTATE=0）";
+  } else if (!manual) {
+    autoBtn.disabled = true; // 已在自動模式
+  } else {
+    autoBtn.addEventListener("click", () => setAutoMode(autoBtn));
+  }
+  row.appendChild(autoBtn);
+  for (const a of accounts) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const on = manual && a.pinned;
+    btn.className = `ghost quota-mode-btn${on ? " on" : ""}`;
+    if (on) {
+      btn.textContent = a.active ? `📌 帳號 ${a.label} · 手動` : `⏳ 帳號 ${a.label} · 排隊中`;
+      btn.disabled = true;
+      if (!a.active) btn.title = "等待任務空檔由 autopilot 自動切換";
+    } else {
+      btn.textContent = `帳號 ${a.label}`;
+      btn.addEventListener("click", () => switchClaudeAccount(a.label, btn));
+    }
+    row.appendChild(btn);
+  }
+  return row;
+}
+
+function pinnedQuotaWarning(accounts, rotate) {
+  // 手動模式警語：釘選帳號任一額度窗 ≥90% → 提醒會 quota_sleep、切回自動可借用另一帳號。
+  if (rotate.mode !== "manual") return null;
+  const pinned = accounts.find((a) => a.pinned);
+  const rl = pinned && pinned.rate_limits;
+  if (!rl || rl.error) return null;
+  const windows = [rl.five_hour, rl.seven_day];
+  const nearCap = windows.some((w) => w && Number(w.used_percentage) >= 90);
+  if (!nearCap) return null;
+  const div = document.createElement("div");
+  div.className = "quota-rl-note quota-pin-warn";
+  div.textContent =
+    "⚠ 手動模式帳號額度將滿：耗盡時 autopilot 會休眠等待重置;切回自動輪替可借用另一帳號。";
+  return div;
+}
+
+function claudeAccountsBlock(accounts, rotate) {
+  // 模式列（自動/各帳號）＋每個 Claude 訂閱帳號一塊：標題、在線標記、官方額度條。
   const wrap = document.createElement("div");
   wrap.className = "quota-accounts";
-  appendTextEl(wrap, "div", "quota-rl-kicker", "訂閱帳號（可切換）");
+  appendTextEl(wrap, "div", "quota-rl-kicker", "訂閱帳號");
+  if (rotate) {
+    wrap.appendChild(accountModeRow(accounts, rotate));
+    const warn = pinnedQuotaWarning(accounts, rotate);
+    if (warn) wrap.appendChild(warn);
+  }
   for (const a of accounts) {
     const box = document.createElement("div");
     box.className = `quota-account${a.active ? " active" : ""}`;
@@ -401,7 +459,9 @@ function claudeAccountsBlock(accounts) {
     appendTextEl(head, "strong", "", name);
     if (a.active) {
       appendTextEl(head, "span", "quota-account-live", "● 在線");
-    } else {
+    }
+    // 無 rotate 資料的舊後端相容：非在線帳號保留原本的切換鈕。
+    if (!rotate && !a.active) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "ghost quota-account-switch";
@@ -421,17 +481,25 @@ export async function switchClaudeAccount(label, btn) {
     !(await openConfirmModal({
       title: "切換 Claude 帳號",
       message:
-        `切換到帳號 ${label}？\n\n` +
-        "這會重啟後端服務：本面板會短暫斷線後自動重連。\n" +
-        "若有互動討論或 autopilot 任務正在進行，會被擋下、不會切換。",
+        `切換到帳號 ${label} 並進入手動模式？\n\n` +
+        "手動模式會暫停自動輪替（不會被政策切回），可隨時按「自動輪替」恢復。\n" +
+        "切換會重啟後端服務：本面板會短暫斷線後自動重連。\n" +
+        "若有互動討論或 autopilot 任務正在進行，可選擇排隊在任務空檔自動切換。",
       confirmLabel: "切換",
     }))
   )
     return;
+  const origText = btn && btn.textContent;
   if (btn) {
     btn.disabled = true;
     btn.textContent = "切換中…";
   }
+  const restore = () => {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  };
   try {
     const resp = await fetch("/api/claude-account/switch", {
       method: "POST",
@@ -440,30 +508,113 @@ export async function switchClaudeAccount(label, btn) {
     });
     if (resp.status === 409) {
       const d = await resp.json().catch(() => ({}));
-      toast(`無法切換：${(d.reasons || []).join("、") || "有討論正在進行"}`, "error");
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "切換到此帳號";
+      const reasons = (d.reasons || []).join("、") || "有討論正在進行";
+      restore();
+      if (d.queueable) {
+        await queueClaudeAccountSwitch(label, reasons, btn);
+      } else {
+        toast(`無法切換：${reasons}`, "error");
       }
       return;
     }
     if (!resp.ok) {
       const d = await resp.json().catch(() => ({}));
       toast(`切換失敗：${d.error || resp.status}`, "error");
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "切換到此帳號";
-      }
+      restore();
       return;
     }
-    toast(`已切換到帳號 ${label}，服務重啟中…`, "ok");
+    toast(`已切換到帳號 ${label}（手動模式），服務重啟中…`, "ok");
     const settingsQuota = $("#settingsQuota");
     if (settingsQuota) {
-      settingsQuota.innerHTML = `<div class='muted'>已切換到帳號 ${label}，服務重啟中…（重連後自動刷新額度）</div>`;
+      settingsQuota.replaceChildren();
+      appendTextEl(
+        settingsQuota,
+        "div",
+        "muted",
+        `已切換到帳號 ${label}，服務重啟中…（重連後自動刷新額度）`,
+      );
     }
     waitForReconnectThenRefresh();
   } catch (e) {
     toast("切換請求已送出，服務可能正在重啟，稍候重新整理頁面。", "");
+  }
+}
+
+async function queueClaudeAccountSwitch(label, reasons, btn) {
+  // 409 busy 的排隊路徑：寫 pin 由 autopilot 在任務空檔代切。202 的 resp.ok 為 true，
+  // 一律以 body 的 queued 分流——排隊沒有重啟，不可走 waitForReconnectThenRefresh。
+  if (
+    !(await openConfirmModal({
+      title: "帳號使用中，改為排隊切換？",
+      message:
+        `現在無法立即切換：${reasons}。\n\n` +
+        `排隊後 autopilot 會在任務空檔自動切換到帳號 ${label} 並重啟服務，` +
+        "期間進行中的任務不受影響。",
+      confirmLabel: "排隊切換",
+    }))
+  )
+    return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "排隊中…";
+  }
+  try {
+    const resp = await fetch("/api/claude-account/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label, queue: true }),
+    });
+    const d = await resp.json().catch(() => ({}));
+    if (d.queued) {
+      toast(`已排隊：將於任務空檔自動切換到帳號 ${label}（手動模式）`, "ok");
+      refreshProviderQuota(); // 立即刷新顯示「排隊中」徽章（無重啟、不等重連）
+      return;
+    }
+    if (d.restarting) {
+      // 排隊送出前恰好變閒置、直接切換成功的罕見競態：走既有重啟重連路徑。
+      toast(`已切換到帳號 ${label}（手動模式），服務重啟中…`, "ok");
+      waitForReconnectThenRefresh();
+      return;
+    }
+    toast(`排隊失敗：${d.error || resp.status}`, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = `帳號 ${label}`;
+    }
+  } catch (e) {
+    toast("排隊請求失敗，請稍後重試。", "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = `帳號 ${label}`;
+    }
+  }
+}
+
+async function setAutoMode(btn) {
+  if (
+    !(await openConfirmModal({
+      title: "恢復自動輪替",
+      message:
+        "切回自動模式？autopilot 會依額度政策自動分配帳號（可能切換在線帳號）。\n" +
+        "若有排隊中的手動切換會一併取消。",
+      confirmLabel: "恢復自動",
+    }))
+  )
+    return;
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch("/api/claude-account/pin", { method: "DELETE" });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      toast(`恢復自動失敗：${d.error || resp.status}`, "error");
+      if (btn) btn.disabled = false;
+      return;
+    }
+    toast("已切回自動模式，自動輪替恢復", "ok");
+    refreshProviderQuota(); // 解除釘選不重啟，直接刷新模式列
+  } catch (e) {
+    toast("恢復自動請求失敗，請稍後重試。", "error");
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -516,8 +667,8 @@ export function renderProviderQuota(data) {
     card.appendChild(cardHead);
     appendTextEl(card, "div", "quota-note", (p.quota && p.quota.summary) || "");
     if (Array.isArray(p.accounts) && p.accounts.length) {
-      // 多帳號（claude）：逐帳號顯示額度＋在線標記＋切換鈕，取代單一額度區。
-      card.appendChild(claudeAccountsBlock(p.accounts));
+      // 多帳號（claude）：模式列（自動/手動釘選）＋逐帳號額度與在線標記，取代單一額度區。
+      card.appendChild(claudeAccountsBlock(p.accounts, p.rotate));
     } else if (p.rate_limits) {
       card.appendChild(rateLimitBlock(p.rate_limits));
     }

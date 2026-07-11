@@ -51,6 +51,16 @@
 
 ### Added
 
+- Claude 帳號「手動/自動模式」單一控制點：設定面板訂閱帳號區塊新增模式列——按
+  「帳號 A/B」＝手動模式（立即切換並釘選，自動輪替凍結、不再被政策切回；忙碌時可
+  改「排隊切換」，由 autopilot 在任務空檔代切並重啟），按「🔄 自動輪替」＝恢復 v4
+  自動分配。機制＝pin 檔哨兵（`~/.claude/.credentials.pin`，純文字 label，不觸碰憑證
+  JSON）：`POST /api/claude-account/switch` 新增 `queue` 欄位（忙碌 409 附
+  `queueable`、排隊回 202 `queued`）、新端點 `DELETE /api/claude-account/pin`、
+  provider 額度快照 claude 條目新增 `rotate {enabled, mode, pinned}` 與各帳號
+  `pinned` 欄位。手動模式下釘選帳號額度將滿（≥90%）時模式列顯示警語（耗盡＝
+  quota_sleep 等重置，切回自動可借用另一帳號）。
+
 - 監控儀表板成為預設首頁（監控視圖）：Autopilot 狀態英雄列（狀態球/心跳/派工/PR 預算
   ＋暫停恢復/分診/開新討論）、任務統計磁貼（完成率與五態計數）、近 30 天結果堆疊長條、
   provider 額度 meter、績效榜、最新動態；30 秒自動更新（背景分頁暫停輪詢）。
