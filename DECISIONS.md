@@ -3129,3 +3129,38 @@
 ## `repo_base._redact` 與 `publisher.redact` 均保留，各自防守自身輸出路徑，不合併
 - 時間：2026-07-11 03:03
 
+## 任務 #1 零改碼，僅輸出全 repo 盤點清單確認無漏網 loopback client
+- 時間：2026-07-11 08:53
+- 理由：studio/ 外網 client 照 PM 裁決維持預設；tests/ mock client 無 trust_env 語義；smoke 腳本已全數修好
+
+## 守門測試掃檔來源用 `Path("tests/server").glob("smoke_*.py")`，不用 `git ls-files`
+- 時間：2026-07-11 08:53
+- 理由：本機開發中新增 smoke 檔即可被即時涵蓋，CI 行為一致
+- 否決方案：`git ls-files` 只掃 tracked，本地未 commit 的 smoke 新增逃過守門，與 CLAUDE.md「掃描類腳本範圍一致性」衝突
+
+## 守門測試斷言掃到的檔案數 `>= 2`，防空掃描（vacuous pass）
+- 時間：2026-07-11 08:53
+- 理由：smoke 目錄若因重構改名導致 0 檔命中，測試會靜默假綠；`>= 2` 反映當前兩支 smoke 為已知下界，消失即紅燈
+- 否決方案：不做下界斷言——假綠時無法感知守門對象已消失
+
+## AST 只支援 `httpx.AsyncClient(` attribute-access 形式（即 `obj.attr` 的 Call node），不處理 import alias
+- 時間：2026-07-11 08:53
+- 理由：現有 smoke 無 alias 用法；alias 支援需追蹤 import 綁定，複雜度不值得
+- 否決方案：掃 `AsyncClient(` bare name——需解析全 import 表，增加維護成本
+
+## `ast.Constant` 值比較一律用 identity（`is False`、`is None`），不用 `==`
+- 時間：2026-07-11 08:53
+- 理由：Python `0 == False` 為 True，用 `==` 會讓 `trust_env=0` 誤判通過；`is` 嚴格型別區分
+
+## 黑樣本用 pytest `tmp_path` fixture，不手寫 `$TMPDIR` + 刪檔
+- 時間：2026-07-11 08:53
+- 理由：pytest 管理 teardown，避免測試失敗時殘留黑樣本；`tmp_path` 是 pytest 慣例，可讀性更高
+- 否決方案：手動 `$TMPDIR` + `finally` 刪檔——失敗路徑若跳過 finally 仍有殘留風險
+
+## 測試 docstring 以一句交叉引用取代複製政策，並明載兩項已知限制
+- 時間：2026-07-11 08:53
+- 理由：複製整段政策會與 CLAUDE.md 漂移；限制要明講以防後人誤信覆蓋完整
+
+## 測試檔落點 `tests/server/test_httpx_proxy_guard.py`；收尾實跑 `pytest -q tests/server` 與 `ruff check .`，退出碼均須為 0
+- 時間：2026-07-11 08:53
+
