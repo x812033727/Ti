@@ -2028,7 +2028,8 @@ async def _handle_task_timeout(task: dict) -> None:
         note = (
             f"逾時且已達自動拆分深度上限（{config.AUTOPILOT_SPLIT_MAX_DEPTH}）——需人工拆分或縮小範圍"
             if reached_depth
-            else f"task timeout after {config.AUTOPILOT_TASK_TIMEOUT}s — 需拆分或縮小範圍"
+            # 此 marker 被 backlog.triage_failed 解析，勿改成另一個字串來源。
+            else f"{backlog.TIMEOUT_NOTE_PREFIX} {config.AUTOPILOT_TASK_TIMEOUT}s — 需拆分或縮小範圍"
         )
         backlog.set_status(tid, "parked", note=note)
         log.warning(
