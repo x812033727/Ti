@@ -13,7 +13,7 @@
 可重跑聚合指令：
 
 ```bash
-timeout 60 ./python - <<'PY'
+timeout 60 .venv/bin/python - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -87,7 +87,7 @@ Sonnet / Opus prompt caching 的最低快取長度為 1024 token；Haiku 4.5 是
 可重跑指令：
 
 ```bash
-timeout 60 ./python - <<'PY'
+timeout 60 .venv/bin/python - <<'PY'
 from pathlib import Path
 from studio import conventions
 from studio.roles import BUILTIN_ROLES
@@ -123,7 +123,7 @@ PY
 可重跑 schema proxy 估算：
 
 ```bash
-timeout 60 ./python - <<'PY'
+timeout 60 .venv/bin/python - <<'PY'
 from pathlib import Path
 import shutil
 
