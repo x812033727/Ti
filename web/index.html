@@ -57,6 +57,7 @@
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M5.5 12.5L12 19l6.5-6.5"/></symbol>
     <symbol id="i-vote" viewBox="0 0 24 24"><path d="M4.5 12.5h15V20h-15z"/><path d="M8 12.5l1.2-3h5.6l1.2 3"/><path d="M9.5 6.5L11.4 8.4 15 4.8"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
   </svg>
 
   <a class="skip-link" href="#stream">跳到討論串</a>
@@ -76,31 +77,8 @@
       <span>Ti Studio</span> <small>AI 專家討論工作室</small>
       <span id="offlineBadge" class="badge-offline hidden">離線示範</span>
     </div>
-    <!-- 主視圖切換：監控（Autopilot 儀表板）／工作室（討論三欄）；手機由底部分頁接手 -->
-    <div class="view-switch" role="tablist" aria-label="主視圖">
-      <button id="viewDashBtn" class="active" role="tab" aria-selected="true">
-        <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg>監控</button>
-      <button id="viewStudioBtn" role="tab" aria-selected="false">
-        <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg>工作室</button>
-    </div>
     <nav class="toolbar">
-      <!-- 主操作（編排工作室）→ 觀測（回顧與監控）→ 系統（設定/主題/登出），以分隔線分組 -->
-      <button id="teamBtn" class="ghost" title="團隊：管理角色與討論小組">
-        <svg class="icon" aria-hidden="true"><use href="#i-users"/></svg>團隊</button>
-      <button id="workflowBtn" class="ghost" title="動態流程編排">
-        <svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>流程</button>
-      <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在啟動列選擇專案）">
-        <svg class="icon" aria-hidden="true"><use href="#i-box"/></svg>專案</button>
-      <span class="toolbar-sep" aria-hidden="true"></span>
-      <button id="historyBtn" class="ghost" title="歷史 session">
-        <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>歷史</button>
-      <button id="metricsBtn" class="ghost" title="運維指標">
-        <svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>指標</button>
-      <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">
-        <svg class="icon" aria-hidden="true"><use href="#i-bot"/></svg>Autopilot</button>
-      <button id="insightsBtn" class="ghost" title="洞察：趨勢/教訓庫/調查結論">
-        <svg class="icon" aria-hidden="true"><use href="#i-bulb"/></svg>洞察</button>
-      <span class="toolbar-sep" aria-hidden="true"></span>
+      <!-- 系統操作留在右上角（設定按鈕位置為 UAT 文件所釘）；面板導覽移往左側 icon rail -->
       <button id="settingsBtn" class="ghost icon-btn" title="設定" aria-label="設定">
         <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg></button>
       <button id="themeBtn" class="ghost icon-btn" data-mode="system" title="主題：跟隨系統" aria-label="主題：跟隨系統">
@@ -113,6 +91,35 @@
     </nav>
     <div id="phase" class="phase" aria-live="polite">待命中</div>
   </header>
+
+  <!-- 左側 icon rail：主視圖切換 + 面板導覽（桌面固定左欄；手機收進「更多」bottom sheet）。
+       按鈕連 id 自 header 工具列原封搬入，app.js 綁定與各面板測試零改動。 -->
+  <nav class="app-rail" aria-label="主導覽">
+    <div class="rail-views" role="tablist" aria-label="主視圖" aria-orientation="vertical">
+      <button id="viewDashBtn" class="active" role="tab" aria-selected="true" title="監控儀表板">
+        <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg><span>監控</span></button>
+      <button id="viewStudioBtn" role="tab" aria-selected="false" title="工作室三欄">
+        <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span>工作室</span></button>
+    </div>
+    <span class="rail-sep" aria-hidden="true"></span>
+    <div class="rail-group-label" aria-hidden="true">編排</div>
+    <button id="teamBtn" title="團隊：管理角色與討論小組">
+      <svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><span>團隊</span></button>
+    <button id="workflowBtn" title="動態流程編排">
+      <svg class="icon" aria-hidden="true"><use href="#i-route"/></svg><span>流程</span></button>
+    <button id="projectBtn" title="專案藍圖與改良待辦（先在啟動列選擇專案）">
+      <svg class="icon" aria-hidden="true"><use href="#i-box"/></svg><span>專案</span></button>
+    <span class="rail-sep" aria-hidden="true"></span>
+    <div class="rail-group-label" aria-hidden="true">觀測</div>
+    <button id="historyBtn" title="歷史 session">
+      <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>歷史</span></button>
+    <button id="metricsBtn" title="運維指標">
+      <svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg><span>指標</span></button>
+    <button id="autopilotBtn" title="Autopilot 自主迴圈">
+      <svg class="icon" aria-hidden="true"><use href="#i-bot"/></svg><span>Autopilot</span></button>
+    <button id="insightsBtn" title="洞察：趨勢/教訓庫/調查結論">
+      <svg class="icon" aria-hidden="true"><use href="#i-bulb"/></svg><span>洞察</span></button>
+  </nav>
 
   <!-- 設定（API key / provider / 模型 / GitHub token） -->
   <div id="settingsPanel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-label="設定">
@@ -250,7 +257,7 @@
   </div>
 
   <!-- 專案藍圖與改良待辦 -->
-  <div id="projectPanel" class="drawer glass hidden" role="dialog" aria-label="專案藍圖與改良待辦">
+  <div id="projectPanel" class="drawer drawer--lg glass hidden" role="dialog" aria-label="專案藍圖與改良待辦">
     <div class="drawer-head">
       <h2><svg class="icon" aria-hidden="true"><use href="#i-box"/></svg>專案</h2>
       <div class="drawer-actions">
@@ -264,7 +271,7 @@
   </div>
 
   <!-- 動態流程編排 -->
-  <div id="workflowPanel" class="drawer glass hidden" role="dialog" aria-label="動態流程編排">
+  <div id="workflowPanel" class="drawer drawer--lg glass hidden" role="dialog" aria-label="動態流程編排">
     <div class="drawer-head">
       <h2><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>動態流程</h2>
       <div class="drawer-actions">
@@ -537,6 +544,8 @@
       <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg><span>檔案</span></button>
     <button data-mv="settings" role="tab" aria-selected="false">
       <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>設定</span></button>
+    <button id="mobileMoreBtn" aria-haspopup="true" aria-expanded="false" title="更多面板">
+      <svg class="icon" aria-hidden="true"><use href="#i-more"/></svg><span>更多</span></button>
   </nav>
 
   <div id="toast" role="status" aria-live="polite"></div>

@@ -41,16 +41,46 @@
 
 /* ---------- 窄螢幕 / 手機版面 ---------- */
 @media (max-width: 900px) {
-  /* 頂欄堆疊：品牌+階段一列、工具列可橫向捲動一列 */
-  .app-header { flex-wrap: wrap; gap: 10px; padding: 10px 14px; }
+  /* 桌面左欄 rail 讓位：手機由底部「更多」sheet 承接 */
+  body { padding-left: 0; }
+
+  /* 頂欄單列：品牌＋系統鈕＋階段（面板導覽已移入 rail sheet，工具列不再橫捲） */
+  .app-header { gap: 10px; padding: 10px 14px; }
   .brand { font-size: 15px; }
   .brand small { display: none; }
-  .phase { order: 2; margin-left: auto; min-width: 0; }
-  .toolbar {
-    order: 3; width: 100%; margin-left: 0;
-    overflow-x: auto; -webkit-overflow-scrolling: touch;
-  }
+  .phase { min-width: 0; overflow: hidden; }
   .toolbar button { flex: 0 0 auto; min-height: 42px; }
+
+  /* rail → bottom sheet：由「更多」分頁鈕開合，點任一項即收合（tabs.js） */
+  .app-rail {
+    top: auto; left: 10px; right: 10px; bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    width: auto;
+    max-height: 60dvh;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-content: flex-start;
+    gap: 4px;
+    padding: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 18px;
+    box-shadow: var(--shadow-3);
+    transform: translateY(12px);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform var(--t-med) var(--ease-out), opacity var(--t-med), visibility var(--t-med);
+  }
+  body.rail-open .app-rail {
+    transform: none;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .app-rail button { width: 76px; min-height: 56px; }
+  .rail-views { flex-direction: row; gap: 4px; width: 100%; justify-content: center; }
+  .rail-sep { display: none; }
+  .rail-group-label { width: 100%; text-align: left; margin: 6px 4px 2px; }
 
   /* 單欄版面：一次只顯示一個分頁，底部保留分頁列空間 */
   .layout { grid-template-columns: 1fr; padding: 10px; gap: 10px; padding-bottom: 86px; overflow: hidden; }
@@ -119,17 +149,45 @@
     box-shadow: inset 0 0 0 1px rgba(124, 134, 255, .25);
   }
 
-  /* drawer 改全屏 sheet：由下往上 */
+  /* drawer 改全屏 sheet：由下往上；頂部 grabber 把手示意可拖 */
   .drawer {
     inset: auto 0 0 0;
     width: auto;
-    max-height: 86vh;
+    max-height: 92dvh;
     border-radius: 18px 18px 0 0;
     border: 1px solid var(--border);
     border-bottom: none;
     transform: translateY(0);
   }
+  .drawer::before {
+    content: "";
+    position: absolute;
+    top: 7px; left: 50%;
+    transform: translateX(-50%);
+    width: 40px; height: 4px;
+    border-radius: var(--r-full);
+    background: var(--border-strong);
+    pointer-events: none;
+  }
   .drawer.hidden { transform: translateY(105%); }
+  /* 觸控目標：標題列按鈕放大到 ≥40px；列表列的刪除/停止鈕常駐可見（無 hover 可言） */
+  .drawer-head button { min-height: 40px; min-width: 40px; }
+  .h-del { opacity: .6; }
+
+  /* 看板：四欄改橫向 scroll-snap 泳道，一欄一屏滑動 */
+  body[data-mv="board"] .columns {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    gap: 10px;
+    padding-bottom: 6px;
+  }
+  body[data-mv="board"] .col {
+    flex: 0 0 76vw;
+    scroll-snap-align: start;
+    min-height: 40vh;
+  }
 
   /* Autopilot 迷你列：浮在底部分頁列上方 */
   #autopilotPanel.mini {
@@ -165,4 +223,21 @@
 
   /* toast 抬高避開分頁列 */
   #toast { bottom: 84px; }
+}
+
+/* ---------- 小手機（≤640px）：更緊湊的密度 ---------- */
+@media (max-width: 640px) {
+  .layout { padding: 8px; gap: 8px; }
+  .dash-hero { padding: 12px 14px; }
+  .dash-state { font-size: 18px; }
+  .dash-tile { padding: 11px 12px; }
+  .dash-tile-v { font-size: 23px; }
+  .mobiletabs button { min-height: 48px; }
+  .mobiletabs button span { font-size: 10px; }
+}
+
+/* ---------- 寬螢幕（≥1440px）：右欄與成員欄放寬、閱讀寬度更舒適 ---------- */
+@media (min-width: 1440px) {
+  .layout { grid-template-columns: 264px minmax(0, 1fr) 420px; gap: 16px; padding: 16px; }
+  body.experts-collapsed .layout { grid-template-columns: 64px minmax(0, 1fr) 420px; }
 }

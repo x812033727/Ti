@@ -40,7 +40,7 @@
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
 }
-.settings-head h2 { margin: 0; font-size: 13px; color: var(--text); letter-spacing: .06em; }
+.settings-head h2 { margin: 0; font-size: var(--fs-2); color: var(--text); letter-spacing: .06em; }
 .settings-head button { padding: 4px 10px; border-radius: var(--r-sm); }
 .settings-main {
   display: grid;
@@ -63,7 +63,7 @@
   color: var(--text-2);
   background: transparent;
   border: 1px solid transparent;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
 }
 .settings-nav button:hover,
 .settings-nav button.active {
@@ -90,12 +90,12 @@
 }
 .settings-search span {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 .settings-search input {
   padding: 9px 10px;
   border-radius: var(--r-sm);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 #settingsQuotaRefresh {
   padding: 9px 14px;
@@ -117,13 +117,13 @@
 }
 .quota-kicker {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-0);
   text-transform: uppercase;
   letter-spacing: .08em;
 }
 .quota-title {
   color: var(--text);
-  font-size: 18px;
+  font-size: var(--fs-4);
   font-weight: 700;
 }
 .quota-grid {
@@ -152,12 +152,12 @@
 }
 .quota-card-head strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 .quota-card-head span {
   border-radius: 999px;
   padding: 2px 7px;
-  font-size: 11px;
+  font-size: var(--fs-0);
   background: var(--surface-2);
   color: var(--text-2);
   white-space: nowrap;
@@ -169,7 +169,7 @@
 .quota-detail,
 .quota-models {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--fs-0);
   line-height: 1.35;
 }
 .quota-models {
@@ -202,16 +202,16 @@
   gap: 8px;
 }
 .quota-account-head strong {
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   color: var(--text);
 }
 .quota-account-live {
-  font-size: 11px;
+  font-size: var(--fs-0);
   color: var(--good);
   white-space: nowrap;
 }
 .quota-account-switch {
-  font-size: 11px;
+  font-size: var(--fs-0);
   padding: 2px 8px;
 }
 .quota-account .quota-ratelimits {
@@ -230,20 +230,20 @@
 }
 .quota-rl-kicker {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-0);
   font-weight: 600;
   letter-spacing: .02em;
 }
 .quota-rl-note {
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--fs-0);
   line-height: 1.35;
 }
 .quota-ratelimit {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: var(--fs-0);
   color: var(--text-2);
 }
 .quota-rl-label {
@@ -303,7 +303,7 @@
 .settings-pw h3,
 .settings-redeploy h3 {
   margin: 8px 0 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   letter-spacing: .06em;
   color: var(--text);
 }
@@ -314,28 +314,28 @@
 }
 .settings-section h3 small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-0);
   font-weight: 500;
   letter-spacing: 0;
 }
 .set-row { display: flex; flex-direction: column; gap: 4px; }
-.set-label { font-size: 12.5px; color: var(--text-2); }
-.set-env { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.set-row input, .set-row select { padding: 8px 10px; border-radius: var(--r-sm); font-size: 13px; }
+.set-label { font-size: var(--fs-1); color: var(--text-2); }
+.set-env { color: var(--muted); font-size: var(--fs-0); overflow-wrap: anywhere; }
+.set-row input, .set-row select { padding: 8px 10px; border-radius: var(--r-sm); font-size: var(--fs-2); }
 .set-row.hidden,
 .settings-section.hidden,
 .settings-nav button.hidden { display: none; }
 
 /* 變更門禁密碼區塊 */
 .settings-pw { padding: 4px 0 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
-.settings-pw input { padding: 8px 10px; border-radius: var(--r-sm); font-size: 13px; }
+.settings-pw input { padding: 8px 10px; border-radius: var(--r-sm); font-size: var(--fs-2); }
 .pw-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
 .pw-actions button {
   padding: 8px 16px;
   background: var(--good);
   color: #04211a;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 .pw-actions button:hover:not(:disabled) { filter: brightness(1.1); }
 
@@ -348,10 +348,10 @@
   background: var(--warn);
   color: #221603;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-2);
 }
 .redeploy-actions button:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 0 16px rgba(245, 184, 95, .3); }
-.redeploy-status { font-size: 13px; }
+.redeploy-status { font-size: var(--fs-2); }
 .redeploy-status.ok { color: var(--good); }
 .redeploy-status.fail { color: var(--bad); }
 
@@ -368,7 +368,7 @@
   background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--fs-3);
   border: 1px solid rgba(255, 255, 255, .08);
   box-shadow: var(--shadow-1);
 }

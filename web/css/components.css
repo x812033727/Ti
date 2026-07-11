@@ -1,7 +1,9 @@
 /* 共用元件：卡片/量表原語、toast 通知、登入頁卡片。 */
 
-/* ---------- 卡片原語：面板/儀表板卡片共用的表面配方 ---------- */
-.card {
+/* ---------- 卡片原語：面板/儀表板卡片共用的表面配方 ----------
+   命名 .surface-card（非 .card）：看板任務卡已佔用 .card（board.css），
+   本檔較晚載入會蓋掉它——撞名實測踩過，勿改回。 */
+.surface-card {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
