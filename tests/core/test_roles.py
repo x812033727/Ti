@@ -50,12 +50,18 @@ def test_builtin_roles_all_have_description():
 
 def test_builtin_roles_all_include_output_length_limit():
     """守門：內建 8 角色組合後的 system prompt 都要注入輸出長度規則。"""
+    expected_fragments = (
+        "單則發言的自由散文部分限 500 字內",
+        "結構化標記行",
+        "`任務:`/`驗證:`/`決議:`",
+        "`依賴:`/`後續任務:`/`核心改動:`",
+        "必要條列內容不計入",
+    )
     assert len(roles.BUILTIN_ROLES) == 8
     for r in roles.BUILTIN_ROLES:
         prompt = r.system_prompt
-        assert "自由散文部分限 500 字內" in prompt, r.key
-        assert "結構化標記行" in prompt, r.key
-        assert "必要條列內容不計入" in prompt, r.key
+        for fragment in expected_fragments:
+            assert fragment in prompt, f"{r.key} missing {fragment!r}"
 
 
 def test_security_approved_parses_verdict():

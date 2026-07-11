@@ -30,11 +30,11 @@ def pytest_configure(config: pytest.Config) -> None:
         return
     if config.option.numprocesses is not None or config.option.dist != "no" or config.option.tx:
         return
-    workers = min(os.cpu_count() or 1, 8)
+    workers = min(os.cpu_count() or 1, 4)
     if workers <= 1:
         return
     config.option.numprocesses = workers
-    config.option.dist = "load"
+    config.option.dist = "loadscope"
     config.option.tx = ["popen"] * workers
 
 
@@ -175,6 +175,24 @@ def _reset_require_chown_after_test():
 
     if _config.REQUIRE_CHOWN != "off":
         _config.REQUIRE_CHOWN = "off"
+
+
+# --- 防 repo 發佈設定跨測試洩漏 -----------------------------------------------
+# 多支 settings / persistence 測試會寫 TI_PUBLISH_REPO 後觸發 config.reload()；
+# 在 xdist worker 內，同一行程後續 autopilot push 測試若吃到殘留的 PUBLISH_REPO，
+# 會被「不得把核心變更推到專案 repo」防線提早擋下。每測試後回到 hermetic 基準。
+@pytest.fixture(autouse=True)
+def _reset_publish_repo_after_test():
+    yield
+    for _env in ("TI_PUBLISH_REPO", "TI_AUTOPILOT_REPO", "TI_PUBLISH_OWNER_ALLOWLIST"):
+        os.environ.pop(_env, None)
+
+    from studio import config as _config
+
+    _config.PUBLISH_REPO = ""
+    _config.AUTOPILOT_REPO = "x812033727/Ti"
+    _config.CORE_REPO = _config.AUTOPILOT_REPO
+    _config.PUBLISH_OWNER_ALLOWLIST = frozenset({"x812033727"})
 
 
 # --- 派工模式哨兵檔隔離：部署機殘留的 DISPATCH_AUTO 不得翻轉測試裡的派工行為 ------
