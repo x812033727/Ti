@@ -1608,9 +1608,13 @@ async def _refute_investigation(task: dict, parsed: dict, clone: str, sid: str) 
     return flow.parse_refutation(text or "")
 
 
-async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -> None:
+async def _run_investigation_task(
+    task: dict, clone: str, sid: str, t0: float, *, sideline: bool = False
+) -> None:
     """調查/驗證型任務的輕量管線：單專家一次 speak → 結構化結論寫回 backlog＋教訓庫。
 
+    sideline=True＝由旁路併行線呼叫：心跳走 liveness_only,不得把 status.json 的
+    state/task_id 蓋成旁路任務(主迴圈身分欄位;旁路顯示走 sideline 子欄)。
     不建 StudioSession、不過 lint/collect/test/merge 閘門——這類任務的完成判準是結論，
     不是 code diff（驗屍：多專家管線對它們結構上不可能過，見 AUTOPILOT_INVESTIGATION_LANE）。
     四個出口：
@@ -1629,7 +1633,7 @@ async def _run_investigation_task(task: dict, clone: str, sid: str, t0: float) -
 
     log.info("任務 #%s 走調查分流輕量管線（單專家、不開 PR）", task["id"])
     history.start_session(sid, f"[autopilot/調查] {task['title']}")
-    heartbeat = asyncio.create_task(_task_heartbeat(task["id"], sid))
+    heartbeat = asyncio.create_task(_task_heartbeat(task["id"], sid, liveness_only=sideline))
     text = ""
     try:
         ex = Expert(SENIOR, sid, Path(clone))
@@ -3410,13 +3414,25 @@ def _latest_activity_at(*values: object) -> float | None:
 def _write_running_status_preserving(
     task_id: int | str | None,
     *,
+    liveness_only: bool = False,
     last_activity_at: object = _STATUS_UNSET,
     workers: object = _STATUS_UNSET,
     current_expert: object = _STATUS_UNSET,
     turn_started_at: object = _STATUS_UNSET,
 ) -> None:
-    """刷新 running 心跳，同時保留主迴圈已寫入的額度/睡眠與其他觀測欄位。"""
+    """刷新 running 心跳，同時保留主迴圈已寫入的額度/睡眠與其他觀測欄位。
+
+    liveness_only=True＝旁路線的純活性刷新：state/task_id 是主迴圈的身分欄位，旁路
+    心跳不得認領——否則看板主任務被蓋成旁路任務（與主迴圈心跳 60s 乒乓，2026-07-11
+    生產實測 main 顯示成 sideline 的 #457），主迴圈的 quota_sleep/paused 也會被蓋回
+    running。旁路任務自己的顯示走 sideline 子欄（_write_status 每次寫入自動帶
+    _sideline_task_info），不經這兩個欄位。
+    """
     prev = _read_status()
+    state = "running"
+    if liveness_only:
+        task_id = prev.get("task_id")
+        state = str(prev.get("state") or "running")
     prev_quota = prev.get("quota")
     resolved_last_activity = (
         _number_or_none(prev.get("last_activity_at"))
@@ -3437,7 +3453,7 @@ def _write_running_status_preserving(
         else _number_or_none(turn_started_at)
     )
     _write_status(
-        "running",
+        state,
         task_id=task_id,
         sleep_until=_number_or_none(prev.get("sleep_until")),
         quota=prev_quota if isinstance(prev_quota, dict) else None,
@@ -3511,7 +3527,9 @@ def _refresh_status_for_event(
 _HEARTBEAT_INTERVAL_S = 60.0
 
 
-async def _task_heartbeat(task_id: int | str | None, sid: str) -> None:
+async def _task_heartbeat(
+    task_id: int | str | None, sid: str, *, liveness_only: bool = False
+) -> None:
     """任務執行期間的背景心跳：每 ~60 秒刷新 status.json 的 updated_at 與 last_activity_at。
 
     last_activity_at 取既有事件驅動值與當前 session events 檔 mtime 的較新者，避免 60s tick
@@ -3520,7 +3538,8 @@ async def _task_heartbeat(task_id: int | str | None, sid: str) -> None:
     （events mtime 凍結）仍能肯定「有 worker 燒 CPU＝非死鎖」；取樣失敗回 None，絕不影響
     任務。既有欄位（sleep_until/quota/current_expert/turn_started_at）自 status.json 讀回
     保留，寫入仍走 _write_status 單一 choke point。由 run_one_task 啟動、finally 取消；寫入
-    失敗由 _write_status 自行吞掉。
+    失敗由 _write_status 自行吞掉。liveness_only=True＝旁路線模式：不認領 state/task_id
+    （見 _write_running_status_preserving）。
     """
     prev_cpu: dict[int, int] | None = None
     while True:
@@ -3530,6 +3549,7 @@ async def _task_heartbeat(task_id: int | str | None, sid: str) -> None:
         prev = _read_status()
         _write_running_status_preserving(
             task_id=task_id,
+            liveness_only=liveness_only,
             last_activity_at=_latest_activity_at(
                 prev.get("last_activity_at"), history.events_mtime(sid)
             ),
@@ -3892,7 +3912,7 @@ async def _investigation_sideline() -> None:
             }
             try:
                 clone = await _prepare_clone(inv_dir)
-                await _run_investigation_task(task, clone, sid, t0)
+                await _run_investigation_task(task, clone, sid, t0, sideline=True)
             finally:
                 _sideline_task_info = None
         except asyncio.CancelledError:
