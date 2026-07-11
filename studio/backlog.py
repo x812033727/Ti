@@ -481,6 +481,13 @@ INFRA_FAILURE_RE = re.compile(
 # 超出者維持 failed，下次分診再處理。
 TRIAGE_RETRY_MAX = 10
 
+# timeout parked note 由 autopilot.py 產生；此 marker 是跨模組解析契約，勿單邊修改。
+TIMEOUT_NOTE_PREFIX = "task timeout after"
+TIMEOUT_NOTE_RE = re.compile(rf"{re.escape(TIMEOUT_NOTE_PREFIX)}\s+(\d+)s")
+
+# 單次分診至多把 timeout parked 退回 pending 的筆數；獨立於 failed retry 配額。
+TRIAGE_UNPARK_MAX = 5
+
 # 非基礎設施型 failed 滿此秒數仍未被處理即歸檔 parked（14 天）。
 TRIAGE_PARK_AFTER_S = 14 * 86400
 
@@ -492,7 +499,7 @@ TRIAGE_REVIVE_AFTER_S = 24 * 3600
 
 
 def triage_failed(*, state_dir: Path | None = None) -> dict:
-    """failed 任務的確定性分診（純規則、無 LLM），回傳 {"retried": n, "parked": m}。
+    """failed/timeout parked 任務的確定性分診（純規則、無 LLM）。
 
     規則（單次 _locked 內完成，跨程序安全）：
       1. legacy 非法狀態 "cancelled"（歷史殘留，set_status 會 reject）一律直接改 dict
@@ -506,8 +513,12 @@ def triage_failed(*, state_dir: Path | None = None) -> dict:
       3. 其餘 failed（含「連續 N 次未過，放棄」等任務本身缺陷）滿
          TRIAGE_PARK_AFTER_S（14 天）→ 歸檔 parked，不再佔據失敗清單；未滿則維持
          failed 等待人工或後續分診。
+      4. parked 且 note 為 autopilot timeout、park 時 timeout 秒數 < 現行
+         AUTOPILOT_TASK_TIMEOUT、且未 timeout_retried/split_done → 退回 pending
+         單次重試（attempts 歸零、timeout_retried=True）；單次至多 TRIAGE_UNPARK_MAX
+         筆，且不佔 failed retry 配額。
     """
-    retried = parked = revived = 0
+    retried = parked = revived = unparked = 0
     now = time.time()
     with _locked(state_dir):
         data = _load(state_dir, mutable=True)
@@ -557,6 +568,28 @@ def triage_failed(*, state_dir: Path | None = None) -> dict:
                 t["status"] = "parked"
                 t["updated_at"] = now
                 parked += 1
-        if retried or parked or revived:
+        timeout_parked: list[tuple[dict, int]] = []
+        for t in data["tasks"]:
+            if t.get("status") != "parked" or t.get("timeout_retried") or t.get("split_done"):
+                continue
+            m = TIMEOUT_NOTE_RE.search(t.get("note") or "")
+            if not m:
+                continue
+            parked_timeout_s = int(m.group(1))
+            if parked_timeout_s < int(config.AUTOPILOT_TASK_TIMEOUT):
+                timeout_parked.append((t, parked_timeout_s))
+        timeout_parked.sort(key=lambda pair: pair[0].get("updated_at", 0), reverse=True)
+        for t, parked_timeout_s in timeout_parked[:TRIAGE_UNPARK_MAX]:
+            old_note = t.get("note") or ""
+            t["status"] = "pending"
+            t["attempts"] = 0
+            t["timeout_retried"] = True
+            t["updated_at"] = now
+            t["note"] = (
+                f"[triage] timeout 上限已由 {parked_timeout_s}s 調高至 "
+                f"{config.AUTOPILOT_TASK_TIMEOUT}s，退回重試；{old_note[:300]}"
+            )
+            unparked += 1
+        if retried or parked or revived or unparked:
             _save(data, state_dir)
-    return {"retried": retried, "parked": parked, "revived": revived}
+    return {"retried": retried, "parked": parked, "revived": revived, "unparked": unparked}

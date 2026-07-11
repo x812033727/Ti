@@ -165,6 +165,7 @@ def test_triage_endpoint_retries_infra_failure(client, state):
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True and body["retried"] == 1 and body["parked"] == 0
+    assert body["unparked"] == 0
     assert backlog.list_tasks("pending")[0]["id"] == t["id"]
 
 
