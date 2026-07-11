@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import os
 import re
@@ -17,6 +18,7 @@ import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 try:
     import resource  # POSIX 專有；非 POSIX（如 Windows）下資源上限整段 no-op。
@@ -589,17 +591,44 @@ def sanitize_demo_command(
     return shlex.join(kept)
 
 
+def _is_loopback_demo_host(host: str | None) -> bool:
+    """Demo probe host allowlist: localhost or IP literals that are loopback."""
+    if host is None:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return ip.is_loopback
+
+
 def parse_demo_url(text: str) -> str | None:
     """從專家文字解析 `Demo 網址: http://localhost:<port>/...`。
 
-    僅放行本機 URL（localhost / 127.0.0.1）——HTTP 驗收只探測自己剛啟動的服務，
-    絕不對外部主機發請求。
+    僅放行本機 URL（localhost 或 loopback IP literal）——HTTP 驗收只探測自己剛啟動的
+    服務，絕不對外部主機發請求。
     """
     m = re.search(r"(?:Demo ?網址|demo ?url)\s*[:：]\s*(\S+)", text, re.I)
     if not m:
         return None
     url = m.group(1).strip().strip("`")
-    if re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", url):
+    try:
+        parsed = urlsplit(url)
+        _port = parsed.port  # force urllib to reject invalid port literals
+    except ValueError:
+        return None
+    if (
+        parsed.scheme in {"http", "https"}
+        and parsed.netloc
+        and parsed.username is None
+        and parsed.password is None
+        and _is_loopback_demo_host(parsed.hostname)
+    ):
         return url
     return None
 
@@ -610,7 +639,7 @@ def _http_get(url: str, timeout: float = 3.0) -> tuple[int | None, str]:
     import urllib.request
 
     try:
-        # nosec B310 — url 已由 parse_demo_url 限定 localhost/127.0.0.1
+        # nosec B310 — url 已由 parse_demo_url 限定為 localhost 或 loopback IP literal
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
             return resp.status, resp.read(2048).decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:

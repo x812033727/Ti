@@ -16,7 +16,7 @@ from studio.roles import BY_KEY, Role
 # --- parse_demo_url ------------------------------------------------------
 
 
-def test_parse_demo_url_localhost_only():
+def test_parse_demo_url_loopback_only():
     assert (
         runner.parse_demo_url("執行指令: python app.py\nDemo 網址: http://localhost:8123/")
         == "http://localhost:8123/"
@@ -24,9 +24,22 @@ def test_parse_demo_url_localhost_only():
     assert runner.parse_demo_url("Demo 網址: `http://127.0.0.1:5000/health`") == (
         "http://127.0.0.1:5000/health"
     )
+    assert runner.parse_demo_url("Demo 網址: http://127.1.2.3:5000/health") == (
+        "http://127.1.2.3:5000/health"
+    )
+    assert runner.parse_demo_url("Demo 網址: http://[::1]:5000/health") == (
+        "http://[::1]:5000/health"
+    )
+    assert runner.parse_demo_url("Demo 網址: http://[::ffff:127.0.0.1]:5000/") == (
+        "http://[::ffff:127.0.0.1]:5000/"
+    )
     # 非本機一律拒絕（不對外部主機發請求）
     assert runner.parse_demo_url("Demo 網址: http://example.com/") is None
+    assert runner.parse_demo_url("Demo 網址: http://10.0.0.1:5000/") is None
+    assert runner.parse_demo_url("Demo 網址: http://[::ffff:192.0.2.1]:5000/") is None
     assert runner.parse_demo_url("Demo 網址: http://localhost.evil.com/") is None
+    assert runner.parse_demo_url("Demo 網址: http://user@localhost:5000/") is None
+    assert runner.parse_demo_url("Demo 網址: ftp://localhost:5000/") is None
     assert runner.parse_demo_url("沒有宣告") is None
 
 
