@@ -1,7 +1,8 @@
 // 洞察面板(D1/D2):audit 趨勢 / 教訓庫瀏覽 / 調查結論 三分頁 drawer + 週報 modal。
-// 趨勢圖沿用 ap-quota-bar 的「div bar + fill」既有手法,零外部圖表依賴。
+// 趨勢圖委派共用原語 components/chart.js（與儀表板同一套 .trend-*）。
 import { $, appendTextEl, toast } from "../dom.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
+import { renderStackedTrend } from "../components/chart.js";
 
 export function openInsights() {
   openDrawer("#insightsPanel");
@@ -35,30 +36,14 @@ async function loadTrend() {
       box, "p", "muted",
       `近 ${d.days} 天:成功 ${totals.ok ?? 0}・失敗 ${totals.fail ?? 0}・完成率 ${totals.rate != null ? Math.round(totals.rate * 100) + "%" : "—"}`
     );
-    const chart = document.createElement("div");
-    chart.className = "ins-trend-chart";
-    const maxN = Math.max(1, ...(d.buckets || []).map((b) => b.ok + b.fail));
-    (d.buckets || []).forEach((b) => {
-      const col = document.createElement("div");
-      col.className = "ins-trend-col";
-      const detail = Object.entries(b.outcomes || {}).map(([k, v]) => `${k}:${v}`).join(" ");
-      col.title = `${b.date}  成功 ${b.ok}/失敗 ${b.fail}  完成率 ${b.rate != null ? Math.round(b.rate * 100) + "%" : "—"}\n${detail}`;
-      const bar = document.createElement("div");
-      bar.className = "ins-trend-bar";
-      const okDiv = document.createElement("div");
-      okDiv.className = "ins-trend-ok";
-      okDiv.style.height = `${(b.ok / maxN) * 100}%`;
-      const failDiv = document.createElement("div");
-      failDiv.className = "ins-trend-fail";
-      failDiv.style.height = `${(b.fail / maxN) * 100}%`;
-      bar.appendChild(failDiv);
-      bar.appendChild(okDiv);
-      col.appendChild(bar);
-      appendTextEl(col, "span", "ins-trend-date", b.date.slice(5));
-      chart.appendChild(col);
+    // 委派共用趨勢圖原語：合計已在上方摘要列呈現，不重複渲染；
+    // tooltip 附各 outcome 分佈（僅洞察面板有此明細）。
+    const chartWrap = document.createElement("div");
+    renderStackedTrend(chartWrap, d.buckets || [], totals, {
+      totalsLine: false,
+      detail: (b) => Object.entries(b.outcomes || {}).map(([k, v]) => `${k}:${v}`).join(" "),
     });
-    box.appendChild(chart);
-    if (!(d.buckets || []).length) appendTextEl(box, "p", "muted", "尚無 audit 紀錄");
+    box.appendChild(chartWrap);
   } catch (e) {
     box.textContent = "讀取失敗";
   }
