@@ -793,3 +793,26 @@ sha256sum -c /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-2
 
 ### 應忽略殘檔
 主 worktree（`/opt/ti-autopilot-work/.ci-evidence/`）所有中間產物均為輔助，以 lane 報告為唯一最終依據。
+
+## 任務 #4 收尾驗收完成：deploy xdist 三輪、ruff、零產品碼 diff
+
+### 驗收環境
+- 日期：2026-07-11
+- lane：`/opt/ti-autopilot-work.lanes/lane-ap600504a989-4`
+- 驗收前 HEAD：`aca538225d6cacb0cbb1075f2e8f5ce5081164c5`
+- 本 lane 無 `.venv/bin/python`，依團隊決議使用主 worktree fallback：`/opt/ti-autopilot-work/.venv/bin/python`
+
+### 實跑證據
+- `timeout 300 /opt/ti-autopilot-work/.venv/bin/python -m pytest -q --collect-only tests/deploy/test_fetch_force_refspec.py`：4 tests collected
+- `timeout 300 bash -c 'set -e; for i in 1 2 3; do /opt/ti-autopilot-work/.venv/bin/python -m pytest -q tests/deploy/; done'`：
+  - round 1：39 passed
+  - round 2：39 passed
+  - round 3：39 passed
+- `timeout 300 /opt/ti-autopilot-work/.venv/bin/python -m ruff check .`：All checks passed
+- `timeout 300 /opt/ti-autopilot-work/.venv/bin/python -m ruff format --check .`：527 files already formatted
+- `git diff --name-only HEAD -- studio/`：空
+- `git status --porcelain`：驗收前空，證據落檔後將一併 commit 收尾
+
+### 範圍外移交
+- 後續任務: [P2/chore] test_redeploy_qa.py import_smoke 改 mock subprocess，消除真實 python -c 外部依賴
+- 後續任務: [P2/chore] autopilot.py:161 _prepare_work_tree 裸 fetch 補 force refspec 測試
