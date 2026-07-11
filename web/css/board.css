@@ -12,7 +12,7 @@
 }
 .rail-tabs button {
   padding: 5px 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   border-radius: var(--r-full);
   background: transparent;
   color: var(--muted);
@@ -26,7 +26,7 @@
 
 .download-btn {
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 600;
   border: 1px solid rgba(124, 134, 255, .35);
   border-radius: var(--r-full);
@@ -44,7 +44,7 @@
   padding: 8px;
   min-height: 110px;
 }
-.col h3 { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.col h3 { display: flex; align-items: center; gap: 6px; font-size: var(--fs-1); }
 .col-count {
   margin-left: auto;
   font-size: 10.5px;
@@ -67,7 +67,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 8px 9px;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   line-height: 1.45;
   transition: transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), border-color var(--t-fast);
 }
@@ -87,7 +87,7 @@
   text-align: left;
   color: inherit;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   padding: 7px 10px 7px 28px;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -126,7 +126,7 @@
   border-radius: var(--r-md);
   padding: 12px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   line-height: 1.6;
   color: var(--code-text);
   margin: 0;

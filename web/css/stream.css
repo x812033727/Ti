@@ -13,7 +13,7 @@
 .stream > *, .lane-col-body > * { animation: rise var(--t-med) var(--ease-out) backwards; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
-.placeholder { margin: auto; text-align: center; color: var(--muted); font-size: 14px; }
+.placeholder { margin: auto; text-align: center; color: var(--muted); font-size: var(--fs-3); }
 .placeholder::before {
   content: "✦";
   display: block;
@@ -33,7 +33,7 @@
   background: var(--surface-2);
   border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
+  font-size: var(--fs-4);
   flex-shrink: 0;
 }
 .msg .body {
@@ -45,7 +45,7 @@
   min-width: 0;
 }
 .msg .who {
-  font-size: 11px;
+  font-size: var(--fs-0);
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -56,7 +56,7 @@
   color: transparent;
   width: fit-content;
 }
-.msg .txt { font-size: 14.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.msg .txt { font-size: var(--fs-3); line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 
 /* 人類插話：靠右、綠色系，跟 AI 拉開視覺差 */
 .msg.human { flex-direction: row-reverse; align-self: flex-end; max-width: 100%; }
@@ -68,7 +68,7 @@
 .msg.human .who { background: none; -webkit-background-clip: initial; background-clip: initial; color: var(--good); }
 
 .tool {
-  font-size: 13px;
+  font-size: var(--fs-2);
   color: var(--muted);
   display: flex;
   gap: 8px;
@@ -79,7 +79,7 @@
 .tool > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool .badge {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-0);
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r-full);
@@ -99,7 +99,7 @@
 
 .sys {
   text-align: center;
-  font-size: 11.5px;
+  font-size: var(--fs-0);
   color: var(--muted);
   padding: 1px 0;
   opacity: .88;
@@ -138,7 +138,7 @@
   max-width: 92%;
   text-align: center;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-2);
   padding: 7px 16px;
   border-radius: var(--r-lg);
   border: 1px solid;
@@ -147,7 +147,7 @@
 .result.fail { color: var(--bad); background: var(--bad-bg); border-color: rgba(255, 107, 107, .35); }
 .ci.result { align-self: stretch; max-width: none; text-align: left; padding-left: 14px; }
 .result .log { text-align: left; font-weight: 400; margin-top: 8px; }
-.result .log summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.result .log summary { cursor: pointer; color: var(--muted); font-size: var(--fs-1); }
 .result .log summary:hover { color: var(--text-2); }
 .result .log pre,
 .demo pre {
@@ -156,7 +156,7 @@
   border-radius: var(--r-sm);
   padding: 10px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--fs-0);
   line-height: 1.55;
   overflow: auto;
   max-height: 220px;
@@ -197,7 +197,7 @@
 }
 .lane-col-head {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--fs-0);
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -211,11 +211,11 @@
 .msg.lane .body { border-left: 3px solid var(--lane-c); }
 
 /* git commit chip */
-.commit { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); padding-left: 42px; min-width: 0; }
+.commit { display: flex; gap: 8px; align-items: center; font-size: var(--fs-2); color: var(--muted); padding-left: 42px; min-width: 0; }
 .commit > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commit .hash {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-1);
   background: rgba(124, 134, 255, .12);
   border: 1px solid rgba(124, 134, 255, .3);
   border-radius: var(--r-full);
@@ -236,10 +236,10 @@
 }
 .demo.pass { border-left-color: var(--good); }
 .demo.fail { border-left-color: var(--bad); }
-.demo .demohead { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
-.demo .demohead code { font-family: var(--font-mono); font-weight: 400; font-size: 11.5px; color: var(--muted); }
+.demo .demohead { font-weight: 600; font-size: var(--fs-2); margin-bottom: 6px; }
+.demo .demohead code { font-family: var(--font-mono); font-weight: 400; font-size: var(--fs-0); color: var(--muted); }
 /* 消毒重試備註：原始壞指令＋首次 exit code（稽核弱化顯示） */
-.demo .demoretry { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-bottom: 6px; }
+.demo .demoretry { font-family: var(--font-mono); font-size: var(--fs-0); color: var(--muted); margin-bottom: 6px; }
 
 /* 發佈到 GitHub */
 .publish-cta { text-align: center; }
@@ -248,14 +248,14 @@
   background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--fs-3);
   border: 1px solid rgba(255, 255, 255, .08);
   box-shadow: var(--shadow-1);
 }
 .publish-cta button:hover:not(:disabled) { background: var(--accent); box-shadow: var(--glow-accent); }
 .publish {
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-2);
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -269,14 +269,14 @@
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 1px 7px;
-  font-size: 12px;
+  font-size: var(--fs-1);
 }
 .publish a { color: var(--accent); }
 .merge-outcome {
   display: inline-block;
   padding: 1px 9px;
   border-radius: var(--r-full);
-  font-size: 12px;
+  font-size: var(--fs-1);
   font-weight: 600;
   border: 1px solid var(--border);
 }
@@ -293,6 +293,6 @@
   background: var(--good);
   color: #04211a;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--fs-3);
 }
 .interject button:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 0 16px rgba(45, 212, 167, .35); }
