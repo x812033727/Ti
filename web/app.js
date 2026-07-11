@@ -29,6 +29,7 @@ import {
   bindSettings, openSettings, closeSettings, saveSettings, applyRecommendedSettings,
   filterSettings, refreshProviderQuota, savePassword, redeployNow,
 } from "./js/panels/settings.js";
+import { bindDashboard, setView } from "./js/panels/dashboard.js";
 
 // --- 事件綁定（集中接線；module script 於 DOM 解析完才執行，可直接查元素）----
 $("#startBtn").onclick = start;
@@ -85,8 +86,9 @@ bindDrawers();
 bindTeam();
 bindInsights();
 bindWorkflowEditor();
+bindDashboard();
 initTheme();
-setMobileView("discussion");
+setMobileView("dash");
 
 async function init() {
   if (!(await checkAuth())) return;
@@ -95,6 +97,7 @@ async function init() {
   loadProjects();
   loadWorkflows();
   loadGroupOptions();
+  setView("dash"); // 認證通過後才抓監控資料（未登入會被 checkAuth 導去 /login）
 }
 
 init();

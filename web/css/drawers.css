@@ -361,3 +361,33 @@
 }
 .wf-add { align-self: flex-start; font-size: 12px; padding: 5px 12px; }
 .wf-json-error { color: var(--warn); font-size: 12.5px; padding: 8px 10px; border: 1px dashed rgba(245, 184, 95, .4); border-radius: var(--r-sm); }
+
+/* drawer 殼底色：玻璃改用高不透明卡底——太透會把底層漸層大按鈕暈進面板成一團色斑 */
+.drawer.glass { background: var(--card-bg); }
+
+/* drawer 標題列的行內圖示對齊 */
+.drawer-head h2 { display: inline-flex; align-items: center; gap: 8px; }
+
+/* backlog 手動操作(C1) */
+.ap-bl-item { display: flex; align-items: center; gap: 6px; }
+.ap-bl-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-bl-actions { display: inline-flex; gap: 4px; flex: 0 0 auto; align-items: center; }
+.ap-bl-btn { padding: 1px 6px; font-size: 0.85em; }
+.ap-bl-actions select { font-size: 0.85em; }
+/* 完整下任務表單(C2):detail textarea 滿寬,priority/type/按鈕一列 */
+.ap-add { flex-wrap: wrap; }
+.ap-add textarea { width: 100%; resize: vertical; margin-top: 4px; }
+.ap-add-row { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
+.ap-add-row select { flex: 0 0 auto; }
+
+/* 洞察面板(D1):趨勢長條沿用 bar+fill 手法（語意色走 token,深淺主題自動跟隨） */
+.ins-trend-chart { display: flex; align-items: flex-end; gap: 3px; height: 140px; overflow-x: auto; padding: 8px 0; }
+.ins-trend-col { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 22px; height: 100%; }
+.ins-trend-bar { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 14px; flex: 1 1 auto; }
+.ins-trend-ok { background: var(--good); border-radius: 2px 2px 0 0; }
+.ins-trend-fail { background: var(--bad); border-radius: 2px 2px 0 0; }
+.ins-trend-date { font-size: 0.65em; opacity: 0.7; writing-mode: vertical-rl; }
+.ins-lesson-text { white-space: pre-wrap; word-break: break-word; }
+.ins-lesson-meta { font-size: 0.8em; }
+#insLessonsSearch { width: 100%; margin-bottom: 6px; }
+.digest-md { max-height: 60vh; overflow: auto; white-space: pre-wrap; }

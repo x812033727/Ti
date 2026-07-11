@@ -122,3 +122,27 @@ input:focus-visible, select:focus-visible { outline: none; }
   transition: top var(--t-fast) var(--ease);
 }
 .skip-link:focus { top: 10px; }
+
+/* ---------- 線性圖示（index.html 內嵌 sprite，<use href="#i-*"> 引用） ---------- */
+.icon {
+  width: 16px; height: 16px; flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -3px;
+}
+button .icon { pointer-events: none; }
+/* 帶文字的按鈕：圖示與字並排 */
+.ghost, .toolbar button, .drawer-actions button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+/* 純圖示按鈕（無文字）：緊湊方形 */
+.icon-btn { gap: 0; }
+
+/* 主題鈕三態：由 data-mode 決定顯示哪顆圖示（theme.js 只切 data-mode，不動子節點） */
+#themeBtn .icon { display: none; }
+#themeBtn[data-mode="system"] .th-system { display: block; }
+#themeBtn[data-mode="light"] .th-light { display: block; }
+#themeBtn[data-mode="dark"] .th-dark { display: block; }

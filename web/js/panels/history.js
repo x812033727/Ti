@@ -5,6 +5,7 @@ import {
   handleEvent, addSystem, clearStream, clearBoard, setPhase, scrollStream,
 } from "../events-render.js";
 import { setRunning } from "./deck.js";
+import { setView } from "./dashboard.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal } from "../components/modal.js";
 // 循環引用（ws.js ↔ history.js）安全：兩邊都只在執行期呼叫函式匯出，ESM 可解析。
@@ -111,6 +112,7 @@ export async function replaySession(sid) {
   // 直接一次把整段歷史渲染完，畫面停在最底（最新）；要看過程往上滑即可。
   // replaying 旗標維持為 true，讓 handleEvent 的 done case 不會替歷史 session 補出發佈鈕。
   state.replaying = true;
+  setView("studio"); // 重播內容渲染在討論串：先切到工作室視圖
   setRunning(false);
   clearStream();
   clearBoard();

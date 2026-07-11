@@ -20,6 +20,7 @@ class RecEl {
   querySelectorAll() { return []; }
   querySelector() { return new RecEl('div'); }
   addEventListener() {}
+  setAttribute() {}
   focus() {}
 }
 

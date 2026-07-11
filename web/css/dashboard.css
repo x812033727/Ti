@@ -1,0 +1,252 @@
+/* 監控儀表板 + 主視圖切換（body[data-view]＝單一真相：dash＝監控、studio＝工作室三欄）。
+   響應式斷點例外地寫在本檔尾端：只影響 dashboard 自身的內部格線，不動全域斷點。 */
+
+/* ---------- 視圖切換 ---------- */
+.dashboard { display: none; }
+body[data-view="dash"] .layout { grid-template-columns: minmax(0, 1fr); }
+body[data-view="dash"] .experts,
+body[data-view="dash"] .discussion,
+body[data-view="dash"] .side { display: none; }
+body[data-view="dash"] .dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px; /* 讓卡片外框陰影不被裁掉 */
+}
+
+/* header 上的視圖切換膠囊（沿用 team-tabs 的分段控制語彙） */
+.view-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  flex: none;
+}
+.view-switch button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.view-switch button:hover { color: var(--text-2); }
+.view-switch button.active {
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(124, 134, 255, .35);
+}
+
+/* ---------- 英雄狀態列 ---------- */
+.dash-hero {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  padding: 18px 20px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+.dash-hero-main { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.dash-hero-text { min-width: 0; }
+.dash-state { font-size: 24px; font-weight: 700; letter-spacing: .01em; line-height: 1.2; }
+.dash-sub { font-size: 12.5px; margin-top: 4px; overflow-wrap: anywhere; }
+.dash-hero-actions { display: flex; gap: 8px; flex: none; align-items: center; }
+.dash-hero-actions #dashNewTalk {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 18px;
+  background: var(--grad-accent);
+  color: #fff; font-weight: 600; font-size: 13px; white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(110, 121, 255, .3);
+}
+.dash-hero-actions #dashNewTalk:hover { filter: brightness(1.12); }
+
+/* 狀態球：執行中呼吸、暫停琥珀、休眠藍、待命灰、離線紅 */
+.dash-orb {
+  width: 16px; height: 16px; border-radius: 50%; flex: none;
+  background: var(--dot-idle);
+}
+.dash-orb[data-state="run"] {
+  background: var(--good);
+  box-shadow: 0 0 0 4px var(--good-bg), 0 0 18px rgba(45, 212, 167, .55);
+  animation: dash-breathe 2.4s ease-in-out infinite;
+}
+.dash-orb[data-state="paused"] { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-bg); }
+.dash-orb[data-state="sleep"] { background: var(--info); box-shadow: 0 0 0 4px rgba(89, 183, 255, .12); }
+.dash-orb[data-state="idle"] { background: var(--dot-muted); box-shadow: 0 0 0 4px var(--surface-2); }
+.dash-orb[data-state="off"] { background: var(--bad); box-shadow: 0 0 0 4px var(--bad-bg); }
+.dash-orb[data-state="loading"] { background: var(--dot-idle); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes dash-breathe {
+  0%, 100% { box-shadow: 0 0 0 4px var(--good-bg), 0 0 10px rgba(45, 212, 167, .35); }
+  50%      { box-shadow: 0 0 0 6px var(--good-bg), 0 0 24px rgba(45, 212, 167, .7); }
+}
+
+/* ---------- 統計磁貼 ---------- */
+.dash-tiles {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+.dash-tile {
+  padding: 14px 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+.dash-tile-v {
+  font-size: 28px; font-weight: 700; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+}
+.dash-tile-k {
+  margin-top: 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  color: var(--muted); text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-tile.tone-accent .dash-tile-v { color: var(--accent-2); }
+.dash-tile.tone-good .dash-tile-v { color: var(--good); }
+.dash-tile.tone-bad .dash-tile-v { color: var(--bad); }
+.dash-tile.tone-info .dash-tile-v { color: var(--info); }
+
+/* ---------- 卡片格線 ---------- */
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.dash-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 0;
+}
+.dash-span2 { grid-column: span 2; }
+.dash-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dash-card-head h3 {
+  margin: 0;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  color: var(--muted); text-transform: uppercase;
+}
+.dash-card-head .ghost { padding: 4px 10px; font-size: 12px; }
+
+/* 圖例 */
+.dash-legend { display: flex; gap: 12px; font-size: 11.5px; color: var(--text-2); }
+.dash-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.dash-swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+.dash-swatch.ok { background: var(--good); }
+.dash-swatch.fail { background: var(--bad); }
+
+/* ---------- 趨勢圖（每日 done/fail 堆疊長條） ---------- */
+.dash-trend { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dash-trend-chart {
+  display: flex; align-items: flex-end; gap: 6px;
+  flex: 1 1 auto;
+  min-height: 150px;
+  padding: 6px 0 2px;
+  overflow-x: auto;
+}
+.dash-trend-col {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  flex: 1 1 0; min-width: 16px; max-width: 42px; height: 100%;
+}
+.dash-trend-bar {
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  width: 100%; max-width: 22px; flex: 1 1 auto;
+}
+.dash-trend-bar .seg-ok { background: var(--good); border-radius: 3px; }
+.dash-trend-bar .seg-fail { background: var(--bad); border-radius: 3px; }
+.dash-trend-col:hover .seg-ok, .dash-trend-col:hover .seg-fail { filter: brightness(1.18); }
+.dash-trend-date {
+  font-size: 10px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* 密集時只留每 3 根的日期標，避免疊字 */
+.dash-trend-col:not(:nth-child(3n + 1)) .dash-trend-date { visibility: hidden; }
+.dash-trend-total { font-size: 12px; }
+
+/* ---------- provider 額度 meter ---------- */
+.dash-quota { display: flex; flex-direction: column; gap: 12px; }
+.dash-quota-row { display: flex; flex-direction: column; gap: 6px; }
+.dash-quota-name { font-size: 12.5px; font-weight: 600; }
+.dash-quota-wins { display: flex; flex-direction: column; gap: 5px; }
+.dash-quota-win { display: flex; align-items: center; gap: 8px; }
+.dash-quota-label {
+  flex: none; width: 52px;
+  font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-meter {
+  flex: 1; height: 7px; border-radius: var(--r-full);
+  background: var(--surface-3); overflow: hidden;
+}
+.dash-meter .fill { height: 100%; background: var(--good); border-radius: var(--r-full); }
+.dash-meter.warn .fill { background: var(--warn); }
+.dash-meter.crit .fill { background: var(--bad); }
+.dash-quota-pct {
+  flex: none; width: 38px; text-align: right;
+  font-size: 11px; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 績效榜 ---------- */
+.dash-appraisal { display: flex; flex-direction: column; gap: 8px; }
+.dash-appr-row { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.dash-appr-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dash-appr-score { color: var(--accent-2); font-variant-numeric: tabular-nums; flex: none; }
+.dash-appr-meta { font-size: 11.5px; margin-left: auto; flex: none; }
+
+/* ---------- 最新動態 ---------- */
+.dash-activity {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+}
+.dash-act-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dash-act-item:last-child { border-bottom: none; }
+.dash-act-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: none; background: var(--dot-idle); }
+.dash-act-dot.st-done { background: var(--good); }
+.dash-act-dot.st-failed { background: var(--bad); }
+.dash-act-dot.st-in_progress { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.dash-act-dot.st-merging { background: var(--info); }
+.dash-act-dot.st-parked { background: var(--dot-muted); }
+.dash-act-body { min-width: 0; flex: 1; }
+.dash-act-title {
+  font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dash-act-meta { font-size: 11.5px; margin-top: 2px; }
+
+/* ---------- 更新時間列 ---------- */
+.dash-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  font-size: 11.5px;
+}
+.dash-foot .icon-btn { padding: 4px 8px; }
+
+/* ---------- 儀表板內部響應式（僅本檔範圍） ---------- */
+@media (max-width: 1180px) {
+  .dash-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-span2 { grid-column: auto; }
+}
+@media (max-width: 900px) {
+  .view-switch { display: none; } /* 手機由底部分頁切視圖 */
+  .dash-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-state { font-size: 20px; }
+  .dash-hero { padding: 14px 16px; }
+  body[data-view="dash"] .dashboard { padding-bottom: 90px; } /* 讓出底部分頁列 */
+}

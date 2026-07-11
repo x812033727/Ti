@@ -26,19 +26,19 @@ const root = globalThis.document.documentElement;
 mod.initTheme();
 expect(store.get('ti-theme') === undefined, '初始不應寫入 localStorage');
 expect(root.dataset.theme === undefined, '系統深色時不應掛 data-theme');
-expect($('#themeBtn').textContent === '🌗', '跟隨系統應顯示 🌗');
+expect($('#themeBtn').dataset.mode === 'system', '跟隨系統應標 data-mode=system');
 
 // 2) 第一按 → 淺色
 mod.toggleTheme();
 expect(store.get('ti-theme') === 'light', '第一按應存 light');
 expect(root.dataset.theme === 'light', '應掛 data-theme=light');
-expect($('#themeBtn').textContent === '☀️', '淺色應顯示 ☀️');
+expect($('#themeBtn').dataset.mode === 'light', '淺色應標 data-mode=light');
 
 // 3) 第二按 → 深色
 mod.toggleTheme();
 expect(store.get('ti-theme') === 'dark', '第二按應存 dark');
 expect(root.dataset.theme === undefined, '深色應移除 data-theme');
-expect($('#themeBtn').textContent === '🌙', '深色應顯示 🌙');
+expect($('#themeBtn').dataset.mode === 'dark', '深色應標 data-mode=dark');
 
 // 4) 第三按 → 跟隨系統；系統偏好淺色時應套淺色
 prefersLight = true;

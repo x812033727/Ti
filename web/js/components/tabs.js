@@ -5,6 +5,8 @@ import { openSettings, closeSettings } from "../panels/settings.js";
 // --- 手機分頁導覽：在討論／成員／看板／檔案間切換（桌機自動隱藏分頁列）----
 export function setMobileView(view) {
   document.body.dataset.mv = view;
+  // 手機分頁同時決定主視圖：監控分頁＝dash，其餘分頁＝工作室（body[data-view] 單一真相）
+  document.body.dataset.view = view === "dash" ? "dash" : "studio";
   document.querySelectorAll(".mobiletabs button").forEach((b) => {
     const active = b.dataset.mv === view;
     b.classList.toggle("active", active);
