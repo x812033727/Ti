@@ -10,10 +10,12 @@ JS 語法另以 `node --check` 於命令列驗證（已通過）。
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config, redeploy, runner
+from studio import config, deploy, redeploy, runner
 
 APP_JS = config.PROJECT_ROOT / "web" / "app.js"
 STYLES = config.PROJECT_ROOT / "web" / "styles.css"
@@ -93,6 +95,12 @@ def client():
 @pytest.fixture(autouse=True)
 def _no_real_restart(monkeypatch):
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
+    monkeypatch.setattr(deploy, "_deploy_lock", _fake_deploy_lock)
+
+
+@contextmanager
+def _fake_deploy_lock():
+    yield True
 
 
 def test_publish_config_exposes_merge(client, monkeypatch):
