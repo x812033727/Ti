@@ -845,3 +845,30 @@ sha256sum -c /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-2
 ### QA 判定
 - FAIL：本輪指定字面指令 `timeout 300 .venv/bin/python -m pytest tests/deploy/ -q` 在此 lane 不可執行。
 - FAIL：三檔 fixture 合約不一致；`test_redeploy.py` 與 `test_web_redeploy_qa.py` 仍使用 fake `_deploy_lock`，`test_redeploy_qa.py` 則使用 `AUTOPILOT_STATE_DIR=tmp_path`。
+
+## QA 修正任務 #4：字面指令與 fixture 合約已收斂
+
+### 修正內容
+- lane 內補 `.venv -> /opt/ti-autopilot-work/.venv` symlink，讓本輪指定的 `.venv/bin/python` 字面指令可執行；`.venv` 受 `.gitignore`/exclude 忽略，不納入 commit。
+- `tests/deploy/test_redeploy.py`：autouse fixture 移除預設 fake `_deploy_lock`，只設定 `config.AUTOPILOT_STATE_DIR=tmp_path` 與禁用真重啟；busy 測試仍在個別 case 內覆寫 `_deploy_lock`。
+- `tests/deploy/test_web_redeploy_qa.py`：autouse fixture 改為 `tmp_path` state dir + 禁用真重啟，移除 fake `_deploy_lock` 與未使用 import。
+- `tests/deploy/test_redeploy_qa.py`：已是 `tmp_path` state dir，無需修改。
+
+### 實跑證據
+- `ls -ld .venv .venv/bin/python && .venv/bin/python --version`：`.venv -> /opt/ti-autopilot-work/.venv`，Python 3.12.3
+- fixture 合約檢查：三檔 autouse fixture 均設定 `AUTOPILOT_STATE_DIR=tmp_path`；只有 `test_redeploy_busy_when_lock_not_acquired` 在單一測試內覆寫 `_deploy_lock` 以驗 busy 分支。
+- 單檔：
+  - `timeout 300 .venv/bin/python -m pytest -q tests/deploy/test_redeploy.py`：8 passed
+  - `timeout 300 .venv/bin/python -m pytest -q tests/deploy/test_redeploy_qa.py`：9 passed
+  - `timeout 300 .venv/bin/python -m pytest -q tests/deploy/test_web_redeploy_qa.py`：9 passed
+- `for i in 1 2 3; do timeout 300 .venv/bin/python -m pytest tests/deploy/ -q; done`：
+  - round 1：39 passed
+  - round 2：39 passed
+  - round 3：39 passed
+- `timeout 300 .venv/bin/python -m ruff check .`：All checks passed
+- `timeout 300 .venv/bin/python -m ruff format --check .`：527 files already formatted
+- `git diff --name-only -- studio/`：空
+
+### QA 判定
+- PASS：字面指令 `.venv/bin/python` 已可執行，deploy 全量連續 3 輪全綠。
+- PASS：三檔 fixture 合約一致，預設路徑不再 fake `_deploy_lock`，以 per-test state dir 消除 flock 競爭。
