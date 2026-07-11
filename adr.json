@@ -1,83 +1,6 @@
 {
   "entries": [
     {
-      "decision": "task #4 守護測試分兩層：(a) YAML 解析層——斷言 `publish-release.yml` 存在 `-F body.md` step、`GH_TOKEN: ${{ secrets.GH_PAT }}`（非 GITHUB_TOKEN）；(b) 邏輯層——直接 import `scripts/publish_release.py` 的 render 邏輯並以 fixture CHANGELOG 跑 dry-run，斷言 output 非空且含 Breaking block；mutation 把 PAT 改回 GITHUB_TOKEN 必須讓 (a) 轉紅。",
-      "rationale": "高工指出純 YAML 掃描脆弱（結構重排假紅）；兩層互補——結構變動由 (a) 抓，邏輯迴歸由 (b) 抓。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0051095
-    },
-    {
-      "decision": "PR 描述必須明確標注「AC#3 端對端驗收需 `GH_PAT` 先設入 repo secrets；secret 未設前 push tag 會在 step 5 以 403 失敗，屬預期行為而非 bug」，避免驗收工程師誤判。",
-      "rationale": "工程師提醒這是最容易被「誤標綠燈」的盲點，文件成本最低。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0051103
-    },
-    {
-      "decision": "**domain API 為 `render_tag_notes(changelog_text: str, version: str) -> str`**，定義於 `studio/release_note.py`，接收字串，不接觸 I/O，可被 pytest 直接 import 測試。",
-      "rationale": "純函式最易被任意 fixture 覆寫，測試不需要真實檔案系統。",
-      "rejected": "讓 domain 層接受路徑——I/O 副作用混入 domain，測試需要 fixture 檔案，可測性下降。",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595693
-    },
-    {
-      "decision": "**adapter API 為 `render_release_body(changelog_path=None, version=None) -> str`**，定義於 `scripts/publish_release.py`，負責讀檔並呼叫 `render_tag_notes`；邏輯層守護測試 import 此函式做 dry-run，SSOT 常數測試 import `BREAKING_HEADING`——兩層不混用。",
-      "rationale": "釘住「哪層測試 import 哪個符號」，消除高工指出的命名歧義，避免未來因混用而出現 `AttributeError`。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.159572
-    },
-    {
-      "decision": "**publish-release.yml 的 create release step 必須加 `id: create-release`**；守護測試 `_create_release_step()` 以 `step[\"id\"] == \"create-release\"` 定位，不用 index 或 name 字串。",
-      "rationale": "高工指出 content-matching 在 step 重排或 run 字串改名時靜默斷鏈（guard 仍綠但已失效）；id 定位語意明確，改名即假紅，有鑑別力。",
-      "rejected": "以 `\"gh release create\" in step[\"run\"]` 定位——若 step 加 `if:` 條件或 run 字串重構，guard 仍能過，失去守護意義。",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595736
-    },
-    {
-      "decision": "**body 注入用 `-F body.md`（gh CLI 的 `--notes-file` 縮寫），不用 `--notes \"$BODY\"`**，且此字串必須出現在 create-release step 的 `run:` 中並被守護測試 `create_uses_file_mode()` 斷言。",
-      "rationale": "工程師確認多行 changelog 經 shell 變數注入會踩跳脫地獄；`-F` 讓 gh CLI 直接讀檔，完全繞開 shell 解析。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595745
-    },
-    {
-      "decision": "**邏輯層守護測試的 fixture CHANGELOG 必須以 `f\"...{BREAKING_HEADING}...\"` 動態組出**，不得硬寫 `## ⚠️ Breaking Changes` 字面值。",
-      "rationale": "工程師指出常數一旦改字，硬寫 fixture 靜默過期，乾跑變成在測試一份永遠成功的舊格式。",
-      "rejected": "fixture 硬寫字面值——BREAKING_HEADING 修改時 fixture 不跟進，dry-run 仍綠但實際 render 會失敗。",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595752
-    },
-    {
-      "decision": "**`main()` 內 `unlink(missing_ok=True)` 緊接 `render_release_body()` 兩行相鄰，中間無任何 early return 或寫檔**；語意為 pre-clean（非原子 rollback）——process 若被 kill 於 unlink 之後，`body.md` 缺失，step 5 fail-fast，靠 CI 重跑恢復；設計不保證原子性。",
-      "rationale": "工程師確認現有順序正確；高工要求語意說清。「不保證原子性」比沉默更誠實，日後偶發假紅時有心理準備。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595771
-    },
-    {
-      "decision": "**release-smoke 斷言：body 非空 AND 含 `BREAKING_HEADING`**（從 `studio.release_note` import 常數比對，不硬寫字面值）；僅驗「release 存在」不構成 smoke，必須驗 body 結構。",
-      "rationale": "高工指出現有設計只說「讀 body 做 smoke」，無具體斷言；smoke 形同空轉。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.159578
-    },
-    {
-      "decision": "**觸發時序措辭統一為「`release:published` 觸發時 release 物件已就緒，無需主動輪詢」**，不寫「零 race condition」。",
-      "rationale": "高工指出 GitHub API 最終一致性在極端情況有短暫視窗；「已就緒無需輪詢」是正確承諾，「零 race condition」過強。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595798
-    },
-    {
-      "decision": "承繼既有決策——**PAT 解鎖觸發死結、tag 經 `env TAG` 防 injection、`release:published` 不改 `workflow_run`、step 3 fail-fast tag 斷言、PR 描述明文標注 GH_PAT 前置**——以上高工與工程師均無異議，維持原案不變。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595807
-    },
-    {
       "decision": "demo command-not-found 真因定位在 OS shell 層，改文件是命中真因，不動 runner `_executable_command` 內部邏輯。",
       "rationale": "runner 介入前 shell 已報錯，映射層從未執行；改執行層屬誤治。",
       "rejected": "",
@@ -3499,6 +3422,83 @@
       "rejected": "",
       "session_id": "ap600504a989",
       "created_at": 1783740989.9228675
+    },
+    {
+      "decision": "Rule 1 「值得重試」語意定義 — N（note 內 `task timeout after Ns` 的秒數，等於 park 當時的 `AUTOPILOT_TASK_TIMEOUT`）< `config.AUTOPILOT_TASK_TIMEOUT`（當前值）時，表示操作者事後調高了上限，原任務值得原樣重試；N ≥ 當前值（含相等）則重試也白搭，交 Rule 2 拆分",
+      "rationale": "note 內秒數即 park 時的上限值（autopilot.py:2031 寫死），若兩值相等則 Rule 1 恆 false 形成死碼；唯有「當前 > park 當時」才有重試意義",
+      "rejected": "「N 與任意固定常數比較」——脫離操作者調高上限的實際語意，形同任意閾值，可維護性差",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365051
+    },
+    {
+      "decision": "Rule 1 實作位置 — 擴充 `backlog.triage_failed()` 同一 `_locked()` 區塊掃 `status==\"parked\"` 任務；在 `_locked()` 頂端加單行 marker 函式說明「此字串由 autopilot.py 產生，解析耦合，勿獨立修改」",
+      "rationale": "確定性、無 LLM、與 failed 掃描共鎖，可隨 `/api/autopilot/triage` 手動觸發；注意 autopilot.py 深度上限變體（`逾時且已達自動拆分深度上限…`）不含 `task timeout after` marker，天然不匹配、自動跳過",
+      "rejected": "在 autopilot async 主迴圈另開函式處理 Rule 1——不需 LLM 卻佔 async slot，且無法隨手動 triage 觸發",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.63651
+    },
+    {
+      "decision": "Rule 1 退回欄位組 — 同時設 `status=\"pending\"`、`timeout_retried=True`、`attempts=0`、`updated_at=now`；`attempts` 重置避免任務被 attempt 上限立即再卡死",
+      "rationale": "工程師實查確認 `set_status()` 支援額外欄位；`attempts` 若不重置，剛退回即觸發上限判斷等於無效 unpark",
+      "rejected": "只設 `timeout_retried=True` 不重置 attempts——退回即死，Rule 1 形同空操作",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365132
+    },
+    {
+      "decision": "Rule 2 split_depth 繼承 — Rule 2 直接將原 parked task 原封傳入 `_autosplit_task()`，不自行 +1；函式內部（autopilot.py:1999/2014）已讀 `task[\"split_depth\"]` 並對 children 設 `depth+1`，封頂自動生效",
+      "rationale": "自行 +1 再傳入會 double increment，提早撞 `AUTOPILOT_SPLIT_MAX_DEPTH`",
+      "rejected": "傳 `split_depth=父+1`——與現有函式契約衝突，造成 double increment",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365142
+    },
+    {
+      "decision": "Rule 2 child 建立邏輯 — 完整重用 `_autosplit_task()`（含 child dict 建立＋`backlog.add_items`），不在 `_maybe_triage_timeout_parked()` 複製一份；原任務維持 `parked`，另呼叫 `backlog.set_status` 加 `split_done=True`、note 改為「已自動拆為 #X…」",
+      "rationale": "避免與 `_handle_task_timeout()` 產生雙份 autosplit child 建立邏輯，維護成本翻倍",
+      "rejected": "在新函式內手刻 child dict 建立——邏輯重複，日後 `_autosplit_task` 格式變動只改一處另一處靜默落差",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365151
+    },
+    {
+      "decision": "Rule 2 實作位置 — 新增 async `_maybe_triage_timeout_parked()`，掛在 autopilot 主迴圈頂端（`_maybe_triage_failed` 同位置），每輪最多 1 筆（模組常數）；揀選條件：`parked` + note 含 `task timeout after` + 無 `split_done` + Rule 1 不適用",
+      "rationale": "",
+      "rejected": "統一放 backlog.triage_failed() 處理 Rule 2——triage 是同步 file-lock，不能含 LLM 呼叫",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.636519
+    },
+    {
+      "decision": "互斥欄位 — `timeout_retried`（bool）與 `split_done`（bool）存 task dict 欄位；Rule 1 進入條件檢查 `無 timeout_retried 且無 split_done`，Rule 2 進入條件檢查 `無 split_done`；同一筆任務不可能被兩規則同輪處理",
+      "rationale": "",
+      "rejected": "用 note 前綴標記狀態——`set_status()` 每次覆寫 note，欄位才能跨輪持久",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.63652
+    },
+    {
+      "decision": "marker 字串共用常數 — 在 `studio/autopilot.py` 頂端定義 `_TIMEOUT_NOTE_PREFIX = \"task timeout after\"`，note 產生（2031 行）與 backlog 解析 regex 均引用此常數；autopilot.py 產生處加反向備註「此字串被 backlog.triage 解析，勿自行修改」",
+      "rationale": "防跨模組隱性耦合靜默斷裂；高工建議，成本極低",
+      "rejected": "兩端各自硬寫字串靠人工守護——字串變動時只改一處、另一處靜默失效",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365209
+    },
+    {
+      "decision": "護欄常數 — `TRIAGE_UNPARK_MAX = 5`（Rule 1 單輪上限）與每輪拆 1 筆（Rule 2）均為模組常數，不進 `config.py`",
+      "rationale": "省兩處同步成本（config.py 頂端 + reload() 區塊），這兩值是防爆閥非營運旋鈕",
+      "rejected": "加入 config 旋鈕——兩處同步踩坑機率高，且操作者幾乎不需動態調整",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365218
+    },
+    {
+      "decision": "API 透傳 — `triage_failed()` 回傳 dict 加 `unparked` 計數；routes.py 已直接展開 stats，只補 assert 測試斷言，不改簽名；既有精準比對 `triage_failed()` dict 的測試一併更新",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365228
+    },
+    {
+      "decision": "測試必要黑樣本 — 深度上限變體 note（`逾時且已達自動拆分深度上限…`）需補黑樣本，確認天然不匹配 `task timeout after` 而被跳過；`timeout_retried=True` 不退、N ≥ 現行上限不退、`split_done=True` 兩規則均跳過各補對應黑樣本",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap14b14f1a1f",
+      "created_at": 1783750935.6365235
     }
   ]
 }
