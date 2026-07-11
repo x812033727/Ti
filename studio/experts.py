@@ -434,6 +434,12 @@ def _skills_options(role: Role) -> dict:
     return {"skills": list(EXPERT_SKILLS_LIST), "setting_sources": ["project"]}
 
 
+def _prompt_cache_options() -> dict:
+    if not config.PROMPT_CACHE_1H:
+        return {}
+    return {"env": {"ENABLE_PROMPT_CACHING_1H": "1"}}
+
+
 def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
     """建立該專家的 ClaudeSDKClient。
 
@@ -471,6 +477,9 @@ def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
             # 推理深度(None=SDK 預設,零行為改變):唯一建構點,自動涵蓋 roster/lane/
             # critic/voter/oneshot(反思可用 TI_EXPERT_EFFORT_MAP="oneshot:low" 降檔)。
             effort=config.effort_for(role.key),
+            # prompt cache(預設開):SDK subprocess env 是 parent env merge 後再疊 options.env,
+            # 單鍵注入不會清掉 ANTHROPIC_API_KEY 等既有環境變數。
+            **_prompt_cache_options(),
             # skills(預設關):見 _skills_options——技能漸進揭露,程序知識不占常駐 prompt。
             **_skills_options(role),
         )
