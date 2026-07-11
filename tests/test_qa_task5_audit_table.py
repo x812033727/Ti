@@ -102,6 +102,8 @@ def test_audit_has_no_phantom_routes(app):
 # 與 /api/roles 同級保護（groups.yaml 為組隊/mode 注入面），一併納管。
 # Claude 多帳號：/api/claude-account/switch 走 WRITE_DEPS(require_admin)，換憑證檔並重啟
 # 服務（高危狀態變更），依架構決策納管。
+# 帳號釘選：DELETE /api/claude-account/pin 走 WRITE_DEPS(require_admin)，刪 pin 哨兵檔
+# 恢復自動輪替（影響後續帳號分配決策），與 switch 同級納管。
 # #196 起 /api/publish/{session_id} 由 auth 升級為 WRITE_DEPS(require_admin)：對外發佈
 # （push＋開 PR＋合併）屬對外狀態變更，與其他寫入端點同級納管。
 # 動態流程：/api/workflows 寫入端點（POST/PUT/DELETE）走 WRITE_DEPS(require_admin)，
@@ -129,6 +131,7 @@ def test_audit_managed_set_matches_decision():
         "/api/workflows",
         "/api/workflows/{name}",
         "/api/claude-account/switch",
+        "/api/claude-account/pin",
         "/api/publish/{session_id}",
     }
     assert managed == expected, f"納管清單與架構決策不符：{managed ^ expected}"
