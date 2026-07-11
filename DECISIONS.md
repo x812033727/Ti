@@ -3160,3 +3160,38 @@
 - 時間：2026-07-11 07:55
 - 否決方案：一次清全 repo `git_cred_argv` 呼叫——超出本輪驗收範圍，`autopilot.py` 有自己的 legacy 路徑考量，混入增加迴歸風險
 
+## `match=r"missing force fetch argv"` 錨定 helper line 16 靜態前綴，三個既有黑樣本共用同一字串
+- 時間：2026-07-11 10:34
+- 理由：`re.search` 語意下靜態前綴足以鎖住來源；訊息同源，統一字串讓 helper 改訊息時三個黑樣本一起翻紅，維護成本最低
+- 否決方案：各自定製不同 match 字串——來源相同、無差異語意，徒增維護負擔
+
+## `pytest.raises(AssertionError, match=r"missing force fetch argv")` 取代裸 `pytest.raises(AssertionError)`，補上判別力閉環
+- 時間：2026-07-11 10:34
+- 理由：裸寫法會吞任何 AssertionError（含 fixture 錯誤等意外來源），加 `match=` 才確保攔的是 helper 那條「missing force fetch argv」，防假綠
+
+## 新增 `test_force_flag_not_refspec_black_sample_is_rejected`，輸入 `[["git","fetch","--force","origin",branch]]`，以 `pytest.raises(AssertionError, match=...)` 斷言被拒
+- 時間：2026-07-11 10:34
+- 理由：`--force` 旗標形式是合法 git 語法，開發者容易混淆；`expected in calls` 是整條 argv list 比對，與 `+refs/heads/...` 顯式 refspec 結構不同必被拒；黑樣本自證此路徑不可繞
+
+## 新黑樣本 docstring 說明「為何 `--force` 形式理所當然被拒」（`expected in calls` 整體比對語意）並記錄假想 mutation 場景（`_force_fetch` 改回 `--force` 形式則此測試翻紅）
+- 時間：2026-07-11 10:34
+- 否決方案：引入 mutation testing framework——輕量 docstring 說明已足夠，不引入新依賴
+
+## 不用 `@pytest.mark.parametrize` 合併三個既有黑樣本，保留各自獨立函式名
+- 時間：2026-07-11 10:34
+- 理由：三案語意各自獨立（bare fetch / no fetch / wrong branch），CI 失敗訊息保留個別函式名稱可讀性 > 省行數
+
+## Task #3 amend 7fd5d8ce，commit 訊息改為如實描述黑樣本強化內容，body 含三項變更摘要（`match=` 錨定、`--force` 變體覆蓋、docstring mutation 證據），不留「知識沉澱：調研結論寫入 docs/RESEARCH.md」
+- 時間：2026-07-11 10:34
+
+## amend 前執行 `git add tests/deploy/test_fetch_force_refspec.py`，禁用 `git add -A`；收尾前以 `git status --porcelain` 確認僅此一檔進 commit
+- 時間：2026-07-11 10:34
+- 理由：防 untracked 殘檔（如曾存在的 docs/RESEARCH.md 痕跡）被帶進 commit，對齊「掃描/提交範圍一致性」教訓
+
+## Task #3 收尾自證順序固定為：`pytest -q tests/deploy/test_fetch_force_refspec.py` → `ruff check .` → `ruff format --check .` → `git status --porcelain` 全乾淨後方可視為閉環
+- 時間：2026-07-11 10:34
+- 否決方案：僅口頭宣稱完成——不實跑不接受，呼應「口頭交付＝未驗證」教訓
+
+## 範圍鎖死：僅動 `tests/deploy/test_fetch_force_refspec.py`；helper 本體、deploy 本體、`@pytest.mark.asyncio` 冗餘均零 diff
+- 時間：2026-07-11 10:34
+
