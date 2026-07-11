@@ -97,7 +97,8 @@ def git_cred_argv(token: str | None, url: str | None = None) -> list[str]:
     """Fallback argv config.
 
     This puts a reversible base64 Authorization header in process argv where ps
-    can see it, so keep it limited to legacy/fallback paths.
+    can see it. The only remaining consumer is the studio.autopilot legacy path;
+    publisher push has moved to env-only auth injection.
     """
     if not token or not _github_url(url):
         return []

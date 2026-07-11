@@ -3129,3 +3129,34 @@
 ## `repo_base._redact` 與 `publisher.redact` 均保留，各自防守自身輸出路徑，不合併
 - 時間：2026-07-11 03:03
 
+## `publisher._push`/`_push_base`/`repush` 移除 `*git_cred.git_cred_argv(...)` splice，認證收斂為 `env=git_auth_env(...)` 單一注入層
+- 時間：2026-07-11 07:55
+- 理由：token 不進 argv/ps/audit log；注入點可審計收斂為一
+- 否決方案：保留 argv 雙保險——雙路徑審計點翻倍，安全審查成本高於可靠性收益
+
+## fail-closed 語意——`make_env` 回 `{}` 時 push 以乾淨 403 失敗，不補任何 fallback
+- 時間：2026-07-11 07:55
+- 理由：`env={}` 仍是完整 os.environ（runner 做 `{**os.environ, **{}}`），git 只缺認證 header 被 GitHub 拒，不是空環境崩潰；語意乾淨
+- 否決方案：補 legacy fallback 降級——等同重開雙路徑，前功盡棄
+
+## 不對稱文件落點為 `git_cred.git_cred_argv` docstring，標明「唯一剩餘消費端：autopilot legacy 路徑；publisher 已收斂 env-only」
+- 時間：2026-07-11 07:55
+- 理由：高工指出：半年後接手者看到同 repo 兩套認證會困惑；`git_auth_env` docstring 只蓋 publisher 視角，不蓋「為何 `git_cred_argv` 還存在」這個困惑點
+- 否決方案：只改 `git_auth_env` docstring——蓋不到 `git_cred_argv` 仍存在的不對稱，問題留給後人
+
+## `config.py` TI_GIT_CRED_LEGACY 旁加 comment 標明「publisher push 路徑需 git ≥ 2.31；legacy/舊 git 時 push 403 屬 fail-closed 預期」
+- 時間：2026-07-11 07:55
+
+## 移除 `test_publisher.py` 的 `_git_env_supported` autouse fixture；移除後正向測試（斷言 env 帶 header）須**顯式 patch `git_cred._GIT_ENV_SUPPORTED=True`**，避免退化成依賴 CI runner 實際 git 版本
+- 時間：2026-07-11 07:55
+- 理由：高工指出：不顯式 patch 則正向測試在 git < 2.31 的環境下為假綠，環境漂移不可接受
+- 否決方案：保留 fixture 只加 comment——fixture 語意已是繞路補丁，留著會誤導後繼者以為仍有功能意義
+
+## Task #3 負向測試 patch `git_cred._GIT_ENV_SUPPORTED=False`，斷言 argv 無 `-c`/token/base64；黑樣本須證「若 splice 仍在，本斷言在 `=False` 下失敗」，而非只證「env 有 header」
+- 時間：2026-07-11 07:55
+- 理由：高工補充判準：後者測不到本次改動，黑樣本要與本次 diff 的因果關係直接對應
+
+## `autopilot.py`、`repo_base.py`、`git_cred.py` 本體本輪零 diff
+- 時間：2026-07-11 07:55
+- 否決方案：一次清全 repo `git_cred_argv` 呼叫——超出本輪驗收範圍，`autopilot.py` 有自己的 legacy 路徑考量，混入增加迴歸風險
+
