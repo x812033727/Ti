@@ -365,13 +365,14 @@
 }
 .settings-foot button {
   padding: 9px 22px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
   font-size: 14px;
-  box-shadow: 0 2px 12px rgba(110, 121, 255, .3);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: var(--shadow-1);
 }
-.settings-foot button:hover:not(:disabled) { filter: brightness(1.12); box-shadow: var(--glow-accent); }
+.settings-foot button:hover:not(:disabled) { background: var(--accent); box-shadow: var(--glow-accent); }
 
 /* 設定面板(C3):textarea 欄與組級提示（自 styles.css 聚合檔歸位） */
 .set-row textarea { width: 100%; resize: vertical; font: inherit; }

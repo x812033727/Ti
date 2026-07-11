@@ -239,13 +239,14 @@
 .publish-cta { text-align: center; }
 .publish-cta button {
   padding: 10px 22px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
   font-size: 14px;
-  box-shadow: 0 2px 12px rgba(110, 121, 255, .35);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: var(--shadow-1);
 }
-.publish-cta button:hover:not(:disabled) { filter: brightness(1.12); box-shadow: var(--glow-accent); }
+.publish-cta button:hover:not(:disabled) { background: var(--accent); box-shadow: var(--glow-accent); }
 .publish {
   text-align: center;
   font-size: 13px;
