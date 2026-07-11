@@ -4,7 +4,7 @@ import { $, toast, appendTextEl } from "../dom.js";
 import { loadHealth, checkAuth } from "../health.js";
 import { setMobileView } from "../components/tabs.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
-import { openConfirmModal } from "../components/modal.js";
+import { openConfirmModal, openFormModal } from "../components/modal.js";
 
 // --- 重新部署重啟（設定面板常駐入口）---------------------------------
 // 拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。後端：POST /api/redeploy。
@@ -412,9 +412,11 @@ function accountModeRow(accounts, rotate) {
     const on = manual && a.pinned;
     btn.className = `ghost quota-mode-btn${on ? " on" : ""}`;
     if (on) {
-      btn.textContent = a.active ? `📌 帳號 ${a.label} · 手動` : `⏳ 帳號 ${a.label} · 排隊中`;
+      btn.textContent = a.active
+        ? `📌 帳號 ${a.label} · 手動`
+        : `⏳ 帳號 ${a.label} · 排空後切換中`;
       btn.disabled = true;
-      if (!a.active) btn.title = "等待任務空檔由 autopilot 自動切換";
+      if (!a.active) btn.title = "等討論空檔由 autopilot 自動切換";
     } else {
       btn.textContent = `帳號 ${a.label}`;
       btn.addEventListener("click", () => switchClaudeAccount(a.label, btn));
@@ -484,7 +486,7 @@ export async function switchClaudeAccount(label, btn) {
         `切換到帳號 ${label} 並進入手動模式？\n\n` +
         "手動模式會暫停自動輪替（不會被政策切回），可隨時按「自動輪替」恢復。\n" +
         "切換會重啟後端服務：本面板會短暫斷線後自動重連。\n" +
-        "若有互動討論或 autopilot 任務正在進行，可選擇強制切換（會中斷任務）。",
+        "若有互動討論或 autopilot 任務正在進行，可選擇排空後切換（零損失）或強制切換（中斷任務）。",
       confirmLabel: "切換",
     }))
   )
@@ -510,7 +512,7 @@ export async function switchClaudeAccount(label, btn) {
       const d = await resp.json().catch(() => ({}));
       const reasons = (d.reasons || []).join("、") || "有討論正在進行";
       restore();
-      await forceClaudeAccountSwitch(label, reasons, btn);
+      await busyClaudeAccountSwitch(label, reasons, btn);
       return;
     }
     if (!resp.ok) {
@@ -536,20 +538,84 @@ export async function switchClaudeAccount(label, btn) {
   }
 }
 
-async function forceClaudeAccountSwitch(label, reasons, btn) {
-  // 409 busy 的強制路徑：使用者明示中斷進行中討論、立即切換＋重啟。被中斷的
-  // autopilot 任務由優雅停機退回待辦自動重跑，只損失該場討論進度。
-  if (
-    !(await openConfirmModal({
-      title: "帳號使用中，強制切換？",
-      message:
-        `現在有：${reasons}。\n\n` +
-        `強制切換會立即中斷進行中的討論並重啟服務，切換到帳號 ${label}。\n` +
-        "被中斷的任務會退回待辦自動重跑，只損失當前討論進度。",
-      confirmLabel: "強制切換",
-    }))
-  )
-    return;
+async function busyClaudeAccountSwitch(label, reasons, btn) {
+  // 409 busy 的二選一：讓使用者選「排空後切換」(零損失,寫 pin 由 autopilot 於討論
+  // 空檔代切) 或「強制切換」(立即中斷討論+重啟)。radio 表單,取消=不動作。
+  const choice = await openFormModal({
+    title: "帳號使用中，選擇切換方式",
+    hint: `現在有：${reasons}。切換到帳號 ${label} 需要重啟服務。`,
+    fields: [
+      {
+        key: "mode",
+        label: "切換方式",
+        type: "radio",
+        value: "drain",
+        options: [
+          {
+            value: "drain",
+            label: "排空後切換（零損失）",
+            hint: "等到沒有進行中的討論時，autopilot 自動切換並重啟；不中斷任何任務。",
+          },
+          {
+            value: "force",
+            label: "強制切換（立即，中斷任務）",
+            hint: "立即中斷進行中的討論並重啟；被中斷的任務退回待辦自動重跑，只損失當前討論進度。",
+          },
+        ],
+      },
+    ],
+    submitLabel: "切換",
+  });
+  if (!choice) return; // 取消
+  if (choice.mode === "force") {
+    await forceSwitchRequest(label, btn);
+  } else {
+    await drainSwitchRequest(label, btn);
+  }
+}
+
+async function drainSwitchRequest(label, btn) {
+  // 排空後切換：寫 pin 回 202，由 autopilot 在討論空檔代切。202 的 resp.ok 為 true，
+  // 以 body 的 queued 分流——排空切換此刻沒有重啟，不可走 waitForReconnectThenRefresh。
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "排空後切換…";
+  }
+  try {
+    const resp = await fetch("/api/claude-account/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label, queue: true }),
+    });
+    const d = await resp.json().catch(() => ({}));
+    if (d.queued) {
+      toast(`已排定：帳號 ${label} 將於討論空檔自動切換（手動模式）`, "ok");
+      refreshProviderQuota(); // 立即刷新顯示「排空後切換中」徽章（無重啟、不等重連）
+      return;
+    }
+    if (d.restarting) {
+      // 送出前恰好變閒置、直接切換成功的罕見競態：走既有重啟重連路徑。
+      toast(`已切換到帳號 ${label}（手動模式），服務重啟中…`, "ok");
+      waitForReconnectThenRefresh();
+      return;
+    }
+    toast(`排空後切換失敗：${d.error || resp.status}`, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = `帳號 ${label}`;
+    }
+  } catch (e) {
+    toast("切換請求失敗，請稍後重試。", "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = `帳號 ${label}`;
+    }
+  }
+}
+
+async function forceSwitchRequest(label, btn) {
+  // 強制路徑：使用者明示中斷進行中討論、立即切換＋重啟。被中斷的 autopilot 任務由
+  // 優雅停機退回待辦自動重跑，只損失該場討論進度。
   if (btn) {
     btn.disabled = true;
     btn.textContent = "強制切換中…";

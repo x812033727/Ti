@@ -575,6 +575,40 @@ async def test_main_loop_applies_pin_before_gate_even_when_rotate_off(
     assert status["quota"]["pinned_to"] == "A"
 
 
+async def test_main_loop_applies_pin_even_when_paused(pin_env, state_dir, monkeypatch):
+    """排空後切換的核心：autopilot 暫停中 pin≠在線且討論空檔 → 仍代切（pin 代切排在
+    pause 檢查之前）。暫停停的是取任務、非帳號切換，否則排空切換會永久卡在暫停態。"""
+    monkeypatch.setattr(config, "autopilot_paused", lambda: True)
+    monkeypatch.setattr(
+        autopilot, "_pause_tick", lambda: pytest.fail("pin 代切應在 pause 檢查之前先發生")
+    )
+    sleeps: list[float] = []
+    _stub_asyncio(monkeypatch, sleeps)
+
+    with pytest.raises(_Stop):
+        await autopilot.main()
+
+    assert pin_env == [("switch", "A"), ("restart",)]
+    assert _read_status(state_dir)["state"] == "rotate_restart"
+
+
+async def test_main_loop_paused_without_pin_still_pauses(rotate_env, state_dir, monkeypatch):
+    """無 pin 時暫停行為不變：_maybe_apply_pinned_account 回 None → 落到 pause_tick。"""
+    monkeypatch.setattr(config, "autopilot_paused", lambda: True)
+    paused: list[bool] = []
+
+    async def fake_pause_tick():
+        paused.append(True)
+        raise _Stop
+
+    monkeypatch.setattr(autopilot, "_pause_tick", fake_pause_tick)
+    with pytest.raises(_Stop):
+        await autopilot.main()
+
+    assert rotate_env == []  # 無 pin、無切換
+    assert paused == [True]
+
+
 async def test_main_loop_busy_discussion_no_rotation(rotate_env, state_dir, monkeypatch):
     """有討論進行中 → 不切換；claude-only 且在線帳號受限時交給 gate 睡眠（既有行為）。"""
     monkeypatch.setattr(autopilot.history, "busy_sessions", lambda _stale: [{"session_id": "s1"}])
