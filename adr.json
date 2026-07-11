@@ -1,55 +1,6 @@
 {
   "entries": [
     {
-      "decision": "Step 1 為 PAT guard：`run: test -n \"$GH_TOKEN\" || (echo \"::error::GH_PAT secret 未設或已過期\" && exit 1)`，`env: GH_TOKEN: ${{ secrets.GH_PAT }}`。",
-      "rationale": "PAT 過期靜默炸掉 pipeline 是中風險；guard step 讓錯誤訊息直接指向根因，不是 403 猜測。",
-      "rejected": "只在 README 備註到期日——文件在緊急時沒人看，guard 在 CI log 裡看得見。",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0050962
-    },
-    {
-      "decision": "Step 3 斷言 `github.ref_name == v{pyproject_version()}`，不符即 fail-fast，不建立 release。",
-      "rationale": "tag 與程式碼版本不同步是上線事故根因；最便宜的攔截點是 release 建立前。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.005097
-    },
-    {
-      "decision": "新增 `scripts/publish_release.py`（薄包裝，< 15 行），讀 `CHANGELOG.md` → 呼叫 `render_tag_notes(changelog_text, pyproject_version())` → 寫 `body.md`；workflow step 4 僅執行 `python scripts/publish_release.py`。",
-      "rationale": "inline Python in YAML 無法被 pytest 直接 import 測試，守護測試只能掃 YAML 結構，意義打折；抽成腳本後 task #4 可直接 import 並跑 dry-run，測試深度從「結構存在」升至「邏輯正確」。",
-      "rejected": "`python -c \"...\"` 或 `run: | 多行 python`——邏輯不可測，且 shell quoting 仍有潛在風險。",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0050976
-    },
-    {
-      "decision": "`scripts/publish_release.py` 作為入口點時設 `set -euo pipefail`（或 Python 層 raise 即退），確保 render 失敗後 `body.md` 不殘留舊內容供 step 5 誤讀。",
-      "rationale": "step 4 失敗後 step 5 若仍執行會讀到舊版 body.md，file mode 本身不防這點；`set -euo pipefail` 是最小成本的冪等性保障。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.005099
-    },
-    {
-      "decision": "Step 5 執行 `gh release create ${{ steps.version.outputs.tag }} -F body.md`，不帶 `--draft`，狀態直接為 published；`env: GH_TOKEN: ${{ secrets.GH_PAT }}`（PAT 身分建立，才能觸發下游 release:published 事件）。",
-      "rationale": "GITHUB_TOKEN 建立的 release 不觸發下游 workflow（GitHub 防遞迴機制）；PAT 是破解死結的最小侵入方案，smoke workflow 無需改動。",
-      "rejected": "workflow_dispatch 接力——smoke 改讀 dispatch input 而非真實 release body，破壞「讀真實 body」的守護意義；GitHub App token——設置成本高，不符合當前規模。",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0051055
-    },
-    {
-      "decision": "`render_tag_notes` 呼叫傳入字串（`Path('CHANGELOG.md').read_text()`），不傳路徑；`scripts/publish_release.py` 負責讀檔，`studio.release_note` 函式簽名不動。",
-      "rationale": "工程師指出資料流圖的描述歧義，此處釘死介面邊界，避免實作時照抄 bug。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0051062
-    },
-    {
-      "decision": "YAML 與 `scripts/publish_release.py` 內零 Breaking heading 字面值；所有 heading 參照透過 `studio.release_note.BREAKING_HEADING`（或 `extract_breaking_block`）匯入，task #4 grep 驗收維持 0 命中。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0051086
-    },
-    {
       "decision": "task #4 守護測試分兩層：(a) YAML 解析層——斷言 `publish-release.yml` 存在 `-F body.md` step、`GH_TOKEN: ${{ secrets.GH_PAT }}`（非 GITHUB_TOKEN）；(b) 邏輯層——直接 import `scripts/publish_release.py` 的 render 邏輯並以 fixture CHANGELOG 跑 dry-run，斷言 output 非空且含 Breaking block；mutation 把 PAT 改回 GITHUB_TOKEN 必須讓 (a) 轉紅。",
       "rationale": "高工指出純 YAML 掃描脆弱（結構重排假紅）；兩層互補——結構變動由 (a) 抓，邏輯迴歸由 (b) 抓。",
       "rejected": "",
@@ -3499,6 +3450,55 @@
       "rejected": "",
       "session_id": "apbfb7560071",
       "created_at": 1783734643.9377747
+    },
+    {
+      "decision": "隔離方式改為 `monkeypatch.setattr(config, \"AUTOPILOT_STATE_DIR\", tmp_path)`，三檔各自 autouse fixture 加一行，不引入 fake contextmanager",
+      "rationale": "`tmp_path` 在 xdist 下 per-worker 唯一，lock 檔天然隔離；與 `test_deploy_lock.py` 現有模式一致，維護者只需理解一種隔離手法；保留真實 lock 行為，負向路徑（鎖被佔用→「另一個部署進行中」）未來仍可測",
+      "rejected": "`@contextlib.contextmanager` fake lock yield True——三檔各塞一份 contextmanager 造成重複，且永遠 yield True 靜默遮蔽負向路徑，降低測試覆蓋的誠實性",
+      "session_id": "ap600504a989",
+      "created_at": 1783740989.9228365
+    },
+    {
+      "decision": "setattr 目標用 `config.AUTOPILOT_STATE_DIR`，不用 `redeploy.deploy.config.AUTOPILOT_STATE_DIR`",
+      "rationale": "三檔已有 `from studio import config`，直接 setattr `config` 模組屬性，程式碼最短；`deploy.config`、`redeploy.config`、`config` 三者為同一物件，效果等價",
+      "rejected": "`redeploy.deploy.config`——鏈式路徑較長，且在 `config` 已被 import 的情況下多此一舉",
+      "session_id": "ap600504a989",
+      "created_at": 1783740989.9228466
+    },
+    {
+      "decision": "`_no_real_restart(monkeypatch)` 的簽名改為 `_no_real_restart(monkeypatch, tmp_path)`，新增 `tmp_path` 參數，pytest 內建 fixture 不須另行 import",
+      "rationale": "pytest 原生支援 autouse fixture 宣告多個 fixture 參數，無需額外設定",
+      "rejected": "",
+      "session_id": "ap600504a989",
+      "created_at": 1783740989.9228632
+    },
+    {
+      "decision": "三檔各自不新增任何 import（不加 `contextlib`、不加 `import deploy`），現有 import 已足夠",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap600504a989",
+      "created_at": 1783740989.9228647
+    },
+    {
+      "decision": "驗收指令採 `timeout 300 bash -c 'for i in 1 2 3; do .venv/bin/python -m pytest -q tests/deploy/ || exit 1; done'`，timeout 包住整個 shell loop",
+      "rationale": "xdist 鎖競爭是機率性的，三輪全綠才足以排除偶然通過；`exit 1` 確保任一輪紅立即中止",
+      "rejected": "",
+      "session_id": "ap600504a989",
+      "created_at": 1783740989.9228659
+    },
+    {
+      "decision": "產品碼零 diff——本輪 diff 僅限 `tests/deploy/` 三個測試檔，驗收以 `git diff HEAD -- studio/` 空為必要條件",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap600504a989",
+      "created_at": 1783740989.922867
+    },
+    {
+      "decision": "範圍外兩項以 `後續任務:` marker 在 #4 輸出中登記，不在本輪實作",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap600504a989",
+      "created_at": 1783740989.9228675
     }
   ]
 }
