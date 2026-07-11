@@ -33,8 +33,24 @@ function bindArrowNav(container) {
 // 分頁列與成員欄收合的接線，由入口 init 呼叫一次。
 export function bindTabs() {
   document.querySelectorAll(".mobiletabs button").forEach((b) => {
+    if (!b.dataset.mv) return; // 「更多」鈕另行接線，不是 data-mv 分頁
     b.onclick = () => setMobileView(b.dataset.mv);
   });
+
+  // 手機「更多」：把左側 rail 以 bottom sheet 形式開合；點 rail 任一鈕即收合
+  const more = $("#mobileMoreBtn");
+  if (more) {
+    more.onclick = () => {
+      const open = document.body.classList.toggle("rail-open");
+      more.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    document.querySelectorAll(".app-rail button").forEach((b) => {
+      b.addEventListener("click", () => {
+        document.body.classList.remove("rail-open");
+        more.setAttribute("aria-expanded", "false");
+      });
+    });
+  }
 
   // --- 桌面右欄分頁（看板／檔案）與左欄成員收合 ---------------------------
   document.querySelectorAll(".rail-tabs button").forEach((b) => {

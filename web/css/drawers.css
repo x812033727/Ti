@@ -4,7 +4,7 @@
 .drawer {
   position: fixed;
   top: 54px; right: 0; bottom: 0;  /* 從頂欄下緣滑出，工具列保持可點 */
-  width: min(480px, 100vw);
+  width: min(480px, 100vw);        /* 預設＝drawer--md 級距 */
   z-index: 50;
   display: flex;
   flex-direction: column;
@@ -14,6 +14,9 @@
   visibility: visible;
   transition: transform var(--t-slow) var(--ease-out), visibility var(--t-slow);
 }
+/* 寬版級距：編輯型面板（流程編輯器/專案藍圖）需要更寬的工作面 */
+.drawer--lg { width: min(640px, 100vw); }
+
 /* 蓋過全域 .hidden：用位移代替 display:none，才有滑入滑出動畫 */
 .drawer.hidden {
   display: flex !important;

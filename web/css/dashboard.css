@@ -19,31 +19,7 @@ body[data-view="dash"] .dashboard {
   padding: 2px; /* 讓卡片外框陰影不被裁掉 */
 }
 
-/* header 上的視圖切換膠囊（沿用 team-tabs 的分段控制語彙） */
-.view-switch {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-full);
-  flex: none;
-}
-.view-switch button {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 14px;
-  font-size: 12.5px;
-  border-radius: var(--r-full);
-  background: transparent;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.view-switch button:hover { color: var(--text-2); }
-.view-switch button.active {
-  background: var(--surface-3);
-  color: var(--text);
-  box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(124, 134, 255, .35);
-}
+/* 視圖切換已移往左側 icon rail（layout.css .app-rail）；.view-switch 走入歷史 */
 
 /* ---------- 英雄狀態列 ---------- */
 .dash-hero {
@@ -215,7 +191,6 @@ body[data-view="dash"] .dashboard {
   .dash-span2 { grid-column: auto; }
 }
 @media (max-width: 900px) {
-  .view-switch { display: none; } /* 手機由底部分頁切視圖 */
   .dash-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dash-state { font-size: 20px; }
   .dash-hero { padding: 14px 16px; }
