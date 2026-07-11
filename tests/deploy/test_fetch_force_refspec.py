@@ -17,10 +17,31 @@ def _assert_force_fetch_seen(calls: list[list[str]], branch: str) -> None:
 
 
 def test_old_bare_fetch_black_sample_is_rejected():
+    """bare fetch（無 force refspec）必須被拒絕——判別力黑樣本。"""
     branch = "deploy/test"
 
     with pytest.raises(AssertionError):
         _assert_force_fetch_seen([["git", "fetch", "origin", branch]], branch)
+
+
+def test_no_fetch_at_all_black_sample_is_rejected():
+    """完全沒有 fetch 命令時必須被拒絕——判別力黑樣本。"""
+    branch = "deploy/test"
+
+    with pytest.raises(AssertionError):
+        _assert_force_fetch_seen([], branch)
+
+
+def test_wrong_branch_force_refspec_black_sample_is_rejected():
+    """force refspec 指向錯誤分支時必須被拒絕——判別力黑樣本。"""
+    branch = "deploy/test"
+    other = "deploy/other"
+
+    with pytest.raises(AssertionError):
+        _assert_force_fetch_seen(
+            [["git", "fetch", "origin", f"+refs/heads/{other}:refs/remotes/origin/{other}"]],
+            branch,
+        )
 
 
 @pytest.mark.asyncio
