@@ -62,18 +62,18 @@ def test_latency_data_audit_numbers_match_history_zero_state():
     text = DOC.read_text(encoding="utf-8")
     metas = [_load_json(path) for path in meta_paths]
 
-    assert _declared_int(text, r"meta 總數:\s*(\d+)") == len(metas)
-    assert _declared_int(text, r"jsonl 總數:\s*(\d+)") == len(jsonl_paths)
+    assert "檔數以查核指令當下輸出為準" in text
+    assert "不以固定檔數作成效結論" in text
+    assert "6 場" not in text
+    assert "12 場" not in text
+    assert "200 場" not in text
 
     latency_total_counts = [
         meta.get("latency", {}).get("total", {}).get("count", 0) for meta in metas
     ]
-    assert _declared_int(text, r"latency\.total\.count == 0:\s*(\d+)") == len(
-        [count for count in latency_total_counts if count == 0]
-    )
-    assert _declared_int(text, r"latency\.total\.count\s+> 0:\s*(\d+)") == len(
-        [count for count in latency_total_counts if count > 0]
-    )
+    assert "latency.total.count == 0" in text
+    assert "latency.total.count  > 0: 0" in text
+    assert len(metas) > 0
     assert latency_total_counts == [0] * len(metas)
     assert all(not meta.get("latency", {}).get("by_role") for meta in metas)
     assert all(not meta.get("latency", {}).get("by_model") for meta in metas)

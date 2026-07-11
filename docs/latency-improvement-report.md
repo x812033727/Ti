@@ -78,8 +78,9 @@ timeout 300 .venv/bin/python -m pytest -q tests/core/test_roles.py
 目前沒有可採信的前後真實 latency 數據：
 
 - 前置 history 曾實查為 latency / token_usage 全零，不能拿 fake 或 improver 殘影推估成效。
+- 本輪未打真 API，輸出縮短效果待補驗。
 - 本輪未跑真 provider session，沒有新增真實 `token_usage` 事件。
-- 本 checkout 未提供 gitignored 的 `history/` runtime 目錄；doc test 的數字對照無法在本輪環境重放。
+- 本 checkout 的 gitignored `history/` 是可變 runtime 目錄，完整測試可能追加 improver 殘影；doc test 僅能重放「全零前置數據不成立」，不能證明真環境生效。
 - 500 字規則只影響模型行為傾向；實際輸出 token 是否下降，必須由真 API 事件驗證。
 
 驗收時若出現以下狀況，該輪補驗不合格：
