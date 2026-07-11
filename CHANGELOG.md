@@ -52,16 +52,16 @@
 ### Added
 
 - Claude 帳號「手動/自動模式」單一控制點：設定面板訂閱帳號區塊新增模式列——按
-  「帳號 A/B」＝手動模式（立即切換並釘選，自動輪替凍結、不再被政策切回；忙碌時可
-  改「強制切換」：立即中斷進行中討論並切換＋重啟，被中斷任務由優雅停機退回待辦
-  自動重跑），按「🔄 自動輪替」＝恢復 v4 自動分配。機制＝pin 檔哨兵
-  （`~/.claude/.credentials.pin`，純文字 label，不觸碰憑證 JSON）：
-  `POST /api/claude-account/switch` 新增 `force`（UI 忙碌路徑，回應標 `forced`）與
-  `queue`（API 選項：忙碌 409 附 `queueable`、排隊回 202 `queued`，由 autopilot 任務
-  空檔代切）欄位、新端點 `DELETE /api/claude-account/pin`、provider 額度快照 claude
-  條目新增 `rotate {enabled, mode, pinned}` 與各帳號 `pinned` 欄位。手動模式下釘選
-  帳號額度將滿（≥90%）時模式列顯示警語（耗盡＝quota_sleep 等重置，切回自動可借用
-  另一帳號）。
+  「帳號 A/B」＝手動模式（切換並釘選，自動輪替凍結、不再被政策切回），按「🔄 自動
+  輪替」＝恢復 v4 自動分配。閒置時立即切換；忙碌（有討論/任務）時彈二選一：
+  **排空後切換**（等討論空檔由 autopilot 自動切、零損失，即使 autopilot 暫停也會
+  完成）或**強制切換**（立即中斷討論並重啟，被中斷任務由優雅停機退回待辦自動重跑）。
+  機制＝pin 檔哨兵（`~/.claude/.credentials.pin`，純文字 label，不觸碰憑證 JSON）：
+  `POST /api/claude-account/switch` 新增 `queue`（排空後切換，回 202 `queued`）與
+  `force`（強制切換，回應標 `forced`）欄位、新端點 `DELETE /api/claude-account/pin`、
+  provider 額度快照 claude 條目新增 `rotate {enabled, mode, pinned}` 與各帳號 `pinned`
+  欄位。手動模式下釘選帳號額度將滿（≥90%）時模式列顯示警語（耗盡＝quota_sleep 等
+  重置，切回自動可借用另一帳號）。
 
 - 監控儀表板成為預設首頁（監控視圖）：Autopilot 狀態英雄列（狀態球/心跳/派工/PR 預算
   ＋暫停恢復/分診/開新討論）、任務統計磁貼（完成率與五態計數）、近 30 天結果堆疊長條、

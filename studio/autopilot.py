@@ -3211,12 +3211,13 @@ def _maybe_apply_pinned_account() -> str | None:
     """使用者釘選帳號 ≠ 在線時，於任務空檔代為切換＋排程服務重啟，回目標 label；否則 None。
 
     釘選（手動模式）由 UI 寫 ``claude_accounts`` 的 pin 檔：閒置時 UI 端點直接切換；
-    忙碌時（backlog 有 in_progress 任務）UI 只寫 pin「排隊」，由本函式在主迴圈代行——
-    busy 判定沿用自動輪替的 ``history.busy_sessions``（活的討論才算，任務邊界空檔即可切，
-    這正是排隊要等的時機）。刻意獨立於 ``_maybe_rotate_claude_account``：
+    忙碌時 UI 提供「排空後切換」（寫 pin，由本函式在討論空檔代行）——busy 判定沿用自動
+    輪替的 ``history.busy_sessions``（活的討論才算，討論空檔即可切，這正是排空要等的時機）。
+    刻意獨立於 ``_maybe_rotate_claude_account`` 且主迴圈把本函式排在 pause 檢查「之前」：
 
-    - 排隊切換是使用者顯式指令，不受 ``config.CLAUDE_ROTATE`` 與 quota gate 開關影響
-      （輪替只在 gate 區塊內被呼叫，gate 關閉時排隊仍須被執行）；
+    - 排空後切換是使用者顯式指令，不受 ``config.CLAUDE_ROTATE`` 與 quota gate 開關影響
+      （輪替只在 gate 區塊內被呼叫，gate 關閉時仍須被執行），且 **autopilot 暫停時亦須
+      完成**（暫停停的是取任務、非帳號切換；否則排空切換會永久卡在暫停態）；
     - 不需要額度快照——只讀 pin 檔與在線 label 兩個檔案。
 
     釘選 label 的憑證檔不存在 → log.warning（同 label 節流一次）並忽略，**不**自動刪
@@ -4146,13 +4147,11 @@ async def _main_loop(startup_sig: float) -> None:
         if _shutdown_requested:
             raise CancelledError()
         _loop_tick()
-        if config.autopilot_paused():
-            await _pause_tick()
-            continue
-        _note_resumed()
 
-        # 使用者釘選帳號（手動模式）≠ 在線 → 於任務空檔代為切換。刻意放在 quota gate
-        # 之前且不受其開關影響：排隊切換是使用者顯式指令，gate 關閉時也要執行。
+        # 使用者釘選帳號（手動模式）≠ 在線 → 於討論空檔代為切換。刻意放在 pause 檢查
+        # 「之前」：排空後切換是使用者顯式指令，即使 autopilot 暫停也該完成（切完重啟、
+        # pause 檔仍在→續暫停，語意一致：pause 停的是「取任務」不是「帳號切換」）。無 pin
+        # 時回 None，照常落到下面的 pause 檢查，暫停行為不變。
         pinned_to = _maybe_apply_pinned_account()
         if pinned_to:
             _write_status(
@@ -4162,6 +4161,11 @@ async def _main_loop(startup_sig: float) -> None:
             )
             await asyncio.sleep(_ROTATE_RESTART_SLEEP)
             continue
+
+        if config.autopilot_paused():
+            await _pause_tick()
+            continue
+        _note_resumed()
 
         # 額度閘門：取任務前先確認至少一個 provider 還有額度；全受限就睡到最早重置
         # （夾在 [60, AUTOPILOT_QUOTA_MAX_SLEEP]）後 continue 重查，避免額度耗盡時
