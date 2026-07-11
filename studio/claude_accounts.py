@@ -7,6 +7,7 @@
   - ``.credentials.json``            線上（SDK/CLI 實際使用，由 HOME 決定位置）
   - ``.credentials.acct-<label>.json``  各帳號標籤檔（登入一次後備份；label 為 A/B…）
   - ``.credentials.active``          純文字，記錄目前在線是哪個 label
+  - ``.credentials.pin``             純文字，使用者釘選的 label（手動模式；缺檔＝自動輪替）
 
 切換 = 把線上檔存回「當前 label」標籤檔（保住自動續期後的最新 token）→ 複製「目標 label」
 標籤檔覆蓋線上 → 改寫 ``.active``。本模組只做檔案層；認證在 SDK 啟動時載入記憶體，故換檔後
@@ -40,6 +41,40 @@ def _label_file(label: str) -> Path:
     return _dir() / f"{_PREFIX}{label}{_SUFFIX}"
 
 
+def _pin_file() -> Path:
+    return _dir() / ".credentials.pin"
+
+
+def pinned_label() -> str | None:
+    """使用者釘選（手動模式）的 label；pin 檔缺失或內容非法時回 None（＝自動模式）。
+
+    pin 檔只存純文字 label（與 ``.credentials.active`` 同格式），刻意不觸碰任何憑證
+    JSON——切換/回寫憑證檔曾發生跨帳號污染事故，pin 機制保持零污染面。
+    """
+    try:
+        v = _pin_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return v if valid_label(v) else None
+
+
+def set_pinned(label: str | None) -> None:
+    """寫入/清除釘選：``label=None`` 刪 pin 檔（回自動模式）；非法 label raise ValueError。"""
+    if label is None:
+        _pin_file().unlink(missing_ok=True)
+        return
+    if not valid_label(label):
+        raise ValueError(f"非法帳號標籤: {label!r}")
+    pin = _pin_file()
+    pin.parent.mkdir(parents=True, exist_ok=True)
+    pin.write_text(label, encoding="utf-8")
+
+
+def label_exists(label: str) -> bool:
+    """label 合法且對應的憑證標籤檔存在。供釘選/切換前驗證目標帳號可用。"""
+    return valid_label(label) and _label_file(label).exists()
+
+
 def valid_label(label: str) -> bool:
     return bool(_LABEL_RE.match(label or ""))
 
@@ -66,10 +101,12 @@ def _subscription(path: Path) -> str | None:
 def list_accounts() -> list[dict]:
     """掃目錄下所有 .credentials.acct-*.json，回每帳號的非秘密中繼資料。
 
-    每筆 ``{label, cred_file, subscription, active}``，依 label 排序。找不到任何標籤檔
-    時回 ``[]``（呼叫端可退回單帳號顯示）。``cred_file`` 供 claude_usage 查該帳號額度。
+    每筆 ``{label, cred_file, subscription, active, pinned}``，依 label 排序。找不到任何
+    標籤檔時回 ``[]``（呼叫端可退回單帳號顯示）。``cred_file`` 供 claude_usage 查該帳號
+    額度；``pinned``＝使用者釘選（手動模式）目標。
     """
     active = active_label()
+    pinned = pinned_label()
     out: list[dict] = []
     for p in sorted(_dir().glob(f"{_PREFIX}*{_SUFFIX}")):
         label = p.name[len(_PREFIX) : -len(_SUFFIX)]
@@ -81,6 +118,7 @@ def list_accounts() -> list[dict]:
                 "cred_file": str(p),
                 "subscription": _subscription(p),
                 "active": label == active,
+                "pinned": label == pinned,
             }
         )
     return out

@@ -21,7 +21,8 @@
 | 方法 | 路徑 | 現況 deps | 納管 | 理由 |
 |------|------|-----------|:----:|------|
 | POST | `/api/redeploy` | admin（auth｜fail-safe loopback） | ✅ | 拉 main 並自我重啟，高危機器狀態變更 |
-| POST | `/api/claude-account/switch` | admin（auth｜fail-safe loopback） | ✅ | 切換 Claude 在線訂閱帳號（換憑證檔 + 重啟 ti.service/ti-autopilot），高危服務狀態變更；有討論/任務進行中時回 409 擋下 |
+| POST | `/api/claude-account/switch` | admin（auth｜fail-safe loopback） | ✅ | 切換 Claude 在線訂閱帳號（換憑證檔 + 重啟 ti.service/ti-autopilot）＝進入手動模式（釘選），高危服務狀態變更；有討論/任務進行中時回 409 擋下（`queue=true` 改寫 pin 檔排隊、由 autopilot 任務空檔代切，回 202） |
+| DELETE | `/api/claude-account/pin` | admin（auth｜fail-safe loopback） | ✅ | 解除帳號釘選＝恢復自動輪替（刪 pin 哨兵檔），影響後續帳號分配決策的服務狀態變更 |
 | POST | `/api/publish/{session_id}` | admin（auth｜fail-safe loopback） | ✅ | 觸發對外發佈（push＋開 PR＋等 CI 合併）的對外狀態變更；#196 起由 `auth` 升級為 `WRITE_DEPS`，與其他寫入端點同級 |
 | POST | `/api/auth/password` | admin（auth｜fail-safe loopback） | ✅ | 寫 .env 改存取密碼，秘密寫入面；門禁停用時限本機，公網裸部署不致被搶先設密碼接管 |
 | POST | `/api/settings` | admin（auth｜fail-safe loopback） | ✅ | 改 .env 設定（含 `OPENAI_BASE_URL` 等），可致金鑰外洩/RCE 風險 |
