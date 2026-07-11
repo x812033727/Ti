@@ -76,26 +76,29 @@ jsonl 總數: 12
 token_usage 事件數: 0
 ```
 
-### 2.3 確認各 JSONL 實際事件型別（抽樣前 20 個）
+### 2.3 確認各 JSONL 實際事件型別（最多抽樣前 20 檔）
 
 ```bash
 timeout 60 .venv/bin/python -c "
 import json, glob, collections
 counter = collections.Counter()
-for path in sorted(glob.glob('history/*.jsonl'))[:20]:
+paths = sorted(glob.glob('history/*.jsonl'))[:20]
+for path in paths:
     with open(path) as f:
         for line in f:
             line = line.strip()
             if line:
                 counter[json.loads(line).get('type','?')] += 1
-print('前 20 檔事件型別分佈:', dict(counter))
+print(f'抽樣檔數: {len(paths)}')
+print('事件型別分佈:', dict(counter))
 "
 ```
 
 **預期輸出**（全為 improver 探索殘影，無真實 LLM session 事件）：
 
 ```
-前 20 檔事件型別分佈: {'phase_change': 20, 'done': 20}
+抽樣檔數: 12
+事件型別分佈: {'phase_change': 12, 'done': 12}
 ```
 
 ### 2.4 確認 token_usage meta 欄位結構（單檔範例）
