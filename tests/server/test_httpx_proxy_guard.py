@@ -1,13 +1,17 @@
 """AST guard for repo HTTP client policy.
 
-Policy: loopback smoke clients 必關 trust_env／proxy；外網 client 維持預設環境，因為
-proxy 與企業憑證是外部 API 使用者的預期設定。本測試用 AST 掃全 repo 實際 Call 節點，
-避免字串檢查漏掉「同檔多個 client 只關一個」。
+Policy: loopback 必關 trust_env／proxy；外網 client 不在關閉環境 proxy 範圍
+（見 CLAUDE.md 雙軌決策）。本測試用 AST 掃 repo 實際 Call 節點，避免字串檢查漏掉
+「同檔多個 client 只關一個」。
+
+Known limits: only attribute-access calls such as httpx.AsyncClient(...) are tracked;
+trust_env=SOME_VAR 這類變數傳入不在 AST 守門範圍。
 """
 
 from __future__ import annotations
 
 import ast
+import subprocess
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,13 +62,18 @@ def _call_name(node: ast.Call) -> str | None:
 
 
 def _python_paths() -> list[Path]:
-    paths: list[Path] = []
-    for path in PROJECT_ROOT.rglob("*.py"):
-        rel_parts = path.relative_to(PROJECT_ROOT).parts
-        if any(part in SKIP_DIRS for part in rel_parts):
-            continue
-        paths.append(path)
-    return sorted(paths)
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.py"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return sorted(
+        PROJECT_ROOT / path
+        for path in result.stdout.splitlines()
+        if not any(part in SKIP_DIRS for part in Path(path).parts)
+    )
 
 
 def _keyword_value(node: ast.Call, name: str) -> object:
