@@ -1,5 +1,5 @@
 // 動態流程編輯器面板。
-import { $, toast } from "../dom.js";
+import { $, toast, icon } from "../dom.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal } from "../components/modal.js";
 import { loadWorkflows } from "./deck.js";
@@ -211,13 +211,13 @@ function stageCard(stages, i, ro, taskLevel) {
     syncDraft(rootStages());
   };
   const up = document.createElement("button");
-  up.type = "button"; up.className = "ghost"; up.textContent = "↑"; up.title = "上移";
+  up.type = "button"; up.className = "ghost"; up.appendChild(icon("up")); up.title = "上移";
   up.disabled = ro || i === 0; up.onclick = () => mv(-1);
   const down = document.createElement("button");
-  down.type = "button"; down.className = "ghost"; down.textContent = "↓"; down.title = "下移";
+  down.type = "button"; down.className = "ghost"; down.appendChild(icon("down")); down.title = "下移";
   down.disabled = ro || i === stages.length - 1; down.onclick = () => mv(1);
   const del = document.createElement("button");
-  del.type = "button"; del.className = "ghost danger"; del.textContent = "✕"; del.title = "刪除此階段";
+  del.type = "button"; del.className = "ghost danger"; del.appendChild(icon("x")); del.title = "刪除此階段";
   del.disabled = ro;
   del.onclick = () => { stages.splice(i, 1); syncDraft(rootStages()); };
   tools.appendChild(up); tools.appendChild(down); tools.appendChild(del);
@@ -303,7 +303,7 @@ function stageCard(stages, i, ro, taskLevel) {
     optLabel.appendChild(gcb); optLabel.appendChild(gcap);
     row.appendChild(optLabel);
     const gdel = document.createElement("button");
-    gdel.type = "button"; gdel.className = "ghost danger"; gdel.textContent = "✕"; gdel.disabled = ro;
+    gdel.type = "button"; gdel.className = "ghost danger"; gdel.appendChild(icon("x")); gdel.title = "刪除此閘門"; gdel.disabled = ro;
     gdel.onclick = () => { s.gate.splice(gi, 1); if (!s.gate.length) delete s.gate; syncDraft(rootStages()); };
     row.appendChild(gdel);
     gates.appendChild(row);
@@ -374,7 +374,7 @@ export function renderStageCards() {
 export function toggleWfJsonMode() {
   wfJsonMode = !wfJsonMode;
   $("#workflowPanel").classList.toggle("wf-json-mode", wfJsonMode);
-  $("#wfModeToggle").textContent = wfJsonMode ? "🧩 卡片" : "{} JSON";
+  $("#wfModeToggle").textContent = wfJsonMode ? "卡片" : "{} JSON";
   renderStageCards();
 }
 

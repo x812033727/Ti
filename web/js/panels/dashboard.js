@@ -3,6 +3,7 @@
 // 資料全部復用既有唯讀端點；趨勢圖沿用「div bar + fill」既有手法，零外部圖表依賴。
 import { $, appendTextEl, toast } from "../dom.js";
 import { setMobileView } from "../components/tabs.js";
+import { renderStackedTrend } from "../components/chart.js";
 import { openAutopilot, apQuotaWindows, apElapsedText } from "./autopilot.js";
 
 // 動態列的狀態中文標籤（顏色由 .dash-act-dot 表達，文字不再帶 emoji）
@@ -132,42 +133,8 @@ function renderDrift(st) {
 
 // --- 近 30 天結果趨勢（每日 done/fail 堆疊長條；缺日不補零，與洞察面板同口徑） ---
 function renderTrend(data) {
-  const box = $("#dashTrend");
-  box.innerHTML = "";
-  const buckets = data.buckets || [];
-  if (!buckets.length) {
-    appendTextEl(box, "span", "muted", "尚無 audit 紀錄");
-    return;
-  }
-  const totals = data.totals || {};
-  const maxN = Math.max(1, ...buckets.map((b) => (b.ok || 0) + (b.fail || 0)));
-  const chart = document.createElement("div");
-  chart.className = "dash-trend-chart";
-  for (const b of buckets) {
-    const col = document.createElement("div");
-    col.className = "dash-trend-col";
-    col.title = `${b.date}　完成 ${b.ok || 0}・失敗 ${b.fail || 0}` +
-      `・完成率 ${b.rate != null ? Math.round(b.rate * 100) + "%" : "—"}`;
-    const bar = document.createElement("div");
-    bar.className = "dash-trend-bar";
-    const mk = (cls, n) => {
-      const seg = document.createElement("div");
-      seg.className = cls;
-      seg.style.height = `${(n / maxN) * 100}%`;
-      bar.appendChild(seg);
-    };
-    mk("seg-fail", b.fail || 0);
-    mk("seg-ok", b.ok || 0);
-    col.appendChild(bar);
-    appendTextEl(col, "span", "dash-trend-date", String(b.date || "").slice(5));
-    chart.appendChild(col);
-  }
-  box.appendChild(chart);
-  appendTextEl(
-    box, "div", "dash-trend-total muted",
-    `合計 完成 ${totals.ok ?? 0}・失敗 ${totals.fail ?? 0}` +
-    `・完成率 ${totals.rate != null ? Math.round(totals.rate * 100) + "%" : "—"}`,
-  );
+  // 委派共用趨勢圖原語（components/chart.js）；合計列由原語渲染。
+  renderStackedTrend($("#dashTrend"), data.buckets || [], data.totals || {});
 }
 
 // --- provider 額度（每 provider 一列：名稱 + 各窗口用量 meter）---------------

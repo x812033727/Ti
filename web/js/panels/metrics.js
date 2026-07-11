@@ -49,7 +49,7 @@ export async function refreshMetrics() {
         ["異議退回", rj.critic], ["停滯收斂", rj.stall],
       ].filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}`);
       rows.push(
-        ["📈 記分卡（場次）", `${sc.n} 場・成功率 ${pct(sc.completed_rate)}`],
+        ["記分卡（場次）", `${sc.n} 場・成功率 ${pct(sc.completed_rate)}`],
         ["　任務", `${t.done ?? 0}/${t.total ?? 0} 完成・一次過率 ${pct(t.first_try_rate)}`],
         ["　測試通過率", pct(sc.qa_pass_rate)],
         ["　Demo 通過率", pct(sc.demo_pass_rate)],

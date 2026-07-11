@@ -1,5 +1,5 @@
 // Autopilot 自主迴圈面板：狀態列、backlog、額度迷你條、績效榜、動態 timeline。
-import { $, appendTextEl, toast } from "../dom.js";
+import { $, appendTextEl, icon, toast } from "../dom.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal } from "../components/modal.js";
 
@@ -36,7 +36,15 @@ export async function expandAutopilot() {
 // autopilot 目標 repo（PR 連結用）；由 /api/autopilot 回應更新，取不到時退回核心 repo。
 let apRepo = "x812033727/Ti";
 let apHeartbeat = {};
-export const AP_STATUS_ICON = { pending: "🕓", in_progress: "⚙️", merging: "🔀", done: "✅", failed: "❌", parked: "🅿️" };
+// 任務狀態 → sprite 圖示名（dom.js icon()）；未知狀態退回中性圓點。
+export const AP_STATUS_ICON = { pending: "clock", in_progress: "refresh", merging: "merge", done: "check", failed: "x", parked: "pause" };
+function statusIconEl(status) {
+  const name = AP_STATUS_ICON[status];
+  if (name) return icon(name, "icon sys-ic st-" + status);
+  const dot = document.createElement("span");
+  dot.textContent = "•";
+  return dot;
+}
 
 export async function refreshAutopilot() {
   try {
@@ -64,10 +72,17 @@ export async function refreshAutopilot() {
     // 每日 PR 預算透明化（F4）：舊後端無此欄時容錯不顯示。
     const pb = st.pr_budget || {};
     const pbStr = pb.cap ? `・今日 PR ${pb.used ?? 0}/${pb.cap}` : "";
-    $("#apState").textContent =
-      `${st.paused ? "⏸ 已暫停" : "▶ 執行中"}　${rateStr}待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
-      `完成 ${c.done || 0}・失敗 ${c.failed || 0}${c.parked ? `・停放 ${c.parked}` : ""}${pbStr}` +
-      `${st.dryrun ? "　(dryrun)" : ""}${hb}`;
+    const stateEl = $("#apState");
+    stateEl.innerHTML = "";
+    stateEl.appendChild(icon(st.paused ? "pause" : "play", "icon sys-ic"));
+    appendTextEl(
+      stateEl,
+      "span",
+      "",
+      `${st.paused ? "已暫停" : "執行中"}　${rateStr}待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
+        `完成 ${c.done || 0}・失敗 ${c.failed || 0}${c.parked ? `・停放 ${c.parked}` : ""}${pbStr}` +
+        `${st.dryrun ? "　(dryrun)" : ""}${hb}`,
+    );
     renderDriftBanner(st.deploy, hbObj);
     $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
     $("#apToggle").dataset.paused = st.paused ? "1" : "0";
@@ -75,15 +90,23 @@ export async function refreshAutopilot() {
     const dm = st.dispatch_mode === "auto" ? "auto" : "manual";
     $("#apDispatchMode").textContent = dm === "auto" ? "派工：auto" : "派工：手動";
     $("#apDispatchMode").dataset.mode = dm;
-    $("#apMini").textContent = `${st.paused ? "⏸" : "▶"} 待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}`;
+    const miniEl = $("#apMini");
+    miniEl.innerHTML = "";
+    miniEl.appendChild(icon(st.paused ? "pause" : "play", "icon sys-ic"));
+    appendTextEl(miniEl, "span", "", `待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}`);
     const list = await (await fetch("/api/autopilot/backlog")).json();
     const ul = $("#apBacklog");
     ul.innerHTML = "";
     (list.tasks || []).slice().reverse().forEach((t) => {
       const li = document.createElement("li");
       li.className = "ap-bl-item";
-      const icon = AP_STATUS_ICON[t.status] || "•";
-      appendTextEl(li, "span", "ap-bl-text", `${icon} #${t.id} ${t.title}　[${t.source}]`);
+      const text = document.createElement("span");
+      text.className = "ap-bl-text";
+      text.appendChild(statusIconEl(t.status));
+      const tspan = document.createElement("span");
+      tspan.textContent = ` #${t.id} ${t.title}　[${t.source}]`;
+      text.appendChild(tspan);
+      li.appendChild(text);
       li.appendChild(buildTaskActions(t));
       ul.appendChild(li);
     });
@@ -120,7 +143,9 @@ function renderDriftBanner(deploy, heartbeat) {
     return;
   }
   box.classList.remove("hidden");
-  box.textContent = `🚀 部署漂移：${parts.join("；")}——已合併的修法尚未進執行碼`;
+  box.innerHTML = "";
+  box.appendChild(icon("alert", "icon sys-ic"));
+  appendTextEl(box, "span", "", `部署漂移：${parts.join("；")}——已合併的修法尚未進執行碼`);
 }
 
 // --- 一鍵分診（F3）：POST /api/autopilot/triage,回報三桶統計 -----------------
@@ -248,7 +273,7 @@ function renderCurrentTurn(ul, heartbeat) {
   li.className = "ap-item ap-current-turn";
   const head = document.createElement("div");
   head.className = "ap-item-head";
-  appendTextEl(head, "span", "", "▶");
+  head.appendChild(icon("play", "icon sys-ic"));
   appendTextEl(head, "strong", "ap-item-title", `目前輪到 ${expert}`);
   appendTextEl(head, "span", "ap-item-time muted", `已跑 ${elapsed}`);
   li.appendChild(head);
@@ -268,7 +293,7 @@ export async function refreshApActivity(heartbeat = apHeartbeat) {
       li.className = "ap-item";
       const head = document.createElement("div");
       head.className = "ap-item-head";
-      appendTextEl(head, "span", "", AP_STATUS_ICON[t.status] || "•");
+      head.appendChild(statusIconEl(t.status));
       appendTextEl(head, "strong", "ap-item-title", `#${t.id} ${t.title || ""}`);
       if (t.updated_at) {
         appendTextEl(head, "span", "ap-item-time muted", new Date(t.updated_at * 1000).toLocaleString());
@@ -300,7 +325,15 @@ export async function refreshApActivity(heartbeat = apHeartbeat) {
         chips.appendChild(a);
       }
       if (chips.childNodes.length) li.appendChild(chips);
-      if (t.deploy_msg) appendTextEl(li, "div", "ap-item-note", `🚀 ${t.deploy_msg}`);
+      if (t.deploy_msg) {
+        const note = document.createElement("div");
+        note.className = "ap-item-note";
+        note.appendChild(icon("send", "icon sys-ic"));
+        const nspan = document.createElement("span");
+        nspan.textContent = t.deploy_msg;
+        note.appendChild(nspan);
+        li.appendChild(note);
+      }
       if (t.note && t.note !== t.deploy_msg) {
         appendTextEl(li, "div", `ap-item-note${t.status === "failed" ? " bad" : " muted"}`, t.note);
       }

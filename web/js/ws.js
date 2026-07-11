@@ -48,8 +48,8 @@ function scheduleReconnect() {
   reconnectAttempts += 1;
   const n = reconnectAttempts;
   const delay = computeReconnectDelay(n - 1);
-  setPhase("🔌 重連中…");
-  addSystem(`⚠️ 連線中斷，${Math.max(1, Math.round(delay / 1000))} 秒後第 ${n} 次重連…`);
+  setPhase("重連中…");
+  addSystem(`連線中斷，${Math.max(1, Math.round(delay / 1000))} 秒後第 ${n} 次重連…`, "", "alert");
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -72,14 +72,16 @@ export function bindSocket(sock) {
       // live_only＝improve 迴圈重掛：無單一 JSONL 可補放，只接續即時事件。
       addSystem(
         p.live_only
-          ? "🔌 已重新連上改良迴圈（接續即時事件；斷線期間的過程可從各輪歷史查看）"
-          : "🔌 已重新連上進行中的討論"
+          ? "已重新連上改良迴圈（接續即時事件；斷線期間的過程可從各輪歷史查看）"
+          : "已重新連上進行中的討論",
+        "",
+        "plug",
       );
       setPhase("已重新連上");
       return;
     }
     if (ev.type === "error" && (ev.payload || {}).code === "attach_unavailable") {
-      addSystem("ℹ️ " + ((ev.payload || {}).message || "該場討論已結束"));
+      addSystem((ev.payload || {}).message || "該場討論已結束", "", "info");
       stopReconnect();
       if (state.sessionId) replaySession(state.sessionId); else setRunning(false);
       return;
@@ -87,7 +89,7 @@ export function bindSocket(sock) {
     if (trackSocketEvent(ev)) sawDone = true;
     handleEvent(ev);
   };
-  sock.onerror = () => { addSystem("⚠️ 連線發生錯誤"); toast("WebSocket 連線錯誤", "err"); };
+  sock.onerror = () => { addSystem("連線發生錯誤", "", "alert"); toast("WebSocket 連線錯誤", "err"); };
   // 連線關閉＝後端收尾（done 已送）或斷線：討論進行中即自動重連（背景仍在跑）——
   // 含 improve 迴圈（後端以 live-only hub 承接，無補放）；正常收尾/重播維持原行為。
   sock.onclose = () => {
@@ -96,7 +98,7 @@ export function bindSocket(sock) {
       return;
     }
     if (reconnectAttempts >= RECONNECT_MAX) {
-      addSystem("⛔ 重連失敗；討論仍在背景進行，稍後可從歷史列表重播此場");
+      addSystem("重連失敗；討論仍在背景進行，稍後可從歷史列表重播此場", "", "stop");
       toast("重連失敗", "err");
       setRunning(false);
       return;

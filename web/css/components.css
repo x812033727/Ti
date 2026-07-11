@@ -1,4 +1,28 @@
-/* 共用元件：toast 通知、登入頁卡片。 */
+/* 共用元件：卡片/量表原語、toast 通知、登入頁卡片。 */
+
+/* ---------- 卡片原語：面板/儀表板卡片共用的表面配方 ---------- */
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}
+
+/* ---------- 量表原語（bar+fill）：autopilot 額度條與儀表板 meter 共用，
+   各自只保留尺寸覆寫；語意色 warn/crit 走 token 深淺主題自動跟隨 ---------- */
+.meter, .ap-quota-bar, .dash-meter {
+  height: 7px;
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.meter .fill, .ap-quota-bar .fill, .dash-meter .fill {
+  height: 100%;
+  background: var(--good);
+  border-radius: var(--r-full);
+}
+.meter.warn .fill, .ap-quota-bar.warn .fill, .dash-meter.warn .fill { background: var(--warn); }
+.meter.crit .fill, .ap-quota-bar.crit .fill, .dash-meter.crit .fill { background: var(--bad); }
 
 /* ---------- Toast 通知 ---------- */
 #toast {
@@ -82,13 +106,14 @@
 .login-form input { padding: 11px 14px; }
 .login-form button {
   padding: 11px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
   font-size: 14px;
-  box-shadow: 0 2px 12px rgba(110, 121, 255, .35);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: var(--shadow-1);
 }
-.login-form button:hover:not(:disabled) { filter: brightness(1.12); box-shadow: var(--glow-accent); }
+.login-form button:hover:not(:disabled) { background: var(--accent); box-shadow: var(--glow-accent); }
 .login-error { color: var(--bad); font-size: 13px; animation: shake .3s var(--ease); }
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
@@ -160,12 +185,13 @@
 }
 .form-modal-submit {
   padding: 9px 20px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--fs-2);
+  border: 1px solid rgba(255, 255, 255, .08);
 }
-.form-modal-submit:hover:not(:disabled) { filter: brightness(1.12); }
+.form-modal-submit:hover:not(:disabled) { background: var(--accent); }
 @media (max-width: 600px) {
   .form-modal { width: calc(100vw - 20px); }
 }

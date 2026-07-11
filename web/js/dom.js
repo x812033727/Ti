@@ -19,3 +19,17 @@ export function appendTextEl(parent, tag, className, text) {
   parent.appendChild(el);
   return el;
 }
+
+// 線性圖示：引用 index.html 內嵌 sprite 的 <symbol id="i-*">。
+// SVG 元素必須用 createElementNS 建立，且 class 走 setAttribute（SVG 的
+// className 是唯讀的 SVGAnimatedString）。
+const SVG_NS = "http://www.w3.org/2000/svg";
+export function icon(name, cls = "icon") {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(SVG_NS, "use");
+  use.setAttribute("href", "#i-" + name);
+  svg.appendChild(use);
+  return svg;
+}

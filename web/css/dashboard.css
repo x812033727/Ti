@@ -62,11 +62,12 @@ body[data-view="dash"] .dashboard {
 .dash-hero-actions #dashNewTalk {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 9px 18px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff; font-weight: 600; font-size: 13px; white-space: nowrap;
-  box-shadow: 0 2px 12px rgba(110, 121, 255, .3);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: var(--shadow-1);
 }
-.dash-hero-actions #dashNewTalk:hover { filter: brightness(1.12); }
+.dash-hero-actions #dashNewTalk:hover { background: var(--accent); }
 
 /* 狀態球：執行中呼吸、暫停琥珀、休眠藍、待命灰、離線紅 */
 .dash-orb {
@@ -147,33 +148,8 @@ body[data-view="dash"] .dashboard {
 .dash-swatch.ok { background: var(--good); }
 .dash-swatch.fail { background: var(--bad); }
 
-/* ---------- 趨勢圖（每日 done/fail 堆疊長條） ---------- */
+/* ---------- 趨勢圖：已統一至 components/chart.js + charts.css 的 .trend-* ---------- */
 .dash-trend { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.dash-trend-chart {
-  display: flex; align-items: flex-end; gap: 6px;
-  flex: 1 1 auto;
-  min-height: 150px;
-  padding: 6px 0 2px;
-  overflow-x: auto;
-}
-.dash-trend-col {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  flex: 1 1 0; min-width: 16px; max-width: 42px; height: 100%;
-}
-.dash-trend-bar {
-  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
-  width: 100%; max-width: 22px; flex: 1 1 auto;
-}
-.dash-trend-bar .seg-ok { background: var(--good); border-radius: 3px; }
-.dash-trend-bar .seg-fail { background: var(--bad); border-radius: 3px; }
-.dash-trend-col:hover .seg-ok, .dash-trend-col:hover .seg-fail { filter: brightness(1.18); }
-.dash-trend-date {
-  font-size: 10px; color: var(--muted);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-/* 密集時只留每 3 根的日期標，避免疊字 */
-.dash-trend-col:not(:nth-child(3n + 1)) .dash-trend-date { visibility: hidden; }
-.dash-trend-total { font-size: 12px; }
 
 /* ---------- provider 額度 meter ---------- */
 .dash-quota { display: flex; flex-direction: column; gap: 12px; }
@@ -186,13 +162,8 @@ body[data-view="dash"] .dashboard {
   font-size: 11px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.dash-meter {
-  flex: 1; height: 7px; border-radius: var(--r-full);
-  background: var(--surface-3); overflow: hidden;
-}
-.dash-meter .fill { height: 100%; background: var(--good); border-radius: var(--r-full); }
-.dash-meter.warn .fill { background: var(--warn); }
-.dash-meter.crit .fill { background: var(--bad); }
+/* 量表本體走 components.css 的 .meter 原語，這裡只留佈局 */
+.dash-meter { flex: 1; }
 .dash-quota-pct {
   flex: none; width: 38px; text-align: right;
   font-size: 11px; color: var(--text-2);

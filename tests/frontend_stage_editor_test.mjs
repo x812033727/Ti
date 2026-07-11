@@ -53,7 +53,8 @@ expect(Array.isArray(stages[2].task_pipeline), 'type 改 build 應自動補 task
 
 // 4) 卡片刪除 → JSON 同步移除
 const cards3 = $('#wfStageCards').children.filter((c) => String(c.className).startsWith('wf-card'));
-const delBtn = cards3[2]._descendants().find((c) => c.tag === 'button' && c.textContent === '✕' && c.title === '刪除此階段');
+// 刪除鈕改為 SVG 圖示（無 textContent），以 title 定位
+const delBtn = cards3[2]._descendants().find((c) => c.tag === 'button' && c.title === '刪除此階段');
 delBtn.onclick();
 stages = JSON.parse($('#workflowStages').value);
 expect(stages.length === 2, '刪卡後 JSON 應回 2 段');

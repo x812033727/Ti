@@ -17,6 +17,7 @@ const doc = {
   querySelector: () => makeStub(),
   querySelectorAll: () => [],
   createElement: () => makeStub(),
+  createElementNS: () => makeStub(), // dom.js icon() 的 SVG 建構
   body: makeStub(),
 };
 

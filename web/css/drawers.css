@@ -122,26 +122,23 @@
 .ap-add input { flex: 1; min-width: 0; }
 .ap-add button {
   padding: 9px 16px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
   font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, .08);
   white-space: nowrap;
 }
-.ap-add button:hover:not(:disabled) { filter: brightness(1.12); }
+.ap-add button:hover:not(:disabled) { background: var(--accent); }
 
 /* Autopilot：provider 額度迷你條（5h/7d 用量） */
 .ap-quota { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .ap-quota-cell { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
 .ap-quota-name { font-weight: 600; }
 .ap-quota-win { color: var(--muted); }
-.ap-quota-bar {
-  width: 44px; height: 6px; border-radius: var(--r-full);
-  background: var(--surface-3); overflow: hidden;
-}
-.ap-quota-bar .fill { height: 100%; background: var(--good); border-radius: var(--r-full); }
-.ap-quota-bar.warn .fill { background: var(--warn); }
-.ap-quota-bar.crit .fill { background: var(--bad); }
+/* 量表本體走 components.css 的 .meter 原語，這裡只留迷你尺寸
+  （components.css 較晚載入，需以 cell 脈絡提高特異性才蓋得回來） */
+.ap-quota-cell .ap-quota-bar { width: 44px; height: 6px; }
 
 /* Autopilot：績效榜（AI 成員考核聚合，per provider 平均分/樣本/通過率） */
 .ap-appraisal { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11px; }
@@ -380,13 +377,7 @@
 .ap-add-row { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
 .ap-add-row select { flex: 0 0 auto; }
 
-/* 洞察面板(D1):趨勢長條沿用 bar+fill 手法（語意色走 token,深淺主題自動跟隨） */
-.ins-trend-chart { display: flex; align-items: flex-end; gap: 3px; height: 140px; overflow-x: auto; padding: 8px 0; }
-.ins-trend-col { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 22px; height: 100%; }
-.ins-trend-bar { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 14px; flex: 1 1 auto; }
-.ins-trend-ok { background: var(--good); border-radius: 2px 2px 0 0; }
-.ins-trend-fail { background: var(--bad); border-radius: 2px 2px 0 0; }
-.ins-trend-date { font-size: 0.65em; opacity: 0.7; writing-mode: vertical-rl; }
+/* 洞察面板(D1)：趨勢圖已統一至 components/chart.js + charts.css 的 .trend-* */
 .ins-lesson-text { white-space: pre-wrap; word-break: break-word; }
 .ins-lesson-meta { font-size: 0.8em; }
 #insLessonsSearch { width: 100%; margin-bottom: 6px; }
