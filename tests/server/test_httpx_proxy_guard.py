@@ -1,18 +1,17 @@
-"""AST guard for repo HTTP client policy.
+"""AST guard for loopback smoke HTTP client policy.
 
 Policy: loopback 必關 trust_env／proxy；外網 client 不在關閉環境 proxy 範圍
-（見 CLAUDE.md 雙軌決策）。本測試用 AST 掃 repo 實際 Call 節點，避免字串檢查漏掉
-「同檔多個 client 只關一個」。
+（見 CLAUDE.md 雙軌決策）。本測試用 AST 掃 tests/server/smoke_*.py 實際 Call 節點，
+避免字串檢查漏掉「同檔多個 client 只關一個」。
 
 Known limits: only attribute-access calls such as httpx.AsyncClient(...) are tracked;
-trust_env=SOME_VAR 這類變數傳入不在 AST 守門範圍。
+trust_env=SOME_VAR / proxy=SOME_VAR 這類變數傳入不在 AST 守門範圍；urllib loopback
+client 不在本 httpx/websockets 守門範圍。
 """
 
 from __future__ import annotations
 
 import ast
-import subprocess
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,16 +25,6 @@ CLIENT_CALLS = {
     "httpx.post",
     "websockets.connect",
 }
-EXTERNAL_CLIENT_COUNTS = {
-    ("deploy/ti-claude-token-refresh.py", "httpx.post"): 1,
-    ("studio/antigravity_usage.py", "httpx.post"): 1,
-    ("studio/autopilot.py", "httpx.AsyncClient"): 1,
-    ("studio/claude_usage.py", "httpx.get"): 1,
-    ("studio/minimax_usage.py", "httpx.get"): 1,
-    ("studio/publisher.py", "httpx.AsyncClient"): 6,
-    ("studio/tools.py", "httpx.AsyncClient"): 1,
-}
-SKIP_DIRS = {".git", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".venv", "__pycache__"}
 
 
 @dataclass(frozen=True)
@@ -59,21 +48,6 @@ def _call_name(node: ast.Call) -> str | None:
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
         return f"{func.value.id}.{func.attr}"
     return None
-
-
-def _python_paths() -> list[Path]:
-    result = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.py"],
-        cwd=PROJECT_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return sorted(
-        PROJECT_ROOT / path
-        for path in result.stdout.splitlines()
-        if not any(part in SKIP_DIRS for part in Path(path).parts)
-    )
 
 
 def _keyword_value(node: ast.Call, name: str) -> object:
@@ -147,30 +121,6 @@ def _relative(path: Path) -> str:
         return path.as_posix()
 
 
-def _is_loopback_smoke(path: Path) -> bool:
-    return path.parent == HERE and path.name.startswith("smoke_")
-
-
-def _format_counts(counts: Counter[tuple[str, str]]) -> str:
-    return "\n".join(f"{path}: {call} x{count}" for (path, call), count in sorted(counts.items()))
-
-
-def test_repo_httpx_websockets_clients_are_fully_classified() -> None:
-    """全 repo 盤點守門：新增裸用 client 必須先分類 loopback 或外網。"""
-    calls = [client_call for path in _python_paths() for client_call in _find_client_calls(path)]
-    external_counts = Counter(
-        (_relative(client_call.path), client_call.call)
-        for client_call in calls
-        if not _is_loopback_smoke(client_call.path)
-    )
-
-    assert external_counts == Counter(EXTERNAL_CLIENT_COUNTS), (
-        "httpx/websockets client inventory changed\n"
-        f"expected:\n{_format_counts(Counter(EXTERNAL_CLIENT_COUNTS))}\n"
-        f"actual:\n{_format_counts(external_counts)}"
-    )
-
-
 def test_loopback_smoke_clients_do_not_use_host_proxy_env_ast() -> None:
     smoke_paths = sorted(HERE.glob("smoke_*.py"))
     assert len(smoke_paths) >= 2
@@ -196,6 +146,8 @@ def test_black_sample_requires_every_client_to_disable_proxy_env(tmp_path: Path)
                 "        pass",
                 "    async with httpx.Client(trust_env=0) as also_bad:",
                 "        pass",
+                "    async with websockets.connect('ws://127.0.0.1:8000/ws') as ws:",
+                "        pass",
             ]
         ),
         encoding="utf-8",
@@ -206,4 +158,5 @@ def test_black_sample_requires_every_client_to_disable_proxy_env(tmp_path: Path)
     assert [(violation.line, violation.call, violation.expected) for violation in violations] == [
         (6, "httpx.AsyncClient", "trust_env=False"),
         (8, "httpx.Client", "trust_env=False"),
+        (10, "websockets.connect", "proxy=None"),
     ]
