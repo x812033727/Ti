@@ -236,10 +236,12 @@ _provider_quota_snapshot = provider_quota.snapshot
 
 # --- Claude 多帳號切換（受保護）----------------------------------------
 class ClaudeAccountSwitch(BaseModel):
-    """POST /api/claude-account/switch 的請求本體。``queue``＝忙碌時改排隊（寫 pin，
-    由 autopilot 在任務空檔代切），而非回 409。"""
+    """POST /api/claude-account/switch 的請求本體。``force``＝忙碌時仍立即切換（中斷
+    進行中討論，UI 忙碌路徑）；``queue``＝忙碌時改排隊（寫 pin，由 autopilot 在任務
+    空檔代切；API 選項）。兩者皆 False 時忙碌回 409。force 優先於 queue。"""
 
     label: str
+    force: bool = False
     queue: bool = False
 
 
@@ -253,10 +255,12 @@ async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
     """切換 Claude 在線訂閱帳號（換憑證檔 + 重啟服務使新認證生效）＝進入手動模式。
 
     認證在 SDK 啟動時載入記憶體，換檔後須重啟 ti.service/ti-autopilot 才生效；重啟會中斷
-    互動討論與 autopilot 任務，故「進行中」狀態不立即切換：``queue=False`` 回 409（附
-    ``queueable: true`` 供前端提示可排隊）；``queue=True`` 寫 pin 檔回 202，由 autopilot
-    的 ``_maybe_apply_pinned_account`` 在任務空檔代切。成功切換（立即或排隊）都會釘選
-    目標帳號＝凍結自動輪替（手動選擇不再被政策切回）；解除見 DELETE /api/claude-account/pin。
+    互動討論與 autopilot 任務，故「進行中」狀態預設不立即切換：``force=True``（UI 忙碌
+    路徑）＝使用者明示強制切換，跳過守衛立即切＋重啟——被中斷的 autopilot 任務由優雅
+    停機退回 pending 自動重排，只損失該場討論進度；``queue=True``（API 選項）寫 pin 檔
+    回 202，由 autopilot 的 ``_maybe_apply_pinned_account`` 在任務空檔代切；兩者皆無 →
+    回 409（附 ``queueable: true``）。成功切換（立即/強制/排隊）都會釘選目標帳號＝凍結
+    自動輪替（手動選擇不再被政策切回）；解除見 DELETE /api/claude-account/pin。
     """
     busy: list[str] = []
     if ws.active_session_count() > 0:
@@ -264,7 +268,7 @@ async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
     in_prog = backlog.list_tasks("in_progress")
     if in_prog:
         busy.append(f"autopilot 有 {len(in_prog)} 個任務進行中")
-    if busy:
+    if busy and not body.force:
         if body.queue:
             if not claude_accounts.label_exists(body.label):
                 return JSONResponse(
@@ -288,7 +292,10 @@ async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
 
     claude_accounts.set_pinned(body.label)  # 手動切換＝釘選（switch 成功才寫）
     _schedule_service_restart()
-    return JSONResponse({"ok": True, "label": body.label, "restarting": True, "pinned": True})
+    payload: dict = {"ok": True, "label": body.label, "restarting": True, "pinned": True}
+    if busy:  # force 蓋過 busy 守衛時標記，供前端/log 辨識這是中斷式切換
+        payload["forced"] = True
+    return JSONResponse(payload)
 
 
 @router.delete("/api/claude-account/pin", dependencies=WRITE_DEPS)
