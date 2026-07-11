@@ -1333,6 +1333,7 @@ async def _fetch_github_merged_titles(repo: str, since_days: int) -> list[str] |
             "X-GitHub-Api-Version": "2022-11-28",
         }
         params = {"state": "closed", "sort": "updated", "direction": "desc", "per_page": 100}
+        # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
                 f"https://api.github.com/repos/{repo}/pulls",

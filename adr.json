@@ -1,83 +1,6 @@
 {
   "entries": [
     {
-      "decision": "新建 studio/release_smoke.py，公開純函式 check_body(body: str) -> None 與 CLI __main__；check_body 只 raise ValueError(reason)，__main__ 負責 catch + stderr + sys.exit(1)。",
-      "rationale": "副作用邊界分離——check_body 可在測試中直接 pytest.raises(ValueError) 而不需 mock sys.exit；CLI 行為不變，非 CLI 呼叫者（未來的 programmatic 整合）亦可安全呼叫。",
-      "rejected": "check_body 直接呼叫 sys.exit(1)——單元測試須 pytest.raises(SystemExit)，且函式對非 CLI 呼叫者完全不可復用。",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.7899024
-    },
-    {
-      "decision": "check_body 判定條件用 if not extract_breaking_block(body)（即 None 視為失敗）；依 release_note.py L92–93 `return body or None` 的已知合約，空字串不可能回傳，is not None 與 not result 等價，選 not result 作防禦性寫法並加行內注釋標明 contract 依賴。",
-      "rationale": "高工指出的空字串風險真實存在於「contract 不明」時，加注釋讓未來讀者不必重查 SSOT 即可理解。",
-      "rejected": "",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.7899082
-    },
-    {
-      "decision": "release body 以環境變數 BODY 傳入 release_smoke.py（workflow 中 env: BODY: ${{ steps.body.outputs.body }}），__main__ 優先讀 os.environ.get(\"BODY\")，fallback sys.stdin.read()。",
-      "rationale": "echo \"$BODY\" 在多行、含反斜線、-e/-n 開頭時會吞字或誤判旗標；env 傳遞不經 shell 字串解析，最穩。fallback stdin 保留本地管線測試與手動驗收能力（兩種呼叫方式都能用）。",
-      "rejected": "echo \"$BODY\" | python——體積大的 release body 含特殊字元時靜默截斷，smoke 拿到殘缺 body 仍可能通過，鑑別力失效。",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.78991
-    },
-    {
-      "decision": "觸發時機選 on: release: types: [published]，不加 retry guard。",
-      "rationale": "release 物件在 published 事件時已就緒，零 race condition；retry guard 增加 YAML 複雜度且掩蓋更深問題。",
-      "rejected": "push: tags + retry loop——需額外 30 秒 guard，且若 release 從未建立會 retry 到上限才失敗，診斷模糊。",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.7899115
-    },
-    {
-      "decision": "smoke 判定層只做「非空頂層 Breaking Changes 區塊存在」，不套 outlet_carries_block() 的四要素檢查。",
-      "rationale": "AC#2 契約是「有非空區塊即通過」，四要素是 pre-tag validator 職責；smoke 過嚴會讓 release 因 CHANGELOG 措辭問題被擋，而非發布流程錯誤。",
-      "rejected": "複用 outlet_carries_block()——四要素語意偵測對 post-publish smoke 過嚴，且把 pre-tag 與 post-publish 兩層職責混入同一函式。",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.789913
-    },
-    {
-      "decision": "版本字串以 pyproject_version()（studio.release_note 已有）為 SSOT，workflow 以獨立 step 取得並輸出至 GITHUB_OUTPUT，版本號可見於 Actions log，供 debug 確認。",
-      "rationale": "",
-      "rejected": "在 workflow YAML 硬寫版本號或另寫 tomllib 解析——多一份解析邏輯就多一個漂移點。",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.7899148
-    },
-    {
-      "decision": "YAML 與 release_smoke.py 均不出現任何 Breaking Changes heading 字面值；SSOT 路徑唯一為 extract_breaking_block（其內引用 BREAKING_HEADING）；Task #4 驗收以 grep .github/workflows/ studio/release_smoke.py 確認 0 命中。",
-      "rationale": "",
-      "rejected": "workflow 中用 --jq '.body | test(\"## ⚠️ Breaking Changes\")'——jq 中硬寫 heading 字面值打破 SSOT，emoji 漂移時 smoke pass 而 pre-tag fail，靜默分歧。",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.7899165
-    },
-    {
-      "decision": "smoke 失敗診斷輸出為 print(body[:500] or \"<empty>\", file=sys.stderr)；空 body 時明確印 <empty> 而非空白，避免「看起來沒執行」的誤判。",
-      "rationale": "空 body 是有效的失敗場景（release body 未填），需讓 CI log 可讀。",
-      "rejected": "",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.7899175
-    },
-    {
-      "decision": "動工前工程師與 workflow 撰寫者先敲定 body 傳遞介面（env BODY + stdin fallback），再各自並行實作 #1、#2、#3；Task #4 在 #2 完成後以 grep 驗收。",
-      "rationale": "介面未對齊時 #4 驗收才發現問題，返工成本最高；先定介面是最便宜的協調點。",
-      "rejected": "",
-      "session_id": "ap7997be8f25",
-      "created_at": 1781516097.7899184
-    },
-    {
-      "decision": "新增 `.github/workflows/publish-release.yml`，trigger `on: push: tags: ['v*']`，job-level 設 `permissions: contents: write`；不與 `release-smoke.yml` 合併。",
-      "rationale": "建立職責 vs 驗證職責分離；`contents: write` 是 `gh release create` 最小權限需求。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0050926
-    },
-    {
-      "decision": "publish job 分五個 step 依序執行：(1) Verify PAT、(2) Resolve version、(3) Assert tag matches version、(4) Render body、(5) Create release。",
-      "rationale": "把「PAT 未設」攔在最前面，避免前四步成功後才 403，錯誤訊息更直覺。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0050952
-    },
-    {
       "decision": "Step 1 為 PAT guard：`run: test -n \"$GH_TOKEN\" || (echo \"::error::GH_PAT secret 未設或已過期\" && exit 1)`，`env: GH_TOKEN: ${{ secrets.GH_PAT }}`。",
       "rationale": "PAT 過期靜默炸掉 pipeline 是中風險；guard step 讓錯誤訊息直接指向根因，不是 403 猜測。",
       "rejected": "只在 README 備註到期日——文件在緊急時沒人看，guard 在 CI log 裡看得見。",
@@ -3499,6 +3422,83 @@
       "rejected": "一次清全 repo `git_cred_argv` 呼叫——超出本輪驗收範圍，`autopilot.py` 有自己的 legacy 路徑考量，混入增加迴歸風險",
       "session_id": "ap7754167c97",
       "created_at": 1783727739.3064272
+    },
+    {
+      "decision": "測試落點 `tests/server/test_qa_httpx_trust_env_guard.py`，沿用 `test_qa_*` 命名慣例，與既有字串守門 `test_qa_real_server_client_helper.py` 並存、不替換",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377587
+    },
+    {
+      "decision": "範圍以 `subprocess(['git','ls-files','tests/server/'])` 取 `.py` 檔，不用 `Path.rglob`",
+      "rationale": "",
+      "rejected": "rglob——會掃 untracked 臨時檔，導致 pre-commit 綠、CI 紅的分歧",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377656
+    },
+    {
+      "decision": "抽出純函式 `_collect_violations(source: str) -> list[str]`，回傳 `\"<call_type>@L<line>\"` 字串列表；正向測試與黑樣本共用同一函式，不重複 AST walk 邏輯",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377673
+    },
+    {
+      "decision": "AST walk 同時比對兩種 call.func 形態——`ast.Attribute`（`httpx.AsyncClient(...)` / `websockets.connect(...)`）與 `ast.Name`（`from httpx import AsyncClient` 後裸呼叫的 `AsyncClient(...)`），缺任一形態守門即失效",
+      "rationale": "高工指出 attribute-only 可被 import alias 繞過；兩種形態共用同一 keyword 檢查邏輯，不增加維護點",
+      "rejected": "只抓 `ast.Attribute`——import alias 直接穿透守門形同虛設",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377685
+    },
+    {
+      "decision": "違規判定規則——**「缺席即違規」優先**：找不到目標 keyword（`trust_env` / `proxy`）算違規；找到但值不符合規值（`trust_env` ≠ `False` 或 `proxy` ≠ `None`）也算違規；兩條件 OR",
+      "rationale": "最常見形態是根本沒寫 keyword；只擋錯值會讓裸用漏網",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377697
+    },
+    {
+      "decision": "黑樣本三條，各自因果對應一種違規形態",
+      "rationale": "",
+      "rejected": "只有 A+B 兩條——alias 形態無黑樣本等於宣稱能守但未自證",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377708
+    },
+    {
+      "decision": "正向測試斷言訊息帶 `\"\\n\".join(violations)`，失敗時直接顯示違規檔名+行號，不只印 `assert not violations`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377718
+    },
+    {
+      "decision": "`httpx.Client`（同步）本輪不納管；掃一遍確認 `tests/server/` 無同步 call site 後，在測試 docstring 標明「目前僅守 AsyncClient；若日後引入 Client 同步呼叫，需補規則」",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377725
+    },
+    {
+      "decision": "`publisher.py`（×6）、`tools.py:311`、`autopilot.py:1336` 每個裸 `AsyncClient(` 前加固定單行注解：`# trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377732
+    },
+    {
+      "decision": "`studio/` 零行為 diff 驗收——收尾以 `git diff studio/ -- '*.py'` 人眼掃一遍確認只有 `#` 開頭行異動，不跑自動 grep 過濾（高工指出尾隨空白/換行編輯會讓 grep 誤判）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377742
+    },
+    {
+      "decision": "DECISIONS.md 新增 ADR，格式與現有條目一致（`## 標題 \\n- 時間\\n- 理由\\n- 否決方案`），內容記「loopback client 關 `trust_env` / 外網 client 維持預設」邊界，否決「全局關閉」與「全局開放」兩種方案並附理由",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apbfb7560071",
+      "created_at": 1783734643.9377747
     }
   ]
 }
