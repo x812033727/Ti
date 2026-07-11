@@ -31,7 +31,8 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_restart(monkeypatch):
+def _no_real_restart(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
 
 
