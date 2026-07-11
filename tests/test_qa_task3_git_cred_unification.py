@@ -193,8 +193,8 @@ async def test_publisher_push_new_mechanism_clean_argv_auth_in_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_publisher_push_fallback_argv_carries_auth_when_env_unsupported(monkeypatch):
-    """legacy/舊 git（env 不可用）下 publisher push：argv fallback 帶 extraHeader 承接認證，push 不斷鏈。"""
+async def test_publisher_push_env_unsupported_fails_closed_without_argv_auth(monkeypatch):
+    """legacy/舊 git（env 不可用）下 publisher push：argv 保持乾淨，缺認證由遠端 403 fail-closed。"""
     monkeypatch.setattr(git_cred, "_GIT_ENV_SUPPORTED", False)
     seen: list[dict] = []
 
@@ -213,11 +213,11 @@ async def test_publisher_push_fallback_argv_carries_auth_when_env_unsupported(mo
     )
 
     push = next(c for c in seen if "push" in c["cmd"])
-    # env 不可用 → git_auth_env(=make_env) 回 {}，認證改由 argv 的 -c extraHeader 承接。
+    # env 不可用 → git_auth_env(=make_env) 回 {}；publisher 不補 argv 認證。
     assert push["env"] == {}
-    assert push["cmd"][:4] == ["git", "-c", "credential.helper=", "-c"]
-    assert push["cmd"][4].startswith("http.https://github.com/.extraheader=Authorization: Basic ")
-    assert push["cmd"][-4:] == ["push", "-u", "ti_publish", "feat"]
+    assert push["cmd"] == ["git", "push", "-u", "ti_publish", "feat"]
+    assert "-c" not in push["cmd"]
+    _assert_no_cred_argv(push["cmd"])
 
 
 def test_git_cred_exposes_public_auth_b64_for_redact():

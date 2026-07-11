@@ -9,8 +9,7 @@ from studio import config, publisher, runner
 # --- 純邏輯 -------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _git_env_supported(monkeypatch):
+def _force_modern_git_auth(monkeypatch):
     monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
     monkeypatch.setattr(publisher.git_cred, "_GIT_ENV_SUPPORTED", True)
 
@@ -60,10 +59,11 @@ def test_remote_url_and_redact(monkeypatch):
     assert token not in url
 
 
-def test_git_auth_env_carries_base64_header():
+def test_git_auth_env_carries_base64_header(monkeypatch):
     """認證改走 env 帶 base64(extraHeader)：驗 header 格式正確、無尾換行，且 b64decode 可反推。"""
     import base64
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     # 走 GIT_CONFIG_* env 注入；先清空 credential.helper，再掛 per-host extraHeader。
@@ -102,6 +102,7 @@ async def test_push_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_path)
     """_push 必須只在 git push 帶 extraHeader env，且 argv/command 不含 token 或 b64。"""
     import base64
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
@@ -152,6 +153,7 @@ async def test_push_base_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_
     """首次發佈初始化 base 也必須走 env，不可把 header 塞進 argv。"""
     import base64
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
@@ -194,11 +196,12 @@ async def test_push_base_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_run_command_exec_env_reaches_child_without_entering_command(tmp_path):
+async def test_run_command_exec_env_reaches_child_without_entering_command(monkeypatch, tmp_path):
     """實跑子行程確認 env 到達；預期值只用 hash 比對，避免 token/b64 進 argv。"""
     import hashlib
     import sys
 
+    _force_modern_git_auth(monkeypatch)
     token = "secrettoken"
     env = publisher.git_auth_env(token)
     header_b64 = env["GIT_CONFIG_VALUE_1"].rsplit(" ", 1)[-1]
@@ -267,6 +270,7 @@ def test_merge_payload():
 
 @pytest.fixture
 def _configured(monkeypatch):
+    _force_modern_git_auth(monkeypatch)
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
