@@ -1,62 +1,6 @@
 {
   "entries": [
     {
-      "decision": "demo command-not-found 真因定位在 OS shell 層，改文件是命中真因，不動 runner `_executable_command` 內部邏輯。",
-      "rationale": "runner 介入前 shell 已報錯，映射層從未執行；改執行層屬誤治。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.067007
-    },
-    {
-      "decision": "改動範圍鎖定四份使用者面文件（README.md、CHANGELOG.md、ARCHITECTURE.md、CONTRIBUTING.md），但 CHANGELOG.md 內描述舊版行為的歷史記錄段落列為禁動區。",
-      "rationale": "歷史段落改了反而製造不實紀錄；高工指出此邊界需明確。",
-      "rejected": "全文件無差別替換——CHANGELOG 歷史段語意不同，不應與「指令宣告」同等對待。",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670094
-    },
-    {
-      "decision": "CI workflow（`.github/workflows/*.yml`）預設不動；動工前須確認無 Makefile/just recipe 抄文件 sample command，若有，該 recipe 納入改動範圍。",
-      "rationale": "CI 跑 setup-python 不是 demo 路徑；但若 CI 直接執行文件指令，不動會留不一致，高工指出需核實。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670106
-    },
-    {
-      "decision": "替換策略採逐檔精確 Edit，不用批次 sed/perl。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670114
-    },
-    {
-      "decision": "第 1 步 grep 命中清單固化為表格（檔案、行號、原文、預定改動/keep 標記），存檔後給 PM approve；改完跑同一條 grep，兩份輸出比對，作為禁動區核驗依據。",
-      "rationale": "高工指出格式未定義是流程卡點；工程師指出兩份輸出比對優於人腦記憶。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.067012
-    },
-    {
-      "decision": "執行驗收指令採 `python3 -c \"import studio.server\"`（即退、不阻塞），整體驗收沿用 `python3 -m pytest tests/docs tests/core/test_runner.py -q`。勘誤：原 `python3 -c \"import studio; python3 -m studio.server --help\"` 在 -c 字串內巢狀 python3 -m 屬非法 Python 語法（SyntaxError），且 server 未實作 --help 會 timeout，已更正。",
-      "rationale": "工程師指出全啟動會卡住 CI；驗收語意只需確認「指令字串找得到 python3 並能解析入口」，import 錯/依賴缺失為另一問題域，不混判。",
-      "rejected": "`python3 -m studio.server`（無限制）——會阻塞執行流程；`python3 -c \"import studio; python3 -m studio.server --help\"`——巢狀指令非法語法 + server 無 --help 會 timeout。",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670133
-    },
-    {
-      "decision": "驗收「非 command not found」的目標環境定義為「未安裝 python symlink 的 bare macOS Monterey+ 或 Ubuntu 22.04+」，不以 dev 本機為準。",
-      "rationale": "高工指出「本環境過關」不等於使用者環境過關，最小環境需明文定義。",
-      "rejected": "以 dev 本機為驗收環境——python symlink 可能由 pyenv 提供，非 bare 狀態，不能代表使用者。",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.067014
-    },
-    {
-      "decision": "guard 測試正則（`tests/docs/*` 等）若驗「不含裸 python 指令」，其排除條件必須同步涵蓋禁動區字串（`python-dotenv`、```python 圍欄、`python3`），避免文件改完後 guard 反紅。",
-      "rationale": "工程師指出此邊界容易漏，guard 正則本身若不排除禁動區，文件改正確但測試報錯，製造假紅。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670147
-    },
-    {
       "decision": "guard 測試與文件改動必須同 batch、同 commit，不允許中間狀態。",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3443,62 @@
       "rejected": "",
       "session_id": "ap14b14f1a1f",
       "created_at": 1783750935.6365235
+    },
+    {
+      "decision": "`_COMMON` 在現有第 3 條後插入第 4 條，延續數字序列，不另起段落",
+      "rationale": "與現有結構一致、guard 測試子串比對最簡單；改字時測試立即報錯",
+      "rejected": "尾端獨立段落——序列斷裂，視覺上與前三條規則語義分裂",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.0779355
+    },
+    {
+      "decision": "字數上限 500 字，明確定義適用範圍為「**單則發言的自由散文部分**」，結構化標記行（以 `任務:/驗證:/決議:/依賴:/後續任務:/核心改動:` 開頭）及其必要條列內容**均不計入**",
+      "rationale": "高工指出若只豁免 marker 開頭行，PM 拆解與 QA 條列說明的非 marker 散文仍受限，行為不可預期；明講「散文部分」才能讓模型正確套用",
+      "rejected": "泛稱「結構化輸出除外」——邊界模糊，不同角色模型解讀會分歧",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.0779428
+    },
+    {
+      "decision": "Guard 測試斷言子串取指示語意核心片段（如「自由散文部分」），**不含 `4.` 序號前綴**",
+      "rationale": "序號未來可能因規則重排而改；斷言應對內容敏感而非對編號敏感",
+      "rejected": "取含 `4.` 的前 15 字元——序號重排即測試誤報，維護成本高",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.0779445
+    },
+    {
+      "decision": "Guard test 斷言目標為 `roles.BUILTIN_ROLES`（import 期凍結全 8 角色），不用 `ROSTER`",
+      "rationale": "`ROSTER` 受 `config.OPTIONAL_ROLES` 影響，CI 環境可能只有 4 角色，覆蓋斷言不穩定",
+      "rejected": "",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.077946
+    },
+    {
+      "decision": "守門測試加在 `tests/core/test_roles.py` 尾端，不新增檔案、不新增 fixture",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.0779467
+    },
+    {
+      "decision": "`latency-improvement-report.md` 明寫「此為軟性 prompt 勸導，非 token 硬上限」，真環境補驗指令必須能量測加指示前後的**平均輸出 token 數與回應字數**（讀 `by_role.count/sum_ms`，並對比輸出 token 計數），不得讓讀者誤解 `~10ms/token` 效益已驗證",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.0779479
+    },
+    {
+      "decision": "兩份 docs 歸 `docs/`；報告內的查核指令一律用 `timeout 60 bash -c \".venv/bin/python -c '...'\"` 包裹，禁裸用 `python/python3/pytest`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.0779486
+    },
+    {
+      "decision": "改動範圍嚴格限三處——`studio/roles.py`（`_COMMON` 字串）、`tests/core/test_roles.py`（守門斷言）、`docs/`（兩份報告）；`config.py`、providers、discussion、experts 均不動",
+      "rationale": "可逆性最高——撤一行字串即回退；範圍小確保前後對比有效",
+      "rejected": "",
+      "session_id": "apa327e03d79",
+      "created_at": 1783755016.07795
     }
   ]
 }
