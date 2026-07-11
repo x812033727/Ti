@@ -53,6 +53,25 @@ def test_wrong_branch_force_refspec_black_sample_is_rejected():
         )
 
 
+def test_force_flag_not_refspec_black_sample_is_rejected():
+    """`git fetch --force origin <branch>` 這種 `--force` 旗標形式必須被拒絕——判別力黑樣本。
+
+    `--force` 旗標雖與 `+` refspec 前綴語意相近（都強制更新），但 argv 結構
+    `["git", "fetch", "--force", "origin", branch]` 缺完整 refspec，無法讓 FETCH_HEAD
+    精確定位 `refs/remotes/origin/<branch>`。helper 的 `expected in calls` 是整條 argv
+    list 精確比對，`--force` 形式的 argv 與 `_force_fetch()` 產生的顯式 refspec 形式
+    不相等，因此理所當然被拒，`match=` 鎖住 helper line 16 的 "missing force fetch argv" 前綴。
+
+    紅樣本 mutation 證據：若把 `_force_fetch()` 改回回傳
+    `["git", "fetch", "--force", "origin", branch]`，則本測試傳入的 argv 會等於 expected、
+    `expected in calls` 成立、AssertionError 不再拋出，本測試翻紅——已於 task #2 實跑確認。
+    """
+    branch = "deploy/test"
+
+    with pytest.raises(AssertionError, match=r"missing force fetch argv"):
+        _assert_force_fetch_seen([["git", "fetch", "--force", "origin", branch]], branch)
+
+
 @pytest.mark.asyncio
 async def test_autodeploy_fetch_uses_force_refspec(tmp_path, monkeypatch):
     branch = "deploy/test"
