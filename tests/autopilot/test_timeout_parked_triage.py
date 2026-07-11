@@ -227,6 +227,53 @@ async def test_disabled_or_dryrun_noop(state, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_rule1_and_rule2_share_backlog_without_double_processing(state, monkeypatch):
+    """跨規則整合：Rule 1 退回與 Rule 2 拆分同場執行，標記互斥且不重複處理同一筆。"""
+    fake = _patch_expert(monkeypatch, "任務: 實作 A 並補測\n任務: 修復 B 並補測")
+    retry = _parked_timeout_task(note_secs=3600, attempts=3)
+    split = _parked_timeout_task(note_secs=7200, attempts=3)
+    already_split = _parked_timeout_task(note_secs=3600, split_done=True)
+    manual = backlog.add("人工歸檔任務")
+    backlog.set_status(manual["id"], "parked", note="人工歸檔，等需求確認")
+
+    stats = backlog.triage_failed()
+
+    assert stats == {"retried": 0, "parked": 0, "revived": 0, "unparked": 1}
+    assert [c["id"] for c in autopilot._timeout_parked_candidates()] == [split["id"]]
+
+    await autopilot._maybe_triage_timeout_parked()
+
+    retry_cur = _reload(retry["id"])
+    split_cur = _reload(split["id"])
+    already_split_cur = _reload(already_split["id"])
+    manual_cur = _reload(manual["id"])
+    children = [c for c in backlog.list_tasks() if c.get("source") == "split"]
+
+    assert retry_cur["status"] == "pending"
+    assert retry_cur["attempts"] == 0
+    assert retry_cur["timeout_retried"] is True
+    assert retry_cur.get("split_done") is not True
+
+    assert split_cur["status"] == "parked"
+    assert split_cur["split_done"] is True
+    assert split_cur.get("timeout_retried") is not True
+    assert "已自動拆為" in split_cur["note"]
+
+    assert already_split_cur["status"] == "parked"
+    assert already_split_cur["split_done"] is True
+    assert already_split_cur.get("timeout_retried") is not True
+    assert manual_cur["status"] == "parked"
+    assert manual_cur.get("timeout_retried") is not True
+    assert manual_cur.get("split_done") is not True
+
+    assert fake.calls == 1
+    assert {c["title"] for c in children} == {"實作 A 並補測", "修復 B 並補測"}
+    assert all(c["status"] == "pending" and c.get("split_depth") == 1 for c in children)
+    assert all(f"#{split['id']}" in c["detail"] for c in children)
+    assert autopilot._timeout_parked_candidates() == []
+
+
+@pytest.mark.asyncio
 async def test_main_loop_runs_rule2_before_fetching_pending(state, monkeypatch):
     """主迴圈合約：Rule 2 與 failed triage 同在取 pending 前觸發，且順序穩定。"""
     calls: list[str] = []
