@@ -31,8 +31,14 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_restart(monkeypatch):
+def _no_real_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
+
+    async def _smoke_ok():
+        return runner.RunOutput("import smoke", 0, "", False)
+
+    monkeypatch.setattr(redeploy, "import_smoke", _smoke_ok)
 
 
 # --- pull_main ------------------------------------------------------
