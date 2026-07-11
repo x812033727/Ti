@@ -19,7 +19,12 @@
 
 ## 二、可重現查核指令
 
-以下指令在 repo 根目錄下執行，不依賴外部 API 金鑰。
+以下指令在 **Ti 主工作目錄**（含 `.venv/` 與 `history/`）下執行，不依賴外部 API 金鑰。
+
+> **環境前提**：`history/` 已列入 `.gitignore`（執行期資料，不進版控）；
+> lane worktree 及 CI 環境**不含**這份目錄，查核指令在空 worktree 會返回空集，
+> 不代表「查無數據」錯誤，而是正常的執行期資料缺失。
+> 本報告中的預期輸出均在主工作目錄（`/opt/ti-autopilot-work/`）實測取得。
 
 ### 2.1 確認 meta 總數與 latency.total.count 全零
 
@@ -28,7 +33,12 @@ timeout 60 .venv/bin/python -c "
 import json, glob
 metas = sorted(glob.glob('history/*.meta.json'))
 print(f'meta 總數: {len(metas)}')
-zero = sum(1 for p in metas if json.load(open(p)).get('latency',{}).get('total',{}).get('count',0) == 0)
+zero = 0
+for p in metas:
+    with open(p) as f:
+        d = json.load(f)
+    if d.get('latency', {}).get('total', {}).get('count', 0) == 0:
+        zero += 1
 print(f'latency.total.count == 0: {zero}')
 print(f'latency.total.count  > 0: {len(metas) - zero}')
 "
@@ -149,14 +159,18 @@ print('latency:', json.dumps(m['latency'], ensure_ascii=False, indent=2))
 
 本輪改善不依賴歷史 latency 數據，改以以下公開研究結論為選題依據：
 
-1. **輸出 token 是最直接的延遲驅動因子**（~10ms/token）
+1. **輸出 token 是最直接的延遲驅動因子**（約 10ms/token，因模型與條件而異）
    - Anthropic 官方文件明載：縮短輸出 token 是降低 end-to-end latency 最立竿見影的手段。
+   - `~10ms/token` 為 Claude Sonnet 3.x 在正常負載下的概估值；Haiku 更快（約 4–6ms），
+     Opus 更慢（約 15–20ms），實際值受 provider 負載與 batch 大小影響，不應視為普適常數。
    - 參考：[Reducing latency – Claude Platform Docs](https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-latency)
 
 2. **多角色討論場景中，engineer / senior 角色輸出最長**
    - 討論場景觀察：engineer/senior 傾向輸出設計說明與程式碼片段，遠超 PM 的結構化清單；
      業界多 agent 場景普遍確認此模式。
-   - 從 800 token 壓到 300 token，理論節省 ≈ 5 秒/次呼叫。
+   - 以下為假設推算，非本目錄量測：若典型輸出從 800 token 壓至 300 token，
+     以 Sonnet 概估值 10ms/token 計算，理論節省 ≈ 5 秒/次呼叫；
+     實際效果須待真環境補驗（詳見第五節）。
 
 3. **並行化路線已耗盡**
    - `discussion.py` 架構討論已走 `asyncio.gather` 並行（`DISCUSS_MODE_DEFAULT="parallel"`）。
