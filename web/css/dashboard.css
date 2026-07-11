@@ -148,33 +148,8 @@ body[data-view="dash"] .dashboard {
 .dash-swatch.ok { background: var(--good); }
 .dash-swatch.fail { background: var(--bad); }
 
-/* ---------- 趨勢圖（每日 done/fail 堆疊長條） ---------- */
+/* ---------- 趨勢圖：已統一至 components/chart.js + charts.css 的 .trend-* ---------- */
 .dash-trend { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.dash-trend-chart {
-  display: flex; align-items: flex-end; gap: 6px;
-  flex: 1 1 auto;
-  min-height: 150px;
-  padding: 6px 0 2px;
-  overflow-x: auto;
-}
-.dash-trend-col {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  flex: 1 1 0; min-width: 16px; max-width: 42px; height: 100%;
-}
-.dash-trend-bar {
-  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
-  width: 100%; max-width: 22px; flex: 1 1 auto;
-}
-.dash-trend-bar .seg-ok { background: var(--good); border-radius: 3px; }
-.dash-trend-bar .seg-fail { background: var(--bad); border-radius: 3px; }
-.dash-trend-col:hover .seg-ok, .dash-trend-col:hover .seg-fail { filter: brightness(1.18); }
-.dash-trend-date {
-  font-size: 10px; color: var(--muted);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-/* 密集時只留每 3 根的日期標，避免疊字 */
-.dash-trend-col:not(:nth-child(3n + 1)) .dash-trend-date { visibility: hidden; }
-.dash-trend-total { font-size: 12px; }
 
 /* ---------- provider 額度 meter ---------- */
 .dash-quota { display: flex; flex-direction: column; gap: 12px; }

@@ -1,0 +1,46 @@
+/* 共用趨勢圖（components/chart.js renderStackedTrend）：
+   儀表板與洞察面板共用同一套 .trend-* 規則，取代先前重複的
+   .dash-trend-* 與 .ins-trend-*。語意色走 token，深淺主題自動跟隨。 */
+
+.trend-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 1 1 auto;
+  /* 實高而非 min-height：欄位的 height:100% 才解析得出（drawer 等非 flex 容器亦然） */
+  height: 160px;
+  padding: 6px 0 2px;
+  overflow-x: auto;
+}
+.trend-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 16px;
+  max-width: 42px;
+  height: 100%;
+}
+.trend-bar {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 100%;
+  max-width: 22px;
+  flex: 1 1 auto;
+}
+.trend-bar .seg-ok { background: var(--good); border-radius: 3px; }
+.trend-bar .seg-fail { background: var(--bad); border-radius: 3px; }
+.trend-col:hover .seg-ok,
+.trend-col:hover .seg-fail { filter: brightness(1.18); }
+.trend-date {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 密集時只留每 3 根的日期標，避免疊字 */
+.trend-col:not(:nth-child(3n + 1)) .trend-date { visibility: hidden; }
+.trend-total { font-size: 12px; }
