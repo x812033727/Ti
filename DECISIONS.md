@@ -3231,3 +3231,37 @@
 ## 範圍外兩項以 `後續任務:` marker 在 #4 輸出中登記，不在本輪實作
 - 時間：2026-07-11 11:36
 
+## `TI_PROMPT_CACHE_1H` 旋鈕預設 `"1"`（開），config.py 頂層變數命名 `PROMPT_CACHE_1H: bool`
+- 時間：2026-07-11 12:34
+- 理由：純降成本優化，無行為副作用，預設開合理；命名刻意不同於 env var key `ENABLE_PROMPT_CACHING_1H`，避免混淆
+- 否決方案：`TI_PROMPT_CACHING_ENABLED`（與 SDK 環境變數名字形近，易誤讀）
+
+## `config.py` 頂層與 `reload()` 兩處同步定義 `PROMPT_CACHE_1H`，對照 `EXPERT_SKILLS` 行（line 1070 / line 1350+賦值行）逐行照模式寫
+- 時間：2026-07-11 12:34
+- 理由：`reload()` 的語意承諾是「UI 改旋鈕後下一 session 生效」；漏 reload 只有頂層會靜默失效，無任何錯誤提示
+
+## 本次旋鈕僅支援 env/.env 方式調整，不進 `settings.py` UI 白名單，範圍嚴格限 `experts.py` + `config.py`
+- 時間：2026-07-11 12:34
+- 理由：範圍最小；UI 支援需改 settings.py 白名單與相關測試，屬另案，不值得為單一 perf 開關擴大 diff
+- 否決方案：同步進 settings.py（增加測試面、延長實作週期，本旋鈕不需即時 UI 調整）
+
+## SDK `env` 合併語意確認為 **merge**（`{**os.environ, ...cli_defaults, **options.env}`），單鍵 dict `{"ENABLE_PROMPT_CACHING_1H": "1"}` 安全傳入，`ANTHROPIC_API_KEY` 等 parent env 不受影響，不需要 `{**os.environ, ...}` 包裹
+- 時間：2026-07-11 12:34
+- 理由：高工實查 `subprocess_cli.py` line 431-434 已確認；工程師亦同步驗證；此結論直接寫進 PR description，不再重查
+
+## 關閉態**不傳 `env` key**（走 SDK default `{}`），嚴禁 `env=None`；實作用對稱 helper `_prompt_cache_options() -> dict`，仿 `_skills_options()` 模式，在 `ClaudeAgentOptions(... **_skills_options(role), **_prompt_cache_options())` spread
+- 時間：2026-07-11 12:34
+- 理由：`ClaudeAgentOptions.env` default 是 `{}` 非 `Optional`；顯式傳 `None` 不被正規化，SDK line 434 `**self._options.env` 對 `None` 直接 `TypeError`，炸所有真實 client；`{}` 則完全無害（`**{}` 與 `in {}` 皆安全）
+- 否決方案：`env=None`（TypeError 地雷，設計原本推論「最保守」恰好相反）；`env={} if disabled`（傳空 dict 安全但冗贅，不傳更乾淨）
+
+## 單元測試覆蓋兩態：開啟態驗 options 含 `env={"ENABLE_PROMPT_CACHING_1H": "1"}`；**關閉態必須驗 options 不含 `env` key 且 env 非 None**，不只驗「沒有正向值」
+- 時間：2026-07-11 12:34
+- 理由：高工指出若只驗「開啟態帶 key」，關閉態悄悄回傳 `None` 會通過測試，正是此 bug 的漏網點；這條斷言是守住 None 地雷的唯一閘門
+
+## `docs/perf/` 兩份文件明標「無真 API 數據、命中證據 N/A」，補驗指令一律用 `.venv/bin/python -m pytest`，禁裸 `python`/`pytest`，補驗路徑為真實 session 後查 `GET /api/metrics` 的 `cache_read_input_tokens` / `cache_creation_input_tokens` 比例
+- 時間：2026-07-11 12:34
+- 理由：`scan_bare_pytest.sh` 會掃 docs/ 並 block CI；`cache_read` 上升即代表命中，現有埋點已夠用不需新增
+
+## `ENABLE_PROMPT_CACHING_1H` 是否被 CLI Node 層實際認得屬**已知邊界**，Python 端不可驗；文件「無真數據」聲明已涵蓋此項，正式上線後以真實 API 的 cache-read token 觀測補閉環，不阻擋本輪交付
+- 時間：2026-07-11 12:34
+

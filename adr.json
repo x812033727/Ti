@@ -1,62 +1,6 @@
 {
   "entries": [
     {
-      "decision": "task #4 守護測試分兩層：(a) YAML 解析層——斷言 `publish-release.yml` 存在 `-F body.md` step、`GH_TOKEN: ${{ secrets.GH_PAT }}`（非 GITHUB_TOKEN）；(b) 邏輯層——直接 import `scripts/publish_release.py` 的 render 邏輯並以 fixture CHANGELOG 跑 dry-run，斷言 output 非空且含 Breaking block；mutation 把 PAT 改回 GITHUB_TOKEN 必須讓 (a) 轉紅。",
-      "rationale": "高工指出純 YAML 掃描脆弱（結構重排假紅）；兩層互補——結構變動由 (a) 抓，邏輯迴歸由 (b) 抓。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0051095
-    },
-    {
-      "decision": "PR 描述必須明確標注「AC#3 端對端驗收需 `GH_PAT` 先設入 repo secrets；secret 未設前 push tag 會在 step 5 以 403 失敗，屬預期行為而非 bug」，避免驗收工程師誤判。",
-      "rationale": "工程師提醒這是最容易被「誤標綠燈」的盲點，文件成本最低。",
-      "rejected": "",
-      "session_id": "apaa35a931cf",
-      "created_at": 1781518971.0051103
-    },
-    {
-      "decision": "**domain API 為 `render_tag_notes(changelog_text: str, version: str) -> str`**，定義於 `studio/release_note.py`，接收字串，不接觸 I/O，可被 pytest 直接 import 測試。",
-      "rationale": "純函式最易被任意 fixture 覆寫，測試不需要真實檔案系統。",
-      "rejected": "讓 domain 層接受路徑——I/O 副作用混入 domain，測試需要 fixture 檔案，可測性下降。",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595693
-    },
-    {
-      "decision": "**adapter API 為 `render_release_body(changelog_path=None, version=None) -> str`**，定義於 `scripts/publish_release.py`，負責讀檔並呼叫 `render_tag_notes`；邏輯層守護測試 import 此函式做 dry-run，SSOT 常數測試 import `BREAKING_HEADING`——兩層不混用。",
-      "rationale": "釘住「哪層測試 import 哪個符號」，消除高工指出的命名歧義，避免未來因混用而出現 `AttributeError`。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.159572
-    },
-    {
-      "decision": "**publish-release.yml 的 create release step 必須加 `id: create-release`**；守護測試 `_create_release_step()` 以 `step[\"id\"] == \"create-release\"` 定位，不用 index 或 name 字串。",
-      "rationale": "高工指出 content-matching 在 step 重排或 run 字串改名時靜默斷鏈（guard 仍綠但已失效）；id 定位語意明確，改名即假紅，有鑑別力。",
-      "rejected": "以 `\"gh release create\" in step[\"run\"]` 定位——若 step 加 `if:` 條件或 run 字串重構，guard 仍能過，失去守護意義。",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595736
-    },
-    {
-      "decision": "**body 注入用 `-F body.md`（gh CLI 的 `--notes-file` 縮寫），不用 `--notes \"$BODY\"`**，且此字串必須出現在 create-release step 的 `run:` 中並被守護測試 `create_uses_file_mode()` 斷言。",
-      "rationale": "工程師確認多行 changelog 經 shell 變數注入會踩跳脫地獄；`-F` 讓 gh CLI 直接讀檔，完全繞開 shell 解析。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595745
-    },
-    {
-      "decision": "**邏輯層守護測試的 fixture CHANGELOG 必須以 `f\"...{BREAKING_HEADING}...\"` 動態組出**，不得硬寫 `## ⚠️ Breaking Changes` 字面值。",
-      "rationale": "工程師指出常數一旦改字，硬寫 fixture 靜默過期，乾跑變成在測試一份永遠成功的舊格式。",
-      "rejected": "fixture 硬寫字面值——BREAKING_HEADING 修改時 fixture 不跟進，dry-run 仍綠但實際 render 會失敗。",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595752
-    },
-    {
-      "decision": "**`main()` 內 `unlink(missing_ok=True)` 緊接 `render_release_body()` 兩行相鄰，中間無任何 early return 或寫檔**；語意為 pre-clean（非原子 rollback）——process 若被 kill 於 unlink 之後，`body.md` 缺失，step 5 fail-fast，靠 CI 重跑恢復；設計不保證原子性。",
-      "rationale": "工程師確認現有順序正確；高工要求語意說清。「不保證原子性」比沉默更誠實，日後偶發假紅時有心理準備。",
-      "rejected": "",
-      "session_id": "ap49cda3d85a",
-      "created_at": 1781524224.1595771
-    },
-    {
       "decision": "**release-smoke 斷言：body 非空 AND 含 `BREAKING_HEADING`**（從 `studio.release_note` import 常數比對，不硬寫字面值）；僅驗「release 存在」不構成 smoke，必須驗 body 結構。",
       "rationale": "高工指出現有設計只說「讀 body 做 smoke」，無具體斷言；smoke 形同空轉。",
       "rejected": "",
@@ -3499,6 +3443,62 @@
       "rejected": "",
       "session_id": "ap600504a989",
       "created_at": 1783740989.9228675
+    },
+    {
+      "decision": "`TI_PROMPT_CACHE_1H` 旋鈕預設 `\"1\"`（開），config.py 頂層變數命名 `PROMPT_CACHE_1H: bool`",
+      "rationale": "純降成本優化，無行為副作用，預設開合理；命名刻意不同於 env var key `ENABLE_PROMPT_CACHING_1H`，避免混淆",
+      "rejected": "`TI_PROMPT_CACHING_ENABLED`（與 SDK 環境變數名字形近，易誤讀）",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.4698956
+    },
+    {
+      "decision": "`config.py` 頂層與 `reload()` 兩處同步定義 `PROMPT_CACHE_1H`，對照 `EXPERT_SKILLS` 行（line 1070 / line 1350+賦值行）逐行照模式寫",
+      "rationale": "`reload()` 的語意承諾是「UI 改旋鈕後下一 session 生效」；漏 reload 只有頂層會靜默失效，無任何錯誤提示",
+      "rejected": "",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.4699004
+    },
+    {
+      "decision": "本次旋鈕僅支援 env/.env 方式調整，不進 `settings.py` UI 白名單，範圍嚴格限 `experts.py` + `config.py`",
+      "rationale": "範圍最小；UI 支援需改 settings.py 白名單與相關測試，屬另案，不值得為單一 perf 開關擴大 diff",
+      "rejected": "同步進 settings.py（增加測試面、延長實作週期，本旋鈕不需即時 UI 調整）",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.4699016
+    },
+    {
+      "decision": "SDK `env` 合併語意確認為 **merge**（`{**os.environ, ...cli_defaults, **options.env}`），單鍵 dict `{\"ENABLE_PROMPT_CACHING_1H\": \"1\"}` 安全傳入，`ANTHROPIC_API_KEY` 等 parent env 不受影響，不需要 `{**os.environ, ...}` 包裹",
+      "rationale": "高工實查 `subprocess_cli.py` line 431-434 已確認；工程師亦同步驗證；此結論直接寫進 PR description，不再重查",
+      "rejected": "",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.4699025
+    },
+    {
+      "decision": "關閉態**不傳 `env` key**（走 SDK default `{}`），嚴禁 `env=None`；實作用對稱 helper `_prompt_cache_options() -> dict`，仿 `_skills_options()` 模式，在 `ClaudeAgentOptions(... **_skills_options(role), **_prompt_cache_options())` spread",
+      "rationale": "`ClaudeAgentOptions.env` default 是 `{}` 非 `Optional`；顯式傳 `None` 不被正規化，SDK line 434 `**self._options.env` 對 `None` 直接 `TypeError`，炸所有真實 client；`{}` 則完全無害（`**{}` 與 `in {}` 皆安全）",
+      "rejected": "`env=None`（TypeError 地雷，設計原本推論「最保守」恰好相反）；`env={} if disabled`（傳空 dict 安全但冗贅，不傳更乾淨）",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.4699035
+    },
+    {
+      "decision": "單元測試覆蓋兩態：開啟態驗 options 含 `env={\"ENABLE_PROMPT_CACHING_1H\": \"1\"}`；**關閉態必須驗 options 不含 `env` key 且 env 非 None**，不只驗「沒有正向值」",
+      "rationale": "高工指出若只驗「開啟態帶 key」，關閉態悄悄回傳 `None` 會通過測試，正是此 bug 的漏網點；這條斷言是守住 None 地雷的唯一閘門",
+      "rejected": "",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.4699044
+    },
+    {
+      "decision": "`docs/perf/` 兩份文件明標「無真 API 數據、命中證據 N/A」，補驗指令一律用 `.venv/bin/python -m pytest`，禁裸 `python`/`pytest`，補驗路徑為真實 session 後查 `GET /api/metrics` 的 `cache_read_input_tokens` / `cache_creation_input_tokens` 比例",
+      "rationale": "`scan_bare_pytest.sh` 會掃 docs/ 並 block CI；`cache_read` 上升即代表命中，現有埋點已夠用不需新增",
+      "rejected": "",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.4699054
+    },
+    {
+      "decision": "`ENABLE_PROMPT_CACHING_1H` 是否被 CLI Node 層實際認得屬**已知邊界**，Python 端不可驗；文件「無真數據」聲明已涵蓋此項，正式上線後以真實 API 的 cache-read token 觀測補閉環，不阻擋本輪交付",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap884b8f9ffc",
+      "created_at": 1783744468.469906
     }
   ]
 }
