@@ -872,3 +872,40 @@ sha256sum -c /opt/ti-autopilot-work.lanes/lane-ap97b0a5f5a4-4/.ci-evidence/run-2
 ### QA 判定
 - PASS：字面指令 `.venv/bin/python` 已可執行，deploy 全量連續 3 輪全綠。
 - PASS：三檔 fixture 合約一致，預設路徑不再 fake `_deploy_lock`，以 per-test state dir 消除 flock 競爭。
+
+## QA 收尾驗收任務 #4：deploy 字面指令三輪全綠
+
+### 驗收環境
+- 日期：2026-07-11
+- lane：`/opt/ti-autopilot-work.lanes/lane-ap600504a989-4`
+- 驗收前 HEAD：`61969db9bb7dade5edaa62f1ed86715a6fbc82bf`
+- `.venv/bin/python`：Python 3.12.3
+- 驗收前 `git status --porcelain`：空
+
+### 實跑證據
+- `timeout 300 .venv/bin/python -m pytest tests/deploy/ -q`
+  - round 1：39 passed in 2.13s
+  - round 2：39 passed in 2.26s
+  - round 3：39 passed in 3.97s
+- `timeout 300 .venv/bin/python -m pytest --collect-only -q tests/deploy/test_fetch_force_refspec.py`：4 tests collected
+- 單檔驗收：
+  - `timeout 300 .venv/bin/python -m pytest tests/deploy/test_redeploy.py -q`：8 passed in 1.55s
+  - `timeout 300 .venv/bin/python -m pytest tests/deploy/test_redeploy_qa.py -q`：9 passed in 2.08s
+  - `timeout 300 .venv/bin/python -m pytest tests/deploy/test_web_redeploy_qa.py -q`：9 passed in 1.92s
+- `timeout 300 .venv/bin/python -m ruff check .`：All checks passed
+- `timeout 300 .venv/bin/python -m ruff format --check .`：527 files already formatted
+- `git diff --name-only HEAD -- studio/`：空
+- `git diff --name-only e021e599..HEAD -- studio/`：空
+- `git status --porcelain`：空（本段證據落檔前）
+
+### fixture 合約檢查
+- `tests/deploy/test_redeploy.py`、`tests/deploy/test_redeploy_qa.py`、`tests/deploy/test_web_redeploy_qa.py` 的 autouse fixture 均使用 `tmp_path` 隔離 `config.AUTOPILOT_STATE_DIR`。
+- 只有 `tests/deploy/test_redeploy.py::test_redeploy_busy_when_lock_not_acquired` 在單一負向測試內覆寫 `_deploy_lock`，用於驗 busy 分支。
+
+### 範圍外移交
+- 後續任務: [P2/chore] test_redeploy_qa.py import_smoke 改 mock subprocess，消除真實 python -c 外部依賴
+- 後續任務: [P2/chore] autopilot.py:161 _prepare_work_tree 裸 fetch 補 force refspec 測試
+
+### QA 判定
+- PASS：字面 deploy 驗收指令連續 3 輪全綠。
+- PASS：ruff、format、產品碼零 diff、工作樹乾淨驗收均成立。
