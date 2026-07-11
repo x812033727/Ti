@@ -6,7 +6,6 @@ import { $ } from "./dom.js";
 const KEY = "ti-theme";
 const ORDER = ["system", "light", "dark"];
 const LABEL = { system: "主題：跟隨系統", light: "主題：淺色", dark: "主題：深色" };
-const ICON = { system: "🌗", light: "☀️", dark: "🌙" };
 
 export function storedTheme() {
   try {
@@ -26,7 +25,8 @@ export function applyTheme(mode) {
   else delete document.documentElement.dataset.theme;
   const btn = $("#themeBtn");
   if (btn) {
-    btn.textContent = ICON[mode];
+    // 圖示由 CSS 依 data-mode 切換（按鈕內含三顆 SVG，不能用 textContent 蓋掉）
+    btn.dataset.mode = mode;
     btn.title = LABEL[mode];
     btn.setAttribute("aria-label", LABEL[mode]);
   }

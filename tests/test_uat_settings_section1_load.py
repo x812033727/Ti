@@ -4,7 +4,7 @@
 - ① 區塊有實際案例（非佔位），每列 7 欄、單一驗證點。
 - 覆蓋三大主題：開啟設定面板、分組顯示、秘密欄位只顯示「是否已設定」不顯示明文。
 - 案例描述須與前端／後端**實際行為一致**（避免誤導測試員）：
-    * 文件宣稱的字串（載入中…、已設定（留空＝不變更）、⚙️ 設定、✕）確實存在於原始碼。
+    * 文件宣稱的字串（載入中…、已設定（留空＝不變更）、設定/關閉圖示鈕）確實存在於原始碼。
     * 分組順序與 settings.FIELDS 實際 group 順序一致。
     * 後端 settings.read() 對秘密欄確實不回明文（value=""、set=True）。
 """
@@ -120,9 +120,12 @@ def test_秘密提示字與前端一致(text):
 
 
 def test_設定按鈕與關閉鈕存在於index(text):
+    # 工具列已換 SVG 線性圖示：設定/關閉為純圖示鈕，以 id + aria-label 驗證存在與可及名稱
     html = INDEX_HTML.read_text(encoding="utf-8")
-    assert "⚙️ 設定" in html, "index.html 無『⚙️ 設定』按鈕，案例 1.1 描述失準"
-    assert 'id="settingsClose"' in html and "✕" in html, "index.html 無關閉鈕 ✕"
+    assert 'id="settingsBtn"' in html and 'aria-label="設定"' in html, (
+        "index.html 無設定按鈕（id=settingsBtn＋aria-label=設定），案例 1.1 描述失準"
+    )
+    assert 'id="settingsClose"' in html and 'aria-label="關閉"' in html, "index.html 無關閉鈕"
     assert 'id="settingsSave"' in html, "index.html 無『儲存』按鈕"
 
 
