@@ -62,11 +62,12 @@ body[data-view="dash"] .dashboard {
 .dash-hero-actions #dashNewTalk {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 9px 18px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff; font-weight: 600; font-size: 13px; white-space: nowrap;
-  box-shadow: 0 2px 12px rgba(110, 121, 255, .3);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: var(--shadow-1);
 }
-.dash-hero-actions #dashNewTalk:hover { filter: brightness(1.12); }
+.dash-hero-actions #dashNewTalk:hover { background: var(--accent); }
 
 /* 狀態球：執行中呼吸、暫停琥珀、休眠藍、待命灰、離線紅 */
 .dash-orb {
@@ -186,13 +187,8 @@ body[data-view="dash"] .dashboard {
   font-size: 11px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.dash-meter {
-  flex: 1; height: 7px; border-radius: var(--r-full);
-  background: var(--surface-3); overflow: hidden;
-}
-.dash-meter .fill { height: 100%; background: var(--good); border-radius: var(--r-full); }
-.dash-meter.warn .fill { background: var(--warn); }
-.dash-meter.crit .fill { background: var(--bad); }
+/* 量表本體走 components.css 的 .meter 原語，這裡只留佈局 */
+.dash-meter { flex: 1; }
 .dash-quota-pct {
   flex: none; width: 38px; text-align: right;
   font-size: 11px; color: var(--text-2);

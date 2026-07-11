@@ -122,26 +122,23 @@
 .ap-add input { flex: 1; min-width: 0; }
 .ap-add button {
   padding: 9px 16px;
-  background: var(--grad-accent);
+  background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
   font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, .08);
   white-space: nowrap;
 }
-.ap-add button:hover:not(:disabled) { filter: brightness(1.12); }
+.ap-add button:hover:not(:disabled) { background: var(--accent); }
 
 /* Autopilot：provider 額度迷你條（5h/7d 用量） */
 .ap-quota { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .ap-quota-cell { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
 .ap-quota-name { font-weight: 600; }
 .ap-quota-win { color: var(--muted); }
-.ap-quota-bar {
-  width: 44px; height: 6px; border-radius: var(--r-full);
-  background: var(--surface-3); overflow: hidden;
-}
-.ap-quota-bar .fill { height: 100%; background: var(--good); border-radius: var(--r-full); }
-.ap-quota-bar.warn .fill { background: var(--warn); }
-.ap-quota-bar.crit .fill { background: var(--bad); }
+/* 量表本體走 components.css 的 .meter 原語，這裡只留迷你尺寸
+  （components.css 較晚載入，需以 cell 脈絡提高特異性才蓋得回來） */
+.ap-quota-cell .ap-quota-bar { width: 44px; height: 6px; }
 
 /* Autopilot：績效榜（AI 成員考核聚合，per provider 平均分/樣本/通過率） */
 .ap-appraisal { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11px; }

@@ -25,7 +25,7 @@
   --accent-strong: #5e6ad2;
   --accent-2: #b49dff;
   --grad-accent: linear-gradient(135deg, #6e79ff 0%, #a78bfa 55%, #c084fc 100%);
-  --glow-accent: 0 0 0 1px rgba(124, 134, 255, .35), 0 4px 24px rgba(124, 134, 255, .22);
+  --glow-accent: 0 0 0 1px rgba(124, 134, 255, .28), 0 4px 18px rgba(124, 134, 255, .16);
 
   /* 語意色 */
   --good: #2dd4a7;  --good-bg: rgba(45, 212, 167, .10);
@@ -57,11 +57,26 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
                Menlo, Consolas, monospace;
 
+  /* 字級刻度：小字固定保可讀，標題級流式（隨視窗微幅放大） */
+  --fs-0: 11.5px;
+  --fs-1: 12.5px;
+  --fs-2: 13.5px;
+  --fs-3: 14.5px;
+  --fs-4: clamp(16px, .95rem + .35vw, 18px);
+  --fs-5: clamp(20px, 1.15rem + .9vw, 25px);
+
+  /* 間距刻度 */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 22px; --sp-6: 30px; --sp-7: 40px;
+
+  /* 焦點環（鍵盤導覽一致的可視焦點） */
+  --ring: 0 0 0 3px rgba(124, 134, 255, .28);
+
   /* 圓角 / 陰影 / 動態 */
   --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-full: 999px;
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
-  --shadow-2: 0 4px 16px rgba(0, 0, 0, .45);
-  --shadow-3: 0 16px 48px rgba(0, 0, 0, .6);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow-2: 0 2px 10px rgba(0, 0, 0, .32);
+  --shadow-3: 0 12px 36px rgba(0, 0, 0, .46);
   --t-fast: 120ms; --t-med: 200ms; --t-slow: 320ms;
   --ease: cubic-bezier(.25, .8, .25, 1);
   --ease-out: cubic-bezier(.16, 1, .3, 1);
@@ -91,7 +106,8 @@
   --accent: #5e6ad2;
   --accent-strong: #4d58c4;
   --accent-2: #7c5cd6;
-  --glow-accent: 0 0 0 1px rgba(94, 106, 210, .30), 0 4px 24px rgba(94, 106, 210, .18);
+  --glow-accent: 0 0 0 1px rgba(94, 106, 210, .24), 0 4px 18px rgba(94, 106, 210, .13);
+  --ring: 0 0 0 3px rgba(94, 106, 210, .25);
 
   --good: #0d8f6c;  --good-bg: rgba(13, 143, 108, .10);
   --bad:  #cf4040;  --bad-bg:  rgba(207, 64, 64, .09);
@@ -114,7 +130,7 @@
   --dot-idle: #b7bdca;
   --dot-muted: #99a0b1;
 
-  --shadow-1: 0 1px 2px rgba(23, 26, 45, .10);
-  --shadow-2: 0 4px 16px rgba(23, 26, 45, .12);
-  --shadow-3: 0 16px 48px rgba(23, 26, 45, .20);
+  --shadow-1: 0 1px 2px rgba(23, 26, 45, .08);
+  --shadow-2: 0 2px 10px rgba(23, 26, 45, .10);
+  --shadow-3: 0 12px 36px rgba(23, 26, 45, .16);
 }
