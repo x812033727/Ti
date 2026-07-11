@@ -16,6 +16,7 @@ export class RecEl {
     this.type = '';
     this.placeholder = '';
     this.title = '';
+    this.style = {}; // inline style 記錄（如 fill.style.width / seg.style.height）
     this.classList = {
       _set: new Set(),
       add: (...c) => c.forEach((x) => this.classList._set.add(x)),

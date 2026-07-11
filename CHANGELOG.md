@@ -51,6 +51,13 @@
 
 ### Added
 
+- 監控儀表板成為預設首頁（監控視圖）：Autopilot 狀態英雄列（狀態球/心跳/派工/PR 預算
+  ＋暫停恢復/分診/開新討論）、任務統計磁貼（完成率與五態計數）、近 30 天結果堆疊長條、
+  provider 額度 meter、績效榜、最新動態；30 秒自動更新（背景分頁暫停輪詢）。
+  header 新增「監控／工作室」視圖切換（手機由底部分頁的「監控」分頁接手），開始討論
+  或重播歷史時自動切回工作室視圖。資料全部復用既有唯讀端點，零後端變更
+  （`web/js/panels/dashboard.js`、`web/css/dashboard.css`）。
+
 - 前端「👥 團隊」面板：角色管理（內建/覆蓋/自建，含反空殼 persona 前端先驗）與
   討論小組管理 UI，首次接上後端既有 `/api/roles`、`/api/groups`；啟動列新增「小組」
   下拉，開場 WS payload 帶 `group`。
@@ -65,6 +72,13 @@
   動態列表真按鈕化、看板/專家卡 aria；新增平板（901–1180px）響應式斷點。
 
 ### Changed
+
+- 前端圖示系統：header 工具列/抽屜標題/手機分頁的 emoji 圖示全面換為內嵌 SVG 線性
+  icon sprite（`index.html` `<symbol>`＋`<use>`，免建置）；主題鈕改由 `data-mode` 切換
+  三顆 SVG（theme.js 不再覆寫 textContent）。drawer 殼底色改高不透明 `--card-bg`，
+  修掉玻璃 backdrop-filter 把底層漸層按鈕暈進面板的色斑；洞察趨勢圖語意色改走
+  `--good/--bad` token（原 `--ok/--err` 未定義、淺色主題不跟隨）；styles.css 恢復純
+  @import 聚合檔，散落規則歸位 drawers/settings。
 
 - `web/app.js`（2107 行單檔）機械拆分為原生 ES modules（`web/js/`：dom/state/ws/
   events-render/theme/panels/*/components/*），`styles.css` 拆為 `web/css/*` 九檔

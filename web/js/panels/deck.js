@@ -1,8 +1,10 @@
 // 啟動列（command-deck）：開始/停止鈕狀態、收合列、專案與動態流程下拉。
 import { $ } from "../dom.js";
 import { createProjectFlow, deleteProject, setProjectPublishRepo } from "./project.js";
+import { setView } from "./dashboard.js";
 
 export function setRunning(running) {
+  if (running) setView("studio"); // 開跑即切到工作室視圖看直播；結束不自動切回
   $("#startBtn").disabled = running;
   $("#stopBtn").disabled = !running;
   $("#interjectInput").disabled = !running;
