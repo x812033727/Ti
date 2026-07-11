@@ -8,6 +8,14 @@ const stack = [];
 export function openDrawer(sel) {
   const el = $(sel);
   if (!el) return;
+  // 單 drawer 政策：開新面板前先關其他開啟中的 drawer，終結 drawer 疊 drawer。
+  // 例外：縮成右下小卡的 autopilot（.mini）與非 drawer 面板（設定 modal）不動。
+  for (const d of [...stack]) {
+    if (d.sel === sel) continue;
+    const other = $(d.sel);
+    if (!other || !other.classList.contains("drawer") || other.classList.contains("mini")) continue;
+    closeDrawer(d.sel);
+  }
   if (!stack.some((d) => d.sel === sel)) {
     stack.push({ sel, trigger: document.activeElement });
   }
