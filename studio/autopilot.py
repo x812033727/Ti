@@ -2947,9 +2947,25 @@ def _recover_stale_in_progress() -> None:
     autopilot 被 kill、LLM turn 被外部中止、或舊版流程卡在 session.run() 時，backlog 可能
     永久停在 in_progress。busy_sessions 已用 events mtime 做 stale 判定；這裡只負責把
     backlog 狀態拉回可重跑，避免主迴圈永遠看不到這筆任務。
+
+    旁路線當前任務必須跳過：claim_next 只標 in_progress 不蓋 session_id，調查管線又從不
+    把 sid 寫回 backlog，對本函式而言整段調查都是「session None」——2026-07-11 灰度首航
+    #300 認領後 19ms 即被誤收成 pending 的實證。_sideline_task_info 在認領後同步設定
+    （中間無 await），事件迴圈內讀它無競態。豁免帶齡上限：旁路若懸掛（clone 卡住、
+    INVESTIGATION_TIMEOUT=0 時 speak 無上限），info 永不清空，無上限豁免會把任務永久
+    釘死 in_progress；超齡（2×調查逾時與 3600s 取大，後者對齊 sweep_stale_running 的
+    靜默視界）即視同孤兒照收。
     """
     busy = {m.get("session_id") for m in history.busy_sessions(config.DEPLOY_STALE_AFTER)}
+    sideline = _sideline_task_info
+    exempt_max = max(2 * config.AUTOPILOT_INVESTIGATION_TIMEOUT, 3600)
     for task in backlog.list_tasks("in_progress"):
+        if (
+            sideline
+            and task["id"] == sideline.get("task_id")
+            and time.time() - sideline.get("started_at", 0.0) < exempt_max
+        ):
+            continue
         sid = task.get("session_id")
         if sid in busy:
             continue
