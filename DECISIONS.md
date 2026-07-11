@@ -3160,3 +3160,41 @@
 - 時間：2026-07-11 07:55
 - 否決方案：一次清全 repo `git_cred_argv` 呼叫——超出本輪驗收範圍，`autopilot.py` 有自己的 legacy 路徑考量，混入增加迴歸風險
 
+## 測試落點 `tests/server/test_qa_httpx_trust_env_guard.py`，沿用 `test_qa_*` 命名慣例，與既有字串守門 `test_qa_real_server_client_helper.py` 並存、不替換
+- 時間：2026-07-11 09:50
+
+## 範圍以 `subprocess(['git','ls-files','tests/server/'])` 取 `.py` 檔，不用 `Path.rglob`
+- 時間：2026-07-11 09:50
+- 否決方案：rglob——會掃 untracked 臨時檔，導致 pre-commit 綠、CI 紅的分歧
+
+## 抽出純函式 `_collect_violations(source: str) -> list[str]`，回傳 `"<call_type>@L<line>"` 字串列表；正向測試與黑樣本共用同一函式，不重複 AST walk 邏輯
+- 時間：2026-07-11 09:50
+
+## AST walk 同時比對兩種 call.func 形態——`ast.Attribute`（`httpx.AsyncClient(...)` / `websockets.connect(...)`）與 `ast.Name`（`from httpx import AsyncClient` 後裸呼叫的 `AsyncClient(...)`），缺任一形態守門即失效
+- 時間：2026-07-11 09:50
+- 理由：高工指出 attribute-only 可被 import alias 繞過；兩種形態共用同一 keyword 檢查邏輯，不增加維護點
+- 否決方案：只抓 `ast.Attribute`——import alias 直接穿透守門形同虛設
+
+## 違規判定規則——**「缺席即違規」優先**：找不到目標 keyword（`trust_env` / `proxy`）算違規；找到但值不符合規值（`trust_env` ≠ `False` 或 `proxy` ≠ `None`）也算違規；兩條件 OR
+- 時間：2026-07-11 09:50
+- 理由：最常見形態是根本沒寫 keyword；只擋錯值會讓裸用漏網
+
+## 黑樣本三條，各自因果對應一種違規形態
+- 時間：2026-07-11 09:50
+- 否決方案：只有 A+B 兩條——alias 形態無黑樣本等於宣稱能守但未自證
+
+## 正向測試斷言訊息帶 `"\n".join(violations)`，失敗時直接顯示違規檔名+行號，不只印 `assert not violations`
+- 時間：2026-07-11 09:50
+
+## `httpx.Client`（同步）本輪不納管；掃一遍確認 `tests/server/` 無同步 call site 後，在測試 docstring 標明「目前僅守 AsyncClient；若日後引入 Client 同步呼叫，需補規則」
+- 時間：2026-07-11 09:50
+
+## `publisher.py`（×6）、`tools.py:311`、`autopilot.py:1336` 每個裸 `AsyncClient(` 前加固定單行注解：`# trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由`
+- 時間：2026-07-11 09:50
+
+## `studio/` 零行為 diff 驗收——收尾以 `git diff studio/ -- '*.py'` 人眼掃一遍確認只有 `#` 開頭行異動，不跑自動 grep 過濾（高工指出尾隨空白/換行編輯會讓 grep 誤判）
+- 時間：2026-07-11 09:50
+
+## DECISIONS.md 新增 ADR，格式與現有條目一致（`## 標題 \n- 時間\n- 理由\n- 否決方案`），內容記「loopback client 關 `trust_env` / 外網 client 維持預設」邊界，否決「全局關閉」與「全局開放」兩種方案並附理由
+- 時間：2026-07-11 09:50
+
