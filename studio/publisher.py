@@ -455,6 +455,7 @@ async def _ensure_repo(repo: str, base: str) -> str:
     assert_repo_allowed(repo)
 
     headers = _headers()
+    # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
     async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
         r = await client.get(f"https://api.github.com/repos/{repo}", headers=headers)
         if r.status_code == 200:
@@ -495,6 +496,7 @@ async def _open_pr(payload: dict) -> tuple[bool, str]:
     import httpx
 
     headers = _headers()
+    # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
     async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
         r = await client.post(_api("/pulls"), json=payload, headers=headers)
     if r.status_code in (200, 201):
@@ -517,6 +519,7 @@ async def _get_pr_status(
     data: dict | None = None
     for i in range(retries + 1):
         try:
+            # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.get(_api(f"/pulls/{number}"), headers=headers)
         except Exception:
@@ -539,6 +542,7 @@ async def _fetch_ci(head_sha: str) -> tuple[list, dict] | None:
     headers = _headers()
     runs: list = []
     try:
+        # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
         async with httpx.AsyncClient(timeout=30) as client:
             page = 1
             while page <= 20:  # 上限 2000 個 check，足夠且避免異常無限翻頁
@@ -624,6 +628,7 @@ async def _update_branch(number: int) -> bool:
 
     headers = _headers()
     try:
+        # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.put(_api(f"/pulls/{number}/update-branch"), headers=headers)
         return r.status_code in (200, 202)
@@ -645,6 +650,7 @@ async def _merge_pr(number: int, payload: dict) -> tuple[MergeOutcome, str, bool
 
     headers = _headers()
     try:
+        # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.put(_api(f"/pulls/{number}/merge"), json=payload, headers=headers)
     except Exception as e:  # 網路等例外也不外拋，轉成可讀錯誤

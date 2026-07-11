@@ -308,6 +308,7 @@ async def _http_get(url: str, timeout: float):
     """
     import httpx
 
+    # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
     async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
         return await client.get(url)
 

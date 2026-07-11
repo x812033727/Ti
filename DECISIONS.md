@@ -3198,3 +3198,9 @@
 ## DECISIONS.md 新增 ADR，格式與現有條目一致（`## 標題 \n- 時間\n- 理由\n- 否決方案`），內容記「loopback client 關 `trust_env` / 外網 client 維持預設」邊界，否決「全局關閉」與「全局開放」兩種方案並附理由
 - 時間：2026-07-11 09:50
 
+## httpx 代理邊界：loopback client 關 `trust_env`，外網 client 維持預設
+- 時間：2026-07-11
+- 理由：`tests/server/` 的 loopback smoke client（`httpx.AsyncClient` 直連 `127.0.0.1`）若繼承環境變數 `HTTPS_PROXY`，會被系統 proxy 誤導、導致測試假紅；故 loopback 端**必須**設 `trust_env=False`。外網 client（`studio/publisher.py`、`studio/tools.py`、`studio/autopilot.py` 呼叫 GitHub API 或研究 URL）則**刻意維持預設 `trust_env=True`**：httpx 的 `trust_env` 同時控制 proxy env 與 `SSL_CERT_FILE`/`SSL_CERT_DIR`，關閉後企業環境的自訂 CA 和合法 proxy 路由一併失效，會讓外網呼叫直接斷線。外網 client 裸用是刻意選擇，非遺漏，每個 call site 已加固定單行注解說明。
+- 否決方案 A：全局關閉（所有 client 均 `trust_env=False`）——破壞企業 proxy / 自訂 CA 路由，外網呼叫在受管環境斷線，代價高於防禦效益。
+- 否決方案 B：全局開放（所有 client 均維持預設）——loopback smoke client 在 CI 有 proxy env 時假紅，干擾測試可信度，屬可預防的誤報。
+
