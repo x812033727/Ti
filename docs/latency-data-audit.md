@@ -9,7 +9,7 @@
 ## 一、TL;DR
 
 > **前置數據不成立。**
-> 本工作目錄（本 lane worktree）12 場 history meta 的 `latency.total.count` 全為 0，`token_usage.total.calls` 全為 0，
+> 本工作目錄（本 lane worktree）目前可見的 history meta 在實查時 `latency.total.count` 全為 0，`token_usage.total.calls` 全為 0，
 > 零筆 `token_usage` 事件存在於任何 JSONL 中。
 > 「從量測數據找最慢環節」路線**無法執行**；
 > **選題依據改為研究證據**——輸出 token 數量是最直接的延遲驅動因子（~10ms/token，Anthropic 官方確認），
@@ -24,7 +24,8 @@
 > **環境前提**：`history/` 已列入 `.gitignore`（執行期資料，不進版控）；
 > CI 環境**不含**這份目錄，查核指令在空 worktree 會返回空集，
 > 不代表「查無數據」錯誤，而是正常的執行期資料缺失。
-> 本報告中的預期輸出在本 lane worktree（12 場 improver 殘影 session）實查取得。
+> `history/` 是可變的 runtime 目錄，完整測試或人工操作可能追加 improver 殘影；
+> 檔數以查核指令當下輸出為準，本報告不以固定檔數作成效結論。
 
 ### 2.1 確認 meta 總數與 latency.total.count 全零
 
@@ -47,8 +48,8 @@ print(f'latency.total.count  > 0: {len(metas) - zero}')
 **預期輸出**：
 
 ```
-meta 總數: 12
-latency.total.count == 0: 12
+meta 總數: <當下 history/*.meta.json 檔數>
+latency.total.count == 0: <同 meta 總數>
 latency.total.count  > 0: 0
 ```
 
@@ -72,30 +73,33 @@ print(f'token_usage 事件數: {total}')
 **預期輸出**：
 
 ```
-jsonl 總數: 12
+jsonl 總數: <當下 history/*.jsonl 檔數>
 token_usage 事件數: 0
 ```
 
-### 2.3 確認各 JSONL 實際事件型別（抽樣前 20 個）
+### 2.3 確認各 JSONL 實際事件型別（最多抽樣前 20 檔）
 
 ```bash
 timeout 60 .venv/bin/python -c "
 import json, glob, collections
 counter = collections.Counter()
-for path in sorted(glob.glob('history/*.jsonl'))[:20]:
+paths = sorted(glob.glob('history/*.jsonl'))[:20]
+for path in paths:
     with open(path) as f:
         for line in f:
             line = line.strip()
             if line:
                 counter[json.loads(line).get('type','?')] += 1
-print('前 20 檔事件型別分佈:', dict(counter))
+print(f'抽樣檔數: {len(paths)}')
+print('事件型別分佈:', dict(counter))
 "
 ```
 
 **預期輸出**（全為 improver 探索殘影，無真實 LLM session 事件）：
 
 ```
-前 20 檔事件型別分佈: {'phase_change': 20, 'done': 20}
+抽樣檔數: <min(20, 當下 history/*.jsonl 檔數)>
+事件型別分佈: {'phase_change': <抽樣檔數>, 'done': <抽樣檔數>}
 ```
 
 ### 2.4 確認 token_usage meta 欄位結構（單檔範例）
@@ -134,13 +138,13 @@ print('latency:', json.dumps(m['latency'], ensure_ascii=False, indent=2))
 
 | 量測維度 | 數值 | 說明 |
 |---------|------|------|
-| meta 檔總數 | 12 | history/ 目錄下所有 `*.meta.json` |
-| `latency.total.count == 0` | **12 / 12** | 全部 session 的 API 呼叫延遲記錄為空 |
+| meta 檔總數 | 當下 `history/*.meta.json` 檔數 | `history/` 目錄下所有 meta |
+| `latency.total.count == 0` | **全部現有 meta** | 全部 session 的 API 呼叫延遲記錄為空 |
 | `latency.by_role` 非空 | 0 | 無任何角色延遲分桶 |
 | `latency.by_model` 非空 | 0 | 無任何模型延遲分桶 |
 | `latency.by_provider` 非空 | 0 | 無任何 provider 延遲分桶 |
 | `token_usage.total.calls` 非零 | 0 | 無任何 LLM API 呼叫記錄 |
-| JSONL `token_usage` 事件 | **0** | 12 個 JSONL 合計零筆 |
+| JSONL `token_usage` 事件 | **0** | 現有 JSONL 合計零筆 |
 | 實際事件型別 | `phase_change` / `done` | 均為 improver 探索殘影，非真實 LLM session |
 
 **結論**：量測管線（`history._derive_latency`、`experts.py` 的 `duration_api_ms`）架構已就緒，
@@ -153,7 +157,7 @@ print('latency:', json.dumps(m['latency'], ensure_ascii=False, indent=2))
 ### 4.1 失效宣告
 
 依本報告第二、三節的實查，「從 `by_role` 找最慢角色再手術」的選題依據**不成立**。
-所有 12 場 history（均為 improver 探索殘影）均無真實 API 呼叫，無法從量測數據推導出任何有效排名。
+所有現有 history（均為 improver 探索殘影）均無真實 API 呼叫，無法從量測數據推導出任何有效排名。
 
 ### 4.2 選題依據改為研究證據
 
@@ -228,4 +232,4 @@ history/
 
 `latency` 由 `history._derive_latency()` 從 JSONL 中的 `token_usage` 事件聚合；
 `token_usage` 事件由 `experts.py` 在每次 LLM 回應後寫入。
-目前 12 場均為 improver 探索殘影（僅 `phase_change` + `done`），故兩者皆空。
+目前現有 history 均為 improver 探索殘影（僅 `phase_change` + `done`），故兩者皆空。
