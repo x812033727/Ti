@@ -32,10 +32,10 @@
   border-bottom: 1px solid var(--border);
   flex: none;
 }
-.drawer-head h2 { margin: 0; font-size: 13px; color: var(--text); letter-spacing: .06em; }
+.drawer-head h2 { margin: 0; font-size: var(--fs-2); color: var(--text); letter-spacing: .06em; }
 .drawer-head button { padding: 4px 10px; border-radius: var(--r-sm); }
 .drawer-actions { display: flex; align-items: center; gap: 8px; }
-.drawer-actions .danger { font-size: 12px; }
+.drawer-actions .danger { font-size: var(--fs-1); }
 
 .history-list {
   list-style: none;
@@ -64,10 +64,10 @@
   background: none; border: none; padding: 0;
   text-align: left; color: inherit; font: inherit;
 }
-.h-req { font-size: 13.5px; font-weight: 600; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.h-meta { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--muted); }
+.h-req { font-size: var(--fs-2); font-weight: 600; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-meta { display: flex; align-items: center; gap: 10px; font-size: var(--fs-0); color: var(--muted); }
 /* 狀態膠囊 */
-.h-status { padding: 1px 9px; border: 1px solid; border-radius: var(--r-full); font-size: 11px; white-space: nowrap; }
+.h-status { padding: 1px 9px; border: 1px solid; border-radius: var(--r-full); font-size: var(--fs-0); white-space: nowrap; }
 .status-completed { color: var(--good); background: var(--good-bg); border-color: rgba(45, 212, 167, .35); }
 .status-incomplete { color: var(--warn); background: var(--warn-bg); border-color: rgba(245, 184, 95, .35); }
 .status-stopped { color: var(--muted); background: var(--surface-2); border-color: var(--border); }
@@ -81,7 +81,7 @@
   color: var(--muted);
   cursor: pointer;
   opacity: 0;
-  font-size: 15px;
+  font-size: var(--fs-3);
   padding: 4px 6px;
   border-radius: var(--r-sm);
 }
@@ -95,7 +95,7 @@
   color: var(--bad);
   cursor: pointer;
   opacity: .75;
-  font-size: 15px;
+  font-size: var(--fs-3);
   padding: 4px 6px;
   border-radius: var(--r-sm);
 }
@@ -110,7 +110,7 @@
 /* 各段落：小標 + 內容，段內用 gap 分隔 */
 .ap-section { display: flex; flex-direction: column; gap: 8px; }
 .ap-section-head {
-  font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--muted);
+  font-size: var(--fs-1); font-weight: 600; letter-spacing: .04em; color: var(--muted);
 }
 
 .ap-status {
@@ -128,7 +128,7 @@
   background: var(--accent-strong);
   color: #fff;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-2);
   border: 1px solid rgba(255, 255, 255, .08);
   white-space: nowrap;
 }
@@ -136,7 +136,7 @@
 
 /* Autopilot：provider 額度迷你條（5h/7d 用量） */
 .ap-quota { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-.ap-quota-cell { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
+.ap-quota-cell { display: flex; align-items: center; gap: 5px; font-size: var(--fs-0); color: var(--text-2); }
 .ap-quota-name { font-weight: 600; }
 .ap-quota-win { color: var(--muted); }
 /* 量表本體走 components.css 的 .meter 原語，這裡只留迷你尺寸
@@ -144,20 +144,20 @@
 .ap-quota-cell .ap-quota-bar { width: 44px; height: 6px; }
 
 /* Autopilot：績效榜（AI 成員考核聚合，per provider 平均分/樣本/通過率） */
-.ap-appraisal { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11px; }
+.ap-appraisal { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--fs-0); }
 .ap-appraisal-row { color: var(--text-2); }
 
 /* Autopilot：工作室動態 timeline（捲動交給外層 .ap-body，這裡不再自行截高） */
 .ap-timeline {
   list-style: none; margin: 0; padding: 0;
 }
-.ap-item { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.ap-item { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-1); }
 .ap-current-turn { color: var(--text); }
 .ap-current-turn .ap-item-title { color: var(--accent); }
 .ap-item:last-child { border-bottom: none; }
 .ap-item-head { display: flex; align-items: baseline; gap: 6px; }
 .ap-item-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.ap-item-time { font-size: 11px; white-space: nowrap; }
+.ap-item-time { font-size: var(--fs-0); white-space: nowrap; }
 .ap-item-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .ap-chip {
   font-size: 10.5px; padding: 1px 7px; border-radius: var(--r-full);
@@ -170,31 +170,31 @@
 .ap-chip.cost { color: var(--warn); border-color: rgba(255, 193, 94, .35); }
 /* 部署漂移橫幅（F1）：已合併 ≠ 已上線的警示，隱藏時零占位 */
 .ap-drift {
-  padding: 8px 14px; font-size: 12.5px; line-height: 1.5;
+  padding: 8px 14px; font-size: var(--fs-1); line-height: 1.5;
   background: rgba(255, 193, 94, .12); border: 1px solid rgba(255, 193, 94, .4);
   border-radius: var(--r-md); color: var(--warn);
 }
 .ap-drift.hidden { display: none; }
-.ap-item-note { margin-top: 3px; font-size: 11.5px; overflow-wrap: anywhere; }
+.ap-item-note { margin-top: 3px; font-size: var(--fs-0); overflow-wrap: anywhere; }
 .ap-item-note.bad { color: var(--bad); }
-.ap-item-score { margin-top: 3px; font-size: 11.5px; }
+.ap-item-score { margin-top: 3px; font-size: var(--fs-0); }
 /* Autopilot backlog：跟其他段落切齊，捲動交給 .ap-body，不自行內縮/截高 */
 #apBacklog { padding: 0; overflow: visible; }
 
 /* Autopilot 迷你狀態列：收起內容只留標題 + 計數，點標題列展開 */
-.ap-mini { font-size: 11.5px; font-weight: 400; letter-spacing: 0; margin-left: 6px; }
+.ap-mini { font-size: var(--fs-0); font-weight: 400; letter-spacing: 0; margin-left: 6px; }
 #autopilotPanel.mini .ap-body { display: none; }
 #autopilotPanel.mini { top: auto; }  /* 桌面：縮成右下小卡 */
 #autopilotPanel.mini .drawer-head { cursor: pointer; border-bottom: none; }
 
 /* 指標 / 專案面板內文 */
 .metrics-body { padding: 12px 16px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-.metric-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 13px; }
+.metric-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: var(--fs-2); }
 .metric-k { color: var(--muted); white-space: nowrap; }
 .metric-v { color: var(--text); text-align: right; }
 
-.proj-name { font-weight: 700; font-size: 15px; }
-.proj-feature, .proj-task { font-size: 13px; display: flex; align-items: baseline; gap: 6px; line-height: 1.5; }
+.proj-name { font-weight: 700; font-size: var(--fs-3); }
+.proj-feature, .proj-task { font-size: var(--fs-2); display: flex; align-items: baseline; gap: 6px; line-height: 1.5; }
 .prio {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -218,7 +218,7 @@
 .wf-textarea {
   width: 100%; min-height: 280px; resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px; line-height: 1.5; padding: 10px; border-radius: 8px;
+  font-size: var(--fs-1); line-height: 1.5; padding: 10px; border-radius: 8px;
   border: 1px solid var(--border-strong); background: var(--inset-strong); color: inherit;
   white-space: pre; tab-size: 2;
 }
@@ -239,7 +239,7 @@
 .team-tabs button {
   flex: 1;
   padding: 6px 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-1);
   border-radius: var(--r-full);
   background: transparent;
   color: var(--muted);
@@ -255,7 +255,7 @@
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 2px 0 8px;
 }
-.team-list-head .muted { font-size: 12px; }
+.team-list-head .muted { font-size: var(--fs-1); }
 .team-list {
   list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: 6px;
@@ -277,16 +277,16 @@
   background: var(--surface-2);
   border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
-  font-size: 17px;
+  font-size: var(--fs-4);
 }
 .team-av.group {
   width: auto; min-width: 34px; padding: 0 8px;
   border-radius: var(--r-full);
-  font-size: 13px; letter-spacing: 2px;
+  font-size: var(--fs-2); letter-spacing: 2px;
 }
 .team-meta { flex: 1; min-width: 0; }
 .team-name-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.team-name-row strong { font-size: 13.5px; }
+.team-name-row strong { font-size: var(--fs-2); }
 .team-badge {
   font-size: 10.5px; padding: 1px 8px; border-radius: var(--r-full);
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
@@ -296,9 +296,9 @@
 .team-badge.src-override { color: var(--warn); border-color: rgba(245, 184, 95, .4); background: var(--warn-bg); }
 .team-badge.src-file { color: var(--accent-2); border-color: rgba(180, 157, 255, .35); }
 .team-badge.off { color: var(--muted); border-style: dashed; }
-.team-sub { font-size: 11.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.team-sub { font-size: var(--fs-0); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .team-actions { display: flex; gap: 6px; flex: none; }
-.team-actions button { font-size: 12px; padding: 4px 10px; }
+.team-actions button { font-size: var(--fs-1); padding: 4px 10px; }
 
 /* 動態流程：結構化 stage 卡片編輯器（textarea 為單一真相，卡片即時序列化回原文） */
 #workflowPanel .wf-textarea { display: none; }
@@ -323,24 +323,24 @@
   letter-spacing: .06em; text-transform: uppercase;
   color: var(--accent-2); flex: none; min-width: 52px;
 }
-.wf-card-head select { flex: 1; min-width: 0; padding: 6px 28px 6px 10px; font-size: 12.5px; }
+.wf-card-head select { flex: 1; min-width: 0; padding: 6px 28px 6px 10px; font-size: var(--fs-1); }
 .wf-card-tools { display: flex; gap: 4px; flex: none; }
-.wf-card-tools button { padding: 3px 8px; font-size: 12px; }
+.wf-card-tools button { padding: 3px 8px; font-size: var(--fs-1); }
 .wf-card-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 6px 10px;
 }
 .wf-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.wf-field > span { font-size: 11px; color: var(--muted); }
-.wf-field input, .wf-field select { padding: 6px 8px; font-size: 12.5px; border-radius: var(--r-sm); }
+.wf-field > span { font-size: var(--fs-0); color: var(--muted); }
+.wf-field input, .wf-field select { padding: 6px 8px; font-size: var(--fs-1); border-radius: var(--r-sm); }
 .wf-field select { padding-right: 26px; }
-.wf-check { flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.wf-check { flex-direction: row; align-items: center; gap: 6px; font-size: var(--fs-1); color: var(--text-2); cursor: pointer; }
 .wf-check input { accent-color: var(--accent); margin: 0; }
-.wf-cap { font-size: 11px; width: 100%; }
+.wf-cap { font-size: var(--fs-0); width: 100%; }
 .wf-roles { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .wf-role-chip {
   display: inline-flex; align-items: center; gap: 5px;
-  font-size: 12px; color: var(--text-2); cursor: pointer;
+  font-size: var(--fs-1); color: var(--text-2); cursor: pointer;
   padding: 3px 9px; border-radius: var(--r-full);
   border: 1px solid var(--border); background: var(--surface-2);
 }
@@ -352,15 +352,15 @@
 .wf-role-chip input { accent-color: var(--accent); margin: 0; }
 .wf-gates { display: flex; flex-direction: column; gap: 5px; }
 .wf-gate-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.wf-gate-row select { padding: 5px 26px 5px 8px; font-size: 12px; }
-.wf-gate-row button { padding: 3px 8px; font-size: 12px; }
+.wf-gate-row select { padding: 5px 26px 5px 8px; font-size: var(--fs-1); }
+.wf-gate-row button { padding: 3px 8px; font-size: var(--fs-1); }
 .wf-subpipeline {
   display: flex; flex-direction: column; gap: 6px;
   border-left: 2px solid rgba(124, 134, 255, .35);
   padding-left: 10px;
 }
-.wf-add { align-self: flex-start; font-size: 12px; padding: 5px 12px; }
-.wf-json-error { color: var(--warn); font-size: 12.5px; padding: 8px 10px; border: 1px dashed rgba(245, 184, 95, .4); border-radius: var(--r-sm); }
+.wf-add { align-self: flex-start; font-size: var(--fs-1); padding: 5px 12px; }
+.wf-json-error { color: var(--warn); font-size: var(--fs-1); padding: 8px 10px; border: 1px dashed rgba(245, 184, 95, .4); border-radius: var(--r-sm); }
 
 /* drawer 殼底色：玻璃改用高不透明卡底——太透會把底層漸層大按鈕暈進面板成一團色斑 */
 .drawer.glass { background: var(--card-bg); }
