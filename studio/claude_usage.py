@@ -78,13 +78,18 @@ def _iso_to_epoch(s: Any) -> float | None:
         return None
 
 
+def _pct(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return round(float(value), 1)
+
+
 def _window(d: Any) -> dict | None:
     """單一視窗（如 five_hour）正規化為 {used_percentage, reset_at(epoch)}；None→None。"""
     if not isinstance(d, dict):
         return None
-    util = d.get("utilization")
     return {
-        "used_percentage": round(float(util), 1) if isinstance(util, (int, float)) else None,
+        "used_percentage": _pct(d.get("utilization")),
         "reset_at": _iso_to_epoch(d.get("resets_at")),
     }
 
@@ -111,7 +116,7 @@ def _scoped_models(limits: Any) -> dict | None:
             continue
         pct = entry.get("percent")
         out[str(name)] = {
-            "used_percentage": round(float(pct), 1) if isinstance(pct, (int, float)) else None,
+            "used_percentage": _pct(pct),
             "reset_at": _iso_to_epoch(entry.get("resets_at")),
             "severity": entry.get("severity"),
         }
