@@ -9,7 +9,14 @@ import secrets
 import shutil
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError as exc:  # pragma: no cover - only for dependency-light smoke checks.
+    if exc.name != "dotenv":
+        raise
+
+    def load_dotenv(*_args: object, **_kwargs: object) -> bool:
+        return False
 
 logger = logging.getLogger(__name__)
 
