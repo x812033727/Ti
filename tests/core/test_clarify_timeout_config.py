@@ -30,10 +30,7 @@ def test_clarify_timeout_bad_value_falls_back_with_warning(monkeypatch, caplog):
 
     assert config.CLARIFY_TIMEOUT == 180.0
     messages = [record.getMessage() for record in caplog.records]
-    assert any(
-        ENV in message and "abc" in message and "180.0" in message
-        for message in messages
-    )
+    assert any(ENV in message and "abc" in message and "180.0" in message for message in messages)
 
 
 def test_clarify_timeout_empty_value_falls_back(monkeypatch):
