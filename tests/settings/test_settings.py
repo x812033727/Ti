@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
@@ -155,6 +156,27 @@ def test_update_advanced_toggle_reloads(sandbox):
     assert config.REFLEXION_ENABLED is False
     assert config.objective_gate_enabled() is False
     assert config.SELF_REFINE_ITERS == 0
+
+
+def test_clarify_timeout_reload_bad_value_falls_back_and_warns(sandbox, monkeypatch, caplog):
+    monkeypatch.setenv("TI_CLARIFY_TIMEOUT", "abc")
+    with caplog.at_level(logging.WARNING, logger="studio.config"):
+        config.reload()
+    assert config.CLARIFY_TIMEOUT == 180.0
+    assert "TI_CLARIFY_TIMEOUT" in caplog.text
+    assert "非數值" in caplog.text
+
+
+def test_clarify_timeout_reload_empty_value_falls_back(sandbox, monkeypatch):
+    monkeypatch.setenv("TI_CLARIFY_TIMEOUT", "")
+    config.reload()
+    assert config.CLARIFY_TIMEOUT == 180.0
+
+
+def test_clarify_timeout_reload_valid_value(sandbox, monkeypatch):
+    monkeypatch.setenv("TI_CLARIFY_TIMEOUT", "90")
+    config.reload()
+    assert config.CLARIFY_TIMEOUT == 90.0
 
 
 def test_update_rejects_bad_objective_gate(sandbox):
