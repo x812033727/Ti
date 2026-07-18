@@ -18,6 +18,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - only for dependency-lig
     def load_dotenv(*_args: object, **_kwargs: object) -> bool:
         return False
 
+
 logger = logging.getLogger(__name__)
 
 # 專案根（單一來源；env_path() 與 load_dotenv 共用）。
