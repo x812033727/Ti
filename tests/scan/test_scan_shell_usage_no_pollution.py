@@ -11,6 +11,7 @@
 import os
 import re
 import subprocess
+import sys
 import tomllib
 
 import pytest
@@ -21,8 +22,11 @@ PYPROJECT = REPO / "pyproject.toml"
 
 
 def run(args):
+    argv = list(args)
+    if argv and argv[0] == "ruff":
+        argv = [sys.executable, "-m", "ruff", *argv[1:]]
     return subprocess.run(
-        args,
+        argv,
         cwd=REPO,
         env=dict(os.environ),
         capture_output=True,
