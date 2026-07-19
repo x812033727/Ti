@@ -36,6 +36,31 @@ log = logging.getLogger("ti.notify")
 
 _TIMEOUT_S = 10.0
 
+# --- 例外分級(第 3/4 階 B5) -------------------------------------------------
+# page   = 立即推播:需要人採取行動的異常(送所有已設定 sink)。
+# digest = 僅落檔:常態質量/回饋訊號,進 events.jsonl 由信任指標與 digest 彙整,推播只會是噪音。
+# 新事件 kind 必須在此登記(守門測試 test_notify_severity 強制);未登記的 kind 一律
+# 視為 page——寧可吵,不可讓新異常靜默(fail-loud)。
+# watchdog_paused 的 emitter 不在本模組:外置 kill switch(deploy/ti-watchdog.sh)依
+# 契約不得依賴 Python runtime,自帶 curl 推播;此處登記僅為分級口徑單一真相。
+SEVERITY: dict[str, str] = {
+    "task_failed": "page",
+    "loop_stall": "page",
+    "quota_exhausted": "page",
+    "watchdog_paused": "page",
+    "slo_brake": "page",  # A4 SLO 自動煞車
+    "deploy_verify_failed": "page",  # B1 部署黑盒驗證失敗
+    "clarify_pending": "page",  # B4 澄清待答
+    "test": "page",
+    "gate_failure": "digest",
+    "critic_reject": "digest",
+}
+
+
+def severity(kind: str) -> str:
+    """回傳事件分級;未登記=page(寧吵勿漏)。"""
+    return SEVERITY.get(kind, "page")
+
 
 def _events_path(state_dir: Path | None = None) -> Path:
     return (state_dir or config.AUTOPILOT_STATE_DIR) / "events.jsonl"
@@ -100,8 +125,13 @@ def _deliver(kind: str, title: str, extra: dict) -> dict:
 
 
 def send(kind: str, title: str, **extra) -> bool:
-    """同步送出一則通知（先落檔）；任一 sink 送達回 True，全失敗/皆未設定回 False。"""
+    """同步送出一則通知（先落檔）；任一 sink 送達回 True，全失敗/皆未設定回 False。
+
+    digest 級 kind 只落檔不推播（與 record 同效）——分級口徑見 SEVERITY。
+    """
     _persist(kind, title, extra)
+    if severity(kind) != "page":
+        return False
     return any(_deliver(kind, title, extra).values())
 
 
@@ -113,8 +143,13 @@ def send_test() -> dict:
 
 
 def send_bg(kind: str, title: str, **extra) -> None:
-    """背景送出（daemon thread）：呼叫端零阻塞。無任何 sink 設定時僅落檔、零網路。"""
+    """背景送出（daemon thread）：呼叫端零阻塞。無任何 sink 設定時僅落檔、零網路。
+
+    digest 級 kind 只落檔不推播——分級口徑見 SEVERITY。
+    """
     _persist(kind, title, extra)
+    if severity(kind) != "page":
+        return
     if not (
         (config.NOTIFY_WEBHOOK or "").strip()
         or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
