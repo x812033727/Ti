@@ -159,3 +159,26 @@ body[data-view="home"] main.layout { display: none; }
 .sched-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sched-meta { font-size: var(--fs-0); }
 #schedAdd { margin-top: var(--sp-2); }
+
+/* 靈感區(PR12):水平滑卡 */
+.inspire-card {
+  flex: 0 0 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  padding: var(--sp-2) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inspire-card.idea { cursor: pointer; }
+.inspire-card.idea:hover { border-color: var(--accent); }
+.ic-tag { font-size: var(--fs-0); color: var(--muted); }
+.ic-tag.ok { color: var(--good); }
+.ic-title {
+  font-size: var(--fs-1);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
