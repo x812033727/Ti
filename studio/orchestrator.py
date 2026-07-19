@@ -28,6 +28,7 @@ from . import (
     flow,
     lessons,
     memory,
+    notify,
     provider_quota,
     publisher,
     reflexion,
@@ -3082,6 +3083,8 @@ class StudioSession:
             # critic 僅剩語意異議。達 CRITIC_MAX_REJECTS 次仍提不出可重現紅點 → 客觀證據優先，以
             # 已知限制放行，並把殘留疑慮記成後續任務（不靜默丟），避免無限退回燒滿輪數後整場判失敗。
             critic_rejects += 1
+            # 質量事件留痕（僅落檔不推播）：信任指標的 critic 退回計數（events.jsonl）。
+            notify.record("critic_reject", task_id=task.get("id"), rejects=critic_rejects)
             if config.CRITIC_MAX_REJECTS > 0 and critic_rejects >= config.CRITIC_MAX_REJECTS:
                 self._followups.append(
                     f"覆查 critic 對「{task['title']}」的殘留疑慮"

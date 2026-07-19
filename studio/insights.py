@@ -12,7 +12,7 @@ import json
 import time
 from pathlib import Path
 
-from . import backlog, config
+from . import backlog, config, interventions, notify
 
 # 完成率口徑：終局成敗桶。merge_pending/no_changes/investigation_parked/escalated 等
 # 「非成敗終局」與未來新增的未知 outcome 進 outcomes 明細但不進分母（前向相容）。
@@ -125,3 +125,66 @@ def investigations(limit: int = 50, *, state_dir: Path | None = None) -> list[di
         out.append(item)
     out.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
     return out[:limit]
+
+
+# 信任指標關注的系統事件 kind(events.jsonl):質量回饋(critic/gate)+異常(quota/stall/
+# task_failed)。未列 kind 照樣進 events 明細——前向相容,新事件不用改這裡。
+_TRUST_EVENT_KINDS = (
+    "critic_reject",
+    "gate_failure",
+    "quota_exhausted",
+    "loop_stall",
+    "task_failed",
+)
+
+
+def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
+    """第 3 階(監督式自治)信任指標:零人工介入合併率+介入分類+系統事件計數。
+
+    口徑:
+    - merged=視窗內 outcome=="merged" 的 audit 紀錄(直接合併與 reconciler 收斂各記
+      一筆、不同任務不重複——同任務先記 merge_pending 非 merged,無雙計)。
+    - zero_touch=merged 中,該 task_id 在視窗內無 output_review 類人工介入者。
+      已知限制:繞過面板直接在 GitHub 上的人工操作不可見——口徑是「面板留痕的介入」。
+    - first_try=attempts==0 的 merged;reconciled=由 reconciler 背景收斂的 merged。
+    - events 只彙整計數,明細留在 events.jsonl。days 夾 1..90。
+    """
+    days = max(1, min(days, 90))
+    cutoff = time.time() - days * 86400
+    merged: list[dict] = []
+    for rec in _read_audit(state_dir):
+        try:
+            ts = float(rec.get("ts", 0))
+        except (TypeError, ValueError):
+            continue
+        if ts >= cutoff and str(rec.get("outcome") or "") == "merged":
+            merged.append(rec)
+    ints = interventions.read_window(days, state_dir=state_dir)
+    reviewed_tasks = {
+        str(i.get("task_id"))
+        for i in ints
+        if i.get("category") == "output_review" and i.get("task_id") is not None
+    }
+    zero = [r for r in merged if str(r.get("task_id")) not in reviewed_tasks]
+    by_cat: dict[str, int] = {}
+    for i in ints:
+        cat = str(i.get("category") or "output_review")
+        by_cat[cat] = by_cat.get(cat, 0) + 1
+    events: dict[str, int] = dict.fromkeys(_TRUST_EVENT_KINDS, 0)
+    for e in notify.read_events(days, state_dir=state_dir):
+        kind = str(e.get("kind") or "unknown")
+        events[kind] = events.get(kind, 0) + 1
+    return {
+        "days": days,
+        "merged": len(merged),
+        "zero_touch": len(zero),
+        "zero_touch_rate": round(len(zero) / len(merged), 3) if merged else None,
+        "first_try_merged": sum(1 for r in merged if not r.get("attempts")),
+        "reconciled_merges": sum(1 for r in merged if r.get("reconciled")),
+        "interventions": {
+            "total": len(ints),
+            "by_category": by_cat,
+            "per_week": round(len(ints) / days * 7, 1),
+        },
+        "events": events,
+    }

@@ -25,6 +25,7 @@ from . import (
     digest,
     history,
     insights,
+    interventions,
     lessons,
     projects,
     provider_quota,
@@ -215,7 +216,9 @@ async def post_settings(request: Request) -> JSONResponse:
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "detail": "格式錯誤"}, status_code=400)
-    return JSONResponse({"ok": True, **settings.update(body)})
+    updated = settings.update(body)  # 可能拋錯(非法值 config.reload 會炸):成功才記介入
+    interventions.record("settings", "context_feeding")
+    return JSONResponse({"ok": True, **updated})
 
 
 @router.get("/api/provider-quota", dependencies=[Depends(auth.require_auth)])
@@ -291,6 +294,7 @@ async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
     claude_accounts.set_pinned(body.label)  # 手動切換＝釘選（switch 成功才寫）
+    interventions.record("account_switch", "ops", detail=body.label)
     _schedule_service_restart()
     payload: dict = {"ok": True, "label": body.label, "restarting": True, "pinned": True}
     if busy:  # force 蓋過 busy 守衛時標記，供前端/log 辨識這是中斷式切換
@@ -303,6 +307,7 @@ async def claude_account_unpin() -> JSONResponse:
     """解除帳號釘選＝回自動模式：恢復自動輪替；排隊中的切換一併取消。無需重啟
     （輪替在 autopilot 下輪額度檢查自然接手）。"""
     claude_accounts.set_pinned(None)
+    interventions.record("account_unpin", "ops")
     return JSONResponse({"ok": True, "pinned": None})
 
 
@@ -900,12 +905,14 @@ async def autopilot_backlog() -> JSONResponse:
 @router.post("/api/autopilot/pause", dependencies=WRITE_DEPS)
 async def autopilot_pause() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.write_text("paused via UI\n", encoding="utf-8")
+    interventions.record("pause", "ops")
     return JSONResponse({"ok": True, "paused": True})
 
 
 @router.post("/api/autopilot/resume", dependencies=WRITE_DEPS)
 async def autopilot_resume() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.unlink(missing_ok=True)
+    interventions.record("resume", "ops")
     return JSONResponse({"ok": True, "paused": config.autopilot_paused()})
 
 
@@ -923,6 +930,7 @@ async def autopilot_dispatch_mode(body: DispatchModeBody) -> JSONResponse:
         config.DISPATCH_AUTO_FILE.write_text("auto via UI\n", encoding="utf-8")
     else:
         config.DISPATCH_AUTO_FILE.unlink(missing_ok=True)
+    interventions.record("dispatch_mode", "ops", detail=mode)
     return JSONResponse(
         {"ok": True, "dispatch_mode": "auto" if config.dispatch_auto() else "manual"}
     )
@@ -940,6 +948,7 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     )
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
+    interventions.record("manual_task", "context_feeding", task_id=task["id"])
     return JSONResponse({"ok": True, "task": task})
 
 
@@ -973,6 +982,12 @@ async def autopilot_digest_read(name: str) -> JSONResponse:
 async def autopilot_audit_trend(days: int = 30) -> JSONResponse:
     """audit.jsonl 每日 outcome 分佈與完成率趨勢(近 N 天,UTC 日;口徑=insights.OK/FAIL)。"""
     return JSONResponse(await asyncio.to_thread(insights.audit_trend, days))
+
+
+@router.get("/api/autopilot/trust", dependencies=[Depends(auth.require_auth)])
+async def autopilot_trust(days: int = 7) -> JSONResponse:
+    """信任指標(第 3 階 A0 基線):零人工介入合併率/介入分類/系統事件計數。"""
+    return JSONResponse(await asyncio.to_thread(insights.trust_metrics, days))
 
 
 @router.get("/api/autopilot/investigations", dependencies=[Depends(auth.require_auth)])
@@ -1014,6 +1029,7 @@ async def autopilot_task_action(task_id: int, body: TaskActionBody) -> JSONRespo
         backlog.apply_action, task_id, body.action, priority=body.priority, note=body.note
     )
     if task is not None:
+        interventions.record("task_action", "output_review", task_id=task_id, detail=body.action)
         return JSONResponse({"ok": True, "task": task})
     status = 404 if err.startswith("不存在") else (409 if err.startswith("不可") else 400)
     return JSONResponse({"ok": False, "detail": err}, status_code=status)
@@ -1023,6 +1039,7 @@ async def autopilot_task_action(task_id: int, body: TaskActionBody) -> JSONRespo
 async def autopilot_triage() -> JSONResponse:
     """failed 任務確定性分診（無 LLM）：基礎設施型失敗退回 pending、陳年失敗歸檔 parked。"""
     stats = await asyncio.to_thread(backlog.triage_failed)
+    interventions.record("triage", "output_review")
     return JSONResponse({"ok": True, **stats})
 
 

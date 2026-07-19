@@ -2130,6 +2130,8 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
     仍走各自既有路徑，與此無關。
     """
     attempts = int(task.get("attempts") or 0)
+    # 質量事件留痕（僅落檔不推播）：信任指標的 gate 失敗計數（events.jsonl）。
+    notify.record("gate_failure", gate=gate_label, task_id=task.get("id"), attempt=attempts + 1)
     if attempts + 1 < config.AUTOPILOT_TASK_MAX_ATTEMPTS:
         backlog.set_status(
             task["id"],
