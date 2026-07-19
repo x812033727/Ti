@@ -158,8 +158,7 @@ def test_readme_py_fallback_specific_phrase():
     """README 退路說明必須有具體可照用的 `py` 指令字串（非抽象形容）。"""
     has_specific = bool(
         re.search(
-            r"`py`(\s*啟動器|\s*-3\b|執行|跑|app\b|main\b)|"
-            r"`py -3`|`py`\s*app|`py`\s*main",
+            r"`py`(\s*啟動器|\s*-3\b|執行|跑|app\b|main\b)|" r"`py -3`|`py`\s*app|`py`\s*main",
             README,
         )
     )

@@ -68,9 +68,10 @@ async def test_autosplit_parses_and_caps(state, monkeypatch):
         "任務: 實作 A 子模組並補單測\n任務: 修復 B 的競態並加守門測試\n任務: 重構 C 介面",
     )
     out = await autopilot._autosplit_task("/clone", {"title": "大任務", "detail": ""})
-    assert out == ["實作 A 子模組並補單測", "修復 B 的競態並加守門測試"], (
-        "解析 + 截斷到 MAX_SUBTASKS"
-    )
+    assert out == [
+        "實作 A 子模組並補單測",
+        "修復 B 的競態並加守門測試",
+    ], "解析 + 截斷到 MAX_SUBTASKS"
 
 
 @pytest.mark.asyncio

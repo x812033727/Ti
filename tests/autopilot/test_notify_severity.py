@@ -53,9 +53,10 @@ def test_digest_kind_never_pushes(monkeypatch):
     assert notify.send("critic_reject", "退回") is False
     notify.send_bg("gate_failure", "閘門失敗")
     assert not calls, "digest 級 kind 不得推播"
-    assert [e["kind"] for e in notify.read_events(1)] == ["critic_reject", "gate_failure"], (
-        "照樣落檔"
-    )
+    assert [e["kind"] for e in notify.read_events(1)] == [
+        "critic_reject",
+        "gate_failure",
+    ], "照樣落檔"
 
 
 def test_unknown_kind_defaults_to_page(monkeypatch):

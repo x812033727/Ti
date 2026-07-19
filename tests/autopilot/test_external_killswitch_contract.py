@@ -65,7 +65,7 @@ def _enclosing_function(tree: ast.AST, target: ast.AST) -> str:
             nonlocal result
             if node is target:
                 result = self.stack[-1] if self.stack else "<module>"
-            is_fn = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            is_fn = isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
             if is_fn:
                 self.stack.append(node.name)
             super().generic_visit(node)

@@ -64,7 +64,7 @@ def _iter_push_stubs():
         target_names = TARGET_STUBS | _patched_push_stub_names(tree)
         for node in ast.walk(tree):
             if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
                 and node.name in target_names
             ):
                 yield path, node.lineno, node.name, node.args

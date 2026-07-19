@@ -587,9 +587,12 @@ def test_offline_e2e_meta_has_latency_key(_offline_client):
 
     lat = meta["latency"]
     # 四個子桶齊全
-    assert set(lat) == {"total", "by_provider", "by_model", "by_role"}, (
-        f"latency 應有 total/by_provider/by_model/by_role，got {sorted(lat)}"
-    )
+    assert set(lat) == {
+        "total",
+        "by_provider",
+        "by_model",
+        "by_role",
+    }, f"latency 應有 total/by_provider/by_model/by_role，got {sorted(lat)}"
     # total 桶欄位齊全
     for field in _LATENCY_FIELDS:
         assert field in lat["total"], f"latency.total 缺欄位 {field!r}"
