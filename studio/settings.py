@@ -617,6 +617,28 @@ FIELDS: tuple[Field, ...] = (
         numeric=True,
         group="Autopilot",
     ),
+    # --- 通知組(第 3 階 A1):web 端(含「發送測試通知」)存檔即生效;autopilot 端的
+    # 事件推播(task_failed/loop_stall/quota_exhausted)需 restart ti-autopilot 才生效 ---
+    Field(
+        "TI_NOTIFY_WEBHOOK",
+        "主動通知 webhook URL（空=關;異常事件 POST JSON,Slack/Discord relay 皆可）",
+        placeholder="https://...",
+        group="通知",
+    ),
+    Field(
+        "TI_TELEGRAM_BOT_TOKEN",
+        "Telegram bot token（@BotFather 建 bot 取得;與 chat id 皆填才啟用）",
+        kind="password",
+        secret=True,
+        placeholder="123456789:AA...",
+        group="通知",
+    ),
+    Field(
+        "TI_TELEGRAM_CHAT_ID",
+        "Telegram chat id（對 bot 說話後由 getUpdates 查得;私訊為正整數）",
+        placeholder="1234567890",
+        group="通知",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}
