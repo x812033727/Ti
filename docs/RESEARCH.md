@@ -582,3 +582,57 @@ Sources:
 - [AI Agent Error Handling: Best Practices & Patterns for 2025](https://fast.io/resources/ai-agent-error-handling/)
 - [AI Agent Circuit Breaker Pattern: Stop Cascading Tool Failures (2026)](https://cordum.io/blog/ai-agent-circuit-breaker-pattern)
 
+## 2026-07-20 07:12
+
+現況已很清晰。現有 `notify.py` 已有完整 webhook + Telegram 雙 sink，**唯一缺口是 email sink 尚未實作**。讓我確認 config.py reload 結構，再快速查 smtplib 最新坑點。
+現況清晰。讓我確認 config.py 中 TELEGRAM 設定的完整宣告位置，再補一個 smtplib port 慣例的快速查證。
+現況已完全摸清，可以直接彙整決策依據。
+
+---
+
+**現況核查（程式碼層級）**
+
+重點: `notify.py` **已不是 pure log no-op**——webhook sink（line 100-103）與 Telegram sink（line 106-113）均已實作，`_deliver()` 雙 sink 並存；本輪任務的唯一缺口是**第三個 email sink 尚未加入**。
+
+重點: `send_bg()` 的 early-return（line 155-160）目前只檢查 webhook 與 Telegram；加 email 後需同步更新此條件，否則 SMTP host 已設但仍會直接 `return`（零網路，通知不送）。
+
+重點: **config.py 三段式慣例**：頂層宣告（line 1148-1149）→ `reload()` global 宣告（line 1390）→ `reload()` 賦值（line 1627-1628）。email 設定要同步三處，否則 `config.reload()` 後 UI 改設定不生效。
+
+重點: **現有測試檔命名規律**：`tests/autopilot/test_notify_webhook.py` + `test_notify_telegram.py` 各自獨立，守門測試跟進加 `test_notify_email.py`；fixture 固定 monkeypatch config 清空所有 sink。
+
+重點: `test_send_noop_without_webhook` 只 mock `urllib.request.urlopen`；email 走 `smtplib`，不走 urlopen——**現有 noop 測試不會因加 email sink 而多打 SMTP**，預設 `TI_ALERT_SMTP_HOST=""` 即可保持零網路，舊測試不需改。
+
+重點: `send_test()` 直接呼叫 `_deliver()`——email sink 一旦加進 `_deliver()`，`send_test` 端點自動涵蓋 email，不需另外改。
+來源：`/opt/ti/studio/notify.py` & `tests/autopilot/test_notify_*.py`（實際程式碼）
+
+重點: **smtplib port 慣例確認**：port 465 = `smtplib.SMTP_SSL`（Implicit TLS）、port 587 = `smtplib.SMTP` + `.starttls()`（STARTTLS），這在 Python 3.11 沒有破壞性變更，stdlib 穩定。Gmail App Password 場景 port 587 STARTTLS 為主流推薦（2024-2026 均有效）。
+來源: [docs.python.org/3/library/smtplib.html](https://docs.python.org/3/library/smtplib.html)、[support.google.com/mail/answer/185833](https://support.google.com/mail/answer/185833)
+
+---
+
+**建議**
+
+建議: **`_post_email()` 實作約 20 行，放在 `_post_telegram()` 之後**：port 465 走 `SMTP_SSL`，否則走 `SMTP + starttls()`；用 `email.mime.text.MIMEText(msg, "plain", "utf-8")` 組信；try/except 吞掉任何 SMTP 例外、debug log 不含密碼（遵守既有 Telegram 安全範式）。
+
+建議: **`_deliver()` 在 Telegram 區塊後加第三段 email 判斷**：`(config.ALERT_SMTP_HOST or "").strip()` 非空且 `ALERT_EMAIL_TO` 非空才啟用；回傳 `out["email"] = ...`。
+
+建議: **`send_bg()` early-return 加第三條判斷**：
+```python
+or (config.ALERT_SMTP_HOST or "").strip()
+```
+三個 sink 全空才 `return`（零網路），任一非空才起 thread。
+
+建議: **config.py 新增 6 個鍵**（頂層 + `global` 宣告 + `reload()` 賦值三處同步）：
+```
+ALERT_EMAIL_TO      = os.getenv("TI_ALERT_EMAIL_TO", "").strip()
+ALERT_SMTP_HOST     = os.getenv("TI_ALERT_SMTP_HOST", "").strip()
+ALERT_SMTP_PORT     = _env_int("TI_ALERT_SMTP_PORT", 587)
+ALERT_SMTP_USER     = os.getenv("TI_ALERT_SMTP_USER", "").strip()
+ALERT_SMTP_PASS     = os.getenv("TI_ALERT_SMTP_PASS", "").strip()
+ALERT_FROM          = os.getenv("TI_ALERT_FROM", "Ti Studio <noreply>").strip()
+```
+
+建議: **新增 `tests/autopilot/test_notify_email.py`**，最少五條測試：①未設 SMTP host → `smtplib.SMTP_SSL` 從未被呼叫；②port 465 走 `SMTP_SSL`；③port 587 走 `SMTP` + `starttls`；④SMTP 例外吞掉不上拋；⑤三 sink 全空時 `send_bg` 不起 thread（monkeypatch `threading.Thread` 記錄呼叫次數確認為 0）。
+
+建議: **密碼安全**：`except` 分支的 `log.debug(...)` 只帶 `kind`/`title`，不帶 `ALERT_SMTP_PASS`，與 Telegram token 不入 log 的現有範式完全一致。
+
