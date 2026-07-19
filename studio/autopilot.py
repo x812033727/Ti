@@ -2668,6 +2668,78 @@ def _pause(reason: str) -> None:
     log.warning("已暫停 autopilot：%s", reason)
 
 
+# --- 規範迴路(第 3 階 A3) ---------------------------------------------------
+# 第 3 階要求人工介入變成 AI 下次讀得到的規範,而不是一次性修正:每 UTC 日一次,把近
+# 7 天人工介入筆記(output_review 帶 detail)與失敗事件蒸餾成通用慣例入 lessons
+# (source=intervention;模糊去重擋重複)。當日一次去重用行程記憶體:重啟最多多跑一次,
+# 由 lessons 去重兜底,可容忍。
+_NORMS_SYSTEM = (
+    "你是 Ti 的規範蒸餾器。輸入是近 7 天的人工介入筆記與失敗事件。"
+    "請萃取「未來能避免同類介入或失敗」的通用執行慣例。規則:\n"
+    "- 每條一行,格式「規範: <一句可執行的慣例>」,至多 3 條。\n"
+    "- 只寫通用慣例;不寫一次性事實、任務編號、日期。\n"
+    "- 材料不足以形成慣例時輸出「無」。"
+)
+_norms_distill_day: tuple | None = None
+
+
+def _event_material_line(e: dict) -> str:
+    parts = [str(e.get("kind") or "")]
+    for key in ("title", "gate", "detail"):
+        v = e.get(key)
+        if v:
+            parts.append(str(v)[:160])
+    return "：".join(parts)
+
+
+async def _maybe_norms_distill() -> None:
+    """規範迴路:蒸餾人工介入+失敗事件成慣例(TI_NORMS_LOOP=0 預設關,零成本)。
+
+    FAST 一次呼叫(providers.complete_once,永不 raise);無材料直接跳過;任何失敗
+    只 log——規範迴路是加值,不得影響主迴圈。
+    """
+    global _norms_distill_day
+    if not config.NORMS_LOOP:
+        return
+    day = time.gmtime()[:3]
+    if _norms_distill_day == day:
+        return
+    _norms_distill_day = day
+    try:
+        from . import interventions, lessons, providers
+
+        notes = [
+            f"人工介入（{i.get('kind')}）：{str(i.get('detail'))[:160]}"
+            for i in interventions.read_window(7)
+            if i.get("category") == "output_review" and i.get("detail")
+        ]
+        fails = [
+            _event_material_line(e)
+            for e in notify.read_events(7)
+            if e.get("kind") in ("task_failed", "gate_failure")
+        ]
+        material = "\n".join((notes + fails)[:40])
+        if not material:
+            return
+        text = await providers.complete_once(
+            _NORMS_SYSTEM,
+            material,
+            session_id=f"norms-distill-{day[0]:04d}{day[1]:02d}{day[2]:02d}",
+            cwd=Path(config.AUTOPILOT_DEPLOY_DIR),
+        )
+        norms = [
+            ln.split("規範:", 1)[1].strip().lstrip("：: ")
+            for ln in (text or "").replace("規範：", "規範:").splitlines()
+            if ln.strip().startswith("規範:")
+        ]
+        norms = [n for n in norms if n][:3]
+        if norms:
+            added = lessons.add_many(norms, source="intervention")
+            log.info("規範迴路：蒸餾出 %d 條、入庫 %d 條（去重後）", len(norms), added)
+    except Exception:  # noqa: BLE001 — 規範迴路失敗不得影響主迴圈
+        log.warning("規範迴路蒸餾失敗（忽略）", exc_info=True)
+
+
 # failed 自動分診的頻率護欄：triage_failed 全量掃 backlog（檔案鎖 + 讀寫整份 JSON），
 # 每輪迴圈都跑屬多餘 IO；15 分鐘一次已足夠讓基礎設施型失敗及時復活。行程記憶體即可
 # （重啟歸零＝重啟後第一輪就跑一次，正合「重啟常因環境修好」的場景）。
@@ -4285,6 +4357,8 @@ async def _main_loop(startup_sig: float) -> None:
         # Rule 2：Rule 1（triage_failed）退不了的歷史 timeout-parked，每輪挑 1 筆交專家自動拆分。
         await _maybe_triage_timeout_parked()
         _recover_stale_in_progress()
+        # 規範迴路(A3,灰度):人工介入/失敗事件 → 蒸餾成慣例入 lessons(每日一次)。
+        await _maybe_norms_distill()
         # 任務邊界部署自查：放在取任務之前——此刻保證無 autopilot 討論，是 autodeploy
         # 飢餓下唯一可靠的部署窗口（成功且自身碼有變會 execv，不返回）。
         await _maybe_boundary_redeploy()

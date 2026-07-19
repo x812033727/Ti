@@ -1036,7 +1036,13 @@ async def autopilot_task_action(task_id: int, body: TaskActionBody) -> JSONRespo
         backlog.apply_action, task_id, body.action, priority=body.priority, note=body.note
     )
     if task is not None:
-        interventions.record("task_action", "output_review", task_id=task_id, detail=body.action)
+        # note 一併留痕:規範迴路(A3)把人工筆記蒸餾成慣例——筆記是最有價值的蒸餾材料。
+        interventions.record(
+            "task_action",
+            "output_review",
+            task_id=task_id,
+            detail=f"{body.action}｜{body.note}".rstrip("｜") if body.note else body.action,
+        )
         return JSONResponse({"ok": True, "task": task})
     status = 404 if err.startswith("不存在") else (409 if err.startswith("不可") else 400)
     return JSONResponse({"ok": False, "detail": err}, status_code=status)
