@@ -76,6 +76,7 @@ def _audit_lines() -> list[dict]:
 _SCHEMA_KEYS = {
     "ts",
     "task_id",
+    "source",  # F2b:寫入端內嵌任務 source(自主度量測免疫 backlog 重建)
     "pr",
     "branch",
     "head_sha",
