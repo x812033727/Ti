@@ -34,6 +34,10 @@ _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
 _consecutive_fail_count = 0
 _consecutive_fail_notified = False
 _consecutive_fail_pause_active = False
+# 每日 PR 成本熔斷：行程記憶體計數＋UTC 日戳，跨日歸零；行程重啟歸零可容忍。
+_daily_pr_count = 0
+_daily_pr_day = ""  # UTC YYYY-MM-DD
+_daily_pr_notified = False
 # 自我重載：autopilot 跑討論依賴整個 studio 套件（orchestrator／experts／flow／providers…），
 # 故監看整包 studio/*.py 的 mtime——只盯少數檔會漏掉 orchestrator-only 的部署（如 #218），
 # 讓 autopilot 一直跑舊 orchestration 邏輯（self-reload 在任務之間做、安全）。
@@ -402,6 +406,7 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
             retries=config.PUBLISH_MERGE_RETRIES,
         )
         if outcome == publisher.MergeOutcome.MERGED:
+            _check_daily_pr_budget()
             return (
                 True,
                 f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}（CI 綠後合併）：{detail}",
@@ -1044,6 +1049,39 @@ def _reset_consecutive_fail_period() -> None:
     _consecutive_fail_count = 0
     _consecutive_fail_notified = False
     _consecutive_fail_pause_active = False
+
+
+def _check_daily_pr_budget() -> None:
+    """每日 PR 成本熔斷：於 squash-merge 成功點自增當日計數，達門檻即 _pause + 通知一次。"""
+    global _daily_pr_count, _daily_pr_day, _daily_pr_notified
+
+    budget = int(config.AUTOPILOT_DAILY_PR_BUDGET or 0)
+    if budget <= 0:
+        return
+
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if today != _daily_pr_day:
+        # 跨 UTC 日：計數與通知旗標歸零，開新的一天。
+        _daily_pr_day = today
+        _daily_pr_count = 0
+        _daily_pr_notified = False
+
+    _daily_pr_count += 1
+
+    if _daily_pr_count < budget or _daily_pr_notified:
+        return
+
+    reason = f"單日 PR 數達 {_daily_pr_count}（budget {budget}），每日 PR 成本熔斷暫停待人工檢視"
+    if not _pause(reason):
+        return
+    notify.send_bg(
+        "daily_pr_budget_pause",
+        reason,
+        daily_pr_count=_daily_pr_count,
+        budget=budget,
+        utc_day=today,
+    )
+    _daily_pr_notified = True
 
 
 def _recover_stale_in_progress() -> None:
