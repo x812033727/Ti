@@ -497,6 +497,24 @@ class ProjectImprover:
             "的角度" + tail,
         }
 
+    def _intent_context(self) -> str:
+        """意圖迴路(第 4 階 B3):把專案常駐 intent 變成找問題的差距分析指令。
+
+        每次現讀 meta(不用 self.project 快照)——intent 是「可隨時更新的指令」,
+        使用者改了下一輪就要生效。旗標關/無 intent 回空字串=零行為變更。
+        """
+        if not config.INTENT_LOOP:
+            return ""
+        meta = projects.get(self.project.get("id", "")) or self.project
+        intent = str(meta.get("intent") or "").strip()
+        if not intent:
+            return ""
+        return (
+            f"【專案常駐意圖(北極星指令)】{intent}\n"
+            "請先做差距分析:對照上述意圖與產品現況/近期完成項,優先提出「離意圖最近的"
+            "缺口」任務;與意圖無關的鍍金式改良不要提。\n"
+        )
+
     async def _discover_with_experts(self, pid: str, sid: str) -> list[dict]:
         """多視角並行「找問題」：各視角獨立提案 → 角色輪替合併＋依標題去重。
 
@@ -512,6 +530,7 @@ class ProjectImprover:
         prompts = self._discover_prompts(pid)
         generic = (
             autopilot.north_star_context()
+            + self._intent_context()
             + self._recent_outcomes_context()
             + self._scorecard_context()
             + f"你正在審視長期產品專案「{self.project.get('name', '')}」。"

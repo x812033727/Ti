@@ -121,6 +121,22 @@ def set_publish_repo(project_id: str, repo: str) -> dict | None:
     return meta
 
 
+def set_intent(project_id: str, intent: str) -> dict | None:
+    """設定/覆寫專案常駐意圖(第 4 階 B3;空字串=清除)。
+
+    與 vision 的差別:vision 是建案時的一句話願景(update_vision 只補空不覆寫),
+    intent 是可隨時更新的「北極星指令」——意圖迴路(TI_INTENT_LOOP,improver 找問題
+    的差距分析)持續消費的輸入。只存欄位,不觸發任何執行。
+    """
+    meta = get(project_id)
+    if meta is None:
+        return None
+    meta["intent"] = (intent or "").strip()[:2000]
+    meta["updated_at"] = time.time()
+    _write_meta(project_id, meta)
+    return meta
+
+
 def effective_repo(project: dict | None) -> str:
     """專案實際的目標 repo：專案自設的 publish_repo 優先，否則退回全域 TI_PUBLISH_REPO。
 
