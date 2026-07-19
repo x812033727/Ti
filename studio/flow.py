@@ -15,6 +15,7 @@ import ...`，且對 `studio.orchestrator.<fn>` 的 monkeypatch 仍有效（orch
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import logging
 import re
 
@@ -674,6 +675,9 @@ def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int
 
     任務行：`任務: [#<id>] <title>`（`#id` 可選，缺則依出現序自動編號，1-based）。
     依賴行：`依賴: #<after> -> #<before>`（after 須在 before 完成後才做）。
+    禁改行：`禁改: #<id> <pattern>[, <pattern>...]`（該任務不得改動的路徑；逗號分隔）。
+        寫入對應任務 dict 的 `forbidden_paths`（list[str]）；無禁改行則為空清單（向後相容）。
+        指向不存在任務 id 的禁改行一律丟棄（防懸空），比對語意見 `check_forbidden_paths`。
     無顯式 `任務:` 行時退回 `parse_tasks` 的條列解析（自動編號、無依賴），與循序行為一致。
     指向不存在任務 id 的依賴邊一律丟棄（防懸空）。任務數沿用 `MAX_TASKS` 上限。
     """
@@ -687,18 +691,57 @@ def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int
             while tid in used:  # 顯式 id 與自動序衝突時往後讓位，保證 id 唯一。
                 tid = max(used) + 1
             used.add(tid)
-            tasks.append({"id": tid, "title": title.strip(), "status": "todo"})
+            tasks.append(
+                {"id": tid, "title": title.strip(), "status": "todo", "forbidden_paths": []}
+            )
     else:
         for pos, title in enumerate(parse_tasks(pm_text)[:cap], start=1):
-            tasks.append({"id": pos, "title": title, "status": "todo"})
+            tasks.append({"id": pos, "title": title, "status": "todo", "forbidden_paths": []})
 
-    valid_ids = {t["id"] for t in tasks}
+    by_id = {t["id"]: t for t in tasks}
+    valid_ids = set(by_id)
     edges: list[tuple[int, int]] = []
     for after, before in re.findall(r"^\s*依賴\s*[:：]\s*#(\d+)\s*->\s*#(\d+)\s*$", pm_text, re.M):
         a, b = int(after), int(before)
         if a in valid_ids and b in valid_ids and a != b:
             edges.append((a, b))
+
+    for rid, raw in re.findall(r"^\s*禁改\s*[:：]\s*#(\d+)\s+(.+?)\s*$", pm_text, re.M):
+        tid = int(rid)
+        task = by_id.get(tid)
+        if task is None:  # 懸空 task id 的禁改行安全丟棄。
+            continue
+        for pat in raw.split(","):
+            pat = pat.strip()
+            if pat and pat not in task["forbidden_paths"]:  # 去重保序。
+                task["forbidden_paths"].append(pat)
     return tasks, edges
+
+
+def check_forbidden_paths(staged: list[str], patterns: list[str]) -> list[str]:
+    """回傳 `staged` 檔案中命中任一 `patterns` 的違規清單（純函式、零副作用）。
+
+    比對語意（stdlib，不引入新依賴）：
+    - pattern 以 `/` 結尾 → 視為目錄前綴：`docs/` 命中 `docs/a.md`、`docs/x/y.md`。
+    - 其餘 → `fnmatch` glob：`studio/config.py` 精確命中、`*.py` / `src/*.js` 同層萬用字元。
+    路徑一律以 `/` 正規化（相容 Windows 反斜線 staged 名）。命中保序去重；無命中回空清單。
+    """
+    norm = lambda p: p.replace("\\", "/").strip()  # noqa: E731
+    pats = [norm(p) for p in patterns if norm(p)]
+    if not pats:
+        return []
+    violations: list[str] = []
+    for raw in staged:
+        path = norm(raw)
+        if not path:
+            continue
+        for pat in pats:
+            hit = path.startswith(pat) if pat.endswith("/") else fnmatch.fnmatch(path, pat)
+            if hit:
+                if path not in violations:
+                    violations.append(path)
+                break
+    return violations
 
 
 def build_waves(tasks: list[dict], edges: list[tuple[int, int]]) -> list[list[dict]]:
