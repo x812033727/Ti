@@ -182,6 +182,14 @@ def list_tasks(status: str | None = None, *, state_dir: Path | None = None) -> l
     return tasks
 
 
+def get(task_id: int, *, state_dir: Path | None = None) -> dict | None:
+    """依 id 讀取單一任務；找不到回 None。"""
+    for task in _load(state_dir)["tasks"]:
+        if task["id"] == task_id:
+            return task
+    return None
+
+
 def next_pending(*, state_dir: Path | None = None) -> dict | None:
     """取優先級最高（P0 先）、同級內最早建立、仍 pending 的任務（不改狀態）。
 

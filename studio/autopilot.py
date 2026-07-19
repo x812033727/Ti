@@ -24,13 +24,15 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import backlog, config, deploy, history, publisher, runner
+from . import backlog, config, deploy, history, notify, publisher, runner
 from .orchestrator import StudioSession, parse_tasks
 
 log = logging.getLogger("ti.autopilot")
 
 _GH = ["gh"]
 _GIT_CRED = ["-c", "credential.helper=!gh auth git-credential"]
+_consecutive_fail_count = 0
+_consecutive_fail_notified = False
 # 自我重載：autopilot 跑討論依賴整個 studio 套件（orchestrator／experts／flow／providers…），
 # 故監看整包 studio/*.py 的 mtime——只盯少數檔會漏掉 orchestrator-only 的部署（如 #218），
 # 讓 autopilot 一直跑舊 orchestration 邏輯（self-reload 在任務之間做、安全）。
@@ -997,6 +999,39 @@ def _pause(reason: str) -> None:
     log.warning("已暫停 autopilot：%s", reason)
 
 
+def _record_consecutive_fail_outcome(task_id: int) -> None:
+    """依任務最終狀態更新主迴圈連續 failed 煞車。"""
+    global _consecutive_fail_count, _consecutive_fail_notified
+
+    threshold = int(config.AUTOPILOT_CONSECUTIVE_FAIL_PAUSE or 0)
+    if threshold <= 0:
+        return
+
+    status = (backlog.get(task_id) or {}).get("status")
+    if status == "failed":
+        _consecutive_fail_count += 1
+    elif status in ("done", "merging"):
+        _consecutive_fail_count = 0
+        _consecutive_fail_notified = False
+        return
+    else:
+        return
+
+    if _consecutive_fail_count < threshold or _consecutive_fail_notified:
+        return
+
+    reason = f"連續 {_consecutive_fail_count} 次任務 failed，SLO 煞車暫停待人工檢視"
+    _pause(reason)
+    notify.send_bg(
+        "consecutive_fail_pause",
+        reason,
+        task_id=task_id,
+        consecutive_fail_count=_consecutive_fail_count,
+        threshold=threshold,
+    )
+    _consecutive_fail_notified = True
+
+
 def _recover_stale_in_progress() -> None:
     """把沒有活躍 history session 的 in_progress 任務放回 pending。
 
@@ -1048,6 +1083,8 @@ async def main() -> None:
         except Exception as exc:  # noqa: BLE001 — 單一任務出錯不該弄死整個迴圈
             log.exception("任務 #%s 例外", task.get("id"))
             backlog.set_status(task["id"], "failed", note=f"{type(exc).__name__}: {exc}")
+
+        _record_consecutive_fail_outcome(task["id"])
 
         # 部署後若自身程式碼有更新 → 重載自己,避免跑舊邏輯
         if not config.AUTOPILOT_DRYRUN and _self_sig() != startup_sig:

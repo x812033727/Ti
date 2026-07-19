@@ -1266,3 +1266,6 @@ The parent venv works against the lane code. Let me run the false-green experime
 
 ## 任務 #4 完成：結案彙整——綜合 #1~#3 出具完成判定與一句檢討（是否需回寫教訓）
 
+## 教訓：連續失敗煞車驗收
+
+假綠驗收要先辨識受測行為由幾道護欄把守；N 道護欄就要 N 個對照破壞，不能用單一 mutation 宣稱全部黑樣本已證偽。
