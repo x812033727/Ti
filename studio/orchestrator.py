@@ -154,6 +154,13 @@ class LaneResult:
 
 log = logging.getLogger("ti.orchestrator")
 
+# lane 收尾（teardown）整段防爆閥上界（秒）。實例 #261 曾因某 expert `stop()` 在 anyio
+# 吞取消下永不返回，使 `_teardown_lane` 靜默卡死 76 分鐘。此常數為「非營運旋鈕」的硬上界，
+# 不進 config.py（防爆閥收緊/放寬無運維價值，進 config 反引入頂端＋reload() 兩處同步漂移風險）。
+# 值 120s 遠大於 gather 並行後的實際最壞值（≈ experts._CTRL_TIMEOUT = 30s，且 stop() 已 kill-first），
+# 純作為「stop() 全數異常永不返回」時的兜底；測試以 monkeypatch 縮小此模組屬性即可秒級驗證有界收斂。
+_TEARDOWN_LANE_TIMEOUT = 120.0
+
 
 def _build_experts(session_id: str, cwd: Path) -> dict[str, ExpertLike]:
     # 依設定的 provider 建立專家（延後 import，避免無 SDK 時就失敗）
@@ -2502,15 +2509,38 @@ class StudioSession:
         }
 
     async def _teardown_lane(self, ctx: LaneContext) -> None:
-        """收掉一條並行 lane 的專家連線與 worktree（best-effort）。"""
-        for ex in list(ctx.experts.values()) + list((ctx.critics or {}).values()):
-            try:
-                await ex.stop()
-            except Exception:  # noqa: BLE001
-                pass
-        if self.cwd and ctx.cwd and ctx.branch:
-            await runner.git_worktree_remove(self.cwd, ctx.cwd, ctx.branch)
-        await self._lane_git_snapshot("teardown", ctx.branch)
+        """收掉一條並行 lane 的專家連線與 worktree（best-effort，整段有界收斂）。
+
+        防爆閥：整段包在 `asyncio.timeout(_TEARDOWN_LANE_TIMEOUT)` 內，逾時就地 catch 並 log，
+        **不外拋**——兩處呼叫端（_integrate_wave 的崩潰 lane 收尾與正常合併後收尾）皆為裸 await、
+        無外層 except，TimeoutError 若逸出會使後續 lane 合併/deferred+crashed 重跑/flush 全被跳過，
+        破壞 best-effort 語義（實例 #261 根因即 stop() 永不返回把此段靜默拖死 76 分鐘）。
+        expert stop 改 `asyncio.gather(return_exceptions=True)` 並行收掉——最壞時間為 max(單一 stop)
+        而非 Σ（N experts × _CTRL_TIMEOUT），不隨 lane×expert 數線性放大。
+        進入前先 broadcast phase_change("清理") 作為 history/watchdog 可見錨點，讓「卡在 teardown」
+        與「卡在 task」可被區分。
+        """
+        # 錨點放在 timeout 外：即使收尾整段逾時，監控仍看得到「已進入清理」。
+        await self.broadcast(
+            events.phase_change(self.session_id, "清理", f"收掉 lane {ctx.lane_id}")
+        )
+        try:
+            async with asyncio.timeout(_TEARDOWN_LANE_TIMEOUT):
+                experts = list(ctx.experts.values()) + list((ctx.critics or {}).values())
+                # gather + return_exceptions：單一 stop() 拋例外/被 timeout 收掉都不牽連其他，
+                # 也接管了原逐一 try/except（故不再保留 for 迴圈的個別吞例外，避免死碼）。
+                if experts:
+                    await asyncio.gather(*(ex.stop() for ex in experts), return_exceptions=True)
+                if self.cwd and ctx.cwd and ctx.branch:
+                    await runner.git_worktree_remove(self.cwd, ctx.cwd, ctx.branch)
+                await self._lane_git_snapshot("teardown", ctx.branch)
+        except TimeoutError:
+            # 有界收斂兜底：某 stop()/git 收尾永不返回時，於上界秒數放棄剩餘收尾繼續主流程。
+            log.warning(
+                "lane %s teardown 逾 %.0fs 上界，放棄剩餘收尾繼續主流程",
+                ctx.lane_id,
+                _TEARDOWN_LANE_TIMEOUT,
+            )
 
     async def _lane_git_snapshot(self, where: str, branch: str | None = None) -> None:
         """診斷用：DEBUG 等級時記錄主工作樹的 git 狀態，定位「lane 成果漏進主工作樹」根因。
