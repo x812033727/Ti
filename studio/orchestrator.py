@@ -89,7 +89,7 @@ AGENDA_PROMPT_RULES = (
     "彼此無依賴的任務會被排進同一波次並行執行。\n"
     "  - 若某任務需保護特定檔案不被修改，在該任務行之後輸出 "
     "`禁改: #<id> <pattern>[, <pattern>...]`（逗號分隔多個 pattern）。"
-    "pattern 語意：`/` 結尾＝目錄前綴比對、其餘為 fnmatch glob（`*` 不跨 `/`）。"
+    "pattern 語意：`/` 結尾＝目錄前綴比對、其餘為 PurePath.match 比對（`*` 不跨 `/`）。"
     "範例：`禁改: #2 studio/config.py, docs/`\n"
 )
 

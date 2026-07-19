@@ -20,7 +20,7 @@ def test_agenda_prompt_teaches_forbidden_marker_format_and_example():
 def test_agenda_prompt_states_forbidden_marker_matching_semantics():
     """比對語意在 prompt 內不可只留給文件，PM 需當場看到。"""
     assert "`/` 結尾＝目錄前綴比對" in AGENDA_PROMPT_RULES
-    assert "其餘為 fnmatch glob" in AGENDA_PROMPT_RULES
+    assert "其餘為 PurePath.match 比對" in AGENDA_PROMPT_RULES
     assert "`*` 不跨 `/`" in AGENDA_PROMPT_RULES
 
 
@@ -31,6 +31,18 @@ def test_workflows_doc_records_forbidden_marker_contract():
     assert "禁改: #2 studio/config.py, docs/" in WORKFLOWS_DOC
     assert "懸空 id 會被安全丟棄" in WORKFLOWS_DOC
     assert "目錄前綴比對：staged 路徑以此字串開頭即命中" in WORKFLOWS_DOC
-    assert "`fnmatch` glob 比對" in WORKFLOWS_DOC
+    assert "`PurePath.match` 比對" in WORKFLOWS_DOC
     assert "`*` 不跨 `/`" in WORKFLOWS_DOC
     assert "不引入 `pathspec` 等外部依賴" in WORKFLOWS_DOC
+
+
+def test_purepath_match_semantics_white_and_black():
+    """確認 PurePath.match 的黑白樣本符合文件宣稱（`*` 不跨 `/`）。
+
+    white：*.py 命中 studio/config.py（`*` 只比對最後一段 config.py）。
+    black：docs/* 不命中 docs/a/b.md（`*` 只比對一段，無法同時消化 a 與 b.md）。
+    """
+    from pathlib import PurePath
+
+    assert PurePath("studio/config.py").match("*.py"), "white sample 應命中"
+    assert not PurePath("docs/a/b.md").match("docs/*"), "black sample 不應命中"

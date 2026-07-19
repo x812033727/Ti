@@ -201,9 +201,9 @@ PM 在任務行之後可輸出 `禁改:` 行，告知工程師該任務不得修
 | pattern 形式 | 比對行為 |
 |---|---|
 | 以 `/` 結尾（如 `docs/`） | 目錄前綴比對：staged 路徑以此字串開頭即命中 |
-| 其他（如 `studio/config.py`、`*.lock`） | `fnmatch` glob 比對（`*` 不跨 `/`） |
+| 其他（如 `studio/config.py`、`*.lock`） | `PurePath.match` 比對（`*` 不跨 `/`） |
 
-> 注意：不引入 `pathspec` 等外部依賴；`**` 跨目錄語意不支援，請用目錄前綴（`/` 結尾）代替。
+> 注意：使用 Python 標準庫 `pathlib.PurePath.match`，不引入 `pathspec` 等外部依賴；`**` 跨目錄語意不支援，請用目錄前綴（`/` 結尾）代替。
 
 ### 範例
 
