@@ -25,8 +25,8 @@ log = logging.getLogger("ti.flow")
 # --- 決議解析 -----------------------------------------------------------
 
 
-def _last_match(text: str, pattern: str) -> str | None:
-    matches = re.findall(pattern, text)
+def _last_match(text: str, pattern: str, flags: int = 0) -> str | None:
+    matches = re.findall(pattern, text, flags)
     return matches[-1].strip() if matches else None
 
 
@@ -263,12 +263,12 @@ def parse_workflow_choice(text: str) -> str:
     只負責抽字串，不驗名稱合法性——白名單（限內建流程）是呼叫端 autopilot
     `_select_workflow` 的職責，解析層不做政策判斷。
     """
-    return _last_match(text, r"流程\s*[:：]\s*(.+)") or ""
+    return _last_match(text, r"^\s*流程\s*[:：]\s*(.+)", re.M) or ""
 
 
 def parse_triage_reason(text: str) -> str:
     """從 PM 分診輸出抽出 `理由: <一句話>`（workflow 分診的稽核註記用）；無標記回空字串。"""
-    return _last_match(text, r"理由\s*[:：]\s*(.+)") or ""
+    return _last_match(text, r"^\s*理由\s*[:：]\s*(.+)", re.M) or ""
 
 
 def parse_refutation(text: str) -> str:
