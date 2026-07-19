@@ -264,9 +264,10 @@ def stage_readiness(*, state_dir: Path | None = None) -> dict:
         },
     ]
     all_ok = all(c["ok"] for c in conditions)
+    streak = stage_streak(state_dir=state_dir)
     if on_count == 0:
         stage = "2"
-    elif all_ok and on_count >= len(canaries) - 3:
+    elif all_ok and streak >= 14 and on_count >= len(canaries) - 3:
         stage = "3-ready"
     else:
         stage = "3-progress"
@@ -275,5 +276,61 @@ def stage_readiness(*, state_dir: Path | None = None) -> dict:
         "canaries": canaries,
         "canaries_on": on_count,
         "conditions": conditions,
+        "streak": streak,
+        "streak_target": 14,
         "trust": m,
     }
+
+
+def _stage_history_path(state_dir: Path | None = None) -> Path:
+    return (state_dir or config.AUTOPILOT_STATE_DIR) / "stage_history.jsonl"
+
+
+def record_stage_snapshot(now: float | None = None, *, state_dir: Path | None = None) -> bool:
+    """把當日(UTC)宣告條件快照落檔 stage_history.jsonl(一天一筆冪等);回是否新寫。
+
+    「連續 14 天條件全綠」需要歷史——快照由 digest scheduler 每日呼叫(同一節拍)。
+    """
+    from . import jsonl_log
+
+    t = now if now is not None else time.time()
+    day = _utc_day(t)
+    path = _stage_history_path(state_dir)
+    for rec in jsonl_log.read_window(path, 3):
+        if rec.get("day") == day:
+            return False  # 當日已記,冪等
+    snap = stage_readiness(state_dir=state_dir)
+    jsonl_log.append(
+        path,
+        {
+            "ts": t,
+            "day": day,
+            "all_ok": all(c["ok"] for c in snap["conditions"]),
+            "conditions": {c["key"]: c["ok"] for c in snap["conditions"]},
+            "canaries_on": snap["canaries_on"],
+        },
+    )
+    return True
+
+
+def stage_streak(*, state_dir: Path | None = None) -> int:
+    """由新往舊數「四條件全綠」的連續天數(含今日快照若存在);斷檔=中斷。"""
+    from . import jsonl_log
+
+    recs = jsonl_log.read_window(_stage_history_path(state_dir), 60)
+    by_day = {r.get("day"): bool(r.get("all_ok")) for r in recs if r.get("day")}
+    if not by_day:
+        return 0
+    streak = 0
+    t = time.time()
+    for i in range(60):
+        day = _utc_day(t - i * 86400)
+        ok = by_day.get(day)
+        if ok is None:
+            if i == 0:
+                continue  # 今日尚未快照,不中斷,從昨日起算
+            break
+        if not ok:
+            break
+        streak += 1
+    return streak

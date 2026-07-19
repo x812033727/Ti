@@ -59,7 +59,7 @@ def test_stage3_progress_and_condition_measurement(monkeypatch):
     assert conds["slo_armed"]["ok"] is False, "門檻=0 未武裝"
 
 
-def test_stage3_ready_when_conditions_green_and_most_on(monkeypatch):
+def test_conditions_green_but_no_streak_stays_progress(monkeypatch):
     for flag, val in [
         ("OBJECTIVE_GATE", "1"),
         ("EXPERT_SKILLS", True),
@@ -83,7 +83,9 @@ def test_stage3_ready_when_conditions_green_and_most_on(monkeypatch):
         },
     )
     out = insights.stage_readiness()
-    assert out["stage"] == "3-ready" and out["canaries_on"] == 6
+    # D5 起 3-ready 另要求 streak>=14(歷史空=0)→ 快照全綠仍為 progress;
+    # ready 路徑由 test_stage_streak.test_stage_ready_requires_streak 覆蓋。
+    assert out["stage"] == "3-progress" and out["canaries_on"] == 6 and out["streak"] == 0
 
 
 def test_zero_touch_needs_sample(monkeypatch):

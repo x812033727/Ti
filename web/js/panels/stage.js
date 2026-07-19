@@ -47,6 +47,22 @@ export async function renderStage() {
   }
   host.appendChild(condGrid);
 
+  // 宣告 streak 進度(D5):條件全綠連續 N/14 天
+  if (typeof d.streak === "number") {
+    const target = d.streak_target || 14;
+    const wrap = document.createElement("div");
+    wrap.className = "stage-streak";
+    appendTextEl(wrap, "span", "muted", `條件全綠連續 ${d.streak}/${target} 天`);
+    const bar = document.createElement("div");
+    bar.className = "streak-bar";
+    const fill = document.createElement("div");
+    fill.className = "streak-fill";
+    fill.style.width = Math.min(100, Math.round((d.streak / target) * 100)) + "%";
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+    host.appendChild(wrap);
+  }
+
   // 信任數字一行
   const tr = d.trust || {};
   appendTextEl(
