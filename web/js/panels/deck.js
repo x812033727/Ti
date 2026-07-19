@@ -3,14 +3,21 @@ import { $, icon } from "../dom.js";
 import { createProjectFlow, deleteProject, setProjectPublishRepo } from "./project.js";
 import { setView } from "./dashboard.js";
 
+// 執行狀態變更回呼(Kimi 化 PR4):home 模組訂閱以同步 hero composer 鎖定狀態。
+// 用註冊表而非反向 import(home→ws→deck 已成鏈,deck→home 會成環)。
+const _runningCbs = [];
+export function onRunningChange(cb) { _runningCbs.push(cb); }
+
 export function setRunning(running) {
-  if (running) setView("studio"); // 開跑即切到工作室視圖看直播；結束不自動切回
+  // 開跑切到工作室看直播;但 home 對話模式(assistant 首頁)留在 home,直播在 #homeChat。
+  if (running && document.body.dataset.view !== "home") setView("studio");
   $("#startBtn").disabled = running;
   $("#stopBtn").disabled = !running;
   $("#interjectInput").disabled = !running;
   $("#interjectBtn").disabled = !running;
   $("#deckStop").classList.toggle("hidden", !running); // 收合列的停止鈕只在執行中顯示
   if (!running) setDeckCollapsed(false);               // 討論結束自動展開，方便開下一場
+  for (const cb of _runningCbs) { try { cb(running); } catch { /* 回呼不得炸主流程 */ } }
 }
 
 // --- 啟動列收合：手機按「開始」後自動收成單列，點擊即展開 -----------------

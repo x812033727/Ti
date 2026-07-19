@@ -14,7 +14,8 @@ export function focusComposer() {
 
 export function bindSidenav() {
   const newChat = $("#homeNewChat");
-  if (newChat) newChat.onclick = focusComposer;
+  // 動態 import 防循環(home.js 亦 import 本模組的 focusComposer)
+  if (newChat) newChat.onclick = () => import("./home.js").then((m) => m.resetToHero());
   const studio = $("#snStudio");
   if (studio) studio.onclick = () => setView("studio");
 }
