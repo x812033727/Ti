@@ -7,11 +7,11 @@
 ## 邊界
 
 - lane 全收斂 -> demo 開始
-- 起點：`studio/orchestrator.py:2435` `await asyncio.gather(` —— 本波所有 lane task 收齊。
-- 主要過渡段：`studio/orchestrator.py:2439` `await self._integrate_wave(` —— 進入整合入口。
+- 起點：`studio/orchestrator.py:2439` `await asyncio.gather(` —— 本波所有 lane task 收齊。
+- 主要過渡段：`studio/orchestrator.py:2443` `await self._integrate_wave(` —— 進入整合入口。
   （此處直呼現存實碼 `_integrate_wave`；產品碼不因測試而額外包一層 wrapper。）
-- 過渡段實作：`studio/orchestrator.py:2653` `async def _integrate_wave(`。
-- 終點：`studio/orchestrator.py:1485` `_stage_demo` -> `studio/orchestrator.py:1487` `await self._final_demo()`。
+- 過渡段實作：`studio/orchestrator.py:2657` `async def _integrate_wave(`。
+- 終點：`studio/orchestrator.py:1489` `_stage_demo` -> `studio/orchestrator.py:1491` `await self._final_demo()`。
 
 ## 無界葉節點結論
 
@@ -20,7 +20,7 @@
 實證：`studio/orchestrator.py` 全檔無 `create_subprocess` / `proc.wait()` / `proc.communicate()`，
 所有 subprocess 一律委派 `runner.*`；**過渡段 subprocess 收尾均帶 timeout**（SSOT 落在
 `studio/runner.py` 的 `_finalize_proc` / `_wait_proc` / `run_http_demo`，非 orchestrator 重複實作）。
-人類插話等待 `studio/orchestrator.py:449` 的 `queue.get()` 也由 `asyncio.wait_for` 1 秒切片包住，
+人類插話等待 `studio/orchestrator.py:453` 的 `queue.get()` 也由 `asyncio.wait_for` 1 秒切片包住，
 可被 stop 即時中止。
 
 但**網路 await 並非全部有界**：過渡段 6 個 `await self.broadcast(`（行 2688 / 2750 / 2787 /
@@ -38,42 +38,42 @@
 
 | 位置 | await | 型別 | 現有 timeout | 判定 |
 |---|---|---|---|---|
-| studio/orchestrator.py:449 | await asyncio.wait_for( | queue.get()（澄清段，非過渡段） | wait_for + 1 秒切片 | 有界 |
-| studio/orchestrator.py:1487 | await self._final_demo() | demo 入口（終點） | subprocess leaf 走 runner timeout | 有界 |
-| studio/orchestrator.py:2435 | await asyncio.gather( | lane fan-in（聚合） | lane leaf 走 runner/TURN timeout | 有界 |
-| studio/orchestrator.py:2439 | await self._integrate_wave(opened, results, deferred, plan_ctx) | 過渡段整合入口 | 內部 git/LLM leaf 帶 timeout | 有界 |
-| studio/orchestrator.py:2688 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
-| studio/orchestrator.py:2698 | await self._teardown_lane(ctx) | lane 收尾（委派） | 內部共享 _TEARDOWN_LANE_TIMEOUT deadline | 有界 |
-| studio/orchestrator.py:2707 | await self._merge_lane(lr, plan_ctx) | lane 合併（委派） | 內部 git leaf 走 runner timeout | 有界 |
-| studio/orchestrator.py:2709 | await self._teardown_lane(lr.ctx) | lane 收尾（委派） | 內部共享 _TEARDOWN_LANE_TIMEOUT deadline | 有界 |
-| studio/orchestrator.py:2714 | await self._run_task_in_lane(self._main_ctx, task, plan_ctx) | 任務執行（委派） | LLM/subprocess leaf 走 TURN/runner timeout | 有界 |
-| studio/orchestrator.py:2736 | await self._lane_git_snapshot("pre-merge", lr.ctx.branch) | git 快照（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2737 | await runner.git_merge_worktree(self.cwd, lr.ctx.branch) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2747 | await runner.git_head_short(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2750 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
-| studio/orchestrator.py:2753 | await self._lane_git_snapshot("post-merge-ok", lr.ctx.branch) | git 快照（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2759 | await runner.git_merge_abort(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2761 | await self._resolve_conflict_in_lane(lr, plan_ctx) | 解衝突（委派） | git/LLM leaf 帶 timeout | 有界 |
-| studio/orchestrator.py:2766 | await self._serialize_lane_rerun( | 序列化重跑（委派） | 任務 leaf 走 TURN timeout | 有界 |
-| studio/orchestrator.py:2779 | await self._serialize_lane_rerun( | 序列化重跑（委派） | 任務 leaf 走 TURN timeout | 有界 |
-| studio/orchestrator.py:2787 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
-| studio/orchestrator.py:2797 | await self.broadcast(events.phase_change(self.session_id, "合併衝突", reason)) | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
-| studio/orchestrator.py:2806 | await self._run_task_in_lane(self._main_ctx, task, plan_ctx) | 任務執行（委派） | LLM/subprocess leaf 走 TURN/runner timeout | 有界 |
-| studio/orchestrator.py:2822 | await runner.git_merge_ref_into(lr.ctx.cwd, self._last_commit) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2825 | await runner.git_commit(lr.ctx.cwd, f"併入主幹 {self._last_commit}") | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2827 | await self._merge_resolved_lane_back(lr) | 解衝突後合回（委派） | git leaf 走 runner timeout | 有界 |
-| studio/orchestrator.py:2830 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
-| studio/orchestrator.py:2838 | await self._speak( | LLM 對話 | provider/TURN timeout | 有界 |
-| studio/orchestrator.py:2847 | await runner.git_merge_abort(lr.ctx.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2850 | await runner.git_conflict_markers_present(lr.ctx.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:453 | await asyncio.wait_for( | queue.get()（澄清段，非過渡段） | wait_for + 1 秒切片 | 有界 |
+| studio/orchestrator.py:1491 | await self._final_demo() | demo 入口（終點） | subprocess leaf 走 runner timeout | 有界 |
+| studio/orchestrator.py:2439 | await asyncio.gather( | lane fan-in（聚合） | lane leaf 走 runner/TURN timeout | 有界 |
+| studio/orchestrator.py:2443 | await self._integrate_wave(opened, results, deferred, plan_ctx) | 過渡段整合入口 | 內部 git/LLM leaf 帶 timeout | 有界 |
+| studio/orchestrator.py:2692 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
+| studio/orchestrator.py:2702 | await self._teardown_lane(ctx) | lane 收尾（委派） | 內部共享 _TEARDOWN_LANE_TIMEOUT deadline | 有界 |
+| studio/orchestrator.py:2711 | await self._merge_lane(lr, plan_ctx) | lane 合併（委派） | 內部 git leaf 走 runner timeout | 有界 |
+| studio/orchestrator.py:2713 | await self._teardown_lane(lr.ctx) | lane 收尾（委派） | 內部共享 _TEARDOWN_LANE_TIMEOUT deadline | 有界 |
+| studio/orchestrator.py:2718 | await self._run_task_in_lane(self._main_ctx, task, plan_ctx) | 任務執行（委派） | LLM/subprocess leaf 走 TURN/runner timeout | 有界 |
+| studio/orchestrator.py:2740 | await self._lane_git_snapshot("pre-merge", lr.ctx.branch) | git 快照（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2741 | await runner.git_merge_worktree(self.cwd, lr.ctx.branch) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2751 | await runner.git_head_short(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2754 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
+| studio/orchestrator.py:2757 | await self._lane_git_snapshot("post-merge-ok", lr.ctx.branch) | git 快照（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2763 | await runner.git_merge_abort(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2765 | await self._resolve_conflict_in_lane(lr, plan_ctx) | 解衝突（委派） | git/LLM leaf 帶 timeout | 有界 |
+| studio/orchestrator.py:2770 | await self._serialize_lane_rerun( | 序列化重跑（委派） | 任務 leaf 走 TURN timeout | 有界 |
+| studio/orchestrator.py:2783 | await self._serialize_lane_rerun( | 序列化重跑（委派） | 任務 leaf 走 TURN timeout | 有界 |
+| studio/orchestrator.py:2791 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
+| studio/orchestrator.py:2801 | await self.broadcast(events.phase_change(self.session_id, "合併衝突", reason)) | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
+| studio/orchestrator.py:2810 | await self._run_task_in_lane(self._main_ctx, task, plan_ctx) | 任務執行（委派） | LLM/subprocess leaf 走 TURN/runner timeout | 有界 |
+| studio/orchestrator.py:2826 | await runner.git_merge_ref_into(lr.ctx.cwd, self._last_commit) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2829 | await runner.git_commit(lr.ctx.cwd, f"併入主幹 {self._last_commit}") | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2831 | await self._merge_resolved_lane_back(lr) | 解衝突後合回（委派） | git leaf 走 runner timeout | 有界 |
+| studio/orchestrator.py:2834 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
+| studio/orchestrator.py:2842 | await self._speak( | LLM 對話 | provider/TURN timeout | 有界 |
 | studio/orchestrator.py:2851 | await runner.git_merge_abort(lr.ctx.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2854 | await runner.git_commit(lr.ctx.cwd, f"化解與主幹 {self._last_commit} 的合併衝突") | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2854 | await runner.git_conflict_markers_present(lr.ctx.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
 | studio/orchestrator.py:2855 | await runner.git_merge_abort(lr.ctx.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2857 | await self._merge_resolved_lane_back(lr) | 解衝突後合回（委派） | git leaf 走 runner timeout | 有界 |
-| studio/orchestrator.py:2861 | await runner.git_merge_worktree(self.cwd, lr.ctx.branch) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2863 | await runner.git_merge_abort(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2865 | await runner.git_head_short(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
-| studio/orchestrator.py:2868 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
+| studio/orchestrator.py:2858 | await runner.git_commit(lr.ctx.cwd, f"化解與主幹 {self._last_commit} 的合併衝突") | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2859 | await runner.git_merge_abort(lr.ctx.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2861 | await self._merge_resolved_lane_back(lr) | 解衝突後合回（委派） | git leaf 走 runner timeout | 有界 |
+| studio/orchestrator.py:2865 | await runner.git_merge_worktree(self.cwd, lr.ctx.branch) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2867 | await runner.git_merge_abort(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2869 | await runner.git_head_short(self.cwd) | git subprocess（委派 runner） | runner _finalize_proc timeout | 有界 |
+| studio/orchestrator.py:2872 | await self.broadcast( | 事件廣播 | 無 wait_for（委派 ws.py:355 send_json） | 無界網路 await |
 
 ## 結論
 
