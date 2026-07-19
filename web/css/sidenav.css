@@ -103,3 +103,16 @@
 .sn-menu button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .sn-menu button:disabled { opacity: 0.45; cursor: default; }
 .sn-menu button.danger { color: var(--bad); }
+
+/* 「需要你」badge(軌 F1):待答澄清數 */
+.sn-badge {
+  margin-left: auto;
+  min-width: 1.4em;
+  padding: 0 0.35em;
+  border-radius: var(--r-full);
+  background: var(--bad);
+  color: #fff;
+  font-size: var(--fs-0);
+  line-height: 1.5;
+  text-align: center;
+}

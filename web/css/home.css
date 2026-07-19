@@ -228,3 +228,29 @@ body[data-view="home"] main.layout { display: none; }
 .stage-streak { display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-2); }
 .streak-bar { flex: 1; height: 8px; border-radius: var(--r-full); background: var(--surface-2); overflow: hidden; }
 .streak-fill { height: 100%; background: var(--grad-accent); border-radius: var(--r-full); transition: width var(--t-med) var(--ease); }
+
+/* 「需要你」例外收件匣(軌 F1) */
+.att-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  background: var(--surface-1);
+}
+.att-card.clarify { border-color: var(--warn); }
+.att-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.att-title { font-weight: 600; }
+.att-question { margin: var(--sp-2) 0; white-space: pre-wrap; }
+.att-note { margin: var(--sp-1) 0 0; white-space: pre-wrap; }
+.att-answer { display: flex; gap: var(--sp-2); align-items: flex-end; }
+.att-input { flex: 1; resize: vertical; min-height: 2.4em; }
+.att-events { display: flex; flex-direction: column; gap: var(--sp-1); }
+.att-event { display: flex; gap: var(--sp-2); align-items: baseline; flex-wrap: wrap; }
+.att-ev-kind {
+  flex-shrink: 0;
+  font-size: var(--fs-1);
+  font-weight: 600;
+  color: var(--bad);
+}
+.att-ev-title { flex: 1; min-width: 12ch; }
+.att-ev-time { font-size: var(--fs-1); flex-shrink: 0; }

@@ -1072,6 +1072,12 @@ async def autopilot_trust(days: int = 7) -> JSONResponse:
     return JSONResponse(await asyncio.to_thread(insights.trust_metrics, days))
 
 
+@router.get("/api/autopilot/attention", dependencies=[Depends(auth.require_auth)])
+async def autopilot_attention(days: int = 7) -> JSONResponse:
+    """「需要你」例外收件匣(第 4 階按例外監控):澄清待答/停放+原因/page 級事件。"""
+    return JSONResponse(await asyncio.to_thread(insights.attention, days))
+
+
 @router.get("/api/autopilot/investigations", dependencies=[Depends(auth.require_auth)])
 async def autopilot_investigations(limit: int = 50) -> JSONResponse:
     """調查任務結論清單(backlog note 前綴 + audit investigation_* join)。"""
@@ -1146,6 +1152,7 @@ _ACTIVITY_FIELDS = (
     "status",
     "updated_at",
     "note",
+    "clarify",
     "attempts",
     "source",
     "session_id",
