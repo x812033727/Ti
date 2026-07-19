@@ -63,25 +63,40 @@ def _is_subprocess_call(
     return False
 
 
-def _has_keyword(call: ast.Call, keyword: str) -> bool:
-    return any(item.arg == keyword for item in call.keywords)
+def _keyword(call: ast.Call, keyword: str) -> ast.keyword | None:
+    for item in call.keywords:
+        if item.arg == keyword:
+            return item
+    return None
 
 
-def _calls_scrub_proxy_env(tree: ast.AST, scrub_names: set[str]) -> bool:
+def _scrubbed_env_lines(tree: ast.AST, scrub_names: set[str]) -> dict[str, list[int]]:
+    scrubbed: dict[str, list[int]] = {}
     if not scrub_names:
-        return False
+        return scrubbed
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in scrub_names:
-                return True
-    return False
+            if node.func.id in scrub_names and node.args and isinstance(node.args[0], ast.Name):
+                scrubbed.setdefault(node.args[0].id, []).append(node.lineno)
+    return scrubbed
+
+
+def _env_scrubbed_before(
+    env_value: ast.AST,
+    call_line: int,
+    scrubbed_lines: dict[str, list[int]],
+) -> bool:
+    return isinstance(env_value, ast.Name) and any(
+        line < call_line for line in scrubbed_lines.get(env_value.id, [])
+    )
 
 
 def _collect_violations(source: str, filename: str = "<source>") -> list[str]:
     tree = ast.parse(source, filename=filename)
     subprocess_modules, subprocess_call_names = _collect_subprocess_imports(tree)
     scrub_names = _collect_scrub_imports(tree)
+    scrubbed_lines = _scrubbed_env_lines(tree, scrub_names)
     subprocess_calls: list[ast.Call] = []
     violations: list[str] = []
 
@@ -92,15 +107,25 @@ def _collect_violations(source: str, filename: str = "<source>") -> list[str]:
             subprocess_call_names,
         ):
             subprocess_calls.append(node)
-            if not _has_keyword(node, "env"):
+            env_keyword = _keyword(node, "env")
+            if env_keyword is None:
                 violations.append(f"{filename}:L{node.lineno}: subprocess call missing env=")
+            elif scrubbed_lines and not _env_scrubbed_before(
+                env_keyword.value,
+                node.lineno,
+                scrubbed_lines,
+            ):
+                violations.append(
+                    f"{filename}:L{node.lineno}: subprocess env must be scrubbed "
+                    "via scrub_proxy_env()"
+                )
 
     if not subprocess_calls:
         return []
 
     if not scrub_names:
         violations.append(f"{filename}: missing scrub_proxy_env import")
-    if not _calls_scrub_proxy_env(tree, scrub_names):
+    if not scrubbed_lines:
         violations.append(f"{filename}: missing scrub_proxy_env call")
 
     return violations
@@ -148,6 +173,25 @@ def test_proxy_scrub_guard_rejects_missing_client_env() -> None:
     )
 
     assert _collect_violations(source) == ["<source>:L8: subprocess call missing env="]
+
+
+def test_proxy_scrub_guard_rejects_unscrubbed_env_keyword() -> None:
+    source = (
+        "import os\n"
+        "import subprocess\n"
+        "from _real_server_client import scrub_proxy_env\n"
+        "def test_real_server(tmp_path):\n"
+        "    env = os.environ.copy()\n"
+        "    other_env = os.environ.copy()\n"
+        "    scrub_proxy_env(other_env)\n"
+        "    subprocess.Popen(['server'], env=env)\n"
+        "    subprocess.run(['client'], env=env)\n"
+    )
+
+    assert _collect_violations(source) == [
+        "<source>:L8: subprocess env must be scrubbed via scrub_proxy_env()",
+        "<source>:L9: subprocess env must be scrubbed via scrub_proxy_env()",
+    ]
 
 
 def test_proxy_scrub_guard_accepts_scrubbed_subprocesses() -> None:
