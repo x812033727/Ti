@@ -314,6 +314,51 @@ async def test_git_commit_no_change_returns_none_head_unmoved(tmp_path):
     assert head.output.strip() == h1, "無變更不應移動 HEAD"
 
 
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_blocks_commit_and_returns_violations(tmp_path):
+    """帶禁改清單時，staged 命中即不 commit，且回傳違規檔清單。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "safe.txt").write_text("base")
+    base_hash = await runner.git_commit(tmp_path, "base")
+    assert isinstance(base_hash, str)
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "blocked.md").write_text("blocked")
+    (tmp_path / "safe.txt").write_text("changed")
+    result = await runner.git_commit(tmp_path, "should be blocked", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash is None
+    assert result.forbidden_violations == ["docs/blocked.md"]
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == base_hash, "違規時 HEAD 不應前進"
+
+
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_allows_non_matching_commit(tmp_path):
+    """帶禁改清單但未命中時仍照常 commit，結果物件帶短 hash 與空違規清單。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "safe.txt").write_text("v1")
+
+    result = await runner.git_commit(tmp_path, "allowed", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash and result.ok
+    assert result.forbidden_violations == []
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == result.commit_hash
+
+
 @pytest.mark.asyncio
 async def test_git_commit_sequential_distinct_hashes(tmp_path):
     """連續多次有變更的 commit 各回不同短 hash。"""
