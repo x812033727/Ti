@@ -2,6 +2,7 @@
 // switch 分派為前後端契約（studio/events.py 的 EventType 一一對應）：
 // 無 default 分支（未知事件天然被忽略）、payload 一律 `ev.payload || {}` 防呆。
 import { $, icon, toast } from "./dom.js";
+import { renderMarkdownInto } from "./markdown.js";
 import { state } from "./state.js";
 import { setRunning, loadProjects } from "./panels/deck.js";
 
@@ -106,7 +107,15 @@ export function addMessage(p) {
   el.innerHTML = `
     <div class="av">${p.avatar}</div>
     <div class="body"><div class="who">${p.name}</div><div class="txt"></div></div>`;
-  el.querySelector(".txt").textContent = p.text;
+  // 專家訊息走 sanitizing markdown(PR3):sanitizer 全程 createElement/textContent,
+  // 原文 HTML 永遠是字面文字;任何解析意外退回純文字,渲染不得中斷討論串。
+  const txt = el.querySelector(".txt");
+  txt.classList.add("md");
+  try {
+    renderMarkdownInto(txt, p.text);
+  } catch {
+    txt.textContent = p.text;
+  }
   sink(p).appendChild(el);
   scrollStream();
 }
