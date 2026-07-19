@@ -349,6 +349,11 @@ APPRAISAL_MAX_STORE = _env_int("TI_APPRAISAL_MAX_STORE", 2000)
 CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
 CLARIFY_TIMEOUT = _env_float("TI_CLARIFY_TIMEOUT", 180)  # 等使用者回覆的秒數
 CLARIFY_MAX_QUESTIONS = _env_int("TI_CLARIFY_MAX_QUESTIONS", 4)
+# async clarify(第 4 階 B4):autopilot 新任務先由 FAST 探測「無法安全假設的關鍵歧義」,
+# 有問題→任務 parked([待澄清] note)+page 推播,不阻塞主迴圈;人答(unpark+note)或逾時
+# (依假設前進)後續跑。0=關(預設灰度)。互動 session 的阻塞式 clarify(TI_CLARIFY)不受影響。
+CLARIFY_ASYNC = os.getenv("TI_CLARIFY_ASYNC", "0") not in ("0", "false", "False", "")
+CLARIFY_ASYNC_TIMEOUT_H = _env_float("TI_CLARIFY_ASYNC_TIMEOUT_H", 24.0)
 
 # 知識沉澱（workspace 的 docs/RESEARCH.md；PRD.md 由澄清階段寫根、設計決策由 ADR 寫根）：
 # 調研結論持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然跨場次累積。
@@ -1376,6 +1381,7 @@ def reload() -> None:
     global AUTOPILOT_DISCOVERED_DAILY_CAP, AUTOPILOT_RETRY_COOLDOWN_S
     global SLO_ZERO_TOUCH_MIN, SLO_MIN_MERGED
     global NORMS_LOOP
+    global CLARIFY_ASYNC, CLARIFY_ASYNC_TIMEOUT_H
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1508,6 +1514,8 @@ def reload() -> None:
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
     CLARIFY_TIMEOUT = _env_float("TI_CLARIFY_TIMEOUT", 180)
     CLARIFY_MAX_QUESTIONS = _env_int("TI_CLARIFY_MAX_QUESTIONS", 4)
+    CLARIFY_ASYNC = os.getenv("TI_CLARIFY_ASYNC", "0") not in ("0", "false", "False", "")
+    CLARIFY_ASYNC_TIMEOUT_H = _env_float("TI_CLARIFY_ASYNC_TIMEOUT_H", 24.0)
     DISCOVER_ROLES = [
         r.strip()
         for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")
