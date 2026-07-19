@@ -92,6 +92,7 @@
 | 2.2d | 後端 Provider（select，高風險） | 展開「後端 Provider」下拉，選 antigravity | 可選取 antigravity，下拉顯示 antigravity（生效後改走伺服器上的 Antigravity CLI 登入／模型設定） | | | 正常值 |
 | 2.3 | 後端 Provider（select，高風險） | 下拉只有 claude／openai／minimax／gemini／codex／antigravity 六個選項，確認無空白選項可選 | 下拉內僅 claude、openai、minimax、gemini、codex、antigravity，無空值可選（select 本身不會是空的） | | | 空值象限：UI 不允許空 |
 | 2.4 | 後端 Provider（select，高風險） | 用開發者工具把 option 改成 `bogus`（或直接 `POST /api/settings` 送 `TI_PROVIDER=bogus`）後儲存，再重開面板 | 非法值被後端忽略不寫入，Provider 仍維持原本合法值（claude／openai／minimax／gemini／codex／antigravity） | | | 非法值：後端白名單擋下 |
+| 2.90 | 各欄位輸入與驗證 | 以 API 對 `TI_DEFAULT_VIEW`(預設視圖)送非法選項(例如 `xxx`) | 後端 update() 白名單忽略非法值,原設定不變;UI 下拉僅列 home/dash/studio | | | 非法值一律忽略 |
 | 2.5 | Claude API Key（password／秘密，高風險） | 在 Claude API Key 欄輸入一組正常金鑰（如 sk-ant-xxxx）後儲存 | 顯示「已儲存」提示；重開面板該欄為空白、提示「已設定（留空＝不變更）」，不顯示明文 | | | 正常值＋不外洩 |
 | 2.6 | Claude API Key（password／秘密，高風險） | 在**已設定**的 Claude API Key 欄留空，直接儲存 | 既有金鑰不被清空（留空＝不變更）；重開仍顯示「已設定」 | | | 空值象限（高風險，與④呼應） |
 | 2.7 | Claude API Key（password／秘密，高風險） | 在 Claude API Key 欄貼上一段超長字串（例如 2000 字元）後儲存 | 欄位與面板版面不變形（不出現水平捲軸或溢出破版）；可儲存，重開顯示「已設定」 | | | 邊界：超長輸入 |

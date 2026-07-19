@@ -93,6 +93,14 @@ FIELDS: tuple[Field, ...] = (
         group="一般",
     ),
     Field(
+        "TI_DEFAULT_VIEW",
+        "預設視圖（home＝助手首頁／dash＝監控／studio＝工作室）",
+        kind="select",
+        options=("home", "dash", "studio"),
+        default="home",
+        group="一般",
+    ),
+    Field(
         "ANTHROPIC_API_KEY",
         "Claude API Key",
         kind="password",
