@@ -1153,6 +1153,11 @@ AUTOPILOT_FOLLOWUP_MAX_GEN = _env_int("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", 3)
 #   合計）。價值閘擋「爛的」、寬度/代數閘擋「同源太多的」，此為總量閘——實測 pending 172
 #   筆中 85% 自產、產生速度 > 消化速度（~8/天），存量只增不減。20＝寬鬆日額；0＝不限。
 AUTOPILOT_DISCOVERED_DAILY_CAP = _env_int("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", 20)
+# SLO 自動煞車(第 3 階 A4):7 天零人工介入合併率(insights.trust_metrics)低於此門檻時,
+# 自產日額自動砍半並推播 slo_brake(每 UTC 日至多一次)。0=停用(預設;信任基線收完、
+# 門檻有依據後才開,建議 0.8)。樣本不足 SLO_MIN_MERGED 視為資料不足不煞車(冷啟動保護)。
+SLO_ZERO_TOUCH_MIN = _env_float("TI_SLO_ZERO_TOUCH_MIN", 0.0)
+SLO_MIN_MERGED = _env_int("TI_SLO_MIN_MERGED", 5)
 # AUTOPILOT_RETRY_COOLDOWN_S：討論未收斂退回 pending 後的重抓冷卻秒數（retry_after 欄位，
 #   next_pending/claim_next 尊重）。0＝不冷卻（舊行為）。動機：2026-07-11 09:24 LLM 劣化
 #   窗口,調查失敗退回後旁路 60s 即重抓,3 次 attempts 在 3 分鐘內於同一窗口內燒光——
@@ -1360,6 +1365,7 @@ def reload() -> None:
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global AUTOPILOT_DISCOVERED_DAILY_CAP, AUTOPILOT_RETRY_COOLDOWN_S
+    global SLO_ZERO_TOUCH_MIN, SLO_MIN_MERGED
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1603,6 +1609,8 @@ def reload() -> None:
     AUTOPILOT_FOLLOWUP_MAX_PER_TASK = _env_int("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", 3)
     AUTOPILOT_FOLLOWUP_MAX_GEN = _env_int("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", 3)
     AUTOPILOT_DISCOVERED_DAILY_CAP = _env_int("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", 20)
+    SLO_ZERO_TOUCH_MIN = _env_float("TI_SLO_ZERO_TOUCH_MIN", 0.0)
+    SLO_MIN_MERGED = _env_int("TI_SLO_MIN_MERGED", 5)
     AUTOPILOT_RETRY_COOLDOWN_S = _env_int("TI_AUTOPILOT_RETRY_COOLDOWN_S", 600)
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)

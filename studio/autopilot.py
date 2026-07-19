@@ -54,6 +54,7 @@ from . import (
     events,
     git_cred,
     history,
+    insights,
     notify,
     provider_quota,
     publisher,
@@ -1814,11 +1815,59 @@ def _discovered_added_today(now: float | None = None) -> int:
     )
 
 
+# SLO 煞車推播的當日一次去重(UTC 日 tuple);行程重啟重置=最多多推一次,可容忍。
+_slo_brake_notified_day: tuple | None = None
+
+
+def _slo_brake_factor() -> int:
+    """SLO 自動煞車(第 3 階 A4):信任未達標時自產日額的除數(2=砍半),否則 1。
+
+    把「信任」從人為判斷變成控制迴路:7 天零人工介入合併率(insights.trust_metrics)
+    低於 TI_SLO_ZERO_TOUCH_MIN 時,系統自動收縮自產、推播 slo_brake 讓人介入調規範,
+    而不是繼續全速產出待人審的工作。0=停用(預設);樣本 < SLO_MIN_MERGED 不煞車
+    (冷啟動保護);指標讀取失敗一律不煞車——煞車是加值,不得影響主迴圈。
+    """
+    threshold = config.SLO_ZERO_TOUCH_MIN
+    if threshold <= 0:
+        return 1
+    try:
+        m = insights.trust_metrics(7)
+    except Exception:  # noqa: BLE001 — 指標壞了不擋自產
+        log.debug("SLO 煞車讀取信任指標失敗(忽略,不煞車)", exc_info=True)
+        return 1
+    rate = m.get("zero_touch_rate")
+    if rate is None or int(m.get("merged") or 0) < config.SLO_MIN_MERGED:
+        return 1
+    if rate >= threshold:
+        return 1
+    global _slo_brake_notified_day
+    day = time.gmtime()[:3]
+    if _slo_brake_notified_day != day:
+        _slo_brake_notified_day = day
+        notify.send_bg(
+            "slo_brake",
+            f"零介入合併率 {rate:.0%} 低於門檻 {threshold:.0%}，自產日額自動砍半",
+            rate=rate,
+            threshold=threshold,
+            merged=int(m.get("merged") or 0),
+        )
+    log.warning(
+        "SLO 煞車生效:7 天零介入合併率 %.0f%% < 門檻 %.0f%%,自產日額砍半",
+        rate * 100,
+        threshold * 100,
+    )
+    return 2
+
+
 def _discovered_budget_left(kind: str, want: int) -> int:
-    """每日自產上限的剩餘配額（0=旋鈕停用時回 want 不設限）；超額丟棄記 log 留痕。"""
+    """每日自產上限的剩餘配額（0=旋鈕停用時回 want 不設限）；超額丟棄記 log 留痕。
+
+    SLO 煞車(_slo_brake_factor)生效時上限砍半——僅在上限旋鈕啟用(cap>0)時有意義。
+    """
     cap = config.AUTOPILOT_DISCOVERED_DAILY_CAP
     if not cap or want <= 0:
         return want
+    cap = max(1, cap // _slo_brake_factor())
     left = max(0, cap - _discovered_added_today())
     if left < want:
         log.info(
