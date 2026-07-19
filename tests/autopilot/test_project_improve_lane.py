@@ -133,3 +133,53 @@ async def test_lane_project_failure_isolated(monkeypatch, lane_on):
     monkeypatch.setattr(_FakeImprover, "run", boom_or_ok)
     await _run_lane_once(monkeypatch)
     assert ("正常", 1) in _FakeImprover.calls, "單一專案炸不影響其他專案"
+
+
+# --- H 補丁:execv 守門/每日 throttle 落檔/專案 stale 回收 --------------------
+
+
+def test_improve_lane_blocking_reload(monkeypatch):
+    import time as _t
+
+    monkeypatch.setattr(autopilot, "_improve_lane_busy", None)
+    assert autopilot._improve_lane_blocking_reload() is False
+    monkeypatch.setattr(autopilot, "_improve_lane_busy", {"pid": "x", "started_at": _t.time()})
+    assert autopilot._improve_lane_blocking_reload() is True, "進行中=擋 execv"
+    monkeypatch.setattr(
+        autopilot,
+        "_improve_lane_busy",
+        {"pid": "x", "started_at": _t.time() - autopilot._IMPROVE_BUSY_MAX_AGE - 1},
+    )
+    assert autopilot._improve_lane_blocking_reload() is False, "超齡懸掛不得永久釘死重載"
+
+
+@pytest.mark.asyncio
+async def test_lane_day_marker_survives_restart(monkeypatch, lane_on):
+    m1 = projects.create("有意圖", vision="v")
+    projects.set_intent(m1["id"], "北極星")
+    await _run_lane_once(monkeypatch)
+    assert len(_FakeImprover.calls) == 1
+    assert autopilot._improve_day_marker().is_file(), "當日 marker 落檔"
+    # 模擬 execv 重啟:行程記憶體歸零,marker 仍在 → 同日不重跑
+    monkeypatch.setattr(autopilot, "_project_improve_day", None)
+    await _run_lane_once(monkeypatch)
+    assert len(_FakeImprover.calls) == 1, "重啟後同日不得二度開場(首航 04:42 實證)"
+
+
+def test_project_stale_in_progress_recovery(monkeypatch):
+    import time as _t
+
+    monkeypatch.setattr(autopilot.history, "busy_sessions", lambda *_a, **_k: [])
+    monkeypatch.setattr(autopilot.history, "mark_interrupted", lambda *a, **k: None)
+    monkeypatch.setattr(autopilot.history, "sweep_stale_running", lambda **k: None)
+    meta = projects.create("回收測試", vision="v")
+    sdir = projects.state_dir(meta["id"])
+    dead = backlog.add("被腰斬的任務", state_dir=sdir)
+    backlog.set_status(dead["id"], "in_progress", state_dir=sdir, session_id="pjdead")
+    backlog.set_status(dead["id"], "in_progress", state_dir=sdir, updated_at=_t.time() - 3600)
+    fresh = backlog.add("剛認領的任務", state_dir=sdir)
+    backlog.set_status(fresh["id"], "in_progress", state_dir=sdir, session_id="pjfresh")
+    autopilot._recover_stale_in_progress()
+    by_id = {t["id"]: t for t in backlog.list_tasks(state_dir=sdir)}
+    assert by_id[dead["id"]]["status"] == "pending", "死 session 的專案任務退回 pending"
+    assert by_id[fresh["id"]]["status"] == "in_progress", "15 分內豁免(認領微窗不誤殺)"

@@ -3157,9 +3157,12 @@ async def _maybe_boundary_redeploy() -> None:
         # redeploy 已 reset 磁碟碼：自身 studio/*.py 有變即原地 execv（鏡射主迴圈既有重載
         # 序列），下一場任務直接跑新碼；只有 web/靜態變更時不重載（服務端已由 redeploy 重啟）。
         if not config.AUTOPILOT_DRYRUN and _self_sig() != pre_sig:
-            log.info("邊界重佈帶入 autopilot 自身程式碼更新，os.execv 重載")
-            await _prepare_execv_reload()
-            os.execv(sys.executable, [sys.executable, "-m", "studio.autopilot"])
+            if _improve_lane_blocking_reload():
+                log.info("邊界重佈帶入自身碼更新,但改良場進行中——execv 延後(下輪再試)")
+            else:
+                log.info("邊界重佈帶入 autopilot 自身程式碼更新，os.execv 重載")
+                await _prepare_execv_reload()
+                os.execv(sys.executable, [sys.executable, "-m", "studio.autopilot"])
     except Exception:  # noqa: BLE001 — 邊界部署只是自癒輔助，失敗不得影響主迴圈
         log.exception("任務邊界部署檢查失敗（忽略，不影響主迴圈）")
 
@@ -3451,6 +3454,34 @@ def _recover_stale_in_progress() -> None:
             note="autopilot stale in_progress recovery",
         )
         log.warning("回收 stale in_progress 任務 #%s（session %s）", task["id"], sid)
+    # 專案 backlog 同步回收(軌 H 補丁):改良場被 execv/重啟腰斬時專案任務會永久卡
+    # in_progress(首航 #19 實證;另有 21 天化石 #4)。busy 集合同源;認領未滿 15 分
+    # 的任務豁免(改良場剛 set_status 到 start_session 之間的微窗不誤殺)。
+    try:
+        from . import projects as _projects
+
+        for _meta in _projects.list_projects():
+            _sdir = _projects.state_dir(str(_meta.get("id") or ""))
+            for task in backlog.list_tasks("in_progress", state_dir=_sdir):
+                sid = task.get("session_id")
+                if sid in busy:
+                    continue
+                if time.time() - float(task.get("updated_at") or 0) < 900:
+                    continue
+                if sid:
+                    history.mark_interrupted(sid, "project stale in_progress recovery")
+                backlog.set_status(
+                    task["id"],
+                    "pending",
+                    state_dir=_sdir,
+                    session_id=sid,
+                    note="project stale in_progress recovery",
+                )
+                log.warning(
+                    "回收專案 %s stale 任務 #%s(session %s)", _meta.get("name"), task["id"], sid
+                )
+    except Exception:  # noqa: BLE001 — 專案回收只是自癒輔助,失敗不得影響主迴圈
+        log.debug("專案 stale in_progress 回收失敗(忽略)", exc_info=True)
     # 幽靈 running meta 掃除：backlog 之外，history 也可能殘留卡在 running 的 meta
     # （restart 殺掉行程、finish_session 沒跑到，且該 sid 早已不在任何 in_progress 任務上）。
     # 每輪迴圈頂端順手治癒，網站不再永遠顯示 ⏳ 執行中。活躍集合帶 busy_sessions 雙保險；
@@ -4351,6 +4382,20 @@ def _sd_notify(msg: str) -> None:
 
 # --- 專案自主排水旁路(軌 H2) -------------------------------------------------
 _project_improve_day: tuple | None = None
+# 進行中改良場(事件迴圈內讀寫無競態):execv 重載據此延後——首航實證 04:42 邊界 execv
+# 把 60 分鐘改良場腰斬成孤兒 in_progress。超齡保險:懸掛的場不得永久釘死重載。
+_improve_lane_busy: dict | None = None
+_IMPROVE_BUSY_MAX_AGE = 3 * 3600
+
+
+def _improve_lane_blocking_reload() -> bool:
+    """改良場進行中(且未超齡)→ execv 重載該延後。"""
+    info = _improve_lane_busy
+    return bool(info and time.time() - float(info.get("started_at") or 0.0) < _IMPROVE_BUSY_MAX_AGE)
+
+
+def _improve_day_marker():
+    return config.AUTOPILOT_STATE_DIR / "project_improve_day"
 
 
 async def _project_improve_lane() -> None:
@@ -4363,7 +4408,7 @@ async def _project_improve_lane() -> None:
     與主迴圈共用 pause/quota 閘門;跨行程互斥靠 ProjectImprover.run 的
     improve.lock(H1)。任何例外 log+continue,絕不影響主迴圈;停機隨 main cancel。
     """
-    global _project_improve_day
+    global _project_improve_day, _improve_lane_busy
     while True:
         await asyncio.sleep(600)
         try:
@@ -4374,6 +4419,16 @@ async def _project_improve_lane() -> None:
             day = time.gmtime()[:3]
             if _project_improve_day == day:
                 continue
+            # 每日 throttle 落檔(execv/重啟後不重跑):行程記憶體版首航即中招——04:42
+            # 邊界 execv 重置 _project_improve_day,同日二度開場。
+            day_str = f"{day[0]:04d}-{day[1]:02d}-{day[2]:02d}"
+            marker = _improve_day_marker()
+            try:
+                if marker.is_file() and marker.read_text(encoding="utf-8").strip() == day_str:
+                    _project_improve_day = day
+                    continue
+            except OSError:
+                pass
             if config.AUTOPILOT_QUOTA_GATE:
                 try:
                     snap = await asyncio.to_thread(provider_quota.snapshot)
@@ -4383,6 +4438,11 @@ async def _project_improve_lane() -> None:
                 except Exception:  # noqa: BLE001 — 額度查詢失敗寧可保守跳過本輪
                     continue
             _project_improve_day = day
+            try:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(day_str, encoding="utf-8")
+            except OSError:
+                log.debug("project_improve_day 落檔失敗(忽略)", exc_info=True)
             from . import projects
             from .improver import ProjectImprover
 
@@ -4394,12 +4454,19 @@ async def _project_improve_lane() -> None:
                     continue
                 if config.autopilot_paused() or _shutdown_requested:
                     break
+                _improve_lane_busy = {
+                    "pid": meta.get("id"),
+                    "name": meta.get("name"),
+                    "started_at": time.time(),
+                }
                 try:
                     imp = ProjectImprover(meta, _noop)
                     summary = await imp.run(max_cycles=config.PROJECT_IMPROVE_CYCLES)
                     log.info("專案自主排水(%s):%s", meta.get("name"), summary)
                 except Exception:  # noqa: BLE001 — 單一專案失敗不得影響其他專案
                     log.warning("專案自主排水失敗(%s,忽略)", meta.get("name"), exc_info=True)
+                finally:
+                    _improve_lane_busy = None
         except CancelledError:
             raise
         except Exception:  # noqa: BLE001 — 旁路絕不死
@@ -4709,9 +4776,13 @@ async def _main_loop(startup_sig: float) -> None:
         _task_running = False
         _loop_tick()
         if not config.AUTOPILOT_DRYRUN and _self_sig() != startup_sig:
-            log.info("偵測到 autopilot 自身程式碼更新,os.execv 重載")
-            await _prepare_execv_reload()
-            os.execv(sys.executable, [sys.executable, "-m", "studio.autopilot"])
+            if _improve_lane_blocking_reload():
+                # 首航實證(2026-07-20 04:42):邊界 execv 腰斬 60 分鐘改良場成孤兒。
+                log.info("自身程式碼更新但改良場進行中,execv 延後至改良場收場")
+            else:
+                log.info("偵測到 autopilot 自身程式碼更新,os.execv 重載")
+                await _prepare_execv_reload()
+                os.execv(sys.executable, [sys.executable, "-m", "studio.autopilot"])
 
         await asyncio.sleep(config.AUTOPILOT_COOLDOWN)
 
