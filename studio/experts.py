@@ -34,7 +34,8 @@ Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 # interrupt()/disconnect() 在疑似 wedged 的 stdio 控制通道上的硬上限（秒）。這兩個呼叫
 # 都走可能已死鎖的控制通道；未加逾時時，一旦通道卡住，發言層 watchdog 的回收（_abort_turn）
 # 與 session.run 收尾（orchestrator finally → Expert.stop）都會永久卡死，連外層任務逾時
-# 取消都無法收斂（見 issue #286）。統一以此上限圈住，逾時即改走 best-effort SIGKILL＋重建。
+# 取消都無法收斂（見 issue #286）。stop() 先 SIGKILL 再以此上限等 disconnect；_abort_turn
+# 則用同一上限圈住 interrupt/drain/disconnect 的退化路徑。
 _CTRL_TIMEOUT = 30.0
 
 
@@ -611,16 +612,39 @@ class Expert:
             self._connected = True
 
     async def stop(self) -> None:
-        if self._connected:
+        client = self._client
+        was_connected = self._connected
+        self._connected = False  # 先標離線，讓重入 stop() 直接 no-op。
+        if not was_connected:
+            return
+
+        # kill-first：SDK disconnect() 可能卡在 anyio/stdio teardown；先殺子程序群再斷線，
+        # 不把 event loop 活性押在控制通道能協作取消上。
+        self._best_effort_kill_subprocess()
+
+        disconnect_task = asyncio.create_task(client.disconnect())
+
+        def _consume_disconnect_result(task: asyncio.Task) -> None:
             try:
-                # disconnect() 走 stdio 控制通道；通道 wedged 時未加逾時會永久卡死，
-                # 且此呼叫落在 session.run 收尾（orchestrator finally）與外層任務逾時
-                # 取消的清理路徑上——卡住即拖垮整個 wait_for 取消（issue #286 根因）。
-                await asyncio.wait_for(self._client.disconnect(), _CTRL_TIMEOUT)
-            except Exception:  # noqa: BLE001 — 含 TimeoutError；斷線卡死不得拖垮回收
-                self._best_effort_kill_subprocess()
-            finally:
-                self._connected = False
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 — 斷線失敗不得拖垮回收
+                logger.debug("disconnect SDK client 失敗（忽略）", exc_info=True)
+
+        try:
+            done, pending = await asyncio.wait({disconnect_task}, timeout=_CTRL_TIMEOUT)
+        except asyncio.CancelledError:
+            disconnect_task.cancel()
+            disconnect_task.add_done_callback(_consume_disconnect_result)
+            raise
+        if pending:
+            disconnect_task.cancel()
+            disconnect_task.add_done_callback(_consume_disconnect_result)
+            logger.debug("disconnect SDK client 逾時（忽略）")
+            return
+        if disconnect_task in done:
+            _consume_disconnect_result(disconnect_task)
 
     def idle_for(self) -> float:
         """距最後活動的秒數(發言中恆 0——reaper 判斷用)。"""
@@ -641,7 +665,7 @@ class Expert:
         self._client = self._new_client()
 
     def _best_effort_kill_subprocess(self) -> None:
-        """disconnect() 逾時後的兜底：盡力對 SDK 內部子程序送 SIGKILL（整個 process group）。
+        """盡力對 SDK 內部子程序送 SIGKILL（整個 process group）。
 
         純 best-effort——任何 claude_agent_sdk 版本差異（`_transport`／`_process` 形狀改變、
         取不到 pid）都被 except 吞掉，退化成「殘留一個 idle 子程序」而非崩潰。迴圈活性由

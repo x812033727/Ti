@@ -95,7 +95,7 @@ def _make_expert(monkeypatch, client, *, ctrl_timeout: float = 0.05):
     return exp, built
 
 
-# --- Expert.stop()：disconnect 卡死須在 _CTRL_TIMEOUT 內收斂並兜底殺程序 ----------
+# --- Expert.stop()：kill-first 後 disconnect 卡死仍須在 _CTRL_TIMEOUT 內收斂 ----------
 
 
 async def test_stop_bounded_when_disconnect_hangs(monkeypatch):
@@ -103,30 +103,54 @@ async def test_stop_bounded_when_disconnect_hangs(monkeypatch):
     exp, _ = _make_expert(monkeypatch, client)
     exp._connected = True
 
-    killed: list[bool] = []
-    monkeypatch.setattr(exp, "_best_effort_kill_subprocess", lambda: killed.append(True))
+    calls: list[tuple[str, bool]] = []
+    reentrant_stops: list[asyncio.Task] = []
+    original_disconnect = client.disconnect
+
+    def kill_first_probe():
+        calls.append(("kill", exp._connected))
+        reentrant_stops.append(asyncio.create_task(exp.stop()))
+
+    async def disconnect_probe():
+        calls.append(("disconnect", exp._connected))
+        await original_disconnect()
+
+    monkeypatch.setattr(exp, "_best_effort_kill_subprocess", kill_first_probe)
+    monkeypatch.setattr(client, "disconnect", disconnect_probe)
 
     # 未綁定時這裡會永遠卡住；wait_for(2) 是測試保險，真正的收斂來自 stop() 內的 _CTRL_TIMEOUT。
     await asyncio.wait_for(exp.stop(), timeout=2)
+    if reentrant_stops:
+        await asyncio.gather(*reentrant_stops)
 
     assert client.disconnects == 1
-    assert killed == [True], "disconnect 逾時應走 best-effort SIGKILL 兜底"
+    assert calls == [
+        ("kill", False),
+        ("disconnect", False),
+    ], "stop() 必須先標離線、先 SIGKILL，再進 disconnect；重入不得重複斷線"
     assert exp._connected is False
 
 
 async def test_stop_ok_when_disconnect_fast(monkeypatch):
-    """正常路徑：disconnect 立即成功則不觸發兜底殺程序。"""
+    """正常路徑也先 kill SDK 子程序群，再讓 disconnect 收斂 client 狀態。"""
     client = _CtrlClient()
     exp, _ = _make_expert(monkeypatch, client)
     exp._connected = True
 
-    killed: list[bool] = []
-    monkeypatch.setattr(exp, "_best_effort_kill_subprocess", lambda: killed.append(True))
+    calls: list[str] = []
+    original_disconnect = client.disconnect
+
+    async def disconnect_probe():
+        calls.append("disconnect")
+        await original_disconnect()
+
+    monkeypatch.setattr(exp, "_best_effort_kill_subprocess", lambda: calls.append("kill"))
+    monkeypatch.setattr(client, "disconnect", disconnect_probe)
 
     await asyncio.wait_for(exp.stop(), timeout=2)
 
     assert client.disconnects == 1
-    assert killed == []
+    assert calls == ["kill", "disconnect"]
     assert exp._connected is False
 
 
