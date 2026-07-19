@@ -3351,3 +3351,31 @@
 - 時間：2026-07-19 23:50
 - 理由：TI_OFFLINE loopback 根本不需要代理，加依賴只是「走了但不炸」，治標不治本；`trust_env=True` 是刻意設計（允許企業 proxy），邊界在測試層
 
+## 閒置逾時（`TURN_IDLE_TIMEOUT`）語意鎖死為「距上次收到 chunk 的時間差」，不是累積發言總長度
+- 時間：2026-07-20 07:18
+- 理由：長但持續輸出的正常發言不應被誤殺；`TURN_HARD_TIMEOUT` 仍作獨立的發言總長上限旋鈕，兩者並存但語意完全分離
+- 否決方案：total-duration 複用作閒置逾時語意——兩種計時混用是線上最常見誤判來源
+
+## 截斷發言在事件 payload 攜帶 `aborted=True` 旗標；orchestrator 收到此旗標後不將 `partial_text` 送進 `flow.py` 任何 marker parser
+- 時間：2026-07-20 07:18
+- 理由：parser 端加旗標判斷會讓 flow 依賴傳輸狀態、污染純函式邊界；在 orchestrator 層攔截符合現有「副作用留 orchestrator」架構鐵則
+- 否決方案：靜默丟棄 partial_text——失去除錯可見性；否決
+
+## 中止時強制透過 `events.py` 發出帶 `aborted` 狀態的明確事件，前端 `events-render.js` 渲染「因無進展被中止」提示，不得靜默吞掉
+- 時間：2026-07-20 07:18
+- 理由：靜默中止讓使用者誤以為自然收斂，違反 silent-failure 教訓
+
+## 閒置逾時中止不進入 `llm_caller` 退避重試迴圈；`make_retry_config` 的可重試例外清單不包含 idle-timeout 類型
+- 時間：2026-07-20 07:18
+- 理由：「無回應專家」自動重試只延長等待、浪費 token，且造成雙重計時；是否重試任務由 orchestrator 上層決定
+- 否決方案：idle timeout 也進退避——雙重計時 + 無限迴圈風險，否決
+
+## `TURN_IDLE_TIMEOUT` 與 `TURN_HARD_TIMEOUT` 在 `config.py` 頂層與 `reload()` 兩處同步定義（沿用 TI_* SSOT 慣例）；`stream_to_events()` 的計時器以參數注入（預設 `asyncio.wait_for`），不硬綁 wall-clock
+- 時間：2026-07-20 07:18
+- 理由：計時器可注入讓單元測試穩定重現逾時分支而無需 sleep
+
+## 插入點維持現有 `stream_to_events()` 逐 chunk `wait_for` 模式，不另加 watchdog class 抽象層；orchestrator 不感知逾時細節，逾時視同「speak() 回傳 partial_text + aborted=True」由既有 `_abort_turn()` 收斂
+- 時間：2026-07-20 07:18
+- 理由：工程師確認架構已接近完整，最小修改風險最低；額外抽象增加複雜度但不帶新能力
+- 否決方案：獨立 watchdog class 包住 speak()——層次過多，否決
+
