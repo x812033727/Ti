@@ -182,3 +182,44 @@ body[data-view="home"] main.layout { display: none; }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* 升階頁(軌 D2) */
+.stage-hero { margin: var(--sp-2) 0 var(--sp-4); }
+.stage-title {
+  font-size: var(--fs-5);
+  font-weight: 700;
+  background: var(--grad-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.stage-sec { margin: var(--sp-4) 0 var(--sp-2); font-size: var(--fs-2); }
+.stage-conds { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-2); }
+.stage-cond {
+  display: flex;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  padding: var(--sp-2) var(--sp-3);
+}
+.stage-cond.ok { border-color: var(--good); }
+.sc-dot { color: var(--muted); font-weight: 700; }
+.stage-cond.ok .sc-dot { color: var(--good); }
+.sc-label { font-weight: 600; font-size: var(--fs-1); }
+.sc-detail { font-size: var(--fs-0); }
+.stage-trust { margin: var(--sp-2) 0 0; font-size: var(--fs-1); }
+.stage-canaries { display: flex; flex-direction: column; gap: 4px; }
+.stage-canary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-1);
+  color: var(--text-2);
+}
+.stage-canary.on { color: var(--text); background: var(--surface-1); }
+.cn-dot { color: var(--muted); }
+.stage-canary.on .cn-dot { color: var(--good); }
+.cn-state { margin-left: auto; font-size: var(--fs-0); }

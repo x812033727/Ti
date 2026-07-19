@@ -36,7 +36,7 @@ export function moveStreamBack() {
   }
 }
 
-const SUBVIEWS = { chat: "#homeChat", plugins: "#homePlugins", schedules: "#homeSchedules" };
+const SUBVIEWS = { chat: "#homeChat", plugins: "#homePlugins", schedules: "#homeSchedules", stage: "#homeStage" };
 
 export function setSubview(name) {
   const main = $("#homeMain");
