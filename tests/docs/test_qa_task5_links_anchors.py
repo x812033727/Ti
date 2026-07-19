@@ -86,9 +86,9 @@ def test_doc_file_links_present():
 
 # ---- 門禁 (B) 連到的『Autopilot 安全旗標補充』錨點可跳轉 ----
 def test_autopilot_supplement_anchor_resolves():
-    assert any(
-        t == "#autopilot-安全旗標補充" for _, t in LINKS
-    ), "缺指向『Autopilot 安全旗標補充』小節的連結"
+    assert any(t == "#autopilot-安全旗標補充" for _, t in LINKS), (
+        "缺指向『Autopilot 安全旗標補充』小節的連結"
+    )
     assert "autopilot-安全旗標補充" in SLUGS, "『Autopilot 安全旗標補充』錨點無法解析"
 
 

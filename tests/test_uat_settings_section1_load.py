@@ -122,9 +122,9 @@ def test_秘密提示字與前端一致(text):
 def test_設定按鈕與關閉鈕存在於index(text):
     # 工具列已換 SVG 線性圖示：設定/關閉為純圖示鈕，以 id + aria-label 驗證存在與可及名稱
     html = INDEX_HTML.read_text(encoding="utf-8")
-    assert (
-        'id="settingsBtn"' in html and 'aria-label="設定"' in html
-    ), "index.html 無設定按鈕（id=settingsBtn＋aria-label=設定），案例 1.1 描述失準"
+    assert 'id="settingsBtn"' in html and 'aria-label="設定"' in html, (
+        "index.html 無設定按鈕（id=settingsBtn＋aria-label=設定），案例 1.1 描述失準"
+    )
     assert 'id="settingsClose"' in html and 'aria-label="關閉"' in html, "index.html 無關閉鈕"
     assert 'id="settingsSave"' in html, "index.html 無『儲存』按鈕"
 

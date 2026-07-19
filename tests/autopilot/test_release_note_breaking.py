@@ -153,9 +153,9 @@ def has_future_enforce_timeline(text: str) -> bool:
 
 @pytest.fixture(scope="module")
 def changelog() -> str:
-    assert (
-        CHANGELOG.exists()
-    ), f"release note 檔不存在：{CHANGELOG}（驗收 #1 未達成，任務 #2/#3 尚未產出 CHANGELOG.md）"
+    assert CHANGELOG.exists(), (
+        f"release note 檔不存在：{CHANGELOG}（驗收 #1 未達成，任務 #2/#3 尚未產出 CHANGELOG.md）"
+    )
     return CHANGELOG.read_text(encoding="utf-8")
 
 
@@ -263,9 +263,9 @@ def test_breaking_block_present(changelog):
 
 
 def test_breaking_block_at_top(changelog):
-    assert breaking_is_at_top(
-        changelog
-    ), "驗收 #2：Breaking 區塊未置於一般變更區塊（Added/Changed/...）之前"
+    assert breaking_is_at_top(changelog), (
+        "驗收 #2：Breaking 區塊未置於一般變更區塊（Added/Changed/...）之前"
+    )
 
 
 @pytest.mark.parametrize("token", ["TI_REQUIRE_CHOWN", "strict", "warn", "off"])
@@ -274,9 +274,9 @@ def test_chown_tokens_present(changelog, token):
 
 
 def test_four_elements_in_order(changelog):
-    assert four_elements_in_order(
-        changelog
-    ), "驗收 #3：四要素（①行為②原因③遷移④生效版本）缺項或順序錯置"
+    assert four_elements_in_order(changelog), (
+        "驗收 #3：四要素（①行為②原因③遷移④生效版本）缺項或順序錯置"
+    )
 
 
 def test_failsafe_note_present(changelog):
@@ -289,24 +289,24 @@ def test_warn_escape_hatch_present(changelog):
 
 def test_points_to_readme_section(changelog, readme):
     """驗收 #5：CHANGELOG 指向 README「state 安全寫入」小節（raw text 一致）。"""
-    assert (
-        README_ANCHOR_TEXT in changelog
-    ), f"驗收 #5：CHANGELOG 未指向遷移指引位置（缺 {README_ANCHOR_TEXT!r}）"
-    assert (
-        README_ANCHOR_TEXT in readme
-    ), f"驗收 #5：README 不含被指向的小節字串 {README_ANCHOR_TEXT!r}（死鏈）"
+    assert README_ANCHOR_TEXT in changelog, (
+        f"驗收 #5：CHANGELOG 未指向遷移指引位置（缺 {README_ANCHOR_TEXT!r}）"
+    )
+    assert README_ANCHOR_TEXT in readme, (
+        f"驗收 #5：README 不含被指向的小節字串 {README_ANCHOR_TEXT!r}（死鏈）"
+    )
 
 
 def test_no_future_enforce_timeline(changelog):
     """驗收 #7：時序語意——strict 已是預設，禁止『下版才 enforce』等未來承諾。"""
     bidx = breaking_header_idx(changelog)
     scope = changelog[bidx:] if bidx != -1 else changelog
-    assert not re.search(
-        r"下版.{0,6}(才|再).{0,6}enforce", scope
-    ), "出現與 config.py 矛盾的未來時序"
-    assert not re.search(
-        r"警告期(後|結束)", scope
-    ), "出現『警告期後才生效』未來時序，與 strict 已成預設矛盾"
+    assert not re.search(r"下版.{0,6}(才|再).{0,6}enforce", scope), (
+        "出現與 config.py 矛盾的未來時序"
+    )
+    assert not re.search(r"警告期(後|結束)", scope), (
+        "出現『警告期後才生效』未來時序，與 strict 已成預設矛盾"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +398,9 @@ def test_three_states_consistent_across_docs(changelog, readme, env_example):
 def test_strict_is_default_across_docs(changelog, readme, env_example):
     """三份文件須一致宣告 strict 為預設值，不得有某檔說別的預設。"""
     for name, text in (("CHANGELOG", changelog), ("README", readme), (".env.example", env_example)):
-        assert re.search(
-            r"strict[^\n]{0,12}預設|預設[^\n]{0,12}strict", text
-        ), f"驗收 #7：{name} 未一致宣告 strict 為預設"
+        assert re.search(r"strict[^\n]{0,12}預設|預設[^\n]{0,12}strict", text), (
+            f"驗收 #7：{name} 未一致宣告 strict 為預設"
+        )
 
 
 def test_failsafe_consistent_across_docs(readme, env_example):

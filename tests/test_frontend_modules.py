@@ -36,9 +36,9 @@ def test_all_relative_imports_resolve():
 def test_index_loads_app_as_module():
     """入口必須是 ES module（拆分後 app.js 全靠 import 組裝）。"""
     html = (WEB / "index.html").read_text(encoding="utf-8")
-    assert re.search(
-        r'<script\s+type="module"\s+src="/static/app\.js">', html
-    ), 'index.html 須以 <script type="module" src="/static/app.js"> 載入入口'
+    assert re.search(r'<script\s+type="module"\s+src="/static/app\.js">', html), (
+        'index.html 須以 <script type="module" src="/static/app.js"> 載入入口'
+    )
 
 
 def test_styles_aggregator_imports_resolve():
@@ -77,9 +77,9 @@ def test_light_theme_tokens_subset_of_root():
     assert not orphans, f"[data-theme=light] 有 :root 不存在的 token：{sorted(orphans)}"
     # 主題核心 token 必須雙邊都有（漏了會整面破版）
     core = {"--bg", "--text", "--muted", "--surface-1", "--surface-solid", "--border"}
-    assert (
-        core <= root_keys and core <= light_keys
-    ), f"核心 token 缺漏：root 缺 {sorted(core - root_keys)}、light 缺 {sorted(core - light_keys)}"
+    assert core <= root_keys and core <= light_keys, (
+        f"核心 token 缺漏：root 缺 {sorted(core - root_keys)}、light 缺 {sorted(core - light_keys)}"
+    )
 
 
 def test_all_var_references_defined():

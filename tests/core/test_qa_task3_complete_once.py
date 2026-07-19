@@ -196,9 +196,9 @@ def test_complete_once_has_no_inline_retry_backbone():
 # ---------------------------------------------------------------------------
 def test_upstream_backbone_exists():
     # speak 委派到 _speak_with_retries（退避不在 speak 本體散落）
-    assert "_speak_with_retries" in _called_names(
-        experts.Expert.speak
-    ), "speak() 應委派 _speak_with_retries，退避統一收斂於骨幹"
+    assert "_speak_with_retries" in _called_names(experts.Expert.speak), (
+        "speak() 應委派 _speak_with_retries，退避統一收斂於骨幹"
+    )
     backbone = _called_names(experts.Expert._speak_with_retries)
     assert "run_with_retries" in backbone, "退避骨幹須呼叫 run_with_retries（限流吸收於此）"
     assert "make_retry_config" in backbone, "退避三參數須源自 make_retry_config 共用旋鈕"

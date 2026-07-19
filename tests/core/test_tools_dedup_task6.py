@@ -67,9 +67,9 @@ def test_replay_run_bash_calls_execute_once(tmp_path):
         _run(one_attempt())  # attempt2：重放命中快取 → 不再進 execute
 
     # 雙重保護①：底層 execute 僅被呼叫一次
-    assert (
-        mock_execute.call_count == 1
-    ), f"execute 被呼叫 {mock_execute.call_count} 次，預期 1 次（重放應命中快取不重執行）"
+    assert mock_execute.call_count == 1, (
+        f"execute 被呼叫 {mock_execute.call_count} 次，預期 1 次（重放應命中快取不重執行）"
+    )
     # 雙重保護②：真實副作用僅發生一次
     assert (tmp_path / "log.txt").read_text().splitlines() == ["A"]
 
@@ -92,9 +92,9 @@ def test_replay_edit_file_calls_execute_once(tmp_path):
         r1 = _run(one_attempt())  # attempt1：實際替換
         r2 = _run(one_attempt())  # attempt2：重放命中快取 → 回首次成功結果，不重進 execute
 
-    assert (
-        mock_execute.call_count == 1
-    ), f"execute 被呼叫 {mock_execute.call_count} 次，預期 1 次（重放應命中快取不重執行）"
+    assert mock_execute.call_count == 1, (
+        f"execute 被呼叫 {mock_execute.call_count} 次，預期 1 次（重放應命中快取不重執行）"
+    )
     # 命中回首次成功結果，而非第二次重跑會得到的「old 不存在」錯誤
     assert r1 == r2
     assert "錯誤" not in r2

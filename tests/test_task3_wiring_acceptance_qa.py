@@ -183,9 +183,9 @@ def test_ac6_only_one_retryconfig_construction_callsite():
                 and node.func.attr == "RetryConfig"
             ):
                 found.append((py.name, node.lineno))
-    assert found == [("experts.py", 116)] or all(
-        f[0] == "experts.py" for f in found
-    ), f"RetryConfig 建構點應集中於 experts.py，實得 {found}"
+    assert found == [("experts.py", 116)] or all(f[0] == "experts.py" for f in found), (
+        f"RetryConfig 建構點應集中於 experts.py，實得 {found}"
+    )
 
 
 # ── 驗收 7：零新外部依賴、零新 env 變數 ────────────────────────────────────

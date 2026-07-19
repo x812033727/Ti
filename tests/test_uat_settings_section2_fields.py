@@ -92,9 +92,9 @@ def test_四象限關鍵字皆出現(sec):
 
 def test_超長輸入不破版有案例(sec):
     assert "超長" in sec, "缺『超長輸入』案例"
-    assert (
-        "破版" in sec or "變形" in sec or "溢出" in sec or "捲軸" in sec
-    ), "超長案例未描述『不撐破版面』的可觀察預期"
+    assert "破版" in sec or "變形" in sec or "溢出" in sec or "捲軸" in sec, (
+        "超長案例未描述『不撐破版面』的可觀察預期"
+    )
 
 
 # ---------- select 欄非法選項覆蓋（對齊實際欄位）----------
@@ -244,9 +244,9 @@ def test_後端文字與combo欄接受任意值含超長(capture_update):
     settings, written = capture_update
     longv = "x" * 2000
     settings.update({"TI_MINIMAX_MODEL_LEAD": longv, "TI_PUBLISH_REPO": "owner/repo"})
-    assert (
-        written["TI_MINIMAX_MODEL_LEAD"] == longv
-    ), "combo 欄應接受任意值含超長（後端不限長、不套白名單）"
+    assert written["TI_MINIMAX_MODEL_LEAD"] == longv, (
+        "combo 欄應接受任意值含超長（後端不限長、不套白名單）"
+    )
     assert written["TI_PUBLISH_REPO"] == "owner/repo"
 
 

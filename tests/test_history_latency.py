@@ -66,9 +66,9 @@ _LATENCY_FIELDS = ("count", "sum_ms", "max_ms", "avg_ms")
 
 def _assert_latency_bucket(actual: dict, count: int, sum_ms: int, max_ms: int) -> None:
     """驗證單一桶的 count/sum_ms/max_ms，並自動驗 avg_ms == sum_ms // count（count>0 時）。"""
-    assert set(actual) == set(
-        _LATENCY_FIELDS
-    ), f"latency bucket 欄位不對：actual={set(actual)}, expected={set(_LATENCY_FIELDS)}"
+    assert set(actual) == set(_LATENCY_FIELDS), (
+        f"latency bucket 欄位不對：actual={set(actual)}, expected={set(_LATENCY_FIELDS)}"
+    )
     assert actual["count"] == count, f"count={actual['count']} expected={count}"
     assert actual["sum_ms"] == sum_ms, f"sum_ms={actual['sum_ms']} expected={sum_ms}"
     assert actual["max_ms"] == max_ms, f"max_ms={actual['max_ms']} expected={max_ms}"
@@ -421,9 +421,9 @@ async def test_claude_path_old_sdk_without_duration_api_ms_omits_key(_fake_sdk):
 
     tu = [e for e in bucket if e.type == EventType.TOKEN_USAGE]
     assert len(tu) == 1
-    assert (
-        "duration_ms" not in tu[0].payload
-    ), f"舊 SDK 無 duration_api_ms 時 payload 不應含 duration_ms，got: {tu[0].payload!r}"
+    assert "duration_ms" not in tu[0].payload, (
+        f"舊 SDK 無 duration_api_ms 時 payload 不應含 duration_ms，got: {tu[0].payload!r}"
+    )
 
 
 # --- 標準 #4：finish_session 整合——meta 同時有 token_usage 與 latency --------

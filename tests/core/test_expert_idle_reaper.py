@@ -184,8 +184,8 @@ async def test_get_critic_supports_multiple_viewpoints(monkeypatch, tmp_path):
     c1 = session._get_critic(ctx, "senior")
     c2 = session._get_critic(ctx, "security")
     assert c1 is not None and c1.key == "senior"
-    assert (
-        c2 is not None and c2.key == "security"
-    ), "第二種視角不得因 dict 被整個覆蓋而拿到 None(靜默放行=critic gate 形同虛設)"
+    assert c2 is not None and c2.key == "security", (
+        "第二種視角不得因 dict 被整個覆蓋而拿到 None(靜默放行=critic gate 形同虛設)"
+    )
     assert session._get_critic(ctx, "senior") is c1, "同視角複用既有實例"
     assert made == ["senior", "security"], "各視角只建一次"

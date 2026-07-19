@@ -58,9 +58,9 @@ def test_section_order_create_then_activate_then_install():
     i_create = SEC.find("python3 -m venv .venv")
     i_activate = SEC.find("source .venv/bin/activate")
     i_install = SEC.find('pip install -e ".[dev]"')
-    assert (
-        -1 < i_create < i_activate < i_install
-    ), f"步驟順序錯誤: create={i_create}, activate={i_activate}, install={i_install}"
+    assert -1 < i_create < i_activate < i_install, (
+        f"步驟順序錯誤: create={i_create}, activate={i_activate}, install={i_install}"
+    )
 
 
 def test_section_located_between_roles_and_install():
@@ -68,6 +68,6 @@ def test_section_located_between_roles_and_install():
     i_roles = README.find("## 角色")
     i_env = README.find("## 執行環境前置")
     i_install = README.find("## 安裝")
-    assert (
-        -1 < i_roles < i_env < i_install
-    ), f"段落位置不符: roles={i_roles}, env={i_env}, install={i_install}"
+    assert -1 < i_roles < i_env < i_install, (
+        f"段落位置不符: roles={i_roles}, env={i_env}, install={i_install}"
+    )

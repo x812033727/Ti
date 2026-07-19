@@ -57,9 +57,9 @@ def test_card_generic_and_ti_sections(ti_cwd, other_cwd):
 
 def test_card_line_budget(ti_cwd):
     n = len(conventions.card(ti_cwd).splitlines())
-    assert (
-        n <= conventions.MAX_LINES
-    ), f"慣例卡 {n} 行超過 {conventions.MAX_LINES} 行上限——內容該搬去 skills/NOTES,不是養肥卡"
+    assert n <= conventions.MAX_LINES, (
+        f"慣例卡 {n} 行超過 {conventions.MAX_LINES} 行上限——內容該搬去 skills/NOTES,不是養肥卡"
+    )
 
 
 def test_card_knob_off_returns_empty(ti_cwd, monkeypatch):
@@ -154,7 +154,7 @@ def test_knob_off_no_injection_anywhere(ti_cwd, monkeypatch):
 
 def test_builtin_body_roundtrip_unaffected():
     body = role_store.builtin_body(ENGINEER)
-    assert (
-        body and "【執行慣例" not in body
-    ), "卡不得進 Role 常數(builtin_body 往返依賴 _COMMON 原文)"
+    assert body and "【執行慣例" not in body, (
+        "卡不得進 Role 常數(builtin_body 往返依賴 _COMMON 原文)"
+    )
     assert not body.startswith("你是"), "removeprefix(_COMMON) 應已剝掉共通守則(往返未被破壞)"

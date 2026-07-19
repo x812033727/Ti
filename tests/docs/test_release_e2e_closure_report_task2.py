@@ -121,7 +121,7 @@ def test_report_sha256_literals_are_all_exact_evidence_values():
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    assert (
-        len(literals) == backed_count
-    ), f"報告內 sha256 字面值總數必須等於 evidence grep 反查命中數；缺漏見 {missing_file}"
+    assert len(literals) == backed_count, (
+        f"報告內 sha256 字面值總數必須等於 evidence grep 反查命中數；缺漏見 {missing_file}"
+    )
     assert missing == []

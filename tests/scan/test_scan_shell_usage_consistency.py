@@ -69,9 +69,9 @@ def test_rules_live_only_in_script_not_inlined():
     否則會與腳本分歧，形成兩套來源。"""
     script_text = SCRIPT.read_text()
     # 規則集與掃描關鍵字必須存在於腳本（SSOT）
-    assert (
-        "S602" in script_text and "S604" in script_text and "S605" in script_text
-    ), "腳本內缺 S602/S604/S605 規則集"
+    assert "S602" in script_text and "S604" in script_text and "S605" in script_text, (
+        "腳本內缺 S602/S604/S605 規則集"
+    )
     assert "create_subprocess_shell" in script_text, "腳本內缺 create_subprocess_shell 掃描"
 
     # CI / pre-commit 不應重複定義規則（避免雙來源分歧）
@@ -79,9 +79,9 @@ def test_rules_live_only_in_script_not_inlined():
     pc_entry = _precommit_scan_hook()["entry"]
     for surface_name, surface in (("CI run", ci_run), ("pre-commit entry", pc_entry)):
         assert "S602" not in surface, f"{surface_name} 不該 inline 規則 S602：{surface}"
-        assert (
-            "create_subprocess_shell" not in surface
-        ), f"{surface_name} 不該 inline grep 規則：{surface}"
+        assert "create_subprocess_shell" not in surface, (
+            f"{surface_name} 不該 inline grep 規則：{surface}"
+        )
 
 
 # --- SCAN_MODE 對齊：兩處等效（皆 warn），不致一邊 block --------------------

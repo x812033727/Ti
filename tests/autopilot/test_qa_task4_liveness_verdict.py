@@ -65,9 +65,9 @@ def test_white_long_turn_cpu_active_not_killed():
     這正是 issue #285 誤報情境：有 5 個 worker 在燒 CPU，長 inter-message 間隔不代表死鎖。
     """
     status = _running(last_activity_at=STALE, workers={"count": 5, "cpu_active": True})
-    assert (
-        _verdict(status) == "alive"
-    ), f"長 turn cpu_active=True 不得判死: got {_verdict(status)!r}"
+    assert _verdict(status) == "alive", (
+        f"長 turn cpu_active=True 不得判死: got {_verdict(status)!r}"
+    )
 
 
 def test_white_activity_fresh_even_if_cpu_idle():

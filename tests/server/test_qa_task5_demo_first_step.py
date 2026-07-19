@@ -206,9 +206,9 @@ def test_demo_first_step_no_command_not_found(demo_server):
     )
 
     # 順手：log 應有 uvicorn 啟動成功的訊號
-    assert (
-        "Uvicorn running on" in stdout
-    ), f"demo server log 缺 uvicorn 啟動訊號，啟動流程異常：\n{stdout}"
+    assert "Uvicorn running on" in stdout, (
+        f"demo server log 缺 uvicorn 啟動訊號，啟動流程異常：\n{stdout}"
+    )
 
 
 # ============================================================================

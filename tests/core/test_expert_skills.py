@@ -31,9 +31,9 @@ def skills_on(monkeypatch):
 def test_skills_options_for_whitelisted_role(skills_on):
     opts = experts._skills_options(ENGINEER)
     assert opts["skills"] == list(experts.EXPERT_SKILLS_LIST)
-    assert opts["setting_sources"] == [
-        "project"
-    ], "必須顯式鎖 project 層——SDK 預設會納入主機 user 層技能"
+    assert opts["setting_sources"] == ["project"], (
+        "必須顯式鎖 project 層——SDK 預設會納入主機 user 層技能"
+    )
 
 
 def test_skills_options_skips_non_whitelisted_and_knob_off(skills_on, monkeypatch):

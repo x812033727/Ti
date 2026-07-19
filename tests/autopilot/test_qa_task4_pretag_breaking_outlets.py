@@ -74,9 +74,9 @@ def test_pretag_effective_version_matches_pyproject_in_both_outlets(changelog, v
     for name, renderer in OUTLETS:
         body = renderer(changelog, version)
         assert version in body, f"AC#2：{name} 出口未帶 pyproject 版本字串 {version!r}"
-        assert version_matches_effective(
-            body, version
-        ), f"AC#2：{name} 的 ④ 生效版本未對應 pyproject 版本 {version!r}"
+        assert version_matches_effective(body, version), (
+            f"AC#2：{name} 的 ④ 生效版本未對應 pyproject 版本 {version!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -89,17 +89,17 @@ def test_black_sample_missing_block_pairs_red(outlet_name, renderer, changelog, 
     """抽掉 Breaking heading → 出口翻紅；先自證 baseline 本來是綠的（排除孤立假綠）。"""
     # 正向基線：原始 CHANGELOG 此出口本來完整帶出區塊。
     baseline = renderer(changelog, version)
-    assert outlet_carries_block(
-        baseline
-    ), f"基線失效：{outlet_name} 對原始 CHANGELOG 本應帶出完整區塊，黑樣本無從證偽"
+    assert outlet_carries_block(baseline), (
+        f"基線失效：{outlet_name} 對原始 CHANGELOG 本應帶出完整區塊，黑樣本無從證偽"
+    )
     # mutation：把契約 heading 抽掉。
     polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Notes", changelog)
     assert polluted != changelog, "mutation 為空操作：heading 未被改動，黑樣本無效"
 
     body = render_or_none(renderer, polluted, version)
-    assert body is None or not outlet_carries_block(
-        body
-    ), f"黑樣本失效：{outlet_name} 缺區塊仍被判為完整帶出（假綠）"
+    assert body is None or not outlet_carries_block(body), (
+        f"黑樣本失效：{outlet_name} 缺區塊仍被判為完整帶出（假綠）"
+    )
 
 
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
@@ -115,9 +115,9 @@ def test_black_sample_missing_each_element_pairs_red(
 
     # baseline：原始出口本來帶到此要素。
     baseline = renderer(changelog, version)
-    assert name not in missing_elements(
-        baseline
-    ), f"基線失效：{outlet_name} 原始 body 本應帶到要素「{name}」"
+    assert name not in missing_elements(baseline), (
+        f"基線失效：{outlet_name} 原始 body 本應帶到要素「{name}」"
+    )
 
     # mutation：同時抹除圈號錨與語意關鍵字，確保兩錨點都不再命中。
     polluted = re.sub(anchor, "x", changelog)
@@ -125,9 +125,9 @@ def test_black_sample_missing_each_element_pairs_red(
     assert polluted != changelog, f"mutation 為空操作：要素「{name}」未被改動，黑樣本無效"
 
     body = render_or_none(renderer, polluted, version)
-    assert body is None or name in missing_elements(
-        body
-    ), f"黑樣本失效：{outlet_name} 移除要素「{name}」後仍被判為帶到（假綠）"
+    assert body is None or name in missing_elements(body), (
+        f"黑樣本失效：{outlet_name} 移除要素「{name}」後仍被判為帶到（假綠）"
+    )
 
 
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
@@ -136,9 +136,9 @@ def test_black_sample_stale_effective_version_pairs_red(outlet_name, renderer, c
     old_version = "0.1.9" if version != "0.1.9" else "0.1.8"
 
     baseline = renderer(changelog, version)
-    assert version_matches_effective(
-        baseline, version
-    ), f"基線失效：{outlet_name} 原始 body 的 ④ 生效版本本應對應 {version!r}"
+    assert version_matches_effective(baseline, version), (
+        f"基線失效：{outlet_name} 原始 body 的 ④ 生效版本本應對應 {version!r}"
+    )
 
     polluted = re.sub(
         r"(?m)(^.*④\s*生效版本[^\n]*自\s*`?)" + re.escape(version) + r"(`?\s*起[^\n]*$)",
@@ -150,6 +150,6 @@ def test_black_sample_stale_effective_version_pairs_red(outlet_name, renderer, c
 
     body = renderer(polluted, version)
     assert version in body, "黑樣本前提失效：外層 heading/footer 應仍帶 pyproject 版本"
-    assert not version_matches_effective(
-        body, version
-    ), f"黑樣本失效：{outlet_name} 的 ④ 生效版本改成 {old_version!r} 仍被判為對應"
+    assert not version_matches_effective(body, version), (
+        f"黑樣本失效：{outlet_name} 的 ④ 生效版本改成 {old_version!r} 仍被判為對應"
+    )

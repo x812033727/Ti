@@ -152,9 +152,9 @@ def test_create_release_published_not_draft(publish_text):
     """AC#1：release 狀態為 published（不帶 --draft），才能被 release:published 接住。"""
     pub = yaml.safe_load(publish_text)
     create = _find_step_by_run_substr(pub, "gh release create")
-    assert (
-        create is not None and "--draft" not in create["run"]
-    ), "AC#1：release 帶 --draft 或缺建立 step"
+    assert create is not None and "--draft" not in create["run"], (
+        "AC#1：release 帶 --draft 或缺建立 step"
+    )
 
 
 def test_smoke_triggered_by_release_published(smoke_text):
@@ -174,9 +174,9 @@ def test_mutation_pat_to_github_token_turns_red(publish_text, smoke_text):
     mutated = publish_text.replace("secrets.GH_PAT", "github.token")
     assert mutated != publish_text, "mutation 無效：未替換到 GH_PAT（孤立假綠風險）"
     problems = check_trigger_chain(mutated, smoke_text)
-    assert any(
-        "GITHUB_TOKEN" in p or "PAT" in p for p in problems
-    ), f"假綠：PAT→GITHUB_TOKEN 後檢查未翻紅，problems={problems}"
+    assert any("GITHUB_TOKEN" in p or "PAT" in p for p in problems), (
+        f"假綠：PAT→GITHUB_TOKEN 後檢查未翻紅，problems={problems}"
+    )
 
 
 def test_mutation_remove_create_step_turns_red(publish_text, smoke_text):
@@ -184,9 +184,9 @@ def test_mutation_remove_create_step_turns_red(publish_text, smoke_text):
     mutated = publish_text.replace("gh release create", "echo skip-create")
     assert mutated != publish_text, "mutation 無效：未替換到建立指令"
     problems = check_trigger_chain(mutated, smoke_text)
-    assert any(
-        "建立 step" in p for p in problems
-    ), f"假綠：移除建立 step 後未翻紅，problems={problems}"
+    assert any("建立 step" in p for p in problems), (
+        f"假綠：移除建立 step 後未翻紅，problems={problems}"
+    )
 
 
 def test_mutation_add_draft_turns_red(publish_text, smoke_text):
@@ -202,9 +202,9 @@ def test_mutation_smoke_published_to_created_turns_red(publish_text, smoke_text)
     mutated_smoke = smoke_text.replace("[published]", "[created]")
     assert mutated_smoke != smoke_text, "mutation 無效：未替換到 trigger types"
     problems = check_trigger_chain(publish_text, mutated_smoke)
-    assert any(
-        "release:published" in p for p in problems
-    ), f"假綠：smoke 改 created 後未翻紅，problems={problems}"
+    assert any("release:published" in p for p in problems), (
+        f"假綠：smoke 改 created 後未翻紅，problems={problems}"
+    )
 
 
 def test_mutation_remove_render_step_turns_red(publish_text, smoke_text):
@@ -212,9 +212,9 @@ def test_mutation_remove_render_step_turns_red(publish_text, smoke_text):
     mutated = publish_text.replace("publish_release.py", "noop.py")
     assert mutated != publish_text, "mutation 無效：未替換到 render 指令"
     problems = check_trigger_chain(mutated, smoke_text)
-    assert any(
-        "Render body step" in p for p in problems
-    ), f"假綠：移除 render step 後未翻紅，problems={problems}"
+    assert any("Render body step" in p for p in problems), (
+        f"假綠：移除 render step 後未翻紅，problems={problems}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -274,9 +274,9 @@ def test_mutation_guard_drops_exit_turns_red(publish_text):
     mutated = publish_text.replace(guard["run"], guard["run"].replace("exit 1", "true"))
     assert mutated != publish_text, "mutation 無效：未替換到 exit 1"
     problems = check_pat_guard(mutated)
-    assert any(
-        "非零退出" in p for p in problems
-    ), f"假綠：guard 去掉 exit 1 後未翻紅，problems={problems}"
+    assert any("非零退出" in p for p in problems), (
+        f"假綠：guard 去掉 exit 1 後未翻紅，problems={problems}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +294,7 @@ def test_no_breaking_heading_literal_in_yaml_and_script(publish_text, smoke_text
         ("smoke.yml", smoke_text),
         ("publish_release.py", script_text),
     ):
-        assert (
-            BREAKING_HEADING not in text
-        ), f"AC#2：{name} 出現 heading 字面值 {BREAKING_HEADING!r}"
+        assert BREAKING_HEADING not in text, (
+            f"AC#2：{name} 出現 heading 字面值 {BREAKING_HEADING!r}"
+        )
         assert "## Breaking" not in text, f"AC#2：{name} 出現 `## Breaking` 字面值"

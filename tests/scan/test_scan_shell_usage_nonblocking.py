@@ -50,9 +50,9 @@ def test_warn_mode_returns_zero_even_on_hit(tmp_path):
     (tmp_path / "s.py").write_text(HIT_SAMPLE)
     cp = run_scan(tmp_path, "warn")
     out = cp.stdout + cp.stderr
-    assert (
-        "S602" in out or "S604" in out
-    ) or "create_subprocess_shell" in out, f"前提失敗：樣本應被掃出命中:\n{out}"
+    assert ("S602" in out or "S604" in out) or "create_subprocess_shell" in out, (
+        f"前提失敗：樣本應被掃出命中:\n{out}"
+    )
     assert cp.returncode == 0, f"warn 模式命中後應回 0，實得 {cp.returncode}\n{out}"
 
 
@@ -84,12 +84,12 @@ def test_ci_yaml_parses():
 def test_ci_scan_step_is_nonblocking():
     step = _find_scan_step()
     assert step is not None, "ci.yml 找不到呼叫 scan_shell_usage.sh 的 step"
-    assert (
-        step.get("continue-on-error") is True
-    ), f"Scan step 缺 continue-on-error: true，會擋 CI：{step}"
-    assert (
-        step.get("env", {}).get("SCAN_MODE") == "warn"
-    ), f"Scan step SCAN_MODE 應為 warn：{step.get('env')}"
+    assert step.get("continue-on-error") is True, (
+        f"Scan step 缺 continue-on-error: true，會擋 CI：{step}"
+    )
+    assert step.get("env", {}).get("SCAN_MODE") == "warn", (
+        f"Scan step SCAN_MODE 應為 warn：{step.get('env')}"
+    )
 
 
 def test_ci_existing_lint_steps_have_no_continue_on_error():
@@ -98,9 +98,9 @@ def test_ci_existing_lint_steps_have_no_continue_on_error():
     for step in data["jobs"]["lint"]["steps"]:
         run = step.get("run", "")
         if run.strip() in ("ruff check .", "ruff format --check ."):
-            assert (
-                "continue-on-error" not in step
-            ), f"既有 lint step 不應有 continue-on-error：{step}"
+            assert "continue-on-error" not in step, (
+                f"既有 lint step 不應有 continue-on-error：{step}"
+            )
 
 
 # --- pre-commit 層：config 合法 + 真實 commit 不被擋 ------------------------

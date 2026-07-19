@@ -125,6 +125,6 @@ def test_task2_self_check_commands_use_python3_not_bare_python():
     assert ".venv/bin/python -m pytest tests/docs -q" in text
     assert "python3 - <<'PY'" in text
     for line in text.splitlines():
-        assert not re.search(
-            r"(?<![./A-Za-z0-9_-])python(?![A-Za-z0-9_-])", line
-        ), f"不得使用裸 python 指令：{line}"
+        assert not re.search(r"(?<![./A-Za-z0-9_-])python(?![A-Za-z0-9_-])", line), (
+            f"不得使用裸 python 指令：{line}"
+        )

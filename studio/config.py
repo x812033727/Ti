@@ -1002,9 +1002,9 @@ AUTOPILOT_SUBSYSTEM_MAX = 2
 # 不變式：軟提示門檻必須嚴格小於硬擋門檻，否則 prompt 還沒提醒就已被 pre-filter 硬拒，
 # 非對稱「軟引導早一步、硬擋兜底」的分層設計會靜默失效。任何人調高 SUBSYSTEM_MAX 而忘改
 # MAX_PENDING 會在 import config 時即時炸出，攔在最便宜的階段（成本一行、防護真實）。
-assert (
-    AUTOPILOT_SUBSYSTEM_MAX < AUTOPILOT_SUBSYSTEM_MAX_PENDING
-), "AUTOPILOT_SUBSYSTEM_MAX（軟提示門檻）必須 < AUTOPILOT_SUBSYSTEM_MAX_PENDING（進場硬擋門檻）"
+assert AUTOPILOT_SUBSYSTEM_MAX < AUTOPILOT_SUBSYSTEM_MAX_PENDING, (
+    "AUTOPILOT_SUBSYSTEM_MAX（軟提示門檻）必須 < AUTOPILOT_SUBSYSTEM_MAX_PENDING（進場硬擋門檻）"
+)
 
 # AUTOPILOT_FOLLOWUP_VALUE_GATE：discovered followup 進場的「良構性/價值閘」（完成率第二輪診斷）。
 #   前輪三大失敗桶（討論不收斂/lint/零-diff）皆為症狀，真正上游是 autopilot 自我衍生的「收尾驗收/

@@ -346,12 +346,12 @@ def test_venv_python_still_runnable():
             "  python3 -m venv .venv && .venv/bin/python --version"
         )
     r = subprocess.run([str(py), "--version"], capture_output=True, text=True)
-    assert (
-        r.returncode == 0
-    ), f".venv/bin/python --version 失敗: rc={r.returncode} stderr={r.stderr!r}"
-    assert re.match(
-        r"^Python 3\.\d+\.\d+", r.stdout.strip()
-    ), f".venv/bin/python --version 輸出非預期: {r.stdout!r}（預期 'Python 3.x.y'）"
+    assert r.returncode == 0, (
+        f".venv/bin/python --version 失敗: rc={r.returncode} stderr={r.stderr!r}"
+    )
+    assert re.match(r"^Python 3\.\d+\.\d+", r.stdout.strip()), (
+        f".venv/bin/python --version 輸出非預期: {r.stdout!r}（預期 'Python 3.x.y'）"
+    )
 
 
 # ============================================================================
@@ -474,9 +474,9 @@ def test_exemption_rules_have_negative_samples(neg_text, why):
     # 跑雙軌豁免——這行不該被任何豁免
     path_reason = _path_is_path_exempt("README.md")  # 隨便挑一個非豁免路徑
     line_reason = _line_is_exempt(neg_text)
-    assert (
-        path_reason is None and line_reason is None
-    ), f"負樣本『{why}』被誤豁免：path={path_reason} line={line_reason}\n  輸入: {neg_text!r}"
+    assert path_reason is None and line_reason is None, (
+        f"負樣本『{why}』被誤豁免：path={path_reason} line={line_reason}\n  輸入: {neg_text!r}"
+    )
 
 
 # ============================================================================
@@ -552,6 +552,6 @@ def test_exempt_patterns_cover_root_historicals():
         assert g in globs, f"root 層級歷史檔 ``{g}`` 漏列——``*/X`` pattern 對根檔失效，需獨立列。"
     # 並且實抽命中
     for path in ["./DECISIONS.md", "./adr.json", "./NOTES.md"]:
-        assert (
-            _path_is_path_exempt(path) is not None
-        ), f"{path} 未命中任何豁免——``*/X`` pattern 配不到根檔，請確認有獨立無前綴條目。"
+        assert _path_is_path_exempt(path) is not None, (
+            f"{path} 未命中任何豁免——``*/X`` pattern 配不到根檔，請確認有獨立無前綴條目。"
+        )

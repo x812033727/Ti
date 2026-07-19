@@ -86,9 +86,9 @@ def test_gh_auth_status_is_never_run_bare() -> None:
     for line_number, line in _executable_shell_lines(text):
         if "gh auth status" not in line:
             continue
-        assert (
-            'GH_TOKEN="$GH_PAT"' in line
-        ), f"第 {line_number} 行可執行路徑出現未明確綁 GH_TOKEN 的 gh auth status"
+        assert 'GH_TOKEN="$GH_PAT"' in line, (
+            f"第 {line_number} 行可執行路徑出現未明確綁 GH_TOKEN 的 gh auth status"
+        )
 
 
 def test_curl_fallback_uses_user_endpoint_without_response_body() -> None:

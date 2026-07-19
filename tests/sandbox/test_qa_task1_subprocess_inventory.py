@@ -206,13 +206,13 @@ def test_expected_caller_present_with_correct_class(name: str, inventory_rows: l
     want_cls, want_anchors = EXPECTED[name]
     matched = [r for r in inventory_rows if (r["file"], r["anchor"]) in want_anchors]
     matched_anchors = {(r["file"], r["anchor"]) for r in matched}
-    assert (
-        matched_anchors == want_anchors
-    ), f"清冊缺少呼叫端：{name}（缺錨點 {sorted(want_anchors - matched_anchors)}）"
+    assert matched_anchors == want_anchors, (
+        f"清冊缺少呼叫端：{name}（缺錨點 {sorted(want_anchors - matched_anchors)}）"
+    )
     for r in matched:
-        assert (
-            r["cls"] == want_cls
-        ), f"{name} 分類錯誤：清冊={r['cls']} 期望={want_cls}（{r['raw']}）"
+        assert r["cls"] == want_cls, (
+            f"{name} 分類錯誤：清冊={r['cls']} 期望={want_cls}（{r['raw']}）"
+        )
 
 
 def test_classification_matches_code_reality():
@@ -256,17 +256,17 @@ def test_classification_matches_code_reality():
         ]
         assert hits, f"orchestrator.py::{anchor} 預期為 shell run_command (c 類)，未找到"
         for c in hits:
-            assert re.search(
-                r"run_command\((?:ctx|self)\.cwd, (?:cmd|sanitized)\)", c.src
-            ), f"orchestrator.py::{anchor} (L{c.lineno}) 預期傳動態 cmd 變數、保留 shell (c 類)：{c.src!r}"
+            assert re.search(r"run_command\((?:ctx|self)\.cwd, (?:cmd|sanitized)\)", c.src), (
+                f"orchestrator.py::{anchor} (L{c.lineno}) 預期傳動態 cmd 變數、保留 shell (c 類)：{c.src!r}"
+            )
     # tools.py run_bash：傳使用者輸入（args.get("command", ...)），必須仍走 shell run_command。
     bash_hits = [
         c for c in callers if c.file == "tools.py" and c.anchor == "execute" and not c.is_exec
     ]
     assert bash_hits, "tools.py::execute 預期含 shell run_command (c 類)，未找到"
-    assert any(
-        'args.get("command"' in c.src for c in bash_hits
-    ), "tools.py run_bash 預期傳使用者輸入、保留 shell (c 類)"
+    assert any('args.get("command"' in c.src for c in bash_hits), (
+        "tools.py run_bash 預期傳使用者輸入、保留 shell (c 類)"
+    )
 
 
 def test_logical_caller_count_is_five(inventory_rows: list[dict]):

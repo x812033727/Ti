@@ -40,9 +40,9 @@ def _autopilot_block(env_text):
 def test_env_has_default_off_principle(env_text):
     """.env.example 含『兩者預設皆關閉/安全側』原則句。"""
     blk = _autopilot_block(env_text)
-    assert re.search(
-        r"預設.{0,4}皆?.{0,4}(關閉|安全)", blk
-    ), ".env.example 缺少『預設關閉/安全側』原則句"
+    assert re.search(r"預設.{0,4}皆?.{0,4}(關閉|安全)", blk), (
+        ".env.example 缺少『預設關閉/安全側』原則句"
+    )
 
 
 def test_env_mentions_branch_protection_and_ci(env_text):

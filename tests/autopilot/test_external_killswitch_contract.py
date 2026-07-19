@@ -102,9 +102,9 @@ def test_pause_file_writers_whitelisted():
         for call in _find_pause_writers(tree):
             found.add((path.name, _enclosing_function(tree, call)))
     unexpected = found - _PAUSE_WRITERS_ALLOWED
-    assert (
-        not unexpected
-    ), f"發現白名單外的 PAUSE_FILE 寫入點（外置 kill switch 假設被破壞）：{unexpected}"
+    assert not unexpected, (
+        f"發現白名單外的 PAUSE_FILE 寫入點（外置 kill switch 假設被破壞）：{unexpected}"
+    )
     assert found == _PAUSE_WRITERS_ALLOWED, f"白名單過時，請同步：實際 {found}"
 
 
@@ -122,9 +122,9 @@ def test_guarded_constants_not_aliased_by_import():
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module and "config" in node.module:
                 aliased = {a.name for a in node.names} & set(_GUARDED)
-                assert (
-                    not aliased
-                ), f"{path.name} 以 import 別名引用受守護常數 {aliased}，請改走 config.X"
+                assert not aliased, (
+                    f"{path.name} 以 import 別名引用受守護常數 {aliased}，請改走 config.X"
+                )
 
 
 def test_guarded_constants_reference_whitelist():
@@ -155,9 +155,9 @@ def test_settings_ui_channel_excludes_killswitch_keys():
     from studio import settings
 
     for key in (f"TI_{c}" for c in _GUARDED):
-        assert (
-            key not in settings.ALLOWED
-        ), f"settings.py 白名單含 {key}——autopilot/LLM 可經 UI 通道改 kill switch 目標"
+        assert key not in settings.ALLOWED, (
+            f"settings.py 白名單含 {key}——autopilot/LLM 可經 UI 通道改 kill switch 目標"
+        )
 
 
 # --- watchdog 腳本外置性與實跑行為 -----------------------------------------

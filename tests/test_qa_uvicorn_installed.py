@@ -51,9 +51,9 @@ def test_installed_version_within_declared_range():
     assert low, f"宣告缺少 >= 下限：{dep}"
     assert ver >= _ver_tuple(low.group(1)), f"安裝版本 {ver} 低於宣告下限 {low.group(1)}"
     if high:
-        assert ver < _ver_tuple(
-            high.group(1)
-        ), f"安裝版本 {ver} 違反宣告上限 <{high.group(1)}；需 pip install -e . --upgrade 重新解析"
+        assert ver < _ver_tuple(high.group(1)), (
+            f"安裝版本 {ver} 違反宣告上限 <{high.group(1)}；需 pip install -e . --upgrade 重新解析"
+        )
 
 
 def test_uvicorn_importable_and_matches_metadata():

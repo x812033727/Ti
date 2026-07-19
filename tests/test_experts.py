@@ -382,9 +382,9 @@ async def test_emit_claude_token_usage_with_duration_api_ms():
 
     assert len(bucket) == 1, f"應發出 1 個事件，got {len(bucket)}"
     payload = bucket[0].to_dict()["payload"]
-    assert (
-        payload["duration_ms"] == 1234
-    ), f"duration_api_ms=1234 應映射為 duration_ms=1234，got {payload.get('duration_ms')!r}"
+    assert payload["duration_ms"] == 1234, (
+        f"duration_api_ms=1234 應映射為 duration_ms=1234，got {payload.get('duration_ms')!r}"
+    )
     # 附帶確認 provider/model/speaker 等基本欄位在場
     assert payload["provider"] == "claude"
     assert payload["speaker"] == "engineer"
@@ -410,6 +410,6 @@ async def test_emit_claude_token_usage_without_duration_api_ms():
 
     assert len(bucket) == 1, f"應發出 1 個事件，got {len(bucket)}"
     payload = bucket[0].to_dict()["payload"]
-    assert (
-        "duration_ms" not in payload
-    ), f"無 duration_api_ms 時 payload 不應含 duration_ms 鍵，got payload={payload!r}"
+    assert "duration_ms" not in payload, (
+        f"無 duration_api_ms 時 payload 不應含 duration_ms 鍵，got payload={payload!r}"
+    )

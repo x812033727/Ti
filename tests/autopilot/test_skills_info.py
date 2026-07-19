@@ -18,9 +18,9 @@ def test_list_skills_shape_and_descriptions():
 def test_list_skills_tolerates_missing_files(monkeypatch, tmp_path):
     monkeypatch.setattr(skills_info, "_skill_dir", lambda: tmp_path / "nope")
     out = skills_info.list_skills()
-    assert [s["description"] for s in out["skills"]] == [""] * len(
-        EXPERT_SKILLS_LIST
-    ), "讀不到=空描述,絕不拋"
+    assert [s["description"] for s in out["skills"]] == [""] * len(EXPERT_SKILLS_LIST), (
+        "讀不到=空描述,絕不拋"
+    )
 
 
 def test_roles_reflect_config(monkeypatch):

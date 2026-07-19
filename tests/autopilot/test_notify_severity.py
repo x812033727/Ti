@@ -81,9 +81,9 @@ def test_watchdog_notify_hook_external_contract():
     assert "watchdog_paused" in code, "推播文字應帶 kind 便於對齊 SEVERITY 口徑"
     hook = code.split("例外推播", 1)[1]
     env_reads = set(re.findall(r"\$\{(\w+)[:-]", hook))
-    assert env_reads <= {
-        "TI_WATCHDOG_NOTIFY_URL"
-    }, f"鉤子只能讀 TI_WATCHDOG_* 環境變數(外置契約),實際:{env_reads}"
+    assert env_reads <= {"TI_WATCHDOG_NOTIFY_URL"}, (
+        f"鉤子只能讀 TI_WATCHDOG_* 環境變數(外置契約),實際:{env_reads}"
+    )
 
 
 def test_watchdog_script_no_notify_when_url_unset(tmp_path):

@@ -78,9 +78,9 @@ def test_workflow_and_deploy_job_have_no_path_filter():
     on_section = text.split("\njobs:", 1)[0]
     deploy_block = _job_block("deploy-test")
     for section_name, section in (("on", on_section), ("deploy-test", deploy_block)):
-        assert not re.search(
-            r"^\s+paths(?:-ignore)?:", section, re.MULTILINE
-        ), f"{section_name} 不可用 paths / paths-ignore 過濾，避免 required check 變 pending 或消失"
+        assert not re.search(r"^\s+paths(?:-ignore)?:", section, re.MULTILINE), (
+            f"{section_name} 不可用 paths / paths-ignore 過濾，避免 required check 變 pending 或消失"
+        )
 
 
 def test_readme_documents_deploy_test_as_required_check():
@@ -93,6 +93,6 @@ def test_readme_documents_deploy_test_as_required_check():
     assert required_lines, "README 缺 required checks 說明"
     text = "\n".join(required_lines)
     assert "`deploy-test`" in text
-    assert re.search(
-        r"branch protection|ruleset", text, re.IGNORECASE
-    ), "README 必須明確提醒在 branch protection / ruleset 設為 required"
+    assert re.search(r"branch protection|ruleset", text, re.IGNORECASE), (
+        "README 必須明確提醒在 branch protection / ruleset 設為 required"
+    )

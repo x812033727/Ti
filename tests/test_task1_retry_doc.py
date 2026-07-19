@@ -36,9 +36,9 @@ def test_section_exists_and_unique_factory():
     sec = arch_section()
     assert "make_retry_config" in sec
     # 必須用「唯一」字樣描述工廠入口
-    assert re.search(
-        r"make_retry_config.{0,40}唯一|唯一.{0,40}make_retry_config", sec
-    ), "未以『唯一』字樣描述 make_retry_config 工廠入口"
+    assert re.search(r"make_retry_config.{0,40}唯一|唯一.{0,40}make_retry_config", sec), (
+        "未以『唯一』字樣描述 make_retry_config 工廠入口"
+    )
     # 三者角色都要點名
     assert "RetryConfig" in sec, "未點名 RetryConfig"
     assert "run_with_retries" in sec, "未點名 run_with_retries"
@@ -60,9 +60,9 @@ def test_provider_contract_three_steps_and_no_second_retry():
     i_run = contract.index("run_with_retries")
     assert i_make < i_kw < i_run, "接入契約三步順序不符（取 cfg → as_kwargs → run_with_retries）"
     # 禁第二層 retry 明文
-    assert re.search(
-        r"禁止.{0,20}retry|禁止.{0,20}第二層", sec
-    ), "未明文『禁止 provider 層第二層 retry』"
+    assert re.search(r"禁止.{0,20}retry|禁止.{0,20}第二層", sec), (
+        "未明文『禁止 provider 層第二層 retry』"
+    )
     assert "max_retries=0" in sec, "未標明 SDK 內建 retry 須設 0（max_retries=0）"
 
 
@@ -73,9 +73,9 @@ def test_jitter_and_clamp_semantics():
     assert "比例" in sec, "未說明 jitter 為比例"
     assert "非秒數" in sec or "不是秒數" in sec, "未明示 jitter 非秒數"
     assert "[0,1]" in sec or "[0、1]" in sec, "未標 jitter 範圍 [0,1]"
-    assert re.search(
-        r"max_retries.{0,30}(clamp|夾|≥\s*0|>=\s*0)", sec
-    ), "未說明 max_retries clamp ≥0"
+    assert re.search(r"max_retries.{0,30}(clamp|夾|≥\s*0|>=\s*0)", sec), (
+        "未說明 max_retries clamp ≥0"
+    )
 
 
 # ── 驗收標準 4：工廠上移接入點以決策形式標注 ──
@@ -84,9 +84,9 @@ def test_future_factory_relocation_decision():
     assert "伏筆" in sec or "決策" in sec, "未以決策/伏筆形式標注"
     assert "上移" in sec or "搬" in sec, "未提工廠上移"
     # 點名候選落點
-    assert (
-        "providers.py" in sec and "llm_caller.py" in sec
-    ), "未標明上移候選（providers.py / llm_caller.py）"
+    assert "providers.py" in sec and "llm_caller.py" in sec, (
+        "未標明上移候選（providers.py / llm_caller.py）"
+    )
     assert "第三" in sec, "未說明觸發條件（第三個 provider）"
 
 
@@ -124,12 +124,12 @@ def test_config_four_knobs_exist():
 
 def test_clamp_actually_in_source():
     """文件聲稱 max_retries call-time clamp ≥0——工廠端與 __post_init__ 皆須有。"""
-    assert "max(0, config.EXPERT_RATE_LIMIT_RETRIES)" in read(
-        "studio/experts.py"
-    ), "工廠端未 clamp max_retries"
-    assert "self.max_retries < 0" in read(
-        "studio/llm_caller.py"
-    ), "RetryConfig.__post_init__ 未 clamp max_retries"
+    assert "max(0, config.EXPERT_RATE_LIMIT_RETRIES)" in read("studio/experts.py"), (
+        "工廠端未 clamp max_retries"
+    )
+    assert "self.max_retries < 0" in read("studio/llm_caller.py"), (
+        "RetryConfig.__post_init__ 未 clamp max_retries"
+    )
 
 
 # ── 反向黑樣本：杜撰錨點不應出現在文件中 ──

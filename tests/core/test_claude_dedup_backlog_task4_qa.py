@@ -49,9 +49,9 @@ def core_state(tmp_path, monkeypatch):
 
 def test_gap_recorded_in_decisions_md():
     text = (ROOT / "DECISIONS.md").read_text(encoding="utf-8")
-    assert (
-        "核心改動: Claude provider 路徑缺乏 per-speak 去重保護" in text
-    ), "DECISIONS.md 未記錄 Claude path per-speak 去重缺口的核心改動票"
+    assert "核心改動: Claude provider 路徑缺乏 per-speak 去重保護" in text, (
+        "DECISIONS.md 未記錄 Claude path per-speak 去重缺口的核心改動票"
+    )
 
 
 # --- 2) 缺口已被結構化記錄（adr.json，且可機器查詢） ----------------------
@@ -71,9 +71,9 @@ def test_gap_recorded_in_adr_json_structured():
     ]
     assert hits, "adr.json 無 Claude per-speak 去重缺口的結構化決策條目"
     # 該票必須含 retry 語境，否則描述不足以讓接手人定位缺口。
-    assert any(
-        "retry" in d["decision"] for d in hits
-    ), "adr.json 條目未說明 retry 重放情境，描述不足"
+    assert any("retry" in d["decision"] for d in hits), (
+        "adr.json 條目未說明 retry 重放情境，描述不足"
+    )
     # 必須含「記入 backlog／不動 Claude path」的範圍宣告（本場不實作）。
     assert any(
         "backlog" in d["decision"] and "不" in d["decision"] and "Claude path" in d["decision"]
@@ -133,6 +133,6 @@ def test_recorded_inline_form_is_not_routable_black_sample():
     若哪天有人改 regex 或記錄格式讓這條變成可解析，本測試會紅，提醒重新評估
     『重解析 doc 即重新路由』是否會造成核心 repo 重複/空轉 PR。
     """
-    assert (
-        flow.parse_core_changes(RECORDED_INLINE_FORM) == []
-    ), "committed 內嵌形式現在可被解析——需重新評估重複路由風險"
+    assert flow.parse_core_changes(RECORDED_INLINE_FORM) == [], (
+        "committed 內嵌形式現在可被解析——需重新評估重複路由風險"
+    )

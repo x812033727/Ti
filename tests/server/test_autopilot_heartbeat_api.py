@@ -145,9 +145,9 @@ def test_monitoring_doc_records_heartbeat_threshold_rationale():
         encoding="utf-8"
     )
     assert re.search(r"60s|60 秒|每 ~60s", text)
-    assert re.search(
-        r"≥\s*300s|>=\s*300s|至少\s*300\s*秒", text
-    ), "文件需明確記錄門檻選值依據：心跳 60s，生產 stale threshold 應 ≥300s"
+    assert re.search(r"≥\s*300s|>=\s*300s|至少\s*300\s*秒", text), (
+        "文件需明確記錄門檻選值依據：心跳 60s，生產 stale threshold 應 ≥300s"
+    )
 
 
 def test_autopilot_status_exposes_turn_fields(client, tmp_path):

@@ -104,9 +104,9 @@ def test_complete_once_has_no_second_retry_layer():
     """complete_once 不得自套第二層 run_with_retries（架構決策否決雙層退避）。"""
     fns = _funcs(PROV_TREE)
     assert "complete_once" in fns, "找不到 complete_once"
-    assert (
-        _calls_named(fns["complete_once"], "run_with_retries") == 0
-    ), "complete_once 不應套第二層退避——退避是 speak() 層職責"
+    assert _calls_named(fns["complete_once"], "run_with_retries") == 0, (
+        "complete_once 不應套第二層退避——退避是 speak() 層職責"
+    )
 
 
 def test_providers_has_no_raw_sleep_retry():

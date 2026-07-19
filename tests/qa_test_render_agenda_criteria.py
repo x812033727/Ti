@@ -211,9 +211,9 @@ def test_addSystem_uses_textContent_not_innerHTML():
     body = app_js[open_brace : body_end + 1]
 
     # 必須有 textContent 賦值
-    assert (
-        "textContent" in body
-    ), f"addSystem body 不含 textContent 賦值，渲染路徑可能有 XSS 風險：\n{body}"
+    assert "textContent" in body, (
+        f"addSystem body 不含 textContent 賦值，渲染路徑可能有 XSS 風險：\n{body}"
+    )
     # 不應有 innerHTML（無論是 property 賦值還是 string literal）
     assert "innerHTML" not in body, (
         f"addSystem body 含 innerHTML——criteria 進拼接後會被當 HTML 解析，"

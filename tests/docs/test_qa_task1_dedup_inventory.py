@@ -58,9 +58,9 @@ def test_inventory_declares_canonical_contributing():
     t = _txt(INVENTORY)
     assert "canonical" in t.lower(), "盤點未標示 canonical 概念"
     # canonical 必須指向 CONTRIBUTING.md
-    assert re.search(
-        r"canonical[^\n]*CONTRIBUTING\.md|CONTRIBUTING\.md[^\n]*canonical", t, re.I
-    ), "盤點未明確把 CONTRIBUTING.md 標為 canonical"
+    assert re.search(r"canonical[^\n]*CONTRIBUTING\.md|CONTRIBUTING\.md[^\n]*canonical", t, re.I), (
+        "盤點未明確把 CONTRIBUTING.md 標為 canonical"
+    )
 
 
 # C. 盤點列出全部 4 組重複指令家族

@@ -93,6 +93,6 @@ def test_no_bare_pip_in_block():
 def test_links_to_settings_not_expand_flags():
     seg = SEC[SEC.find("happy-path") :]
     assert "[設定](#設定)" in seg, "happy-path 區塊未以連結指向『[設定](#設定)』表"
-    assert "TI_AUTOPILOT_" not in re.sub(
-        r"<!--.*?-->", "", seg, flags=re.DOTALL
-    ), "happy-path 不應展開 TI_AUTOPILOT_* 旗標細節"
+    assert "TI_AUTOPILOT_" not in re.sub(r"<!--.*?-->", "", seg, flags=re.DOTALL), (
+        "happy-path 不應展開 TI_AUTOPILOT_* 旗標細節"
+    )

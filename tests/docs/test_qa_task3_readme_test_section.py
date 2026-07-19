@@ -73,9 +73,9 @@ def test_summary_mentions_tools_descriptively():
 # 標準 4-c：onboarding「執行環境前置」happy-path 的 pre-commit 步驟未被誤刪
 def test_onboarding_precommit_step_preserved():
     t = _readme()
-    assert (
-        ".venv/bin/python3 -m pre_commit install" in t
-    ), "onboarding 執行環境前置的 pre-commit 步驟不應被本次收斂移除"
+    assert ".venv/bin/python3 -m pre_commit install" in t, (
+        "onboarding 執行環境前置的 pre-commit 步驟不應被本次收斂移除"
+    )
 
 
 # 標準 4-d：驗證指令段（預期輸出 ok）維持原樣

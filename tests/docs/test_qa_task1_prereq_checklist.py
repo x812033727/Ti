@@ -90,6 +90,6 @@ def test_checklist_no_autopilot_varnames():
     block = _checklist_block()
     # 剝除 HTML 維護註解（其內刻意提及 TI_AUTOPILOT_* 作為紅線提醒，非實際變數使用）
     block = re.sub(r"<!--.*?-->", "", block, flags=re.DOTALL)
-    assert (
-        "TI_AUTOPILOT_" not in block
-    ), "checklist 不得出現 TI_AUTOPILOT_* 完整變數名（首現須留在『設定』表）"
+    assert "TI_AUTOPILOT_" not in block, (
+        "checklist 不得出現 TI_AUTOPILOT_* 完整變數名（首現須留在『設定』表）"
+    )

@@ -83,9 +83,9 @@ def test_warn_mode_returns_zero_even_on_hit(tmp_path):
     (tmp_path / "a.py").write_text(SHELL_TRUE_SAMPLE)
     (tmp_path / "b.py").write_text(CREATE_SHELL_SAMPLE)
     cp = run_scan(tmp_path, mode="warn")
-    assert (
-        cp.returncode == 0
-    ), f"warn 模式命中後仍回非零: rc={cp.returncode}\n{cp.stdout}{cp.stderr}"
+    assert cp.returncode == 0, (
+        f"warn 模式命中後仍回非零: rc={cp.returncode}\n{cp.stdout}{cp.stderr}"
+    )
 
 
 if __name__ == "__main__":

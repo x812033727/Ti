@@ -55,9 +55,9 @@ def test_all_server_launches_use_venv_path():
     ]
     assert launches, "找不到任何 studio.server 啟動範例"
     for ln in launches:
-        assert re.search(
-            r"\.venv[/\\](bin/python3|Scripts\\python)", ln
-        ), f"啟動指令未用 .venv 完整路徑: {ln}"
+        assert re.search(r"\.venv[/\\](bin/python3|Scripts\\python)", ln), (
+            f"啟動指令未用 .venv 完整路徑: {ln}"
+        )
 
 
 def test_install_section_points_to_env_setup():

@@ -192,6 +192,6 @@ def test_negative_samples_must_not_trigger_convention_matchers(neg_text, why):
     py_hint = _has_windows_py_launcher_hint(neg_text)
     venv = _has_venv_python_explicit(neg_text)
     shell = _has_shell_python3_explicit_convention(neg_text)
-    assert not (
-        py_hint or venv or shell
-    ), f"負樣本『{why}』誤觸：py_hint={py_hint} venv={venv} shell={shell}\n  輸入: {neg_text!r}"
+    assert not (py_hint or venv or shell), (
+        f"負樣本『{why}』誤觸：py_hint={py_hint} venv={venv} shell={shell}\n  輸入: {neg_text!r}"
+    )

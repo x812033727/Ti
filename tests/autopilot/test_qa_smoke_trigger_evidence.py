@@ -218,9 +218,9 @@ def test_black_sample_drop_failure_run_turns_red(evidence):
     mutated = copy.deepcopy(evidence)
     mutated.pop("superseded_failure_run", None)
     problems = check_evidence(mutated)
-    assert any(
-        "superseded_failure_run" in p or "failure" in p for p in problems
-    ), f"假綠：抽掉 failure run 後守護未翻紅，problems={problems}"
+    assert any("superseded_failure_run" in p or "failure" in p for p in problems), (
+        f"假綠：抽掉 failure run 後守護未翻紅，problems={problems}"
+    )
 
 
 def test_black_sample_pending_but_still_green_turns_red(evidence, handoff_text):
@@ -228,6 +228,6 @@ def test_black_sample_pending_but_still_green_turns_red(evidence, handoff_text):
     mutated = copy.deepcopy(evidence)
     mutated["verification_status"] = "pending"
     problems = check_gate(mutated, handoff_text)
-    assert any(
-        "假綠" in p for p in problems
-    ), f"假綠：pending 卻仍 ✅ 未被擋下，problems={problems}"
+    assert any("假綠" in p for p in problems), (
+        f"假綠：pending 卻仍 ✅ 未被擋下，problems={problems}"
+    )

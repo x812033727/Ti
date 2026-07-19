@@ -554,9 +554,9 @@ async def test_git_commit_fail_closed_logs_warning(tmp_path, monkeypatch, caplog
         assert await runner.git_commit(tmp_path, "x") is None
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warnings, "fail-closed 應記一筆 warning"
-    assert any(
-        "git add" in r.getMessage() for r in warnings
-    ), f"warning 應點名失敗步驟：{[r.getMessage() for r in warnings]}"
+    assert any("git add" in r.getMessage() for r in warnings), (
+        f"warning 應點名失敗步驟：{[r.getMessage() for r in warnings]}"
+    )
 
 
 @pytest.mark.asyncio

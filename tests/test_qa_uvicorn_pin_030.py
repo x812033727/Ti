@@ -64,9 +64,9 @@ def test_acceptance2_comment_mentions_proxyheaders():
         j -= 1
     comment = "\n".join(block)
     assert "ProxyHeaders" in comment, f"註解需提及 ProxyHeaders：\n{comment}"
-    assert (
-        "最左值" in comment or "X-Forwarded-For" in comment
-    ), f"註解需提及最左值/X-Forwarded-For 偽造：\n{comment}"
+    assert "最左值" in comment or "X-Forwarded-For" in comment, (
+        f"註解需提及最左值/X-Forwarded-For 偽造：\n{comment}"
+    )
 
 
 def test_acceptance3_installed_version_ge_030():

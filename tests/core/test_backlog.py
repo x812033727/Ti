@@ -146,9 +146,9 @@ def test_completion_stats_recent_window_slices_by_updated_at(state):
     for rank, tid in enumerate(ids):
         _patch_task(tid, updated_at=1000.0 + rank)  # rank 越大越新；最新兩筆(3,4)=done
     cs = backlog.completion_stats(window=2)
-    assert (
-        cs["total"] == 2 and cs["done"] == 2 and cs["rate"] == 1.0
-    ), f"近 2 筆應只含最新的兩筆 done、不被舊 failed 拖低：{cs}"
+    assert cs["total"] == 2 and cs["done"] == 2 and cs["rate"] == 1.0, (
+        f"近 2 筆應只含最新的兩筆 done、不被舊 failed 拖低：{cs}"
+    )
     # 全窗則含全部 5 筆：2 done / 5
     allw = backlog.completion_stats(window=0)
     assert allw["total"] == 5 and allw["done"] == 2 and allw["rate"] == 0.4

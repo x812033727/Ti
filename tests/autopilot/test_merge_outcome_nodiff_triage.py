@@ -92,9 +92,9 @@ async def test_no_changes_parks_noop_not_failed(monkeypatch, tmp_path):
     # attempts 未被 _handle_gate_failure 遞增（沒燒重試）
     assert all("attempts" not in s[2] or s[2].get("attempts") is None for s in statuses[1:])
     # audit 走獨立 outcome，不污染 merge_failed 桶
-    assert (
-        audits and audits[-1]["outcome"] == "no_changes"
-    ), f"audit outcome 應為 no_changes：{audits[-1]!r}"
+    assert audits and audits[-1]["outcome"] == "no_changes", (
+        f"audit outcome 應為 no_changes：{audits[-1]!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -134,9 +134,9 @@ async def test_real_merge_failure_still_gate_fails(monkeypatch, tmp_path):
 def test_network_transient_tagged_infra(out):
     note = autopilot._merge_fail_note("push 失敗", out)
     assert "unreachable" in note, f"網路暫時性應附 infra 標記：{note!r}"
-    assert backlog.INFRA_FAILURE_RE.search(
-        note
-    ), "標記後須被 triage 的 INFRA_FAILURE_RE 命中（會自動重排）"
+    assert backlog.INFRA_FAILURE_RE.search(note), (
+        "標記後須被 triage 的 INFRA_FAILURE_RE 命中（會自動重排）"
+    )
 
 
 @pytest.mark.parametrize(
@@ -150,9 +150,9 @@ def test_network_transient_tagged_infra(out):
 )
 def test_auth_failure_not_tagged_infra(out):
     note = autopilot._merge_fail_note("push 失敗", out)
-    assert (
-        "unreachable" not in note
-    ), f"認證/權限實質失敗不得附 infra 標記（否則 triage 無限重排）：{note!r}"
+    assert "unreachable" not in note, (
+        f"認證/權限實質失敗不得附 infra 標記（否則 triage 無限重排）：{note!r}"
+    )
     assert not backlog.INFRA_FAILURE_RE.search(note), "認證失敗不得被 triage 當可重試"
 
 
