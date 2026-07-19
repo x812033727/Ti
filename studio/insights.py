@@ -174,7 +174,9 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
     # 自主度拆解(軌 F2,第 4 階量測):merged join backlog source。人工源=人出的題;
     # 其餘(intent/schedule/eval/discovered/investigation…)=系統自產;backlog 已不存在
     # 的舊任務歸 unknown 不進分子分母(誠實呈現缺口,不灌水)。
-    src_by_id = {t.get("id"): str(t.get("source") or "") for t in backlog.list_tasks(state_dir=state_dir)}
+    src_by_id = {
+        t.get("id"): str(t.get("source") or "") for t in backlog.list_tasks(state_dir=state_dir)
+    }
     by_source: dict[str, int] = {}
     zero_ids = {str(r.get("task_id")) for r in zero}
     intent_delivery = 0

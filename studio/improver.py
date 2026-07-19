@@ -433,7 +433,9 @@ class ProjectImprover:
             autopilot._filter_pending_duplicates([t["title"].strip() for t in items], existing)
         )
         items = [t for t in items if t["title"].strip() in kept]
-        n = backlog.add_items(items[:DISCOVERY_MAX], source=self._discovery_source(), state_dir=sdir)
+        n = backlog.add_items(
+            items[:DISCOVERY_MAX], source=self._discovery_source(), state_dir=sdir
+        )
         # 留痕閉環：把「源頭擋掉幾個重複/低價值提案」回報前端並寫進伺服器日誌，取代靜默丟棄，
         # 讓使用者看得到把關量、可據此回饋調整品質下限（dropped 不含 DISCOVERY_MAX 容量截斷）。
         dropped = raw_n - len(items)
