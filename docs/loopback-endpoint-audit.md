@@ -33,6 +33,9 @@
 | POST | `/api/autopilot/task/{task_id}/action` | admin（auth｜fail-safe loopback） | ✅ | 看板手動操作單一任務（retry/park/unpark/priority），改寫 backlog 狀態 |
 | POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
 | POST | `/api/notify/test` | admin（auth｜fail-safe loopback） | ✅ | 發送測試推播（webhook/Telegram）＝觸發對外網路呼叫且間接證實已設憑證，管理面操作 |
+| POST | `/api/schedules` | admin（auth｜fail-safe loopback） | ✅ | 建立排程＝向會自主執行 bash 的 autopilot 週期性注入任務，與 /api/autopilot/task 同級 |
+| PUT | `/api/schedules/{sched_id}` | admin（auth｜fail-safe loopback） | ✅ | 改排程內容/啟停（同 POST 寫入面） |
+| DELETE | `/api/schedules/{sched_id}` | admin（auth｜fail-safe loopback） | ✅ | 刪除排程條目 |
 | POST | `/api/roles` | admin（auth｜fail-safe loopback） | ✅ | 寫入角色檔 `roles/<key>.md` 並 reload 角色表（system_prompt 注入面） |
 | PUT | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 改寫角色檔並 reload（同 POST 寫入面） |
 | DELETE | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 刪角色檔（file＝移除、override＝還原內建），機器狀態變更 |
@@ -52,6 +55,8 @@
 | GET  | `/api/autopilot/trust` | auth | ➖ | 唯讀：信任指標（零人工介入合併率/介入分類/系統事件計數，第 3 階 A0） |
 | GET  | `/api/autopilot/investigations` | auth | ➖ | 唯讀：調查任務結論清單（backlog note＋audit join） |
 | GET  | `/api/lessons` | auth | ➖ | 唯讀：教訓庫瀏覽（子字串搜尋） |
+| GET  | `/api/skills` | auth | ➖ | 唯讀：內部專家技能清單（白名單+SKILL.md 描述），無秘密 |
+| GET  | `/api/schedules` | auth | ➖ | 唯讀：排程任務清單 |
 | GET  | `/api/autopilot/digest` | auth | ➖ | 唯讀：週報 digest（audit/backlog/lessons 純模板彙整） |
 | GET  | `/api/autopilot/digests` | auth | ➖ | 唯讀：已落盤 digest 歷史清單（每日排程寫檔） |
 | GET  | `/api/autopilot/digests/{name}` | auth | ➖ | 唯讀：單一落盤 digest 內容（檔名白名單擋穿越） |

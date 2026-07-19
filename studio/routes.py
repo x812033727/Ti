@@ -35,6 +35,7 @@ from . import (
     repo_base,
     role_store,
     roles,
+    schedules,
     settings,
     workflow,
     workspace,
@@ -968,6 +969,58 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     return JSONResponse({"ok": True, "task": task})
 
 
+# --- 排程任務(Kimi 化 PR10):週期性把任務插進 autopilot backlog ---------------
+class ScheduleBody(BaseModel):
+    title: str = ""
+    detail: str = ""
+    priority: int = 1
+    type: str = "improvement"
+    recurrence: dict = Field(default_factory=dict)
+    enabled: bool | None = None
+
+
+@router.get("/api/schedules", dependencies=[Depends(auth.require_auth)])
+async def schedules_list() -> JSONResponse:
+    """唯讀:排程清單(到期由 autopilot 主迴圈入列,執行仍走既有 backlog)。"""
+    return JSONResponse({"schedules": await asyncio.to_thread(schedules.list_schedules)})
+
+
+@router.post("/api/schedules", dependencies=WRITE_DEPS)
+async def schedules_create(body: ScheduleBody) -> JSONResponse:
+    sched, err = await asyncio.to_thread(
+        schedules.create,
+        body.title,
+        body.detail,
+        body.recurrence,
+        priority=body.priority,
+        item_type=body.type,
+    )
+    if sched is None:
+        return JSONResponse({"ok": False, "detail": err}, status_code=400)
+    interventions.record("schedule_create", "context_feeding")
+    return JSONResponse({"ok": True, "schedule": sched})
+
+
+@router.put("/api/schedules/{sched_id}", dependencies=WRITE_DEPS)
+async def schedules_update(sched_id: str, body: ScheduleBody) -> JSONResponse:
+    fields = body.model_dump(exclude_unset=True)
+    sched, err = await asyncio.to_thread(schedules.update, sched_id, fields)
+    if sched is None:
+        status = 404 if err.startswith("不存在") else 400
+        return JSONResponse({"ok": False, "detail": err}, status_code=status)
+    interventions.record("schedule_update", "context_feeding")
+    return JSONResponse({"ok": True, "schedule": sched})
+
+
+@router.delete("/api/schedules/{sched_id}", dependencies=WRITE_DEPS)
+async def schedules_delete(sched_id: str) -> JSONResponse:
+    ok = await asyncio.to_thread(schedules.delete, sched_id)
+    if not ok:
+        return JSONResponse({"ok": False, "detail": "不存在的排程"}, status_code=404)
+    interventions.record("schedule_delete", "context_feeding")
+    return JSONResponse({"ok": True})
+
+
 @router.get("/api/autopilot/digest", dependencies=[Depends(auth.require_auth)])
 async def autopilot_digest(days: int = 7) -> JSONResponse:
     """週報 digest(純模板零 LLM,即時生成):成果/完成率對比/PR 清單/教訓/北極星。"""
@@ -1016,6 +1069,14 @@ async def autopilot_trust(days: int = 7) -> JSONResponse:
 async def autopilot_investigations(limit: int = 50) -> JSONResponse:
     """調查任務結論清單(backlog note 前綴 + audit investigation_* join)。"""
     return JSONResponse({"investigations": await asyncio.to_thread(insights.investigations, limit)})
+
+
+@router.get("/api/skills", dependencies=[Depends(auth.require_auth)])
+async def skills_list() -> JSONResponse:
+    """唯讀:內部專家技能清單(名稱白名單+SKILL.md 描述+啟用狀態/適用角色)。"""
+    from . import skills_info
+
+    return JSONResponse(await asyncio.to_thread(skills_info.list_skills))
 
 
 @router.get("/api/lessons", dependencies=[Depends(auth.require_auth)])
