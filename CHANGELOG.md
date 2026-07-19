@@ -47,6 +47,19 @@
 **遷移指引**：完整說明見 README 的「state 安全寫入（TI_REQUIRE_CHOWN）」小節，
 以及 `.env.example` 內的 `TI_REQUIRE_CHOWN` 範例。
 
+## 未發佈(2026-07-19 Kimi 化批次)
+
+### Added
+- 助手首頁(view=home,預設;`TI_DEFAULT_VIEW` 可改):hero composer(討論/交辦 Agent/快答)、
+  常駐側欄(新對話 Ctrl+K/對話歷史/插件/排程任務/帳號)、工作室脈搏與靈感區、手機 RWD。
+- 排程任務:`studio/schedules.py` + `/api/schedules*`(到期入列 autopilot backlog,occurrence 去重)。
+- `GET /api/skills` 技能唯讀清單;內建「快答」workflow(單專家一輪)。
+- 專家訊息 markdown 渲染(`web/js/markdown.js` sanitizing 子集,零 innerHTML)。
+
+### Fixed
+- kill-first 自殺防護:SDK 子程序與主行程同 process group 時禁 killpg(#465,crashloop 事故)。
+- #stream 單向陷阱與 attach 殘留 sawDone(#466,覆審修正)。
+
 ## [Unreleased]
 
 ### Added

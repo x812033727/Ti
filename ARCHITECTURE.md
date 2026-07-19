@@ -20,6 +20,18 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 （`routes` 與 `ws`）、提供 `/` 與 `/login` 頁面入口，以及 `main()` 啟動 uvicorn。
 入口 `studio.server:app` 與 `python3 -m studio.server` 維持不變。
 
+## 助手首頁(Kimi 式門面,2026-07-19)
+
+`body[data-view]` 三視圖:`home`(預設,`TI_DEFAULT_VIEW` 可改)/`dash`(監控)/`studio`(工作室)。
+home=消費級門面:hero composer 三模式(討論=/ws 多專家、交辦=POST /api/autopilot/task+任務卡片
+輪詢 activity、快答=內建「快答」workflow 單專家一輪);常駐側欄(Ctrl+K 新對話/對話歷史
+attach·重播/插件=roles·groups·workflows 導流+skills 唯讀/排程任務=schedules CRUD/帳號選單);
+工作室脈搏與靈感區吃既有唯讀 API。核心手法=**#stream 重掛(reparent)不複製**——串流/重連/
+重播管線零改動,`dashboard.onViewChange` 回呼負責離開 home 時搬回(勿刪:單向陷阱回歸測試
+`frontend_home_chat_test`)。模型輸出經 `web/js/markdown.js` sanitizing 渲染(零 innerHTML/
+協定白名單);排程執行引擎仍是 autopilot backlog(`studio/schedules.py` 只做到期入列)。
+回滾:`TI_DEFAULT_VIEW=dash` 即回舊門面,功能不受影響。
+
 ## 模組職責
 
 | 模組 | 職責 |

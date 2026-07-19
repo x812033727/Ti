@@ -241,3 +241,43 @@
   .layout { grid-template-columns: 264px minmax(0, 1fr) 420px; gap: 16px; padding: 16px; }
   body.experts-collapsed .layout { grid-template-columns: 64px minmax(0, 1fr) 420px; }
 }
+
+/* ---------- 助手首頁(Kimi 化 PR14)RWD ---------- */
+/* ≤900:側欄收成 off-canvas(頂部漢堡?簡化=側欄改水平頂欄,歷史清單降為橫向捲) */
+@media (max-width: 900px) {
+  body[data-view="home"] .home-shell { grid-template-columns: minmax(0, 1fr); }
+  .side-nav {
+    flex-direction: row;
+    align-items: center;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    gap: var(--sp-2);
+    overflow-x: auto;
+  }
+  .sn-new { width: auto; flex: none; }
+  .sn-new kbd { display: none; }
+  .sn-history { flex: 1; overflow: hidden; }
+  .sn-label { display: none; }
+  .sn-history ul { flex-direction: row; overflow-x: auto; }
+  .sn-item { flex: none; max-width: 180px; }
+  .sn-bottom { flex-direction: row; border-top: 0; padding-top: 0; }
+  .sn-bottom button span { display: none; } /* 窄幅只留 icon */
+  .sn-menu { bottom: auto; top: calc(100% + 6px); left: auto; right: 0; min-width: 180px; }
+  .home-main { padding: var(--sp-3); }
+  .home-hero { margin-top: clamp(16px, 6vh, 48px); }
+}
+
+/* ≤640:手機——home 為 mv 一級分頁;composer 貼齊、卡片單欄、留出底部分頁列 */
+@media (max-width: 640px) {
+  body[data-view="home"] .home-shell { min-height: calc(100vh - 58px); padding-bottom: 84px; }
+  .hero-title { font-size: var(--fs-4); }
+  .hero-composer textarea { font-size: 16px; } /* 防 iOS 聚焦自動縮放 */
+  .home-chat-bar input { font-size: 16px; }
+  .hero-modes button { padding: 5px 9px; }
+  .plug-grid { grid-template-columns: 1fr; }
+  .sched-row { flex-wrap: wrap; }
+  .inspire-card { flex-basis: 180px; }
+  .taskcard { margin: var(--sp-2) 0; }
+  /* mv=home:隱藏工作室三欄與監控(homeShell 由 data-view 控制,不受 mv pane 規則牽連) */
+  body[data-mv="home"] .mobiletabs button[data-mv="home"] { color: var(--accent); }
+}
