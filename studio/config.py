@@ -702,6 +702,9 @@ AUTOPILOT_CONSECUTIVE_FAIL_PAUSE = _env_int("TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE
 # 每日 PR 成本熔斷：單一 UTC 日 squash-merge 成功數達此值即 _pause（人工恢復）；0＝停用。
 # 計數為行程記憶體＋UTC 日戳，跨日歸零，行程重啟歸零可容忍。
 AUTOPILOT_DAILY_PR_BUDGET = _env_int("TI_AUTOPILOT_DAILY_PR_BUDGET", 0)
+# 外部通知 webhook；空字串＝停用。timeout 供後續通知送出流程共用。
+NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
+NOTIFY_TIMEOUT = _env_float("TI_NOTIFY_TIMEOUT", 10.0)
 # 軟性時間預算：session 在硬 timeout（AUTOPILOT_TASK_TIMEOUT，由 autopilot 的 wait_for 套用）的
 # 此比例處主動收斂——停止派發新任務、把已完成的走 Demo/出貨、未動的記 known-limit/followup，
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
@@ -936,6 +939,7 @@ def reload() -> None:
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE
     global AUTOPILOT_CONSECUTIVE_FAIL_PAUSE, AUTOPILOT_DAILY_PR_BUDGET
+    global NOTIFY_WEBHOOK, NOTIFY_TIMEOUT
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
@@ -1028,6 +1032,8 @@ def reload() -> None:
     PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
     AUTOPILOT_CONSECUTIVE_FAIL_PAUSE = _env_int("TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 5)
     AUTOPILOT_DAILY_PR_BUDGET = _env_int("TI_AUTOPILOT_DAILY_PR_BUDGET", 0)
+    NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
+    NOTIFY_TIMEOUT = _env_float("TI_NOTIFY_TIMEOUT", 10.0)
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
     # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
     HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
