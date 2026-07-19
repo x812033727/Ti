@@ -52,6 +52,7 @@ SEVERITY: dict[str, str] = {
     "deploy_verify_failed": "page",  # B1 部署黑盒驗證失敗
     "clarify_pending": "page",  # B4 澄清待答
     "daily_digest": "page",  # 每日摘要(TI_DIGEST_PUSH opt-in,呼叫端擋)
+    "stage_changed": "page",  # 升階狀態變化/streak 里程碑(軌 G1)
     "test": "page",
     "gate_failure": "digest",
     "critic_reject": "digest",
