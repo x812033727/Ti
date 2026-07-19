@@ -43,4 +43,14 @@ if [ "$count" -ge "$THRESHOLD" ] && [ ! -e "$PAUSE_FILE" ]; then
     printf 'watchdog: health check failed %s consecutive times (%s)\n' "$count" "$HEALTH_URL"
     date
   } > "$PAUSE_FILE"
+  # 例外推播（B5，可選）：kill switch 落 PAUSE 檔＝page 級異常，人必須知道。
+  # 外置契約不變：僅 TI_WATCHDOG_* env + curl；URL 放 /etc/default/ti-watchdog
+  # （EnvironmentFile，root 檔），絕不放 autopilot 可自改的 /opt/ti/.env。
+  # Telegram 用法：TI_WATCHDOG_NOTIFY_URL='https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<ID>'
+  # 推播失敗忽略——通知是加值，kill switch 本體不受影響。
+  if [ -n "${TI_WATCHDOG_NOTIFY_URL:-}" ]; then
+    curl -fsS --max-time 10 \
+      --data-urlencode "text=[ti] watchdog_paused: health check failed ${count}x, autopilot paused (${HEALTH_URL})" \
+      "$TI_WATCHDOG_NOTIFY_URL" > /dev/null 2>&1 || true
+  fi
 fi
