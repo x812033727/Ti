@@ -103,8 +103,7 @@ bindDashboard();
 bindSidenav();
 bindHome();
 initTheme();
-// 手機首繪暫維持監控分頁(home 的手機 pane 規則在 RWD 收尾 PR);桌機直接 home。
-setMobileView(window.matchMedia && window.matchMedia("(max-width: 640px)").matches ? "dash" : "home");
+setMobileView("home");
 
 async function init() {
   if (!(await checkAuth())) return;
