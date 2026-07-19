@@ -147,7 +147,41 @@ function groupId(name) {
 // autopilot 行程不會——需 restart 該服務才生效(挑任務空檔;暫停/恢復與派工模式不受影響)。
 const GROUP_NOTES = {
   Autopilot: "此組寫入 .env 後需重啟 ti-autopilot 服務才對 autopilot 生效(請挑任務空檔);網頁互動討論不受影響。",
+  通知: "存檔後「發送測試通知」立即可用;autopilot 的異常事件推播(任務失敗/迴圈停滯/額度耗盡)需重啟 ti-autopilot 服務才生效(請挑任務空檔)。",
 };
+
+// 通知組尾端的「發送測試通知」列:POST /api/notify/test 同步發一則 test 事件,
+// 逐 sink(webhook/telegram)回報送達狀況——「手機真的收到」才算管道驗收完成。
+function createNotifyTestRow() {
+  const wrap = document.createElement("div");
+  wrap.className = "set-row";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost";
+  btn.id = "notifyTestBtn";
+  btn.textContent = "發送測試通知";
+  const status = document.createElement("span");
+  status.className = "muted";
+  status.id = "notifyTestStatus";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    status.textContent = "發送中…";
+    try {
+      const r = await (await fetch("/api/notify/test", { method: "POST" })).json();
+      const sinks = r.sinks || {};
+      const parts = Object.entries(sinks).map(([k, ok]) => `${k}:${ok ? "✅ 已送達" : "❌ 失敗"}`);
+      status.textContent = parts.length
+        ? parts.join("・") + "(記得先按「儲存」再測)"
+        : "未設定任何通知管道:先填 webhook 或 Telegram 兩欄並按「儲存」。";
+    } catch {
+      status.textContent = "測試請求失敗,請稍後再試。";
+    }
+    btn.disabled = false;
+  };
+  wrap.appendChild(btn);
+  wrap.appendChild(status);
+  return wrap;
+}
 
 export function createSettingInput(f, row) {
   let input;
@@ -265,6 +299,7 @@ export function renderSettings(fields) {
       grid.appendChild(row);
     }
     section.appendChild(grid);
+    if (group.name === "通知") section.appendChild(createNotifyTestRow());
     settingsForm.appendChild(section);
   }
   filterSettings();
