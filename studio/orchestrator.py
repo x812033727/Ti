@@ -2550,7 +2550,7 @@ class StudioSession:
                     len(tasks),
                     _TEARDOWN_LANE_TIMEOUT,
                 )
-        # git 收尾：worktree_remove／snapshot 底層各有 run_command_exec(timeout=20) 的可取消 subprocess，
+        # git 收尾：worktree_remove 底層 run_command_exec timeout=30/20；snapshot 兩個 probe 皆 timeout=20；這些都是可取消 subprocess（communicate + killpg），不重複包每個 git await。
         # 天然有界；外層以 timeout_at(deadline) 共享剩餘預算——stop 吃光則 git 收尾立即放棄，符合 best-effort。
         try:
             async with asyncio.timeout_at(deadline):
@@ -2662,6 +2662,20 @@ class StudioSession:
         results 與 opened 位置對應（asyncio.gather 保序）。某 lane 跑任務時拋例外（崩潰）→ 丟棄
         該 lane 的 worktree 與筆記，把其任務併入 deferred 於主幹序列化重跑（與合併衝突 fallback
         對稱，不讓崩潰 lane 的任務靜默卡在 doing/review）。
+
+        【#3 過渡段非 LLM await 稽核】全段非 LLM await timeout 覆蓋如下：
+        - `broadcast`：委派 ws.py send_json，無本地 wait_for；為無界網路 await（stalled client
+          可阻塞）。不加外層信封：事件已先 `history.record_event` 落檔（前端可 attach 補放），
+          broadcast 阻塞不遺失資料，且不影響 lane 合併邏輯。已如實記入 transition_await_inventory.md。
+        - `_teardown_lane`：整段共享單一 deadline（_TEARDOWN_LANE_TIMEOUT），expert stop 以
+          abandon-pending 收斂（對 anyio 吞取消唯一有效做法），git 收尾委派 runner.* 各帶 timeout。
+        - `_merge_lane`：所有 git 操作委派 runner.*，底層走 run_command_exec → _finalize_proc →
+          asyncio.wait_for(communicate(), timeout) + killpg——真 subprocess，asyncio 協作
+          取消有效，逐項 timeout 足夠，**無需外層信封**（對比 teardown：stop 的 anyio 吞取消
+          才是外層信封的動機）。詳見 _merge_lane 的稽核說明。
+        - `_flush_lane_notes`：同步函式，無 await，不需 timeout。
+        - `_run_task_in_lane`：LLM await，由 TURN_IDLE_TIMEOUT / TURN_HARD_TIMEOUT 覆蓋，
+          超出本段稽核範圍。
         """
         all_ok = True
         lane_results: list[LaneResult] = []
@@ -2708,6 +2722,16 @@ class StudioSession:
         衝突時先嘗試「lane 內解衝突」：把最新主幹 merge 進 lane worktree，讓該 lane 的工程師
         就地解掉衝突標記後 commit，再 fast-forward 合回主幹——成功則保留 lane 已完成的所有
         commit（省去整段重跑）。解不掉才退回既有的「於最新主幹序列化重跑」fallback。
+
+        【#3 非 LLM await timeout 來源】本函式所有 git subprocess 呼叫均委派 runner.*，底層
+        run_command_exec → _finalize_proc → asyncio.wait_for(communicate(), timeout) +
+        killpg；asyncio 協作取消對 subprocess 有效（對比 SDK anyio 吞取消），逐項 timeout 足夠：
+        - _lane_git_snapshot：內部每個 run_command_exec timeout=20，外層 try/except BLE001。
+        - git_merge_worktree：timeout=60（含 merge commit 寫入）。
+        - git_head_short：timeout=20。
+        - git_merge_abort：timeout=20。
+        - broadcast：無本地 wait_for，為無界網路 await（詳見 _integrate_wave 稽核說明）。
+        - _resolve_conflict_in_lane / _serialize_lane_rerun：LLM await，TURN timeout 覆蓋。
         """
         await self._lane_git_snapshot("pre-merge", lr.ctx.branch)
         res = await runner.git_merge_worktree(self.cwd, lr.ctx.branch)
@@ -3587,7 +3611,15 @@ class StudioSession:
         return result
 
     async def _final_demo(self) -> runner.RunOutput | None:
-        """最終整體 Demo；回傳實際執行結果（供客觀閘門判定），無 cwd/指令或已停止時回 None。"""
+        """最終整體 Demo；回傳實際執行結果（供客觀閘門判定），無 cwd/指令或已停止時回 None。
+
+        【#3 非 LLM await timeout 來源】
+        - run_http_demo：timeout=config.DEMO_TIMEOUT；內部以 deadline loop 控探測上界，
+          proc 收尾帶 wait_for(proc_wait, 10) + wait_for(drain_task, 5)，全段有界。
+        - run_command：timeout=config.DEMO_TIMEOUT（default 60s）；底層 _finalize_proc +
+          killpg，subprocess 有效強制收斂。
+        - broadcast：無本地 wait_for，為無界網路 await（詳見 _integrate_wave 稽核說明）。
+        """
         if not self.cwd or self._stop:
             return None
         cmd = runner.resolve_demo_command(self.cwd, self._run_command)
