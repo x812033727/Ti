@@ -1,83 +1,6 @@
 {
   "entries": [
     {
-      "decision": "`RetryConfig` dataclass 新增於 `llm_caller.py`，緊鄰 `run_with_retries`，欄位為 `max_retries: int`、`backoff: Callable[[float|None, int], float]`、`sleep: Callable[[float], Awaitable[None]]`",
-      "rationale": "llm_caller 是 `run_with_retries` 介面的所有者，RetryConfig 是其參數的結構化型別；零 config 依賴確保模組維持 provider-agnostic",
-      "rejected": "放 `experts.py` — 會讓下游 import `experts` 才能取得型別，破壞 llm_caller 作為穩定公開介面的角色",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761533
-    },
-    {
-      "decision": "`RetryConfig` 提供 `as_kwargs() -> dict` 方法，明確回傳 `{\"max_retries\": self.max_retries, \"backoff\": self.backoff, \"sleep\": self.sleep}`，docstring 標注「僅封裝 config-driven 三參數，call-site callback 鉤平鋪傳入」",
-      "rationale": "Callable 欄位無法 `dataclasses.asdict()` 序列化；docstring 說明消除後來者對「其餘 6 個 kwargs 為何未封裝」的困惑（高工意見）",
-      "rejected": "`dataclasses.asdict()` — Callable 欄位崩潰；`**cfg.__dict__` — 繞過 dataclass 抽象且語義不清",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761576
-    },
-    {
-      "decision": "`make_retry_config()` 落點 `experts.py`，call-time 讀 config，回傳 `RetryConfig(max_retries=max(0, config.EXPERT_RATE_LIMIT_RETRIES), backoff=_backoff_delay, sleep=_sleep)`",
-      "rationale": "讀 config 的責任屬消費層；工廠在 `experts.py` 保持 `llm_caller` config-free",
-      "rejected": "放 `config.py` — config 模組不應 import experts 的 Callable；放 `llm_caller.py` — 違反 provider-agnostic 原則",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761593
-    },
-    {
-      "decision": "`max(0, ...)` clamp 移入 `make_retry_config()` 內部，`RetryConfig.max_retries` 保證 ≥0；移除 `_speak_with_retries` L380 的本地讀值",
-      "rationale": "工程師指出 clamp 語義不可在「移除本地變數」時靜默丟失；高工補充 `run_with_retries` 雖在 L410 也有 `max(0, ...)`，但在工廠明訂讓外部合約清晰、防呆在最近端",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761605
-    },
-    {
-      "decision": "`_speak_with_retries` 改動點：① 刪 L380 本地 `max_retries` 讀值；② 插入 `cfg = make_retry_config()`；③ `run_with_retries` 呼叫改傳 `**cfg.as_kwargs()`；④ L405/L407 fallback 字串的 `{max_retries}` 改為 `{cfg.max_retries}`",
-      "rationale": "工程師與高工同步指出 L405/L407 仍引用局部變數，改後若不替換即 NameError；此為實作必補項，納入最小化改動清單",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761614
-    },
-    {
-      "decision": "`_backoff_delay`、`_sleep` 保留為 `experts.py` 模組級 lazy 函式，`make_retry_config()` 直接以函式物件引用傳入 `RetryConfig`；不在工廠內另建 closure",
-      "rationale": "兩者已是 call-time 讀 config 的 lazy closure（L83-91 既有範本），直接引用等價；不重複造 closure 避免多層包裝增加可讀性負擔",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761629
-    },
-    {
-      "decision": "wiring 測試用 `mocker.spy(experts, \"make_retry_config\")`（保留真實邏輯），斷言 `spy.assert_called_once()`；補反向對照：`monkeypatch.setattr(config, \"EXPERT_RATE_LIMIT_RETRIES\", 7)` 後再呼工廠，斷言 `cfg.max_retries == 7`",
-      "rationale": "spy 不替換實現，可同時驗「有取用」與「值正確流入」；反向對照排假綠（高工確認）",
-      "rejected": "`mocker.patch(\"make_retry_config\")` 直接替換 — 只驗呼叫、跳過真實值流，無法確認 config 值是否正確傳入",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761636
-    },
-    {
-      "decision": "任務#5 grep 驗收對象為 `max_retries` 與 `_backoff_delay` 的所有引用點，確認無第二套散傳退避呼叫點，且 L405/L407 已改為 `cfg.max_retries`（工程師建議：grep max_retries 引用點可順帶抓出此細節）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap56fd03a05c",
-      "created_at": 1781438433.2761645
-    },
-    {
-      "decision": "`providers.py` 頂層直接 `from .experts import make_retry_config`，不新增模組、不複製工廠。",
-      "rationale": "experts.py 無任何 providers import（循環依賴不存在），共用同一 `EXPERT_RATE_LIMIT_*` 旋鈕保持三端一致。",
-      "rejected": "",
-      "session_id": "ap6e19134877",
-      "created_at": 1781442117.1619449
-    },
-    {
-      "decision": "`OpenAIExpert.speak()` 將整個工具迴圈（`for _ in range(OPENAI_MAX_STEPS)`）打包為單一 `_attempt`，交 `run_with_retries` 控制退避。",
-      "rationale": "對齊 Claude 端「一次 attempt = 一個完整 turn」語義；逐步包裝需在上層處理 `resp` 型態歧義，複雜度不值得。",
-      "rejected": "逐 `_chat` 單步包裝（複雜、需把 resp 從 attempt_fn 回傳再由外層繼續處理，架構破碎）。",
-      "session_id": "ap6e19134877",
-      "created_at": 1781442117.1619496
-    },
-    {
-      "decision": "工具副作用冪等性為**隱性合約**，選擇接受（方案 a）；但 `_attempt` 函式上方 comment 必須明文標注「retry 假設工具呼叫冪等，寫入型工具不在此重試保證範圍；非冪等工具須在 tools.execute 層自行防護」。",
-      "rationale": "429 多發生在 `_chat` 呼叫階段；工具執行本身不觸發限流；重放機率低但必須讓維護者知道這個前提。",
-      "rejected": "方案 b（只包 `_chat` 的逐步退避）——回到複雜的多層包裝，首次 rate_limit 發生在工具執行後時仍需 rollback 邏輯，代價更高。",
-      "session_id": "ap6e19134877",
-      "created_at": 1781442117.1619508
-    },
-    {
       "decision": "`speak()` 進入時 `snapshot = list(self._messages)`；user 訊息 append 與 `collected = []` 搬入 `_attempt` 內部；retry 時以 `self._messages[:] = snapshot + [user_msg]` 恢復，確保訊息不重複累加。",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3422,83 @@
       "rejected": "",
       "session_id": "pj8ee4edef1a",
       "created_at": 1784495313.785099
+    },
+    {
+      "decision": "範圍鎖定 webhook-only，本輪只開 `NOTIFY_WEBHOOK` 一個 config 鍵",
+      "rationale": "單一 sink 已達「紅色事件抵達人工」；email/Telegram 需外部憑證管理，複雜度不對等",
+      "rejected": "同時實作 email/Telegram sink——本輪 scope 過大，憑證管理問題留後",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811287
+    },
+    {
+      "decision": "`config.py` 只新增 `NOTIFY_WEBHOOK`（`TI_NOTIFY_WEBHOOK`，預設空字串），三段同步（頂層宣告、`reload() global`、`reload()` 賦值）",
+      "rationale": "唯一可調旋鈕是「要不要推」，不是「等多久」",
+      "rejected": "同時新增 `NOTIFY_TIMEOUT` 進 config——與宣稱「對照範式不自創」自我矛盾；範式本身用模組常數、不進 config；多鍵三段同步是永久維護債，實益為零（無 settings.py 接線）",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811316
+    },
+    {
+      "decision": "timeout 用模組常數 `_TIMEOUT_S = 10.0` 置於 `notify.py` 頂層，不進 config",
+      "rationale": "與 `/opt/ti/studio/notify.py` line 37 範式完全對齊；真要可調另案，不在本輪",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811327
+    },
+    {
+      "decision": "`notify.py` 新增 `_post_webhook(url: str, data: bytes) -> None`，urllib POST JSON，try/except 全吞任何例外，`log.debug` 只帶 event 名稱不含 URL",
+      "rationale": "webhook URL 可能含 secret（query param token），不得出現在 log",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811342
+    },
+    {
+      "decision": "`notify.py` 新增 `_deliver(event: str, message: str, extra: dict) -> None`，組 payload `{\"source\":\"ti\",\"event\":...,\"message\":...,...extra}` 後呼叫 `_post_webhook`；docstring 明記「extra 不得挾帶 log 全文或憑證」",
+      "rationale": "",
+      "rejected": "直接在 `send_bg` 裡組 payload 發送——抽出 `_deliver` 便於測試與後續多 sink 擴充",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811354
+    },
+    {
+      "decision": "`send_bg(event, message, **payload)` 簽名不變（相容現有兩處 `autopilot.py` 呼叫端）；webhook 空時 early-return（零網路零 thread）；非空時 `threading.Thread(target=_deliver, daemon=True).start()`",
+      "rationale": "daemon=True 確保行程退出不被未送完通知卡住",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811366
+    },
+    {
+      "decision": "payload 欄位命名統一用 `event` / `message`，不用範式的 `kind` / `title`",
+      "rationale": "工作目錄呼叫端與現有 `send_bg` 合約皆用 `event/message`；混用會造成消費端解析錯亂",
+      "rejected": "改用 `kind/title` 對齊 `/opt/ti/studio/notify.py`——會 breaking 現有呼叫端，超出本輪範圍",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811375
+    },
+    {
+      "decision": "測試檔 `tests/autopilot/test_notify_webhook.py` 五條精確樣本（增至五條）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811382
+    },
+    {
+      "decision": "測試中 `threading.Thread` monkeypatch 為同步執行（呼叫 `target()` 再 return mock），不讓 daemon thread 帶來競態",
+      "rationale": "非同步 thread 下 `urlopen` 可能在 assert 前未執行，造成偶發假綠",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.981139
+    },
+    {
+      "decision": "不新增任何第三方依賴，僅用 `urllib.request`、`threading`、`json`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811397
+    },
+    {
+      "decision": "跟進待辦（明列、不混入本輪）：email sink（SMTP）、Telegram sink、severity 分級、`send_bg` early-return 未來擴 sink 需同步更新判斷條件、`/opt/ti` 主版本 settings.py 接線",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811401
     }
   ]
 }

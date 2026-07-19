@@ -2404,3 +2404,47 @@
 ## **測試含以下兩個樣本**（寫入 `tests/autopilot/test_budget_brake.py`）：
 - 時間：2026-07-20 05:08
 
+## 範圍鎖定 webhook-only，本輪只開 `NOTIFY_WEBHOOK` 一個 config 鍵
+- 時間：2026-07-20 07:19
+- 理由：單一 sink 已達「紅色事件抵達人工」；email/Telegram 需外部憑證管理，複雜度不對等
+- 否決方案：同時實作 email/Telegram sink——本輪 scope 過大，憑證管理問題留後
+
+## `config.py` 只新增 `NOTIFY_WEBHOOK`（`TI_NOTIFY_WEBHOOK`，預設空字串），三段同步（頂層宣告、`reload() global`、`reload()` 賦值）
+- 時間：2026-07-20 07:19
+- 理由：唯一可調旋鈕是「要不要推」，不是「等多久」
+- 否決方案：同時新增 `NOTIFY_TIMEOUT` 進 config——與宣稱「對照範式不自創」自我矛盾；範式本身用模組常數、不進 config；多鍵三段同步是永久維護債，實益為零（無 settings.py 接線）
+
+## timeout 用模組常數 `_TIMEOUT_S = 10.0` 置於 `notify.py` 頂層，不進 config
+- 時間：2026-07-20 07:19
+- 理由：與 `/opt/ti/studio/notify.py` line 37 範式完全對齊；真要可調另案，不在本輪
+
+## `notify.py` 新增 `_post_webhook(url: str, data: bytes) -> None`，urllib POST JSON，try/except 全吞任何例外，`log.debug` 只帶 event 名稱不含 URL
+- 時間：2026-07-20 07:19
+- 理由：webhook URL 可能含 secret（query param token），不得出現在 log
+
+## `notify.py` 新增 `_deliver(event: str, message: str, extra: dict) -> None`，組 payload `{"source":"ti","event":...,"message":...,...extra}` 後呼叫 `_post_webhook`；docstring 明記「extra 不得挾帶 log 全文或憑證」
+- 時間：2026-07-20 07:19
+- 否決方案：直接在 `send_bg` 裡組 payload 發送——抽出 `_deliver` 便於測試與後續多 sink 擴充
+
+## `send_bg(event, message, **payload)` 簽名不變（相容現有兩處 `autopilot.py` 呼叫端）；webhook 空時 early-return（零網路零 thread）；非空時 `threading.Thread(target=_deliver, daemon=True).start()`
+- 時間：2026-07-20 07:19
+- 理由：daemon=True 確保行程退出不被未送完通知卡住
+
+## payload 欄位命名統一用 `event` / `message`，不用範式的 `kind` / `title`
+- 時間：2026-07-20 07:19
+- 理由：工作目錄呼叫端與現有 `send_bg` 合約皆用 `event/message`；混用會造成消費端解析錯亂
+- 否決方案：改用 `kind/title` 對齊 `/opt/ti/studio/notify.py`——會 breaking 現有呼叫端，超出本輪範圍
+
+## 測試檔 `tests/autopilot/test_notify_webhook.py` 五條精確樣本（增至五條）
+- 時間：2026-07-20 07:19
+
+## 測試中 `threading.Thread` monkeypatch 為同步執行（呼叫 `target()` 再 return mock），不讓 daemon thread 帶來競態
+- 時間：2026-07-20 07:19
+- 理由：非同步 thread 下 `urlopen` 可能在 assert 前未執行，造成偶發假綠
+
+## 不新增任何第三方依賴，僅用 `urllib.request`、`threading`、`json`
+- 時間：2026-07-20 07:19
+
+## 跟進待辦（明列、不混入本輪）：email sink（SMTP）、Telegram sink、severity 分級、`send_bg` early-return 未來擴 sink 需同步更新判斷條件、`/opt/ti` 主版本 settings.py 接線
+- 時間：2026-07-20 07:19
+
