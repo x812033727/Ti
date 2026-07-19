@@ -436,6 +436,27 @@ def test_pick_account_scoped_tiebreak_prefers_preferred_then_alpha():
     assert _pick(usages, "A", preferred="C") == "C"  # B、C scoped 同 0 → preferred C
 
 
+def test_pick_account_scoped_blocked_peer_excluded_from_reset_rules():
+    """防 flap 迴歸:救援切到 B 後,A scoped 仍爆但全域 7d 較早重置 → 不得被早重置規則拉回。
+
+    否則 A(爆)↔B 互切無止盡,每切一次一次重啟。scoped 已爆者逐出早重置/負載候選池。
+    """
+    usages = {
+        "A": _w(60.0, 60.0, sdr=_T + 3600, sc=100.0),  # scoped 爆 + 全域 7d 最早重置
+        "B": _w(20.0, 20.0, sdr=_T + 90 * 3600, sc=10.0),  # 在線(剛被救援切來)
+    }
+    assert _pick(usages, "B") is None
+
+
+def test_pick_account_all_scoped_blocked_falls_back_to_full_pool():
+    """兩帳號 scoped 皆爆 → 池退回全候選,全域早重置規則維持運作(不因池空癱瘓)。"""
+    usages = {
+        "A": _w(60.0, 60.0, sdr=_T + 3600, sc=100.0),  # 7d 早重置 ≥edge
+        "B": _w(20.0, 20.0, sdr=_T + 90 * 3600, sc=98.0),  # 在線
+    }
+    assert _pick(usages, "B") == "A"
+
+
 # --- scoped_used_pct：scoped 比對 SSOT --------------------------------------
 
 
