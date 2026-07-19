@@ -545,3 +545,40 @@ Sources:
 - [webhook anti-patterns](https://webhookantipatterns.com/)
 - [FastAPI background patterns](https://medium.com/@connect.hashblock/10-fastapi-background-patterns-that-dont-block-cbfea8bfb717)
 
+## 2026-07-20 04:54
+
+先確認主迴圈現況與 `improver.py` 的對照，再快速調研。
+已確認現況缺口。結合程式碼閱讀與調研，彙整如下：
+
+---
+
+**現況盤點（實際程式碼，非文件描述）**
+
+重點: **主迴圈 `_main_loop`（autopilot.py:4566）完全沒有連續失敗計數器**——任務一個個被標 `failed` 後迴圈繼續取下一個，集中故障時 backlog 全部燒光才停。
+重點: **`improver.py` 已有完整的 `consecutive_fails` 計數器範本**（第158-206行）：`consecutive_fails += 1` → 達 `IMPROVE_MAX_FAILS`（預設2）→ `break`。可直接複製模式。
+重點: **`AUTOPILOT_DAILY_PR_BUDGET` 超標目前走 `budget_sleep`，不是 `_pause`**（autopilot.py:4641-4654）。`budget_sleep` 跨日 UTC 自動恢復，`_pause` 需人工 `rm` 才能恢復——語意不同，不宜靜默改成 `_pause`。
+重點: **`_pause()` 函式已存在**（autopilot.py:2796），寫入 `config.AUTOPILOT_PAUSE_FILE`；`notify.send_bg("slo_brake", ...)` 已有推播範例（autopilot.py:1848）。
+重點: **circuit breaker 業界建議連續失敗門檻：3–5 次**。2026年 AI agent 容錯研究：三次連續失敗即暫停+通知是主流做法，避免「hammering failing services」。[來源](https://www.waxell.ai/blog/ai-agent-circuit-breaker-pattern)
+重點: `run_one_task` 回傳 `None`，主迴圈無法直接知道任務是否 `failed`——需查 `backlog.get(task["id"])["status"]` 或讓 `run_one_task` 回傳 bool。
+
+---
+
+**建議**
+
+建議: **新增設定鍵 `AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`（預設 `5`，`0` 停用）**，在 config.py 頂層與 `reload()` 兩處同步定義（遵守本專案慣例）。
+
+建議: **在 `_main_loop` `await run_one_task(task)` 之後，查 `backlog.get(task["id"])` 狀態**——`"failed"` 計入計數器，`"done"` / `"pending"`（provider unavailable 退回）重置為 0；`provider_unavailable` 退回 pending 不應計入（暫時性 infra 問題，非程式缺陷）。
+
+建議: **達上限時呼叫 `_pause(f"連續 {n} 次任務 failed，SLO 煞車暫停待人工檢視")` + `notify.send_bg("consecutive_fail_pause", ...)`**，遵循 `_slo_brake_factor` 的通知去重範式（每個「連續失敗期」只發一次）。
+
+建議: **`AUTOPILOT_DAILY_PR_BUDGET` 超標保持現有 `budget_sleep`（不改 `_pause`）**——自動恢復比人工介入更適合「只是燒太快」的場景；`_pause` 留給需人工診斷的狀況（例如連續 fail 或重佈失敗）。
+
+建議: **計數器用行程記憶體全域變數**（如 `_consecutive_fail_count: int = 0`），位置仿照 `_slo_brake_notified_day`（autopilot.py:1820）——行程重啟自動歸零可容忍，不需持久化。
+
+建議: **補一條 contract 測試**，驗證「連續 N 次 failed → `autopilot_paused()` 返回 True」，仿照 `tests/autopilot/test_qa_no_publish_pollution.py` 風格。
+
+Sources:
+- [AI Agent Circuit Breakers: The Pattern Teams Need [2026]](https://www.waxell.ai/blog/ai-agent-circuit-breaker-pattern)
+- [AI Agent Error Handling: Best Practices & Patterns for 2025](https://fast.io/resources/ai-agent-error-handling/)
+- [AI Agent Circuit Breaker Pattern: Stop Cascading Tool Failures (2026)](https://cordum.io/blog/ai-agent-circuit-breaker-pattern)
+
