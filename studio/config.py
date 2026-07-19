@@ -1141,6 +1141,8 @@ NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
 # 預設視圖(Kimi 化 PR7):home=助手首頁(消費級門面)、dash=監控、studio=工作室。
 # 回滾=設 dash + restart 或 revert PR。
 DEFAULT_VIEW = os.getenv("TI_DEFAULT_VIEW", "home").strip() or "home"
+# 每日摘要推播(軌 D3):digest 落盤後推一則三行摘要到通知 sinks。0=關(預設)。
+DIGEST_PUSH = os.getenv("TI_DIGEST_PUSH", "0") not in ("0", "false", "False", "")
 # Telegram 推播（第 3 階 A1）：bot token + chat_id 皆非空才啟用，與 webhook 並存
 # （各自獨立成敗）。向 @BotFather 建 bot 取 token；chat_id 可由 getUpdates 查得。
 TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
@@ -1381,7 +1383,7 @@ def reload() -> None:
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
     global EXPERT_IDLE_STOP_S, EXPERT_IDLE_STOP_EXEMPT
     global AUTOPILOT_LOOP_STALL_S, AUTOPILOT_RECONCILE_INTERVAL_S, NOTIFY_WEBHOOK
-    global DEPLOY_VERIFY, DEFAULT_VIEW
+    global DEPLOY_VERIFY, DEFAULT_VIEW, DIGEST_PUSH
     global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
@@ -1617,6 +1619,7 @@ def reload() -> None:
     AUTOPILOT_RECONCILE_INTERVAL_S = _env_int("TI_AUTOPILOT_RECONCILE_INTERVAL_S", 300)
     NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
     DEFAULT_VIEW = os.getenv("TI_DEFAULT_VIEW", "home").strip() or "home"
+    DIGEST_PUSH = os.getenv("TI_DIGEST_PUSH", "0") not in ("0", "false", "False", "")
     DEPLOY_VERIFY = os.getenv("TI_DEPLOY_VERIFY", "0") not in ("0", "false", "False", "")
     TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
     TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()

@@ -51,6 +51,7 @@ SEVERITY: dict[str, str] = {
     "slo_brake": "page",  # A4 SLO 自動煞車
     "deploy_verify_failed": "page",  # B1 部署黑盒驗證失敗
     "clarify_pending": "page",  # B4 澄清待答
+    "daily_digest": "page",  # 每日摘要(TI_DIGEST_PUSH opt-in,呼叫端擋)
     "test": "page",
     "gate_failure": "digest",
     "critic_reject": "digest",
