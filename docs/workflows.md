@@ -181,6 +181,39 @@ dynamic step 中，PM 的 `下一步: <role_key>` 若指到不在場的角色：
   形成「驗證 → 改善計畫 → 下一場行動」迴圈（一次性 session 每場新 workspace 無此檔→零行為差；
   專案模式固定 workspace 才跨場累積生效）。
 
+## 禁改路徑（`禁改:` marker）
+
+PM 在任務行之後可輸出 `禁改:` 行，告知工程師該任務不得修改哪些檔案；
+引擎在 commit 前自動比對 staged 檔案，違規則攔截並廣播警告。
+
+### marker 格式
+
+```
+任務: #<id> <標題>
+禁改: #<id> <pattern>[, <pattern>...]
+```
+
+- `#<id>` 必須與緊鄰的任務行 id 對應（懸空 id 會被安全丟棄）。
+- 多個 pattern 以英文逗號加空白分隔。
+
+### pattern 比對語意
+
+| pattern 形式 | 比對行為 |
+|---|---|
+| 以 `/` 結尾（如 `docs/`） | 目錄前綴比對：staged 路徑以此字串開頭即命中 |
+| 其他（如 `studio/config.py`、`*.lock`） | `PurePath.match` 比對（`*` 不跨 `/`） |
+
+> 注意：使用 Python 標準庫 `pathlib.PurePath.match`，不引入 `pathspec` 等外部依賴；`**` 跨目錄語意不支援，請用目錄前綴（`/` 結尾）代替。
+
+### 範例
+
+```
+任務: #2 接線 orchestrator
+禁改: #2 studio/config.py, docs/
+```
+
+上述宣告在任務 #2 的 commit 前，會攔截 `studio/config.py` 及 `docs/` 目錄下任何被修改的檔案。
+
 ## 相關設定
 
 | env | 預設 | 說明 |
