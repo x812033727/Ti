@@ -20,6 +20,23 @@ def test_empty_state():
     assert out == {"clarify": [], "parked": [], "events": [], "pending_clarify": 0}
 
 
+def test_stale_parked_excluded_but_stale_clarify_kept():
+    """陳年停放=歸檔語意不進收件匣;澄清票沒答就是欠著,不看時間。"""
+    import time as _t
+
+    t_old = backlog.add("陳年歸檔", "", source="eval")
+    t_oldq = backlog.add("陳年澄清", "", source="manual")
+    backlog.set_status(t_old["id"], "parked", note="老東西")
+    backlog.set_status(t_oldq["id"], "parked", note="[待澄清] 舊問題", clarify="舊問題?")
+    stale = _t.time() - 40 * 86400
+    # set_status 的 **fields 在刷新 updated_at 之後 update → 可覆寫成陳年
+    for tid in (t_old["id"], t_oldq["id"]):
+        backlog.set_status(tid, "parked", updated_at=stale)
+    out = insights.attention(days=7)
+    assert out["parked"] == [], "陳年停放不進收件匣"
+    assert [r["id"] for r in out["clarify"]] == [t_oldq["id"]], "陳年澄清票仍在"
+
+
 def test_clarify_vs_plain_parked_split():
     t1 = backlog.add("歧義任務", "", source="manual")
     t2 = backlog.add("普通停放", "", source="eval")

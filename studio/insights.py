@@ -231,11 +231,16 @@ def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
     unpark+note);badge 數=待答澄清票數。days 夾 1..30。
     """
     days = max(1, min(30, int(days)))
+    cutoff = time.time() - days * 86400
     clarify: list[dict] = []
     parked: list[dict] = []
     for t in backlog.list_tasks("parked", state_dir=state_dir):
         row = {k: t.get(k) for k in _ATTENTION_TASK_FIELDS}
-        (clarify if str(t.get("clarify") or "").strip() else parked).append(row)
+        if str(t.get("clarify") or "").strip():
+            clarify.append(row)  # 澄清票不看時間:沒答就是欠著
+        elif (t.get("updated_at") or 0) >= cutoff:
+            # 陳年停放=歸檔語意,不進「需要你」——例外收件匣只裝視窗內的新停放。
+            parked.append(row)
     clarify.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     parked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     events = [
