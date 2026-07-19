@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -682,7 +683,15 @@ class Expert:
             transport = getattr(self._client, "_transport", None)
             proc = getattr(transport, "_process", None)
             if proc is not None and getattr(proc, "pid", None) is not None:
-                runner.kill_process_group(proc)
+                # ⚠️ SDK 子程序「不是」runner 啟動的,沒有 start_new_session=True 的自成
+                # group 保證(runner.kill_process_group 的契約只對 runner 生的程序成立)。
+                # 與本行程同 process group 時,killpg=殺整組=autopilot 自殺——
+                # 2026-07-19 事故:每個調查任務 stop() 即自殺,SIGKILL crashloop
+                # restart counter 14。同組 → 退回只殺該 pid;確認異組才可整組殺。
+                if os.getpgid(proc.pid) == os.getpgid(0):
+                    proc.kill()
+                else:
+                    runner.kill_process_group(proc)
         except Exception:  # noqa: BLE001 — 兜底殺程序失敗不得影響回收流程
             logger.debug("best-effort 殺 SDK 子程序失敗（忽略）", exc_info=True)
 

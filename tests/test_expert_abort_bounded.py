@@ -277,6 +277,10 @@ async def test_best_effort_kill_calls_runner_when_process_present(monkeypatch):
 
     called: list = []
     monkeypatch.setattr(runner, "kill_process_group", lambda proc: called.append(proc))
+    # 2026-07-19 自殺防護後,killpg 只在「子程序與本行程異 group」時走——測試明確給異組。
+    import os as _os
+
+    monkeypatch.setattr(_os, "getpgid", lambda pid: 999 if pid == -999999 else 111)
 
     exp._best_effort_kill_subprocess()
 
