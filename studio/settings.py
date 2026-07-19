@@ -330,6 +330,7 @@ FIELDS: tuple[Field, ...] = (
         "TI_CLARIFY_TIMEOUT",
         "澄清等待回覆秒數（逾時按 PM 預設假設續行）",
         placeholder="180",
+        numeric=True,
         group="進階",
     ),
     Field(

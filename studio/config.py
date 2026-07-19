@@ -347,7 +347,7 @@ APPRAISAL_MAX_STORE = int(os.getenv("TI_APPRAISAL_MAX_STORE", "2000"))
 # 迴圈等自主流程一律跳過。預設開啟：這是「說一句產品就能開工」的核心，無插話佇列時
 # 自動跳過、天然向後相容。結論固化 workspace 的 PRD.md，抽出的「願景:」回填專案 meta。
 CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
-CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))  # 等使用者回覆的秒數
+CLARIFY_TIMEOUT = _env_float("TI_CLARIFY_TIMEOUT", 180)  # 等使用者回覆的秒數
 CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
 
 # 知識沉澱（workspace 的 docs/RESEARCH.md；PRD.md 由澄清階段寫根、設計決策由 ADR 寫根）：
@@ -1485,7 +1485,7 @@ def reload() -> None:
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
     KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
-    CLARIFY_TIMEOUT = float(os.getenv("TI_CLARIFY_TIMEOUT", "180"))
+    CLARIFY_TIMEOUT = _env_float("TI_CLARIFY_TIMEOUT", 180)
     CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
     DISCOVER_ROLES = [
         r.strip()

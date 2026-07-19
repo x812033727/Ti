@@ -49,6 +49,7 @@
 .gitconfig
 .gitmodules
 .idea
+.local/
 .mcp.json
 .pc-cache-qa/
 .profile
