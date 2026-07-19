@@ -2391,21 +2391,25 @@ def _maybe_clarify_timeout(now: float | None = None) -> int:
     if t - _clarify_sweep_at < 900:
         return 0
     _clarify_sweep_at = t
-    horizon = config.CLARIFY_ASYNC_TIMEOUT_H * 3600
     n = 0
-    for task in backlog.list_tasks("parked"):
-        note = str(task.get("note") or "")
-        if not note.startswith(_CLARIFY_NOTE_PREFIX):
-            continue
-        if t - float(task.get("updated_at") or 0) < horizon:
-            continue
-        backlog.set_status(
-            task["id"],
-            "pending",
-            attempts=int(task.get("attempts") or 0),
-            note=_CLARIFY_TIMEOUT_NOTE,
-        )
-        n += 1
+    try:
+        horizon = config.CLARIFY_ASYNC_TIMEOUT_H * 3600
+        for task in backlog.list_tasks("parked"):
+            note = str(task.get("note") or "")
+            if not note.startswith(_CLARIFY_NOTE_PREFIX):
+                continue
+            if t - float(task.get("updated_at") or 0) < horizon:
+                continue
+            backlog.set_status(
+                task["id"],
+                "pending",
+                attempts=int(task.get("attempts") or 0),
+                note=_CLARIFY_TIMEOUT_NOTE,
+            )
+            n += 1
+    except Exception:  # noqa: BLE001 — set_status 寫檔可拋;逾時掃描失敗不得影響主迴圈
+        log.warning("async clarify 逾時掃描失敗（忽略，下輪再試）", exc_info=True)
+        return n
     if n:
         log.info("async clarify:%d 個 [待澄清] 任務逾時,依假設前進", n)
     return n
@@ -2479,6 +2483,7 @@ async def run_one_task(task: dict) -> None:
                 attempts=int(task.get("attempts") or 0),
                 note=f"{_CLARIFY_NOTE_PREFIX} {q_text}"[:800],
                 clarify=q_text[:1200],
+                session_id="",  # 該 sid 的 session 從未 start,殘留會誤導「有 session 可看」
             )
             notify.send_bg(
                 "clarify_pending",

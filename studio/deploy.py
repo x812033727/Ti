@@ -153,7 +153,7 @@ async def blackbox_verify(base: str | None = None) -> tuple[bool, str]:
     for path, needle in _BLACKBOX_PROBES:
         url = base + path
         rc, out = await _run(
-            ["curl", "-s", "--max-time", "5", "-w", "\n%{http_code}", url], timeout=15
+            ["curl", "-sL", "--max-time", "5", "-w", "\n%{http_code}", url], timeout=15
         )
         body, _, code = (out or "").rpartition("\n")
         if rc != 0 or code.strip() != "200" or (needle and needle not in body):
