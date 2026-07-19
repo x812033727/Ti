@@ -4,10 +4,12 @@
 // 節點,home 對話時把它搬進 #homeChat、進工作室視圖時搬回原位——串流/重連/重播零改動。
 // 契約 id 不動:開始前把 hero 輸入同步進 #requirement(值的單一來源),再呼叫既有 start()。
 import { $, toast } from "../dom.js";
-import { start, stop, sendInterject } from "../ws.js";
+import { start, stop, sendInterject, bindSocket, stopReconnect } from "../ws.js";
 import { state } from "../state.js";
-import { onRunningChange } from "./deck.js";
-import { focusComposer } from "./sidenav.js";
+import { clearStream, clearBoard } from "../events-render.js";
+import { onRunningChange, setRunning } from "./deck.js";
+import { focusComposer, refreshSidenavHistory } from "./sidenav.js";
+import { replaySession } from "./history.js";
 
 let _origParent = null; // #stream 原位(工作室 .discussion 內)的還原錨
 let _origNext = null;
@@ -57,6 +59,33 @@ export function heroStart() {
   setSubview("chat");
   moveStreamHome();
   start(); // 專案/流程/小組沿用工作室啟動列現值;ws 拒絕(併發滿/互斥)由既有 error 事件呈現
+  setTimeout(refreshSidenavHistory, 1200); // 新場入列後刷新側欄(session_started 落檔約需一拍)
+}
+
+// 側欄點「進行中」會話:以 attach 訂閱直播(cursor=0=補放全程再接 live)。
+export function attachSessionInHome(sid) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.close();
+  stopReconnect();
+  state.replaying = false;
+  state.improveMode = false;
+  state.sessionId = sid;
+  setSubview("chat");
+  moveStreamHome();
+  clearStream();
+  clearBoard();
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const sock = new WebSocket(`${proto}://${location.host}/ws`);
+  sock.onopen = () => sock.send(JSON.stringify({ attach: sid, cursor: 0 }));
+  bindSocket(sock);
+  state.ws = sock;
+  setRunning(true); // home 視圖不跳走(deck 已豁免);啟用插話/停止
+}
+
+// 側欄點「已結束」會話:重播灌入 home chat(replaySession 渲染 #stream,已先 reparent)。
+export async function replaySessionInHome(sid) {
+  setSubview("chat");
+  moveStreamHome();
+  await replaySession(sid, { view: "home" });
 }
 
 export function homeInterject() {
@@ -69,6 +98,7 @@ export function homeInterject() {
 }
 
 export function setHomeRunning(running) {
+  if (!running) refreshSidenavHistory(); // 收尾後刷新側欄狀態點
   const send = $("#heroSend");
   if (send) send.disabled = running;
   for (const sel of ["#heroInterject", "#heroInterjectBtn", "#heroStopBtn"]) {
