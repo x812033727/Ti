@@ -1180,6 +1180,7 @@ NORMS_LOOP = os.getenv("TI_NORMS_LOOP", "0") not in ("0", "false", "False", "")
 # 瞄準「離意圖最近的缺口」而非漫遊式改良。0=關(預設灰度);intent 由
 # POST /api/projects/{id}/intent 設定。
 INTENT_LOOP = os.getenv("TI_INTENT_LOOP", "0") not in ("0", "false", "False", "")
+INTENT_DISCOVERY = os.getenv("TI_INTENT_DISCOVERY", "0") not in ("0", "false", "False", "")
 # AUTOPILOT_RETRY_COOLDOWN_S：討論未收斂退回 pending 後的重抓冷卻秒數（retry_after 欄位，
 #   next_pending/claim_next 尊重）。0＝不冷卻（舊行為）。動機：2026-07-11 09:24 LLM 劣化
 #   窗口,調查失敗退回後旁路 60s 即重抓,3 次 attempts 在 3 分鐘內於同一窗口內燒光——
@@ -1391,7 +1392,7 @@ def reload() -> None:
     global SLO_ZERO_TOUCH_MIN, SLO_MIN_MERGED
     global NORMS_LOOP
     global CLARIFY_ASYNC, CLARIFY_ASYNC_TIMEOUT_H
-    global NORMS_LOOP, INTENT_LOOP
+    global NORMS_LOOP, INTENT_LOOP, INTENT_DISCOVERY
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1644,6 +1645,7 @@ def reload() -> None:
     SLO_MIN_MERGED = _env_int("TI_SLO_MIN_MERGED", 5)
     NORMS_LOOP = os.getenv("TI_NORMS_LOOP", "0") not in ("0", "false", "False", "")
     INTENT_LOOP = os.getenv("TI_INTENT_LOOP", "0") not in ("0", "false", "False", "")
+    INTENT_DISCOVERY = os.getenv("TI_INTENT_DISCOVERY", "0") not in ("0", "false", "False", "")
     AUTOPILOT_RETRY_COOLDOWN_S = _env_int("TI_AUTOPILOT_RETRY_COOLDOWN_S", 600)
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)

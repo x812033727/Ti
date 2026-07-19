@@ -3318,3 +3318,36 @@
 ## 不升級 claude-agent-sdk，不改事件契約欄位，不動 `flow.py` marker 解析；sdk 升版列 followup 另案。
 - 時間：2026-07-19 17:44
 
+## `scrub_proxy_env(env: dict) -> None` 函式落在 `tests/server/_real_server_client.py`，就地 `.pop(key, None)` 六個變數：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`http_proxy`、`https_proxy`、`all_proxy`
+- 時間：2026-07-19 23:50
+- 理由：`_real_server_client.py` 已是兩支 real_server 測試的共用 helper 模組；helper 單一 SSOT 確保清單只維護一處
+- 否決方案：在兩支測試檔各自貼清單——複製貼上清單日後難同步，六個 key 有一個遺漏就半殘
+
+## 函式簽名為 mutate-in-place（`-> None`），不回傳新 dict
+- 時間：2026-07-19 23:50
+- 理由：兩支測試檔現行都是 `env.update({...})`（就地風格）；保持語義一致、呼叫端無需接回傳值、無隱式 copy
+
+## 呼叫順序鎖死為 `os.environ.copy()` → `env.update({TI_*})` → `scrub_proxy_env(env)` → `subprocess.Popen(env=env, ...)`
+- 時間：2026-07-19 23:50
+- 理由：`scrub` 排在 `update` 之後：若 `update` 意外帶入 proxy key，也會被清掉（防禦縱深）；排在 `Popen` 之前：server subprocess 拿到的是已清 proxy 的 env
+
+## `test_ws_attach_real_server.py` 與 `test_smoke_agenda_real_server.py` 的 client subprocess（`subprocess.run`）補傳 `env=env`，使用與 server 子行程同一份已清 proxy 的 dict
+- 時間：2026-07-19 23:50
+- 理由：client 端目前裸繼承 `os.environ`，即便 smoke client 內 httpx 已 `trust_env=False`，裸繼承仍是潛在洩漏路徑；補傳是 defense-in-depth
+- 否決方案：client 另建獨立乾淨 env——兩端用同一份 env 意圖最明確；且 TI_* 變數本就需要帶進 client，不宜另維護一份
+
+## 守護測試 `tests/server/test_qa_proxy_scrub_guard.py`，以 AST 掃描所有符合 `tests/server/test_*real_server*.py` glob 的檔案，確認：① `scrub_proxy_env` 從 `_real_server_client` import；② 函式體內至少存在一次對 `scrub_proxy_env` 的 `ast.Call`
+- 時間：2026-07-19 23:50
+- 否決方案：偵測「subprocess.Popen 前緊鄰 scrub call」的資料流分析——代價高、易因格式差異誤判，且漏掉的「import 但未呼叫」情況屬死碼，ruff/reviewer 可補
+
+## 守護測試黑樣本用 **in-memory 字串** 喂進 `ast.parse()`，不落真實檔案
+- 時間：2026-07-19 23:50
+- 理由：避免在 `tests/server/` 留 untracked 殘檔（呼應掃描範圍一致性教訓）；也避免黑樣本被 guard 本身誤掃成違規
+
+## 新 `test_qa_proxy_scrub_guard.py` 職責邊界與既有 guard 切清楚：只掃「是否呼叫 scrub_proxy_env」；httpx `trust_env` 與 websockets 裸連線管制仍由 `test_qa_httpx_trust_env_guard.py` 負責
+- 時間：2026-07-19 23:50
+
+## 不加 `httpx[socks]`（`socksio`）依賴；不改 `studio/` 任何 `trust_env` 設定；不加 proxy 字串專屬 skip
+- 時間：2026-07-19 23:50
+- 理由：TI_OFFLINE loopback 根本不需要代理，加依賴只是「走了但不炸」，治標不治本；`trust_env=True` 是刻意設計（允許企業 proxy），邊界在測試層
+

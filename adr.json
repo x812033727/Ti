@@ -1,62 +1,6 @@
 {
   "entries": [
     {
-      "decision": "shebang 不納入本次範圍（現有腳本均為 `env bash`，無 python shebang）。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670156
-    },
-    {
-      "decision": "產物頂端第一行即放「本任務實為驗證型 no-op，無任何寫入操作」結論句，三段證據為佐證而非主體——PM 第一眼掌握任務性質。",
-      "rationale": "避免 PM 讀完整份報告才發現是空包，縮短決策路徑。",
-      "rejected": "原本「三段證據平鋪、由 PM 自己推導結論」的順序——推導成本不該丟給 PM。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624551
-    },
-    {
-      "decision": "C 段（渲染行指認）grep pattern 綁死為兩組關鍵字——`criteria` 與 `render`，兩組都需有命中才算「渲染邏輯存在」；命中後輸出含行號與前後 2 行 context，不得只貼行號。",
-      "rationale": "防止「grep 什麼隨便找」的黑箱風險；高工指認為最大設計洞。",
-      "rejected": "執行端自由發揮 pattern（工程師原本「先 cat 再定 pattern」雖方向對，但未綁死判定邏輯，仍有操作空間）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.862457
-    },
-    {
-      "decision": "B 段（app.js == HEAD）採 `git diff --stat HEAD -- web/app.js` 先看一行彙整，零差即收工；如需深查再加 `git diff HEAD -- web/app.js`。",
-      "rationale": "高工建議；零差時完整 diff 為空但有 noise，stat 先看更省時。",
-      "rejected": "直接跑完整 `git diff HEAD`（零差時多餘輸出）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624582
-    },
-    {
-      "decision": "範圍外清單必須跑 `git log --oneline -n 5` + `git show --stat <sha>` 撈出實際「不相關 commit」與其檔名/SHA，不接受「@ 4572a49」之類的舉例式標註。",
-      "rationale": "PM 拿到清單要判斷是否 revert，必須是實資料不是猜測。",
-      "rejected": "沿用研究快照的範例 SHA。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624592
-    },
-    {
-      "decision": "範圍外清單另增一條「流程守則給 PM」——下次需求 doc 須附 `git rev-parse HEAD` 與 `git status --short` 自驗，避免舊快照重演。",
-      "rationale": "高工指出此為流程債，趁現在順手記。",
-      "rejected": "留待下個 task 處理（會重演同樣卡點）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624597
-    },
-    {
-      "decision": "沿用：任務性質 = 驗證型 no-op，全程 read-only（禁 `git restore` / `git reset` / `git rm` / `git checkout` 寫入子命令）。",
-      "rationale": "既有紀律「可逆性優先」「本環境過關 ≠ 使用者環境過關」延伸。",
-      "rejected": "硬做清理（會引入破壞性操作，違反可逆性）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624606
-    },
-    {
-      "decision": "沿用：技術選型 = 純 git CLI + grep，無 wrapper、無腳本框架。",
-      "rationale": "為 no-op 任務增加工具面是過度設計。",
-      "rejected": "包成 `verify.sh` 腳本（一次性驗收物不需入庫）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624618
-    },
-    {
       "decision": "沿用：介面格式 = 單一 markdown 區塊，依 A/B/C 三段、每段附「執行指令 + 預期輸出 + 實測輸出」三欄；明註「一次性驗收物、不為後續自動化保留介面」。",
       "rationale": "高工次要建議；防止下次被誤當 API 接 CI。",
       "rejected": "產 JSON / 結構化檔（為 no-op 投資未來介面是 YAGNI）。",
@@ -3499,6 +3443,62 @@
       "rejected": "",
       "session_id": "ap7f8929ed39",
       "created_at": 1784454263.8181903
+    },
+    {
+      "decision": "`scrub_proxy_env(env: dict) -> None` 函式落在 `tests/server/_real_server_client.py`，就地 `.pop(key, None)` 六個變數：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`http_proxy`、`https_proxy`、`all_proxy`",
+      "rationale": "`_real_server_client.py` 已是兩支 real_server 測試的共用 helper 模組；helper 單一 SSOT 確保清單只維護一處",
+      "rejected": "在兩支測試檔各自貼清單——複製貼上清單日後難同步，六個 key 有一個遺漏就半殘",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.180512
+    },
+    {
+      "decision": "函式簽名為 mutate-in-place（`-> None`），不回傳新 dict",
+      "rationale": "兩支測試檔現行都是 `env.update({...})`（就地風格）；保持語義一致、呼叫端無需接回傳值、無隱式 copy",
+      "rejected": "",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.1805215
+    },
+    {
+      "decision": "呼叫順序鎖死為 `os.environ.copy()` → `env.update({TI_*})` → `scrub_proxy_env(env)` → `subprocess.Popen(env=env, ...)`",
+      "rationale": "`scrub` 排在 `update` 之後：若 `update` 意外帶入 proxy key，也會被清掉（防禦縱深）；排在 `Popen` 之前：server subprocess 拿到的是已清 proxy 的 env",
+      "rejected": "",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.1805236
+    },
+    {
+      "decision": "`test_ws_attach_real_server.py` 與 `test_smoke_agenda_real_server.py` 的 client subprocess（`subprocess.run`）補傳 `env=env`，使用與 server 子行程同一份已清 proxy 的 dict",
+      "rationale": "client 端目前裸繼承 `os.environ`，即便 smoke client 內 httpx 已 `trust_env=False`，裸繼承仍是潛在洩漏路徑；補傳是 defense-in-depth",
+      "rejected": "client 另建獨立乾淨 env——兩端用同一份 env 意圖最明確；且 TI_* 變數本就需要帶進 client，不宜另維護一份",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.1805248
+    },
+    {
+      "decision": "守護測試 `tests/server/test_qa_proxy_scrub_guard.py`，以 AST 掃描所有符合 `tests/server/test_*real_server*.py` glob 的檔案，確認：① `scrub_proxy_env` 從 `_real_server_client` import；② 函式體內至少存在一次對 `scrub_proxy_env` 的 `ast.Call`",
+      "rationale": "",
+      "rejected": "偵測「subprocess.Popen 前緊鄰 scrub call」的資料流分析——代價高、易因格式差異誤判，且漏掉的「import 但未呼叫」情況屬死碼，ruff/reviewer 可補",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.180526
+    },
+    {
+      "decision": "守護測試黑樣本用 **in-memory 字串** 喂進 `ast.parse()`，不落真實檔案",
+      "rationale": "避免在 `tests/server/` 留 untracked 殘檔（呼應掃描範圍一致性教訓）；也避免黑樣本被 guard 本身誤掃成違規",
+      "rejected": "",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.180528
+    },
+    {
+      "decision": "新 `test_qa_proxy_scrub_guard.py` 職責邊界與既有 guard 切清楚：只掃「是否呼叫 scrub_proxy_env」；httpx `trust_env` 與 websockets 裸連線管制仍由 `test_qa_httpx_trust_env_guard.py` 負責",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.180529
+    },
+    {
+      "decision": "不加 `httpx[socks]`（`socksio`）依賴；不改 `studio/` 任何 `trust_env` 設定；不加 proxy 字串專屬 skip",
+      "rationale": "TI_OFFLINE loopback 根本不需要代理，加依賴只是「走了但不炸」，治標不治本；`trust_env=True` 是刻意設計（允許企業 proxy），邊界在測試層",
+      "rejected": "",
+      "session_id": "ap2f8ee80ebc",
+      "created_at": 1784476240.1805305
     }
   ]
 }

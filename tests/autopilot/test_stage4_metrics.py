@@ -18,10 +18,10 @@ def _state(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _audit_merged(task_id):
+def _audit_merged(task_id, **extra):
     jsonl_log.append(
         config.AUTOPILOT_STATE_DIR / "audit.jsonl",
-        {"task_id": task_id, "outcome": "merged", "ts": time.time()},
+        {"task_id": task_id, "outcome": "merged", "ts": time.time(), **extra},
     )
 
 
@@ -79,6 +79,16 @@ def test_stage4_conditions_and_promotion(monkeypatch):
     green["events"] = {"deploy_verify_failed": 1}
     out = insights.stage_readiness()
     assert {c["key"]: c for c in out["stage4_conditions"]}["deploy_verify_green"]["ok"] is False
+
+
+def test_audit_embedded_source_wins_over_backlog_join():
+    """audit 內嵌 source 優先(免疫 backlog 重建/撞號);缺欄舊紀錄退回 join。"""
+    t = backlog.add("撞號任務", "", source="manual")
+    _audit_merged(t["id"], source="intent")  # 內嵌 intent 勝過 backlog 的 manual
+    _audit_merged(424242)  # 缺欄+backlog 查不到 → unknown
+    a = insights.trust_metrics(7)["autonomy"]
+    assert a["by_source"] == {"intent": 1, "unknown": 1}
+    assert a["intent_delivery"] == 1
 
 
 def test_route_core_changes_intent_source():

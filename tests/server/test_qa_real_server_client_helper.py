@@ -125,7 +125,7 @@ def test_loopback_connection_refused_tracebacks_skip_instead_of_failing(stderr: 
 def test_sister_real_server_tests_share_client_result_helper(filename: str) -> None:
     source = (HERE / filename).read_text(encoding="utf-8")
 
-    assert "from _real_server_client import assert_smoke_client_ok" in source
+    assert "from _real_server_client import" in source
     assert "assert_smoke_client_ok(" in source
     assert "client.returncode" not in source
 
