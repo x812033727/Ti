@@ -27,6 +27,12 @@ def test_no_forbidden_line_backward_compat():
     assert all(t["forbidden_paths"] == [] for t in tasks)
 
 
+def test_bullet_task_fallback_gets_empty_forbidden_paths():
+    tasks, _ = parse_tasks_with_deps("- 甲\n- 乙")
+    assert [t["title"] for t in tasks] == ["甲", "乙"]
+    assert all(t["forbidden_paths"] == [] for t in tasks)
+
+
 def test_forbidden_paths_dedup_preserves_order():
     text = "任務: #1 甲\n禁改: #1 a.py, docs/, a.py"
     tasks, _ = parse_tasks_with_deps(text)

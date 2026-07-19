@@ -723,16 +723,21 @@ def check_forbidden_paths(staged: list[str], patterns: list[str]) -> list[str]:
 
     比對語意（stdlib，不引入新依賴）：
     - pattern 以 `/` 結尾 → 視為目錄前綴：`docs/` 命中 `docs/a.md`、`docs/x/y.md`。
-    - 其餘 → `fnmatch` glob：`studio/config.py` 精確命中、`*.py` / `src/*.js` 同層萬用字元。
+    - 其餘 → `fnmatch` glob：`studio/config.py` 精確命中；`*.py`／`src/*.js` 的 `*` **會跨 `/`**
+      （`fnmatch` 語意，非單層 glob），故 `*.py` 亦命中 `src/a.py`——對「禁改」防護是偏嚴、
+      不漏擋的安全方向。若接線端需嚴格單層再議。
     路徑一律以 `/` 正規化（相容 Windows 反斜線 staged 名）。命中保序去重；無命中回空清單。
     """
-    norm = lambda p: p.replace("\\", "/").strip()  # noqa: E731
-    pats = [norm(p) for p in patterns if norm(p)]
+
+    def _norm(p: str) -> str:
+        return p.replace("\\", "/").strip()
+
+    pats = [_norm(p) for p in patterns if _norm(p)]
     if not pats:
         return []
     violations: list[str] = []
     for raw in staged:
-        path = norm(raw)
+        path = _norm(raw)
         if not path:
             continue
         for pat in pats:
