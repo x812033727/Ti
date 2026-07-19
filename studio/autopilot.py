@@ -2346,6 +2346,86 @@ async def _run_session_supervised(session, requirement: str, sid: str):
         raise
 
 
+# --- async clarify(第 4 階 B4,TI_CLARIFY_ASYNC 灰度) -------------------------
+# 互動 session 的 clarify 會阻塞等人答;autopilot 是無人值守迴圈,阻塞=餓死。改為:
+# 新任務先由 FAST 探測「會做錯方向且無法安全假設」的關鍵歧義,有→任務 parked(問題存
+# 專用 clarify 欄位,unpark 覆寫 note 也不丟)+page 推播;人答=unpark+note([手動] 取回:
+# 回覆),逾時=依假設自動前進;澄清紀錄併入 requirement,PM 帶著假設/回覆開工並留痕。
+_CLARIFY_PROBE_SYSTEM = (
+    "你是 PM,檢查 autopilot 任務描述是否存在「會導致做錯方向、且無法安全假設」的關鍵歧義。"
+    "規則:\n"
+    "- 絕大多數任務應回「澄清: 不需要」——能以合理預設假設前進的一律不問,寧可假設。\n"
+    "- 確有關鍵歧義才提問,每個問題兩行:\n"
+    "問題: <一句>\n"
+    "假設: <逾時未答時採用的預設做法>\n"
+)
+_CLARIFY_NOTE_PREFIX = "[待澄清]"
+_CLARIFY_TIMEOUT_NOTE = "[澄清逾時] 未獲回覆,依假設前進"
+_clarify_sweep_at = 0.0
+
+
+async def _clarify_probe(task: dict, clone: str, sid: str) -> list[dict]:
+    """FAST 一次呼叫探測關鍵歧義;回問題清單(空=不需澄清)。任何失敗回空(寧跑勿擋)。"""
+    from . import flow, providers
+
+    user = (
+        f"任務標題:{(task.get('title') or '').strip()}\n"
+        f"任務細節:{(task.get('detail') or '').strip()[:1500]}"
+    )
+    text = await providers.complete_once(
+        _CLARIFY_PROBE_SYSTEM, user, session_id=f"{sid}:clarify", cwd=Path(clone)
+    )
+    return flow.parse_clarify(text or "")[: config.CLARIFY_MAX_QUESTIONS]
+
+
+def _maybe_clarify_timeout(now: float | None = None) -> int:
+    """[待澄清] parked 逾時自動依假設前進(15 分鐘掃一次);回復活數。
+
+    只動「note 仍是 [待澄清] 開頭」的任務——人工 unpark/park 過的(note 已被 [手動]
+    覆寫)不碰,人的裁決優先。attempts 不動(澄清等待不是失敗)。
+    """
+    global _clarify_sweep_at
+    if not config.CLARIFY_ASYNC:
+        return 0
+    t = now if now is not None else time.time()
+    if t - _clarify_sweep_at < 900:
+        return 0
+    _clarify_sweep_at = t
+    horizon = config.CLARIFY_ASYNC_TIMEOUT_H * 3600
+    n = 0
+    for task in backlog.list_tasks("parked"):
+        note = str(task.get("note") or "")
+        if not note.startswith(_CLARIFY_NOTE_PREFIX):
+            continue
+        if t - float(task.get("updated_at") or 0) < horizon:
+            continue
+        backlog.set_status(
+            task["id"],
+            "pending",
+            attempts=int(task.get("attempts") or 0),
+            note=_CLARIFY_TIMEOUT_NOTE,
+        )
+        n += 1
+    if n:
+        log.info("async clarify:%d 個 [待澄清] 任務逾時,依假設前進", n)
+    return n
+
+
+def _clarify_requirement_section(task: dict) -> str:
+    """把澄清紀錄(問題/假設+人工回覆)組進 requirement;無澄清紀錄回空字串。"""
+    clar = str(task.get("clarify") or "")
+    if not clar:
+        return ""
+    note = str(task.get("note") or "")
+    answer = ""
+    if note.startswith("[手動] 取回"):
+        answer = note.split(":", 1)[1].strip() if ":" in note else ""
+    out = f"\n\n澄清紀錄(有人工回覆以其為準,否則依括號內假設前進,並在成果中留痕):\n{clar[:1200]}"
+    if answer:
+        out += f"\n人工回覆:{answer[:800]}"
+    return out
+
+
 async def run_one_task(task: dict) -> None:
     t0 = time.time()  # 供 audit.jsonl 的 duration_s（整個任務含討論/閘門/合併）
     sid = f"ap{uuid.uuid4().hex[:10]}"
@@ -2353,7 +2433,11 @@ async def run_one_task(task: dict) -> None:
     log.info("開始任務 #%s：%s（session %s）", task["id"], task["title"], sid)
 
     clone = await _prepare_clone()
-    requirement = task["title"] + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
+    requirement = (
+        task["title"]
+        + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
+        + _clarify_requirement_section(task)
+    )
 
     matched_implemented_title = await _prefilter_implemented_match(task, clone)
     if matched_implemented_title:
@@ -2379,6 +2463,45 @@ async def run_one_task(task: dict) -> None:
     if _is_investigation_task(task):
         await _run_investigation_task(task, clone, sid, t0)
         return
+
+    # async clarify(B4,灰度):僅首攻(attempts==0)且未探測過(無 clarify 欄位)的完整
+    # 管線任務探測;有關鍵歧義 → parked 等人答,主迴圈立刻去做下一個任務(不阻塞)。
+    # attempts 回填揀起前的值:澄清等待不是失敗,不消耗重試額度(仿調查升級回填)。
+    if config.CLARIFY_ASYNC and not int(task.get("attempts") or 0) and not task.get("clarify"):
+        questions = await _clarify_probe(task, clone, sid)
+        if questions:
+            q_text = " ｜ ".join(
+                f"問:{q['q']}(假設:{q.get('assumption') or '無'})" for q in questions
+            )
+            backlog.set_status(
+                task["id"],
+                "parked",
+                attempts=int(task.get("attempts") or 0),
+                note=f"{_CLARIFY_NOTE_PREFIX} {q_text}"[:800],
+                clarify=q_text[:1200],
+            )
+            notify.send_bg(
+                "clarify_pending",
+                f"任務 #{task['id']} 待澄清：{(task.get('title') or '')[:60]}",
+                task_id=task["id"],
+                questions=len(questions),
+            )
+            if not config.AUTOPILOT_DRYRUN:
+                _append_audit(
+                    {
+                        "ts": time.time(),
+                        "task_id": task.get("id"),
+                        "pr": None,
+                        "branch": "",
+                        "head_sha": "",
+                        "outcome": "clarify_parked",
+                        "detail": q_text[:400],
+                        "duration_s": round(time.time() - t0, 1),
+                        "attempts": int(task.get("attempts") or 0),
+                    }
+                )
+            log.info("任務 #%s 有 %d 個待澄清問題,parked 等人答", task["id"], len(questions))
+            return
 
     history.start_session(sid, f"[autopilot] {task['title']}")
     turn_state: dict[str, object] = {
@@ -4359,6 +4482,8 @@ async def _main_loop(startup_sig: float) -> None:
         _recover_stale_in_progress()
         # 規範迴路(A3,灰度):人工介入/失敗事件 → 蒸餾成慣例入 lessons(每日一次)。
         await _maybe_norms_distill()
+        # async clarify(B4,灰度):[待澄清] parked 逾時自動依假設前進(15 分鐘掃一次)。
+        _maybe_clarify_timeout()
         # 任務邊界部署自查：放在取任務之前——此刻保證無 autopilot 討論，是 autodeploy
         # 飢餓下唯一可靠的部署窗口（成功且自身碼有變會 execv，不返回）。
         await _maybe_boundary_redeploy()
