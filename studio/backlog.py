@@ -277,6 +277,9 @@ def apply_action(
                 t["status"] = target
                 if action in ("retry", "unpark"):
                     t["attempts"] = 0
+                if action == "park":
+                    # 手動歸檔不是澄清票:清殘留 clarify,免得在收件匣死灰復燃(F1 覆審修)。
+                    t.pop("clarify", None)
                 label = {"retry": "重試", "park": "歸檔", "unpark": "取回"}[action]
                 t["note"] = f"[手動] {label}" + (f":{extra}" if extra else "")
             t["updated_at"] = time.time()
@@ -342,7 +345,12 @@ def next_pending(*, state_dir: Path | None = None) -> dict | None:
 def set_status(
     task_id: int, status: str, *, state_dir: Path | None = None, **fields
 ) -> dict | None:
-    """更新任務狀態與其他欄位（session_id 等）；in_progress 時 attempts +1。"""
+    """更新任務狀態與其他欄位（session_id 等）；in_progress 時 attempts +1。
+
+    clarify 不變量(F1 覆審修):clarify 只在「帶著問題停放」時有效——不帶新 clarify 的
+    parked 轉換清掉殘留舊問題,否則答過的票會在日後無關停放時於收件匣死灰復燃。
+    (unpark 刻意保留 clarify:_clarify_requirement_section 靠它注入問題+人工回覆。)
+    """
     if status not in VALID_STATUS:
         raise ValueError(f"invalid status: {status}")
     with _locked(state_dir):
@@ -352,6 +360,8 @@ def set_status(
                 t["status"] = status
                 if status == "in_progress":
                     t["attempts"] = t.get("attempts", 0) + 1
+                if status == "parked" and "clarify" not in fields:
+                    t.pop("clarify", None)
                 t["updated_at"] = time.time()
                 t.update(fields)
                 _save(data, state_dir)
@@ -447,8 +457,11 @@ def recent_done_titles(limit: int, *, state_dir: Path | None = None) -> set[str]
     return {t["title"].strip() for t in done[:limit]}
 
 
-def route_core_changes(items: list[dict]) -> int:
+def route_core_changes(items: list[dict], *, source: str = "core") -> int:
     """把判定的核心改動路由到核心 backlog（雙軌路由的單一收斂點），回傳實際路由數。
+
+    source 預設 "core";improver 意圖差距分析驅動時傳 "intent"(F2)——這是「使用者意圖→
+    核心自產→零人工交付」在 core 迴圈唯一可量測的通道(專案 backlog 不進 core audit)。
 
     `核心改動:` 專指「改 Ti 框架本身」、與專案無關——任何來源（檢討／找問題／單場討論／autopilot）
     都進同一份核心 backlog（省略 state_dir＝預設 config.AUTOPILOT_STATE_DIR，正是 autopilot 在 drain
@@ -464,7 +477,7 @@ def route_core_changes(items: list[dict]) -> int:
         return 0
     done = recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
     items = [c for c in items if c.get("title", "").strip() not in done]
-    return add_items(items, source="core") if items else 0
+    return add_items(items, source=source) if items else 0
 
 
 # --- failed 分診（確定性規則、無 LLM）--------------------------------------

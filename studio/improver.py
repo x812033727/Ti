@@ -579,7 +579,11 @@ class ProjectImprover:
                 if c["title"] not in seen_core:
                     seen_core.add(c["title"])
                     uniq.append(c)
-            routed = backlog.route_core_changes(uniq)
+            # 意圖驅動的核心改動蓋 source="intent":core 迴圈執行+audit 後,第 4 階
+            # 「意圖→零人工交付」才量測得到(專案 backlog 的 intent 任務不進 core audit)。
+            routed = backlog.route_core_changes(
+                uniq, source="intent" if self._intent_context() else "core"
+            )
             if routed:
                 log.info("找問題：路由 %d 個核心改動到核心 backlog（%s）", routed, config.CORE_REPO)
                 await self.broadcast(

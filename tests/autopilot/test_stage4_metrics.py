@@ -81,6 +81,17 @@ def test_stage4_conditions_and_promotion(monkeypatch):
     assert {c["key"]: c for c in out["stage4_conditions"]}["deploy_verify_green"]["ok"] is False
 
 
+def test_route_core_changes_intent_source():
+    """意圖驅動的核心改動蓋 source=intent(core 迴圈可量測的意圖→交付通道)。"""
+    n = backlog.route_core_changes([{"title": "意圖驅動核心改動X"}], source="intent")
+    assert n == 1
+    t = next(t for t in backlog.list_tasks() if t["title"] == "意圖驅動核心改動X")
+    assert t["source"] == "intent"
+    n = backlog.route_core_changes([{"title": "一般核心改動Y"}])
+    t = next(t for t in backlog.list_tasks() if t["title"] == "一般核心改動Y")
+    assert t["source"] == "core"
+
+
 def test_discovery_source_stamp(monkeypatch):
     stub = SimpleNamespace(_intent_context=lambda: "")
     assert improver.ProjectImprover._discovery_source(stub) == "eval"
