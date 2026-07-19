@@ -3,8 +3,10 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+import time
 
 from _repo import REPO_ROOT
 
@@ -265,3 +267,111 @@ def test_layer3_monitor_self_test_runs():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "self-test: ok" in result.stdout
+
+
+def _run_monitor_with_stubbed_host_commands(
+    tmp_path,
+    *,
+    status: dict | None,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    workdir = tmp_path / "work"
+    state_dir = tmp_path / "state"
+    status_file = tmp_path / "status.json"
+    log_file = tmp_path / "host-calls.log"
+    workdir.mkdir()
+    state_dir.mkdir()
+    if status is not None:
+        status_file.write_text(json.dumps(status), encoding="utf-8")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "TI_LAYER3_WORKDIR": str(workdir),
+            "TI_LAYER3_STATE_DIR": str(state_dir),
+            "TI_LAYER3_STATUS_FILE": str(status_file),
+            "TI_LAYER3_LIVENESS_SCRIPT": str(LIVENESS),
+            "TI_LAYER3_PAUSE_FILE": str(tmp_path / "not-paused"),
+            "TI_LAYER3_TEST_LOG": str(log_file),
+        }
+    )
+    harness = f"""
+set -eu
+systemctl() {{
+  printf 'systemctl' >> "$TI_LAYER3_TEST_LOG"
+  for arg in "$@"; do printf ' %s' "$arg" >> "$TI_LAYER3_TEST_LOG"; done
+  printf '\\n' >> "$TI_LAYER3_TEST_LOG"
+  case "${{1:-}}" in
+    is-active|restart) return 0 ;;
+    show) printf '0\\n'; return 0 ;;
+  esac
+  return 0
+}}
+curl() {{
+  printf 'curl' >> "$TI_LAYER3_TEST_LOG"
+  for arg in "$@"; do printf ' %s' "$arg" >> "$TI_LAYER3_TEST_LOG"; done
+  printf '\\n' >> "$TI_LAYER3_TEST_LOG"
+  return 0
+}}
+claude() {{
+  printf 'claude invoked\\n' >> "$TI_LAYER3_TEST_LOG"
+  return 0
+}}
+export -f systemctl curl claude
+exec bash {MONITOR}
+"""
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=env,
+    )
+    calls = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+    return result, calls
+
+
+def test_layer3_monitor_does_not_restart_long_turn_with_cpu_active(tmp_path):
+    now = time.time()
+    result, calls = _run_monitor_with_stubbed_host_commands(
+        tmp_path,
+        status=_running(
+            updated_at=now - 5.0,
+            last_activity_at=now - 3600.0,
+            workers={"count": 5, "cpu_active": True},
+        ),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "layer3: all green" in result.stdout
+    assert "verdict=alive" in result.stdout
+    assert "systemctl restart" not in calls
+    assert "claude invoked" not in calls
+
+
+def test_layer3_monitor_probe_fail_warns_without_restart(tmp_path):
+    result, calls = _run_monitor_with_stubbed_host_commands(tmp_path, status=None)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "liveness probe warning: verdict=probe_fail reason=status_file_missing" in result.stdout
+    assert "systemctl restart" not in calls
+    assert "claude invoked" not in calls
+
+
+def test_layer3_monitor_dead_task_restarts_service_without_claude(tmp_path):
+    now = time.time()
+    result, calls = _run_monitor_with_stubbed_host_commands(
+        tmp_path,
+        status=_running(
+            updated_at=now - 5.0,
+            last_activity_at=now - 3600.0,
+            workers={"count": 5, "cpu_active": False},
+        ),
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "layer3: 判死 → restart ti-autopilot.service: verdict=dead_task" in result.stdout
+    assert "layer3: restart ti-autopilot.service exit=0" in result.stdout
+    assert "systemctl restart ti-autopilot.service" in calls
+    assert "claude invoked" not in calls
