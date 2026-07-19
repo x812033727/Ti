@@ -30,14 +30,14 @@ def _url() -> str:
 
 def _ms_to_epoch(v: Any) -> float | None:
     """毫秒 epoch → 秒；非數字回 None。"""
-    return float(v) / 1000.0 if isinstance(v, (int, float)) else None
+    return float(v) / 1000.0 if isinstance(v, int | float) else None
 
 
 def _used(remaining_percent: Any) -> float | None:
     """remaining_percent(0-100) → used_percentage(0-100)；非數字回 None。"""
     return (
         round(100 - float(remaining_percent), 1)
-        if isinstance(remaining_percent, (int, float))
+        if isinstance(remaining_percent, int | float)
         else None
     )
 

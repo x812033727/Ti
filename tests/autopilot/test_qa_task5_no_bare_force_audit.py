@@ -43,7 +43,7 @@ def _func_string_constants(src: str, func_name: str) -> list[str]:
     tree = ast.parse(src)
     out: list[str] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == func_name:
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
                     out.append(sub.value)
@@ -67,7 +67,7 @@ def test_ast_function_exists_and_isolated():
     # 確認確實在分析目標函式（避免函式改名造成假綠）
     tree = ast.parse(_SRC)
     names = {
-        n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
     }
     assert "_commit_push_merge" in names
 

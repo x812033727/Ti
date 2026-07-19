@@ -39,7 +39,7 @@ def _get(path: str, timeout: float = 3.0):
 
 
 def _post(path: str, body, timeout: float = 3.0):
-    data = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode()
+    data = body if isinstance(body, bytes | bytearray) else json.dumps(body).encode()
     req = urllib.request.Request(
         BASE + path,
         data=data,

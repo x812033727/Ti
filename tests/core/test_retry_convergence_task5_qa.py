@@ -41,7 +41,7 @@ def _funcs(tree: ast.AST):
     """回傳 name -> FunctionDef（含 async），名稱重複時保留最後一個。"""
     out: dict[str, ast.AST] = {}
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             out[node.name] = node
     return out
 
@@ -75,7 +75,7 @@ def test_providers_imports_shared_factory_not_own():
     defined = {
         n.name
         for n in ast.walk(PROV_TREE)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
     }
     assert "make_retry_config" not in defined, "providers.py 不應自建退避工廠"
     assert "RetryConfig" not in defined, "providers.py 不應複製 RetryConfig"
@@ -89,9 +89,9 @@ def test_run_with_retries_only_in_openai_speak_once():
     # 定位該唯一呼叫所屬的最內層函式名
     owners: list[str] = []
     for node in ast.walk(PROV_TREE):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             if _calls_named(node, "run_with_retries") and not any(
-                isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))
+                isinstance(inner, ast.FunctionDef | ast.AsyncFunctionDef)
                 and inner is not node
                 and _calls_named(inner, "run_with_retries")
                 for inner in ast.walk(node)
@@ -157,7 +157,7 @@ def test_make_retry_config_single_definition_in_experts():
     defs = [
         n
         for n in ast.walk(EXP_TREE)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "make_retry_config"
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == "make_retry_config"
     ]
     assert len(defs) == 1, f"experts.py 應恰好一個 make_retry_config 定義，實為 {len(defs)}"
 

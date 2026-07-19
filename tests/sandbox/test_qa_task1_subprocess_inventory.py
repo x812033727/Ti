@@ -73,7 +73,7 @@ def _iter_callers() -> list[Caller]:
         funcs = [
             (n.name, n.lineno, n.end_lineno or n.lineno)
             for n in ast.walk(tree)
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
         ]
         lines = src.splitlines()
         for node in ast.walk(tree):
