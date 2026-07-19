@@ -1060,6 +1060,12 @@ async def notify_test() -> JSONResponse:
     return JSONResponse(await asyncio.to_thread(notify.send_test))
 
 
+@router.get("/api/autopilot/stage", dependencies=[Depends(auth.require_auth)])
+async def autopilot_stage() -> JSONResponse:
+    """唯讀:升階儀表(八 canary 現值+第 3 階四條件快照+階段判定)。"""
+    return JSONResponse(await asyncio.to_thread(insights.stage_readiness))
+
+
 @router.get("/api/autopilot/trust", dependencies=[Depends(auth.require_auth)])
 async def autopilot_trust(days: int = 7) -> JSONResponse:
     """信任指標(第 3 階 A0 基線):零人工介入合併率/介入分類/系統事件計數。"""
