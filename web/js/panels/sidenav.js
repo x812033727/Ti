@@ -65,6 +65,8 @@ export function bindSidenav() {
   if (plugins) plugins.onclick = () => import("./plugins.js").then((m) => m.openPlugins());
   const sched = $("#snSchedules");
   if (sched) sched.onclick = () => import("./schedules.js").then((m) => m.openSchedules());
+  const stage = $("#snStage");
+  if (stage) stage.onclick = () => import("./stage.js").then((m) => m.openStage());
   // 帳號選單(PR12):向上彈出;主題/密碼走既有機制,登出同 header 登出鈕語意。
   const acc = $("#snAccount");
   const menu = $("#snAccountMenu");
