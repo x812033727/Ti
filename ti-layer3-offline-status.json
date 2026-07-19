@@ -1,0 +1,21 @@
+{
+  "state": "running",
+  "task_id": 342,
+  "sleep_until": null,
+  "updated_at": 4102444800,
+  "quota": {
+    "claude": 63.0,
+    "codex": 36.0,
+    "antigravity": 0.0,
+    "minimax": 0.0
+  },
+  "last_activity_at": 1784488679,
+  "workers": {
+    "count": 18,
+    "cpu_active": true
+  },
+  "current_expert": "engineer",
+  "turn_started_at": 1784488000,
+  "running_commit": "73ed375d3bfa",
+  "sideline": null
+}
