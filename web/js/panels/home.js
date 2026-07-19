@@ -4,10 +4,11 @@
 // 節點,home 對話時把它搬進 #homeChat、進工作室視圖時搬回原位——串流/重連/重播零改動。
 // 契約 id 不動:開始前把 hero 輸入同步進 #requirement(值的單一來源),再呼叫既有 start()。
 import { $, toast } from "../dom.js";
-import { start, stop, sendInterject, bindSocket, stopReconnect } from "../ws.js";
+import { start, stop, sendInterject, bindSocket, resetForAttach } from "../ws.js";
 import { state } from "../state.js";
 import { clearStream, clearBoard } from "../events-render.js";
 import { onRunningChange, setRunning } from "./deck.js";
+import { onViewChange } from "./dashboard.js";
 import { focusComposer, refreshSidenavHistory } from "./sidenav.js";
 import { replaySession } from "./history.js";
 import { createTaskCard, startTaskCardPolling } from "../components/taskcard.js";
@@ -131,7 +132,7 @@ export function heroStart() {
 // 側欄點「進行中」會話:以 attach 訂閱直播(cursor=0=補放全程再接 live)。
 export function attachSessionInHome(sid) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.close();
-  stopReconnect();
+  resetForAttach(); // 含 sawDone 歸零:殘留 true 會讓本場斷線被誤判已收尾而不重連
   state.replaying = false;
   state.improveMode = false;
   state.sessionId = sid;
@@ -239,4 +240,10 @@ export function bindHome() {
   const mq = $("#heroModeQuick");
   if (mq) mq.onclick = () => setHeroMode("quick");
   onRunningChange(setHomeRunning);
+  // 覆審修正:離開 home 必搬回 #stream(否則工作室討論區永遠空白=單向陷阱);
+  // 回到 home 且停在 chat 子頁則搬回來。
+  onViewChange((view) => {
+    if (view !== "home") moveStreamBack();
+    else if (($("#homeMain") || {}).dataset?.subview === "chat") moveStreamHome();
+  });
 }
