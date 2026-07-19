@@ -138,6 +138,11 @@ _TRUST_EVENT_KINDS = (
 )
 
 
+# 自主度口徑(軌 F2):人工源=人出的題;意圖/排程源=第 4 階「意圖→交付」的可辨識標記。
+_HUMAN_SOURCES = frozenset({"manual", "user"})
+_INTENT_SOURCES = frozenset({"intent", "schedule"})
+
+
 def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
     """第 3 階(監督式自治)信任指標:零人工介入合併率+介入分類+系統事件計數。
 
@@ -166,6 +171,23 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
         if i.get("category") == "output_review" and i.get("task_id") is not None
     }
     zero = [r for r in merged if str(r.get("task_id")) not in reviewed_tasks]
+    # 自主度拆解(軌 F2,第 4 階量測):merged join backlog source。人工源=人出的題;
+    # 其餘(intent/schedule/eval/discovered/investigation…)=系統自產;backlog 已不存在
+    # 的舊任務歸 unknown 不進分子分母(誠實呈現缺口,不灌水)。
+    src_by_id = {
+        t.get("id"): str(t.get("source") or "") for t in backlog.list_tasks(state_dir=state_dir)
+    }
+    by_source: dict[str, int] = {}
+    zero_ids = {str(r.get("task_id")) for r in zero}
+    intent_delivery = 0
+    for r in merged:
+        src = src_by_id.get(r.get("task_id")) or "unknown"
+        by_source[src] = by_source.get(src, 0) + 1
+        if src in _INTENT_SOURCES and str(r.get("task_id")) in zero_ids:
+            intent_delivery += 1
+    human_n = sum(v for k, v in by_source.items() if k in _HUMAN_SOURCES)
+    auto_n = sum(v for k, v in by_source.items() if k not in _HUMAN_SOURCES and k != "unknown")
+    known = human_n + auto_n
     by_cat: dict[str, int] = {}
     for i in ints:
         cat = str(i.get("category") or "output_review")
@@ -187,6 +209,13 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
             "per_week": round(len(ints) / days * 7, 1),
         },
         "events": events,
+        "autonomy": {
+            "by_source": by_source,
+            "human": human_n,
+            "autonomous": auto_n,
+            "autonomous_rate": round(auto_n / known, 3) if known else None,
+            "intent_delivery": intent_delivery,
+        },
     }
 
 
@@ -204,11 +233,16 @@ def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
     unpark+note);badge 數=待答澄清票數。days 夾 1..30。
     """
     days = max(1, min(30, int(days)))
+    cutoff = time.time() - days * 86400
     clarify: list[dict] = []
     parked: list[dict] = []
     for t in backlog.list_tasks("parked", state_dir=state_dir):
         row = {k: t.get(k) for k in _ATTENTION_TASK_FIELDS}
-        (clarify if str(t.get("clarify") or "").strip() else parked).append(row)
+        if str(t.get("clarify") or "").strip():
+            clarify.append(row)  # 澄清票不看時間:沒答就是欠著
+        elif (t.get("updated_at") or 0) >= cutoff:
+            # 陳年停放=歸檔語意,不進「需要你」——例外收件匣只裝視窗內的新停放。
+            parked.append(row)
     clarify.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     parked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     events = [
@@ -301,10 +335,39 @@ def stage_readiness(*, state_dir: Path | None = None) -> dict:
     ]
     all_ok = all(c["ok"] for c in conditions)
     streak = stage_streak(state_dir=state_dir)
+    # 第 4 階(AI 原生)條件卡(軌 F2):意圖→自產→零人工交付的可量測進度。
+    auto = m.get("autonomy") or {}
+    intent_delivery = int(auto.get("intent_delivery") or 0)
+    dv_failed = int(ev.get("deploy_verify_failed") or 0)
+    dv_on = bool(config.DEPLOY_VERIFY)
+    stage4_conditions = [
+        {
+            "key": "intent_loop_on",
+            "label": "意圖迴路運轉中",
+            "value": None,
+            "detail": "北極星 intent 驅動差距分析" if bool(config.INTENT_LOOP) else "開關未開",
+            "ok": bool(config.INTENT_LOOP),
+        },
+        {
+            "key": "autonomous_delivery",
+            "label": "意圖/排程源零人工交付 ≥1",
+            "value": intent_delivery,
+            "detail": f"7 天內 intent/schedule 源 merged 且零介入 {intent_delivery} 件",
+            "ok": intent_delivery >= 1,
+        },
+        {
+            "key": "deploy_verify_green",
+            "label": "部署黑盒驗證全綠",
+            "value": dv_failed,
+            "detail": ("驗證已開" if dv_on else "開關未開") + f"・7 天失敗 {dv_failed} 次",
+            "ok": dv_on and dv_failed == 0,
+        },
+    ]
     if on_count == 0:
         stage = "2"
     elif all_ok and streak >= 14 and on_count >= len(canaries) - 3:
-        stage = "3-ready"
+        # 第 3 階已可宣告;第 4 階條件也全綠則進入 AI 原生進行式。
+        stage = "4-progress" if all(c["ok"] for c in stage4_conditions) else "3-ready"
     else:
         stage = "3-progress"
     return {
@@ -312,6 +375,7 @@ def stage_readiness(*, state_dir: Path | None = None) -> dict:
         "canaries": canaries,
         "canaries_on": on_count,
         "conditions": conditions,
+        "stage4_conditions": stage4_conditions,
         "streak": streak,
         "streak_target": 14,
         "trust": m,

@@ -20,6 +20,24 @@ def test_empty_state():
     assert out == {"clarify": [], "parked": [], "events": [], "pending_clarify": 0}
 
 
+def test_stale_parked_excluded_but_stale_clarify_kept():
+    """陳年停放=歸檔語意不進收件匣;澄清票沒答就是欠著,不看時間。"""
+    import time as _t
+
+    t_old = backlog.add("陳年歸檔", "", source="eval")
+    t_oldq = backlog.add("陳年澄清", "", source="manual")
+    backlog.set_status(t_old["id"], "parked", note="老東西")
+    backlog.set_status(t_oldq["id"], "parked", note="[待澄清] 舊問題", clarify="舊問題?")
+    stale = _t.time() - 40 * 86400
+    # set_status 的 **fields 在刷新 updated_at 之後 update → 可覆寫成陳年;
+    # 澄清票要連 clarify 一起帶(不帶 clarify 的 parked 轉換會清殘留=不變量)。
+    backlog.set_status(t_old["id"], "parked", updated_at=stale)
+    backlog.set_status(t_oldq["id"], "parked", updated_at=stale, clarify="舊問題?")
+    out = insights.attention(days=7)
+    assert out["parked"] == [], "陳年停放不進收件匣"
+    assert [r["id"] for r in out["clarify"]] == [t_oldq["id"]], "陳年澄清票仍在"
+
+
 def test_clarify_vs_plain_parked_split():
     t1 = backlog.add("歧義任務", "", source="manual")
     t2 = backlog.add("普通停放", "", source="eval")
@@ -31,6 +49,28 @@ def test_clarify_vs_plain_parked_split():
     assert out["clarify"][0]["clarify"] == "要哪個環境?"
     assert [r["id"] for r in out["parked"]] == [t2["id"]]
     assert out["parked"][0]["note"] == "等外部依賴"
+
+
+def test_clarify_invariant_cleared_on_plain_park_kept_on_unpark():
+    """clarify 只在帶問題停放時有效:答過→取回→日後無關停放,不得死灰復燃(覆審修)。"""
+    t = backlog.add("歧義任務", "", source="manual")
+    backlog.set_status(t["id"], "parked", note="[待澄清] 哪個環境?", clarify="哪個環境?")
+    # 取回(答覆)保留 clarify——下次執行要注入問題+人工回覆
+    task, err = backlog.apply_action(t["id"], "unpark", note="staging")
+    assert err == "" and task["clarify"] == "哪個環境?"
+    # 之後無關原因停放(不帶新 clarify)→ 殘留問題清掉,不再是澄清票
+    backlog.set_status(t["id"], "parked", note="[調查] 其他原因")
+    out = insights.attention()
+    assert out["pending_clarify"] == 0 and out["clarify"] == []
+    assert [r["id"] for r in out["parked"]] == [t["id"]]
+    # 手動歸檔同樣清 clarify
+    backlog.set_status(t["id"], "parked", note="q", clarify="新問題?")
+    backlog.apply_action(t["id"], "unpark")
+    task, _ = backlog.apply_action(t["id"], "park")
+    assert "clarify" not in task
+    # 帶著新問題停放=合法澄清票,保留
+    backlog.set_status(t["id"], "parked", note="[待澄清] again", clarify="again?")
+    assert insights.attention()["pending_clarify"] == 1
 
 
 def test_events_page_only_and_noise_excluded():
