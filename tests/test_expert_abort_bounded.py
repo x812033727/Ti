@@ -154,6 +154,63 @@ async def test_stop_ok_when_disconnect_fast(monkeypatch):
     assert exp._connected is False
 
 
+async def test_stop_bounded_when_kill_noop_and_disconnect_hangs(monkeypatch):
+    """SDK 私有 transport 形狀取不到時，stop() 仍須靠 _CTRL_TIMEOUT 有界返回。"""
+    client = _CtrlClient(disconnect_hang=True)
+    del client._transport
+    exp, _ = _make_expert(monkeypatch, client)
+    exp._connected = True
+
+    killed: list[object] = []
+    monkeypatch.setattr(runner, "kill_process_group", lambda proc: killed.append(proc))
+
+    await asyncio.wait_for(exp.stop(), timeout=2)
+
+    assert killed == []
+    assert client.disconnects == 1
+    assert exp._connected is False
+
+
+async def test_stop_bounded_when_disconnect_swallows_cancellation(monkeypatch):
+    """disconnect 吞掉 CancelledError 仍不返回時，stop() 不得等它取消完成。"""
+    client = _CtrlClient()
+    exp, _ = _make_expert(monkeypatch, client)
+    exp._connected = True
+
+    cancel_seen = asyncio.Event()
+    release_disconnect = asyncio.Event()
+    disconnect_done = asyncio.Event()
+
+    async def disconnect_probe():
+        client.disconnects += 1
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancel_seen.set()
+            await release_disconnect.wait()
+        finally:
+            disconnect_done.set()
+
+    monkeypatch.setattr(exp, "_best_effort_kill_subprocess", lambda: None)
+    monkeypatch.setattr(client, "disconnect", disconnect_probe)
+
+    stop_task = asyncio.create_task(exp.stop())
+    done, pending = await asyncio.wait({stop_task}, timeout=1)
+    if pending:
+        release_disconnect.set()
+        await asyncio.wait_for(stop_task, timeout=1)
+        pytest.fail("stop() 等待 disconnect 取消完成，未有界返回")
+
+    assert done == {stop_task}
+    await stop_task
+    await asyncio.wait_for(cancel_seen.wait(), timeout=1)
+
+    release_disconnect.set()
+    await asyncio.wait_for(disconnect_done.wait(), timeout=1)
+    assert client.disconnects == 1
+    assert exp._connected is False
+
+
 # --- _abort_turn：interrupt 卡死須在 ~2×_CTRL_TIMEOUT 內收斂、斷線重建 ------------
 
 

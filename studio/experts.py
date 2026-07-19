@@ -34,8 +34,9 @@ Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 # interrupt()/disconnect() 在疑似 wedged 的 stdio 控制通道上的硬上限（秒）。這兩個呼叫
 # 都走可能已死鎖的控制通道；未加逾時時，一旦通道卡住，發言層 watchdog 的回收（_abort_turn）
 # 與 session.run 收尾（orchestrator finally → Expert.stop）都會永久卡死，連外層任務逾時
-# 取消都無法收斂（見 issue #286）。stop() 先 SIGKILL 再以此上限等 disconnect；_abort_turn
-# 則用同一上限圈住 interrupt/drain/disconnect 的退化路徑。
+# 取消都無法收斂（見 issue #286）。stop() 已採 kill-first：先 SIGKILL SDK 子程序群，再以
+# 此上限等 disconnect；_abort_turn 目前仍只用同一上限圈住 interrupt/drain/disconnect，
+# 並在 disconnect 退化路徑兜底 kill，尚未改成 kill-first。
 _CTRL_TIMEOUT = 30.0
 
 
@@ -666,6 +667,9 @@ class Expert:
 
     def _best_effort_kill_subprocess(self) -> None:
         """盡力對 SDK 內部子程序送 SIGKILL（整個 process group）。
+
+        stop() 的正常路徑也會先呼叫此方法，再進入 disconnect；這是刻意的 kill-first
+        回收契約，避免把 event loop 活性押在 SDK 控制通道能協作取消上。
 
         純 best-effort——任何 claude_agent_sdk 版本差異（`_transport`／`_process` 形狀改變、
         取不到 pid）都被 except 吞掉，退化成「殘留一個 idle 子程序」而非崩潰。迴圈活性由
