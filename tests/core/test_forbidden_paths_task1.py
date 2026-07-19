@@ -65,6 +65,11 @@ def test_directory_prefix_hit():
     assert check_forbidden_paths(staged, ["docs/"]) == ["docs/a.md", "docs/sub/b.md"]
 
 
+def test_directory_prefix_does_not_match_sibling_prefix():
+    staged = ["docs-old/a.md", "docs", "docs/a.md"]
+    assert check_forbidden_paths(staged, ["docs/"]) == ["docs/a.md"]
+
+
 def test_fnmatch_glob_hit():
     staged = ["a.py", "src/x.js", "src/y.js", "readme.md"]
     assert check_forbidden_paths(staged, ["*.py"]) == ["a.py"]
@@ -90,3 +95,12 @@ def test_multiple_patterns_dedup_violations():
 
 def test_backslash_path_normalized():
     assert check_forbidden_paths(["docs\\a.md"], ["docs/"]) == ["docs/a.md"]
+
+
+def test_check_forbidden_paths_does_not_mutate_inputs():
+    staged = ["docs\\a.md", "studio/config.py"]
+    patterns = ["docs/", "studio/config.py"]
+
+    assert check_forbidden_paths(staged, patterns) == ["docs/a.md", "studio/config.py"]
+    assert staged == ["docs\\a.md", "studio/config.py"]
+    assert patterns == ["docs/", "studio/config.py"]
