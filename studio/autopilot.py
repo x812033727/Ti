@@ -993,10 +993,14 @@ async def run_one_task(task: dict) -> None:
     log.info("任務 #%s %s", task["id"], "帶已知限制完成" if shipped_with_limits else "完成")
 
 
-def _pause(reason: str) -> None:
-    with contextlib.suppress(OSError):
+def _pause(reason: str) -> bool:
+    try:
         config.AUTOPILOT_PAUSE_FILE.write_text(f"{reason}\n{time.ctime()}\n", encoding="utf-8")
+    except OSError:
+        log.exception("暫停 autopilot 失敗：%s", reason)
+        return False
     log.warning("已暫停 autopilot：%s", reason)
+    return True
 
 
 def _record_consecutive_fail_outcome(task_id: int) -> None:
@@ -1010,7 +1014,7 @@ def _record_consecutive_fail_outcome(task_id: int) -> None:
     status = (backlog.get(task_id) or {}).get("status")
     if status == "failed":
         _consecutive_fail_count += 1
-    elif status in ("done", "merging"):
+    elif status == "done":
         _consecutive_fail_count = 0
         _consecutive_fail_notified = False
         return
@@ -1021,7 +1025,8 @@ def _record_consecutive_fail_outcome(task_id: int) -> None:
         return
 
     reason = f"連續 {_consecutive_fail_count} 次任務 failed，SLO 煞車暫停待人工檢視"
-    _pause(reason)
+    if not _pause(reason):
+        return
     notify.send_bg(
         "consecutive_fail_pause",
         reason,
