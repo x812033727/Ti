@@ -11,6 +11,7 @@ from studio import autopilot, config
 def _reset_brake(monkeypatch):
     monkeypatch.setattr(autopilot, "_consecutive_fail_count", 0)
     monkeypatch.setattr(autopilot, "_consecutive_fail_notified", False)
+    monkeypatch.setattr(autopilot, "_consecutive_fail_pause_active", False)
 
 
 def _drive_statuses(monkeypatch, statuses):
@@ -73,6 +74,121 @@ async def test_main_pauses_and_notifies_once_after_consecutive_failures(monkeypa
     assert len(sent) == 1
     assert sent[0][0] == "consecutive_fail_pause"
     assert sent[0][2]["consecutive_fail_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_main_pending_after_task_does_not_count_or_reset(monkeypatch, tmp_path):
+    class StopLoop(Exception):
+        pass
+
+    processed: list[int] = []
+    statuses: dict[int, str] = {}
+    tasks = iter([{"id": 1, "title": "provider unavailable"}])
+
+    async def pending_task(task):
+        processed.append(task["id"])
+        statuses[task["id"]] = "pending"
+
+    async def stop_after_first_sleep(_delay):
+        if processed:
+            raise StopLoop
+
+    monkeypatch.setattr(autopilot, "_consecutive_fail_count", 1)
+    monkeypatch.setattr(config, "AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 2)
+    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
+    monkeypatch.setattr(config, "AUTOPILOT_COOLDOWN", 0)
+    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
+    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: None)
+    monkeypatch.setattr(autopilot.backlog, "next_pending", lambda: next(tasks))
+    monkeypatch.setattr(autopilot.backlog, "get", lambda task_id: {"status": statuses[task_id]})
+    monkeypatch.setattr(autopilot, "run_one_task", pending_task)
+    monkeypatch.setattr(autopilot.asyncio, "sleep", stop_after_first_sleep)
+    monkeypatch.setattr(autopilot, "_pause", lambda _reason: pytest.fail("pending must not pause"))
+    monkeypatch.setattr(
+        autopilot.notify,
+        "send_bg",
+        lambda *a, **k: pytest.fail("pending must not notify"),
+    )
+
+    with pytest.raises(StopLoop):
+        await autopilot.main()
+
+    assert autopilot._consecutive_fail_count == 1
+    assert config.autopilot_paused() is False
+
+
+@pytest.mark.asyncio
+async def test_manual_pause_recovery_starts_new_notification_period(monkeypatch, tmp_path):
+    class StopLoop(Exception):
+        pass
+
+    processed: list[int] = []
+    sent: list[tuple[str, str, dict]] = []
+    statuses: dict[int, str] = {}
+    tasks = iter(
+        [
+            {"id": 1, "title": "fail 1"},
+            {"id": 2, "title": "fail 2"},
+            {"id": 3, "title": "fail 3"},
+            {"id": 4, "title": "fail 4"},
+        ]
+    )
+
+    async def fail_task(task):
+        processed.append(task["id"])
+        statuses[task["id"]] = "failed"
+
+    async def remove_pause_then_stop(_delay):
+        if config.autopilot_paused():
+            config.AUTOPILOT_PAUSE_FILE.unlink()
+        if len(sent) >= 2:
+            raise StopLoop
+
+    monkeypatch.setattr(config, "AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 2)
+    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
+    monkeypatch.setattr(config, "AUTOPILOT_COOLDOWN", 0)
+    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
+    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: None)
+    monkeypatch.setattr(autopilot.backlog, "next_pending", lambda: next(tasks))
+    monkeypatch.setattr(autopilot.backlog, "get", lambda task_id: {"status": statuses[task_id]})
+    monkeypatch.setattr(autopilot, "run_one_task", fail_task)
+    monkeypatch.setattr(autopilot.asyncio, "sleep", remove_pause_then_stop)
+    monkeypatch.setattr(autopilot.notify, "send_bg", lambda *a, **k: sent.append((a[0], a[1], k)))
+
+    with pytest.raises(StopLoop):
+        await autopilot.main()
+
+    assert processed == [1, 2, 3, 4]
+    assert len(sent) == 2
+    assert sent[0][0] == "consecutive_fail_pause"
+    assert sent[1][0] == "consecutive_fail_pause"
+
+
+@pytest.mark.asyncio
+async def test_non_slo_pause_recovery_does_not_reset_failures(monkeypatch, tmp_path):
+    class StopLoop(Exception):
+        pass
+
+    async def clear_pause(_delay):
+        config.AUTOPILOT_PAUSE_FILE.unlink()
+
+    def stop_after_unpause():
+        raise StopLoop
+
+    monkeypatch.setattr(autopilot, "_consecutive_fail_count", 1)
+    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
+    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
+    monkeypatch.setattr(autopilot.asyncio, "sleep", clear_pause)
+    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", stop_after_unpause)
+    config.AUTOPILOT_PAUSE_FILE.write_text("provider unavailable\n", encoding="utf-8")
+
+    with pytest.raises(StopLoop):
+        await autopilot.main()
+
+    assert autopilot._consecutive_fail_count == 1
 
 
 def test_unreached_threshold_does_not_pause(monkeypatch):
