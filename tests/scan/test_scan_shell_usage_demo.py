@@ -114,9 +114,9 @@ def _normalize(text):
 def test_demo_is_reproducible_across_runs():
     out1 = _normalize(run_demo().stdout)
     out2 = _normalize(run_demo().stdout)
-    assert out1 == out2, (
-        f"demo 兩次執行輸出不一致（不可重現）：\n--- 第一次 ---\n{out1}\n--- 第二次 ---\n{out2}"
-    )
+    assert (
+        out1 == out2
+    ), f"demo 兩次執行輸出不一致（不可重現）：\n--- 第一次 ---\n{out1}\n--- 第二次 ---\n{out2}"
 
 
 if __name__ == "__main__":

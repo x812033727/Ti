@@ -46,9 +46,9 @@ def test_parse_rule_lists_off_set(text):
 def test_parse_rule_else_is_true(text):
     """非關閉集合一律視為開啟。"""
     seg = text[text.index(RULE_MARK) :]
-    assert re.search(r"其餘.{0,8}(視為|當成|判為|皆).{0,4}開啟|皆.{0,4}開啟", seg), (
-        "解析規則未說明『其餘皆視為開啟』"
-    )
+    assert re.search(
+        r"其餘.{0,8}(視為|當成|判為|皆).{0,4}開啟|皆.{0,4}開啟", seg
+    ), "解析規則未說明『其餘皆視為開啟』"
 
 
 def test_parse_rule_warns_case_sensitive_traps(text):

@@ -215,9 +215,9 @@ async def test_non_claude_path_skips_token_usage_event_when_no_usage_reported(
     out = await expert.speak("x", broadcast)
     assert out == "答"
     tu_events = [e for e in bucket if e.type == events.EventType.TOKEN_USAGE]
-    assert tu_events == [], (
-        f"無 usage 回報時不該發 token_usage（連 duration 也不留）：{tu_events!r}"
-    )
+    assert (
+        tu_events == []
+    ), f"無 usage 回報時不該發 token_usage（連 duration 也不留）：{tu_events!r}"
 
 
 # B) --- Baseline 等價 --------------------------------------------------------
@@ -352,14 +352,14 @@ def test_latency_cross_session_merge_is_sum_count_safe():
     # by_* 三維度：逐 key（含只出現在單場的 key）合併後與「合成一場」一致
     for dim in ("by_provider", "by_model", "by_role"):
         all_keys = set(la[dim]) | set(lb[dim])
-        assert all_keys == set(lc[dim]), (
-            f"{dim} 合併後 key 集合不一致：expected={all_keys}, got={set(lc[dim])}"
-        )
+        assert all_keys == set(
+            lc[dim]
+        ), f"{dim} 合併後 key 集合不一致：expected={all_keys}, got={set(lc[dim])}"
         for key in all_keys:
             merged = _merge_bucket(la[dim].get(key), lb[dim].get(key))
-            assert merged == lc[dim][key], (
-                f"{dim}[{key}] 跨場合併失真：merged={merged}, combined={lc[dim][key]}"
-            )
+            assert (
+                merged == lc[dim][key]
+            ), f"{dim}[{key}] 跨場合併失真：merged={merged}, combined={lc[dim][key]}"
 
 
 def test_latency_avg_ms_rederivable_across_sessions():
@@ -397,9 +397,9 @@ def test_events_py_source_contains_duration_ms_keyword():
     events_path = Path(__file__).resolve().parents[1] / "studio" / "events.py"
     src = events_path.read_text(encoding="utf-8")
     # 至少三處：參數宣告、None 判斷、payload 寫入
-    assert re.search(r"^\s*duration_ms:\s*int\s*\|\s*None\s*=\s*None", src, re.MULTILINE), (
-        "events.py 簽名應含 `duration_ms: int | None = None`"
-    )
+    assert re.search(
+        r"^\s*duration_ms:\s*int\s*\|\s*None\s*=\s*None", src, re.MULTILINE
+    ), "events.py 簽名應含 `duration_ms: int | None = None`"
     assert "if duration_ms is not None:" in src, "events.py 應以「非 None 才寫入 payload」守門"
     assert 'payload["duration_ms"]' in src, "events.py 應寫入 payload['duration_ms']"
 
@@ -414,14 +414,14 @@ def test_providers_py_docstring_documents_full_loop_semantic():
     # 「整輪工具迴圈」語意字面必須在原始碼註解/docstring 出現
     assert "整輪" in src and "工具迴圈" in src, "providers.py 必須在註解/字串中標註「整輪工具迴圈」"
     # 必須明示與 Claude 端 duration_api_ms 不同（單次 API 通訊）
-    assert "duration_api_ms" in src, (
-        "providers.py 必須在某處明示與 Claude 端的 duration_api_ms 對照"
-    )
+    assert (
+        "duration_api_ms" in src
+    ), "providers.py 必須在某處明示與 Claude 端的 duration_api_ms 對照"
     # perf_counter 整輪計時的入口必須真的用 time.perf_counter（已被 grep 證實），
     # 額外守護：截斷採 int() 而非 round
-    assert "int((time.perf_counter() - loop_started_at) * 1000)" in src, (
-        "providers.py 必須用 int() 截斷（不四捨五入）"
-    )
+    assert (
+        "int((time.perf_counter() - loop_started_at) * 1000)" in src
+    ), "providers.py 必須用 int() 截斷（不四捨五入）"
 
 
 # E) --- finish_session 真實序列化路徑下「有 duration 必計入」 ----------------

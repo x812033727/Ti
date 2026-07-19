@@ -72,9 +72,9 @@ def version() -> str:
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
 def test_outlet_contains_heading(outlet_name, renderer, changelog, version):
     body = renderer(changelog, version)
-    assert _has_heading(body), (
-        f"AC#3：{outlet_name} 出口缺 Breaking Changes heading {BREAKING_HEADING!r}"
-    )
+    assert _has_heading(
+        body
+    ), f"AC#3：{outlet_name} 出口缺 Breaking Changes heading {BREAKING_HEADING!r}"
 
 
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
@@ -110,9 +110,9 @@ def test_version_from_pyproject_appears_in_both_outlets(changelog, version):
     out = dry_run_dump(changelog, version)
     for name, body in out.items():
         assert version in body, f"AC#2：{name} 出口未帶 pyproject 版本字串 {version!r}"
-        assert _version_matches_effective(body, version), (
-            f"AC#2：{name} 的 ④ 生效版本未對應 pyproject 版本 {version!r}"
-        )
+        assert _version_matches_effective(
+            body, version
+        ), f"AC#2：{name} 的 ④ 生效版本未對應 pyproject 版本 {version!r}"
 
 
 def test_dry_run_default_version_uses_pyproject(changelog, version):
@@ -176,9 +176,9 @@ def test_black_sample_missing_block_fails_both_outlets(outlet_name, renderer, ch
     """把整個 Breaking heading 抽掉 → 出口要嘛拋例外、要嘛不帶區塊，總之翻紅。"""
     polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Notes", changelog)
     body = _render_or_none(renderer, polluted, version)
-    assert body is None or not _outlet_carries_block(body), (
-        f"黑樣本失效：{outlet_name} 缺區塊仍被判為帶出完整區塊（假綠）"
-    )
+    assert body is None or not _outlet_carries_block(
+        body
+    ), f"黑樣本失效：{outlet_name} 缺區塊仍被判為帶出完整區塊（假綠）"
 
 
 @pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
@@ -200,9 +200,9 @@ def test_black_sample_missing_each_element_fails(
     assert not _missing_elements(changelog), "前提失效：原 CHANGELOG 四要素本應齊備"
 
     body = _render_or_none(renderer, polluted, version)
-    assert body is None or name in _missing_elements(body), (
-        f"黑樣本失效：{outlet_name} 移除要素「{name}」後仍被判為帶到（假綠）"
-    )
+    assert body is None or name in _missing_elements(
+        body
+    ), f"黑樣本失效：{outlet_name} 移除要素「{name}」後仍被判為帶到（假綠）"
 
 
 def test_black_sample_heading_renamed_fails_outlets(changelog, version):
@@ -214,9 +214,9 @@ def test_black_sample_heading_renamed_fails_outlets(changelog, version):
     for name, renderer in OUTLETS:
         body = _render_or_none(renderer, polluted, version)
         # 改名後 extractor 抓不到契約 heading → render 拋例外（body=None）。
-        assert body is None or not _has_heading(body), (
-            f"黑樣本失效：{name} 在 heading 改名後仍判為含契約 heading"
-        )
+        assert body is None or not _has_heading(
+            body
+        ), f"黑樣本失效：{name} 在 heading 改名後仍判為含契約 heading"
 
 
 # ---------------------------------------------------------------------------
@@ -240,9 +240,9 @@ def changelog_bc_at_eof() -> str:
 def test_eof_boundary_outlets_carry_block(outlet_name, renderer, changelog_bc_at_eof, version):
     """EOF 邊界下兩出口仍完整帶出 heading＋四要素（守 extractor 的 `\\Z`/EOF 收尾）。"""
     body = renderer(changelog_bc_at_eof, version)
-    assert _outlet_carries_block(body), (
-        f"EOF 邊界缺陷：{outlet_name} 在 Breaking 為末段時未完整帶出區塊"
-    )
+    assert _outlet_carries_block(
+        body
+    ), f"EOF 邊界缺陷：{outlet_name} 在 Breaking 為末段時未完整帶出區塊"
 
 
 # ---------------------------------------------------------------------------

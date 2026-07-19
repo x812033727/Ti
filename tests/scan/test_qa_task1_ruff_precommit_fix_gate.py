@@ -60,12 +60,12 @@ def test_ruff_version_pin_consistent_across_dev_precommit_and_ci():
     precommit_version = _ruff_precommit_repo()["rev"].removeprefix("v")
     ci_versions = set(re.findall(r"ruff==([0-9.]+)", CI.read_text(encoding="utf-8")))
 
-    assert pyproject_versions == {precommit_version}, (
-        f"pyproject 與 pre-commit Ruff 版本不一致：{pyproject_versions} vs {precommit_version}"
-    )
-    assert ci_versions == {precommit_version}, (
-        f"CI 與 pre-commit Ruff 版本不一致：{ci_versions} vs {precommit_version}"
-    )
+    assert pyproject_versions == {
+        precommit_version
+    }, f"pyproject 與 pre-commit Ruff 版本不一致：{pyproject_versions} vs {precommit_version}"
+    assert ci_versions == {
+        precommit_version
+    }, f"CI 與 pre-commit Ruff 版本不一致：{ci_versions} vs {precommit_version}"
 
 
 def test_precommit_ruff_hook_keeps_auto_fix_without_exit_zero_escape():

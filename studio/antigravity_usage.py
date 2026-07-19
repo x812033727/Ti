@@ -201,7 +201,7 @@ def _parse_summary(body: Any) -> list[dict]:
                 continue
             win = _WIN_LABEL.get(b.get("window")) or b.get("displayName") or b.get("window")
             frac = b.get("remainingFraction")
-            used = round((1 - float(frac)) * 100, 1) if isinstance(frac, (int, float)) else None
+            used = round((1 - float(frac)) * 100, 1) if isinstance(frac, int | float) else None
             out.append(
                 {
                     "label": f"{prefix} · {win}",
@@ -224,7 +224,7 @@ def _parse_buckets(body: Any) -> list[dict]:
             continue
         seen.add(model)
         frac = b.get("remainingFraction")
-        used = round((1 - float(frac)) * 100, 1) if isinstance(frac, (int, float)) else None
+        used = round((1 - float(frac)) * 100, 1) if isinstance(frac, int | float) else None
         out.append(
             {
                 "label": _prettify(model),

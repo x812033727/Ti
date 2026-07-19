@@ -40,9 +40,9 @@ def _heading_line_present(text: str, heading: str) -> bool:
 
 def test_constant_is_exact_contract_value():
     """常數值逐字鎖死；若有人改成 `## Breaking` 或拿掉 emoji，此處先翻紅。"""
-    assert BREAKING_HEADING == EXPECTED_HEADING, (
-        f"BREAKING_HEADING 契約被改動：{BREAKING_HEADING!r} != {EXPECTED_HEADING!r}"
-    )
+    assert (
+        BREAKING_HEADING == EXPECTED_HEADING
+    ), f"BREAKING_HEADING 契約被改動：{BREAKING_HEADING!r} != {EXPECTED_HEADING!r}"
 
 
 def test_changelog_contains_contract_heading():
@@ -62,23 +62,23 @@ def test_black_sample_heading_renamed_to_breaking():
     text = CHANGELOG.read_text(encoding="utf-8")
     # 前置斷言：確保替換確實命中。否則 CHANGELOG 已漂移時 re.sub 無作用，
     # polluted == text，下方 assert not 仍無條件通過＝孤立執行假綠。
-    assert _heading_line_present(text, BREAKING_HEADING), (
-        "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
-    )
+    assert _heading_line_present(
+        text, BREAKING_HEADING
+    ), "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
     polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking", text)
-    assert not _heading_line_present(polluted, BREAKING_HEADING), (
-        "黑樣本失效：heading 改名為 `## Breaking` 後仍被判為存在"
-    )
+    assert not _heading_line_present(
+        polluted, BREAKING_HEADING
+    ), "黑樣本失效：heading 改名為 `## Breaking` 後仍被判為存在"
 
 
 def test_black_sample_emoji_stripped():
     """拿掉 emoji（改成 `## Breaking Changes`）後，逐行比對必須翻紅。"""
     text = CHANGELOG.read_text(encoding="utf-8")
     # 前置斷言：同上，防止 CHANGELOG 已漂移時黑樣本孤立執行假綠。
-    assert _heading_line_present(text, BREAKING_HEADING), (
-        "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
-    )
+    assert _heading_line_present(
+        text, BREAKING_HEADING
+    ), "前置條件失效：替換前 CHANGELOG 必須含 heading（否則黑樣本驗不到鑑別力）"
     polluted = re.sub(r"(?m)^" + re.escape(BREAKING_HEADING) + r"\s*$", "## Breaking Changes", text)
-    assert not _heading_line_present(polluted, BREAKING_HEADING), (
-        "黑樣本失效：拿掉 emoji 後仍被判為存在"
-    )
+    assert not _heading_line_present(
+        polluted, BREAKING_HEADING
+    ), "黑樣本失效：拿掉 emoji 後仍被判為存在"

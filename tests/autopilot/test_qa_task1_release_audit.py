@@ -62,9 +62,9 @@ def test_audit_doc_has_achieved_section_with_file_line_refs():
         for r in body_rows
         if "已達成" in r and re.search(r"`[\w/_\-./]+\.(yml|py|md):\d+(-\d+)?`", r)
     ]
-    assert len(achieved_rows) >= 10, (
-        f"AC#1：已達成段僅 {len(achieved_rows)} 列含檔案/行號，預期 ≥10 條引用"
-    )
+    assert (
+        len(achieved_rows) >= 10
+    ), f"AC#1：已達成段僅 {len(achieved_rows)} 列含檔案/行號，預期 ≥10 條引用"
 
 
 def test_audit_doc_has_gap_section_with_descriptions():
@@ -99,9 +99,9 @@ def test_audit_doc_marks_pat_not_github_token():
     """對照表必須明文標記 Create release 使用 `secrets.GH_PAT` 而非 `GITHUB_TOKEN`。"""
     text = AUDIT.read_text(encoding="utf-8")
     assert "GH_PAT" in text, "AC#3：對照表未提到 GH_PAT"
-    assert "GITHUB_TOKEN" in text or "github.token" in text, (
-        "AC#3：對照表未對照 GITHUB_TOKEN 觸發死結"
-    )
+    assert (
+        "GITHUB_TOKEN" in text or "github.token" in text
+    ), "AC#3：對照表未對照 GITHUB_TOKEN 觸發死結"
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +146,9 @@ def test_publish_yml_resolves_version_from_pyproject_not_hardcoded():
     assert "pyproject_version" in yml, "AC#2：publish-release.yml 未引用 pyproject_version()"
     # 不得出現 0.2.0 / v0.2.0 這類硬寫版本字串在 yaml 內容（CHANGELOG/註解除外）
     # 以正則檢查「version: 'X.Y.Z'」這種 YAML 硬寫樣式——允許在註解裡但不應作為 step 輸出源。
-    assert not re.search(r"""(?m)^\s*version:\s*["']?\d+\.\d+\.\d+""", yml), (
-        "AC#2：publish-release.yml 硬寫版本字串（應走 pyproject_version()）"
-    )
+    assert not re.search(
+        r"""(?m)^\s*version:\s*["']?\d+\.\d+\.\d+""", yml
+    ), "AC#2：publish-release.yml 硬寫版本字串（應走 pyproject_version()）"
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +176,9 @@ def test_hardening_decision_recorded_not_silent_skip():
     """`--verify-tag` 等硬化必須在某決策文件明文留下「不補」理由。"""
     text = _combined_text()
     # 命中 `--verify-tag` 字串
-    assert "--verify-tag" in text, (
-        "AC#4：硬化 `--verify-tag` 在所有決策文件皆無聲略過（未提及＝無聲略過）"
-    )
+    assert (
+        "--verify-tag" in text
+    ), "AC#4：硬化 `--verify-tag` 在所有決策文件皆無聲略過（未提及＝無聲略過）"
     # 反向詞：必須見到「不」「否決」「不補」之類錨點
     # 取包含 `--verify-tag` 的行 ±2 行
     lines = text.splitlines()
@@ -190,9 +190,9 @@ def test_hardening_decision_recorded_not_silent_skip():
     assert hits, "AC#4：未抓到 --verify-tag 上下文（邏輯漏洞）"
     # 至少有一處上下文出現「不」「否決」「不補」「無需」「拒絕」之一
     refusal_terms = ("不補", "否決", "無需", "拒絕", "不必", "不需", "no-op", "鍍金")
-    assert any(any(t in ctx for t in refusal_terms) for ctx in hits), (
-        f"AC#4：--verify-tag 出現但未附『不補/否決』理由：{hits[:3]}"
-    )
+    assert any(
+        any(t in ctx for t in refusal_terms) for ctx in hits
+    ), f"AC#4：--verify-tag 出現但未附『不補/否決』理由：{hits[:3]}"
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +227,9 @@ def test_audit_doc_marks_ac5_as_open_gap():
         ("輪替", r"輪替"),
     ]
     found = [name for name, pat in must_have_any_of if re.search(pat, text)]
-    assert len(found) >= 3, (
-        f"AC#5 (a)：對照表未誠實標記 GH_PAT 文件／半閉環／端到端缺口（命中 {found}）"
-    )
+    assert (
+        len(found) >= 3
+    ), f"AC#5 (a)：對照表未誠實標記 GH_PAT 文件／半閉環／端到端缺口（命中 {found}）"
     # 必須以「缺口」狀態出現
     gap_rows = [
         ln
@@ -239,9 +239,9 @@ def test_audit_doc_marks_ac5_as_open_gap():
         and ln.count("|") >= 4
         and not re.match(r"^\|\s*:?-+:?\s*\|", ln)
     ]
-    assert any(any(k in row for k in ("GH_PAT", "半閉環", "端到端")) for row in gap_rows), (
-        f"AC#5 (a)：對照表未把 AC#5 缺口列為「缺口」狀態：{gap_rows}"
-    )
+    assert any(
+        any(k in row for k in ("GH_PAT", "半閉環", "端到端")) for row in gap_rows
+    ), f"AC#5 (a)：對照表未把 AC#5 缺口列為「缺口」狀態：{gap_rows}"
 
 
 def test_ac5_op_guide_present_in_collab_doc():

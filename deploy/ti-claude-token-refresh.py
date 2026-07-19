@@ -48,7 +48,7 @@ def _refresh(path: str, label: str) -> str:
     rt = o.get("refreshToken")
     if not rt:
         return f"{label}: 無 refreshToken,略過(需重新登入)"
-    left_h = (exp / 1000 - time.time()) / 3600 if isinstance(exp, (int, float)) else -999
+    left_h = (exp / 1000 - time.time()) / 3600 if isinstance(exp, int | float) else -999
     if left_h > REFRESH_IF_LEFT_H:
         return f"{label}: 尚有 {left_h:.1f}h,免刷"
 

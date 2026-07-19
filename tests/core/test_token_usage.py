@@ -1377,8 +1377,8 @@ def test_legacy_jsonl_history_replay_usage_report_golden(monkeypatch, tmp_path):
     )
 
     agg_with_task_id = usage_report.aggregate()
-    assert agg_with_task_id == golden, (
-        f"補 task_id 後輸出漂移（task_id 不應污染 provider/model/role 彙總）:\n{agg_with_task_id}"
-    )
+    assert (
+        agg_with_task_id == golden
+    ), f"補 task_id 後輸出漂移（task_id 不應污染 provider/model/role 彙總）:\n{agg_with_task_id}"
     # 額外顯式斷言兩輪結果彼此相等（防黃金基準寫錯時雙方一起錯過）
     assert agg_legacy == agg_with_task_id

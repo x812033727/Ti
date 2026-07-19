@@ -124,14 +124,14 @@ def _collect_python_symbols() -> set[str]:
     symbols: set[str] = set()
     for path, module_name in sources.items():
         for node in _tree(path).body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 symbols.add(node.name)
                 symbols.add(f"{module_name}.{node.name}")
             elif isinstance(node, ast.ClassDef):
                 symbols.add(node.name)
                 symbols.add(f"{module_name}.{node.name}")
                 for child in node.body:
-                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                         symbols.add(child.name)
                         symbols.add(f"{node.name}.{child.name}")
                         symbols.add(f"{module_name}.{node.name}.{child.name}")
@@ -162,7 +162,7 @@ def _python_marker_resolves(path: Path, marker: str) -> bool:
         return False
     name = func_match.group(1)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
             return True
     return False
 

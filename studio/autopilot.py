@@ -3478,7 +3478,7 @@ def _window_field(rl: dict, window: str, field: str) -> float | None:
     （used_percentage/reset_at）；缺失或非數值回 None。"""
     w = rl.get(window)
     v = w.get(field) if isinstance(w, dict) else None
-    return float(v) if isinstance(v, (int, float)) else None
+    return float(v) if isinstance(v, int | float) else None
 
 
 def _claude_accounts_usage(
@@ -3855,7 +3855,7 @@ _STATUS_UNSET = object()
 def _number_or_none(value: object) -> float | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     return None
 

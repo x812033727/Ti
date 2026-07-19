@@ -53,9 +53,9 @@ def test_task1_inventory_preserves_ellipsis_and_does_not_invent_full_sha256():
     text = raw.decode("utf-8")
 
     assert b"\xe2\x80\xa6" in raw, "省略號必須是 U+2026，不可消失"
-    assert not re.search(rb"[0-9A-Fa-f]{2,}\.\.\.[0-9A-Fa-f]{2,}", raw), (
-        "不可把 hash 或識別值中的省略號改成三個句點"
-    )
-    assert not re.search(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])", text), (
-        "task #1 是逐字蒐集，不得自行展開或推算 64 碼 sha256"
-    )
+    assert not re.search(
+        rb"[0-9A-Fa-f]{2,}\.\.\.[0-9A-Fa-f]{2,}", raw
+    ), "不可把 hash 或識別值中的省略號改成三個句點"
+    assert not re.search(
+        r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])", text
+    ), "task #1 是逐字蒐集，不得自行展開或推算 64 碼 sha256"

@@ -57,9 +57,9 @@ def _checklist_block() -> str:
 def test_checklist_ruff_prefixed():
     blk = _checklist_block()
     assert ".venv/bin/python -m ruff check ." in blk, "checklist 的 ruff check 未補 .venv 前綴"
-    assert ".venv/bin/python -m ruff format --check ." in blk, (
-        "checklist 的 ruff format 未補 .venv 前綴"
-    )
+    assert (
+        ".venv/bin/python -m ruff format --check ." in blk
+    ), "checklist 的 ruff format 未補 .venv 前綴"
     # 不應殘留裸 ruff 指令（行首或 `ruff check` 開頭的 checklist 項）
     bad = [ln for ln in blk.splitlines() if re.search(r"\]\s*`?ruff (check|format)", ln)]
     assert not bad, f"checklist 仍有裸 ruff 指令: {bad}"
@@ -73,13 +73,13 @@ def test_checklist_pytest_present():
 # 標準3/5 收尾-c：checklist 新增防漂移項（dev 指令唯一維護、其他文件不得重複）
 def test_checklist_has_antidrift_item():
     blk = _checklist_block()
-    assert re.search(r"dev 指令.*(只在本文件|唯一).*維護", blk) or "重複" in blk, (
-        "checklist 未新增『dev 指令只在本文件維護、不得重複』的防漂移項"
-    )
+    assert (
+        re.search(r"dev 指令.*(只在本文件|唯一).*維護", blk) or "重複" in blk
+    ), "checklist 未新增『dev 指令只在本文件維護、不得重複』的防漂移項"
     # 防漂移項應點名 README/其他文件僅以敘述或連結引用
-    assert "README" in blk and ("連結" in blk or "敘述" in blk), (
-        "防漂移項未說明 README 等文件僅以敘述或連結引用"
-    )
+    assert "README" in blk and (
+        "連結" in blk or "敘述" in blk
+    ), "防漂移項未說明 README 等文件僅以敘述或連結引用"
 
 
 # 標準2 不退步：pytest -q 仍 >=2 處（canonical 區塊 + checklist）
@@ -110,9 +110,9 @@ def test_pyproject_unchanged():
         capture_output=True,
         text=True,
     )
-    assert r.returncode == 0 and r.stdout.strip() == "", (
-        f"收斂 epic 不應改動 pyproject:\n{r.stdout}"
-    )
+    assert (
+        r.returncode == 0 and r.stdout.strip() == ""
+    ), f"收斂 epic 不應改動 pyproject:\n{r.stdout}"
 
 
 # 標準7：subprocess inventory 未被更動

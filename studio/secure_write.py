@@ -35,7 +35,7 @@ def secure_write_root(path, data, *, mode: int = 0o600, require_chown=None) -> N
     require_chown: None＝讀 config.require_chown_mode()；非 None＝呼叫端強制覆蓋三態
       （安全邊界旁路，會記 warning 留稽核軌跡）。
     """
-    if not isinstance(data, (bytes, bytearray)):
+    if not isinstance(data, bytes | bytearray):
         raise TypeError(f"secure_write_root 需要 bytes，收到 {type(data).__name__}")
 
     if require_chown is None:

@@ -142,9 +142,9 @@ async def test_appraisal_lessons_e2e_flow(monkeypatch):
 
     # 落盤驗證
     stored = [r["text"] for r in lessons.all_lessons()]
-    assert any("考核教訓(2分): 浮點數比較寫錯了，請用 math.isclose" in s for s in stored), (
-        f"考核教訓未落盤：{stored}"
-    )
+    assert any(
+        "考核教訓(2分): 浮點數比較寫錯了，請用 math.isclose" in s for s in stored
+    ), f"考核教訓未落盤：{stored}"
 
     # 第 2 場：開場 PM 拆解 prompt 應收到注入的考核教訓
     experts2 = await _run_session(

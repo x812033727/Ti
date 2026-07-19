@@ -66,9 +66,9 @@ def test_mutation_soften_to_fully_verified_turns_red():
     mutated = text.replace("尚待", "已完整").replace("半閉環", "已完整閉環")
     assert mutated != text, "mutation 無效：未軟化半閉環字串"
     problems = check_half_closed(mutated)
-    assert any("半閉環" in p or "尚待" in p for p in problems), (
-        f"假綠：漂移為『已完整』後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "半閉環" in p or "尚待" in p for p in problems
+    ), f"假綠：漂移為『已完整』後守護未翻紅，problems={problems}"
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +113,9 @@ def test_mutation_drop_escape_hatch_turns_red():
     mutated = text.replace("TI_REQUIRE_CHOWN=warn/off", "TI_REQUIRE_CHOWN")
     assert mutated != text, "mutation 無效：未替換到逃生艙字串"
     problems = check_post_release_runbook(mutated)
-    assert any("逃生艙" in p for p in problems), (
-        f"假綠：拿掉逃生艙後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "逃生艙" in p for p in problems
+    ), f"假綠：拿掉逃生艙後守護未翻紅，problems={problems}"
 
 
 def test_mutation_drop_breaking_top_check_turns_red():
@@ -128,9 +128,9 @@ def test_mutation_drop_breaking_top_check_turns_red():
     )
     assert mutated != text, "mutation 無效：未替換到置頂字樣"
     problems = check_post_release_runbook(mutated)
-    assert any("置頂" in p or "頂部" in p for p in problems), (
-        f"假綠：拿掉置頂核對點後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "置頂" in p or "頂部" in p for p in problems
+    ), f"假綠：拿掉置頂核對點後守護未翻紅，problems={problems}"
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +140,9 @@ def test_mutation_drop_breaking_top_check_turns_red():
 
 def test_handoff_cross_references_pretag_guard(handoff_text):
     """移交文件須勾稽 pretag 守護測試檔，讓『已閉環』邊界可被稽核。"""
-    assert "test_qa_task4_pretag_breaking_outlets.py" in handoff_text, (
-        "AC#5.3：未勾稽 pretag 守護測試檔，無法界定已閉環邊界"
-    )
+    assert (
+        "test_qa_task4_pretag_breaking_outlets.py" in handoff_text
+    ), "AC#5.3：未勾稽 pretag 守護測試檔，無法界定已閉環邊界"
 
 
 # 文件以「函式名」而非「行號」勾稽（行號會隨被引檔增刪漂移且無護欄）。

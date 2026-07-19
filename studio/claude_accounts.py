@@ -145,7 +145,7 @@ def _expires_at(path: Path) -> float | None:
     except (OSError, json.JSONDecodeError):
         return None
     exp = (data.get("claudeAiOauth") or {}).get("expiresAt")
-    return float(exp) if isinstance(exp, (int, float)) else None
+    return float(exp) if isinstance(exp, int | float) else None
 
 
 def sync_active_label() -> bool:
@@ -220,7 +220,7 @@ def _reset_of(windows: dict[str, float | None] | None, key: str = "five_hour_res
     """帳號額度窗的重置時間（epoch 秒）；``key`` 選窗（five_hour_reset／seven_day_reset），
     查不到（None）視為 +inf（最晚重置）。"""
     r = (windows or {}).get(key)
-    return float(r) if isinstance(r, (int, float)) else float("inf")
+    return float(r) if isinstance(r, int | float) else float("inf")
 
 
 def _earlier_reset_target(
@@ -260,7 +260,7 @@ def scoped_used_pct(model: str, models_usage: dict | None) -> float | None:
         if not isinstance(w, dict):
             continue
         pct = w.get("used_percentage")
-        if not isinstance(pct, (int, float)):
+        if not isinstance(pct, int | float):
             continue
         if disp and str(disp).lower() in mid:
             return float(pct)
@@ -275,7 +275,7 @@ def _scoped_blocked(windows: dict[str, float | None] | None, threshold: float) -
     應把它排除，才不會與 scoped 救援層互相拉扯來回 flap。
     """
     s = (windows or {}).get("scoped")
-    return isinstance(s, (int, float)) and s >= threshold
+    return isinstance(s, int | float) and s >= threshold
 
 
 def pick_account(
@@ -337,12 +337,12 @@ def pick_account(
     # 第 1.5 層：scoped 週限（如 PM 釘的 Fable）救援——在線 scoped 已滿但某候選 scoped 仍有餘
     # → 切去該候選。候選已排除全域達上限者；在線 scoped 未知/未滿則本層不介入,下沉既有規則。
     on_scoped = (usages.get(active) or {}).get("scoped")
-    if isinstance(on_scoped, (int, float)) and on_scoped >= scoped_threshold:
+    if isinstance(on_scoped, int | float) and on_scoped >= scoped_threshold:
         relief = [
             lb
             for lb in candidates
             if lb != active
-            and isinstance((usages.get(lb) or {}).get("scoped"), (int, float))
+            and isinstance((usages.get(lb) or {}).get("scoped"), int | float)
             and (usages.get(lb) or {})["scoped"] < scoped_threshold
         ]
         if relief:

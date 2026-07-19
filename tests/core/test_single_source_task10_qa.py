@@ -57,7 +57,7 @@ def _is_parents_containment(node: ast.AST) -> bool:
     if not isinstance(node, ast.Compare):
         return False
     for op, comp in zip(node.ops, node.comparators, strict=False):
-        if isinstance(op, (ast.In, ast.NotIn)):
+        if isinstance(op, ast.In | ast.NotIn):
             if isinstance(comp, ast.Attribute) and comp.attr == "parents":
                 return True
     return False

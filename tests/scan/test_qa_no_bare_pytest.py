@@ -149,9 +149,9 @@ def test_ci_pytest_step_is_blocking():
     """驗收#5 配套：CI pytest 掃描須為 blocking（不得 continue-on-error 吞掉命中）。"""
     step = _ci_pytest_step()
     assert step is not None
-    assert step.get("continue-on-error", False) is False, (
-        "CI pytest 掃描被設為 continue-on-error，命中不會擋 CI"
-    )
+    assert (
+        step.get("continue-on-error", False) is False
+    ), "CI pytest 掃描被設為 continue-on-error，命中不會擋 CI"
 
 
 def test_real_docs_clean():
