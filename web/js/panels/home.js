@@ -57,8 +57,8 @@ export function resetToHero() {
 let _heroMode = "chat";
 
 export function setHeroMode(mode) {
-  _heroMode = mode === "task" ? "task" : "chat";
-  const map = { "#heroModeChat": "chat", "#heroModeTask": "task" };
+  _heroMode = mode === "task" || mode === "quick" ? mode : "chat";
+  const map = { "#heroModeChat": "chat", "#heroModeTask": "task", "#heroModeQuick": "quick" };
   for (const [sel, m] of Object.entries(map)) {
     const btn = $(sel);
     if (!btn) continue;
@@ -69,7 +69,7 @@ export function setHeroMode(mode) {
   const send = $("#heroSend");
   if (send) {
     const label = send.querySelector("span");
-    if (label) label.textContent = _heroMode === "task" ? "交辦" : "開始";
+    if (label) label.textContent = { task: "交辦", quick: "快答" }[_heroMode] || "開始";
   }
 }
 
@@ -119,7 +119,12 @@ export function heroStart() {
   $("#requirement").value = text; // 契約 id=值的單一來源(工作室測試/流程依賴)
   setSubview("chat");
   moveStreamHome();
+  // 快答模式(PR13):暫借 workflowSelect 指到內建「快答」流程(單專家一輪),start() 讀完即還原
+  const wfSel = $("#workflowSelect");
+  const prevWf = _heroMode === "quick" && wfSel ? wfSel.value : null;
+  if (prevWf !== null) wfSel.value = "快答";
   start(); // 專案/流程/小組沿用工作室啟動列現值;ws 拒絕(併發滿/互斥)由既有 error 事件呈現
+  if (prevWf !== null) wfSel.value = prevWf;
   setTimeout(refreshSidenavHistory, 1200); // 新場入列後刷新側欄(session_started 落檔約需一拍)
 }
 
@@ -231,5 +236,7 @@ export function bindHome() {
   if (mc) mc.onclick = () => setHeroMode("chat");
   const mt = $("#heroModeTask");
   if (mt) mt.onclick = () => setHeroMode("task");
+  const mq = $("#heroModeQuick");
+  if (mq) mq.onclick = () => setHeroMode("quick");
   onRunningChange(setHomeRunning);
 }
