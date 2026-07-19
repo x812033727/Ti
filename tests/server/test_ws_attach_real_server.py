@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
-from _real_server_client import assert_smoke_client_ok
+from _real_server_client import assert_smoke_client_ok, scrub_proxy_env
 
 pytest.importorskip("websockets")
 pytest.importorskip("httpx")
@@ -64,6 +64,7 @@ def test_ws_attach_real_server(tmp_path):
             "TI_HISTORY_ROOT": str(tmp_path / "hist"),
         }
     )
+    scrub_proxy_env(env)
     log = tmp_path / "server.log"
     with log.open("w", encoding="utf-8") as logf:
         server = subprocess.Popen(
@@ -91,6 +92,7 @@ def test_ws_attach_real_server(tmp_path):
             [sys.executable, str(SCRIPT), str(port)],
             cwd=ROOT,
             capture_output=True,
+            env=env,
             text=True,
             timeout=180,
         )
