@@ -2868,6 +2868,26 @@ async def _maybe_norms_distill() -> None:
         log.warning("規範迴路蒸餾失敗（忽略）", exc_info=True)
 
 
+# --- 排程任務入列(Kimi 化 PR10) ---------------------------------------------
+_schedules_checked_at = 0.0
+
+
+def _maybe_enqueue_schedules(now: float | None = None) -> int:
+    """到期排程插入 backlog(60 秒節流);任何失敗只 log,不得影響主迴圈。"""
+    global _schedules_checked_at
+    t = now if now is not None else time.time()
+    if t - _schedules_checked_at < 60:
+        return 0
+    _schedules_checked_at = t
+    try:
+        from . import schedules
+
+        return schedules.enqueue_due(t)
+    except Exception:  # noqa: BLE001 — 排程是加值,不得弄死主迴圈
+        log.warning("排程入列失敗(忽略)", exc_info=True)
+        return 0
+
+
 # failed 自動分診的頻率護欄：triage_failed 全量掃 backlog（檔案鎖 + 讀寫整份 JSON），
 # 每輪迴圈都跑屬多餘 IO；15 分鐘一次已足夠讓基礎設施型失敗及時復活。行程記憶體即可
 # （重啟歸零＝重啟後第一輪就跑一次，正合「重啟常因環境修好」的場景）。
@@ -4489,6 +4509,8 @@ async def _main_loop(startup_sig: float) -> None:
         await _maybe_norms_distill()
         # async clarify(B4,灰度):[待澄清] parked 逾時自動依假設前進(15 分鐘掃一次)。
         _maybe_clarify_timeout()
+        # 排程任務(PR10):到期排程入列(60 秒節流;店面空=零成本)。
+        _maybe_enqueue_schedules()
         # 任務邊界部署自查：放在取任務之前——此刻保證無 autopilot 討論，是 autodeploy
         # 飢餓下唯一可靠的部署窗口（成功且自身碼有變會 execv，不返回）。
         await _maybe_boundary_redeploy()
