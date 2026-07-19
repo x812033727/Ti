@@ -780,6 +780,10 @@ CORE_REPO = AUTOPILOT_REPO
 AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
+# 部署黑盒驗證(第 4 階 B1):redeploy 健康檢查通過後,再以 curl 驗證幾條真實 API 契約
+# (health JSON/auth 握手/前端殼);失敗→回滾+page 級推播 deploy_verify_failed。
+# 0=關(預設灰度)。無人值守的意圖執行要能信任「部署完=服務是對的」,liveness 不夠。
+DEPLOY_VERIFY = os.getenv("TI_DEPLOY_VERIFY", "0") not in ("0", "false", "False", "")
 AUTOPILOT_COOLDOWN = _env_int("TI_AUTOPILOT_COOLDOWN", 30)  # 任務間最小喘息（秒）
 AUTOPILOT_TASK_TIMEOUT = _env_int("TI_AUTOPILOT_TASK_TIMEOUT", 3600)
 # 任務執行中「活動停滯」自癒門檻（秒）：連續此秒數「無進展」（events 檔 mtime 未前進 **且**
@@ -1365,6 +1369,7 @@ def reload() -> None:
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
     global EXPERT_IDLE_STOP_S, EXPERT_IDLE_STOP_EXEMPT
     global AUTOPILOT_LOOP_STALL_S, AUTOPILOT_RECONCILE_INTERVAL_S, NOTIFY_WEBHOOK
+    global DEPLOY_VERIFY
     global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
@@ -1595,6 +1600,7 @@ def reload() -> None:
     AUTOPILOT_LOOP_STALL_S = _env_int("TI_AUTOPILOT_LOOP_STALL_S", 900)
     AUTOPILOT_RECONCILE_INTERVAL_S = _env_int("TI_AUTOPILOT_RECONCILE_INTERVAL_S", 300)
     NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
+    DEPLOY_VERIFY = os.getenv("TI_DEPLOY_VERIFY", "0") not in ("0", "false", "False", "")
     TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
     TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()
     EXPERT_IDLE_STOP_S = _env_int("TI_EXPERT_IDLE_STOP_S", 0)

@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import time
 
-from . import config, runner
+from . import config, notify, runner
 
 
 def _lock_path():
@@ -137,6 +137,30 @@ async def _reinstall_and_restart(deploy_dir: str, service: str) -> tuple[bool, s
     return True, "已重裝並重啟"
 
 
+# 黑盒探針(第 4 階 B1):部署後除 liveness(health_check)外,再驗證幾條真實 API 契約
+# ——「服務起來了」≠「服務是對的」。探針刻意極小、零依賴(curl):health JSON 契約、
+# auth 握手、前端殼。(path, body 必含子字串;空=只驗 200)。
+_BLACKBOX_PROBES: tuple[tuple[str, str], ...] = (
+    ("/api/health", '"ok"'),
+    ("/api/auth/status", '"auth_enabled"'),
+    ("/", ""),
+)
+
+
+async def blackbox_verify(base: str | None = None) -> tuple[bool, str]:
+    """部署後 API 契約黑盒驗證;回 (ok, msg)。base 預設由 AUTOPILOT_HEALTH_URL 推導。"""
+    base = (base or config.AUTOPILOT_HEALTH_URL).rsplit("/api/", 1)[0].rstrip("/")
+    for path, needle in _BLACKBOX_PROBES:
+        url = base + path
+        rc, out = await _run(
+            ["curl", "-s", "--max-time", "5", "-w", "\n%{http_code}", url], timeout=15
+        )
+        body, _, code = (out or "").rpartition("\n")
+        if rc != 0 or code.strip() != "200" or (needle and needle not in body):
+            return False, f"黑盒探針失敗:{path}(HTTP {code.strip() or '?'})"
+    return True, f"黑盒探針通過({len(_BLACKBOX_PROBES)} 條契約)"
+
+
 async def redeploy() -> tuple[bool, str]:
     """把部署目錄拉到 origin/<branch>、重裝、重啟、健康檢查；失敗自動回滾。
 
@@ -174,10 +198,16 @@ async def redeploy() -> tuple[bool, str]:
         ok, msg = await _reinstall_and_restart(deploy_dir, service)
         if ok:
             ok, msg = await health_check()
+        if ok and config.DEPLOY_VERIFY:
+            ok, msg = await blackbox_verify()
 
         if not ok:
             rb_ok, rb_msg = await rollback(last_good)
-            return False, f"重佈失敗（{msg}）→ 回滾{'成功' if rb_ok else '也失敗'}：{rb_msg}"
+            detail = f"重佈失敗（{msg}）→ 回滾{'成功' if rb_ok else '也失敗'}：{rb_msg}"
+            # page 級推播(B1):部署失敗+回滾必須到人——過去這條路徑是靜默的,人要開面板
+            # 才會發現服務被回滾。推播失敗不影響回滾結果(send_bg 吞掉一切)。
+            notify.send_bg("deploy_verify_failed", detail[:300], rollback_ok=rb_ok)
+            return False, detail
 
         return True, f"重佈成功：{last_good[:8]} → {new_head[:8]}"
 
