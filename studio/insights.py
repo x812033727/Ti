@@ -188,3 +188,92 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
         },
         "events": events,
     }
+
+
+# --- 升階儀表(第 3/4 階可視化,軌 D1) ----------------------------------------
+# 八個 canary 開關的單一真相表:(鍵, 人話標籤, config 取值函數)。順序=建議開啟順序。
+_CANARIES = (
+    ("objective_gate", "① 客觀驗收閘門", lambda c: bool(c.objective_gate_enabled())),
+    ("expert_skills", "② 專家技能手冊", lambda c: bool(c.EXPERT_SKILLS)),
+    (
+        "investigation_parallel",
+        "③ 調查併行旁路",
+        lambda c: bool(c.AUTOPILOT_INVESTIGATION_PARALLEL),
+    ),
+    ("norms_loop", "④ 規範蒸餾迴路", lambda c: bool(c.NORMS_LOOP)),
+    ("slo_brake", "⑤ SLO 自動煞車", lambda c: float(getattr(c, "SLO_ZERO_TOUCH_MIN", 0) or 0) > 0),
+    ("deploy_verify", "⑥ 部署黑盒驗證", lambda c: bool(c.DEPLOY_VERIFY)),
+    ("clarify_async", "⑦ 非同步澄清", lambda c: bool(c.CLARIFY_ASYNC)),
+    ("intent_loop", "⑧ 意圖迴路", lambda c: bool(c.INTENT_LOOP)),
+)
+
+
+def stage_readiness(*, state_dir: Path | None = None) -> dict:
+    """升階儀表快照:八開關現值+第 3 階四條件量測+階段判定。
+
+    純快照(連續天數 streak 留後續);「紅色事件全由推播抵達」真值不可自動量測,
+    以代理呈現(page 級事件計數+推播 sinks 是否已設)。零 LLM、純檔案/config 讀取。
+    """
+    canaries = [{"key": k, "label": label, "on": bool(fn(config))} for k, label, fn in _CANARIES]
+    on_count = sum(1 for c in canaries if c["on"])
+    m = trust_metrics(7, state_dir=state_dir)
+    iv = m.get("interventions", {})
+    by_cat = iv.get("by_category", {})
+    ev = m.get("events", {})
+    page_kinds = (
+        "task_failed",
+        "loop_stall",
+        "quota_exhausted",
+        "slo_brake",
+        "deploy_verify_failed",
+        "clarify_pending",
+    )
+    sinks_ready = bool(
+        (config.NOTIFY_WEBHOOK or "").strip()
+        or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
+    )
+    conditions = [
+        {
+            "key": "zero_touch",
+            "label": "零人工介入合併率 ≥90%",
+            "value": m.get("zero_touch_rate"),
+            "detail": f"7 天 merged {m.get('merged', 0)}、零介入 {m.get('zero_touch', 0)}",
+            "ok": bool(m.get("merged", 0) >= 5 and (m.get("zero_touch_rate") or 0) >= 0.9),
+        },
+        {
+            "key": "interventions",
+            "label": "人工介入 ≤2/週且零成果審查",
+            "value": iv.get("per_week"),
+            "detail": f"成果審查 {by_cat.get('output_review', 0)}・補背景 {by_cat.get('context_feeding', 0)}・維運 {by_cat.get('ops', 0)}",
+            "ok": bool((iv.get("per_week") or 0) <= 2 and by_cat.get("output_review", 0) == 0),
+        },
+        {
+            "key": "paging",
+            "label": "異常推播管道就緒(代理量測)",
+            "value": sum(int(ev.get(k) or 0) for k in page_kinds),
+            "detail": ("推播 sinks 已設" if sinks_ready else "推播 sinks 未設")
+            + f"・7 天 page 級事件 {sum(int(ev.get(k) or 0) for k in page_kinds)} 筆",
+            "ok": sinks_ready,
+        },
+        {
+            "key": "slo_armed",
+            "label": "SLO 煞車武裝",
+            "value": int(ev.get("slo_brake") or 0),
+            "detail": f"門檻 {'已設' if float(getattr(config, 'SLO_ZERO_TOUCH_MIN', 0) or 0) > 0 else '未設(=0)'}・觸發 {int(ev.get('slo_brake') or 0)} 次",
+            "ok": float(getattr(config, "SLO_ZERO_TOUCH_MIN", 0) or 0) > 0,
+        },
+    ]
+    all_ok = all(c["ok"] for c in conditions)
+    if on_count == 0:
+        stage = "2"
+    elif all_ok and on_count >= len(canaries) - 3:
+        stage = "3-ready"
+    else:
+        stage = "3-progress"
+    return {
+        "stage": stage,
+        "canaries": canaries,
+        "canaries_on": on_count,
+        "conditions": conditions,
+        "trust": m,
+    }
