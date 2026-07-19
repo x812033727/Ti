@@ -1,7 +1,7 @@
 // Ti Studio 前端入口（ES module）：載入各模組、集中事件綁定、初始化。
 // 職責分工見 web/js/：dom.js（工具）、state.js（跨模組狀態）、events-render.js
 //（事件渲染中樞 handleEvent）、ws.js（連線）、panels/*（各面板）、components/*（共用元件）。
-import { $, toast } from "./js/dom.js";
+import { $ } from "./js/dom.js";
 import { initTheme, toggleTheme } from "./js/theme.js";
 import { downloadWorkspace, loadPublishConfig } from "./js/events-render.js";
 import { start, stop, sendInterject } from "./js/ws.js";
@@ -31,6 +31,7 @@ import {
 } from "./js/panels/settings.js";
 import { bindDashboard, setView } from "./js/panels/dashboard.js";
 import { bindSidenav, focusComposer } from "./js/panels/sidenav.js";
+import { bindHome } from "./js/panels/home.js";
 
 // --- 事件綁定（集中接線；module script 於 DOM 解析完才執行，可直接查元素）----
 $("#startBtn").onclick = start;
@@ -79,9 +80,8 @@ $("#projectRefresh").onclick = refreshProjectPanel;
 $("#projectSelect").addEventListener("change", onProjectChange);
 $("#improveChk").addEventListener("change", () => updateStartLabel());
 $("#requirement").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
-// 助手首頁(PR1 骨架):rail 首頁鈕 + 側欄;composer 送出於 PR4 接通 ws。
+// 助手首頁:rail 首頁鈕 + 側欄 + hero composer(home.js 對話編排)。
 $("#homeBtn").onclick = () => { setView("home"); focusComposer(); };
-$("#heroSend").onclick = () => toast("對話功能即將接通(施工中)");
 $("#interjectInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
 
 bindSettings();
@@ -92,6 +92,7 @@ bindInsights();
 bindWorkflowEditor();
 bindDashboard();
 bindSidenav();
+bindHome();
 initTheme();
 setMobileView("dash");
 

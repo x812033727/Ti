@@ -425,7 +425,16 @@
         <div id="heroPulse" class="hero-pulse" aria-live="polite"></div>
         <div id="heroInspire" class="hero-inspire"></div>
       </div>
-      <div id="homeChat" class="home-chat hidden"></div>
+      <div id="homeChat" class="home-chat hidden">
+        <div class="home-chat-stream" id="homeChatStream"></div>
+        <div class="home-chat-bar">
+          <input id="heroInterject" type="text" placeholder="隨時插話,專家們會看到…" aria-label="插話" disabled />
+          <button id="heroInterjectBtn" class="ghost icon-btn" title="送出插話" aria-label="送出插話" disabled>
+            <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg></button>
+          <button id="heroStopBtn" class="ghost icon-btn danger" title="停止討論" aria-label="停止討論" disabled>
+            <svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg></button>
+        </div>
+      </div>
       <div id="homePlugins" class="home-sub hidden"></div>
       <div id="homeSchedules" class="home-sub hidden"></div>
     </div>
