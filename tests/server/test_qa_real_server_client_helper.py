@@ -141,4 +141,5 @@ def test_loopback_smoke_clients_do_not_use_host_proxy_env(filename: str) -> None
     source = (HERE / filename).read_text(encoding="utf-8")
 
     assert "trust_env=False" in source
-    assert "proxy=None" in source
+    assert "from _loopback_clients import loopback_websocket_connect" in source
+    assert "websockets.connect" not in source

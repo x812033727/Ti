@@ -1,7 +1,7 @@
 """AST guard for loopback smoke clients.
 
-Currently this only guards httpx.AsyncClient; if tests/server introduces
-synchronous httpx.Client loopback calls, add that rule here too.
+Direct websockets.connect calls are rejected; real-server smoke clients must use
+_loopback_clients.loopback_websocket_connect for websockets-version compatibility.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def _collect_violations(source: str, filename: str = "<source>") -> list[str]:
         )
         if call_type == "httpx.AsyncClient" and not _keyword_matches(node, "trust_env", False):
             violations.append(f"{filename}:L{node.lineno}: httpx.AsyncClient")
-        elif call_type == "websockets.connect" and not _keyword_matches(node, "proxy", None):
+        elif call_type == "websockets.connect":
             violations.append(f"{filename}:L{node.lineno}: websockets.connect")
 
     return violations
@@ -118,11 +118,22 @@ def test_loopback_proxy_guard_rejects_missing_httpx_trust_env() -> None:
     assert _collect_violations(source) == ["<source>:L2: httpx.AsyncClient"]
 
 
-def test_loopback_proxy_guard_rejects_missing_websocket_proxy() -> None:
+def test_loopback_proxy_guard_rejects_direct_websocket_connect() -> None:
     source = (
         "import websockets\n"
         "async def f():\n"
         "    async with websockets.connect('ws://x') as ws:\n"
+        "        pass\n"
+    )
+
+    assert _collect_violations(source) == ["<source>:L3: websockets.connect"]
+
+
+def test_loopback_proxy_guard_rejects_direct_websocket_connect_with_proxy_none() -> None:
+    source = (
+        "import websockets\n"
+        "async def f():\n"
+        "    async with websockets.connect('ws://x', proxy=None) as ws:\n"
         "        pass\n"
     )
 
