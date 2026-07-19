@@ -179,6 +179,16 @@ def test_window_handles_none_and_missing_util():
     )
 
 
+def test_bool_percent_is_not_treated_as_usage_number():
+    assert claude_usage._window({"utilization": True})["used_percentage"] is None
+    assert (
+        claude_usage._scoped_models(
+            [{"percent": False, "scope": {"model": {"display_name": "Fable"}}}]
+        )["Fable"]["used_percentage"]
+        is None
+    )
+
+
 # --- 暫時性失敗的 last-known-good 回退（429 不得誤殺帳號）---------------------
 
 
