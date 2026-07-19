@@ -46,9 +46,9 @@ async def test_pause_tick_writes_paused_state_and_advances(tmp_path, monkeypatch
 
     await autopilot._pause_tick()
     st2 = _status(tmp_path)
-    assert st2["state"] == "paused" and st2["updated_at"] >= st1["updated_at"], (
-        "每輪刷新 updated_at,外部監控可判活著"
-    )
+    assert (
+        st2["state"] == "paused" and st2["updated_at"] >= st1["updated_at"]
+    ), "每輪刷新 updated_at,外部監控可判活著"
     assert recovered == [1], "之後輪不重複收斂"
 
 

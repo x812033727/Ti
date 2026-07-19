@@ -60,9 +60,9 @@ def test_comment_mentions_forwarded_allow_ips_landed():
     assert "forwarded_allow_ips" in block, f"註解需提醒設定 forwarded_allow_ips：\n{block}"
     assert ('"*"' in block) or ("嚴禁" in block), f'註解需警示嚴禁 "*"：\n{block}'
     # issue #0001 已落地：註解由「基線」改為點明防護已在 server.main() 實際生效。
-    assert "落地" in block or "server.main()" in block, (
-        f"註解需說明防護已落地（server.main()）：\n{block}"
-    )
+    assert (
+        "落地" in block or "server.main()" in block
+    ), f"註解需說明防護已落地（server.main()）：\n{block}"
 
 
 def test_pyproject_still_valid_toml():

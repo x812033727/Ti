@@ -142,9 +142,9 @@ def test_mutation_drop_fine_grained_turns_red():
     assert mutated != text, "mutation 無效：未替換到 Fine-grained"
 
     problems = check_gh_pat_specs(mutated)
-    assert any("Fine-grained" in p for p in problems), (
-        f"假綠：移除 Fine-grained 後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "Fine-grained" in p for p in problems
+    ), f"假綠：移除 Fine-grained 後守護未翻紅，problems={problems}"
 
 
 def test_mutation_drop_read_and_write_turns_red():
@@ -156,9 +156,9 @@ def test_mutation_drop_read_and_write_turns_red():
     assert mutated != text, "mutation 無效：未替換到 Read and write"
 
     problems = check_gh_pat_specs(mutated)
-    assert any("Read and write" in p for p in problems), (
-        f"假綠：降級為 write 後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "Read and write" in p for p in problems
+    ), f"假綠：降級為 write 後守護未翻紅，problems={problems}"
 
 
 def test_mutation_drop_repo_scope_turns_red():
@@ -170,9 +170,9 @@ def test_mutation_drop_repo_scope_turns_red():
     assert mutated != text, "mutation 無效：未替換到本 repo 字串"
 
     problems = check_gh_pat_specs(mutated)
-    assert any("只選本 repo" in p or "all-repos" in p for p in problems), (
-        f"假綠：放寬 repo 範圍後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "只選本 repo" in p or "all-repos" in p for p in problems
+    ), f"假綠：放寬 repo 範圍後守護未翻紅，problems={problems}"
 
 
 def test_mutation_rename_secret_turns_red():
@@ -188,9 +188,9 @@ def test_mutation_rename_secret_turns_red():
     assert mutated != text, "mutation 無效：未替換到 GH_PAT"
 
     problems = check_gh_pat_specs(mutated)
-    assert any("GH_PAT" in p for p in problems), (
-        f"假綠：改名 secret 後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "GH_PAT" in p for p in problems
+    ), f"假綠：改名 secret 後守護未翻紅，problems={problems}"
 
 
 # ---------------------------------------------------------------------------
@@ -244,9 +244,9 @@ def test_mutation_drop_pyproject_ssot_turns_red():
     assert mutated != text, "mutation 無效：未替換到 pyproject_version"
 
     problems = check_release_dod(mutated)
-    assert any("pyproject" in p for p in problems), (
-        f"假綠：抽掉 SSOT 字串後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "pyproject" in p for p in problems
+    ), f"假綠：抽掉 SSOT 字串後守護未翻紅，problems={problems}"
 
 
 def test_mutation_drop_publish_script_turns_red():
@@ -258,9 +258,9 @@ def test_mutation_drop_publish_script_turns_red():
     assert mutated != text, "mutation 無效：未替換到 publish_release.py"
 
     problems = check_release_dod(mutated)
-    assert any("publish_release.py" in p for p in problems), (
-        f"假綠：改掉命令後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "publish_release.py" in p for p in problems
+    ), f"假綠：改掉命令後守護未翻紅，problems={problems}"
 
 
 # ---------------------------------------------------------------------------
@@ -328,9 +328,9 @@ def test_mutation_soften_to_fully_verified_turns_red():
     assert mutated != text, "mutation 無效：未把尚待改為已驗證（假綠風險）"
 
     problems = check_half_closed_disclaimer(mutated)
-    assert any("半閉環" in p or "尚待" in p or "尚未" in p for p in problems), (
-        f"假綠：漂移為『已完整驗證』後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "半閉環" in p or "尚待" in p or "尚未" in p for p in problems
+    ), f"假綠：漂移為『已完整驗證』後守護未翻紅，problems={problems}"
 
 
 def test_mutation_drop_tag_push_keyword_turns_red():
@@ -345,9 +345,9 @@ def test_mutation_drop_tag_push_keyword_turns_red():
     assert mutated != text, "mutation 無效：未替換到 tag-push"
 
     problems = check_half_closed_disclaimer(mutated)
-    assert any("tag-push" in p for p in problems), (
-        f"假綠：拿掉 tag-push 後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "tag-push" in p for p in problems
+    ), f"假綠：拿掉 tag-push 後守護未翻紅，problems={problems}"
 
 
 # ---------------------------------------------------------------------------
@@ -402,9 +402,9 @@ def test_mutation_drop_403_hint_turns_red():
     assert mutated != text, "mutation 無效：未替換到 403"
 
     problems = check_gh_pat_403_runbook(mutated)
-    assert any("403" in p for p in problems), (
-        f"假綠：拿掉 403 字串後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "403" in p for p in problems
+    ), f"假綠：拿掉 403 字串後守護未翻紅，problems={problems}"
 
 
 # ---------------------------------------------------------------------------
@@ -461,9 +461,9 @@ def test_task4_commit_does_not_alter_release_smoke_trigger():
     after = RELEASE_SMOKE_YML.read_text(encoding="utf-8")
 
     assert "release:" in before and "published" in before, "前提失效：HEAD 前 release-smoke 缺契約"
-    assert "release:" in after and "published" in after, (
-        "AC#6.3：release-smoke.yml 在任務#4 後丟失 `release: published` 觸發契約"
-    )
+    assert (
+        "release:" in after and "published" in after
+    ), "AC#6.3：release-smoke.yml 在任務#4 後丟失 `release: published` 觸發契約"
     # 進一步：trigger 區塊逐字相同（接受純註解 reflow，但拒絕 trigger 類型變更）
     before_trigger = re.search(r"on:\s*\n\s*release:\s*\n\s*types:\s*\[published\]", before)
     after_trigger = re.search(r"on:\s*\n\s*release:\s*\n\s*types:\s*\[published\]", after)

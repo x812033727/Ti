@@ -103,9 +103,9 @@ def test_rotation_dod_requires_live_auth_check_and_release_403_signal() -> None:
     dod = _section(text, "輪替驗證 DoD")
 
     # 必須明確綁定新 token（防止 keyring 舊 token 假綠）
-    assert 'GH_TOKEN="$GH_PAT"' in dod, (
-        'DoD 缺 GH_TOKEN="$GH_PAT" gh auth status；裸跑 gh auth status 只驗 keyring 舊 token'
-    )
+    assert (
+        'GH_TOKEN="$GH_PAT"' in dod
+    ), 'DoD 缺 GH_TOKEN="$GH_PAT" gh auth status；裸跑 gh auth status 只驗 keyring 舊 token'
     assert "gh auth status" in dod
 
     # curl fallback：帶 Bearer header 打 /user
@@ -116,14 +116,14 @@ def test_rotation_dod_requires_live_auth_check_and_release_403_signal() -> None:
     assert "200" in dod, "DoD 必須說明 HTTP 200 為生效判定"
 
     # scope 警告：200 不等於有 Contents RW 權限
-    assert "scope" in dod or "Contents: Read and write" in dod, (
-        "DoD 缺 scope != 200 說明（token 有效不代表有 Contents RW 權限，scope 錯仍 403）"
-    )
+    assert (
+        "scope" in dod or "Contents: Read and write" in dod
+    ), "DoD 缺 scope != 200 說明（token 有效不代表有 Contents RW 權限，scope 錯仍 403）"
 
     # curl 洩漏面：真正外洩點是 process argv，非 shell history 字面
-    assert "process argv" in dod or "ps aux" in dod, (
-        "DoD 缺 curl token 洩漏面說明（真正外洩點是 process argv，非 history 字面）"
-    )
+    assert (
+        "process argv" in dod or "ps aux" in dod
+    ), "DoD 缺 curl token 洩漏面說明（真正外洩點是 process argv，非 history 字面）"
 
     # 斷鏈訊號：到期/撤銷在 gh release create 以 403 失敗
     assert "gh release create" in dod

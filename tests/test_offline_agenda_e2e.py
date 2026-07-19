@@ -154,9 +154,9 @@ def test_agenda_full_flow_engine_mode(client):
         e["payload"]["text"] for e in by_type["expert_message"] if e["payload"]["name"] == speaker
     ]
     assert spoken, f"錨點 speaker={speaker} 並非本場發言者（假綠）"
-    assert any("回應 @" in t for t in spoken), (
-        "錨點所指角色的發言應含結構化引用，方能回指 transcript"
-    )
+    assert any(
+        "回應 @" in t for t in spoken
+    ), "錨點所指角色的發言應含結構化引用，方能回指 transcript"
 
     # 5c) 反向防幻覺：共識段每條結論都能回指規則層（帶錨點或標「（無）」），
     #     不得出現 transcript 未產生的憑空 mention。
@@ -186,9 +186,9 @@ def test_agenda_full_flow_engine_mode(client):
     # 真實輪數＝md 錨點觀察到的最大 round（來自 transcript Utterance.round）；rounds 必 ≥1
     # 且等於該值——若 orchestrator 漏傳 rounds，這裡會是 0、斷言失敗（自證對應、排除假綠）。
     max_anchor_round = max(int(r) for r, _ in anchors)
-    assert data["rounds"] == max_anchor_round, (
-        f"sidecar rounds={data['rounds']} 應等於真實輪數 {max_anchor_round}（非寫死 0）"
-    )
+    assert (
+        data["rounds"] == max_anchor_round
+    ), f"sidecar rounds={data['rounds']} 應等於真實輪數 {max_anchor_round}（非寫死 0）"
     assert data["rounds"] >= 1
 
     # 5e) 驗收 #4 核心：conclusion.json 與 CONCLUSION.md **同 commit 入 git**，工作區

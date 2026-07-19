@@ -53,9 +53,10 @@ def test_digest_kind_never_pushes(monkeypatch):
     assert notify.send("critic_reject", "退回") is False
     notify.send_bg("gate_failure", "閘門失敗")
     assert not calls, "digest 級 kind 不得推播"
-    assert [e["kind"] for e in notify.read_events(1)] == ["critic_reject", "gate_failure"], (
-        "照樣落檔"
-    )
+    assert [e["kind"] for e in notify.read_events(1)] == [
+        "critic_reject",
+        "gate_failure",
+    ], "照樣落檔"
 
 
 def test_unknown_kind_defaults_to_page(monkeypatch):
@@ -80,9 +81,9 @@ def test_watchdog_notify_hook_external_contract():
     assert "watchdog_paused" in code, "推播文字應帶 kind 便於對齊 SEVERITY 口徑"
     hook = code.split("例外推播", 1)[1]
     env_reads = set(re.findall(r"\$\{(\w+)[:-]", hook))
-    assert env_reads <= {"TI_WATCHDOG_NOTIFY_URL"}, (
-        f"鉤子只能讀 TI_WATCHDOG_* 環境變數(外置契約),實際:{env_reads}"
-    )
+    assert env_reads <= {
+        "TI_WATCHDOG_NOTIFY_URL"
+    }, f"鉤子只能讀 TI_WATCHDOG_* 環境變數(外置契約),實際:{env_reads}"
 
 
 def test_watchdog_script_no_notify_when_url_unset(tmp_path):

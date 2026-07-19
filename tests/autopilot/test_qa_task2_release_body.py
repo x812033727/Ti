@@ -60,9 +60,9 @@ def test_render_reads_real_changelog_and_pyproject_version():
     """不帶參數時：讀真實 CHANGELOG.md + pyproject_version()，body 非空且含 Breaking 區塊。"""
     body = pr.render_release_body()
     assert body.strip(), "body 不該為空"
-    assert BREAKING_HEADING in body, (
-        "body 必須含逐字 Breaking heading（來自 render_tag_notes 注入）"
-    )
+    assert (
+        BREAKING_HEADING in body
+    ), "body 必須含逐字 Breaking heading（來自 render_tag_notes 注入）"
     # 版本來自 SSOT，必須出現在 body（render_tag_notes 的 heading / footer 都帶 version）。
     assert pyproject_version() in body, "body 必須含 pyproject SSOT 版本字串"
 
@@ -201,9 +201,9 @@ def test_main_failure_does_not_write_github_output(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_OUTPUT", str(gh_out))
     with pytest.raises(MissingBreakingBlock):
         pr.main()
-    assert not gh_out.exists() or "body<<" not in gh_out.read_text(), (
-        "render 失敗時不應寫出 body 至 GITHUB_OUTPUT"
-    )
+    assert (
+        not gh_out.exists() or "body<<" not in gh_out.read_text()
+    ), "render 失敗時不應寫出 body 至 GITHUB_OUTPUT"
 
 
 # ---------------------------------------------------------------------------
@@ -214,9 +214,9 @@ def test_main_failure_does_not_write_github_output(tmp_path, monkeypatch):
 def test_script_has_zero_breaking_heading_literal():
     """腳本原始碼 grep 不出 Breaking heading 字面值（0 命中）；heading 一律由 SSOT 注入。"""
     src = _SCRIPT.read_text(encoding="utf-8")
-    assert BREAKING_HEADING not in src, (
-        "scripts/publish_release.py 不得硬寫 Breaking heading 字面值"
-    )
+    assert (
+        BREAKING_HEADING not in src
+    ), "scripts/publish_release.py 不得硬寫 Breaking heading 字面值"
     # 連 emoji 也不該單獨出現（避免拆字繞過）。
     assert "⚠️ Breaking Changes" not in src
 
@@ -224,6 +224,6 @@ def test_script_has_zero_breaking_heading_literal():
 def test_grep_mutation_is_meaningful():
     """反向證明上面的 grep 有判別力：同字串確實存在於 SSOT 模組（否則 grep 永遠 0 命中＝假綠）。"""
     ssot_src = (_ROOT / "studio" / "release_note.py").read_text(encoding="utf-8")
-    assert BREAKING_HEADING in ssot_src, (
-        "SSOT 模組應含 heading 字面值——若這裡都找不到，代表 grep 失效，零命中無意義"
-    )
+    assert (
+        BREAKING_HEADING in ssot_src
+    ), "SSOT 模組應含 heading 字面值——若這裡都找不到，代表 grep 失效，零命中無意義"

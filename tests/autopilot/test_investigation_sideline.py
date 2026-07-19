@@ -34,16 +34,16 @@ def test_claim_next_order_and_attempts():
     hi = backlog.add("高優先", priority=0)
     got = backlog.claim_next(lambda t: True)
     assert got["id"] == hi["id"], "priority 排序與 next_pending 一致"
-    assert got["status"] == "in_progress" and got["attempts"] == 1, (
-        "認領即標 in_progress+attempts+1"
-    )
+    assert (
+        got["status"] == "in_progress" and got["attempts"] == 1
+    ), "認領即標 in_progress+attempts+1"
 
 
 def test_claim_next_predicate_and_none():
     backlog.add("普通任務甲")
-    assert backlog.claim_next(lambda t: "調查" in t["title"]) is None, (
-        "無符合回 None 且不動任何任務"
-    )
+    assert (
+        backlog.claim_next(lambda t: "調查" in t["title"]) is None
+    ), "無符合回 None 且不動任何任務"
     assert backlog.list_tasks("pending")[0]["title"] == "普通任務甲"
 
 

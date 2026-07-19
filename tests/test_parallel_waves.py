@@ -490,9 +490,9 @@ async def test_dependent_tasks_run_in_later_wave_on_merged_base(tmp_path, monkey
 
     # lane 分支名 = lane-<sid>-<id>；第一波(task#1)開工看不到自己，第二波(task#2)應已看到前波成果。
     assert DepStub.saw_prior.get("lane-dep-1") is False
-    assert DepStub.saw_prior.get("lane-dep-2") is True, (
-        "第二波 worktree 未從前一波合併後的 HEAD 分支"
-    )
+    assert (
+        DepStub.saw_prior.get("lane-dep-2") is True
+    ), "第二波 worktree 未從前一波合併後的 HEAD 分支"
     assert {"lane-dep-1.txt", "lane-dep-2.txt"} <= set(workspace.list_files(sid))
 
 

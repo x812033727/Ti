@@ -68,9 +68,9 @@ def test_readme_strict_is_default(readme):
 
 
 def test_env_strict_is_default(env):
-    assert re.search(r"strict[^\n]{0,40}預設", env) or re.search(r"預設[^\n]{0,40}strict", env), (
-        ".env.example 未把 strict 標示為預設值"
-    )
+    assert re.search(r"strict[^\n]{0,40}預設", env) or re.search(
+        r"預設[^\n]{0,40}strict", env
+    ), ".env.example 未把 strict 標示為預設值"
 
 
 def test_readme_has_warn_transition_meaning(readme):

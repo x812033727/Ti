@@ -155,21 +155,21 @@ def test_create_step_is_located_by_id(workflow):
 
 def test_create_release_step_uses_file_mode(workflow):
     assert has_create_step(workflow), "缺 `gh release create` 建立 step"
-    assert create_uses_file_mode(workflow), (
-        "建立 release 未用 `-F body.md` file mode（架構決策：不經 shell 字串拼裝）"
-    )
+    assert create_uses_file_mode(
+        workflow
+    ), "建立 release 未用 `-F body.md` file mode（架構決策：不經 shell 字串拼裝）"
 
 
 def test_create_release_not_draft(workflow):
-    assert create_is_not_draft(workflow), (
-        "建立 release 不得帶 --draft（draft 不觸發 release:published）"
-    )
+    assert create_is_not_draft(
+        workflow
+    ), "建立 release 不得帶 --draft（draft 不觸發 release:published）"
 
 
 def test_render_step_invokes_publish_script(workflow):
-    assert has_render_step(workflow), (
-        "缺 render step：未執行 scripts/publish_release.py（body 來源契約）"
-    )
+    assert has_render_step(
+        workflow
+    ), "缺 render step：未執行 scripts/publish_release.py（body 來源契約）"
 
 
 def test_create_release_uses_pat_token(workflow):
@@ -182,9 +182,9 @@ def test_create_release_token_is_not_github_token(workflow):
     GITHUB_TOKEN 建立的 release 不觸發下游 workflow（GitHub 防遞迴），smoke 永不啟動。
     這是最容易在重構時被悄悄改回的安全閥，故獨立守護。
     """
-    assert not create_uses_github_token(workflow), (
-        "建立 release 誤用 GITHUB_TOKEN——將不觸發 release-smoke"
-    )
+    assert not create_uses_github_token(
+        workflow
+    ), "建立 release 誤用 GITHUB_TOKEN——將不觸發 release-smoke"
 
 
 # ---------------------------------------------------------------------------
@@ -253,9 +253,9 @@ def test_mutation_drop_step_id_turns_red(wf_copy):
     step = _create_release_step(_publish_steps(wf_copy))
     del step["id"]  # mutation：拔掉定位契約（run 內容不動）
 
-    assert _create_release_step(_publish_steps(wf_copy)) is None, (
-        "mutation 後仍以內容矇到 step＝假綠"
-    )
+    assert (
+        _create_release_step(_publish_steps(wf_copy)) is None
+    ), "mutation 後仍以內容矇到 step＝假綠"
     assert not create_uses_file_mode(wf_copy), "mutation 後 file-mode 守護仍綠＝假綠"
     assert not create_uses_pat(wf_copy), "mutation 後 PAT 守護仍綠＝假綠"
 
@@ -291,9 +291,9 @@ PUBLISH_SCRIPT_PATH = _ROOT / "scripts" / "publish_release.py"
 
 def test_workflow_has_zero_breaking_heading_literal(workflow_text):
     """publish-release.yml 不得硬寫 Breaking heading 字面值（SSOT 由 Python 注入）。"""
-    assert BREAKING_HEADING not in workflow_text, (
-        f"publish-release.yml 出現 heading 字面值 {BREAKING_HEADING!r}（須走 SSOT）"
-    )
+    assert (
+        BREAKING_HEADING not in workflow_text
+    ), f"publish-release.yml 出現 heading 字面值 {BREAKING_HEADING!r}（須走 SSOT）"
 
 
 def test_publish_script_has_zero_breaking_heading_literal():
@@ -304,9 +304,9 @@ def test_publish_script_has_zero_breaking_heading_literal():
     """
     assert PUBLISH_SCRIPT_PATH.exists(), f"前提失效：缺 publish_release.py {PUBLISH_SCRIPT_PATH}"
     script_text = PUBLISH_SCRIPT_PATH.read_text(encoding="utf-8")
-    assert BREAKING_HEADING not in script_text, (
-        f"publish_release.py 出現 heading 字面值 {BREAKING_HEADING!r}（須走 SSOT）"
-    )
+    assert (
+        BREAKING_HEADING not in script_text
+    ), f"publish_release.py 出現 heading 字面值 {BREAKING_HEADING!r}（須走 SSOT）"
 
 
 def test_mutation_script_with_heading_literal_turns_red():

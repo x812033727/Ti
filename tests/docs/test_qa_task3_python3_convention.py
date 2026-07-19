@@ -158,8 +158,7 @@ def test_readme_py_fallback_specific_phrase():
     """README 退路說明必須有具體可照用的 `py` 指令字串（非抽象形容）。"""
     has_specific = bool(
         re.search(
-            r"`py`(\s*啟動器|\s*-3\b|執行|跑|app\b|main\b)|"
-            r"`py -3`|`py`\s*app|`py`\s*main",
+            r"`py`(\s*啟動器|\s*-3\b|執行|跑|app\b|main\b)|" r"`py -3`|`py`\s*app|`py`\s*main",
             README,
         )
     )
@@ -193,6 +192,6 @@ def test_negative_samples_must_not_trigger_convention_matchers(neg_text, why):
     py_hint = _has_windows_py_launcher_hint(neg_text)
     venv = _has_venv_python_explicit(neg_text)
     shell = _has_shell_python3_explicit_convention(neg_text)
-    assert not (py_hint or venv or shell), (
-        f"負樣本『{why}』誤觸：py_hint={py_hint} venv={venv} shell={shell}\n  輸入: {neg_text!r}"
-    )
+    assert not (
+        py_hint or venv or shell
+    ), f"負樣本『{why}』誤觸：py_hint={py_hint} venv={venv} shell={shell}\n  輸入: {neg_text!r}"

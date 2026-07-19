@@ -345,9 +345,9 @@ def _usage(entry: dict) -> dict:
     else:
         windows = [v for v in rl.values() if isinstance(v, dict) and "used_percentage" in v]
     used = [
-        w["used_percentage"] for w in windows if isinstance(w.get("used_percentage"), (int, float))
+        w["used_percentage"] for w in windows if isinstance(w.get("used_percentage"), int | float)
     ]
-    resets = [w["reset_at"] for w in windows if isinstance(w.get("reset_at"), (int, float))]
+    resets = [w["reset_at"] for w in windows if isinstance(w.get("reset_at"), int | float)]
     return {
         "ready": ready,
         "error": error,
@@ -463,7 +463,7 @@ def summarize_for_pm(snap: dict, role_provider_map: dict[str, str] | None = None
                 continue
             mwarn = "⚠️" if mpct >= CONSTRAINED_THRESHOLD else ""
             seg = f"{mname} 模型限額 {mwarn}{mpct:.0f}%"
-            if isinstance(mw.get("reset_at"), (int, float)):
+            if isinstance(mw.get("reset_at"), int | float):
                 mins = max(0, int((mw["reset_at"] - now) / 60))
                 seg += (
                     f"（約 {mins // 60} 小時後重置）" if mins >= 120 else f"（約 {mins} 分後重置）"

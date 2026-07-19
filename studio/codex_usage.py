@@ -36,8 +36,8 @@ def _window(d) -> dict | None:
     pct = d.get("usedPercent")
     reset = d.get("resetsAt")
     return {
-        "used_percentage": round(float(pct), 1) if isinstance(pct, (int, float)) else None,
-        "reset_at": float(reset) if isinstance(reset, (int, float)) else None,
+        "used_percentage": round(float(pct), 1) if isinstance(pct, int | float) else None,
+        "reset_at": float(reset) if isinstance(reset, int | float) else None,
     }
 
 

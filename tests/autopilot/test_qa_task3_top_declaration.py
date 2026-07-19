@@ -183,9 +183,9 @@ def test_mutation_soften_尚待_to_已完整_turns_red(handoff_text):
     p_keywords = check_six_keywords(mutated)
     p_softening = check_no_full_softening(mutated)
     problems = p_keywords + p_softening
-    assert any("尚待" in p or "已(完整|通過|閉環)" in p or "軟化" in p for p in problems), (
-        f"假綠：把『尚待』改為『已完整』後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "尚待" in p or "已(完整|通過|閉環)" in p or "軟化" in p for p in problems
+    ), f"假綠：把『尚待』改為『已完整』後守護未翻紅，problems={problems}"
 
 
 def test_mutation_drop_v020_closure_turns_red(handoff_text):
@@ -193,9 +193,9 @@ def test_mutation_drop_v020_closure_turns_red(handoff_text):
     mutated = handoff_text.replace("v0.2.0 此鏈已生產閉環；", "")
     assert mutated != handoff_text, "mutation 無效：未替換到 v0.2.0 已生產閉環片段"
     problems = check_declaration_text(mutated)
-    assert any("v0.2.0 此鏈已生產閉環" in p for p in problems), (
-        f"假綠：刪掉 v0.2.0 收斂片段後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "v0.2.0 此鏈已生產閉環" in p for p in problems
+    ), f"假綠：刪掉 v0.2.0 收斂片段後守護未翻紅，problems={problems}"
 
 
 def test_mutation_drop_尚待_turns_red(handoff_text):
@@ -203,9 +203,9 @@ def test_mutation_drop_尚待_turns_red(handoff_text):
     mutated = handoff_text.replace("尚待逐版生產驗證", "逐版生產驗證")
     assert mutated != handoff_text, "mutation 無效：未替換到『尚待』"
     problems = check_six_keywords(mutated)
-    assert any("尚待" in p for p in problems), (
-        f"假綠：抽掉『尚待』後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "尚待" in p for p in problems
+    ), f"假綠：抽掉『尚待』後守護未翻紅，problems={problems}"
 
 
 def test_mutation_body_row_reverted_to_pending_turns_red(handoff_text):
@@ -219,6 +219,6 @@ def test_mutation_body_row_reverted_to_pending_turns_red(handoff_text):
     mutated = handoff_text.replace(body_row, body_row.replace("✅", "⏳"))
     assert mutated != handoff_text, "mutation 無效：未改到 body 列 ✅"
     problems = check_consistency_with_table(mutated)
-    assert any("body 置頂列" in p for p in problems), (
-        f"假綠：body 列改 ⏳ 後自洽性守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "body 置頂列" in p for p in problems
+    ), f"假綠：body 列改 ⏳ 後自洽性守護未翻紅，problems={problems}"

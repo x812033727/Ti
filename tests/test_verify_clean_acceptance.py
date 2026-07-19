@@ -77,9 +77,9 @@ def test_origin_main_ref_exists() -> None:
     """防呆：origin/main 必須可解析為 commit 物件（腳本內 exit 99 路徑的觸發條件）。"""
     _ensure_origin_main_ref()
     cp = _run(["git", "rev-parse", "--verify", "origin/main^{commit}"])
-    assert cp.returncode == 0, (
-        f"origin/main 缺 commit 物件（請先 git fetch origin）: stderr={cp.stderr!r}"
-    )
+    assert (
+        cp.returncode == 0
+    ), f"origin/main 缺 commit 物件（請先 git fetch origin）: stderr={cp.stderr!r}"
 
 
 # --- 驗收標準 1：git fetch origin 成功 --------------------------------------
@@ -206,9 +206,9 @@ def test_verify_clean_script_executable_and_reflects_fail() -> None:
     )
 
     # (1) 結構化輸出存在：標頭 + 至少一處提到 origin/main
-    assert "# verify-clean.sh" in cp.stdout, (
-        f"腳本輸出缺 '# verify-clean.sh' 標頭，不像驗證腳本: stdout={cp.stdout[:500]!r}"
-    )
+    assert (
+        "# verify-clean.sh" in cp.stdout
+    ), f"腳本輸出缺 '# verify-clean.sh' 標頭，不像驗證腳本: stdout={cp.stdout[:500]!r}"
     assert "origin/main" in cp.stdout, f"腳本輸出缺 'origin/main' 標籤: stdout={cp.stdout[:500]!r}"
 
     match = re.search(r"=== 程式 fail=(\d+)", cp.stdout)
@@ -220,9 +220,9 @@ def test_verify_clean_script_executable_and_reflects_fail() -> None:
     )
 
     # (3) 不偽綠 exit 0 — 已在 (2) 涵蓋；額外保險：退出碼不可為 99（環境前置失敗）
-    assert cp.returncode != 99, (
-        f"腳本 exit 99（環境前置失敗），4 條命令未執行: stderr={cp.stderr!r}"
-    )
+    assert (
+        cp.returncode != 99
+    ), f"腳本 exit 99（環境前置失敗），4 條命令未執行: stderr={cp.stderr!r}"
 
 
 # --- 假性 diff 排除政策的證據（不修補，只盤點）------------------------------

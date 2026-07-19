@@ -73,9 +73,9 @@ def test_overview_equivalence_oracle():
             backlog.set_status(t["id"], status)
     ov = backlog.overview(window=50)
     assert ov["counts"] == backlog.counts(), "overview.counts 必須與 counts() 逐字段等價"
-    assert ov["completion"] == backlog.completion_stats(window=50), (
-        "overview.completion 必須與 completion_stats() 逐字段等價"
-    )
+    assert ov["completion"] == backlog.completion_stats(
+        window=50
+    ), "overview.completion 必須與 completion_stats() 逐字段等價"
 
 
 # --- lessons 快取 -------------------------------------------------------------

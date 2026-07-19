@@ -36,9 +36,9 @@ def test_impl_no_umask_swap_and_has_fchmod_or_chmod():
     # 不得有 os.umask( 的暫存交換寫法
     assert "os.umask(" not in src, "實作不應使用 os.umask 暫存交換寫法"
     # 必須有 fchmod 或 (mkstemp/replace) 或結尾 chmod 0o600 之一保證權限
-    assert ("fchmod" in src) or ("mkstemp" in src and "replace" in src), (
-        "需有 os.fchmod 或 mkstemp+os.replace 的安全建檔"
-    )
+    assert ("fchmod" in src) or (
+        "mkstemp" in src and "replace" in src
+    ), "需有 os.fchmod 或 mkstemp+os.replace 的安全建檔"
     assert "0o600" in src
 
 
@@ -227,9 +227,9 @@ def test_settings_update_tightens_existing_0644_env(sandbox):
 
     settings.update({"GITHUB_TOKEN": "ghp_tighten_via_api"})
 
-    assert _mode(str(env)) == 0o600, (
-        f"既存 0644 經 settings.update 後應收緊為 0600，實為 {oct(_mode(str(env)))}"
-    )
+    assert (
+        _mode(str(env)) == 0o600
+    ), f"既存 0644 經 settings.update 後應收緊為 0600，實為 {oct(_mode(str(env)))}"
     body = env.read_text()
     assert "ghp_tighten_via_api" in body and "preexisting" in body
 
@@ -245,9 +245,9 @@ def test_auth_set_password_writes_0600_env(sandbox):
 
     auth.set_password("s3cret-pw")
 
-    assert _mode(str(env)) == 0o600, (
-        f"auth.set_password 後 .env 應為 0600，實為 {oct(_mode(str(env)))}"
-    )
+    assert (
+        _mode(str(env)) == 0o600
+    ), f"auth.set_password 後 .env 應為 0600，實為 {oct(_mode(str(env)))}"
     assert "TI_ACCESS_PASSWORD" in env.read_text()
     assert os.environ["TI_ACCESS_PASSWORD"] == "s3cret-pw"
 

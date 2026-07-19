@@ -23,9 +23,9 @@ def _git(cwd: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        f"git {' '.join(args)} failed in {cwd}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"git {' '.join(args)} failed in {cwd}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     return result.stdout
 
 

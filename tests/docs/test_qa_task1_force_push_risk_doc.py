@@ -43,18 +43,18 @@ def test_force_push_table_row_is_first_mention_and_safe_default(lines):
 
 def test_force_push_has_overwrite_others_commit_risk(text):
     """風險提示：誤用會覆蓋/覆寫他人 commit。"""
-    assert re.search(r"(覆蓋|覆寫).{0,8}他人.{0,4}commit", text), (
-        "缺少『覆蓋/覆寫他人 commit』風險敘述"
-    )
+    assert re.search(
+        r"(覆蓋|覆寫).{0,8}他人.{0,4}commit", text
+    ), "缺少『覆蓋/覆寫他人 commit』風險敘述"
 
 
 def test_force_push_has_reflog_local_only_note(text):
     """風險提示：救援僅靠本機 reflog。"""
     assert "reflog" in text, "缺少 reflog 字樣"
     # reflog 同段需點明本機性
-    assert re.search(r"本機.{0,6}reflog|reflog[^\n]{0,30}本機", text), (
-        "缺少『reflog 僅本機』的本機性敘述"
-    )
+    assert re.search(
+        r"本機.{0,6}reflog|reflog[^\n]{0,30}本機", text
+    ), "缺少『reflog 僅本機』的本機性敘述"
 
 
 def test_force_push_risk_below_table(lines):

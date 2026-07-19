@@ -95,9 +95,9 @@ def test_儲存後重整值還在(sec4):
 
 
 def test_秘密欄留空不清空(sec4):
-    assert "留空" in sec4 and ("不變更" in sec4 or "未被清空" in sec4 or "不清空" in sec4), (
-        "④ 缺『秘密欄留空不清空』案例"
-    )
+    assert "留空" in sec4 and (
+        "不變更" in sec4 or "未被清空" in sec4 or "不清空" in sec4
+    ), "④ 缺『秘密欄留空不清空』案例"
 
 
 def test_未存變更離開提醒(sec4):
@@ -110,9 +110,9 @@ def test_未存變更離開提醒(sec4):
 def test_三高風險點全部出現(text):
     assert "連點" in text, "缺高風險點：連點儲存不重複送出"
     assert "離開" in text and ("未儲存" in text or "未存" in text), "缺高風險點：未存變更離開提醒"
-    assert ("重整" in text or "重新整理" in text) and ("還在" in text or "仍" in text), (
-        "缺高風險點：儲存後重整值還在"
-    )
+    assert ("重整" in text or "重新整理" in text) and (
+        "還在" in text or "仍" in text
+    ), "缺高風險點：儲存後重整值還在"
 
 
 # ---------- ⑤ 錯誤／權限覆蓋 ----------
@@ -163,18 +163,18 @@ def test_label包覆input_與renderSettings一致(sec6):
 def test_routes後端權限與錯誤防護屬實(sec5):
     src = ROUTES.read_text(encoding="utf-8")
     # GET /api/settings 受 require_auth
-    assert 'get("/api/settings", dependencies=[Depends(auth.require_auth)])' in src, (
-        "GET /api/settings 未掛 require_auth，5.2 失準"
-    )
+    assert (
+        'get("/api/settings", dependencies=[Depends(auth.require_auth)])' in src
+    ), "GET /api/settings 未掛 require_auth，5.2 失準"
     # POST /api/settings 受 require_admin 複合門禁（WRITE_DEPS）
-    assert 'post("/api/settings", dependencies=WRITE_DEPS)' in src, (
-        "POST /api/settings 未掛 WRITE_DEPS，5.3 失準"
-    )
+    assert (
+        'post("/api/settings", dependencies=WRITE_DEPS)' in src
+    ), "POST /api/settings 未掛 WRITE_DEPS，5.3 失準"
     assert "require_admin" in src, "WRITE_DEPS 未掛 require_admin 管理門禁"
     # 非 dict body → 400 格式錯誤
-    assert "isinstance(body, dict)" in src and '"格式錯誤"' in src and "status_code=400" in src, (
-        "POST 未對非物件 body 回 400 格式錯誤，5.4 失準"
-    )
+    assert (
+        "isinstance(body, dict)" in src and '"格式錯誤"' in src and "status_code=400" in src
+    ), "POST 未對非物件 body 回 400 格式錯誤，5.4 失準"
 
 
 # ---------- 真實行為佐證：持久化 round-trip + 0600 ----------
@@ -193,9 +193,9 @@ def test_持久化roundtrip_改其他欄原值保留(tmp_path):
     write_secret_file(env, "TI_PARALLEL_LANES", "6")
 
     assert get_key(env, "TI_MODEL_LEAD") == "claude-opus-4-8", "重整後文字欄值應保留"
-    assert get_key(env, "GITHUB_TOKEN") == "ghp_secret_xyz", (
-        "改其他欄後既有金鑰應保留（留空不清空的底層保證）"
-    )
+    assert (
+        get_key(env, "GITHUB_TOKEN") == "ghp_secret_xyz"
+    ), "改其他欄後既有金鑰應保留（留空不清空的底層保證）"
     assert get_key(env, "TI_PARALLEL_LANES") == "6", "新值應寫入"
 
 

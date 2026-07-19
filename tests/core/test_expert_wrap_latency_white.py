@@ -91,9 +91,9 @@ def test_non_expert_message_events_receive_no_metadata(monkeypatch):
     for event in bucket:
         assert event.type != events.EventType.EXPERT_MESSAGE
         for key in _INJECTED_KEYS:
-            assert key not in event.payload, (
-                f"{key!r} 被注入到 {event.type} 事件 — 只 EXPERT_MESSAGE 該被標註"
-            )
+            assert (
+                key not in event.payload
+            ), f"{key!r} 被注入到 {event.type} 事件 — 只 EXPERT_MESSAGE 該被標註"
 
 
 # --- 反例 2：payload 非 dict — 不炸、不注入 -----------------------------------
@@ -134,9 +134,9 @@ def test_non_dict_payload_does_not_crash_or_get_injected(monkeypatch):
     assert bucket[0].payload == ["untouched"]
     # 不注入：在 list sentinel 上，注入鍵本就不該存在。
     for key in _INJECTED_KEYS:
-        assert key not in bucket[0].payload, (
-            f"{key!r} 竟出現在非 dict payload — wrapper 應該跳過而非亂塞"
-        )
+        assert (
+            key not in bucket[0].payload
+        ), f"{key!r} 竟出現在非 dict payload — wrapper 應該跳過而非亂塞"
 
 
 # --- 反例 3：speaker 與 role_key 不匹配不注入 -----------------------------------
@@ -177,9 +177,9 @@ def test_speaker_mismatch_skips_metadata_injection(monkeypatch):
     assert payload["speaker"] == "pm"
     assert payload["speaker"] != wrapper.wrapped.role.key
     for key in _INJECTED_KEYS:
-        assert key not in payload, (
-            f"{key!r} 被注入非本人 ({payload['speaker']}) 的訊息 — speaker 不匹配時必須跳過"
-        )
+        assert (
+            key not in payload
+        ), f"{key!r} 被注入非本人 ({payload['speaker']}) 的訊息 — speaker 不匹配時必須跳過"
 
 
 # --- 反例 4：wrapped.speak 拋例外 — last_duration_s 仍要記錄 -------------------

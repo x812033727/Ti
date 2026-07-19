@@ -208,6 +208,6 @@ def test_mutation_drop_checker_script_path_turns_red(evidence, verdict, handoff_
     )
     assert mutated_text != handoff_text, "mutation 無效：未改到 script path"
     problems = check_handoff_body_row(mutated_text) + check_gate(evidence, verdict, mutated_text)
-    assert any("script" in p or "回指" in p for p in problems), (
-        f"假綠：script path 拿掉後守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "script" in p or "回指" in p for p in problems
+    ), f"假綠：script path 拿掉後守護未翻紅，problems={problems}"

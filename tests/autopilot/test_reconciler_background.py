@@ -62,9 +62,9 @@ def test_throttle_epoch_is_zero_in_source():
     """回歸守門:節流起點必須寫死 0.0——起點=time.time() 正是整晚失能的根因之一
     (重啟/execv 重新起算+邊界才跑=永遠追不上)。"""
     src = Path(autopilot.__file__).read_text(encoding="utf-8")
-    assert re.search(r"^_last_reconcile_at = 0\.0$", src, re.M), (
-        "_last_reconcile_at 模組初值必須是 0.0"
-    )
+    assert re.search(
+        r"^_last_reconcile_at = 0\.0$", src, re.M
+    ), "_last_reconcile_at 模組初值必須是 0.0"
 
 
 @pytest.mark.asyncio
@@ -138,9 +138,9 @@ async def test_gh_view_failure_logs_warning(monkeypatch, state, caplog):
     _install_run(monkeypatch, (1, "api error"))
     with caplog.at_level(logging.WARNING, logger="ti.autopilot"):
         await autopilot._maybe_reconcile_open_prs()
-    assert any("查 PR #42 失敗" in r.getMessage() for r in caplog.records), (
-        "gh 失敗必須 warning 可見——整個 pass 靜默失能曾以零 log 呈現"
-    )
+    assert any(
+        "查 PR #42 失敗" in r.getMessage() for r in caplog.records
+    ), "gh 失敗必須 warning 可見——整個 pass 靜默失能曾以零 log 呈現"
     assert next(x for x in backlog.list_tasks() if x["id"] == t["id"])["status"] == "merging"
 
 
@@ -154,6 +154,6 @@ async def test_pass_summary_logged(monkeypatch, state, caplog):
     )
     with caplog.at_level(logging.INFO, logger="ti.autopilot"):
         await autopilot._maybe_reconcile_open_prs()
-    assert any("核對 1 筆 merging" in r.getMessage() for r in caplog.records), (
-        "pass 級摘要:journal 必須能分辨 reconciler 有沒有在跑"
-    )
+    assert any(
+        "核對 1 筆 merging" in r.getMessage() for r in caplog.records
+    ), "pass 級摘要:journal 必須能分辨 reconciler 有沒有在跑"
