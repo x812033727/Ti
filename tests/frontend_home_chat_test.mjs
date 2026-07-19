@@ -49,4 +49,30 @@ $('#heroInput').value = '殘字';
 home.resetToHero();
 expect($('#homeMain').dataset.subview === 'hero' && $('#heroInput').value === '', '新對話應清空回 hero');
 
+
+
+// 6) 覆審修正回歸:離開 home 自動搬回 #stream(單向陷阱);attach 重置 sawDone
+const dash = await import('../web/js/panels/dashboard.js');
+const ws = await import('../web/js/ws.js');
+{
+  const stream2 = $('#stream');
+  const orig2 = { children: [stream2], insertBefore(el) { this.children.push(el); } };
+  stream2.parentNode = orig2;
+  stream2.nextSibling = null;
+  home.moveStreamHome();
+  stream2.parentNode = $('#homeChatStream');
+  dash.setView('studio'); // 觸發 onViewChange → moveStreamBack
+  expect(orig2.children.at(-1) === stream2, '切離 home 應自動搬回 #stream');
+}
+{
+  // 模擬前一場正常收尾(走真實 bindSocket 路徑把 sawDone 置 true),attach 後必須歸零
+  const sock = { onmessage: null, onerror: null, onclose: null };
+  ws.bindSocket(sock);
+  sock.onmessage({ data: JSON.stringify({ type: 'session_started', payload: {} }) });
+  sock.onmessage({ data: JSON.stringify({ type: 'done', payload: {} }) });
+  expect(ws.getReconnectState().sawDone === true, '前置:done 應標記 sawDone');
+  home.attachSessionInHome('s9');
+  expect(ws.getReconnectState().sawDone === false, 'attach 必須歸零 sawDone(否則斷線不重連)');
+}
+
 console.log('OK');
