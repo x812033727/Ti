@@ -67,7 +67,8 @@ mtime 皆凍結）會停滯 30–90 分鐘，但子行程其實持續在算。`c
    - `updated_at` 停滯（主迴圈死）；**或**
    - `state == "running"` 且 `workers.cpu_active == false` **且** `last_activity_at` 長時間不動。
    - 第二條的兩個子句必須**同時**成立才殺——`cpu_active == true` 或 `last_activity_at` 仍前進
-     任一為真即不得 restart（對應 issue #285 誤殺教訓）。門檻建議 ≥3× 刷新間隔（≥3–5 分含裕度）。
+     任一為真即不得 restart（對應 issue #285 誤殺教訓）。門檻建議 ≥3× 刷新間隔（≥3–5 分含裕度）；
+   生產選定值為 **≥300s（＝5×60s 心跳間隔，對齊 systemd WatchdogSec=300）**。
 
 4. **`workers.cpu_active == null` 不可單獨作為 restart 依據**（`/proc` 不可用或首 tick 屬正常）——
    此時退回規則 2/3 用 `updated_at` 與 `last_activity_at` 判斷。
