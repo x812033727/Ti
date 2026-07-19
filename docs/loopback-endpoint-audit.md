@@ -32,6 +32,7 @@
 | POST | `/api/autopilot/task` | admin（auth｜fail-safe loopback） | ✅ | 向會自主執行 bash 的 autopilot 注入任務 |
 | POST | `/api/autopilot/task/{task_id}/action` | admin（auth｜fail-safe loopback） | ✅ | 看板手動操作單一任務（retry/park/unpark/priority），改寫 backlog 狀態 |
 | POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
+| POST | `/api/notify/test` | admin（auth｜fail-safe loopback） | ✅ | 發送測試推播（webhook/Telegram）＝觸發對外網路呼叫且間接證實已設憑證，管理面操作 |
 | POST | `/api/roles` | admin（auth｜fail-safe loopback） | ✅ | 寫入角色檔 `roles/<key>.md` 並 reload 角色表（system_prompt 注入面） |
 | PUT | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 改寫角色檔並 reload（同 POST 寫入面） |
 | DELETE | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 刪角色檔（file＝移除、override＝還原內建），機器狀態變更 |

@@ -27,6 +27,7 @@ from . import (
     insights,
     interventions,
     lessons,
+    notify,
     projects,
     provider_quota,
     publisher,
@@ -982,6 +983,12 @@ async def autopilot_digest_read(name: str) -> JSONResponse:
 async def autopilot_audit_trend(days: int = 30) -> JSONResponse:
     """audit.jsonl 每日 outcome 分佈與完成率趨勢(近 N 天,UTC 日;口徑=insights.OK/FAIL)。"""
     return JSONResponse(await asyncio.to_thread(insights.audit_trend, days))
+
+
+@router.post("/api/notify/test", dependencies=WRITE_DEPS)
+async def notify_test() -> JSONResponse:
+    """端到端驗證推播管道:同步發一則 test 事件,回報各 sink(webhook/telegram)送達狀況。"""
+    return JSONResponse(await asyncio.to_thread(notify.send_test))
 
 
 @router.get("/api/autopilot/trust", dependencies=[Depends(auth.require_auth)])

@@ -122,6 +122,8 @@ def test_audit_managed_set_matches_decision():
         "/api/autopilot/dispatch-mode",
         "/api/autopilot/task",
         "/api/autopilot/triage",
+        # 測試推播(第 3 階 A1):觸發對外網路呼叫且間接證實已設 Telegram/webhook 憑證。
+        "/api/notify/test",
         # 看板手動操作(C1):改寫 backlog 狀態(retry/park/unpark/priority),與 triage 同級納管。
         "/api/autopilot/task/{task_id}/action",
         "/api/roles",

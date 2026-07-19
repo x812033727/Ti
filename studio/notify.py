@@ -5,6 +5,10 @@
     {"source": "ti", "kind": "<事件類型>", "title": "<一句人話>", ...extra}
 端點自理路由（Slack/Discord/自架皆可作 relay）。
 
+Telegram sink（第 3 階 A1）：TI_TELEGRAM_BOT_TOKEN + TI_TELEGRAM_CHAT_ID 皆非空即啟用，
+與 webhook 並存、各自獨立成敗——「按例外監控」的前提是推播真的到手機。端到端驗證走
+POST /api/notify/test（routes.py）。
+
 A0 起，每則事件（無論 webhook 是否設定）都先落檔 autopilot/events.jsonl
 （jsonl_log 範式）——quota_exhausted/loop_stall/task_failed 過去只有推播、不留痕，
 信任指標（insights.trust_metrics）需要無條件的結構化計數。
@@ -52,10 +56,8 @@ def read_events(days: int, *, state_dir: Path | None = None) -> list[dict]:
     return jsonl_log.read_window(_events_path(state_dir), days)
 
 
-def _post(url: str, kind: str, title: str, extra: dict) -> bool:
-    body = json.dumps(
-        {"source": "ti", "kind": kind, "title": title, **extra}, ensure_ascii=False
-    ).encode("utf-8")
+def _post_json(url: str, payload: dict, kind: str, title: str, sink: str) -> bool:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     try:
         req = urllib.request.Request(
             url, data=body, headers={"Content-Type": "application/json"}, method="POST"
@@ -63,24 +65,59 @@ def _post(url: str, kind: str, title: str, extra: dict) -> bool:
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S):
             pass
         return True
-    except Exception:  # noqa: BLE001 — 通知失敗不得影響呼叫端
-        log.debug("webhook 通知送出失敗（忽略）：%s %s", kind, title, exc_info=True)
+    except Exception:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 URL（Telegram URL 內嵌 token）
+        log.debug("%s 通知送出失敗（忽略）：%s %s", sink, kind, title, exc_info=True)
         return False
+
+
+def _post_webhook(url: str, kind: str, title: str, extra: dict) -> bool:
+    return _post_json(
+        url, {"source": "ti", "kind": kind, "title": title, **extra}, kind, title, "webhook"
+    )
+
+
+def _post_telegram(token: str, chat_id: str, kind: str, title: str, extra: dict) -> bool:
+    """Telegram sendMessage（第 3 階 A1）：純文字（不用 parse_mode，杜絕跳脫地雷）。"""
+    lines = [f"[ti] {kind}" + (f"：{title}" if title else "")]
+    lines += [f"{k}={v}" for k, v in extra.items()]
+    payload = {"chat_id": chat_id, "text": "\n".join(lines), "disable_web_page_preview": True}
+    return _post_json(
+        f"https://api.telegram.org/bot{token}/sendMessage", payload, kind, title, "telegram"
+    )
+
+
+def _deliver(kind: str, title: str, extra: dict) -> dict:
+    """把事件推到所有已設定的 sink；回 {sink: 成敗}（未設定的 sink 不出現）。"""
+    out: dict[str, bool] = {}
+    url = (config.NOTIFY_WEBHOOK or "").strip()
+    if url:
+        out["webhook"] = _post_webhook(url, kind, title, extra)
+    token = (config.TELEGRAM_BOT_TOKEN or "").strip()
+    chat_id = (config.TELEGRAM_CHAT_ID or "").strip()
+    if token and chat_id:
+        out["telegram"] = _post_telegram(token, chat_id, kind, title, extra)
+    return out
 
 
 def send(kind: str, title: str, **extra) -> bool:
-    """同步送出一則通知（先落檔）；未設 webhook 回 False，任何失敗吞掉回 False。"""
+    """同步送出一則通知（先落檔）；任一 sink 送達回 True，全失敗/皆未設定回 False。"""
     _persist(kind, title, extra)
-    url = (config.NOTIFY_WEBHOOK or "").strip()
-    if not url:
-        return False
-    return _post(url, kind, title, extra)
+    return any(_deliver(kind, title, extra).values())
+
+
+def send_test() -> dict:
+    """端到端驗證推播管道（同步）：發一則 test 事件，回報各 sink 送達狀況。"""
+    _persist("test", "推播管道測試", {})
+    results = _deliver("test", "推播管道測試", {})
+    return {"ok": any(results.values()), "sinks": results}
 
 
 def send_bg(kind: str, title: str, **extra) -> None:
-    """背景送出（daemon thread）：呼叫端零阻塞。未設 webhook 時僅落檔、零網路。"""
+    """背景送出（daemon thread）：呼叫端零阻塞。無任何 sink 設定時僅落檔、零網路。"""
     _persist(kind, title, extra)
-    url = (config.NOTIFY_WEBHOOK or "").strip()
-    if not url:
+    if not (
+        (config.NOTIFY_WEBHOOK or "").strip()
+        or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
+    ):
         return
-    threading.Thread(target=_post, args=(url, kind, title, extra), daemon=True).start()
+    threading.Thread(target=_deliver, args=(kind, title, extra), daemon=True).start()

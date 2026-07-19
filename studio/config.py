@@ -1129,6 +1129,10 @@ AUTOPILOT_RECONCILE_INTERVAL_S = int(os.getenv("TI_AUTOPILOT_RECONCILE_INTERVAL_
 # 主動通知 webhook（功能第五輪 F2）：異常事件（task_failed/loop_stall/quota_exhausted）
 # POST JSON 到此 URL。空＝關（預設）。實作在 studio/notify.py（零依賴、失敗吞掉）。
 NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
+# Telegram 推播（第 3 階 A1）：bot token + chat_id 皆非空才啟用，與 webhook 並存
+# （各自獨立成敗）。向 @BotFather 建 bot 取 token；chat_id 可由 getUpdates 查得。
+TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()
 EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
 EXPERT_IDLE_STOP_EXEMPT = frozenset(
     r.strip().lower() for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",") if r.strip()
@@ -1352,6 +1356,7 @@ def reload() -> None:
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
     global EXPERT_IDLE_STOP_S, EXPERT_IDLE_STOP_EXEMPT
     global AUTOPILOT_LOOP_STALL_S, AUTOPILOT_RECONCILE_INTERVAL_S, NOTIFY_WEBHOOK
+    global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global AUTOPILOT_DISCOVERED_DAILY_CAP, AUTOPILOT_RETRY_COOLDOWN_S
@@ -1579,6 +1584,8 @@ def reload() -> None:
     AUTOPILOT_LOOP_STALL_S = int(os.getenv("TI_AUTOPILOT_LOOP_STALL_S", "900"))
     AUTOPILOT_RECONCILE_INTERVAL_S = int(os.getenv("TI_AUTOPILOT_RECONCILE_INTERVAL_S", "300"))
     NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
+    TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
+    TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()
     EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
     EXPERT_IDLE_STOP_EXEMPT = frozenset(
         r.strip().lower()
