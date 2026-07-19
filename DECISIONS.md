@@ -2293,3 +2293,63 @@
 ## docs/VERIFY_metrics_panel.md 格式——含執行指令、exit code、截圖路徑、三條斷言各別 PASS/FAIL、console log 狀態（取到/不可取得/有 SEVERE）、假綠排除實跑記錄（--skip-open-panel 的 exit code 與斷言輸出）
 - 時間：2026-06-29 02:25
 
+## 新建 studio/notify.py，零新依賴，stdlib urllib 實作 webhook sink
+- 時間：2026-07-20 04:20
+- 理由：workspace 無任何通知模組；urllib 零依賴且與 CLAUDE.md「不隨意新增依賴」一致
+- 否決方案：aiosmtplib（新依賴）、email sink（SMTP TLS 雙模式複雜度 > 效益）
+
+## notify.py 公開介面為 send_bg(kind, title, **extra)，daemon thread 非同步送出
+- 時間：2026-07-20 04:20
+- 理由：autopilot 主迴圈是 async；daemon thread 保證呼叫端零阻塞、行程結束不等未送通知
+- 否決方案：直接 await（阻塞主迴圈）、asyncio.create_task（需在同 event loop 內且複雜化呼叫）
+
+## SEVERITY 分級表登記 task_failed/loop_task_error/deploy_failed 為 page，gate_failure 為 digest
+- 時間：2026-07-20 04:20
+- 理由：gate_failure 是重試過程中的常態訊號（重試可能通過），推播出去是噪音；只有最終放棄才推
+- 否決方案：全部 page（噪音過多）；全部 digest（失去即時告警意義）
+
+## send_bg 無 sink 設定時 early return，零網路呼叫
+- 時間：2026-07-20 04:20
+- 理由：TI_ALERT_WEBHOOK 空時任何掛載點都不應有副作用；確保「未設定 = 無回歸」
+- 否決方案：送失敗再吞（多一次 socket 建立成本）
+
+## config.py 新增 ALERT_WEBHOOK，頂層與 reload() 兩處同步定義
+- 時間：2026-07-20 04:20
+- 理由：專案鐵則——config 旋鈕必須頂層與 reload() 兩處同步，否則 reload 後不生效
+- 否決方案：只頂層不加 reload()（熱更新失效）；沿用 TI_NOTIFY_* 命名（任務明確要求 TI_ALERT_*）
+
+## _deliver() 讀 config.ALERT_WEBHOOK，不讀舊鍵
+- 時間：2026-07-20 04:20
+- 理由：workspace 本無舊鍵，無需向後相容；直接讀新鍵，無間接層
+
+## broadcast(891-892) 本體不改；notify 以 send_bg 明確掛在三個失敗路徑
+- 時間：2026-07-20 04:20
+- 理由：broadcast 是每個事件都呼叫的通用 hook，在此過濾會讓 notify 判斷與事件型別耦合；
+- 否決方案：在 broadcast 內部依 event.type 過濾推播（增加 broadcast 的職責、難以 monkeypatch 測試）
+
+## _handle_gate_failure else 分支（最終放棄，標 failed）補 send_bg("task_failed",...)；重試分支不推
+- 時間：2026-07-20 04:20
+- 理由：重試中推播是噪音且可能誤報；放棄才是紅色事件需人介入
+
+## deploy 失敗(982) 補 send_bg("deploy_failed",...) 於 _pause() 之前
+- 時間：2026-07-20 04:20
+- 理由：_pause() 是人工介入訊號，需同步推播讓人知道
+
+## 主迴圈例外(1048) 補 send_bg("loop_task_error", task_id=task.get("id",""), ...)
+- 時間：2026-07-20 04:20
+- 理由：task 在此已確定存在（next_pending 非 None 才往下走），task.get("id","") 安全取值
+- 否決方案：locals().get("task_id","")（不必要，task 已明確 bound）
+
+## tests/test_notify.py 三條斷言：空config零urllib呼叫、有config觸發POST、URL不出現在 log
+- 時間：2026-07-20 04:20
+- 理由：覆蓋核心合約：無設定零副作用、有設定真的送、憑證不洩漏
+- 否決方案：monkeypatch config.ALERT_WEBHOOK 直接改全域（易與 reload 機制混淆）；測試用 patch + env var 方式
+
+## autopilot 紅色路徑測試 monkeypatch notify.send_bg 計數，走最短失敗路徑，不拆主流程
+- 時間：2026-07-20 04:20
+- 理由：工程師明確提醒：「不要為測試製造新抽象」；monkeypatch 是最小侵入驗證
+
+## TI_ALERT_WEBHOOK 未設時整個系統行為與現況完全一致（無回歸）
+- 時間：2026-07-20 04:20
+- 理由：所有掛載點均在 send_bg early return 保護下；新增呼叫不影響 None-config 路徑
+

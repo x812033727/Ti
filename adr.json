@@ -1,97 +1,6 @@
 {
   "entries": [
     {
-      "decision": "orchestrator 接線於 `_discuss_agenda` 討論全部結束後、ADR 蒸餾同階段，依序 summarize→record→commit（訊息「結論彙整：產出 CONCLUSION.md」）→broadcast CONCLUSION 事件，單一接點不散落",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.968065
-    },
-    {
-      "decision": "落盤 commit 沿用既有 `self._commit` 慣例，不引入 `fcntl` 鎖",
-      "rationale": "單檔每場覆寫一次、無同檔跨程序併發，鎖為過度設計（adr.py 的鎖是為 read-modify-write 累積＋跨場併發）",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680665
-    },
-    {
-      "decision": "移除原設計「ERE 可攜性」措辭——此處為 Python `re` 非 shell grep fallback，CLAUDE.md 的 lookbehind/PCRE 教訓不適用，`[:：]` 全形容錯沿用既有 parser 即可",
-      "rationale": "高工澄清，避免把掃描腳本的可攜性顧慮誤套到 Python 解析",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.9680676
-    },
-    {
-      "decision": "測試切分——`parse_conclusion` 四段正常解析／全形冒號／漏標回空骨架純函式測試；`_build_summary` 新鍵（含 per-pair 末輪 stance、self-mention 排除、零-mention 黑樣本、部分-mention 灰樣本）stance 路徑測試；離線 e2e 驗證跑完 workspace 根產出 CONCLUSION.md 四段且至少一條回指 transcript（自證對應、排除假綠）",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pjac99386bbc",
-      "created_at": 1781318684.968069
-    },
-    {
-      "decision": "任務#1 第④條自我校驗指令插入 `build_prompt` 的 159 行（硬指令③）與 160 行（「盡量帶 (round, speaker) 錨點」提示）之間",
-      "rationale": "經兩位親查核實該位置不動四鍵前綴格式，`flow.parse_conclusion` 解析不破壞（驗收#1）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799076
-    },
-    {
-      "decision": "任務#1 第④條措辭須與 160 行「盡量帶錨點」語意對齊不打架——統一為「能對應骨架錨點者帶上，自檢確認每條都有骨架依據，查無依據者刪除」，避免 LLM 將「盡量帶」與「無依據即刪」理解成衝突",
-      "rationale": "工程師指出兩行語氣若對立會擾動 LLM 輸出；收斂為同一條「有依據才留、留則帶錨」的一致敘事",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.379911
-    },
-    {
-      "decision": "任務#2 護欄套用範圍以「是否走 `_anchored_from_summary` 回填」為判別，凡未被回填的 LLM 自產非空鍵一律過護欄，明確涵蓋 `actions` 鍵",
-      "rationale": "工程師指出 `actions` 永遠走 LLM 原文、不在部分漏標回填範圍內，若護欄只列 consensus/disagreements/open_questions 則幻覺 action 漏網",
-      "rejected": "寫死鍵名清單套護欄——會遺漏 actions，且與「回填條目不重複處理」的判別邏輯不一致",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799124
-    },
-    {
-      "decision": "任務#2 護欄 `_guard_anchor` 採「抽 `(R<n> <speaker>)` token + 驗 speaker 存在性」保守判別，抽不到或 speaker 不存在於 transcript 才加 `（未錨定）`",
-      "rationale": "LLM 自由文字無法用規則層 `f\"{s} {verb} {t}\"` 精確重建，保守策略寧漏標不誤傷真錨點；`re` 限 ERE 等價、不用 PCRE 符合 CLAUDE.md 可攜性鐵則",
-      "rejected": "規則層精確重建比對——僅適用規則條目，套到 LLM 自由文字會大量誤標真來源條目",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799133
-    },
-    {
-      "decision": "任務#2 須在程式註解與 #5 交付說明標明護欄判別力上限為「只驗 speaker 出現、不驗 round 與論點對應」的盡力而為，非幻覺攔截保證，列為已知待辦",
-      "rationale": "高工指出「真 speaker＋幻覺論點」仍會漏標；須避免驗收#2 被誤解為護欄能保證攔幻覺，誠實暴露限制（CLAUDE.md 元認知鐵則）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799143
-    },
-    {
-      "decision": "任務#3 `record` 雙寫採「md 主檔先寫保底、sidecar best-effort 後寫」語義——`conclusion.json` 寫入包 try，失敗降級為只保留 `CONCLUSION.md` ＋ log warning，不拋例外、不拖垮人讀主檔與既有 record→commit→broadcast 時序",
-      "rationale": "高工指出 `_record_conclusion` 無 try，sidecar 拋例外會中斷 commit/broadcast 且 md 已落卻未入 git；md 為驗收核心（#3/#5/#6）必落保底，sidecar 為 M2 前瞻附屬可降級",
-      "rejected": "工程師「sidecar 先寫、md 後寫代表整組就緒」——順序技巧仍需包 try 才安全，且讓附屬檔擋在主檔前不符主檔優先級；改以「主檔先落＋附屬 best-effort」更穩",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799152
-    },
-    {
-      "decision": "任務#3 sidecar 寫入失敗的降級路徑須清理殘留 `.json.tmp`，收尾以 `git status` 確認 workspace 無未追蹤殘檔",
-      "rationale": "高工提醒 tmp-replace 失敗可能殘留 `.json.tmp`，沿用 `adr.py` 範式並符合 CLAUDE.md「臨時檔不落被掃描目錄、收尾 git status 驗無殘留」鐵則",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799162
-    },
-    {
-      "decision": "任務#3 sidecar schema 為 `{\"version\": 1, \"session_id\", \"rounds\", \"consensus\", \"disagreements\", \"open_questions\", \"actions\"}`，`record` 加 `rounds: int = 0` keyword-only 參數承載輪數，回傳值維持 `CONCLUSION.md` path 不變",
-      "rationale": "`version` 欄供 M2 演進辨識；回傳不變則 broadcast CONCLUSION 事件零影響；`cwd is None` 時兩檔皆不落、回 None（驗收#3）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799171
-    },
-    {
-      "decision": "任務#4 orchestrator `_record_conclusion` 僅改一行——`conclusion.record(...)` 傳 `rounds=max((u.round for u in transcript), default=0)`，commit 範圍不需改動",
-      "rationale": "高工驗實 `git_commit` 為 `git add -A`（runner.py 605），sidecar 在 commit 前由 record 寫出即同 commit 入 git，#4 零接線假設成立（驗收#4）",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799176
-    },
-    {
       "decision": "任務#4 維持既有 record→commit→broadcast 時序與單一接點不變，sidecar 僅為 record 內多寫一檔，不新增接點、不散落",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3408,97 @@
       "rejected": "",
       "session_id": "pjeaf1f783d0",
       "created_at": 1782671139.476192
+    },
+    {
+      "decision": "新建 studio/notify.py，零新依賴，stdlib urllib 實作 webhook sink",
+      "rationale": "workspace 無任何通知模組；urllib 零依賴且與 CLAUDE.md「不隨意新增依賴」一致",
+      "rejected": "aiosmtplib（新依賴）、email sink（SMTP TLS 雙模式複雜度 > 效益）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.871221
+    },
+    {
+      "decision": "notify.py 公開介面為 send_bg(kind, title, **extra)，daemon thread 非同步送出",
+      "rationale": "autopilot 主迴圈是 async；daemon thread 保證呼叫端零阻塞、行程結束不等未送通知",
+      "rejected": "直接 await（阻塞主迴圈）、asyncio.create_task（需在同 event loop 內且複雜化呼叫）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712256
+    },
+    {
+      "decision": "SEVERITY 分級表登記 task_failed/loop_task_error/deploy_failed 為 page，gate_failure 為 digest",
+      "rationale": "gate_failure 是重試過程中的常態訊號（重試可能通過），推播出去是噪音；只有最終放棄才推",
+      "rejected": "全部 page（噪音過多）；全部 digest（失去即時告警意義）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712268
+    },
+    {
+      "decision": "send_bg 無 sink 設定時 early return，零網路呼叫",
+      "rationale": "TI_ALERT_WEBHOOK 空時任何掛載點都不應有副作用；確保「未設定 = 無回歸」",
+      "rejected": "送失敗再吞（多一次 socket 建立成本）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.871228
+    },
+    {
+      "decision": "config.py 新增 ALERT_WEBHOOK，頂層與 reload() 兩處同步定義",
+      "rationale": "專案鐵則——config 旋鈕必須頂層與 reload() 兩處同步，否則 reload 後不生效",
+      "rejected": "只頂層不加 reload()（熱更新失效）；沿用 TI_NOTIFY_* 命名（任務明確要求 TI_ALERT_*）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712287
+    },
+    {
+      "decision": "_deliver() 讀 config.ALERT_WEBHOOK，不讀舊鍵",
+      "rationale": "workspace 本無舊鍵，無需向後相容；直接讀新鍵，無間接層",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.87123
+    },
+    {
+      "decision": "broadcast(891-892) 本體不改；notify 以 send_bg 明確掛在三個失敗路徑",
+      "rationale": "broadcast 是每個事件都呼叫的通用 hook，在此過濾會讓 notify 判斷與事件型別耦合；",
+      "rejected": "在 broadcast 內部依 event.type 過濾推播（增加 broadcast 的職責、難以 monkeypatch 測試）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712306
+    },
+    {
+      "decision": "_handle_gate_failure else 分支（最終放棄，標 failed）補 send_bg(\"task_failed\",...)；重試分支不推",
+      "rationale": "重試中推播是噪音且可能誤報；放棄才是紅色事件需人介入",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712318
+    },
+    {
+      "decision": "deploy 失敗(982) 補 send_bg(\"deploy_failed\",...) 於 _pause() 之前",
+      "rationale": "_pause() 是人工介入訊號，需同步推播讓人知道",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712327
+    },
+    {
+      "decision": "主迴圈例外(1048) 補 send_bg(\"loop_task_error\", task_id=task.get(\"id\",\"\"), ...)",
+      "rationale": "task 在此已確定存在（next_pending 非 None 才往下走），task.get(\"id\",\"\") 安全取值",
+      "rejected": "locals().get(\"task_id\",\"\")（不必要，task 已明確 bound）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712335
+    },
+    {
+      "decision": "tests/test_notify.py 三條斷言：空config零urllib呼叫、有config觸發POST、URL不出現在 log",
+      "rationale": "覆蓋核心合約：無設定零副作用、有設定真的送、憑證不洩漏",
+      "rejected": "monkeypatch config.ALERT_WEBHOOK 直接改全域（易與 reload 機制混淆）；測試用 patch + env var 方式",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712344
+    },
+    {
+      "decision": "autopilot 紅色路徑測試 monkeypatch notify.send_bg 計數，走最短失敗路徑，不拆主流程",
+      "rationale": "工程師明確提醒：「不要為測試製造新抽象」；monkeypatch 是最小侵入驗證",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712354
+    },
+    {
+      "decision": "TI_ALERT_WEBHOOK 未設時整個系統行為與現況完全一致（無回歸）",
+      "rationale": "所有掛載點均在 send_bg early return 保護下；新增呼叫不影響 None-config 路徑",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712358
     }
   ]
 }
