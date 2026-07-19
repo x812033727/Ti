@@ -30,7 +30,7 @@ import {
   filterSettings, refreshProviderQuota, savePassword, redeployNow,
 } from "./js/panels/settings.js";
 import { bindDashboard, setView } from "./js/panels/dashboard.js";
-import { bindSidenav, focusComposer } from "./js/panels/sidenav.js";
+import { bindSidenav, focusComposer, refreshSidenavHistory } from "./js/panels/sidenav.js";
 import { bindHome } from "./js/panels/home.js";
 
 // --- 事件綁定（集中接線；module script 於 DOM 解析完才執行，可直接查元素）----
@@ -81,7 +81,16 @@ $("#projectSelect").addEventListener("change", onProjectChange);
 $("#improveChk").addEventListener("change", () => updateStartLabel());
 $("#requirement").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 // 助手首頁:rail 首頁鈕 + 側欄 + hero composer(home.js 對話編排)。
-$("#homeBtn").onclick = () => { setView("home"); focusComposer(); };
+$("#homeBtn").onclick = () => { setView("home"); refreshSidenavHistory(); focusComposer(); };
+// Ctrl/Cmd+K=新對話(Kimi 慣例):任何視圖直達 home hero。
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    setView("home");
+    refreshSidenavHistory();
+    import("./js/panels/home.js").then((m) => m.resetToHero());
+  }
+});
 $("#interjectInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendInterject(); });
 
 bindSettings();

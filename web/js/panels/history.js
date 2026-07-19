@@ -96,7 +96,7 @@ export async function cleanupCompleted() {
   } catch (e) { toast("清除失敗", "err"); }
 }
 
-export async function replaySession(sid) {
+export async function replaySession(sid, opts = {}) {
   if (state.replaying) return;
   closeDrawer("#historyPanel");
   stopReconnect(); // 主動導向重播＝放棄重掛，別讓 onclose 又觸發重連
@@ -112,7 +112,7 @@ export async function replaySession(sid) {
   // 直接一次把整段歷史渲染完，畫面停在最底（最新）；要看過程往上滑即可。
   // replaying 旗標維持為 true，讓 handleEvent 的 done case 不會替歷史 session 補出發佈鈕。
   state.replaying = true;
-  setView("studio"); // 重播內容渲染在討論串：先切到工作室視圖
+  setView(opts.view || "studio"); // 重播渲染在 #stream:預設工作室;home 側欄重播傳 view:"home"
   setRunning(false);
   clearStream();
   clearBoard();
