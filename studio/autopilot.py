@@ -4293,6 +4293,21 @@ async def _digest_scheduler() -> None:
             if today not in existing:
                 name = await asyncio.to_thread(digest.save_digest)
                 log.info("digest 已落盤：%s", name)
+                # 每日摘要推播(軌 D3,TI_DIGEST_PUSH opt-in):三行人話,一天一則。
+                if config.DIGEST_PUSH:
+                    d = await asyncio.to_thread(digest.build_digest, 7)
+                    tr = d.get("trust") or {}
+                    rate = d.get("completion_rate")
+                    zt = tr.get("zero_touch_rate")
+                    bc = d.get("backlog_counts") or {}
+                    notify.send_bg(
+                        "daily_digest",
+                        "Ti 每日摘要",
+                        rate=f"{round(rate * 100)}%" if rate is not None else "—",
+                        zero_touch=f"{round(zt * 100)}%" if zt is not None else "—",
+                        pending=bc.get("pending", 0),
+                        merged=len(d.get("prs") or []),
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — 排程器自身失敗不得影響主迴圈
