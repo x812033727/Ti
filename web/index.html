@@ -407,8 +407,16 @@
           <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>排程任務</span></button>
         <button id="snStudio" title="進入工作室(完整三欄)">
           <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span>工作室</span></button>
-        <button id="snAccount" disabled title="即將推出">
-          <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span>帳號</span></button>
+        <div class="sn-account-wrap">
+          <div id="snAccountMenu" class="sn-menu hidden" role="menu" aria-label="帳號選單">
+            <button id="accTheme" role="menuitem">切換主題</button>
+            <button id="accPassword" role="menuitem">變更密碼</button>
+            <button id="accLang" role="menuitem" disabled title="即將推出">語言:繁體中文</button>
+            <button id="accLogout" role="menuitem" class="danger">登出</button>
+          </div>
+          <button id="snAccount" title="帳號與偏好">
+            <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span>帳號</span></button>
+        </div>
       </div>
     </aside>
     <div id="homeMain" class="home-main" data-subview="hero">
