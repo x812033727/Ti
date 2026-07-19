@@ -7,6 +7,19 @@ import subprocess
 import pytest
 
 LOOPBACK_REFUSED_SKIP_REASON = "沙箱禁跨進程 loopback（client 連線被拒）——環境因素"
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+
+
+def scrub_proxy_env(env: dict[str, str]) -> None:
+    for key in _PROXY_ENV_KEYS:
+        env.pop(key, None)
 
 
 def _looks_like_loopback_refused_traceback(output: str) -> bool:
