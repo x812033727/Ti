@@ -18,6 +18,11 @@ let dashTimer = null;
 // --- 視圖切換（首頁 home / 監控 dash / 工作室 studio）：body[data-view] 為單一真相 -------
 const VIEW_BTNS = { "#homeBtn": "home", "#viewDashBtn": "dash", "#viewStudioBtn": "studio" };
 
+// 視圖變更回呼(覆審修正):home 模組訂閱以搬回 #stream——dashboard 不 import home
+// (會成環),用註冊表解耦(同 deck.onRunningChange 範式)。
+const _viewCbs = [];
+export function onViewChange(cb) { _viewCbs.push(cb); }
+
 export function setView(view) {
   document.body.dataset.view = view;
   Object.entries(VIEW_BTNS).forEach(([sel, v]) => {
@@ -37,6 +42,7 @@ export function setView(view) {
   } else {
     stopDashTimer();
   }
+  for (const cb of _viewCbs) { try { cb(view); } catch { /* 回呼不得炸視圖切換 */ } }
 }
 
 function startDashTimer() {

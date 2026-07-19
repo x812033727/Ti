@@ -39,6 +39,15 @@ export function getReconnectState() {
   return { eventCount, counting, sawDone, reconnectAttempts };
 }
 
+// attach 訂閱前的狀態重置(覆審修正):start() 會歸零 sawDone/attempts,attach 路徑
+// 過去只 stopReconnect——前一場正常收尾留下的 sawDone=true 會讓新 attach 的斷線被
+// 誤判「已收尾」而不重連。eventCount 由 attach_ok 權威校準,這裡不動。
+export function resetForAttach() {
+  stopReconnect();
+  sawDone = false;
+  reconnectAttempts = 0;
+}
+
 export function stopReconnect() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   counting = false; // 停止起算＝onclose 不再觸發重連（重播/手動導航時用）
