@@ -48,6 +48,7 @@
 | GET  | `/api/autopilot/backlog` | auth | ➖ | 讀取待辦清單 |
 | GET  | `/api/autopilot/activity` | auth | ➖ | 讀取任務動態視圖（backlog × history 記分卡/token 用量聚合） |
 | GET  | `/api/autopilot/audit-trend` | auth | ➖ | 唯讀：audit.jsonl 每日 outcome 分佈與完成率趨勢 |
+| GET  | `/api/autopilot/trust` | auth | ➖ | 唯讀：信任指標（零人工介入合併率/介入分類/系統事件計數，第 3 階 A0） |
 | GET  | `/api/autopilot/investigations` | auth | ➖ | 唯讀：調查任務結論清單（backlog note＋audit join） |
 | GET  | `/api/lessons` | auth | ➖ | 唯讀：教訓庫瀏覽（子字串搜尋） |
 | GET  | `/api/autopilot/digest` | auth | ➖ | 唯讀：週報 digest（audit/backlog/lessons 純模板彙整） |

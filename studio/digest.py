@@ -83,6 +83,7 @@ def build_digest(days: int = 7) -> dict:
         "north_star": config.AUTOPILOT_NORTH_STAR,
         "backlog_counts": backlog.counts(),
         "version": pyproject_version(),
+        "trust": insights.trust_metrics(days),
     }
 
 
@@ -110,6 +111,24 @@ def render_markdown(digest: dict) -> str:
         f"**完成率**:{rate_s} {prev_s}".rstrip(),
         f"**終局分佈**:{counts_s}",
         f"**backlog**:pending {bc.get('pending', 0)}・merging {bc.get('merging', 0)}・done {bc.get('done', 0)}・failed {bc.get('failed', 0)}・parked {bc.get('parked', 0)}",
+    ]
+    tr = digest.get("trust")
+    if tr:
+        zt = tr.get("zero_touch_rate")
+        zt_s = f"{round(zt * 100)}%" if zt is not None else "—"
+        iv = tr.get("interventions", {})
+        cat = iv.get("by_category", {})
+        ev = tr.get("events", {})
+        ev_s = "・".join(f"{k} {v}" for k, v in sorted(ev.items()) if v) or "無"
+        lines += [
+            "",
+            "### 信任指標(第 3 階基線)",
+            f"- 零人工介入合併率:{zt_s}(merged {tr.get('merged', 0)}・被人工複審 {tr.get('merged', 0) - tr.get('zero_touch', 0)})",
+            f"- 一次過合併:{tr.get('first_try_merged', 0)}/{tr.get('merged', 0)}・reconciler 收斂:{tr.get('reconciled_merges', 0)}",
+            f"- 人工介入:{iv.get('total', 0)} 次(成果審查 {cat.get('output_review', 0)}・補背景 {cat.get('context_feeding', 0)}・維運 {cat.get('ops', 0)})",
+            f"- 系統事件:{ev_s}",
+        ]
+    lines += [
         "",
         f"### 本窗合併 PR({len(digest['prs'])})",
     ]
