@@ -2871,6 +2871,77 @@ async def _maybe_norms_distill() -> None:
         log.warning("規範迴路蒸餾失敗（忽略）", exc_info=True)
 
 
+# --- 意圖迴路自動化(軌 G2) ---------------------------------------------------
+_intent_discovery_day: tuple | None = None
+
+
+async def _maybe_intent_discovery() -> None:
+    """意圖迴路的自主觸發端(TI_INTENT_DISCOVERY=0 預設關,零成本;需 ⑧ INTENT_LOOP 同開)。
+
+    ProjectImprover 只在人手動開改良 session 時運轉——沒有這一步,「意圖→自產」斷在
+    觸發端。每日一次:對每個設有常駐 intent 的專案,headless 單專家(SENIOR,cwd=專案
+    workspace)做意圖差距分析;`任務:` 行過 done 去重入專案 backlog(source="intent"),
+    `核心改動:` 行走 route_core_changes(source="intent")=core audit 可量測的
+    「意圖→零人工交付」通道。任何失敗只 log,不得影響主迴圈。
+    """
+    global _intent_discovery_day
+    if not (config.INTENT_DISCOVERY and config.INTENT_LOOP):
+        return
+    day = time.gmtime()[:3]
+    if _intent_discovery_day == day:
+        return
+    _intent_discovery_day = day
+    try:
+        from . import flow, improver, projects
+        from .experts import Expert
+        from .roles import SENIOR
+
+        async def _noop(_ev):
+            return None
+
+        for meta in projects.list_projects():
+            intent = str(meta.get("intent") or "").strip()
+            if not intent:
+                continue
+            pid = str(meta.get("id") or "")
+            cwd = projects.workspace_dir(pid)
+            if not cwd.is_dir():
+                continue
+            sid = f"intent-disc-{pid[:8]}-{day[0]:04d}{day[1]:02d}{day[2]:02d}"
+            prompt = (
+                f"你正在審視長期產品專案「{meta.get('name', '')}」(程式碼就在你的工作目錄)。\n"
+                f"【專案常駐意圖(北極星指令)】{intent}\n"
+                "請用 Read/Grep 檢視現況並做差距分析:只提「離意圖最近的缺口」任務 1~5 點,"
+                "每點獨立一行,格式固定 `任務: [P0/bug] <動詞開頭的具體任務>`(標籤可省視為 P1);"
+                "若是要改 Ti 核心框架本身(非本產品程式碼),改用 `核心改動: <描述>`。"
+                "只輸出任務行或核心改動行。" + improver._DISCOVERY_QUALITY_BAR
+            )
+            ex = Expert(SENIOR, sid, cwd)
+            try:
+                text = await ex.speak(prompt, _noop)
+            finally:
+                with contextlib.suppress(Exception):
+                    await ex.stop()
+            sdir = projects.state_dir(pid)
+            done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY, state_dir=sdir)
+            items = [
+                t
+                for t in flow.parse_structured_tasks(text or "")
+                if t.get("title", "").strip() and t["title"].strip() not in done
+            ]
+            n_proj = backlog.add_items(
+                items[: improver.DISCOVERY_MAX], source="intent", state_dir=sdir
+            )
+            n_core = backlog.route_core_changes(
+                flow.parse_core_changes(text or ""), source="intent"
+            )
+            log.info(
+                "意圖差距分析(%s):專案任務 %d、核心改動 %d", meta.get("name", pid), n_proj, n_core
+            )
+    except Exception:  # noqa: BLE001 — 意圖迴路是加值,不得影響主迴圈
+        log.warning("意圖差距分析失敗(忽略)", exc_info=True)
+
+
 # --- 排程任務入列(Kimi 化 PR10) ---------------------------------------------
 _schedules_checked_at = 0.0
 
@@ -4529,6 +4600,8 @@ async def _main_loop(startup_sig: float) -> None:
         _recover_stale_in_progress()
         # 規範迴路(A3,灰度):人工介入/失敗事件 → 蒸餾成慣例入 lessons(每日一次)。
         await _maybe_norms_distill()
+        # 意圖迴路自動化(G2,灰度):有 intent 的專案每日一輪差距分析找問題。
+        await _maybe_intent_discovery()
         # async clarify(B4,灰度):[待澄清] parked 逾時自動依假設前進(15 分鐘掃一次)。
         _maybe_clarify_timeout()
         # 排程任務(PR10):到期排程入列(60 秒節流;店面空=零成本)。
