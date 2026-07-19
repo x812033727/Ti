@@ -433,7 +433,7 @@ class ProjectImprover:
             autopilot._filter_pending_duplicates([t["title"].strip() for t in items], existing)
         )
         items = [t for t in items if t["title"].strip() in kept]
-        n = backlog.add_items(items[:DISCOVERY_MAX], source="eval", state_dir=sdir)
+        n = backlog.add_items(items[:DISCOVERY_MAX], source=self._discovery_source(), state_dir=sdir)
         # 留痕閉環：把「源頭擋掉幾個重複/低價值提案」回報前端並寫進伺服器日誌，取代靜默丟棄，
         # 讓使用者看得到把關量、可據此回饋調整品質下限（dropped 不含 DISCOVERY_MAX 容量截斷）。
         dropped = raw_n - len(items)
@@ -464,6 +464,7 @@ class ProjectImprover:
         # 長期目標段與 autopilot 自評同源（autopilot.north_star_context → config，單一真相）。
         head = (
             autopilot.north_star_context()
+            + self._intent_context()  # 意圖差距分析與 generic 同步注入(F2:蓋章 source=intent 的前提)
             + self._recent_outcomes_context()
             + self._scorecard_context()
             + (
@@ -514,6 +515,14 @@ class ProjectImprover:
             "請先做差距分析:對照上述意圖與產品現況/近期完成項,優先提出「離意圖最近的"
             "缺口」任務;與意圖無關的鍍金式改良不要提。\n"
         )
+
+    def _discovery_source(self) -> str:
+        """本輪找問題的 backlog source:意圖差距分析驅動=「intent」,否則「eval」。
+
+        第 4 階量測(軌 F2)靠這個標記把「意圖→交付」從一般自我發現中辨識出來;
+        _intent_context 為空(旗標關/無 intent)時與舊行為逐位等價。
+        """
+        return "intent" if self._intent_context() else "eval"
 
     async def _discover_with_experts(self, pid: str, sid: str) -> list[dict]:
         """多視角並行「找問題」：各視角獨立提案 → 角色輪替合併＋依標題去重。
