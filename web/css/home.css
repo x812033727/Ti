@@ -142,3 +142,20 @@ body[data-view="home"] main.layout { display: none; }
 .plug-desc { margin: 0; font-size: var(--fs-1); }
 .plug-manage { align-self: flex-start; font-size: var(--fs-1); }
 .plug-skills { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-1); }
+
+/* 排程任務頁(PR11) */
+.sched-list { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  padding: var(--sp-2) var(--sp-3);
+}
+.sched-row.off { opacity: 0.6; }
+.sched-info { flex: 1; min-width: 0; }
+.sched-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sched-meta { font-size: var(--fs-0); }
+#schedAdd { margin-top: var(--sp-2); }

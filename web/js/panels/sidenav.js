@@ -61,4 +61,6 @@ export function bindSidenav() {
   if (studio) studio.onclick = () => setView("studio");
   const plugins = $("#snPlugins");
   if (plugins) plugins.onclick = () => import("./plugins.js").then((m) => m.openPlugins());
+  const sched = $("#snSchedules");
+  if (sched) sched.onclick = () => import("./schedules.js").then((m) => m.openSchedules());
 }
