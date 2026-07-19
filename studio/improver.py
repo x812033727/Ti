@@ -117,6 +117,35 @@ class ProjectImprover:
 
     # --- 主迴圈 ----------------------------------------------------------
     async def run(self, max_cycles: int | None = None) -> dict:
+        """持續改良迴圈的唯一進場點(跨行程互斥,軌 H1)。
+
+        鎖=projects/{id}/improve.lock 非阻塞 flock:人工改良場(ws)與 autopilot
+        自主排水共用 ProjectImprover,單一進場點互斥即雙向安全(ws 行程內重複另有
+        _active_projects 擋)。搶不到=另一場正在跑,broadcast 一句直接收場。
+        """
+        import fcntl
+
+        sdir = projects.state_dir(self.project["id"])
+        sdir.mkdir(parents=True, exist_ok=True)
+        lock_file = open(sdir / "improve.lock", "w")  # noqa: SIM115 — 鎖生命週期跨 finally
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock_file.close()
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id, "持續改良", "另一個改良場正在此專案上運行,本場不啟動"
+                )
+            )
+            return {"cycles": 0, "done": 0, "failed": 0, "stopped": True}
+        try:
+            return await self._run_unlocked(max_cycles)
+        finally:
+            with contextlib.suppress(Exception):
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+                lock_file.close()
+
+    async def _run_unlocked(self, max_cycles: int | None = None) -> dict:
         """跑持續改良迴圈，回傳摘要 {cycles, done, failed, stopped}。
 
         結束條件（先到先停）：使用者停止／達 max_cycles（0=不限）／連續失敗達上限／

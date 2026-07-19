@@ -4241,11 +4241,13 @@ async def main() -> None:
         notifier = asyncio.create_task(_watchdog_notifier())
         reconciler = asyncio.create_task(_reconciler_loop())
         digester = asyncio.create_task(_digest_scheduler())
+        improver_lane = asyncio.create_task(_project_improve_lane())
     except AttributeError:
         monitor = None
         sideline = None
         notifier = None
         reconciler = None
+        improver_lane = None
         digester = None
     try:
         await _main_loop(startup_sig)
@@ -4261,7 +4263,7 @@ async def main() -> None:
     finally:
         # 先收尾旁路調查再 cancel:sideline 的 finally 會清掉 _sideline_task_info。
         _requeue_sideline_task("優雅停機")
-        for aux in (monitor, sideline, notifier, reconciler, digester):
+        for aux in (monitor, sideline, notifier, reconciler, digester, improver_lane):
             if aux is not None:
                 aux.cancel()
                 with contextlib.suppress(BaseException):
@@ -4345,6 +4347,63 @@ def _sd_notify(msg: str) -> None:
             s.sendall(msg.encode())
     except OSError:
         log.debug("sd_notify 送出失敗(忽略):%s", msg, exc_info=True)
+
+
+# --- 專案自主排水旁路(軌 H2) -------------------------------------------------
+_project_improve_day: tuple | None = None
+
+
+async def _project_improve_lane() -> None:
+    """專案改良旁路(TI_PROJECT_IMPROVE_AUTO=0 預設關,零成本):每日對設有常駐
+    intent 的專案 headless 排水專案 backlog——「意圖→自產→交付」的執行端。
+
+    專案 backlog 原本只有人手動開改良場才執行(ProjectImprover 唯一建構點在 ws)。
+    本線每日一輪、逐專案 `ProjectImprover.run(max_cycles=TI_PROJECT_IMPROVE_CYCLES)`
+    (預設 1=每天每專案一件);發佈與人工場同管線(publisher 等 CI 綠才合併)。
+    與主迴圈共用 pause/quota 閘門;跨行程互斥靠 ProjectImprover.run 的
+    improve.lock(H1)。任何例外 log+continue,絕不影響主迴圈;停機隨 main cancel。
+    """
+    global _project_improve_day
+    while True:
+        await asyncio.sleep(600)
+        try:
+            if not config.PROJECT_IMPROVE_AUTO:
+                continue
+            if config.autopilot_paused() or _shutdown_requested:
+                continue
+            day = time.gmtime()[:3]
+            if _project_improve_day == day:
+                continue
+            if config.AUTOPILOT_QUOTA_GATE:
+                try:
+                    snap = await asyncio.to_thread(provider_quota.snapshot)
+                    usable, _reset = provider_quota.gate(snap)
+                    if not usable:
+                        continue
+                except Exception:  # noqa: BLE001 — 額度查詢失敗寧可保守跳過本輪
+                    continue
+            _project_improve_day = day
+            from . import projects
+            from .improver import ProjectImprover
+
+            async def _noop(_ev):
+                return None
+
+            for meta in projects.list_projects():
+                if not str(meta.get("intent") or "").strip():
+                    continue
+                if config.autopilot_paused() or _shutdown_requested:
+                    break
+                try:
+                    imp = ProjectImprover(meta, _noop)
+                    summary = await imp.run(max_cycles=config.PROJECT_IMPROVE_CYCLES)
+                    log.info("專案自主排水(%s):%s", meta.get("name"), summary)
+                except Exception:  # noqa: BLE001 — 單一專案失敗不得影響其他專案
+                    log.warning("專案自主排水失敗(%s,忽略)", meta.get("name"), exc_info=True)
+        except CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — 旁路絕不死
+            log.warning("專案改良旁路異常(忽略)", exc_info=True)
 
 
 async def _watchdog_notifier() -> None:
