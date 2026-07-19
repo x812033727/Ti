@@ -81,7 +81,7 @@ $("#projectSelect").addEventListener("change", onProjectChange);
 $("#improveChk").addEventListener("change", () => updateStartLabel());
 $("#requirement").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 // 助手首頁:rail 首頁鈕 + 側欄 + hero composer(home.js 對話編排)。
-$("#homeBtn").onclick = () => { setView("home"); refreshSidenavHistory(); focusComposer(); };
+$("#homeBtn").onclick = () => { setView("home"); refreshSidenavHistory(); import("./js/panels/home.js").then((m) => m.refreshHomeExtras()); focusComposer(); };
 // Ctrl/Cmd+K=新對話(Kimi 慣例):任何視圖直達 home hero。
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {

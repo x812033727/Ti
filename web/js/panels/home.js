@@ -11,6 +11,7 @@ import { onRunningChange, setRunning } from "./deck.js";
 import { focusComposer, refreshSidenavHistory } from "./sidenav.js";
 import { replaySession } from "./history.js";
 import { createTaskCard, startTaskCardPolling } from "../components/taskcard.js";
+import { appendTextEl } from "../dom.js";
 
 let _origParent = null; // #stream 原位(工作室 .discussion 內)的還原錨
 let _origNext = null;
@@ -165,6 +166,50 @@ export function setHomeRunning(running) {
     const el = $(sel);
     if (el) el.disabled = !running;
   }
+}
+
+
+// --- 工作室脈搏+靈感區(PR12):hero 下方的「這間工作室正在活著」訊號 ---------
+// 脈搏=一行即時狀態(/api/autopilot);靈感=最近合併成果+佇列頭建議(activity),
+// 點建議卡=帶入 composer 交辦模式。載入失敗一律優雅隱藏,不打擾 hero。
+export async function refreshHomeExtras() {
+  const pulse = $("#heroPulse");
+  const inspire = $("#heroInspire");
+  if (!pulse || !inspire) return;
+  try {
+    const st = await (await fetch("/api/autopilot")).json();
+    const c = st.counts || st.backlog || {};
+    const hb = st.heartbeat || {};
+    const runState = st.paused ? "已暫停" : hb.state === "running" ? "執行中" : "待命";
+    pulse.textContent = `工作室脈搏:${runState}・待辦 ${c.pending ?? "?"}・完成 ${c.done ?? "?"}`;
+  } catch { pulse.textContent = ""; }
+  try {
+    const data = await (await fetch("/api/autopilot/activity?limit=12")).json();
+    const tasks = data.tasks || [];
+    inspire.innerHTML = "";
+    const merged = tasks.filter((t) => t.status === "done" && t.pr).slice(0, 3);
+    const suggest = tasks.filter((t) => t.status === "pending").slice(0, 3);
+    for (const t of merged) {
+      const cardEl = document.createElement("div");
+      cardEl.className = "inspire-card done";
+      appendTextEl(cardEl, "div", "ic-tag ok", `已出貨・PR #${t.pr}`);
+      appendTextEl(cardEl, "div", "ic-title", t.title);
+      inspire.appendChild(cardEl);
+    }
+    for (const t of suggest) {
+      const cardEl = document.createElement("div");
+      cardEl.className = "inspire-card idea";
+      appendTextEl(cardEl, "div", "ic-tag", "佇列中・點擊改派或加碼");
+      appendTextEl(cardEl, "div", "ic-title", t.title);
+      cardEl.onclick = () => {
+        const input = $("#heroInput");
+        if (input) input.value = t.title;
+        setHeroMode("task");
+        focusComposer();
+      };
+      inspire.appendChild(cardEl);
+    }
+  } catch { inspire.innerHTML = ""; }
 }
 
 export function bindHome() {

@@ -3,6 +3,8 @@
 // 慣例:import 期零 DOM 觸碰,綁定集中由 app.js 呼叫 bindSidenav()。
 import { $, appendTextEl } from "../dom.js";
 import { setView } from "./dashboard.js";
+import { toggleTheme } from "../theme.js";
+import { openSettings } from "./settings.js";
 import { STATUS_LABEL } from "./history.js";
 
 export function focusComposer() {
@@ -63,4 +65,17 @@ export function bindSidenav() {
   if (plugins) plugins.onclick = () => import("./plugins.js").then((m) => m.openPlugins());
   const sched = $("#snSchedules");
   if (sched) sched.onclick = () => import("./schedules.js").then((m) => m.openSchedules());
+  // 帳號選單(PR12):向上彈出;主題/密碼走既有機制,登出同 header 登出鈕語意。
+  const acc = $("#snAccount");
+  const menu = $("#snAccountMenu");
+  if (acc && menu) acc.onclick = () => menu.classList.toggle("hidden");
+  const accTheme = $("#accTheme");
+  if (accTheme) accTheme.onclick = toggleTheme;
+  const accPw = $("#accPassword");
+  if (accPw) accPw.onclick = () => { menu?.classList.add("hidden"); openSettings(); };
+  const accOut = $("#accLogout");
+  if (accOut) accOut.onclick = async () => {
+    try { await fetch("/api/logout", { method: "POST" }); } catch { /* 斷線也照導 */ }
+    location.href = "/login";
+  };
 }
