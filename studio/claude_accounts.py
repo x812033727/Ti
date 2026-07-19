@@ -267,6 +267,17 @@ def scoped_used_pct(model: str, models_usage: dict | None) -> float | None:
     return None
 
 
+def _scoped_blocked(windows: dict[str, float | None] | None, threshold: float) -> bool:
+    """該帳號的釘選模型 scoped 週限（如 Fable weekly_scoped）是否已達上限。
+
+    scoped 未填（None）＝資訊不明，回 False（不排除該帳號，維持向後相容）。已爆的帳號
+    做不了主要工作（experts 會把它改派成較貴備援空耗全域額度），故「早重置/負載」選擇
+    應把它排除，才不會與 scoped 救援層互相拉扯來回 flap。
+    """
+    s = (windows or {}).get("scoped")
+    return isinstance(s, (int, float)) and s >= threshold
+
+
 def pick_account(
     usages: dict[str, dict[str, float | None]],
     active: str | None,
@@ -295,8 +306,13 @@ def pick_account(
         時釘 Fable 的專家全被 ``experts`` 改派成較貴備援（opus）空耗全域額度；有另一帳號
         Fable 仍新鮮時切過去讓 Fable 恢復可用更省。候選已排除全域達上限者（不會切到爆帳號）；
         在線 scoped 未知/未滿 → 不介入。切 scoped 最低者（同分 preferred 優先、再字母序）；
-        換帳號本身要重啟即遲滯,不另設 margin,且切後新在線 scoped 低 → 下輪不回切,天然防抖。
-    2a. 7d 早重置多吃：候選的 ``seven_day_reset`` **兩者皆已知**且最早者比次早者早
+        換帳號本身要重啟即遲滯,不另設 margin。**防回切靠下述 pool 過濾**：救援後新在線
+        scoped 低雖使本層下輪不再觸發,但若不把 scoped 已爆的舊帳號逐出「早重置/負載」
+        候選,2a/2b 會因它全域較早重置而把在線拉回去→又觸發本層→無止盡 flap（每切一次
+        一次重啟）。故第 2、3 層改用 **scoped-unblocked 池**（``pool``）：``_scoped_blocked``
+        （scoped ≥ 門檻）者剔除,scoped 全 None 時 pool==candidates 完全相容,全爆時退回
+        candidates。
+    2a. 7d 早重置多吃：**池內**（pool，非全候選）``seven_day_reset`` **兩者皆已知**且最早者比次早者早
         ≥ ``reset_edge_7d``（秒）→ target＝最早重置者。7d 窗優先於 5h 窗：7d 是
         「週尺度的稀缺資源」，早歸還的額度不先吃掉就是白白浪費一整週的配額；5h 窗
         每天循環多次、只是節奏問題，錯過下一輪就補回來。
@@ -331,18 +347,30 @@ def pick_account(
         ]
         if relief:
             return min(relief, key=lambda lb: (usages[lb]["scoped"], lb != preferred, lb))
+    # scoped-unblocked 池：釘選模型 scoped 已爆的帳號無法做主要工作（回去只會被 experts
+    # 改派較貴備援空耗全域額度），故下面「早重置/負載」選擇不得挑中它們——否則會與第 1.5
+    # 層 scoped 救援永無止盡地互切 flap（在線 A：scoped 爆→救援→切 B；到 B：早重置規則
+    # 見 A 全域 5h/7d 皆較早重置→拉回 A；A scoped 仍爆→又救援→B…每切一次一次重啟）。
+    # scoped 全 None（未填/純負載模式）時 scoped_ok == candidates，完全向後相容；全部
+    # scoped 皆爆時退回 candidates（都做不了主要工作，至少讓全域早重置/負載規則維持運作）。
+    scoped_ok = {
+        lb: ld
+        for lb, ld in candidates.items()
+        if not _scoped_blocked(usages.get(lb), scoped_threshold)
+    }
+    pool = scoped_ok or candidates
     # 第 2 層：早重置多吃——7d 窗（稀缺資源）優先於 5h 窗（節奏）；規則成立即定案。
-    if len(candidates) >= 2:
+    if len(pool) >= 2:
         for key, edge in (("seven_day_reset", reset_edge_7d), ("five_hour_reset", reset_edge)):
-            target = _earlier_reset_target(usages, candidates, key, edge)
+            target = _earlier_reset_target(usages, pool, key, edge)
             if target is not None:
                 # 非在線就切（含在線不在候選的強制切）；在線即最早者 → 留著多吃
                 return target if target != active else None
     # 第 3 層：負載平衡（同 v2）——負載最低者；同分 preferred 優先（False < True）、再字母序
-    best = min(candidates, key=lambda lb: (candidates[lb], lb != preferred, lb))
-    active_load = candidates.get(active)
+    best = min(pool, key=lambda lb: (pool[lb], lb != preferred, lb))
+    active_load = pool.get(active)
     if active_load is None:
-        return best  # 在線達安全上限或不可用（best 必 ≠ active，因 active 不在候選）
-    if best != active and active_load - candidates[best] >= margin:
+        return best  # 在線達安全上限/不可用/scoped 爆（best 必 ≠ active，因 active 不在池）
+    if best != active and active_load - pool[best] >= margin:
         return best
     return None

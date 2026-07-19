@@ -31,6 +31,12 @@ def test_parse_workflow_choice_takes_last_match_and_empty():
     assert flow.parse_triage_reason("理由: 單檔小修\n流程: 快速模式") == "單檔小修"
 
 
+def test_parse_workflow_choice_ignores_inline_marker_text():
+    text = "請不要在說明句中寫 流程: 快速模式\n理由也不要用句中 理由: 單檔小修"
+    assert flow.parse_workflow_choice(text) == ""
+    assert flow.parse_triage_reason(text) == ""
+
+
 # --- _select_workflow 護欄 --------------------------------------------------
 
 
