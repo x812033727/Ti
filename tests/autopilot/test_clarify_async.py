@@ -152,3 +152,23 @@ def test_requirement_section_with_answer():
     s = autopilot._clarify_requirement_section(task)
     assert "範圍?" in s and "人工回覆:只動 studio/" in s
     assert autopilot._clarify_requirement_section({"note": "x"}) == ""
+
+
+def test_timeout_sweep_swallows_write_errors(monkeypatch):
+    """set_status 寫檔拋錯不得殺死主迴圈(對齊 sibling 慣例);下輪重掃可復原。"""
+    t1 = backlog.add("會炸的任務")
+    backlog.set_status(t1["id"], "parked", note="[待澄清] 問:x(假設:y)")
+    import json
+
+    old = time.time() - 25 * 3600
+    data = backlog._load(None, mutable=True)
+    for task in data["tasks"]:
+        task["updated_at"] = old
+    backlog._path(None).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    backlog._read_cache.clear()
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(autopilot.backlog, "set_status", boom)
+    assert autopilot._maybe_clarify_timeout(now=time.time()) == 0  # 不得拋
