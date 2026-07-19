@@ -87,6 +87,10 @@ AGENDA_PROMPT_RULES = (
     "對應實作任務的驗收標準，不要另立「補測試」「複核」尾任務串成流水線。\n"
     "  - 能並行就並行：優先拆成 ≥2 個互不依賴、檔案範圍不重疊、可同時動工的任務——"
     "彼此無依賴的任務會被排進同一波次並行執行。\n"
+    "  - 若某任務需保護特定檔案不被修改，在該任務行之後輸出 "
+    "`禁改: #<id> <pattern>[, <pattern>...]`（逗號分隔多個 pattern）。"
+    "pattern 語意：`/` 結尾＝目錄前綴比對、其餘為 fnmatch glob（`*` 不跨 `/`）。"
+    "範例：`禁改: #2 studio/config.py, docs/`\n"
 )
 
 # task_pipeline review stage 的 reviewer：已知核心角色的「專屬 prompt 全文」與「feedback 區段
