@@ -76,6 +76,26 @@ def test_reaching_budget_pauses_and_notifies_once(monkeypatch):
     assert autopilot._daily_pr_count == 3
 
 
+def test_reaching_budget_writes_pause_file(monkeypatch, tmp_path):
+    sent: list = []
+    pause_file = tmp_path / "autopilot.pause"
+    monkeypatch.delenv("TI_AUTOPILOT_PAUSED", raising=False)
+    monkeypatch.setattr(config, "AUTOPILOT_DAILY_PR_BUDGET", 1)
+    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", pause_file)
+    monkeypatch.setattr(autopilot.notify, "send_bg", lambda *a, **k: sent.append((a[0], k)))
+
+    autopilot._check_daily_pr_budget()
+
+    assert config.autopilot_paused() is True
+    assert "每日 PR 成本熔斷" in pause_file.read_text(encoding="utf-8")
+    assert sent == [
+        (
+            "daily_pr_budget_pause",
+            {"daily_pr_count": 1, "budget": 1, "utc_day": "1970-01-01"},
+        )
+    ]
+
+
 def test_cross_utc_day_resets_count_and_notification(monkeypatch):
     pauses: list[str] = []
     sent: list = []
