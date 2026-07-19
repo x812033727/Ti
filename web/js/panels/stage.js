@@ -6,6 +6,7 @@ export const STAGE_LABEL = {
   "2": { title: "第 2 階・指揮官", sub: "多分身並行,自動測試把關——正在累積升階的信任數字。" },
   "3-progress": { title: "第 3 階・升級中", sub: "監督式自治的開關逐一點亮;你負責餵背景,不再逐件驗收。" },
   "3-ready": { title: "第 3 階・待宣告", sub: "條件快照全綠——連續維持 14 天即可宣告監督式自治。" },
+  "4-progress": { title: "第 4 階・AI 原生進行式", sub: "意圖驅動、按例外監控——你出意圖,工作室自己出題交付。" },
 };
 
 function fmtPct(v) {
@@ -63,13 +64,31 @@ export async function renderStage() {
     host.appendChild(wrap);
   }
 
+  // 第 4 階條件卡(F2):意圖→自產→零人工交付
+  if (Array.isArray(d.stage4_conditions) && d.stage4_conditions.length) {
+    appendTextEl(host, "h3", "stage-sec", "第 4 階(AI 原生)進度");
+    const s4Grid = document.createElement("div");
+    s4Grid.className = "stage-conds";
+    for (const c of d.stage4_conditions) {
+      const card = document.createElement("div");
+      card.className = "stage-cond" + (c.ok ? " ok" : "");
+      appendTextEl(card, "div", "sc-dot", c.ok ? "✓" : "…");
+      const body = document.createElement("div");
+      appendTextEl(body, "div", "sc-label", c.label);
+      appendTextEl(body, "div", "sc-detail muted", c.detail || "");
+      card.appendChild(body);
+      s4Grid.appendChild(card);
+    }
+    host.appendChild(s4Grid);
+  }
+
   // 信任數字一行
   const tr = d.trust || {};
   appendTextEl(
     host,
     "p",
     "stage-trust muted",
-    `零介入合併率 ${fmtPct(tr.zero_touch_rate)}・7 天 merged ${tr.merged ?? "—"}・人工介入 ${(tr.interventions || {}).total ?? "—"} 次`,
+    `零介入合併率 ${fmtPct(tr.zero_touch_rate)}・7 天 merged ${tr.merged ?? "—"}・人工介入 ${(tr.interventions || {}).total ?? "—"} 次・自主出題占比 ${fmtPct((tr.autonomy || {}).autonomous_rate)}`,
   );
 
   // 八開關

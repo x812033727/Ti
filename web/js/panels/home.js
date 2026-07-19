@@ -36,7 +36,13 @@ export function moveStreamBack() {
   }
 }
 
-const SUBVIEWS = { chat: "#homeChat", plugins: "#homePlugins", schedules: "#homeSchedules", stage: "#homeStage" };
+const SUBVIEWS = {
+  chat: "#homeChat",
+  plugins: "#homePlugins",
+  schedules: "#homeSchedules",
+  stage: "#homeStage",
+  attention: "#homeAttention",
+};
 
 export function setSubview(name) {
   const main = $("#homeMain");
@@ -216,6 +222,8 @@ export async function refreshHomeExtras() {
       inspire.appendChild(cardEl);
     }
   } catch { inspire.innerHTML = ""; }
+  // 「需要你」badge 輕量刷新(收件匣模組動態載入,失敗靜默)
+  import("./attention.js").then((m) => m.refreshAttentionBadge()).catch(() => {});
 }
 
 export function bindHome() {

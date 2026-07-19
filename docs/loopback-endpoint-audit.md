@@ -54,6 +54,7 @@
 | GET  | `/api/autopilot/audit-trend` | auth | ➖ | 唯讀：audit.jsonl 每日 outcome 分佈與完成率趨勢 |
 | GET  | `/api/autopilot/trust` | auth | ➖ | 唯讀：信任指標（零人工介入合併率/介入分類/系統事件計數，第 3 階 A0） |
 | GET  | `/api/autopilot/stage` | auth | ➖ | 唯讀：升階儀表（八 canary 現值+第 3 階條件快照+階段判定） |
+| GET  | `/api/autopilot/attention` | auth | ➖ | 唯讀：例外收件匣（澄清待答/停放+原因/page 級事件，軌 F1） |
 | GET  | `/api/autopilot/investigations` | auth | ➖ | 唯讀：調查任務結論清單（backlog note＋audit join） |
 | GET  | `/api/lessons` | auth | ➖ | 唯讀：教訓庫瀏覽（子字串搜尋） |
 | GET  | `/api/skills` | auth | ➖ | 唯讀：內部專家技能清單（白名單+SKILL.md 描述），無秘密 |

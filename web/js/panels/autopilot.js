@@ -403,7 +403,19 @@ function buildTaskActions(t) {
   };
   if (t.status === "failed" || t.status === "parked") mk("重試", "retry", { title: "退回 pending 並歸零重試次數" });
   if (t.status === "pending" || t.status === "failed") mk("歸檔", "park", { confirm: "歸檔此任務?" });
-  if (t.status === "parked") mk("取回", "unpark", { title: "取回為 pending" });
+  if (t.status === "parked") {
+    // 取回可附一句指示(unpark+note 契約;規範迴路把筆記蒸餾成慣例)——取消=不動作。
+    const b = document.createElement("button");
+    b.className = "ghost ap-bl-btn";
+    b.textContent = "取回";
+    b.title = "取回為 pending(可附一句指示給 agent)";
+    b.addEventListener("click", () => {
+      const note = window.prompt("附一句指示給 agent(可留空):", "");
+      if (note === null) return;
+      taskAction(t.id, "unpark", note.trim() ? { note: note.trim() } : {});
+    });
+    box.appendChild(b);
+  }
   return box;
 }
 
