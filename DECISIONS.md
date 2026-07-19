@@ -2353,3 +2353,54 @@
 - 時間：2026-07-20 04:20
 - 理由：所有掛載點均在 send_bg early return 保護下；新增呼叫不影響 None-config 路徑
 
+## 改動目標為 `/opt/ti/studio/autopilot.py` 與 `/opt/ti/studio/config.py`（核心 repo），非 workspace 副本。
+- 時間：2026-07-20 05:08
+- 理由：Ti 核心框架改動依雙軌路由規則走核心 repo，workspace 是專案用途。
+
+## 新增 `AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`（`TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`，預設 5，0 停用）至 `config.py` 頂層宣告與 `reload()` 兩處，與所有現有旋鈕格式一致。
+- 時間：2026-07-20 05:08
+
+## 在 `_main_loop` 每輪迭代的 try/except 區塊**之前**，宣告區域變數 `_infra_transient = False`（每輪重置）。
+- 時間：2026-07-20 05:08
+- 理由：必須是區域變數，不可為模組全域——否則上輪的 `True` 殘留會誤排除下輪的真 failed，直接導致漏計 bug。
+- 否決方案：以模組全域變數儲存旗標——跨輪殘留語意不正確。
+
+## 只在 `AutopilotTaskStalled` exception handler 內設 `_infra_transient = True`；`TimeoutError` 分支**不設旗標**。
+- 時間：2026-07-20 05:08
+- 理由：`TimeoutError` 落 `_handle_task_timeout` → status 為 `parked`（非 `failed`），事後查 status 自然排除，旗標冗餘。`AutopilotTaskStalled` 雖寫 `status=failed`，但屬 infra 自癒（triage 自動重試），必須明確排除。
+- 否決方案：timeout 分支也設旗標——製造「timeout==failed 需排除」的錯誤讀法，且防禦性程式碼應有明確理由才加。
+
+## try/except 區塊結束後、`_task_running = False` 之後，查 `(backlog.get(task["id"]) or {}).get("status")` 更新全域計數器：`failed` 且 `not _infra_transient` → 計數 `+1`；`done` 或 `merging` → 計數歸零並重置通知旗標；其餘（`pending`/`parked`/`None`）→ 不動計數。含 `or {}` 的 None-guard 防任務歸檔後 `["status"]` 崩潰。
+- 時間：2026-07-20 05:08
+
+## 模組全域宣告 `_consecutive_fail_count: int = 0` 與 `_consecutive_fail_notified: bool = False`，位置仿 `_slo_brake_notified_day`（約 1820 行）。行程重啟歸零可容忍。
+- 時間：2026-07-20 05:08
+- 否決方案：持久化計數——增加子系統複雜度；重啟歸零是合理的「重設視窗」。
+
+## 達門檻時：`_pause(f"連續 {n} 次任務 failed，SLO 煞車暫停待人工檢視")` + `notify.send_bg("consecutive_fail_pause", ...)`；`_consecutive_fail_notified` 去重確保同一連續失敗期只發一次通知；計數歸零時同步重置 `_consecutive_fail_notified = False`。
+- 時間：2026-07-20 05:08
+
+## **測試必含以下四個精確樣本**（寫入 `tests/autopilot/test_consecutive_fail_brake.py`）：
+- 時間：2026-07-20 05:08
+- 否決方案：只寫泛型「infra 黑樣本」——無法證明 stalled 路徑的判別力（歷次教訓：自證對應 + 排除假綠）。
+
+## **不改 `budget_sleep` 為 `_pause`**。
+- 時間：2026-07-20 05:08
+- 理由：`budget_sleep`（UTC 跨日自癒）語意對應「速率上限，明天自動重來」；`_pause`（需人工 `rm` 才恢復）對應「真問題需診斷」。兩機制自然分流——budget 超標≠失控，每天要人手動恢復比睡到午夜更差。PM 的翻案前提（誤以為 `budget_sleep` 不存在）已不成立。
+- 否決方案：budget 超標改走 `_pause`——語意過強，且使用者每日需人工介入才能恢復，實際上是退化。
+
+## Task #2 縮減為「補 notify 通知 + 修 CLAUDE.md」：在 `autopilot.py:4647` `_write_status("budget_sleep", ...)` 之後，以 `_budget_notified_day` 行程記憶體去重，插入 `notify.send_bg("daily_pr_budget_sleep", f"已達每日 PR 預算 {config.AUTOPILOT_DAILY_PR_BUDGET}，UTC 跨日自動恢復", ...)`。
+- 時間：2026-07-20 05:08
+
+## 新增模組全域 `_budget_notified_day: tuple | None = None`，位置、去重邏輯與 `_slo_brake_notified_day` 完全對稱（每 UTC 日一次）。
+- 時間：2026-07-20 05:08
+
+## `AUTOPILOT_DAILY_PR_BUDGET` **不新增至 config.py**——已在 :844/:1558 兩處存在，本輪不動。
+- 時間：2026-07-20 05:08
+
+## 回寫 CLAUDE.md **兩處**（`/opt/ti/CLAUDE.md` 與 `/opt/ti/workspaces/project-ea851408a641/CLAUDE.md`）：將 `AUTOPILOT_DAILY_PR_BUDGET 每日 PR 成本熔斷` 從「移交待辦」移出，補記「已實作，語意為 `budget_sleep`（UTC 跨日自癒）而非 `_pause`（人工恢復），計數讀 `audit.jsonl` 持久化」。
+- 時間：2026-07-20 05:08
+
+## **測試含以下兩個樣本**（寫入 `tests/autopilot/test_budget_brake.py`）：
+- 時間：2026-07-20 05:08
+

@@ -1,104 +1,6 @@
 {
   "entries": [
     {
-      "decision": "任務#4 維持既有 record→commit→broadcast 時序與單一接點不變，sidecar 僅為 record 內多寫一檔，不新增接點、不散落",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799183
-    },
-    {
-      "decision": "任務#5 測試切分——`build_prompt` 第④條 grep＋前綴不破壞；`_guard_anchor` 純函式測（有效錨點／真 speaker＋幻覺論點／無錨點三類，含高工指定黑樣本）；`record` 雙寫 JSON 合法性＋四鍵＋session_id＋rounds＋`cwd=None` 雙不落；sidecar 寫失敗降級只保 md 的路徑測試",
-      "rationale": "護欄黑樣本須涵蓋「真 speaker＋幻覺論點」以驗判別力邊界並佐證已知限制",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.379919
-    },
-    {
-      "decision": "任務#5 離線 e2e 須實跑「全員無反對」與「LLM 漏標前綴 fallback」兩條既有路徑，確認四段產出＋至少一條回指 transcript 無回歸，且第④條與 `_guard_anchor` 以實跑黑白樣本驗證、不只 grep",
-      "rationale": "兩位均強調 CLAUDE.md 鐵則「親自實跑、自證對應、排除假綠」，prompt/格式改動不靠讀碼下結論",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799195
-    },
-    {
-      "decision": "全程不砍既有架構——規則為骨、LLM 為肉、覆寫式單檔＋git 快照、md 人讀／json 機讀雙寫不變；三項皆低風險增量，#1/#2/#3 同檔不同函式可並行，#4 待 #3 sidecar 路徑定後接線，#5 收尾",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "pj8fd2961355",
-      "created_at": 1781324639.3799207
-    },
-    {
-      "decision": "任務#1 僅確認 `providers.py:107–108`（make_expert openai 分支）與 `providers.py:149`（complete_once 呼叫 make_expert）兩處行號，**零程式碼改動**，鏈路已閉合",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.7490432
-    },
-    {
-      "decision": "所有新測試追加進 `tests/core/test_providers.py` 尾端，複用既有 `FakeChat`/`_msg`/`_tc`，不新增測試檔",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.7490458
-    },
-    {
-      "decision": "**所有 config 屬性異動一律用 `monkeypatch.setattr(config, \"屬性名\", 值)`，禁止直接賦值**，確保測後自動還原，不污染後續測試",
-      "rationale": "config 是模組級全域；直接賦值無還原機制，PROVIDER/OFFLINE_MODE 會洩漏，任務#5 補跑雖能抓但原因難追；現有 line 85 已有正確示範，新測試須一致",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.7490466
-    },
-    {
-      "decision": "注入點選 `monkeypatch.setattr(providers, \"_openai_chat\", fake_chat_instance)`",
-      "rationale": "`make_expert` 在 call-time 才取 `_openai_chat`（非 import-time 閉包），patch 模組屬性確實截斷真實外呼，且比 patch SDK 內部更穩定",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.7490525
-    },
-    {
-      "decision": "**成功路徑測試（任務#2）** 需設定以下四項 monkeypatch：`PROVIDER=\"openai\"`、`OFFLINE_MODE=False`、`OPENAI_BASE_URL=\"http://local\"`（令 provider_ready() 走 openai 分支且回 True）；傳 `timeout=1.0`；斷言回傳等於注入文字且 `fake.seen` 長度為 1",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.749053
-    },
-    {
-      "decision": "成功路徑注入 `_msg(content=\"文字\", tool_calls=None)` 並斷言 `speak` 首回合收斂（`seen` 長度 1）；若實跑發現 speak 有額外包裝導致斷言失敗，須對應調整，**以實跑結果為準，不靠讀碼猜測**",
-      "rationale": "工程師指出「純 content 首回合收斂」是未在設計中明寫的假設，須實跑自證，符合 CLAUDE.md「親自實跑、自證對應」鐵則",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.7490535
-    },
-    {
-      "decision": "**短路守門三態（任務#3）** 各自一支測試，每支均裝 FakeChat spy 並斷言 `fake.seen == []` 作反向對照排假綠；三態分別為：① `cwd=None`（其餘 config 無須特設）、② `OFFLINE_MODE=True`＋`PROVIDER=\"openai\"`＋`OPENAI_BASE_URL=\"http://local\"`、③ `PROVIDER=\"openai\"`＋`OPENAI_API_KEY=\"\"`＋`OPENAI_BASE_URL=\"\"`",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.749054
-    },
-    {
-      "decision": "**`provider_ready()=False` 守門測試（第三態）必須同時設 `PROVIDER=\"openai\"`**，否則函數走 claude 分支不讀 OPENAI_* 變數，guard 驗的是 CI 有無 claude 憑證，非目標行為",
-      "rationale": "",
-      "rejected": "僅設雙空字串不設 PROVIDER——高工確認 `config.py:621` 先判斷 PROVIDER 分支，不設 openai 會靜默走錯分支，假綠/假紅均有可能",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.749055
-    },
-    {
-      "decision": "**例外降級測試（任務#4）** 用 inline `async def exploding_chat(...): raise RuntimeError(\"API 炸了\")`，同時設 `PROVIDER=\"openai\"`＋`OFFLINE_MODE=False`＋`OPENAI_BASE_URL=\"http://local\"` 讓 guard 通過，斷言 `complete_once` 回 `\"\"` 且不外拋",
-      "rationale": "",
-      "rejected": "新建 ExplodingChat class——inline async def 已足夠覆蓋 `except Exception: return \"\"` 路徑，無需增加 class",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.7490559
-    },
-    {
-      "decision": "任務#2/#3/#4 三組測試互不依賴，可並行撰寫；任務#5 排最後，執行 `.venv/bin/python -m pytest tests/core/test_providers.py -q` 確認全綠、無真實網路 I/O",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf031a661a2",
-      "created_at": 1781424332.749057
-    },
-    {
       "decision": "`RetryConfig` dataclass 新增於 `llm_caller.py`，緊鄰 `run_with_retries`，欄位為 `max_retries: int`、`backoff: Callable[[float|None, int], float]`、`sleep: Callable[[float], Awaitable[None]]`",
       "rationale": "llm_caller 是 `run_with_retries` 介面的所有者，RetryConfig 是其參數的結構化型別；零 config 依賴確保模組維持 provider-agnostic",
       "rejected": "放 `experts.py` — 會讓下游 import `experts` 才能取得型別，破壞 llm_caller 作為穩定公開介面的角色",
@@ -3499,6 +3401,104 @@
       "rejected": "",
       "session_id": "pj958e6a57bc",
       "created_at": 1784492419.8712358
+    },
+    {
+      "decision": "改動目標為 `/opt/ti/studio/autopilot.py` 與 `/opt/ti/studio/config.py`（核心 repo），非 workspace 副本。",
+      "rationale": "Ti 核心框架改動依雙軌路由規則走核心 repo，workspace 是專案用途。",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.785086
+    },
+    {
+      "decision": "新增 `AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`（`TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`，預設 5，0 停用）至 `config.py` 頂層宣告與 `reload()` 兩處，與所有現有旋鈕格式一致。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850895
+    },
+    {
+      "decision": "在 `_main_loop` 每輪迭代的 try/except 區塊**之前**，宣告區域變數 `_infra_transient = False`（每輪重置）。",
+      "rationale": "必須是區域變數，不可為模組全域——否則上輪的 `True` 殘留會誤排除下輪的真 failed，直接導致漏計 bug。",
+      "rejected": "以模組全域變數儲存旗標——跨輪殘留語意不正確。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850912
+    },
+    {
+      "decision": "只在 `AutopilotTaskStalled` exception handler 內設 `_infra_transient = True`；`TimeoutError` 分支**不設旗標**。",
+      "rationale": "`TimeoutError` 落 `_handle_task_timeout` → status 為 `parked`（非 `failed`），事後查 status 自然排除，旗標冗餘。`AutopilotTaskStalled` 雖寫 `status=failed`，但屬 infra 自癒（triage 自動重試），必須明確排除。",
+      "rejected": "timeout 分支也設旗標——製造「timeout==failed 需排除」的錯誤讀法，且防禦性程式碼應有明確理由才加。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850916
+    },
+    {
+      "decision": "try/except 區塊結束後、`_task_running = False` 之後，查 `(backlog.get(task[\"id\"]) or {}).get(\"status\")` 更新全域計數器：`failed` 且 `not _infra_transient` → 計數 `+1`；`done` 或 `merging` → 計數歸零並重置通知旗標；其餘（`pending`/`parked`/`None`）→ 不動計數。含 `or {}` 的 None-guard 防任務歸檔後 `[\"status\"]` 崩潰。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850924
+    },
+    {
+      "decision": "模組全域宣告 `_consecutive_fail_count: int = 0` 與 `_consecutive_fail_notified: bool = False`，位置仿 `_slo_brake_notified_day`（約 1820 行）。行程重啟歸零可容忍。",
+      "rationale": "",
+      "rejected": "持久化計數——增加子系統複雜度；重啟歸零是合理的「重設視窗」。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850933
+    },
+    {
+      "decision": "達門檻時：`_pause(f\"連續 {n} 次任務 failed，SLO 煞車暫停待人工檢視\")` + `notify.send_bg(\"consecutive_fail_pause\", ...)`；`_consecutive_fail_notified` 去重確保同一連續失敗期只發一次通知；計數歸零時同步重置 `_consecutive_fail_notified = False`。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850943
+    },
+    {
+      "decision": "**測試必含以下四個精確樣本**（寫入 `tests/autopilot/test_consecutive_fail_brake.py`）：",
+      "rationale": "",
+      "rejected": "只寫泛型「infra 黑樣本」——無法證明 stalled 路徑的判別力（歷次教訓：自證對應 + 排除假綠）。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850952
+    },
+    {
+      "decision": "**不改 `budget_sleep` 為 `_pause`**。",
+      "rationale": "`budget_sleep`（UTC 跨日自癒）語意對應「速率上限，明天自動重來」；`_pause`（需人工 `rm` 才恢復）對應「真問題需診斷」。兩機制自然分流——budget 超標≠失控，每天要人手動恢復比睡到午夜更差。PM 的翻案前提（誤以為 `budget_sleep` 不存在）已不成立。",
+      "rejected": "budget 超標改走 `_pause`——語意過強，且使用者每日需人工介入才能恢復，實際上是退化。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850957
+    },
+    {
+      "decision": "Task #2 縮減為「補 notify 通知 + 修 CLAUDE.md」：在 `autopilot.py:4647` `_write_status(\"budget_sleep\", ...)` 之後，以 `_budget_notified_day` 行程記憶體去重，插入 `notify.send_bg(\"daily_pr_budget_sleep\", f\"已達每日 PR 預算 {config.AUTOPILOT_DAILY_PR_BUDGET}，UTC 跨日自動恢復\", ...)`。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850964
+    },
+    {
+      "decision": "新增模組全域 `_budget_notified_day: tuple | None = None`，位置、去重邏輯與 `_slo_brake_notified_day` 完全對稱（每 UTC 日一次）。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850971
+    },
+    {
+      "decision": "`AUTOPILOT_DAILY_PR_BUDGET` **不新增至 config.py**——已在 :844/:1558 兩處存在，本輪不動。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850978
+    },
+    {
+      "decision": "回寫 CLAUDE.md **兩處**（`/opt/ti/CLAUDE.md` 與 `/opt/ti/workspaces/project-ea851408a641/CLAUDE.md`）：將 `AUTOPILOT_DAILY_PR_BUDGET 每日 PR 成本熔斷` 從「移交待辦」移出，補記「已實作，語意為 `budget_sleep`（UTC 跨日自癒）而非 `_pause`（人工恢復），計數讀 `audit.jsonl` 持久化」。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850983
+    },
+    {
+      "decision": "**測試含以下兩個樣本**（寫入 `tests/autopilot/test_budget_brake.py`）：",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.785099
     }
   ]
 }
