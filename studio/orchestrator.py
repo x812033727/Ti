@@ -1390,7 +1390,24 @@ class StudioSession:
         )
 
     def _current_provider_bindings(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
-        return {k: self._actual_provider_for_expert(k, ex) for k, ex in experts.items()}
+        from .providers import effective_provider
+
+        out: dict[str, str] = {}
+        for role_key, expert in experts.items():
+            provider = (
+                self._recruit_providers.get(role_key)
+                or getattr(expert, "provider", None)
+                or getattr(expert, "_provider", None)
+            )
+            if provider:
+                out[role_key] = provider
+            elif type(expert).__module__.startswith("studio."):
+                out[role_key] = effective_provider(expert.role)
+            else:
+                # 外部注入的無 provider stub 沒有可安全重建的 provider metadata；
+                # preflight plan 看到空值會跳過，但 roster 顯示仍由 _role_provider_map fallback。
+                out[role_key] = ""
+        return out
 
     def _explicit_provider_overrides(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
         return {
@@ -1405,6 +1422,9 @@ class StudioSession:
         snapshot 內各 usage 模組 60s 快取＋未設定 provider 不打外網，故成本低；存於 self 供本
         stage 的 PM 摘要與招募自動重綁共用，不每 hop 重查。
         """
+        if config.OFFLINE_MODE:
+            self._quota_snap = None
+            return
         try:
             self._quota_snap = await asyncio.to_thread(provider_quota.snapshot)
         except Exception:  # noqa: BLE001 — 額度查詢失敗不該拖垮討論，退回「無額度資訊」

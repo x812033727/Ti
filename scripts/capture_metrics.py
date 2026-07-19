@@ -313,7 +313,9 @@ def _write_png(path: Path, data: bytes, overwrite: bool) -> None:
         existing = path.read_bytes()
         if not existing.startswith(b"\x89PNG\r\n\x1a\n") or not existing:
             raise CaptureError(f"{path} already exists but is not a valid PNG")
-        print(f"WARN screenshot: {path.relative_to(PROJECT_ROOT)} exists; pass --overwrite to replace")
+        print(
+            f"WARN screenshot: {path.relative_to(PROJECT_ROOT)} exists; pass --overwrite to replace"
+        )
         return
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
         raise CaptureError("screenshot is not a PNG")
