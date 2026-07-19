@@ -1672,6 +1672,7 @@ async def _run_investigation_task(
             {
                 "ts": time.time(),
                 "task_id": task.get("id"),
+                "source": str(task.get("source") or ""),
                 "pr": None,  # 調查管線不開 PR，不計每日 PR 預算
                 "branch": "",
                 "head_sha": "",
@@ -2496,6 +2497,7 @@ async def run_one_task(task: dict) -> None:
                     {
                         "ts": time.time(),
                         "task_id": task.get("id"),
+                        "source": str(task.get("source") or ""),
                         "pr": None,
                         "branch": "",
                         "head_sha": "",
@@ -2689,6 +2691,7 @@ async def run_one_task(task: dict) -> None:
                 {
                     "ts": time.time(),
                     "task_id": task.get("id"),
+                    "source": str(task.get("source") or ""),
                     "pr": getattr(merge_res, "pr_number", None),
                     "branch": getattr(merge_res, "branch", ""),
                     "head_sha": head_sha.strip() if rc_sha == 0 else "",
@@ -3213,6 +3216,7 @@ async def _reconcile_merging_tasks(repo: str) -> None:
                 {
                     "ts": time.time(),
                     "task_id": tid,
+                    "source": str(task.get("source") or ""),
                     "pr": None,
                     "pr_ref": pr,
                     "branch": task.get("merged_branch", ""),

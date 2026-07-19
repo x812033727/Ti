@@ -171,9 +171,9 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
         if i.get("category") == "output_review" and i.get("task_id") is not None
     }
     zero = [r for r in merged if str(r.get("task_id")) not in reviewed_tasks]
-    # 自主度拆解(軌 F2,第 4 階量測):merged join backlog source。人工源=人出的題;
-    # 其餘(intent/schedule/eval/discovered/investigation…)=系統自產;backlog 已不存在
-    # 的舊任務歸 unknown 不進分子分母(誠實呈現缺口,不灌水)。
+    # 自主度拆解(軌 F2,第 4 階量測):優先用 audit 內嵌 source(寫入端自帶,免疫
+    # backlog 重建/撞號),缺欄的舊紀錄退回 join backlog;兩邊都查不到歸 unknown
+    # 不進分子分母(誠實呈現缺口,不灌水)。人工源=manual/user,其餘=系統自產。
     src_by_id = {
         t.get("id"): str(t.get("source") or "") for t in backlog.list_tasks(state_dir=state_dir)
     }
@@ -181,7 +181,7 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
     zero_ids = {str(r.get("task_id")) for r in zero}
     intent_delivery = 0
     for r in merged:
-        src = src_by_id.get(r.get("task_id")) or "unknown"
+        src = str(r.get("source") or "") or src_by_id.get(r.get("task_id")) or "unknown"
         by_source[src] = by_source.get(src, 0) + 1
         if src in _INTENT_SOURCES and str(r.get("task_id")) in zero_ids:
             intent_delivery += 1
