@@ -34,11 +34,15 @@ export function moveStreamBack() {
   }
 }
 
+const SUBVIEWS = { chat: "#homeChat", plugins: "#homePlugins", schedules: "#homeSchedules" };
+
 export function setSubview(name) {
   const main = $("#homeMain");
   if (main) main.dataset.subview = name;
-  const chat = $("#homeChat");
-  if (chat) chat.classList.toggle("hidden", name !== "chat");
+  for (const [k, sel] of Object.entries(SUBVIEWS)) {
+    const el = $(sel);
+    if (el) el.classList.toggle("hidden", name !== k);
+  }
 }
 
 export function resetToHero() {
