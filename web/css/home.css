@@ -94,7 +94,7 @@ body[data-view="home"] main.layout { display: none; }
 .home-sub { width: min(960px, 100%); margin: 0 auto; }
 
 /* subview 切換(PR4):chat 模式隱藏 hero,對話容器接管 */
-.home-main[data-subview="chat"] .home-hero { display: none; }
+.home-main:not([data-subview="hero"]) .home-hero { display: none; }
 .home-chat-stream { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-3) 0; }
 .home-chat-stream .stream { min-height: 0; }
 .home-chat-bar {
@@ -122,3 +122,40 @@ body[data-view="home"] main.layout { display: none; }
   border-radius: var(--r-full); padding: 5px 12px; font-size: var(--fs-1); cursor: pointer;
 }
 .hero-modes button.active { background: var(--surface-solid); color: var(--text); box-shadow: var(--shadow-1); }
+
+/* 插件頁(PR9) */
+.home-sub { padding: var(--sp-4) 0; }
+.home-sub-title { margin: 0 0 var(--sp-1); font-size: var(--fs-4); }
+.plug-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--sp-3); margin-top: var(--sp-3); }
+.plug-card {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plug-head { display: flex; align-items: center; gap: 8px; }
+.plug-head .icon { width: 17px; height: 17px; color: var(--accent); }
+.plug-title { font-weight: 650; }
+.plug-desc { margin: 0; font-size: var(--fs-1); }
+.plug-manage { align-self: flex-start; font-size: var(--fs-1); }
+.plug-skills { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-1); }
+
+/* 排程任務頁(PR11) */
+.sched-list { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  padding: var(--sp-2) var(--sp-3);
+}
+.sched-row.off { opacity: 0.6; }
+.sched-info { flex: 1; min-width: 0; }
+.sched-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sched-meta { font-size: var(--fs-0); }
+#schedAdd { margin-top: var(--sp-2); }

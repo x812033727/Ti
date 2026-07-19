@@ -59,4 +59,8 @@ export function bindSidenav() {
   if (newChat) newChat.onclick = () => import("./home.js").then((m) => m.resetToHero());
   const studio = $("#snStudio");
   if (studio) studio.onclick = () => setView("studio");
+  const plugins = $("#snPlugins");
+  if (plugins) plugins.onclick = () => import("./plugins.js").then((m) => m.openPlugins());
+  const sched = $("#snSchedules");
+  if (sched) sched.onclick = () => import("./schedules.js").then((m) => m.openSchedules());
 }
