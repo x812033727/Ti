@@ -52,6 +52,7 @@
 | GET  | `/api/autopilot/trust` | auth | ➖ | 唯讀：信任指標（零人工介入合併率/介入分類/系統事件計數，第 3 階 A0） |
 | GET  | `/api/autopilot/investigations` | auth | ➖ | 唯讀：調查任務結論清單（backlog note＋audit join） |
 | GET  | `/api/lessons` | auth | ➖ | 唯讀：教訓庫瀏覽（子字串搜尋） |
+| GET  | `/api/skills` | auth | ➖ | 唯讀：內部專家技能清單（白名單+SKILL.md 描述），無秘密 |
 | GET  | `/api/autopilot/digest` | auth | ➖ | 唯讀：週報 digest（audit/backlog/lessons 純模板彙整） |
 | GET  | `/api/autopilot/digests` | auth | ➖ | 唯讀：已落盤 digest 歷史清單（每日排程寫檔） |
 | GET  | `/api/autopilot/digests/{name}` | auth | ➖ | 唯讀：單一落盤 digest 內容（檔名白名單擋穿越） |
