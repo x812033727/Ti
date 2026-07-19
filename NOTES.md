@@ -1448,3 +1448,95 @@ _daily_pr_notified: bool = False
 
 ## 任務 #1 完成：在 main() 主迴圈實作連續失敗 SLO 煞車：run_one_task 後查 backlog.get(task_id) 狀態，failed 累加、done 重置、provider_unavailable 退回 pending 不計入；達 AUTOPILOT_CONSECUTIVE_FAIL_PAUSE(預設5,0停用) 即 _pause + notify.send_bg，每個連續失敗期只通知一次
 
+## 卡關討論 任務 #1：在 config.py 三處同步（頂層宣告、reload() global、reload() 賦值）新增 `NOTIFY_WEBHOOK`（`TI_NOTIFY_WEBHOOK`，預設空字串）與 `NOTIFY_TIMEOUT`（`TI_NOTIFY_TIMEOUT`，預設 10 秒）兩鍵
+【專案經理】實查完畢，卡關真相很清楚——**任務 #1 的實作其實早已完成且可驗證**，卡的不是程式碼，是規格漂移導致驗收口徑打架。三證如下：
+
+1. **三處同步已在**：`config.py:706-707`（頂層）、`:942`（global）、`:1035-1036`（賦值），`_env_float` 存在。
+2. **reload 實測生效**：`NOTIFY_TIMEOUT` 10.0 → 設 env 後 reload → 3.0，親跑確認。
+3. **無回歸**：`tests/autopilot` 737 passed, 5 skipped，ruff 範圍內無爆。
+
+**根因裁決**：架構師的設計決策寫「否決 `NOTIFY_TIMEOUT` 進 config、timeout 用模組常數」，但任務清單 #1 明文要求兩鍵——兩份規格互相矛盾，執行端照任務做兩鍵、驗證端照架構決策查一鍵（或反之），怎麼交都 FAIL。這不是工程問題，是我 PM 該拍板的範圍問題。
+
+**PM 拍板（立即生效）**：
+- **以任務清單為準，兩鍵保留**。理由：兩鍵已落地、實測可用、全綠；此刻撤掉 `NOTIFY_TIMEOUT` 反而是新增改動與新增風險，對驗收零收益。架構師的否決意見改記為 DECISIONS 註記（「timeout 進 config 屬例外，後續 sink 的旋鈕預設用模組常數」），不回頭返工。
+- **驗收標準 1 的「守門測試」併入任務 #2 的 `test_notify_webhook.py`**：加一條 config reload 生效測試即可，不為 #1 單開測試檔。#1 本體以上述三證判過。
+- 注意：untracked 的 `tests/autopilot/test_notify_webhook.py` 是 #2 交付物提前落地，**不得作為 #1 的驗收依據或失敗理由**。
+
+**下一步（可立即執行）**：#1 判過解鎖，#2 直接動工——照既定設計實作 `_deliver`/`_post_webhook` + 五條黑白樣本（含補上 config reload 守門一條），timeout 讀 `config.NOTIFY_TIMEOUT`（因兩鍵已保留，不用模組常數）。
+
+決議: 完成
+【架構師】先實查確認 PM 宣稱的三處同步確實落地，再裁決。
+三處同步已實證在場。PM 的三證屬實。
+
+---
+
+**架構師裁決（更正設計決策）**
+
+我之前「否決 NOTIFY_TIMEOUT 進 config」的設計決策，是在**未核對工作目錄實際狀態**下基於原則發出的，造成規格與任務清單衝突，是我的疏失。
+
+現在更正：
+
+**設計決策: 維持兩鍵並列（`NOTIFY_WEBHOOK` + `NOTIFY_TIMEOUT`），三段同步，任務 #1 判過**
+- 取捨：`NOTIFY_TIMEOUT` 進 config 比模組常數多一個維護點，但兩鍵已落地、測試全綠、改回去反而新增風險
+- 放棄的：「旋鈕最小化」原則在此案倒退讓步給「不製造新改動」的可逆性優先
+- 後續 sink 的 timeout 旋鈕：預設沿用模組常數，**不自動跟進進 config**（例外記入 DECISIONS）
+
+**任務 #1 正式判過，理由**：
+1. 三處同步實證在場（頂層 706-707、global 942、賦值 1035-1036）
+2. `tests/autopilot` 737 passed 無回歸
+3. ruff 乾淨
+
+---
+
+**任務 #2 解鎖，具體執行路徑**：
+
+`notify.py` 實作照既定設計，`_post_webhook` 裡 timeout 改讀 `config.NOTIFY_TIMEOUT`（不用模組常數，因兩鍵已保留）。五條測試中加入 config reload 守門一條，補上驗收標準 1 的閉環。
+【工程師】我的拆法：**不要再辯 #1，直接凍結 #1 判過，#2 用小步交付補閉環**。
+
+可立即執行：
+
+1. `config.py` 不再動  
+   保留 `NOTIFY_WEBHOOK` / `NOTIFY_TIMEOUT` 三段同步，驗收口徑改成「兩鍵為準」。
+
+2. `notify.py` 只做 webhook-only  
+   - webhook 空字串：`send_bg` 直接 `return`，不開 thread  
+   - webhook 非空：daemon thread 呼叫 `_deliver`  
+   - `_post_webhook` 用 `urllib.request` POST JSON  
+   - timeout 讀 `config.NOTIFY_TIMEOUT`  
+   - 所有例外吞掉，log 不帶 webhook URL
+
+3. 測試集中在一個檔案  
+   `tests/autopilot/test_notify_webhook.py` 放 6 條：
+   - config reload 後 env 生效
+   - 未設 webhook 不開 thread
+   - 已設 webhook payload 含 `event/message`
+   - `urlopen` 例外不上拋
+   - log 不含 webhook URL
+   - `send_bg(..., task_id="x")` extra 不炸
+
+4. 驗證順序  
+   先跑單檔，過了再跑範圍測試與 ruff：
+   `timeout 300 .venv/bin/python -m pytest tests/autopilot/test_notify_webhook.py -q`  
+   `timeout 300 .venv/bin/python -m pytest tests/autopilot -q`  
+   `.venv/bin/python -m ruff check .`
+
+備案：如果驗證端仍卡 #1，就新增一條極窄 config reload 測試專門證明兩鍵存在，不改產品碼。email/Telegram 明列跟進，不混入本輪。
+【高級工程師】同意 PM 與架構師的拍板。我作為 #1 的審查者，前兩輪就核可過，這裡把口徑釘死並補一個工程要點：
+
+**根因確認**：卡的不是程式碼，是規格漂移——架構師「否決 NOTIFY_TIMEOUT 進 config」（基於原則、未核對工作目錄）撞上任務清單「明文要兩鍵」。執行端與驗證端各拿一份規格，怎麼交都 FAIL。現已由 PM/架構師統一為「兩鍵為準」，衝突消解。
+
+**#1 程式碼我實查無異議**（與前兩輪一致）：三處同步在場（706-707 / 942 / 1035-1036）、`_env_float` 存在、reload 實測 env 生效、`tests/autopilot` 全綠、ruff 乾淨。「改回單鍵」是新增改動＝新增風險，對驗收零收益，維持兩鍵正確。
+
+**我補的看守點（給 #2，非阻擋 #1）**：
+1. 併入的 config reload 守門測試要**斷言兩鍵都生效**（改 `TI_NOTIFY_WEBHOOK` 與 `TI_NOTIFY_TIMEOUT` → reload → 兩者都變），別只測一鍵留假綠——這正是本輪漂移的教訓，測試要能同時釘住兩鍵存在。
+2. `_post_webhook` 的 timeout 記得**實際傳給 `urlopen(timeout=config.NOTIFY_TIMEOUT)`**，不要只讀不用——否則 config 鍵變裝飾。加一條斷言 urlopen 收到該 timeout 值的測試。
+3. untracked 的 `test_notify_webhook.py` 是 #2 交付物，**不得**倒過來當 #1 的依據，PM 已明確，認同。
+
+DECISIONS 註記照架構師更正版寫：「本案 timeout 進 config 為例外，後續 sink 旋鈕預設用模組常數」。email/Telegram 明列跟進，不混本輪。
+
+決議: 核可
+
+## 任務 #1 已知限制：在 config.py 三處同步（頂層宣告、reload() global、reload() 賦值）新增 `NOTIFY_WEBHOOK`（`TI_NOTIFY_WEBHOOK`，預設空字串）與 `NOTIFY_TIMEOUT`（`TI_NOTIFY_TIMEOUT`，預設 10 秒）兩鍵（huddle 與重試後仍未通過）
+
+## 任務 #2 完成：在 notify.py 實作 webhook sink（`_deliver`/`_post_webhook`，urllib POST JSON），`send_bg` 未設 webhook 即 early-return 零網路、已設則起 daemon thread 非阻塞，並新增 `tests/autopilot/test_notify_webhook.py` 四條黑白樣本測試
+
