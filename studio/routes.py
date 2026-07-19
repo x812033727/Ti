@@ -564,9 +564,10 @@ async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONRespo
     """手動往專案 backlog 排一個改良任務（持續改良迴圈會撿走）。"""
     if projects.get(project_id) is None:
         return JSONResponse({"error": "not found"}, status_code=404)
+    # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
     task = backlog.add(
         body.title,
-        body.detail,
+        body.detail[:4000],
         source="user",
         state_dir=projects.state_dir(project_id),
         priority=body.priority,

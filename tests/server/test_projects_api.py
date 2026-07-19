@@ -58,3 +58,15 @@ def test_add_task_defaults_unchanged(client):
     pid = projects.create("預設")["id"]
     task = client.post(f"/api/projects/{pid}/backlog", json={"title": "舊格式"}).json()["task"]
     assert task["priority"] == 1 and task["type"] == "improvement"
+
+
+def test_add_task_truncates_long_detail(client):
+    pid = projects.create("長細節")["id"]
+    client.post(
+        f"/api/projects/{pid}/backlog",
+        json={"title": "長細節任務", "detail": "x" * 5000},
+    )
+
+    data = client.get(f"/api/projects/{pid}").json()
+    task = next(t for t in data["backlog"] if t["title"] == "長細節任務")
+    assert len(task["detail"]) <= 4000
