@@ -28,9 +28,23 @@ from __future__ import annotations
 import os
 import threading
 
-from dotenv import set_key
+from dotenv import set_key, unset_key
 
 _lock = threading.Lock()
+
+
+def remove_secret_key(path: str, key: str) -> None:
+    """安全地把 key 從 .env 移除（不存在＝no-op），並保證檔案權限 0600。
+
+    「設了但留空」與「未設定」對 os.getenv 是兩回事：空字串會蓋掉程式內預設。
+    數字欄清空要的語意是「回到預設」，故必須真移除而非寫入空值
+    （2026-07-19 事故：TI_AUTOPILOT_INVESTIGATION_TIMEOUT='' 使 config import 期 int('') 炸）。
+    """
+    with _lock:
+        if not os.path.isfile(path):
+            return
+        unset_key(path, key)
+        os.chmod(path, 0o600)
 
 
 def write_secret_file(path: str, key: str, value: str) -> None:

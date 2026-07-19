@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 
 from . import config
-from .secretfile import write_secret_file
+from .secretfile import remove_secret_key, write_secret_file
 
 
 @dataclass(frozen=True)
@@ -686,7 +686,14 @@ def update(payload: dict) -> dict:
             continue  # 秘密留空＝不變更
         if f.kind == "select" and f.options and val not in f.options:
             continue  # 不接受非法選項
-        if f.numeric and val:
+        if f.numeric:
+            if not val:
+                # 數字欄清空＝「回到程式預設」:必須真移除而非寫空值——空字串會蓋掉
+                # os.getenv 的預設(2026-07-19 事故:INVESTIGATION_TIMEOUT='' 落檔後
+                # config import 期 int('') 炸,autopilot 重啟即 crashloop)。
+                remove_secret_key(path, key)
+                os.environ.pop(key, None)
+                continue
             try:
                 int(val)
             except ValueError:
