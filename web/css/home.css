@@ -114,3 +114,11 @@ body[data-view="home"] main.layout { display: none; }
 }
 .home-chat-bar input:focus { outline: none; border-color: var(--accent); }
 .home-chat-bar .icon-btn.danger { color: var(--bad); }
+
+/* composer 模式切換(PR6):討論/交辦 pill */
+.hero-modes { display: inline-flex; gap: 2px; margin-right: auto; background: var(--surface-2); border-radius: var(--r-full); padding: 3px; }
+.hero-modes button {
+  border: 0; background: transparent; color: var(--text-2);
+  border-radius: var(--r-full); padding: 5px 12px; font-size: var(--fs-1); cursor: pointer;
+}
+.hero-modes button.active { background: var(--surface-solid); color: var(--text); box-shadow: var(--shadow-1); }

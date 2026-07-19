@@ -10,6 +10,7 @@ import { clearStream, clearBoard } from "../events-render.js";
 import { onRunningChange, setRunning } from "./deck.js";
 import { focusComposer, refreshSidenavHistory } from "./sidenav.js";
 import { replaySession } from "./history.js";
+import { createTaskCard, startTaskCardPolling } from "../components/taskcard.js";
 
 let _origParent = null; // #stream 原位(工作室 .discussion 內)的還原錨
 let _origNext = null;
@@ -47,10 +48,65 @@ export function resetToHero() {
   focusComposer();
 }
 
+// composer 模式(PR6):chat=多專家討論(直播)、task=交辦 agent(背景 autopilot 佇列)。
+let _heroMode = "chat";
+
+export function setHeroMode(mode) {
+  _heroMode = mode === "task" ? "task" : "chat";
+  const map = { "#heroModeChat": "chat", "#heroModeTask": "task" };
+  for (const [sel, m] of Object.entries(map)) {
+    const btn = $(sel);
+    if (!btn) continue;
+    const on = m === _heroMode;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  const send = $("#heroSend");
+  if (send) {
+    const label = send.querySelector("span");
+    if (label) label.textContent = _heroMode === "task" ? "交辦" : "開始";
+  }
+}
+
+export function getHeroMode() { return _heroMode; }
+
+// 交辦 agent:POST 既有 autopilot 任務端點;成功→對話區插任務卡片並輪詢進度。
+export async function heroDispatchTask(text) {
+  const title = text.split("\n")[0].slice(0, 120);
+  setSubview("chat");
+  moveStreamHome();
+  try {
+    const r = await fetch("/api/autopilot/task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, detail: text, priority: 1, type: "improvement" }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const why = r.status === 401 || r.status === 403
+        ? "需要登入(或本機管理權限)才能交辦"
+        : d.detail || "交辦失敗";
+      toast(why, "err");
+      return null;
+    }
+    const card = createTaskCard(d.task.id, title);
+    $("#homeChatStream").appendChild(card);
+    startTaskCardPolling(card);
+    const input = $("#heroInput");
+    if (input) input.value = "";
+    setTimeout(refreshSidenavHistory, 1200);
+    return d.task;
+  } catch (e) {
+    toast("交辦失敗:" + e.message, "err");
+    return null;
+  }
+}
+
 export function heroStart() {
   const input = $("#heroInput");
   const text = (input?.value || "").trim();
   if (!text) { focusComposer(); return; }
+  if (_heroMode === "task") { heroDispatchTask(text); return; }
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     toast("目前已有進行中的討論——先停止它,或到工作室查看", "err");
     return;
@@ -122,5 +178,9 @@ export function bindHome() {
   if (ijInput) ijInput.addEventListener("keydown", (e) => { if (e.key === "Enter") homeInterject(); });
   const stopBtn = $("#heroStopBtn");
   if (stopBtn) stopBtn.onclick = stop;
+  const mc = $("#heroModeChat");
+  if (mc) mc.onclick = () => setHeroMode("chat");
+  const mt = $("#heroModeTask");
+  if (mt) mt.onclick = () => setHeroMode("task");
   onRunningChange(setHomeRunning);
 }
