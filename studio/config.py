@@ -122,7 +122,7 @@ PM_PIN_MODEL = os.getenv("TI_PM_PIN_MODEL", "claude-fable-5").strip()
 CLAUDE_SCOPED_FALLBACK_MODEL = os.getenv(
     "TI_CLAUDE_SCOPED_FALLBACK_MODEL", "claude-opus-4-8"
 ).strip()
-CLAUDE_SCOPED_LIMIT_THRESHOLD = float(os.getenv("TI_CLAUDE_SCOPED_LIMIT_THRESHOLD", "95"))
+CLAUDE_SCOPED_LIMIT_THRESHOLD = _env_float("TI_CLAUDE_SCOPED_LIMIT_THRESHOLD", 95)
 
 
 # OpenAI（相容）設定。OPENAI_BASE_URL 可指向本地模型（Ollama / LM Studio 等）。
@@ -130,7 +130,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")
 OPENAI_MODEL_FAST = os.getenv("TI_OPENAI_MODEL_FAST", "gpt-4o-mini")
-OPENAI_MAX_STEPS = int(os.getenv("TI_OPENAI_MAX_STEPS", "12"))
+OPENAI_MAX_STEPS = _env_int("TI_OPENAI_MAX_STEPS", 12)
 
 # MiniMax（OpenAI 相容介面；訂閱或 API key 皆走此路）。base_url 預設官方端點、可改；
 # 模型 ID 走 MiniMax 自家命名（如 MiniMax-M3）。憑證與 OpenAI 分開存放，互不污染。
@@ -195,11 +195,11 @@ ANTIGRAVITY_SKIP_PERMISSIONS = os.getenv("TI_ANTIGRAVITY_SKIP_PERMISSIONS", "1")
 
 # --- 流程 ---------------------------------------------------------------
 # 每個任務「實作→驗證→審查」的最大改進輪數，避免無止盡迴圈。
-TASK_MAX_ROUNDS = int(os.getenv("TI_MAX_ROUNDS", "3"))
+TASK_MAX_ROUNDS = _env_int("TI_MAX_ROUNDS", 3)
 MAX_ROUNDS = TASK_MAX_ROUNDS  # 舊名相容
 
 # 架構辯論的來回回合數（工程師 ⇄ 高級工程師）。
-DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
+DEBATE_ROUNDS = _env_int("TI_DEBATE_ROUNDS", 2)
 
 
 def _discuss_max_rounds() -> int:
@@ -297,7 +297,7 @@ CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
 # 連續退回達上限仍提不出可重現紅點 → 客觀證據優先，以「已知限制」放行並把殘留疑慮記成後續任務
 # （不靜默丟），避免 critic 對 objectively-green 的票無限退回、燒滿輪數後整場判失敗。
 # 0＝不設限（舊行為：critic 可在輪數內無限退回）。只作用於任務審查 gate，不影響最終驗收 gate。
-CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
+CRITIC_MAX_REJECTS = _env_int("TI_CRITIC_MAX_REJECTS", 2)
 
 # 動態流程（workflow）的 dynamic step：PM 運行時逐 hop 決定下一步找誰的最大 hop 數上限
 # （stage 未指定 budget 時取此值）。空字串容錯（_env_int），對齊收斂預算思維防無限退回。
@@ -320,19 +320,19 @@ DEFAULT_WORKFLOW = os.getenv("TI_DEFAULT_WORKFLOW", "動態優先").strip()
 # 不進交付物與檔案清單（見 workspace._IGNORE）。純檔案 IO、無額外 LLM 呼叫——預設開啟；
 # 注入時只取尾段 NOTES_MAX_CHARS 字（從段落邊界起），防專案模式長跑 context 無限膨脹。
 NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
-NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
+NOTES_MAX_CHARS = _env_int("TI_NOTES_MAX_CHARS", 6000)
 
 # 跨場次教訓庫（lessons.json）：工作室的長期記憶。每場檢討蒸餾出可重用的「教訓」持久化，
 # 下次新討論開場注入 PM 拆解，讓工作室跨場次自我加強（避免重蹈、善用既有結論）。
 # 近零成本（搭檢討 prompt 順帶解析，無額外 LLM 呼叫）——預設開啟；LESSONS_MAX 為注入上限。
 LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
-LESSONS_MAX = int(os.getenv("TI_LESSONS_MAX", "12"))
+LESSONS_MAX = _env_int("TI_LESSONS_MAX", 12)
 # 教訓庫蒸餾：庫超過門檻時於檢討後用一次 LLM 把相近教訓合併、淘汰過時項（取代純 FIFO 截斷的
 # 粗暴遺忘）。低頻（門檻＋最小間隔雙閘）；LLM 失敗/離線/壞輸出一律靜默跳過、保留原庫，行為退
 # 回現行 FIFO——絕不讓壞輸出清空長期記憶。env-only（與 LESSONS_MAX 同級的 power-user 旋鈕）。
 LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "False", "")
-LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
-LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))  # 最小間隔（秒）
+LESSONS_DISTILL_THRESHOLD = _env_int("TI_LESSONS_DISTILL_THRESHOLD", 200)
+LESSONS_DISTILL_INTERVAL = _env_int("TI_LESSONS_DISTILL_INTERVAL", 86400)  # 最小間隔（秒）
 
 # 考核庫（appraisals.json）：每場收尾檢討 PM 對各參與 AI 打 1–5 分（`考核:` 行），與客觀
 # 指標（QA 輪數／裁決、高工核可、耗時）合併持久化；拆解與 per-task 派工時聚合成
@@ -340,7 +340,7 @@ LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400")
 # 近零成本（搭檢討 prompt 順帶解析，無額外 LLM 呼叫）——預設開啟；MAX_STORE 為檔案
 # 保留上限（由新到舊裁剪，防長跑只增不減）。
 APPRAISAL_ENABLED = os.getenv("TI_APPRAISAL", "1") not in ("0", "false", "False", "")
-APPRAISAL_MAX_STORE = int(os.getenv("TI_APPRAISAL_MAX_STORE", "2000"))
+APPRAISAL_MAX_STORE = _env_int("TI_APPRAISAL_MAX_STORE", 2000)
 
 # 需求澄清階段：拆解前 PM 先就模糊需求向使用者反問關鍵問題（附預設假設），等回覆逾時則按
 # 假設續行——流程絕不因等人而卡死。僅互動 session 生效（須有插話佇列）；autopilot／持續改良
@@ -348,26 +348,26 @@ APPRAISAL_MAX_STORE = int(os.getenv("TI_APPRAISAL_MAX_STORE", "2000"))
 # 自動跳過、天然向後相容。結論固化 workspace 的 PRD.md，抽出的「願景:」回填專案 meta。
 CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
 CLARIFY_TIMEOUT = _env_float("TI_CLARIFY_TIMEOUT", 180)  # 等使用者回覆的秒數
-CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
+CLARIFY_MAX_QUESTIONS = _env_int("TI_CLARIFY_MAX_QUESTIONS", 4)
 
 # 知識沉澱（workspace 的 docs/RESEARCH.md；PRD.md 由澄清階段寫根、設計決策由 ADR 寫根）：
 # 調研結論持久化成交付物，下場開場注入尾段——專案模式 workspace 固定，知識自然跨場次累積。
 # 檔案不存在時注入空字串、行為與關閉時逐字相同，故可安全預設開啟。
 KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
-KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))  # 注入尾段上限（字元）
+KNOWLEDGE_MAX_CHARS = _env_int("TI_KNOWLEDGE_MAX_CHARS", 4000)  # 注入尾段上限（字元）
 
 # 產品藍圖：專案持續改良迴圈開跑時，PM 把一句願景展開成結構化藍圖（願景/用戶/功能 P0~P2/
 # 里程碑），落盤 BLUEPRINT.md＋blueprint.json、功能清單餵入專案 backlog（P0 先做），
 # 跨場次注入 requirement 前綴——讓「越做越進步」有方向感。每專案僅生成一次。
 # 預設關閉（opt-in，會多一次 PM 呼叫）；SEED_MAX 為一次最多餵 backlog 的功能數。
 BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
-BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
+BLUEPRINT_SEED_MAX = _env_int("TI_BLUEPRINT_SEED_MAX", 5)
 
 # 架構決策記錄（ADR）：架構辯論/架構師定案後蒸餾成決策條目，落盤 workspace 的
 # DECISIONS.md（人讀、進交付物）＋adr.json（機讀索引）；後續 session 的 PM 拆解與
 # 架構提案注入既有決策摘要，翻案須說明理由——避免跨場次反覆推翻。預設關閉（opt-in）。
 ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
-ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))  # 注入時取最新 N 筆決策
+ADR_MAX = _env_int("TI_ADR_MAX", 8)  # 注入時取最新 N 筆決策
 
 # 實作中即時研究（roadmap 階段二，opt-in 預設關）：開啟後工程師／高級工程師的工具清單
 # 附加 WebSearch/WebFetch，動工中可上網查官方 API、套件用法與最佳實踐。Claude 路徑由
@@ -379,8 +379,8 @@ RESEARCH_TOOLS_ENABLED = os.getenv("TI_RESEARCH_TOOLS", "0") not in ("0", "false
 RESEARCH_ALLOWED_DOMAINS = [
     d.strip().lower() for d in os.getenv("TI_RESEARCH_ALLOWED_DOMAINS", "").split(",") if d.strip()
 ]
-RESEARCH_FETCH_TIMEOUT = float(os.getenv("TI_RESEARCH_FETCH_TIMEOUT", "20"))  # 單次抓取逾時（秒）
-RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))  # 回應截斷上限
+RESEARCH_FETCH_TIMEOUT = _env_float("TI_RESEARCH_FETCH_TIMEOUT", 20)  # 單次抓取逾時（秒）
+RESEARCH_FETCH_MAX_CHARS = _env_int("TI_RESEARCH_FETCH_MAX_CHARS", 8000)  # 回應截斷上限
 
 # --- 自我改進機制（移植自 ti-studio 自我進步交付，補主迴圈缺口）-----------------
 # A 反思記憶：每輪失敗把 QA／高工意見蒸餾成精簡反思，存 per-session JSONL，後續輪次／huddle
@@ -395,18 +395,18 @@ RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))
 # 與 TI_LESSONS／NOTES／HUDDLE／CRITIC 同列「進階流程」開關：env 仍是來源，且已納入設定面板
 # （settings.FIELDS「進階」組）與 reload()。消費端皆讀即時全域值，故面板存檔後下次討論即生效。
 REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
-REFLEXION_MAX = int(os.getenv("TI_REFLEXION_MAX", "5"))  # 注入時取最近 N 筆反思
+REFLEXION_MAX = _env_int("TI_REFLEXION_MAX", 5)  # 注入時取最近 N 筆反思
 # 客觀閘門：0=關／1=開（工程師本輪宣告的自測指令實敗才否決；fallback 整體指令只回報不硬退）
 # ／strict=fallback 失敗與「未宣告執行指令」皆視為未通過。
 OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
-SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))  # 單輪內就地精修次數（0=關）
+SELF_REFINE_ITERS = _env_int("TI_SELF_REFINE_ITERS", 1)  # 單輪內就地精修次數（0=關）
 # 子進程資源上限（穩健式預設開）。每項 0=略過該限。RLIMIT_AS 算虛擬位址空間，V8／BLAS 會預留
 # 數 GB，故 4096MB 為真實工作負載的寬鬆下限（交付物 512MB 是玩具題尺度）；CPU 300s 遠高於
 # DEMO_TIMEOUT(60s wall)，只攔失控孤兒；FSIZE 512MB 擋單檔塞爆磁碟而不卡 pip wheel。
 RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
-RLIMIT_MEM_MB = int(os.getenv("TI_RLIMIT_MEM_MB", "4096"))
-RLIMIT_CPU_S = int(os.getenv("TI_RLIMIT_CPU_S", "300"))
-RLIMIT_FSIZE_MB = int(os.getenv("TI_RLIMIT_FSIZE_MB", "512"))
+RLIMIT_MEM_MB = _env_int("TI_RLIMIT_MEM_MB", 4096)
+RLIMIT_CPU_S = _env_int("TI_RLIMIT_CPU_S", 300)
+RLIMIT_FSIZE_MB = _env_int("TI_RLIMIT_FSIZE_MB", 512)
 
 
 def objective_gate_enabled() -> bool:
@@ -422,10 +422,10 @@ def objective_gate_strict() -> bool:
 # 停滯守門：改進迴圈連續 STALL_ROUNDS 輪只重述（文字高度相似且無檔案變動）就提早收斂，
 # 避免燒 token。<=1 視為停用。預設值刻意大於離線示範每任務實際圈數，使既有流程不誤觸；
 # 且 _stalled 在無 cwd 或關閉 git 時一律不偵測（保護 cwd=None 的單元測試）。
-STALL_ROUNDS = int(os.getenv("TI_STALL_ROUNDS", "3"))
+STALL_ROUNDS = _env_int("TI_STALL_ROUNDS", 3)
 
 # 單一專家發言（含工具操作）的回合上限，避免 agent 卡住。
-MAX_TURNS_PER_TURN = int(os.getenv("TI_MAX_TURNS", "40"))
+MAX_TURNS_PER_TURN = _env_int("TI_MAX_TURNS", 40)
 
 # 發言層 watchdog：max_turns 只限「回合數」，限不住單一工具呼叫卡死（如前景跑常駐
 # server），故另設時間軸保護。idle＝兩則串流訊息的間隔上限（有進展就重置，不誤殺正常
@@ -434,7 +434,7 @@ TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
 TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
 
 # 對偵測到的 rate_limit_error／429 做有限次退避重試——優先讀 retry-after，否則指數退避
-EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
+EXPERT_RATE_LIMIT_RETRIES = _env_int("TI_RATELIMIT_RETRIES", 3)
 EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)  # 退避基數（秒）
 EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)  # 單次退避上限
 # 退避 jitter 分數 ∈[0,1]，傳給 llm_caller.backoff_delay 打散多 expert 同撞 429／529 的重試時點
@@ -455,7 +455,7 @@ OPTIONAL_ROLES = {
 LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if r.strip()}
 
 # PM 拆解出的任務數上限（autopilot 單一 backlog 任務不該再炸成超多子任務 → 控時間）。
-MAX_TASKS = int(os.getenv("TI_MAX_TASKS", "5"))
+MAX_TASKS = _env_int("TI_MAX_TASKS", 5)
 
 # --- 任務並行（多支線 lane）---------------------------------------------
 # 開啟後：PM 標注依賴 → 獨立任務分「波次」，每波最多 PARALLEL_LANES 條支線並行，每條各有
@@ -464,15 +464,15 @@ MAX_TASKS = int(os.getenv("TI_MAX_TASKS", "5"))
 # 行為：TI_PARALLEL_TASKS=0（循序專屬語義的測試已各自明確釘在 PARALLEL_TASKS_ENABLED=False）。
 PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
 # 單一波次內同時並行的支線數上限（含 1 = 退化為循序）。
-PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
+PARALLEL_LANES = _env_int("TI_PARALLEL_LANES", 3)
 # 全域同時進行中的 LLM 發言數上限（節流：N 條 lane × 各自驗證/審查/資安 gather 可能爆量）。
 # 下限會在使用時夾到 ≥ 單一 lane 內最大 gather 數（4），避免單 lane 內 gather 自我死鎖。
-LLM_MAX_CONCURRENCY = int(os.getenv("TI_LLM_MAX_CONCURRENCY", "9"))
+LLM_MAX_CONCURRENCY = _env_int("TI_LLM_MAX_CONCURRENCY", 9)
 
 # --- 確定性執行（runner）-----------------------------------------------
 # 自測 / Demo 的執行逾時（秒）與輸出字數上限。
-DEMO_TIMEOUT = int(os.getenv("TI_DEMO_TIMEOUT", "60"))
-DEMO_MAX_OUTPUT = int(os.getenv("TI_DEMO_MAX_OUTPUT", "8000"))
+DEMO_TIMEOUT = _env_int("TI_DEMO_TIMEOUT", 60)
+DEMO_MAX_OUTPUT = _env_int("TI_DEMO_MAX_OUTPUT", 8000)
 
 # 是否在 workspace 內建立獨立 git repo 並做階段性 commit。
 ENABLE_GIT = os.getenv("TI_ENABLE_GIT", "1") not in ("0", "false", "False", "")
@@ -540,7 +540,7 @@ def expert_sandbox_settings() -> dict | None:
 # --- 離線示範模式 -------------------------------------------------------
 # 不需 API 金鑰，用腳本化的假專家驅動完整流程（真的寫檔/git/Demo），供試用與端到端驗證。
 OFFLINE_MODE = os.getenv("TI_OFFLINE", "0") not in ("0", "false", "False", "")
-OFFLINE_DELAY = float(os.getenv("TI_OFFLINE_DELAY", "0.4"))  # 每次發言之間的節奏（秒）
+OFFLINE_DELAY = _env_float("TI_OFFLINE_DELAY", 0.4)  # 每次發言之間的節奏（秒）
 
 # --- 發佈到 GitHub（對外、預設關閉）------------------------------------
 # 需同時設定 GITHUB_TOKEN 與 TI_PUBLISH_REPO（owner/repo）才會啟用。
@@ -578,19 +578,19 @@ PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", 
 # push 並開 PR 後是否自動合併進 base 分支（預設關閉，向後相容；開啟才形成自我改進閉環）。
 PUBLISH_MERGE = os.getenv("TI_PUBLISH_MERGE", "0") not in ("0", "false", "False", "")
 # 自動合併前等待 CI 的最長秒數、輪詢間隔、以及對 stale／409 的重試次數。
-PUBLISH_CI_TIMEOUT = int(os.getenv("TI_PUBLISH_CI_TIMEOUT", "600"))
-PUBLISH_CI_INTERVAL = int(os.getenv("TI_PUBLISH_CI_INTERVAL", "10"))
-PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
+PUBLISH_CI_TIMEOUT = _env_int("TI_PUBLISH_CI_TIMEOUT", 600)
+PUBLISH_CI_INTERVAL = _env_int("TI_PUBLISH_CI_INTERVAL", 10)
+PUBLISH_MERGE_RETRIES = _env_int("TI_PUBLISH_MERGE_RETRIES", 3)
 # 合併時 PR 落後 base（mergeable_state=behind，分支保護要求與 base 同步→PUT merge 回 405）
 # 的自動修復輪數：update-branch 把 base 併進來 → 等新 head 的 CI → 重試合併。
 # 0＝停用（恢復舊行為：behind 直接判 CONFLICT 退回）；上限防止 base 高頻前進時無限追趕。
 # 預設 2→4（第五輪 C1）：BEHIND 是「main 動太快」而非任務缺陷，2 輪在多 PR 排隊日
 # （單日 12 支）實測容易耗盡誤傷；耗盡的處置同步改為退回 pending 不計 attempts。
-MERGE_BEHIND_RETRIES = int(os.getenv("TI_MERGE_BEHIND_RETRIES", "4"))
+MERGE_BEHIND_RETRIES = _env_int("TI_MERGE_BEHIND_RETRIES", 4)
 # 發佈後 CI 失敗時，讓團隊修正重推、再驗合併的最多輪數；以及每輪等新 commit 的 check
 # 註冊出現的寬限秒數（避免「尚未註冊」被誤判為無 CI 而提前合併）。
-PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
-PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
+PUBLISH_CI_MAX_ROUNDS = _env_int("TI_PUBLISH_CI_MAX_ROUNDS", 5)
+PUBLISH_CI_GRACE = _env_int("TI_PUBLISH_CI_GRACE", 120)
 
 # --- 登入 / 門禁（單一共用密碼，預設關閉）------------------------------
 # 設定 TI_ACCESS_PASSWORD 後即啟用門禁：使用者需在登入頁輸入正確密碼才能進入工作室。
@@ -604,11 +604,11 @@ AUTH_SECRET = _env_auth_secret or secrets.token_hex(32)
 AUTH_SECRET_IS_EPHEMERAL = not _env_auth_secret
 # 登入 cookie 名稱與有效秒數（預設 7 天）。
 AUTH_COOKIE = "ti_session"
-AUTH_TTL = int(os.getenv("TI_AUTH_TTL", "604800"))
+AUTH_TTL = _env_int("TI_AUTH_TTL", 604800)
 
 # --- 工具讀檔上限：防超大生成檔被全量 read_text 載入記憶體（OOM）------------
 # read_file 工具與 workspace.read_file 在讀取前先檢查檔案大小，超過即拒讀並回提示。
-MAX_READ_FILE_BYTES = int(os.getenv("TI_MAX_READ_FILE_BYTES", str(1_000_000)))
+MAX_READ_FILE_BYTES = _env_int("TI_MAX_READ_FILE_BYTES", 1_000_000)
 
 
 def auth_enabled() -> bool:
@@ -755,17 +755,17 @@ ANTIGRAVITY_OAUTH_TOKEN_FILE = Path(
 # 兩規則取聯集（任一超標即回收）；設 0 = 該規則停用。MAX_COUNT 預設啟用（夠寬、足以保留
 # 近期歷史，又能封住無上限成長）；MAX_AGE 預設停用（opt-in）。設 TI_HISTORY_MAX_COUNT=0
 # 即完全還原成不自動回收。屬「啟動時固定」、非 UI 可調，故不納入 config.reload()。
-HISTORY_MAX_COUNT = int(os.getenv("TI_HISTORY_MAX_COUNT", "200"))  # 最多保留幾個非 running session
-HISTORY_MAX_AGE = int(os.getenv("TI_HISTORY_MAX_AGE", "0"))  # 最後活動超過幾秒即回收（0=停用）
+HISTORY_MAX_COUNT = _env_int("TI_HISTORY_MAX_COUNT", 200)  # 最多保留幾個非 running session
+HISTORY_MAX_AGE = _env_int("TI_HISTORY_MAX_AGE", 0)  # 最後活動超過幾秒即回收（0=停用）
 
 # --- 伺服器 -------------------------------------------------------------
 HOST = os.getenv("TI_HOST", "0.0.0.0")
-PORT = int(os.getenv("TI_PORT", "8000"))
+PORT = _env_int("TI_PORT", 8000)
 
 # 同時進行的討論場次上限（每場會起多個專家子程序 / LLM 連線；無上限時大量並發連線可
 # 耗盡資源與 API 額度）。超過時新的 /ws 連線被拒（送 error 後 close 1013）。0 = 不限
 # （向後相容）。預設給一個寬鬆上限，封住「大量分頁／腳本狂開連線」的失控情況。
-MAX_CONCURRENT_SESSIONS = int(os.getenv("TI_MAX_CONCURRENT_SESSIONS", "8"))
+MAX_CONCURRENT_SESSIONS = _env_int("TI_MAX_CONCURRENT_SESSIONS", 8)
 
 # --- Autopilot（自主自我改善迴圈，由獨立的 ti-autopilot.service 跑）-------
 # 持久任務 backlog 與狀態存這裡；working clone 與部署目標分開（避免改到正在跑的服務）。
@@ -780,15 +780,15 @@ CORE_REPO = AUTOPILOT_REPO
 AUTOPILOT_BRANCH = os.getenv("TI_AUTOPILOT_BRANCH", "main")  # 部署分支
 AUTOPILOT_SERVICE = os.getenv("TI_AUTOPILOT_SERVICE", "ti.service")  # 重佈時要 restart 的服務
 AUTOPILOT_HEALTH_URL = os.getenv("TI_AUTOPILOT_HEALTH_URL", "http://127.0.0.1:8021/api/health")
-AUTOPILOT_COOLDOWN = int(os.getenv("TI_AUTOPILOT_COOLDOWN", "30"))  # 任務間最小喘息（秒）
-AUTOPILOT_TASK_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TASK_TIMEOUT", "3600"))
+AUTOPILOT_COOLDOWN = _env_int("TI_AUTOPILOT_COOLDOWN", 30)  # 任務間最小喘息（秒）
+AUTOPILOT_TASK_TIMEOUT = _env_int("TI_AUTOPILOT_TASK_TIMEOUT", 3600)
 # 任務執行中「活動停滯」自癒門檻（秒）：連續此秒數「無進展」（events 檔 mtime 未前進 **且**
 # worker 子程序零 CPU 活性）＝疑似子程序死鎖（非任務太大），autopilot 就地取消該場並標 failed
 # 交分診自動重試，無需外部監控/重啟。以 events＋CPU 雙訊號判活（events 在長 inter-message 間隔
 # 會凍結，CPU 兜底）。不變量：須 > TURN_HARD_TIMEOUT（單一 turn 可合法靜默的上限，預設 1800），
 # 否則會誤殺慢但活著的 turn。預設 2400（40min）＝ TURN_HARD_TIMEOUT 之上留 600s headroom，
 # 且 < AUTOPILOT_TASK_TIMEOUT(3600) 以更早自癒。0＝停用（退回僅硬牆逾時）。
-AUTOPILOT_STALL_TIMEOUT = int(os.getenv("TI_AUTOPILOT_STALL_TIMEOUT", "2400"))
+AUTOPILOT_STALL_TIMEOUT = _env_int("TI_AUTOPILOT_STALL_TIMEOUT", 2400)
 
 # AUTOPILOT_TIMEOUT_AUTOSPLIT：硬牆逾時任務（多半範圍太大跑不完）不再無聲 parked 等人工拆，而是交
 #   資深專家自動拆成數個更小、可獨立出貨的子任務再排回 backlog、原任務歸檔 parked（完成率第二輪修法
@@ -802,9 +802,9 @@ AUTOPILOT_TIMEOUT_AUTOSPLIT = os.getenv("TI_AUTOPILOT_TIMEOUT_AUTOSPLIT", "1") n
 )
 # 自動拆分的最大代數：任務帶 split_depth（拆分產物 = 父 depth+1）；達此上限的逾時任務不再自動拆、
 #   維持 parked 待人工，避免無限拆分。2＝原任務可被拆一次、其子任務再逾時可再拆一次,之後止步。
-AUTOPILOT_SPLIT_MAX_DEPTH = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_DEPTH", "2"))
+AUTOPILOT_SPLIT_MAX_DEPTH = _env_int("TI_AUTOPILOT_SPLIT_MAX_DEPTH", 2)
 # 單次拆分最多產出的子任務數（過濾/去重後再截斷），避免一次灌太多。
-AUTOPILOT_SPLIT_MAX_SUBTASKS = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", "4"))
+AUTOPILOT_SPLIT_MAX_SUBTASKS = _env_int("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", 4)
 
 # 本工作室長期目標（北極星）：注入 autopilot 自評與 improver「找問題」的 discovery prompt，
 # 讓自主提案可追溯到一致的長期方向（單一真相在此，消費端一律讀 config）。空字串＝不注入。
@@ -814,7 +814,7 @@ AUTOPILOT_NORTH_STAR = os.getenv(
 )
 # 單一任務客觀閘門（lint/collect/test/merge）失敗時，重試同一任務的最大嘗試次數。
 # 達上限才標 failed；避免每次失敗就 spawn 一個措辭近似的「修復X」新任務造成 backlog 暴增。
-AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3"))
+AUTOPILOT_TASK_MAX_ATTEMPTS = _env_int("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", 3)
 # 「討論未達完成且不可出貨」時重試同一任務的最大嘗試次數（預設 2，刻意 < 客觀閘門的 3）。
 # 討論未收斂常是暫時性的（turn timeout 讓 QA 文字缺通過字樣、provider 抖動、單一 wave
 # flaky、critic 一時否決；LLM 非決定性，重跑常會過），值得有限次重試而非單發即永久 failed
@@ -822,17 +822,17 @@ AUTOPILOT_TASK_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_TASK_MAX_ATTEMPTS", "3
 # 避免對真的不可收斂任務空耗額度。達上限才標 failed（note 仍含「討論未達完成」）。
 # 預設 2→3（第五輪 C1）：實測 failed 23 筆中 48% 是此桶且 cap=2 擋死；LLM 非決定性，
 # 第 3 次常會過——與客觀閘門上限對齊，成本由每日 PR 預算兜底。
-AUTOPILOT_DISCUSSION_MAX_ATTEMPTS = int(os.getenv("TI_AUTOPILOT_DISCUSSION_MAX_ATTEMPTS", "3"))
+AUTOPILOT_DISCUSSION_MAX_ATTEMPTS = _env_int("TI_AUTOPILOT_DISCUSSION_MAX_ATTEMPTS", 3)
 # 額度感知節奏（quota gate）：主迴圈取任務前先查 provider 額度快照（provider_quota.snapshot
 # ＋ gate()），全部 provider 受限（未就緒/查詢異常/用量達門檻）時睡到最早重置再重查，取代
 # 「額度耗盡仍空轉把任務燒成 failed」。GATE=0 可關閉（維持舊行為）；MAX_SLEEP 為單次睡眠
 # 上限秒數（防 reset 資訊異常導致睡過頭，醒來會重查快照再決定）。
 AUTOPILOT_QUOTA_GATE = os.getenv("TI_AUTOPILOT_QUOTA_GATE", "1") not in ("0", "false", "False", "")
-AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+AUTOPILOT_QUOTA_MAX_SLEEP = _env_int("TI_AUTOPILOT_QUOTA_MAX_SLEEP", 1800)
 # 每日 PR 成本熔斷：UTC 當日 autopilot 實際開出的 PR 數（audit.jsonl 中 pr 非空的紀錄）達
 # 上限即停止接新任務，睡到跨日自動恢復（不寫 pause 檔、免人工 resume）。0＝不限制（預設，
 # 行為不變）。防幻覺任務迴圈在單日燒光 PR/CI/LLM 成本。
-AUTOPILOT_DAILY_PR_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_PR_BUDGET", "0"))
+AUTOPILOT_DAILY_PR_BUDGET = _env_int("TI_AUTOPILOT_DAILY_PR_BUDGET", 0)
 # 任務開場前的 PM workflow 分診：小任務走「快速模式」省三審輪次、高風險走「預設流程」完整
 # 把關（一次 MODEL_FAST 級短呼叫）。預設關閉（0）：維持「autopilot 一律走 default_workflow
 # 安全骨架」的既有不變式，opt-in 後才生效；任何分診失敗（LLM 錯誤/逾時/非法名稱）都退回
@@ -843,7 +843,7 @@ AUTOPILOT_WORKFLOW_TRIAGE = os.getenv("TI_AUTOPILOT_WORKFLOW_TRIAGE", "0") not i
     "False",
     "",
 )
-AUTOPILOT_TRIAGE_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TRIAGE_TIMEOUT", "60"))
+AUTOPILOT_TRIAGE_TIMEOUT = _env_int("TI_AUTOPILOT_TRIAGE_TIMEOUT", 60)
 # provider 額度快照 SWR（stale-while-revalidate）：provider_quota.snapshot() 的模組級快取
 # 過期後，只要舊快照年齡未超過此秒數，就立即回舊快照（附 stale=true）並由背景執行緒刷新，
 # 讓設定面板、orchestrator 派工與 autopilot 額度閘門等關鍵路徑不必同步等最慢 provider。
@@ -853,15 +853,15 @@ QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
 # 此比例處主動收斂——停止派發新任務、把已完成的走 Demo/出貨、未動的記 known-limit/followup，
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
 # 預設 0.85（留 15% 給 Demo/發佈/wrap-up）。只在 autopilot 傳入 time_budget_s 時生效。
-SESSION_SOFT_DEADLINE_FRAC = float(os.getenv("TI_SESSION_SOFT_DEADLINE_FRAC", "0.85"))
+SESSION_SOFT_DEADLINE_FRAC = _env_float("TI_SESSION_SOFT_DEADLINE_FRAC", 0.85)
 # 每場用量預算（成本熔斷）：與時間預算同機制——session 累計用量達上限即停止派發新任務、優雅收尾
 # 出貨，治「失控場一路燒 token 到撞硬 timeout」。兩者皆 0＝不限（預設不啟用，維持既有行為）；
 # TOKEN 為單場 total token 上限、USD 為單場估算成本上限（採事件回報的 cost_usd 累計）。
-SESSION_TOKEN_BUDGET = int(os.getenv("TI_SESSION_TOKEN_BUDGET", "0"))
-SESSION_USD_BUDGET = float(os.getenv("TI_SESSION_USD_BUDGET", "0"))
+SESSION_TOKEN_BUDGET = _env_int("TI_SESSION_TOKEN_BUDGET", 0)
+SESSION_USD_BUDGET = _env_float("TI_SESSION_USD_BUDGET", 0)
 # 部署 idle 守衛的 stale 門檻（秒）：status 卡在 running 但最後活動超過此值的討論視為死掉、
 # 不再算「進行中」，避免崩潰沒收尾的 session 永久擋住 autodeploy / autopilot 重佈。預設 30 分。
-DEPLOY_STALE_AFTER = int(os.getenv("TI_DEPLOY_STALE_AFTER", "1800"))
+DEPLOY_STALE_AFTER = _env_int("TI_DEPLOY_STALE_AFTER", 1800)
 AUTOPILOT_PAUSE_FILE = Path(
     os.getenv("TI_AUTOPILOT_PAUSE_FILE", str(PROJECT_ROOT / "AUTOPILOT_PAUSED"))
 )
@@ -915,10 +915,10 @@ AUTOPILOT_PROTECTION_CHECK = os.getenv("TI_AUTOPILOT_PROTECTION_CHECK", "1") not
 #   主迴圈在任務邊界（此刻保證無 autopilot 討論）每隔此秒數 fetch 比對 origin/<branch>，
 #   有 drift 且無手動討論即就地 deploy.redeploy()＋execv 重載。0＝關閉（回舊行為，只靠 timer；
 #   tests/conftest.py 對整個測試樹設 0——此檢查會真的 fetch/reset/restart，絕不可在測試觸發）。
-AUTOPILOT_DEPLOY_CHECK_INTERVAL = int(os.getenv("TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL", "300"))
+AUTOPILOT_DEPLOY_CHECK_INTERVAL = _env_int("TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL", 300)
 # 邊界重佈失敗（已自動回滾）後的退避秒數：避免壞 commit 讓每輪任務邊界都白燒一次 redeploy；
 # autodeploy timer 原邏輯仍在，雙保險。
-AUTOPILOT_DEPLOY_FAIL_BACKOFF = int(os.getenv("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", "1800"))
+AUTOPILOT_DEPLOY_FAIL_BACKOFF = _env_int("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", 1800)
 # AUTOPILOT_AUTO_MERGE：開 PR 後掛 GitHub 原生 auto-merge（完成率第三輪修法二B）。舊同步
 #   路徑阻塞等 CI（PUBLISH_CI_TIMEOUT=600s）：被中斷＝殘留 open PR＋任務被自己的殘留擋死；
 #   CI 慢於 600s＝關 PR 丟掉整份成品。掛 auto-merge 後短窗輪詢（AUTOPILOT_MERGE_FAST_WAIT），
@@ -934,14 +934,14 @@ AUTOPILOT_AUTO_MERGE = os.getenv("TI_AUTOPILOT_AUTO_MERGE", "1") not in (
 )
 # auto-merge 掛上後的短窗輪詢秒數（多數 CI 幾分鐘內綠，窗內合併＝與舊成功路徑等價）；
 # 0＝掛上即走（任務直接標 merging）。
-AUTOPILOT_MERGE_FAST_WAIT = int(os.getenv("TI_AUTOPILOT_MERGE_FAST_WAIT", "180"))
+AUTOPILOT_MERGE_FAST_WAIT = _env_int("TI_AUTOPILOT_MERGE_FAST_WAIT", 180)
 # merging 任務等待背景合併的最長秒數：逾齡由 reconciler 關 PR 退回重排（note 帶「逾時」
 # 命中 INFRA_FAILURE_RE，triage 可自動重排）。
-AUTOPILOT_MERGE_MAX_AGE = int(os.getenv("TI_AUTOPILOT_MERGE_MAX_AGE", "7200"))
+AUTOPILOT_MERGE_MAX_AGE = _env_int("TI_AUTOPILOT_MERGE_MAX_AGE", 7200)
 # AUTOPILOT_EVAL_MEMORY：自我評估時回饋「近期成敗」給資深專家的筆數（每類 done/failed 各取
 #   最近 N 筆）。讓評估記取自身成績單——避免重提已完成、避開已知失敗做法，越跑越聚焦。
 #   0 = 停用（還原成無狀態評估）。
-AUTOPILOT_EVAL_MEMORY = int(os.getenv("TI_AUTOPILOT_EVAL_MEMORY", "20"))
+AUTOPILOT_EVAL_MEMORY = _env_int("TI_AUTOPILOT_EVAL_MEMORY", 20)
 # LINT_AUTOFORMAT：lint 閘門遇「機器可修項」失敗時先自動修再重驗，重驗綠即視同通過
 #   （機器可確定性修復的問題不值得把整場 1-2 小時的討論退回重試；見任務 #249 卡格式牆、
 #   #496/#364/#367 卡 import 排序）。涵蓋兩類：
@@ -1030,7 +1030,7 @@ AUTOPILOT_INVESTIGATION_LANE = os.getenv("TI_AUTOPILOT_INVESTIGATION_LANE", "1")
 )
 # 調查管線單次專家呼叫的硬逾時（秒）：遠小於整場 session 的 AUTOPILOT_TASK_TIMEOUT(3600)——
 # 輕量管線就該輕量，逾時走「討論未達完成」既有重試語意。
-AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+AUTOPILOT_INVESTIGATION_TIMEOUT = _env_int("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", 1200)
 # 調查旁路併行(吞吐強化 δ):主 worker 跑完整管線時,背景線併行消化調查分流任務
 # (live 量測 pending 37% 符合、每筆 ~89s vs 完整管線 ~51min)。單線+與主迴圈共用
 # pause/quota 閘門+原子認領+獨立唯讀 clone。**預設 0 灰度**,穩定後翻 1。
@@ -1060,7 +1060,7 @@ AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", 
 #   非 .py／無 ruff（外部非 Python 專案）／逾時／例外一律靜默放行，絕不擋寫檔。設 0 關閉。
 EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
 # 寫時 lint 單一 ruff 命令的逾時秒數（每次寫檔最多三支命令：check --fix / format / check）。
-EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+EXPERT_LINT_TIMEOUT = _env_float("TI_EXPERT_LINT_TIMEOUT", 15)
 
 # EXPERT_SKILLS：Claude 專家的 skills 漸進揭露(SKILL.md)——出貨自檢/調查輸出契約等程序
 #   知識放 .claude/skills/,專家需要時經 Skill 工具載入,不占常駐 system prompt。
@@ -1122,10 +1122,10 @@ def effort_for(role_key: str) -> str | None:
 # **預設 0=完全關閉(零行為改變)**;生產建議 900。EXEMPT=豁免角色 csv(pm 脈絡最值錢)。
 # 主迴圈心跳停滯告警秒數(β):非暫停且無任務執行中,主迴圈 tick 逾此秒數未推進即
 # log.error(告警不自殺,自救交 systemd watchdog)。0=關。
-AUTOPILOT_LOOP_STALL_S = int(os.getenv("TI_AUTOPILOT_LOOP_STALL_S", "900"))
+AUTOPILOT_LOOP_STALL_S = _env_int("TI_AUTOPILOT_LOOP_STALL_S", 900)
 # open PR reconciler 的節流間隔秒數(第五輪 P1):常駐背景線+任務邊界共用同一節流。
 # 0=停用 reconciler(邊界+背景皆不跑)。舊值 900 且只在任務邊界跑,實測 merging 卡 2-8h。
-AUTOPILOT_RECONCILE_INTERVAL_S = int(os.getenv("TI_AUTOPILOT_RECONCILE_INTERVAL_S", "300"))
+AUTOPILOT_RECONCILE_INTERVAL_S = _env_int("TI_AUTOPILOT_RECONCILE_INTERVAL_S", 300)
 # 主動通知 webhook（功能第五輪 F2）：異常事件（task_failed/loop_stall/quota_exhausted）
 # POST JSON 到此 URL。空＝關（預設）。實作在 studio/notify.py（零依賴、失敗吞掉）。
 NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
@@ -1133,7 +1133,7 @@ NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
 # （各自獨立成敗）。向 @BotFather 建 bot 取 token；chat_id 可由 getUpdates 查得。
 TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()
-EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
+EXPERT_IDLE_STOP_S = _env_int("TI_EXPERT_IDLE_STOP_S", 0)
 EXPERT_IDLE_STOP_EXEMPT = frozenset(
     r.strip().lower() for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",") if r.strip()
 )
@@ -1143,21 +1143,21 @@ EXPERT_IDLE_STOP_EXEMPT = frozenset(
 #   品質防線（去重 + 價值閘）後再截斷到此數。對治完成率診斷的「一個任務繁殖一堆 followup」echo
 #   chamber：價值閘擋「沒價值的」、本上限擋「同源衍生太多的」，互補封住 discovered 迴圈灌水（修法②）。
 #   3＝一場討論最多回填 3 個後續；0＝不限（恢復舊行為）。
-AUTOPILOT_FOLLOWUP_MAX_PER_TASK = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", "3"))
+AUTOPILOT_FOLLOWUP_MAX_PER_TASK = _env_int("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", 3)
 # AUTOPILOT_FOLLOWUP_MAX_GEN：discovered followup 的「血緣代數」上限（seed/manual/eval=0，父任務的
 #   followup=父+1）。父任務 gen 已達此上限時，其 discovered followup 一律不入場（留痕丟棄）——斷開
 #   「followup 生 followup 生 followup」的深鏈,與寬度上限一縱一橫共同封頂 discovered 扇出爆炸。
 #   3＝原始任務可衍生到第 3 代,之後止;0＝不限（恢復舊行為）。
-AUTOPILOT_FOLLOWUP_MAX_GEN = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", "3"))
+AUTOPILOT_FOLLOWUP_MAX_GEN = _env_int("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", 3)
 # AUTOPILOT_DISCOVERED_DAILY_CAP：每日（UTC）自產任務入列總量上限（source=discovered/eval
 #   合計）。價值閘擋「爛的」、寬度/代數閘擋「同源太多的」，此為總量閘——實測 pending 172
 #   筆中 85% 自產、產生速度 > 消化速度（~8/天），存量只增不減。20＝寬鬆日額；0＝不限。
-AUTOPILOT_DISCOVERED_DAILY_CAP = int(os.getenv("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", "20"))
+AUTOPILOT_DISCOVERED_DAILY_CAP = _env_int("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", 20)
 # AUTOPILOT_RETRY_COOLDOWN_S：討論未收斂退回 pending 後的重抓冷卻秒數（retry_after 欄位，
 #   next_pending/claim_next 尊重）。0＝不冷卻（舊行為）。動機：2026-07-11 09:24 LLM 劣化
 #   窗口,調查失敗退回後旁路 60s 即重抓,3 次 attempts 在 3 分鐘內於同一窗口內燒光——
 #   冷卻把重試錯開,撐過短暫劣化。600＝重試間隔 10 分鐘,3 次橫跨 >20 分鐘。
-AUTOPILOT_RETRY_COOLDOWN_S = int(os.getenv("TI_AUTOPILOT_RETRY_COOLDOWN_S", "600"))
+AUTOPILOT_RETRY_COOLDOWN_S = _env_int("TI_AUTOPILOT_RETRY_COOLDOWN_S", 600)
 
 
 # --- state 安全寫入（root-only chown 驗證）---------------------------------
@@ -1228,11 +1228,11 @@ DISCOVER_ROLES = [
 ]
 # 單次「持續改良」連線最多跑幾輪（每輪＝一場完整討論）；0 = 不限（直到找不到新改善點）。
 # 預設給保守上限，避免一次連線燒掉過多 API 額度。
-IMPROVE_MAX_CYCLES = int(os.getenv("TI_IMPROVE_MAX_CYCLES", "5"))
+IMPROVE_MAX_CYCLES = _env_int("TI_IMPROVE_MAX_CYCLES", 5)
 # 連續失敗幾輪即停（避免同一個壞任務無限重試空轉）。
-IMPROVE_MAX_FAILS = int(os.getenv("TI_IMPROVE_MAX_FAILS", "2"))
+IMPROVE_MAX_FAILS = _env_int("TI_IMPROVE_MAX_FAILS", 2)
 # 每輪之間的喘息秒數（0 = 不等待）。
-IMPROVE_COOLDOWN = float(os.getenv("TI_IMPROVE_COOLDOWN", "0"))
+IMPROVE_COOLDOWN = _env_float("TI_IMPROVE_COOLDOWN", 0)
 
 
 def autopilot_paused() -> bool:
@@ -1370,17 +1370,17 @@ def reload() -> None:
     )
     ROLES_DIR = Path(os.getenv("TI_ROLES_DIR", str(PROJECT_ROOT / "roles")))
     PARALLEL_TASKS_ENABLED = os.getenv("TI_PARALLEL_TASKS", "1") not in ("0", "false", "False", "")
-    PARALLEL_LANES = int(os.getenv("TI_PARALLEL_LANES", "3"))
-    LLM_MAX_CONCURRENCY = int(os.getenv("TI_LLM_MAX_CONCURRENCY", "9"))
+    PARALLEL_LANES = _env_int("TI_PARALLEL_LANES", 3)
+    LLM_MAX_CONCURRENCY = _env_int("TI_LLM_MAX_CONCURRENCY", 9)
     LEAD_ROLES = {r.strip() for r in os.getenv("TI_LEAD_ROLES", "pm").split(",") if r.strip()}
     OPTIONAL_ROLES = {
         r.strip()
         for r in os.getenv("TI_OPTIONAL_ROLES", "researcher,architect,security,devops").split(",")
         if r.strip()
     }
-    MAX_TASKS = int(os.getenv("TI_MAX_TASKS", "5"))
-    TASK_MAX_ROUNDS = int(os.getenv("TI_MAX_ROUNDS", "3"))
-    DEBATE_ROUNDS = int(os.getenv("TI_DEBATE_ROUNDS", "2"))
+    MAX_TASKS = _env_int("TI_MAX_TASKS", 5)
+    TASK_MAX_ROUNDS = _env_int("TI_MAX_ROUNDS", 3)
+    DEBATE_ROUNDS = _env_int("TI_DEBATE_ROUNDS", 2)
     DISCUSS_MAX_ROUNDS = _discuss_max_rounds()  # 依賴 DEBATE_ROUNDS，須在其後重算
     DISCUSS_MODE = _discuss_mode()
     AGENDA_ROUNDS = _agenda_rounds()
@@ -1393,12 +1393,12 @@ def reload() -> None:
     CLAUDE_SCOPED_FALLBACK_MODEL = os.getenv(
         "TI_CLAUDE_SCOPED_FALLBACK_MODEL", "claude-opus-4-8"
     ).strip()
-    CLAUDE_SCOPED_LIMIT_THRESHOLD = float(os.getenv("TI_CLAUDE_SCOPED_LIMIT_THRESHOLD", "95"))
+    CLAUDE_SCOPED_LIMIT_THRESHOLD = _env_float("TI_CLAUDE_SCOPED_LIMIT_THRESHOLD", 95)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
     OPENAI_MODEL_LEAD = os.getenv("TI_OPENAI_MODEL_LEAD", "gpt-4o")
     OPENAI_MODEL_FAST = os.getenv("TI_OPENAI_MODEL_FAST", "gpt-4o-mini")
-    OPENAI_MAX_STEPS = int(os.getenv("TI_OPENAI_MAX_STEPS", "12"))
+    OPENAI_MAX_STEPS = _env_int("TI_OPENAI_MAX_STEPS", 12)
     MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
     MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
     MINIMAX_MODEL_LEAD = os.getenv("TI_MINIMAX_MODEL_LEAD", "MiniMax-M3")
@@ -1449,66 +1449,66 @@ def reload() -> None:
     PUBLISH_OWNER_ALLOWLIST = _publish_owner_allowlist()
     PUBLISH_AUTO = os.getenv("TI_PUBLISH_AUTO", "0") not in ("0", "false", "False", "")
     PUBLISH_MERGE = os.getenv("TI_PUBLISH_MERGE", "0") not in ("0", "false", "False", "")
-    PUBLISH_CI_TIMEOUT = int(os.getenv("TI_PUBLISH_CI_TIMEOUT", "600"))
-    PUBLISH_CI_INTERVAL = int(os.getenv("TI_PUBLISH_CI_INTERVAL", "10"))
-    PUBLISH_MERGE_RETRIES = int(os.getenv("TI_PUBLISH_MERGE_RETRIES", "3"))
-    MERGE_BEHIND_RETRIES = int(os.getenv("TI_MERGE_BEHIND_RETRIES", "4"))
-    PUBLISH_CI_MAX_ROUNDS = int(os.getenv("TI_PUBLISH_CI_MAX_ROUNDS", "5"))
-    PUBLISH_CI_GRACE = int(os.getenv("TI_PUBLISH_CI_GRACE", "120"))
+    PUBLISH_CI_TIMEOUT = _env_int("TI_PUBLISH_CI_TIMEOUT", 600)
+    PUBLISH_CI_INTERVAL = _env_int("TI_PUBLISH_CI_INTERVAL", 10)
+    PUBLISH_MERGE_RETRIES = _env_int("TI_PUBLISH_MERGE_RETRIES", 3)
+    MERGE_BEHIND_RETRIES = _env_int("TI_MERGE_BEHIND_RETRIES", 4)
+    PUBLISH_CI_MAX_ROUNDS = _env_int("TI_PUBLISH_CI_MAX_ROUNDS", 5)
+    PUBLISH_CI_GRACE = _env_int("TI_PUBLISH_CI_GRACE", 120)
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
     # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
     HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")
     TASK_HELP_ENABLED = os.getenv("TI_TASK_HELP", "1") not in ("0", "false", "False", "")
     TASK_HELP_MAX = _env_int("TI_TASK_HELP_MAX", 1)
     CRITIC_ENABLED = os.getenv("TI_CRITIC", "0") not in ("0", "false", "False", "")
-    CRITIC_MAX_REJECTS = int(os.getenv("TI_CRITIC_MAX_REJECTS", "2"))
+    CRITIC_MAX_REJECTS = _env_int("TI_CRITIC_MAX_REJECTS", 2)
     DYNAMIC_STEP_BUDGET = _env_int("TI_DYNAMIC_STEP_BUDGET", 3)
     RECRUIT_MAX = _env_int("TI_RECRUIT_MAX", 3)
     VOTE_ENABLED = os.getenv("TI_VOTE_ENABLED", "1") not in ("0", "false", "False", "")
     VOTE_MAX = _env_int("TI_VOTE_MAX", 2)
     DEFAULT_WORKFLOW = os.getenv("TI_DEFAULT_WORKFLOW", "動態優先").strip()
     NOTES_ENABLED = os.getenv("TI_NOTES", "1") not in ("0", "false", "False", "")
-    NOTES_MAX_CHARS = int(os.getenv("TI_NOTES_MAX_CHARS", "6000"))
+    NOTES_MAX_CHARS = _env_int("TI_NOTES_MAX_CHARS", 6000)
     LESSONS_ENABLED = os.getenv("TI_LESSONS", "1") not in ("0", "false", "False", "")
     LESSONS_DISTILL = os.getenv("TI_LESSONS_DISTILL", "1") not in ("0", "false", "False", "")
-    LESSONS_DISTILL_THRESHOLD = int(os.getenv("TI_LESSONS_DISTILL_THRESHOLD", "200"))
-    LESSONS_DISTILL_INTERVAL = int(os.getenv("TI_LESSONS_DISTILL_INTERVAL", "86400"))
+    LESSONS_DISTILL_THRESHOLD = _env_int("TI_LESSONS_DISTILL_THRESHOLD", 200)
+    LESSONS_DISTILL_INTERVAL = _env_int("TI_LESSONS_DISTILL_INTERVAL", 86400)
     APPRAISAL_ENABLED = os.getenv("TI_APPRAISAL", "1") not in ("0", "false", "False", "")
-    APPRAISAL_MAX_STORE = int(os.getenv("TI_APPRAISAL_MAX_STORE", "2000"))
+    APPRAISAL_MAX_STORE = _env_int("TI_APPRAISAL_MAX_STORE", 2000)
     REFLEXION_ENABLED = os.getenv("TI_REFLEXION", "1") not in ("0", "false", "False", "")
     OBJECTIVE_GATE = os.getenv("TI_OBJECTIVE_GATE", "1")
-    SELF_REFINE_ITERS = int(os.getenv("TI_SELF_REFINE_ITERS", "1"))
+    SELF_REFINE_ITERS = _env_int("TI_SELF_REFINE_ITERS", 1)
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
     TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
     TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
     # 與 TURN_* 同組重載，使停滯門檻執行期可調（須維持 > TURN_HARD_TIMEOUT 的不變量）。
-    AUTOPILOT_STALL_TIMEOUT = int(os.getenv("TI_AUTOPILOT_STALL_TIMEOUT", "2400"))
-    EXPERT_RATE_LIMIT_RETRIES = int(os.getenv("TI_RATELIMIT_RETRIES", "3"))
+    AUTOPILOT_STALL_TIMEOUT = _env_int("TI_AUTOPILOT_STALL_TIMEOUT", 2400)
+    EXPERT_RATE_LIMIT_RETRIES = _env_int("TI_RATELIMIT_RETRIES", 3)
     EXPERT_RATE_LIMIT_BACKOFF = _env_float("TI_RATELIMIT_BACKOFF", 2.0)
     EXPERT_RATE_LIMIT_BACKOFF_CAP = _env_float("TI_RATELIMIT_BACKOFF_CAP", 60.0)
     EXPERT_RATE_LIMIT_BACKOFF_JITTER = _env_float("TI_RATELIMIT_BACKOFF_JITTER", 0.5)
     KNOWLEDGE_ENABLED = os.getenv("TI_KNOWLEDGE", "1") not in ("0", "false", "False", "")
-    KNOWLEDGE_MAX_CHARS = int(os.getenv("TI_KNOWLEDGE_MAX_CHARS", "4000"))
+    KNOWLEDGE_MAX_CHARS = _env_int("TI_KNOWLEDGE_MAX_CHARS", 4000)
     CLARIFY_ENABLED = os.getenv("TI_CLARIFY", "1") not in ("0", "false", "False", "")
     CLARIFY_TIMEOUT = _env_float("TI_CLARIFY_TIMEOUT", 180)
-    CLARIFY_MAX_QUESTIONS = int(os.getenv("TI_CLARIFY_MAX_QUESTIONS", "4"))
+    CLARIFY_MAX_QUESTIONS = _env_int("TI_CLARIFY_MAX_QUESTIONS", 4)
     DISCOVER_ROLES = [
         r.strip()
         for r in os.getenv("TI_DISCOVER_ROLES", "senior,pm,researcher").split(",")
         if r.strip()
     ]
     BLUEPRINT_ENABLED = os.getenv("TI_BLUEPRINT", "0") not in ("0", "false", "False", "")
-    BLUEPRINT_SEED_MAX = int(os.getenv("TI_BLUEPRINT_SEED_MAX", "5"))
+    BLUEPRINT_SEED_MAX = _env_int("TI_BLUEPRINT_SEED_MAX", 5)
     ADR_ENABLED = os.getenv("TI_ADR", "0") not in ("0", "false", "False", "")
-    ADR_MAX = int(os.getenv("TI_ADR_MAX", "8"))
+    ADR_MAX = _env_int("TI_ADR_MAX", 8)
     RESEARCH_TOOLS_ENABLED = os.getenv("TI_RESEARCH_TOOLS", "0") not in ("0", "false", "False", "")
     RESEARCH_ALLOWED_DOMAINS = [
         d.strip().lower()
         for d in os.getenv("TI_RESEARCH_ALLOWED_DOMAINS", "").split(",")
         if d.strip()
     ]
-    RESEARCH_FETCH_TIMEOUT = float(os.getenv("TI_RESEARCH_FETCH_TIMEOUT", "20"))
-    RESEARCH_FETCH_MAX_CHARS = int(os.getenv("TI_RESEARCH_FETCH_MAX_CHARS", "8000"))
+    RESEARCH_FETCH_TIMEOUT = _env_float("TI_RESEARCH_FETCH_TIMEOUT", 20)
+    RESEARCH_FETCH_MAX_CHARS = _env_int("TI_RESEARCH_FETCH_MAX_CHARS", 8000)
     # autopilot 額度感知節奏（預設值須與檔頂宣告一致）
     AUTOPILOT_QUOTA_GATE = os.getenv("TI_AUTOPILOT_QUOTA_GATE", "1") not in (
         "0",
@@ -1516,9 +1516,9 @@ def reload() -> None:
         "False",
         "",
     )
-    AUTOPILOT_QUOTA_MAX_SLEEP = int(os.getenv("TI_AUTOPILOT_QUOTA_MAX_SLEEP", "1800"))
+    AUTOPILOT_QUOTA_MAX_SLEEP = _env_int("TI_AUTOPILOT_QUOTA_MAX_SLEEP", 1800)
     # 每日 PR 成本熔斷（預設值須與檔頂宣告一致）
-    AUTOPILOT_DAILY_PR_BUDGET = int(os.getenv("TI_AUTOPILOT_DAILY_PR_BUDGET", "0"))
+    AUTOPILOT_DAILY_PR_BUDGET = _env_int("TI_AUTOPILOT_DAILY_PR_BUDGET", 0)
     # PM workflow 分診（預設值須與檔頂宣告一致）
     AUTOPILOT_WORKFLOW_TRIAGE = os.getenv("TI_AUTOPILOT_WORKFLOW_TRIAGE", "0") not in (
         "0",
@@ -1526,17 +1526,17 @@ def reload() -> None:
         "False",
         "",
     )
-    AUTOPILOT_TRIAGE_TIMEOUT = int(os.getenv("TI_AUTOPILOT_TRIAGE_TIMEOUT", "60"))
-    AUTOPILOT_DEPLOY_CHECK_INTERVAL = int(os.getenv("TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL", "300"))
-    AUTOPILOT_DEPLOY_FAIL_BACKOFF = int(os.getenv("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", "1800"))
+    AUTOPILOT_TRIAGE_TIMEOUT = _env_int("TI_AUTOPILOT_TRIAGE_TIMEOUT", 60)
+    AUTOPILOT_DEPLOY_CHECK_INTERVAL = _env_int("TI_AUTOPILOT_DEPLOY_CHECK_INTERVAL", 300)
+    AUTOPILOT_DEPLOY_FAIL_BACKOFF = _env_int("TI_AUTOPILOT_DEPLOY_FAIL_BACKOFF", 1800)
     AUTOPILOT_AUTO_MERGE = os.getenv("TI_AUTOPILOT_AUTO_MERGE", "1") not in (
         "0",
         "false",
         "False",
         "",
     )
-    AUTOPILOT_MERGE_FAST_WAIT = int(os.getenv("TI_AUTOPILOT_MERGE_FAST_WAIT", "180"))
-    AUTOPILOT_MERGE_MAX_AGE = int(os.getenv("TI_AUTOPILOT_MERGE_MAX_AGE", "7200"))
+    AUTOPILOT_MERGE_FAST_WAIT = _env_int("TI_AUTOPILOT_MERGE_FAST_WAIT", 180)
+    AUTOPILOT_MERGE_MAX_AGE = _env_int("TI_AUTOPILOT_MERGE_MAX_AGE", 7200)
     # lint 閘門自動格式化（預設值須與檔頂宣告一致）
     LINT_AUTOFORMAT = os.getenv("TI_LINT_AUTOFORMAT", "1") not in ("0", "false", "False", "")
     AUTOPILOT_PREFILTER_IMPLEMENTED = os.getenv("TI_AUTOPILOT_PREFILTER_IMPLEMENTED", "1") not in (
@@ -1559,7 +1559,7 @@ def reload() -> None:
         "False",
         "",
     )
-    AUTOPILOT_INVESTIGATION_TIMEOUT = int(os.getenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", "1200"))
+    AUTOPILOT_INVESTIGATION_TIMEOUT = _env_int("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", 1200)
     AUTOPILOT_INVESTIGATION_PARALLEL = os.getenv(
         "TI_AUTOPILOT_INVESTIGATION_PARALLEL", "0"
     ) not in ("0", "false", "False", "")
@@ -1570,7 +1570,7 @@ def reload() -> None:
         "",
     )
     EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
-    EXPERT_LINT_TIMEOUT = float(os.getenv("TI_EXPERT_LINT_TIMEOUT", "15"))
+    EXPERT_LINT_TIMEOUT = _env_float("TI_EXPERT_LINT_TIMEOUT", 15)
 
     EXPERT_SKILLS = os.getenv("TI_EXPERT_SKILLS", "0") not in ("0", "false", "False", "")
     EXPERT_SKILLS_ROLES = frozenset(
@@ -1581,12 +1581,12 @@ def reload() -> None:
     CONVENTIONS_CARD = os.getenv("TI_CONVENTIONS_CARD", "1") not in ("0", "false", "False", "")
     EXPERT_EFFORT = os.getenv("TI_EXPERT_EFFORT", "").strip().lower()
     EXPERT_EFFORT_MAP = _parse_effort_map(os.getenv("TI_EXPERT_EFFORT_MAP", ""))
-    AUTOPILOT_LOOP_STALL_S = int(os.getenv("TI_AUTOPILOT_LOOP_STALL_S", "900"))
-    AUTOPILOT_RECONCILE_INTERVAL_S = int(os.getenv("TI_AUTOPILOT_RECONCILE_INTERVAL_S", "300"))
+    AUTOPILOT_LOOP_STALL_S = _env_int("TI_AUTOPILOT_LOOP_STALL_S", 900)
+    AUTOPILOT_RECONCILE_INTERVAL_S = _env_int("TI_AUTOPILOT_RECONCILE_INTERVAL_S", 300)
     NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
     TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
     TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()
-    EXPERT_IDLE_STOP_S = int(os.getenv("TI_EXPERT_IDLE_STOP_S", "0"))
+    EXPERT_IDLE_STOP_S = _env_int("TI_EXPERT_IDLE_STOP_S", 0)
     EXPERT_IDLE_STOP_EXEMPT = frozenset(
         r.strip().lower()
         for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",")
@@ -1598,12 +1598,12 @@ def reload() -> None:
         "False",
         "",
     )
-    AUTOPILOT_SPLIT_MAX_DEPTH = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_DEPTH", "2"))
-    AUTOPILOT_SPLIT_MAX_SUBTASKS = int(os.getenv("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", "4"))
-    AUTOPILOT_FOLLOWUP_MAX_PER_TASK = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", "3"))
-    AUTOPILOT_FOLLOWUP_MAX_GEN = int(os.getenv("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", "3"))
-    AUTOPILOT_DISCOVERED_DAILY_CAP = int(os.getenv("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", "20"))
-    AUTOPILOT_RETRY_COOLDOWN_S = int(os.getenv("TI_AUTOPILOT_RETRY_COOLDOWN_S", "600"))
+    AUTOPILOT_SPLIT_MAX_DEPTH = _env_int("TI_AUTOPILOT_SPLIT_MAX_DEPTH", 2)
+    AUTOPILOT_SPLIT_MAX_SUBTASKS = _env_int("TI_AUTOPILOT_SPLIT_MAX_SUBTASKS", 4)
+    AUTOPILOT_FOLLOWUP_MAX_PER_TASK = _env_int("TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK", 3)
+    AUTOPILOT_FOLLOWUP_MAX_GEN = _env_int("TI_AUTOPILOT_FOLLOWUP_MAX_GEN", 3)
+    AUTOPILOT_DISCOVERED_DAILY_CAP = _env_int("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", 20)
+    AUTOPILOT_RETRY_COOLDOWN_S = _env_int("TI_AUTOPILOT_RETRY_COOLDOWN_S", 600)
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
     # Claude 訂閱雙帳號自動輪替（預設值須與檔頂宣告一致）
