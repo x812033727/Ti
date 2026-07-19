@@ -54,18 +54,18 @@ def test_pre_commit_is_a_step_in_order():
     pos_install = b.find('pip install -e ".[dev]"')
     pos_server = b.find("-m studio.server")
     assert pos_install != -1 and pos_server != -1
-    assert pos_install < pos_pc < pos_server, (
-        f"pre-commit 步驟未落在 install 與 server 之間：install={pos_install}, pc={pos_pc}, server={pos_server}"
-    )
+    assert (
+        pos_install < pos_pc < pos_server
+    ), f"pre-commit 步驟未落在 install 與 server 之間：install={pos_install}, pc={pos_pc}, server={pos_server}"
 
 
 # ---- 該步以 .venv 內 python 執行（與流程其他步一致，非系統環境）----
 def test_pre_commit_uses_venv_python():
     b = _happy_block()
     line = next(ln for ln in b.splitlines() if _PC_RE.search(ln))
-    assert ".venv/bin/python3 -m pre_commit install" in line, (
-        f"pre-commit 步驟應以 .venv/bin/python3 -m pre_commit install 執行：{line}"
-    )
+    assert (
+        ".venv/bin/python3 -m pre_commit install" in line
+    ), f"pre-commit 步驟應以 .venv/bin/python3 -m pre_commit install 執行：{line}"
 
 
 # ---- pre-commit 確為專案實際工具（.pre-commit-config.yaml 存在）----

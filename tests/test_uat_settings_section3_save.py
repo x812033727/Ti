@@ -115,9 +115,9 @@ def test_儲存鈕防連點_文件與程式碼一致(sec, app):
         assert "未禁用" not in sec, "app.js 已實作儲存鈕防連點，文件仍宣稱未禁用——需同步更新"
         assert "禁用" in sec, "文件未描述儲存鈕請求期間禁用的防連點行為"
         # 防連點須有收尾：失敗也要恢復可點，否則一次錯誤後永久卡死
-        assert "finally" in body and "disabled = false" in body, (
-            "saveSettings 禁用按鈕後未以 finally 恢復，失敗會永久卡死儲存鈕"
-        )
+        assert (
+            "finally" in body and "disabled = false" in body
+        ), "saveSettings 禁用按鈕後未以 finally 恢復，失敗會永久卡死儲存鈕"
     else:
         assert "未禁用" in sec or "未禁" in sec, "文件未誠實揭露儲存鈕未防連點的風險"
 
@@ -169,9 +169,9 @@ def test_文件提到的字串都真實存在於前端(claim, sec, app):
 
 
 def test_重新部署確認文字一致(sec, app):
-    assert "服務會重啟" in app and "進行中的工作與連線會中斷" in app, (
-        "app.js 重新部署 confirm 文字與預期不符"
-    )
+    assert (
+        "服務會重啟" in app and "進行中的工作與連線會中斷" in app
+    ), "app.js 重新部署 confirm 文字與預期不符"
     if "重新部署" in sec:
         assert "服務會重啟" in sec, "文件 3.5 未對齊實際 confirm 文字"
 

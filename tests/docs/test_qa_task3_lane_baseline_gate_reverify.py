@@ -56,13 +56,13 @@ def _source_segment(path: Path, symbol: str) -> str:
             if isinstance(node, ast.ClassDef) and node.name == class_name:
                 for child in node.body:
                     if (
-                        isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
                         and child.name == child_name
                     ):
                         return ast.get_source_segment(src, child) or ""
     else:
         for node in tree.body:
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 if node.name == symbol:
                     return ast.get_source_segment(src, node) or ""
     raise AssertionError(f"source segment not found: {path}:{symbol}")
@@ -111,7 +111,7 @@ def _python_marker_resolves(path: Path, marker: str) -> bool:
     if not func_match:
         return False
     return any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
         and node.name == func_match.group(1)
         for node in ast.walk(_module(path))
     )
@@ -119,7 +119,7 @@ def _python_marker_resolves(path: Path, marker: str) -> bool:
 
 def _function_arg_names(path: Path, name: str) -> set[str]:
     for node in ast.walk(_module(path)):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
             return {
                 arg.arg
                 for arg in (

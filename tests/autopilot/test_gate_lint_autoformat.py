@@ -254,9 +254,9 @@ def test_autoformat_writes_land_in_followup_commit():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             call_lines.setdefault(node.func.id, node.lineno)  # 取首次呼叫的行號
     assert {"_gate_lint", "_commit_push_merge"} <= call_lines.keys(), sorted(call_lines)
-    assert call_lines["_gate_lint"] < call_lines["_commit_push_merge"], (
-        f"lint 閘門必須先於 commit，自動格式化寫回才會被帶上：{call_lines}"
-    )
+    assert (
+        call_lines["_gate_lint"] < call_lines["_commit_push_merge"]
+    ), f"lint 閘門必須先於 commit，自動格式化寫回才會被帶上：{call_lines}"
 
 
 def test_reformat_count_parses_both_sources():

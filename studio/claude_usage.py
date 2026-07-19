@@ -65,7 +65,7 @@ def _token_expired(now: float, cred_file: Path | None = None) -> bool:
         exp = (data.get("claudeAiOauth") or {}).get("expiresAt")
     except (OSError, json.JSONDecodeError):
         return False
-    return isinstance(exp, (int, float)) and now >= exp / 1000.0
+    return isinstance(exp, int | float) and now >= exp / 1000.0
 
 
 def _iso_to_epoch(s: Any) -> float | None:
@@ -79,7 +79,7 @@ def _iso_to_epoch(s: Any) -> float | None:
 
 
 def _pct(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return round(float(value), 1)
 

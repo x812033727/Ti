@@ -402,9 +402,9 @@ def test_handoff_breaking_heading_literal_matches_constant(handoff_text):
     """AC#B7：handoff 文件頂部/邊界表/核對步驟出現的 Breaking heading 字面值 == BREAKING_HEADING。"""
     norm = _norm(handoff_text)
     constant_norm = _norm(BREAKING_HEADING)
-    assert constant_norm in norm, (
-        f"AC#B7：handoff 文件未含 BREAKING_HEADING 字面值 {BREAKING_HEADING!r}"
-    )
+    assert (
+        constant_norm in norm
+    ), f"AC#B7：handoff 文件未含 BREAKING_HEADING 字面值 {BREAKING_HEADING!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -462,9 +462,9 @@ def test_black_sample_drop_six_keyword_shangdai_turns_red(handoff_text):
     mutated = handoff_text.replace("尚待", "已驗證")
     assert mutated != handoff_text, "mutation 無效"
     problems = check_six_keywords(mutated)
-    assert any("尚待" in p for p in problems), (
-        f"假綠：拿掉『尚待』後六關鍵詞守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "尚待" in p for p in problems
+    ), f"假綠：拿掉『尚待』後六關鍵詞守護未翻紅，problems={problems}"
 
 
 def test_black_sample_drop_six_keyword_halfclosed_turns_red(handoff_text):
@@ -473,9 +473,9 @@ def test_black_sample_drop_six_keyword_halfclosed_turns_red(handoff_text):
     mutated = handoff_text.replace("半閉環", "已閉環")
     assert mutated != handoff_text, "mutation 無效"
     problems = check_six_keywords(mutated)
-    assert any("半閉環" in p for p in problems), (
-        f"假綠：拿掉『半閉環』後六關鍵詞守護未翻紅，problems={problems}"
-    )
+    assert any(
+        "半閉環" in p for p in problems
+    ), f"假綠：拿掉『半閉環』後六關鍵詞守護未翻紅，problems={problems}"
 
 
 def test_black_sample_body_row_reverted_to_pending_turns_red(handoff_text):
@@ -487,9 +487,9 @@ def test_black_sample_body_row_reverted_to_pending_turns_red(handoff_text):
     problems_b1 = check_both_rows_green(mutated)
     problems_b8 = check_no_conflicting_phrases(mutated)
     combined = problems_b1 + problems_b8
-    assert any("body" in p.lower() or "⏳" in p or "置頂" in p for p in combined), (
-        f"假綠：body 列退回 ⏳ 後 AC#B1/#B8 未翻紅，problems={combined}"
-    )
+    assert any(
+        "body" in p.lower() or "⏳" in p or "置頂" in p for p in combined
+    ), f"假綠：body 列退回 ⏳ 後 AC#B1/#B8 未翻紅，problems={combined}"
 
 
 def test_black_sample_smoke_row_reverted_to_red_turns_red(handoff_text):
@@ -499,9 +499,9 @@ def test_black_sample_smoke_row_reverted_to_red_turns_red(handoff_text):
     mutated = handoff_text.replace(row, row.replace("✅", "❌"))
     assert mutated != handoff_text, "mutation 無效"
     problems = check_both_rows_green(mutated)
-    assert any("smoke" in p.lower() or "❌" in p for p in problems), (
-        f"假綠：smoke 列退回 ❌ 後 AC#B1 未翻紅，problems={problems}"
-    )
+    assert any(
+        "smoke" in p.lower() or "❌" in p for p in problems
+    ), f"假綠：smoke 列退回 ❌ 後 AC#B1 未翻紅，problems={problems}"
 
 
 def test_black_sample_drop_disclaimer_version_scope_turns_red(handoff_text):
@@ -553,9 +553,9 @@ def test_black_sample_drop_body_path_in_row_turns_red(handoff_text):
     mutated = handoff_text.replace(row, mutated_row, 1)
     assert mutated != handoff_text, "mutation 無效：未替換到 body 列"
     problems = check_body_row_paths(mutated)
-    assert any("online-body.json" in p or "evidence" in p for p in problems), (
-        f"假綠：拿掉 evidence 路徑後 AC#B2 未翻紅，problems={problems}"
-    )
+    assert any(
+        "online-body.json" in p or "evidence" in p for p in problems
+    ), f"假綠：拿掉 evidence 路徑後 AC#B2 未翻紅，problems={problems}"
 
 
 def test_black_sample_drop_runid_in_smoke_row_turns_red(handoff_text):
@@ -565,9 +565,9 @@ def test_black_sample_drop_runid_in_smoke_row_turns_red(handoff_text):
     mutated = handoff_text.replace(EXPECTED_RUN_ID, "00000000000")
     assert mutated != handoff_text, "mutation 無效"
     problems = check_smoke_row_paths(mutated)
-    assert any(EXPECTED_RUN_ID in p or "run-id" in p for p in problems), (
-        f"假綠：拿掉 run-id 後 AC#B3 未翻紅，problems={problems}"
-    )
+    assert any(
+        EXPECTED_RUN_ID in p or "run-id" in p for p in problems
+    ), f"假綠：拿掉 run-id 後 AC#B3 未翻紅，problems={problems}"
 
 
 def test_black_sample_drop_dualpath_phrase_turns_red(handoff_text):
@@ -581,9 +581,9 @@ def test_black_sample_drop_dualpath_phrase_turns_red(handoff_text):
     assert mutated_row != row, "mutation 無效"
     mutated = handoff_text.replace(row, mutated_row)
     problems = check_smoke_row_paths(mutated)
-    assert any("雙路" in p for p in problems), (
-        f"假綠：退化為單路後 AC#B3 未翻紅，problems={problems}"
-    )
+    assert any(
+        "雙路" in p for p in problems
+    ), f"假綠：退化為單路後 AC#B3 未翻紅，problems={problems}"
 
 
 def test_black_sample_inject_conflict_phrase_in_body_row_turns_red(handoff_text):
@@ -593,6 +593,6 @@ def test_black_sample_inject_conflict_phrase_in_body_row_turns_red(handoff_text)
     mutated = handoff_text.replace(row, row + "（待封）")
     assert mutated != handoff_text, "mutation 無效"
     problems = check_no_conflicting_phrases(mutated)
-    assert any("待封" in p for p in problems), (
-        f"假綠：塞入『待封』後 AC#B8 未翻紅，problems={problems}"
-    )
+    assert any(
+        "待封" in p for p in problems
+    ), f"假綠：塞入『待封』後 AC#B8 未翻紅，problems={problems}"

@@ -44,9 +44,9 @@ def test_output_traces_back_to_input_lines():
     # 自證對應：每筆輸出標題與 assignee 都必須能在輸入文本中找到對應行。
     items = parse_agenda(PM_TEXT)
     for it in items:
-        assert any(ln.startswith("子題:") and it["title"] in ln for ln in PM_TEXT.splitlines()), (
-            f"標題 {it['title']!r} 無法回指輸入"
-        )
+        assert any(
+            ln.startswith("子題:") and it["title"] in ln for ln in PM_TEXT.splitlines()
+        ), f"標題 {it['title']!r} 無法回指輸入"
         assert f"負責: {it['assignee']}" in PM_TEXT
 
 

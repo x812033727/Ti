@@ -58,9 +58,9 @@ def test_env_example_covers_all_config_vars():
 def test_env_example_has_no_unknown_vars():
     """反向：.env.example 不得殘留 config.py 沒有的變數（動態鍵家族範例除外）。"""
     unknown = sorted(v for v in _env_vars() - _config_vars() if not _DYNAMIC_FAMILY_RE.fullmatch(v))
-    assert not unknown, (
-        f".env.example 有 {len(unknown)} 個 config.py 不認得的變數（打錯字或改名殘留？）：{unknown}"
-    )
+    assert (
+        not unknown
+    ), f".env.example 有 {len(unknown)} 個 config.py 不認得的變數（打錯字或改名殘留？）：{unknown}"
 
 
 def test_exempt_list_not_stale():

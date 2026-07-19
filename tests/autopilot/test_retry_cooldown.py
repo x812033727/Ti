@@ -85,6 +85,6 @@ async def test_unparseable_output_head_is_logged(state, monkeypatch, caplog):
     with caplog.at_level("WARNING", logger="ti.autopilot"):
         await autopilot._run_investigation_task(dict(t), str(state), "apinvtest001", time.time())
     joined = "\n".join(r.getMessage() for r in caplog.records)
-    assert "調查輸出無法解析" in joined and "Execution error: transport closed" in joined, (
-        "缺結論時必須留痕原始輸出頭段,否則劣化窗口無從驗屍"
-    )
+    assert (
+        "調查輸出無法解析" in joined and "Execution error: transport closed" in joined
+    ), "缺結論時必須留痕原始輸出頭段,否則劣化窗口無從驗屍"

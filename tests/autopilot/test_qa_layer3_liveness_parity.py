@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import subprocess
 import sys
 
@@ -135,6 +136,122 @@ def test_layer3_liveness_self_test_runs():
     assert result.returncode == 0, result.stdout + result.stderr
     assert "white_long_turn_cpu_active" in result.stdout
     assert "black_cpu_idle_and_activity_stale" in result.stdout
+
+
+def test_layer3_evaluate_status_probe_fail_is_null_safe():
+    for status, reason in [
+        ({}, "status_has_no_liveness_fields"),
+        ([], "status_not_object"),
+        (
+            {
+                "state": "",
+                "updated_at": True,
+                "sleep_until": False,
+                "last_activity_at": False,
+                "workers": "old_status_without_worker_dict",
+            },
+            "status_has_no_liveness_fields",
+        ),
+    ]:
+        verdict, line = layer3.evaluate_status(
+            status,
+            now=NOW,
+            stale_threshold_s=THRESHOLD,
+        )
+        assert verdict == "probe_fail"
+        assert f"reason={reason}" in line
+
+
+def test_layer3_cli_probe_fail_exits_zero_for_missing_or_bad_status(tmp_path):
+    missing = tmp_path / "missing-status.json"
+    bad = tmp_path / "bad-status.json"
+    bad.write_text("{not-json", encoding="utf-8")
+
+    for status_file, reason in [
+        (missing, "status_file_missing"),
+        (bad, "status_read_failed_JSONDecodeError"),
+    ]:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(LIVENESS),
+                "--status-file",
+                str(status_file),
+                "--now",
+                str(NOW),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"verdict=probe_fail reason={reason}" in result.stdout
+
+
+def test_layer3_cli_dead_task_exit_code_is_machine_readable(tmp_path):
+    status_file = tmp_path / "status.json"
+    status_file.write_text(
+        json.dumps(
+            _running(
+                updated_at=FRESH,
+                last_activity_at=STALE,
+                workers={"count": 5, "cpu_active": False},
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(LIVENESS),
+            "--status-file",
+            str(status_file),
+            "--now",
+            str(NOW),
+            "--stale-threshold-s",
+            "300",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "verdict=dead_task" in result.stdout
+    assert "cpu_active=false" in result.stdout
+
+
+def test_layer3_cli_stale_threshold_is_clamped_to_300_seconds(tmp_path):
+    status_file = tmp_path / "status.json"
+    status_file.write_text(
+        json.dumps({"state": "idle", "updated_at": NOW - 250.0}),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(LIVENESS),
+            "--status-file",
+            str(status_file),
+            "--now",
+            str(NOW),
+            "--stale-threshold-s",
+            "1",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "verdict=alive" in result.stdout
+    assert "updated_age_s=250" in result.stdout
 
 
 def test_layer3_monitor_self_test_runs():

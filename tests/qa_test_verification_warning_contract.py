@@ -171,9 +171,9 @@ def test_warn_file_declared_in_stdout(_evidence: tuple[Path, Path, str]) -> None
         f"OUT_FILE 前 15 行：\n{chr(10).join(out_text.splitlines()[:15])}"
     )
     declared_path = Path(match.group(1))
-    assert declared_path == warn_file, (
-        f"宣告路徑與 fixture 抓到的 WARN_FILE 不一致：\n  宣告：{declared_path}\n  實體：{warn_file}"
-    )
+    assert (
+        declared_path == warn_file
+    ), f"宣告路徑與 fixture 抓到的 WARN_FILE 不一致：\n  宣告：{declared_path}\n  實體：{warn_file}"
 
 
 # --- 契約 (b)：落盤契約 -----------------------------------------------------
@@ -213,13 +213,13 @@ def test_evidence_files_have_expected_name_prefix(
     assert target.exists(), f"{filename}_file 不存在於磁碟：{target}"
 
     target_name = target.name
-    assert target_name.startswith(expected_prefix), (
-        f"{filename}_file 檔名前綴不符（{why}）：實際={target_name!r} 期望前綴={expected_prefix!r}"
-    )
+    assert target_name.startswith(
+        expected_prefix
+    ), f"{filename}_file 檔名前綴不符（{why}）：實際={target_name!r} 期望前綴={expected_prefix!r}"
     # 負樣斷言：檔名不應為空字串（防 fixture 回傳空路徑的退化情境）
-    assert target_name != expected_prefix, (
-        f"{filename}_file 檔名僅剩前綴，缺 branch/TS 段：{target_name!r}"
-    )
+    assert (
+        target_name != expected_prefix
+    ), f"{filename}_file 檔名僅剩前綴，缺 branch/TS 段：{target_name!r}"
 
 
 def test_out_and_warn_files_are_distinct(_evidence: tuple[Path, Path, str]) -> None:
@@ -227,9 +227,9 @@ def test_out_and_warn_files_are_distinct(_evidence: tuple[Path, Path, str]) -> N
     out_file, warn_file, _ = _evidence
     assert out_file != warn_file, f"OUT_FILE 與 WARN_FILE 指向同一檔（職責未分離）：{out_file}"
     # 負樣：任一檔不得為對方的絕對路徑子字串以外的東西（即：兩者必須各自存在）
-    assert out_file.is_file() and warn_file.is_file(), (
-        f"OUT_FILE 或 WARN_FILE 不是 regular file：out={out_file} warn={warn_file}"
-    )
+    assert (
+        out_file.is_file() and warn_file.is_file()
+    ), f"OUT_FILE 或 WARN_FILE 不是 regular file：out={out_file} warn={warn_file}"
 
 
 # --- 契約 (c)：分流契約（防呆 / 目前 vacuous truth，但採正/負樣成對）---------
@@ -284,9 +284,9 @@ def test_warn_file_routing_contract(
     _, warn_file, _ = _evidence
     warn_text = warn_file.read_text(encoding="utf-8", errors="replace")
     # 正樣：WARN_FILE 必含真實 stderr 累積
-    assert present_substr in warn_text, (
-        f"WARN_FILE 缺『{present_substr}』（{why_present}）\n--- WARN_FILE 內容 ---\n{warn_text}"
-    )
+    assert (
+        present_substr in warn_text
+    ), f"WARN_FILE 缺『{present_substr}』（{why_present}）\n--- WARN_FILE 內容 ---\n{warn_text}"
     # 負樣：WARN_FILE 絕不含 OUT_FILE 業務標頭
     assert absent_substr not in warn_text, (
         f"WARN_FILE 誤含 OUT_FILE 業務標頭『{absent_substr}』（{why_absent}）\n"

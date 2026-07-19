@@ -81,9 +81,9 @@ def test_task2_report_inline_command_is_copyable_and_exits_zero():
         check=False,
     )
 
-    assert result.returncode == 0, (
-        f"報告 #2 欄內可照抄指令執行失敗\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"報告 #2 欄內可照抄指令執行失敗\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert result.stdout == ""
 
 

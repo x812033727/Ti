@@ -71,6 +71,6 @@ def test_speak_path_uses_single_retry_authority():
     assert "run_with_retries" in retry_src
     assert "make_retry_config" in retry_src
     # 反向：_build_client 不得自帶 run_with_retries（退避權威不應下沉到 client 建構）。
-    assert "run_with_retries" not in re.sub(r"#.*", "", _build_client_source()), (
-        "退避權威不應出現在 _build_client 的程式碼（註解引用除外）"
-    )
+    assert "run_with_retries" not in re.sub(
+        r"#.*", "", _build_client_source()
+    ), "退避權威不應出現在 _build_client 的程式碼（註解引用除外）"

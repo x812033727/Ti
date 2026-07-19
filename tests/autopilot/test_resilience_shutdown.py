@@ -202,9 +202,9 @@ async def test_cancelled_run_one_task_with_shutdown_flag_cleans_up(
 
     assert backlog.list_tasks()[0]["status"] == "pending"
     meta = history.get_meta(sid)
-    assert meta["status"] == "error", (
-        "停機路徑須 mark_interrupted，不得被 finish_session 蓋成 incomplete"
-    )
+    assert (
+        meta["status"] == "error"
+    ), "停機路徑須 mark_interrupted，不得被 finish_session 蓋成 incomplete"
     assert _read_status(state_dir)["state"] == "stopped"
 
 
@@ -330,9 +330,9 @@ async def test_task_heartbeat_refreshes_status_and_keeps_fields(state_dir, monke
     assert status["current_expert"] == "engineer"
     assert status["turn_started_at"] == 123.0
     assert status["updated_at"] > before["updated_at"], "心跳須刷新 updated_at"
-    assert status["last_activity_at"] == pytest.approx(history.events_mtime("ap-hb-1"), abs=1), (
-        "last_activity_at 應為 session events 檔 mtime"
-    )
+    assert status["last_activity_at"] == pytest.approx(
+        history.events_mtime("ap-hb-1"), abs=1
+    ), "last_activity_at 應為 session events 檔 mtime"
     assert "workers" in status, "workers 欄位須恆存在（契約）"
 
 
@@ -851,9 +851,9 @@ async def test_prepare_execv_reload_removes_signal_handlers():
 
     await autopilot._prepare_execv_reload()
 
-    assert signal_mod.getsignal(signal_mod.SIGTERM) is signal_mod.SIG_DFL, (
-        "execv 前必須回復預設訊號處置，晚到的 SIGTERM 才能直接終止行程"
-    )
+    assert (
+        signal_mod.getsignal(signal_mod.SIGTERM) is signal_mod.SIG_DFL
+    ), "execv 前必須回復預設訊號處置，晚到的 SIGTERM 才能直接終止行程"
 
 
 async def test_main_loop_reload_aborts_execv_on_shutdown(state_dir, monkeypatch):

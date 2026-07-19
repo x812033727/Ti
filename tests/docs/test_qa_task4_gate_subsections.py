@@ -50,9 +50,9 @@ def test_two_subsections_exist():
 def test_subsection_a_login_gate():
     a = _subsection("A")
     assert "TI_ACCESS_PASSWORD" in a, "(A) 小節未提及 TI_ACCESS_PASSWORD"
-    assert re.search(r"TI_ACCESS_PASSWORD=.*-m studio\.server", a), (
-        "(A) 小節缺最小啟用範例（TI_ACCESS_PASSWORD=... -m studio.server）"
-    )
+    assert re.search(
+        r"TI_ACCESS_PASSWORD=.*-m studio\.server", a
+    ), "(A) 小節缺最小啟用範例（TI_ACCESS_PASSWORD=... -m studio.server）"
 
 
 # ---- (B) Autopilot 門禁前置：分支保護/ruleset ----
@@ -73,17 +73,17 @@ def test_subsection_b_required_checks():
 # ---- required check 名稱與實際 CI job 對齊（防文件腐化） ----
 def test_required_checks_match_ci_jobs():
     for job in ("lint:", "test:", "sandbox-test:"):
-        assert re.search(rf"^  {re.escape(job)}", CI_YML, re.MULTILINE), (
-            f"ci.yml 找不到 job 定義：{job}"
-        )
+        assert re.search(
+            rf"^  {re.escape(job)}", CI_YML, re.MULTILINE
+        ), f"ci.yml 找不到 job 定義：{job}"
 
 
 # ---- (B) 不寫 TI_AUTOPILOT_* 完整變數名（紅線：首現須留在設定表） ----
 def test_subsection_b_no_autopilot_varnames():
     b = _strip_comments(_subsection("B"))
-    assert "TI_AUTOPILOT_" not in b, (
-        "(B) 小節不應出現 TI_AUTOPILOT_* 完整變數名（首現須留在設定表）"
-    )
+    assert (
+        "TI_AUTOPILOT_" not in b
+    ), "(B) 小節不應出現 TI_AUTOPILOT_* 完整變數名（首現須留在設定表）"
 
 
 # ---- (B) 以連結指向「設定」表，只連結不展開 ----

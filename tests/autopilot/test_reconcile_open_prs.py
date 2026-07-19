@@ -115,9 +115,9 @@ async def test_merged_pr_converges_to_done_with_pr_ref_audit(monkeypatch, state)
     updated = _load(t["id"])
     assert updated["status"] == "done"
     assert audits and audits[-1]["outcome"] == "merged" and audits[-1]["reconciled"] is True
-    assert audits[-1]["pr"] is None and audits[-1]["pr_ref"] == 42, (
-        "補記須用 pr_ref——pr 欄會被 _todays_pr_count 二次計入每日預算"
-    )
+    assert (
+        audits[-1]["pr"] is None and audits[-1]["pr_ref"] == 42
+    ), "補記須用 pr_ref——pr 欄會被 _todays_pr_count 二次計入每日預算"
 
 
 @pytest.mark.asyncio
