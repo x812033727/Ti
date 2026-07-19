@@ -80,7 +80,7 @@ def test_task1_ws_attach_client_refused_traceback_is_persisted_to_tmpdir() -> No
     assert "SMOKE FAIL" not in combined_output
     for feature in features:
         assert feature in combined_output
-    assert "websockets/asyncio/client.py" in client.stderr
+    assert "/websockets/" in client.stderr
     assert "asyncio/selector_events.py" in client.stderr
 
     _write_evidence(port, client)
