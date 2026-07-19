@@ -99,8 +99,9 @@ VERDICTS: dict[str, object] = {
 DEFAULT_WORKFLOW_NAME = "預設流程"  # 等價現有寫死骨架
 DYNAMIC_FIRST_NAME = "動態優先"  # dynamic-first：PM 運行時溝通/分派/招募為主（互動預設）
 FAST_TRACK_NAME = "快速模式"  # fast-track：動態討論分派→實作→QA 單審，砍三審與任務級 critic 求速度
+QUICK_ANSWER_NAME = "快答"  # 單一資深專家直接回答/完成小事(Kimi 化 PR13,home 快答模式)
 # 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
-RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME)
+RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME, QUICK_ANSWER_NAME)
 
 WORKFLOWS_FILENAME = "workflows.yaml"
 
@@ -418,11 +419,35 @@ def fast_track_workflow() -> dict:
     }
 
 
+def quick_answer_workflow() -> dict:
+    """快答內建流程(Kimi 化 PR13):單一資深專家一輪回應,不開多專家陣仗。
+
+    設計目標=消費級「問一句得一句」:適合問答/查詢/小結論,不適合改碼出貨(那走
+    預設流程或交辦)。單 stage discuss(mode=single、senior 一人、一輪)+wrap_up 收尾
+    (session 正常落 history/可重播);客觀閘門等引擎不變式照常。不存檔、保留名。
+    """
+    return {
+        "name": QUICK_ANSWER_NAME,
+        "description": "快答:單一資深專家直接回應(適合問答與小查詢;要出貨請用預設流程或交辦)",
+        "stages": [
+            {
+                "type": "discuss",
+                "name": "快答",
+                "mode": "single",
+                "roles": ["senior"],
+                "max_rounds": 1,
+            },
+            {"type": "wrap_up"},
+        ],
+    }
+
+
 # 保留名 → 內建定義工廠（get_workflow／list_workflows 用）。
 _BUILTIN_WORKFLOWS = {
     DEFAULT_WORKFLOW_NAME: default_workflow,
     DYNAMIC_FIRST_NAME: dynamic_first_workflow,
     FAST_TRACK_NAME: fast_track_workflow,
+    QUICK_ANSWER_NAME: quick_answer_workflow,
 }
 
 
