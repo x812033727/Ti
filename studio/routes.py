@@ -1018,6 +1018,14 @@ async def autopilot_investigations(limit: int = 50) -> JSONResponse:
     return JSONResponse({"investigations": await asyncio.to_thread(insights.investigations, limit)})
 
 
+@router.get("/api/skills", dependencies=[Depends(auth.require_auth)])
+async def skills_list() -> JSONResponse:
+    """唯讀:內部專家技能清單(名稱白名單+SKILL.md 描述+啟用狀態/適用角色)。"""
+    from . import skills_info
+
+    return JSONResponse(await asyncio.to_thread(skills_info.list_skills))
+
+
 @router.get("/api/lessons", dependencies=[Depends(auth.require_auth)])
 async def lessons_browse(q: str = "", limit: int = 50) -> JSONResponse:
     """教訓庫唯讀瀏覽:q=大小寫不敏感子字串(text+requirement),由新到舊。"""
