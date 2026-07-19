@@ -223,3 +223,8 @@ body[data-view="home"] main.layout { display: none; }
 .cn-dot { color: var(--muted); }
 .stage-canary.on .cn-dot { color: var(--good); }
 .cn-state { margin-left: auto; font-size: var(--fs-0); }
+
+/* 宣告 streak 進度條(D5) */
+.stage-streak { display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-2); }
+.streak-bar { flex: 1; height: 8px; border-radius: var(--r-full); background: var(--surface-2); overflow: hidden; }
+.streak-fill { height: 100%; background: var(--grad-accent); border-radius: var(--r-full); transition: width var(--t-med) var(--ease); }

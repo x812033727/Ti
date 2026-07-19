@@ -4293,6 +4293,9 @@ async def _digest_scheduler() -> None:
             if today not in existing:
                 name = await asyncio.to_thread(digest.save_digest)
                 log.info("digest 已落盤：%s", name)
+                # 宣告 streak(軌 D5):同節拍落當日條件快照(冪等),供連續天數量測。
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(insights.record_stage_snapshot)
                 # 每日摘要推播(軌 D3,TI_DIGEST_PUSH opt-in):三行人話,一天一則。
                 if config.DIGEST_PUSH:
                     d = await asyncio.to_thread(digest.build_digest, 7)
