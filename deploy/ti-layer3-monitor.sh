@@ -28,7 +28,11 @@ run_liveness() {
 }
 
 sanitize_prompt_value() {
-  printf '%s' "$1" | LC_ALL=C tr -cd '\40-\176' | head -c 500
+  local value
+  value=$(printf '%s' "$1" | LC_ALL=C tr -cd '\40-\176')
+  value=${value//---BEGIN_LAYER3_ALERT---/}
+  value=${value//---END_LAYER3_ALERT---/}
+  printf '%s' "$value" | head -c 500
 }
 
 sanitize_prompt_word() {
@@ -36,7 +40,11 @@ sanitize_prompt_word() {
 }
 
 sanitize_liveness_value() {
-  printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-' | head -c 80
+  local value
+  value=$(printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-')
+  value=${value//---BEGIN_LAYER3_ALERT---/}
+  value=${value//---END_LAYER3_ALERT---/}
+  printf '%s' "$value" | head -c 80
 }
 
 sanitize_liveness_output() {
@@ -77,6 +85,17 @@ load_watchdog_defaults() {
   . /etc/default/ti-watchdog
 }
 
+load_layer3_defaults() {
+  [ -f /etc/default/ti-layer3-monitor ] || return 0
+  local meta
+  meta=$(stat -c '%a %u' /etc/default/ti-layer3-monitor 2>/dev/null || true)
+  if [ "$meta" != "600 0" ]; then
+    echo "layer3: unsafe /etc/default/ti-layer3-monitor permissions: $(sanitize_prompt_value "$meta")"
+    exit 1
+  fi
+  . /etc/default/ti-layer3-monitor
+}
+
 if [ "${1:-}" = "--self-test" ]; then
   run_liveness --self-test
   exit $?
@@ -104,6 +123,7 @@ case "$STALE_THRESHOLD_S" in ''|*[!0-9]*) STALE_THRESHOLD_S=300 ;; esac
 if [ "$STALE_THRESHOLD_S" -lt 300 ]; then STALE_THRESHOLD_S=300; fi
 
 load_watchdog_defaults
+load_layer3_defaults
 NOTIFY_URL="${TI_LAYER3_NOTIFY_URL:-${TI_WATCHDOG_NOTIFY_URL:-}}"
 
 notify_layer3() {
