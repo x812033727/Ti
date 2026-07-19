@@ -2550,7 +2550,7 @@ class StudioSession:
                     len(tasks),
                     _TEARDOWN_LANE_TIMEOUT,
                 )
-        # git 收尾：worktree_remove／snapshot 底層各有 run_command_exec(timeout=20) 的可取消 subprocess，
+        # git 收尾：worktree_remove 底層 run_command_exec timeout=30/20；snapshot 兩個 probe 皆 timeout=20；這些都是可取消 subprocess（communicate + killpg），不重複包每個 git await。
         # 天然有界；外層以 timeout_at(deadline) 共享剩餘預算——stop 吃光則 git 收尾立即放棄，符合 best-effort。
         try:
             async with asyncio.timeout_at(deadline):
@@ -2665,8 +2665,8 @@ class StudioSession:
 
         【#3 過渡段非 LLM await 稽核】全段非 LLM await timeout 覆蓋如下：
         - `broadcast`：委派 ws.py send_json，無本地 wait_for；為無界網路 await（stalled client
-          可阻塞）。不加 envelope：broadcast 失敗不影響 lane 合併邏輯，且 WebSocket 層有獨立
-          心跳／session 清理機制。已如實記入 transition_await_inventory.md。
+          可阻塞）。不加外層信封：事件已先 `history.record_event` 落檔（前端可 attach 補放），
+          broadcast 阻塞不遺失資料，且不影響 lane 合併邏輯。已如實記入 transition_await_inventory.md。
         - `_teardown_lane`：整段共享單一 deadline（_TEARDOWN_LANE_TIMEOUT），expert stop 以
           abandon-pending 收斂（對 anyio 吞取消唯一有效做法），git 收尾委派 runner.* 各帶 timeout。
         - `_merge_lane`：所有 git 操作委派 runner.*，底層走 run_command_exec → _finalize_proc →
