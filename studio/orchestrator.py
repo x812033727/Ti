@@ -2532,11 +2532,15 @@ class StudioSession:
         await self.broadcast(
             events.phase_change(self.session_id, "清理", f"收掉 lane {ctx.lane_id}")
         )
+        # 整段共享同一個 deadline，stop 與 git 收尾合計不超過一個上界（非各段各等一次）。
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _TEARDOWN_LANE_TIMEOUT
         experts = list(ctx.experts.values()) + list((ctx.critics or {}).values())
         if experts:
             # ensure_future 顯式建 task；abandon-pending 是對「不可取消 hang」唯一有界的收斂法。
             tasks = [asyncio.ensure_future(ex.stop()) for ex in experts]
-            _done, pending = await asyncio.wait(tasks, timeout=_TEARDOWN_LANE_TIMEOUT)
+            remaining = max(0.0, deadline - loop.time())
+            _done, pending = await asyncio.wait(tasks, timeout=remaining)
             if pending:
                 # 放手不 await、也不 cancel（吞取消者 cancel 無效且會反噬拖死本協程）；純記錄洩漏。
                 log.warning(
@@ -2547,15 +2551,15 @@ class StudioSession:
                     _TEARDOWN_LANE_TIMEOUT,
                 )
         # git 收尾：worktree_remove／snapshot 底層各有 run_command_exec(timeout=20) 的可取消 subprocess，
-        # 天然有界；外層再包 asyncio.timeout 作 defense-in-depth（可取消 hang 有效），逾時就地吸收不外拋。
+        # 天然有界；外層以 timeout_at(deadline) 共享剩餘預算——stop 吃光則 git 收尾立即放棄，符合 best-effort。
         try:
-            async with asyncio.timeout(_TEARDOWN_LANE_TIMEOUT):
+            async with asyncio.timeout_at(deadline):
                 if self.cwd and ctx.cwd and ctx.branch:
                     await runner.git_worktree_remove(self.cwd, ctx.cwd, ctx.branch)
                 await self._lane_git_snapshot("teardown", ctx.branch)
         except TimeoutError:
             log.warning(
-                "lane %s teardown git 收尾逾 %.0fs 上界，放棄剩餘 git 收尾繼續主流程",
+                "lane %s teardown git 收尾超出整段上界 %.0fs，放棄剩餘 git 收尾繼續主流程",
                 ctx.lane_id,
                 _TEARDOWN_LANE_TIMEOUT,
             )

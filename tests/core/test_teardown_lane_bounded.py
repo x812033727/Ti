@@ -143,6 +143,34 @@ async def test_teardown_bounded_when_stop_swallows_cancellation(monkeypatch):
             await asyncio.sleep(0)
 
 
+async def test_teardown_timeout_is_single_envelope_for_stop_and_git(monkeypatch):
+    """整段 teardown 應共享同一個上界；不能 stop 與 git 收尾各等一次。"""
+    bound = 0.2
+    monkeypatch.setattr(orchestrator, "_TEARDOWN_LANE_TIMEOUT", bound)
+    ex = _CancelSwallowingStopExpert(BY_KEY["engineer"])
+    experts = {"engineer": ex}
+    s, bucket = _session(experts)
+    ctx = LaneContext("lane-1", None, experts, None)
+
+    async def hanging_snapshot(where, branch=None):
+        await asyncio.Event().wait()  # 永不返回；禁真 sleep
+
+    s._lane_git_snapshot = hanging_snapshot
+
+    try:
+        t0 = time.monotonic()
+        await asyncio.wait_for(s._teardown_lane(ctx), timeout=5.0)
+        elapsed = time.monotonic() - t0
+
+        assert ex.started is True
+        assert "清理" in _phase_anchors(bucket)
+        assert elapsed < bound * 1.5
+    finally:
+        ex.release()
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+
 async def test_teardown_parallel_not_linear_in_expert_count(monkeypatch):
     """多個永不返回的 stop() 並行啟動（abandon-pending），且清理錨點必須在 stop 前送出。"""
     monkeypatch.setattr(orchestrator, "_TEARDOWN_LANE_TIMEOUT", 0.2)
