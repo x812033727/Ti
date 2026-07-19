@@ -37,6 +37,7 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.5 5.5l10 6.5-10 6.5z"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8.5 5.5v13M15.5 5.5v13"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h11V9.5"/></symbol>
     <symbol id="i-news" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M8 9h8M8 12.5h8M8 16h4.5"/></symbol>
     <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12.5h3.6L9 6.8l4.4 11 2.4-5.3H21"/></symbol>
     <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M12 3.5l2 4.2 4.6.6-3.4 3.2.9 4.6-4.1-2.3-4.1 2.3.9-4.6L5.4 8.3l4.6-.6z"/></symbol>
@@ -96,6 +97,8 @@
        按鈕連 id 自 header 工具列原封搬入，app.js 綁定與各面板測試零改動。 -->
   <nav class="app-rail" aria-label="主導覽">
     <div class="rail-views" role="tablist" aria-label="主視圖" aria-orientation="vertical">
+      <button id="homeBtn" role="tab" aria-selected="false" title="助手首頁">
+        <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span>首頁</span></button>
       <button id="viewDashBtn" class="active" role="tab" aria-selected="true" title="監控儀表板">
         <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg><span>監控</span></button>
       <button id="viewStudioBtn" role="tab" aria-selected="false" title="工作室三欄">
@@ -385,6 +388,48 @@
     </div>
     <div id="metricsBody" class="metrics-body"><span class="muted">載入中…</span></div>
   </div>
+
+    <!-- Kimi 式助手首頁(view=home):常駐側欄+hero composer。非破壞性新增——
+       dash/studio 兩視圖與所有面板原封保留;#stream 於對話時 reparent 進 #homeChat(PR4)。 -->
+  <section id="homeShell" class="home-shell" aria-label="助手首頁">
+    <aside id="sideNav" class="side-nav glass" aria-label="助手導覽">
+      <button id="homeNewChat" class="sn-new">
+        <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+        <span>新對話</span><kbd>Ctrl K</kbd></button>
+      <nav class="sn-history" aria-label="對話">
+        <div class="sn-label">對話</div>
+        <ul id="snHistoryList"><li class="sn-empty">還沒有對話——從上面開始第一個。</li></ul>
+      </nav>
+      <div class="sn-bottom">
+        <button id="snPlugins" disabled title="即將推出">
+          <svg class="icon" aria-hidden="true"><use href="#i-plug"/></svg><span>插件</span></button>
+        <button id="snSchedules" disabled title="即將推出">
+          <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>排程任務</span></button>
+        <button id="snStudio" title="進入工作室(完整三欄)">
+          <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span>工作室</span></button>
+        <button id="snAccount" disabled title="即將推出">
+          <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span>帳號</span></button>
+      </div>
+    </aside>
+    <div id="homeMain" class="home-main" data-subview="hero">
+      <div id="homeHero" class="home-hero">
+        <h1 class="hero-title">想做什麼?</h1>
+        <p class="hero-sub">直接說,讓工作室的專家們討論並動手;或交辦給 agent 在背景完成。</p>
+        <div class="hero-composer">
+          <textarea id="heroInput" rows="2" placeholder="說說你要什麼,或交辦一個 agent…" aria-label="輸入需求"></textarea>
+          <div class="hero-actions">
+            <button id="heroSend" class="hero-send" title="開始">
+              <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg><span>開始</span></button>
+          </div>
+        </div>
+        <div id="heroPulse" class="hero-pulse" aria-live="polite"></div>
+        <div id="heroInspire" class="hero-inspire"></div>
+      </div>
+      <div id="homeChat" class="home-chat hidden"></div>
+      <div id="homePlugins" class="home-sub hidden"></div>
+      <div id="homeSchedules" class="home-sub hidden"></div>
+    </div>
+  </section>
 
   <main class="layout">
     <!-- 監控視圖：Autopilot 儀表板（預設首頁；開始討論/重播自動切到工作室視圖） -->
