@@ -1158,6 +1158,10 @@ AUTOPILOT_DISCOVERED_DAILY_CAP = _env_int("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", 2
 # 門檻有依據後才開,建議 0.8)。樣本不足 SLO_MIN_MERGED 視為資料不足不煞車(冷啟動保護)。
 SLO_ZERO_TOUCH_MIN = _env_float("TI_SLO_ZERO_TOUCH_MIN", 0.0)
 SLO_MIN_MERGED = _env_int("TI_SLO_MIN_MERGED", 5)
+# 規範迴路(第 3 階 A3):每日一次把近 7 天人工介入筆記+失敗事件交 FAST 模型蒸餾成
+# 可執行慣例,入 lessons(source=intervention)——「人工介入→durable norm」的自動寫路。
+# 0=關(預設灰度)。
+NORMS_LOOP = os.getenv("TI_NORMS_LOOP", "0") not in ("0", "false", "False", "")
 # AUTOPILOT_RETRY_COOLDOWN_S：討論未收斂退回 pending 後的重抓冷卻秒數（retry_after 欄位，
 #   next_pending/claim_next 尊重）。0＝不冷卻（舊行為）。動機：2026-07-11 09:24 LLM 劣化
 #   窗口,調查失敗退回後旁路 60s 即重抓,3 次 attempts 在 3 分鐘內於同一窗口內燒光——
@@ -1366,6 +1370,7 @@ def reload() -> None:
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global AUTOPILOT_DISCOVERED_DAILY_CAP, AUTOPILOT_RETRY_COOLDOWN_S
     global SLO_ZERO_TOUCH_MIN, SLO_MIN_MERGED
+    global NORMS_LOOP
     global CLAUDE_ROTATE, CLAUDE_ACCOUNT_PREFERRED, CLAUDE_ROTATE_THRESHOLD
     global CLAUDE_ROTATE_MARGIN, CLAUDE_ROTATE_RESET_EDGE, CLAUDE_ROTATE_RESET_EDGE_7D
     global CLAUDE_ROTATE_SCOPED
@@ -1611,6 +1616,7 @@ def reload() -> None:
     AUTOPILOT_DISCOVERED_DAILY_CAP = _env_int("TI_AUTOPILOT_DISCOVERED_DAILY_CAP", 20)
     SLO_ZERO_TOUCH_MIN = _env_float("TI_SLO_ZERO_TOUCH_MIN", 0.0)
     SLO_MIN_MERGED = _env_int("TI_SLO_MIN_MERGED", 5)
+    NORMS_LOOP = os.getenv("TI_NORMS_LOOP", "0") not in ("0", "false", "False", "")
     AUTOPILOT_RETRY_COOLDOWN_S = _env_int("TI_AUTOPILOT_RETRY_COOLDOWN_S", 600)
     # provider 額度快照 SWR（預設值須與檔頂宣告一致）
     QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)

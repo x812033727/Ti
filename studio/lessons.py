@@ -25,7 +25,7 @@ from . import config
 _MAX_STORE = 500
 # investigation=調查分流管線的結論沉澱(2026-07-10 修:autopilot 以 source="investigation"
 # 呼叫 add_many,但白名單漏列 → ValueError 被呼叫端 suppress 吞掉,調查結論從未真正入庫)。
-_VALID_SOURCES = {"retro", "vote", "appraisal", "investigation"}
+_VALID_SOURCES = {"retro", "vote", "appraisal", "investigation", "intervention"}
 
 # 目前工作目錄沒有既有 lessons.json，可直接校準的實庫為空；因此用 repo 既有 tests/docs 的教訓句型
 # 抽樣校準：明顯近似句 ratio 0.909~0.973，跨主題句 ratio 0.143~0.571。取 0.90 可擋表層
