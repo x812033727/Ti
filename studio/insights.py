@@ -190,6 +190,42 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
     }
 
 
+# --- 「需要你」例外收件匣(第 4 階按例外監控,軌 F1) ---------------------------
+# 收件匣事件=page 級(需要人行動)但排除自證/日報型雜訊;用 severity 動態判定,
+# 未來新增的 page kind 自動進收件匣(fail-loud,與 notify 同哲學)。
+_ATTENTION_EVENT_EXCLUDE = frozenset({"test", "daily_digest"})
+_ATTENTION_TASK_FIELDS = ("id", "title", "note", "clarify", "updated_at", "source", "attempts")
+
+
+def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
+    """例外收件匣聚合:澄清待答票/停放任務+原因/近 days 天 page 級事件。
+
+    純檔案讀取零 LLM。澄清票=parked 且 clarify 非空(答覆走既有 task action
+    unpark+note);badge 數=待答澄清票數。days 夾 1..30。
+    """
+    days = max(1, min(30, int(days)))
+    clarify: list[dict] = []
+    parked: list[dict] = []
+    for t in backlog.list_tasks("parked", state_dir=state_dir):
+        row = {k: t.get(k) for k in _ATTENTION_TASK_FIELDS}
+        (clarify if str(t.get("clarify") or "").strip() else parked).append(row)
+    clarify.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
+    parked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
+    events = [
+        {k: e.get(k) for k in ("kind", "title", "task_id", "ts") if e.get(k) is not None}
+        for e in notify.read_events(days, state_dir=state_dir)
+        if notify.severity(str(e.get("kind") or "")) == "page"
+        and e.get("kind") not in _ATTENTION_EVENT_EXCLUDE
+    ]
+    events.sort(key=lambda e: e.get("ts") or 0, reverse=True)
+    return {
+        "clarify": clarify[:50],
+        "parked": parked[:50],
+        "events": events[:50],
+        "pending_clarify": len(clarify),
+    }
+
+
 # --- 升階儀表(第 3/4 階可視化,軌 D1) ----------------------------------------
 # 八個 canary 開關的單一真相表:(鍵, 人話標籤, config 取值函數)。順序=建議開啟順序。
 _CANARIES = (

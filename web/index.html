@@ -401,6 +401,9 @@
         <ul id="snHistoryList"><li class="sn-empty">還沒有對話——從上面開始第一個。</li></ul>
       </nav>
       <div class="sn-bottom">
+        <button id="snAttention" title="需要你的事——澄清待答/停放任務/紅色事件">
+          <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span>需要你</span>
+          <span id="snAttentionBadge" class="sn-badge hidden"></span></button>
         <button id="snPlugins" title="角色/群組/流程/技能總覽">
           <svg class="icon" aria-hidden="true"><use href="#i-plug"/></svg><span>插件</span></button>
         <button id="snSchedules" title="定期交辦給 agent 的例行工作">
@@ -456,6 +459,7 @@
       <div id="homePlugins" class="home-sub hidden"></div>
       <div id="homeSchedules" class="home-sub hidden"></div>
       <div id="homeStage" class="home-sub hidden"></div>
+      <div id="homeAttention" class="home-sub hidden"></div>
     </div>
   </section>
 
