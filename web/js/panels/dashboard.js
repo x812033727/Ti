@@ -15,13 +15,15 @@ const ACT_STATUS_LABEL = {
 const REFRESH_MS = 30000;
 let dashTimer = null;
 
-// --- 視圖切換（監控 dash / 工作室 studio）：body[data-view] 為單一真相 -------
+// --- 視圖切換（首頁 home / 監控 dash / 工作室 studio）：body[data-view] 為單一真相 -------
+const VIEW_BTNS = { "#homeBtn": "home", "#viewDashBtn": "dash", "#viewStudioBtn": "studio" };
+
 export function setView(view) {
   document.body.dataset.view = view;
-  ["#viewDashBtn", "#viewStudioBtn"].forEach((sel) => {
+  Object.entries(VIEW_BTNS).forEach(([sel, v]) => {
     const btn = $(sel);
     if (!btn) return;
-    const active = (sel === "#viewDashBtn") === (view === "dash");
+    const active = v === view;
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-selected", active ? "true" : "false");
   });
