@@ -864,7 +864,7 @@ async def git_commit(
     if forbidden_paths is not None:
         staged = await run_command_exec(
             root,
-            ["git", "diff", "--staged", "--diff-filter=ACMRT", "--name-only"],
+            ["git", "diff", "--staged", "--name-only", "--no-renames"],
             timeout=20,
             label="git diff --staged",
         )

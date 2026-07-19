@@ -300,6 +300,22 @@ async def test_git_commit_normal_returns_valid_hash(tmp_path):
     assert head.output.strip() == h
 
 
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_default_forbidden_paths_none_keeps_legacy_return_type(tmp_path):
+    """未傳 forbidden_paths 時維持舊介面：成功回短 hash 字串，不回 GitCommitResult。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "legacy.txt").write_text("v1")
+
+    result = await runner.git_commit(tmp_path, "legacy return type")
+
+    assert isinstance(result, str)
+    assert not isinstance(result, runner.GitCommitResult)
+    assert result
+
+
 @pytest.mark.asyncio
 async def test_git_commit_no_change_returns_none_head_unmoved(tmp_path):
     """無變更時回 None，且 HEAD 不移動（不產生空 commit）。"""
@@ -337,6 +353,56 @@ async def test_git_commit_forbidden_paths_blocks_commit_and_returns_violations(t
         tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
     )
     assert head.output.strip() == base_hash, "違規時 HEAD 不應前進"
+
+
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_blocks_deleted_protected_file(tmp_path):
+    """刪除禁改檔也算變更，必須擋下且不前進 HEAD。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "docs").mkdir()
+    protected = tmp_path / "docs" / "protected.md"
+    protected.write_text("base")
+    base_hash = await runner.git_commit(tmp_path, "base")
+    assert isinstance(base_hash, str)
+
+    protected.unlink()
+    result = await runner.git_commit(tmp_path, "delete protected", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash is None
+    assert result.forbidden_violations == ["docs/protected.md"]
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == base_hash, "刪除禁改檔時 HEAD 不應前進"
+
+
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_blocks_renamed_protected_file_out(tmp_path):
+    """把禁改檔移出保護目錄時，來源路徑必須被檢出並擋下。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "docs").mkdir()
+    protected = tmp_path / "docs" / "protected.md"
+    protected.write_text("base")
+    base_hash = await runner.git_commit(tmp_path, "base")
+    assert isinstance(base_hash, str)
+
+    protected.rename(tmp_path / "moved.md")
+    result = await runner.git_commit(tmp_path, "move protected out", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash is None
+    assert result.forbidden_violations == ["docs/protected.md"]
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == base_hash, "搬出禁改目錄時 HEAD 不應前進"
 
 
 @pytest.mark.realgit
