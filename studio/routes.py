@@ -579,6 +579,21 @@ class PublishRepoBody(BaseModel):
     repo: str = ""
 
 
+class ProjectIntentBody(BaseModel):
+    intent: str = ""
+
+
+@router.post("/api/projects/{project_id}/intent", dependencies=[Depends(auth.require_auth)])
+async def projects_set_intent(project_id: str, body: ProjectIntentBody) -> JSONResponse:
+    """設定/覆寫專案常駐意圖(空=清除):意圖迴路(TI_INTENT_LOOP)差距分析的輸入。"""
+    meta = await asyncio.to_thread(projects.set_intent, project_id, body.intent)
+    if meta is None:
+        return JSONResponse({"ok": False, "detail": "專案不存在"}, status_code=404)
+    # 設定意圖=補背景型介入——這正是第 3/4 階人類的核心職責,入信任指標分類。
+    interventions.record("project_intent", "context_feeding")
+    return JSONResponse({"ok": True, "project": meta})
+
+
 @router.post("/api/projects/{project_id}/publish-repo", dependencies=[Depends(auth.require_auth)])
 async def projects_set_publish_repo(project_id: str, body: PublishRepoBody) -> JSONResponse:
     """設定專案的目標 repo（owner/repo；留空＝清除）＝工作基底＋發佈目標。

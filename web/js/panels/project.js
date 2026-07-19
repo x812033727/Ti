@@ -105,6 +105,18 @@ export async function refreshProjectPanel() {
     repoRow.appendChild(repoBtn);
     body.appendChild(repoRow);
 
+    // 常駐意圖(第 4 階 B3):可隨時更新的北極星指令;TI_INTENT_LOOP 開啟後,
+    // 持續改良的「找問題」會先對照意圖做差距分析。
+    const intentRow = projLine(`常駐意圖：${p.intent || "（未設定）"}`, "muted");
+    const intentBtn = document.createElement("button");
+    intentBtn.id = "projectIntent";
+    intentBtn.className = "ghost";
+    intentBtn.textContent = "設定";
+    intentBtn.title = "一句話北極星指令；TI_INTENT_LOOP 開啟後找問題先做意圖差距分析；留空＝清除";
+    intentBtn.onclick = () => setProjectIntent(pid, p.intent || "");
+    intentRow.appendChild(intentBtn);
+    body.appendChild(intentRow);
+
     // 藍圖卡片（有藍圖才顯示；raw 藍圖只提示看 BLUEPRINT.md）
     const bp = d.blueprint;
     if (bp && (bp.features || []).length) {
@@ -211,6 +223,30 @@ export async function deleteProject(pid, name) {
     await loadProjects();
     onProjectChange(); // 還原啟動列（收起 repo 標籤／刪除鈕、回到一次性討論）
   } catch (e) { toast("刪除失敗：" + e.message, "err"); }
+}
+
+export async function setProjectIntent(pid, current) {
+  const values = await openFormModal({
+    title: "設定常駐意圖",
+    hint: "一句話北極星指令（例如「把結帳流程做到可正式收費」）。TI_INTENT_LOOP 開啟後，" +
+      "持續改良的「找問題」會先對照意圖做差距分析，優先補離意圖最近的缺口。留空＝清除。",
+    fields: [
+      { key: "intent", label: "常駐意圖", value: current, placeholder: "（留空＝清除）" },
+    ],
+    submitLabel: "儲存",
+  });
+  if (values === null) return; // 取消
+  try {
+    const res = await fetch(`/api/projects/${pid}/intent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ intent: values.intent }),
+    });
+    const d = await res.json();
+    if (!res.ok) { toast(d.detail || "設定失敗", "err"); return; }
+    toast(values.intent ? "常駐意圖已更新" : "已清除常駐意圖");
+    await refreshProjectPanel();
+  } catch (e) { toast("設定失敗：" + e.message, "err"); }
 }
 
 export async function setProjectPublishRepo(pid, current) {
