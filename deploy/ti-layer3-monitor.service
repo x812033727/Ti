@@ -1,0 +1,15 @@
+[Unit]
+Description=Ti autopilot layer 3 monitor
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/default/ti-layer3-monitor
+ExecStart=/usr/local/sbin/ti-layer3-monitor.sh
+
+# 安裝:
+#   cp /opt/ti/deploy/ti-layer3-monitor.sh /usr/local/sbin/
+#   cp /opt/ti/deploy/ti-layer3-liveness.py /usr/local/sbin/
+#   cp /opt/ti/deploy/ti-layer3-monitor.{service,timer} /etc/systemd/system/
+#   chmod +x /usr/local/sbin/ti-layer3-monitor.sh /usr/local/sbin/ti-layer3-liveness.py
+#   systemctl daemon-reload && systemctl enable --now ti-layer3-monitor.timer
