@@ -222,7 +222,7 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
 # --- 「需要你」例外收件匣(第 4 階按例外監控,軌 F1) ---------------------------
 # 收件匣事件=page 級(需要人行動)但排除自證/日報型雜訊;用 severity 動態判定,
 # 未來新增的 page kind 自動進收件匣(fail-loud,與 notify 同哲學)。
-_ATTENTION_EVENT_EXCLUDE = frozenset({"test", "daily_digest"})
+_ATTENTION_EVENT_EXCLUDE = frozenset({"test", "daily_digest", "stage_changed"})  # 好消息不是例外
 _ATTENTION_TASK_FIELDS = ("id", "title", "note", "clarify", "updated_at", "source", "attempts")
 
 
@@ -396,20 +396,42 @@ def record_stage_snapshot(now: float | None = None, *, state_dir: Path | None = 
     t = now if now is not None else time.time()
     day = _utc_day(t)
     path = _stage_history_path(state_dir)
-    for rec in jsonl_log.read_window(path, 3):
+    prev: dict | None = None
+    for rec in jsonl_log.read_window(path, 30):
         if rec.get("day") == day:
             return False  # 當日已記,冪等
+        if prev is None or (rec.get("ts") or 0) > (prev.get("ts") or 0):
+            prev = rec
     snap = stage_readiness(state_dir=state_dir)
     jsonl_log.append(
         path,
         {
             "ts": t,
             "day": day,
+            "stage": snap["stage"],
             "all_ok": all(c["ok"] for c in snap["conditions"]),
             "conditions": {c["key"]: c["ok"] for c in snap["conditions"]},
             "canaries_on": snap["canaries_on"],
         },
     )
+    # 升階轉換推播(軌 G1):stage 值變化或 streak 首達里程碑——「按例外監控」不漏升階
+    # 本身。一天最多一則(跟著冪等寫入節拍);任何失敗不得影響快照落檔(已寫完才推)。
+    try:
+        streak = stage_streak(state_dir=state_dir)
+        prev_stage = str((prev or {}).get("stage") or "")
+        if prev_stage and snap["stage"] != prev_stage:
+            notify.send_bg(
+                "stage_changed",
+                f"升階狀態變化:{prev_stage} → {snap['stage']}(條件全綠連續 {streak} 天)",
+            )
+        elif streak in (7, 14):
+            notify.send_bg(
+                "stage_changed",
+                f"宣告條件全綠連續 {streak} 天(目前 {snap['stage']}"
+                + (",達成宣告門檻!)" if streak >= 14 else ")"),
+            )
+    except Exception:  # noqa: BLE001 — 推播是加值,不得影響快照節拍
+        pass
     return True
 
 
