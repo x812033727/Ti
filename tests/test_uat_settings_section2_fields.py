@@ -109,6 +109,7 @@ def test_每個select欄都有非法選項案例(sec):
     # 進階組（0/1 或固定選項）由一條彙整的「非法值一律忽略」案例涵蓋（列名所有 env）。
     checks = {
         "TI_PROVIDER": ["TI_PROVIDER", "Provider"],
+        "TI_DEFAULT_VIEW": ["TI_DEFAULT_VIEW", "預設視圖"],
         "TI_MODEL_LEAD": ["TI_MODEL_LEAD", "主力模型"],
         "TI_MODEL_FAST": ["TI_MODEL_FAST", "快速模型"],
         # 角色模型（8 欄）：彙整於 2.25 一條案例，逐 env 列名

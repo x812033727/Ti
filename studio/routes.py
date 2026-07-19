@@ -60,6 +60,7 @@ async def health() -> JSONResponse:
             "offline": config.OFFLINE_MODE,
             "provider": config.PROVIDER,
             "provider_ready": config.provider_ready(),
+            "default_view": config.DEFAULT_VIEW,
         }
     )
 

@@ -103,7 +103,8 @@ bindDashboard();
 bindSidenav();
 bindHome();
 initTheme();
-setMobileView("dash");
+// 手機首繪暫維持監控分頁(home 的手機 pane 規則在 RWD 收尾 PR);桌機直接 home。
+setMobileView(window.matchMedia && window.matchMedia("(max-width: 640px)").matches ? "dash" : "home");
 
 async function init() {
   if (!(await checkAuth())) return;
@@ -112,7 +113,17 @@ async function init() {
   loadProjects();
   loadWorkflows();
   loadGroupOptions();
-  setView("dash"); // 認證通過後才抓監控資料（未登入會被 checkAuth 導去 /login）
+  // 預設視圖(PR7):server 設定 TI_DEFAULT_VIEW(health 曝露),失敗退 home。
+  let dv = "home";
+  try {
+    const h = await (await fetch("/api/health")).json();
+    if (["home", "dash", "studio"].includes(h.default_view)) dv = h.default_view;
+  } catch { /* 取不到照預設 */ }
+  setView(dv); // 認證通過後才抓資料(未登入會被 checkAuth 導去 /login)
+  if (dv === "home") {
+    refreshSidenavHistory();
+    import("./js/panels/home.js").then((m) => m.refreshHomeExtras());
+  }
 }
 
 init();

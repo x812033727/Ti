@@ -6,7 +6,8 @@ import { openSettings, closeSettings } from "../panels/settings.js";
 export function setMobileView(view) {
   document.body.dataset.mv = view;
   // 手機分頁同時決定主視圖：監控分頁＝dash，其餘分頁＝工作室（body[data-view] 單一真相）
-  document.body.dataset.view = view === "dash" ? "dash" : "studio";
+  // home 分頁(PR7)保持助手首頁;監控=dash;其餘=工作室(body[data-view] 單一真相)
+  document.body.dataset.view = view === "dash" ? "dash" : view === "home" ? "home" : "studio";
   document.querySelectorAll(".mobiletabs button").forEach((b) => {
     const active = b.dataset.mv === view;
     b.classList.toggle("active", active);
