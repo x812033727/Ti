@@ -3280,3 +3280,41 @@
 ## 測試必要黑樣本 — 深度上限變體 note（`逾時且已達自動拆分深度上限…`）需補黑樣本，確認天然不匹配 `task timeout after` 而被跳過；`timeout_retried=True` 不退、N ≥ 現行上限不退、`split_done=True` 兩規則均跳過各補對應黑樣本
 - 時間：2026-07-11 14:22
 
+## `stop()` 改為 kill-first——執行順序：先 `connected_before = self._connected; self._connected = False`（縮短競態窗口，非互斥鎖），再 `_best_effort_kill_subprocess()`，最後 `asyncio.wait_for(self._client.disconnect(), _CTRL_TIMEOUT)`；snapshot `client = self._client` 後再操作，避免重建 client 時操作到新物件。
+- 時間：2026-07-19 17:44
+- 理由：subprocess 已死時 `process.wait()` 預期立即返回，disconnect 快速收斂；anyio 的 CancelledError 吞取消問題被繞過。
+- 否決方案：disconnect-first（現狀）——`asyncio.wait_for` 在 anyio context 被吞取消，30s 兜底形同虛設，實例 #261 76 分鐘卡死的直接根因。
+
+## `_CTRL_TIMEOUT = 30.0` 維持現值不縮短——kill 送 SIGKILL 不等 reap，「disconnect 立即返回」是預期而非保證；30s buffer 應對 kill 為 no-op 時的退化路徑（SDK 私有屬性 `_transport._process` 取不到→kill 靜默失敗→仍靠 timeout 收斂）。
+- 時間：2026-07-19 17:44
+- 否決方案：縮短至 5s——kill-first 失效時退化路徑會提前誤判超時，成本不對稱。
+
+## `asyncio.timeout(_TEARDOWN_LANE_TIMEOUT)` 包在 `_teardown_lane` 函式**內部**，`TimeoutError` 在函式內自己 catch 並 log，不往外拋。
+- 時間：2026-07-19 17:44
+- 理由：兩處呼叫端（orchestrator.py:2632、2643）是裸 await，無外層 except；若 TimeoutError 逸出，後續 lane 合併、deferred+crashed 重跑、`_flush_lane_notes` 全部跳過，best-effort 語義破防。
+- 否決方案：依賴外層吞掉——外層根本不存在，設計文字原本描述有誤。
+
+## `_TEARDOWN_LANE_TIMEOUT = 120.0` 定為模組常數，不進 `config.py`。
+- 時間：2026-07-19 17:44
+- 理由：防爆閥不是營運旋鈕，進 config 需兩處同步（頂端宣告＋`reload()` 區塊），省此成本；120s 已遠大於 gather 後的實際最壞值（≈`_CTRL_TIMEOUT` = 30s）。
+- 否決方案：進 `config.py` 做旋鈕——防爆閥收緊/放寬無運維價值，反而引入漂移風險。
+
+## `_teardown_lane` 內 expert stop 改 `asyncio.gather(*[ex.stop() for ex in all_experts], return_exceptions=True)`，同時移除原 for 迴圈的逐一 try/except（gather + return_exceptions 已接管，留著是死碼）。
+- 時間：2026-07-19 17:44
+- 理由：最壞時間從 N×30s 壓到 max(30s)，lane×expert 數多時效益顯著。
+
+## 進入 `_teardown_lane` 前 broadcast `phase_change("清理", f"收掉 lane {ctx.lane_id}")`，提供 history/watchdog 可見錨點。
+- 時間：2026-07-19 17:44
+- 否決方案：不加錨點——重現 #261 類問題時無法區分「卡在 teardown」vs「卡在 task」，診斷盲區維持。
+
+## 稽核結論（`_integrate_wave` 中 git 合併/flush/snapshot 各 await 的 timeout 來源）以行內註解隨 commit 入庫，不另立文件；`git_worktree_remove` 和 `_lane_git_snapshot` 底層各有 `timeout=20` 的 `run_command_exec`，且被 `_TEARDOWN_LANE_TIMEOUT` 外層兜住，不補額外 timeout。
+- 時間：2026-07-19 17:44
+
+## 測試必須覆蓋兩條路徑——①`disconnect` 永不返回（正常 kill-first 路徑）；②kill 為 no-op（SDK 私有屬性取不到）＋`disconnect` 永不返回，驗證兩者均在 `_TEARDOWN_LANE_TIMEOUT` 內收斂。測試以 monkeypatch 縮小 `_CTRL_TIMEOUT` 與 `_TEARDOWN_LANE_TIMEOUT`（0.1s 量級），禁真 sleep，用 `asyncio.Event().wait()` 模擬永不返回。
+- 時間：2026-07-19 17:44
+- 理由：高工指出 kill-first 核心假設（kill 成功→disconnect 快速）若無 no-op 路徑測試，timeout 兜底的有效性未被驗證。
+- 否決方案：只測 kill 成功路徑——kill 靠 SDK 私有屬性，形狀一變即退化，沒測等於宣稱未覆蓋的保證。
+
+## 不升級 claude-agent-sdk，不改事件契約欄位，不動 `flow.py` marker 解析；sdk 升版列 followup 另案。
+- 時間：2026-07-19 17:44
+

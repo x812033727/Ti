@@ -1,69 +1,6 @@
 {
   "entries": [
     {
-      "decision": "demo command-not-found 真因定位在 OS shell 層，改文件是命中真因，不動 runner `_executable_command` 內部邏輯。",
-      "rationale": "runner 介入前 shell 已報錯，映射層從未執行；改執行層屬誤治。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.067007
-    },
-    {
-      "decision": "改動範圍鎖定四份使用者面文件（README.md、CHANGELOG.md、ARCHITECTURE.md、CONTRIBUTING.md），但 CHANGELOG.md 內描述舊版行為的歷史記錄段落列為禁動區。",
-      "rationale": "歷史段落改了反而製造不實紀錄；高工指出此邊界需明確。",
-      "rejected": "全文件無差別替換——CHANGELOG 歷史段語意不同，不應與「指令宣告」同等對待。",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670094
-    },
-    {
-      "decision": "CI workflow（`.github/workflows/*.yml`）預設不動；動工前須確認無 Makefile/just recipe 抄文件 sample command，若有，該 recipe 納入改動範圍。",
-      "rationale": "CI 跑 setup-python 不是 demo 路徑；但若 CI 直接執行文件指令，不動會留不一致，高工指出需核實。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670106
-    },
-    {
-      "decision": "替換策略採逐檔精確 Edit，不用批次 sed/perl。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670114
-    },
-    {
-      "decision": "第 1 步 grep 命中清單固化為表格（檔案、行號、原文、預定改動/keep 標記），存檔後給 PM approve；改完跑同一條 grep，兩份輸出比對，作為禁動區核驗依據。",
-      "rationale": "高工指出格式未定義是流程卡點；工程師指出兩份輸出比對優於人腦記憶。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.067012
-    },
-    {
-      "decision": "執行驗收指令採 `python3 -c \"import studio.server\"`（即退、不阻塞），整體驗收沿用 `python3 -m pytest tests/docs tests/core/test_runner.py -q`。勘誤：原 `python3 -c \"import studio; python3 -m studio.server --help\"` 在 -c 字串內巢狀 python3 -m 屬非法 Python 語法（SyntaxError），且 server 未實作 --help 會 timeout，已更正。",
-      "rationale": "工程師指出全啟動會卡住 CI；驗收語意只需確認「指令字串找得到 python3 並能解析入口」，import 錯/依賴缺失為另一問題域，不混判。",
-      "rejected": "`python3 -m studio.server`（無限制）——會阻塞執行流程；`python3 -c \"import studio; python3 -m studio.server --help\"`——巢狀指令非法語法 + server 無 --help 會 timeout。",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670133
-    },
-    {
-      "decision": "驗收「非 command not found」的目標環境定義為「未安裝 python symlink 的 bare macOS Monterey+ 或 Ubuntu 22.04+」，不以 dev 本機為準。",
-      "rationale": "高工指出「本環境過關」不等於使用者環境過關，最小環境需明文定義。",
-      "rejected": "以 dev 本機為驗收環境——python symlink 可能由 pyenv 提供，非 bare 狀態，不能代表使用者。",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.067014
-    },
-    {
-      "decision": "guard 測試正則（`tests/docs/*` 等）若驗「不含裸 python 指令」，其排除條件必須同步涵蓋禁動區字串（`python-dotenv`、```python 圍欄、`python3`），避免文件改完後 guard 反紅。",
-      "rationale": "工程師指出此邊界容易漏，guard 正則本身若不排除禁動區，文件改正確但測試報錯，製造假紅。",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.0670147
-    },
-    {
-      "decision": "guard 測試與文件改動必須同 batch、同 commit，不允許中間狀態。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf9cde330c0",
-      "created_at": 1781525960.067015
-    },
-    {
       "decision": "shebang 不納入本次範圍（現有腳本均為 `env bash`，無 python shebang）。",
       "rationale": "",
       "rejected": "",
@@ -3499,6 +3436,69 @@
       "rejected": "",
       "session_id": "ap14b14f1a1f",
       "created_at": 1783750935.6365235
+    },
+    {
+      "decision": "`stop()` 改為 kill-first——執行順序：先 `connected_before = self._connected; self._connected = False`（縮短競態窗口，非互斥鎖），再 `_best_effort_kill_subprocess()`，最後 `asyncio.wait_for(self._client.disconnect(), _CTRL_TIMEOUT)`；snapshot `client = self._client` 後再操作，避免重建 client 時操作到新物件。",
+      "rationale": "subprocess 已死時 `process.wait()` 預期立即返回，disconnect 快速收斂；anyio 的 CancelledError 吞取消問題被繞過。",
+      "rejected": "disconnect-first（現狀）——`asyncio.wait_for` 在 anyio context 被吞取消，30s 兜底形同虛設，實例 #261 76 分鐘卡死的直接根因。",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.8181725
+    },
+    {
+      "decision": "`_CTRL_TIMEOUT = 30.0` 維持現值不縮短——kill 送 SIGKILL 不等 reap，「disconnect 立即返回」是預期而非保證；30s buffer 應對 kill 為 no-op 時的退化路徑（SDK 私有屬性 `_transport._process` 取不到→kill 靜默失敗→仍靠 timeout 收斂）。",
+      "rationale": "",
+      "rejected": "縮短至 5s——kill-first 失效時退化路徑會提前誤判超時，成本不對稱。",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.81818
+    },
+    {
+      "decision": "`asyncio.timeout(_TEARDOWN_LANE_TIMEOUT)` 包在 `_teardown_lane` 函式**內部**，`TimeoutError` 在函式內自己 catch 並 log，不往外拋。",
+      "rationale": "兩處呼叫端（orchestrator.py:2632、2643）是裸 await，無外層 except；若 TimeoutError 逸出，後續 lane 合併、deferred+crashed 重跑、`_flush_lane_notes` 全部跳過，best-effort 語義破防。",
+      "rejected": "依賴外層吞掉——外層根本不存在，設計文字原本描述有誤。",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.8181825
+    },
+    {
+      "decision": "`_TEARDOWN_LANE_TIMEOUT = 120.0` 定為模組常數，不進 `config.py`。",
+      "rationale": "防爆閥不是營運旋鈕，進 config 需兩處同步（頂端宣告＋`reload()` 區塊），省此成本；120s 已遠大於 gather 後的實際最壞值（≈`_CTRL_TIMEOUT` = 30s）。",
+      "rejected": "進 `config.py` 做旋鈕——防爆閥收緊/放寬無運維價值，反而引入漂移風險。",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.818184
+    },
+    {
+      "decision": "`_teardown_lane` 內 expert stop 改 `asyncio.gather(*[ex.stop() for ex in all_experts], return_exceptions=True)`，同時移除原 for 迴圈的逐一 try/except（gather + return_exceptions 已接管，留著是死碼）。",
+      "rationale": "最壞時間從 N×30s 壓到 max(30s)，lane×expert 數多時效益顯著。",
+      "rejected": "",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.8181856
+    },
+    {
+      "decision": "進入 `_teardown_lane` 前 broadcast `phase_change(\"清理\", f\"收掉 lane {ctx.lane_id}\")`，提供 history/watchdog 可見錨點。",
+      "rationale": "",
+      "rejected": "不加錨點——重現 #261 類問題時無法區分「卡在 teardown」vs「卡在 task」，診斷盲區維持。",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.8181865
+    },
+    {
+      "decision": "稽核結論（`_integrate_wave` 中 git 合併/flush/snapshot 各 await 的 timeout 來源）以行內註解隨 commit 入庫，不另立文件；`git_worktree_remove` 和 `_lane_git_snapshot` 底層各有 `timeout=20` 的 `run_command_exec`，且被 `_TEARDOWN_LANE_TIMEOUT` 外層兜住，不補額外 timeout。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.8181877
+    },
+    {
+      "decision": "測試必須覆蓋兩條路徑——①`disconnect` 永不返回（正常 kill-first 路徑）；②kill 為 no-op（SDK 私有屬性取不到）＋`disconnect` 永不返回，驗證兩者均在 `_TEARDOWN_LANE_TIMEOUT` 內收斂。測試以 monkeypatch 縮小 `_CTRL_TIMEOUT` 與 `_TEARDOWN_LANE_TIMEOUT`（0.1s 量級），禁真 sleep，用 `asyncio.Event().wait()` 模擬永不返回。",
+      "rationale": "高工指出 kill-first 核心假設（kill 成功→disconnect 快速）若無 no-op 路徑測試，timeout 兜底的有效性未被驗證。",
+      "rejected": "只測 kill 成功路徑——kill 靠 SDK 私有屬性，形狀一變即退化，沒測等於宣稱未覆蓋的保證。",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.8181896
+    },
+    {
+      "decision": "不升級 claude-agent-sdk，不改事件契約欄位，不動 `flow.py` marker 解析；sdk 升版列 followup 另案。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap7f8929ed39",
+      "created_at": 1784454263.8181903
     }
   ]
 }
