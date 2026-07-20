@@ -74,7 +74,7 @@ def test_task2_row_has_20260707_key_values_and_copyable_compare_command():
 
 def test_task2_report_inline_command_is_copyable_and_exits_zero():
     result = subprocess.run(
-        ["bash", "-lc", _task2_inline_command()],
+        ["bash", "-c", _task2_inline_command()],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -146,7 +146,7 @@ printf 'task2_actual=%s\n' "$actual"
 printf 'task2_diff=%s\n' "$diff_out"
 """
     result = subprocess.run(
-        ["bash", "-lc", command],
+        ["bash", "-c", command],
         cwd=ROOT,
         env=env,
         text=True,
