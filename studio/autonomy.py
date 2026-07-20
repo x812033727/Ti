@@ -1846,7 +1846,26 @@ def admission_decision(project_id: str, *, state_dir: Path | None = None) -> dic
                 project_id=project_id,
                 state_dir=state_dir,
             )
-    terminal = [e for e in recent_project_events if e.get("outcome") in _TERMINAL_OUTCOMES]
+    # 管理員明確解除 per-project brake 代表「根因已處理，從此刻重新計 failure streak」。
+    # 若不設 cutoff，舊的三筆 failure 仍位於 90 天事件尾端，下一次 admission 會在一秒內
+    # 把同一煞車重新觸發，形成永遠無法跑出成功事件來歸零的閉鎖。只重置 consecutive streak；
+    # daily cost / PR / rollback 等硬門檻仍在上方以完整原始事件重算，clear 不能洗掉。
+    failure_streak_cutoff = max(
+        (
+            float(event.get("ts") or 0)
+            for event in recent_project_events
+            if event.get("event_type") == "autonomy_decision"
+            and event.get("outcome") == "brake_cleared"
+            and (event.get("payload") or {}).get("scope") == "project"
+        ),
+        default=0.0,
+    )
+    terminal = [
+        e
+        for e in recent_project_events
+        if e.get("outcome") in _TERMINAL_OUTCOMES
+        and float(e.get("ts") or 0) > failure_streak_cutoff
+    ]
     terminal.sort(key=lambda e: e.get("ts", 0), reverse=True)
     consecutive = 0
     for event in terminal:
