@@ -196,14 +196,22 @@ def test_comparison_table_has_16_complete_rows_with_no_manifest_claims() -> None
 
 
 def test_claude_expert_inventory_row_matches_build_client_keyword_order() -> None:
-    lines = _read(INVENTORY).splitlines()
-    assert lines[26] == EXPECTED_CLAUDE_EXPERT_ROW
+    rows = _comparison_table_rows(_read(INVENTORY))
+    row = next(
+        (
+            "| " + " | ".join(cells) + " |"
+            for cells in rows
+            if cells and cells[0] == "Claude expert"
+        ),
+        None,
+    )
+    assert row is not None, "Claude expert row not found in table"
+    assert row == EXPECTED_CLAUDE_EXPERT_ROW
 
     keyword_order = _claude_agent_options_keyword_order()
     positions = [keyword_order.index(name) for name in EXPECTED_CLAUDE_AGENT_OPTIONS_ORDER]
     assert positions == sorted(positions)
 
-    row = lines[26]
     row_positions = [
         row.index(f"{name}=" if name != "cwd" else "cwd=str(cwd)")
         for name in EXPECTED_CLAUDE_AGENT_OPTIONS_ORDER

@@ -1,5 +1,13 @@
 # 任務 #1 盤點：README ↔ CONTRIBUTING dev 指令重複與測試約束
 
+## 行號守門
+
+- 類型：`historical-location`
+- 狀態：`not-required`
+- 守門測試：不適用
+- 模板：`studio/docs/inventory_line_guard_convention.md`
+- 原則：本檔的 `L<line>` 是收斂前盤點位置，不作現碼行號契約；若改成現碼行號 inventory，需改用 `line-number` 並補正式命名守門測試。
+
 > 收斂方案：**單一權威 + 連結引用**，canonical = `CONTRIBUTING.md`。
 > 本文僅為盤點（task #1），不改任何指令；供 task #2/#3/#4 落地依據。
 

@@ -1,5 +1,13 @@
 # 過渡段 await 定位清單
 
+## 行號守門
+
+- 類型：`line-number`
+- 狀態：`active`
+- 守門測試：`tests/docs/test_inventory_line_guard_transition_await.py`
+- 模板：`studio/docs/inventory_line_guard_convention.md`
+- 原則：文件只作被校驗方；測試須由實碼動態重算行號，不得為了過測試改產品碼或新增 wrapper。
+
 目的：盤點並行 lane 從「本波任務全部收斂」到「demo 開始」之間的所有 await，
 逐行列出行號、型別與 timeout 狀態，確認真無界葉節點實際有幾個。行號由守門測試對現行
 `studio/orchestrator.py` 動態重算，本清單為被校驗方（防文件漂移）。
