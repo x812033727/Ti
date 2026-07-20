@@ -175,6 +175,30 @@ async def test_run_command_exec_runs_in_cwd(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_command_exec_env_merges_with_parent(tmp_path, monkeypatch):
+    monkeypatch.setenv("TI_PARENT_ENV", "parent")
+    monkeypatch.setenv("TI_OVERRIDE_ENV", "old")
+    r = await runner.run_command_exec(
+        tmp_path,
+        [
+            runner.sys.executable,
+            "-c",
+            (
+                "import os;"
+                "print(os.environ.get('TI_PARENT_ENV'));"
+                "print(os.environ.get('TI_CHILD_ENV'));"
+                "print(os.environ.get('TI_OVERRIDE_ENV'));"
+                "print(bool(os.environ.get('PATH')))"
+            ),
+        ],
+        sandbox=False,
+        env={"TI_CHILD_ENV": "child", "TI_OVERRIDE_ENV": "new"},
+    )
+    assert r.ok
+    assert r.output.splitlines() == ["parent", "child", "new", "True"]
+
+
+@pytest.mark.asyncio
 async def test_run_command_exec_no_shell_injection(tmp_path):
     """核心安全驗收：argv 內的 shell metacharacters 不被解譯/執行。"""
     payload = "; touch semi `touch backtick` $(touch dollar)\nrm -rf x && touch andand"

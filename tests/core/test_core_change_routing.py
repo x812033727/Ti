@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import backlog, config
+from studio import backlog, config, flow
 from studio.backlog import route_core_changes
 from studio.improver import drain_result_to_backlogs
 
@@ -86,6 +86,25 @@ def test_route_core_changes_standalone(dirs):
     core_tasks = backlog.list_tasks()  # 預設 state_dir＝核心 backlog
     assert {t["title"] for t in core_tasks} == {"改 runner 沙箱"}
     assert all(t["source"] == "core" for t in core_tasks)
+
+
+def test_runner_exec_env_core_change_routes_only_to_core_backlog(dirs):
+    _core_dir, project_dir = dirs
+    text = (
+        "核心改動: runner.run_command_exec 的 env 參數屬 Ti 核心 runner 能力擴充，"
+        "應併入核心 repo 獨立 PR（本專案僅消費，不應各自 fork）"
+    )
+
+    routed = route_core_changes(flow.parse_core_changes(text))
+
+    assert routed == 1
+    assert backlog.list_tasks(state_dir=project_dir) == []
+    core_tasks = backlog.list_tasks()
+    assert [t["title"] for t in core_tasks] == [
+        "runner.run_command_exec 的 env 參數屬 Ti 核心 runner 能力擴充，"
+        "應併入核心 repo 獨立 PR（本專案僅消費，不應各自 fork）"
+    ]
+    assert core_tasks[0]["source"] == "core"
 
 
 def test_route_core_changes_empty_is_noop(dirs):
