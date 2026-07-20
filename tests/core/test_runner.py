@@ -220,6 +220,42 @@ async def test_run_command_exec_label(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_command_exec_env_merges_parent_environment(tmp_path, monkeypatch):
+    """env 是增量覆寫；不能吞掉既有父行程環境。"""
+    monkeypatch.setenv("TI_RUNNER_PARENT_ENV_SAMPLE", "parent")
+    r = await runner.run_command_exec(
+        tmp_path,
+        [
+            "python3",
+            "-c",
+            (
+                "import os;"
+                "print(os.environ['TI_RUNNER_PARENT_ENV_SAMPLE']);"
+                "print(os.environ['TI_RUNNER_CHILD_ENV_SAMPLE']);"
+                "print(bool(os.environ.get('PATH')))"
+            ),
+        ],
+        sandbox=False,
+        env={"TI_RUNNER_CHILD_ENV_SAMPLE": "child"},
+    )
+    assert r.ok, r.output
+    assert r.output.splitlines() == ["parent", "child", "True"]
+
+
+@pytest.mark.asyncio
+async def test_run_command_exec_env_can_override_parent_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("TI_RUNNER_OVERRIDE_ENV_SAMPLE", "parent")
+    r = await runner.run_command_exec(
+        tmp_path,
+        ["python3", "-c", "import os; print(os.environ['TI_RUNNER_OVERRIDE_ENV_SAMPLE'])"],
+        sandbox=False,
+        env={"TI_RUNNER_OVERRIDE_ENV_SAMPLE": "child"},
+    )
+    assert r.ok, r.output
+    assert r.output.strip() == "child"
+
+
+@pytest.mark.asyncio
 async def test_run_command_exec_fail_closed(tmp_path, monkeypatch):
     """沙箱啟用但 bwrap 不存在 → fail-closed，與 shell 路徑語意一致。"""
     monkeypatch.setattr(runner.config, "SANDBOX_BWRAP", "/nonexistent/bwrap")
