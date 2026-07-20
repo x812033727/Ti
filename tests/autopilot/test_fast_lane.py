@@ -164,3 +164,26 @@ async def test_run_one_task_fast_escalate_requeues_full(monkeypatch, tmp_path, f
     assert t.get("attempts") == 0, "升級不燒 attempts"
     assert "[快車道升級]" in t.get("note", "")
     assert _audit_lines() == [], "升級不落 merge audit"
+
+
+# --- I3:改良場流程選擇 --------------------------------------------------------
+
+
+def test_improver_task_workflow_selection(monkeypatch):
+    from studio import improver, workflow
+
+    monkeypatch.setattr(config, "FAST_LANE", True)
+    wf = improver.ProjectImprover._task_workflow({"id": 1})
+    assert wf and wf["name"] == workflow.IMPLEMENT_FAST_NAME
+    assert [s["type"] for s in wf["stages"]] == ["decompose", "build", "demo", "wrap_up", "publish"]
+    assert improver.ProjectImprover._task_workflow({"id": 1, "lane": "full"}) is None
+    monkeypatch.setattr(config, "FAST_LANE", False)
+    assert improver.ProjectImprover._task_workflow({"id": 1}) is None
+
+
+def test_implement_fast_workflow_validates():
+    from studio import workflow
+
+    v = workflow.coerce(workflow.implement_fast_workflow())
+    assert v["name"] == workflow.IMPLEMENT_FAST_NAME, "coerce 不得退回 default"
+    assert workflow.IMPLEMENT_FAST_NAME in workflow._BUILTIN_WORKFLOWS
