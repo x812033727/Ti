@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 
 import pytest
 
@@ -212,6 +213,38 @@ async def test_governed_path_disables_native_auto_merge_and_rechecks_in_merge_fl
     assert not spy.called("pr merge 42")
     assert len(flow.calls) == 1
     assert flow.calls[0][2]["pre_merge_guard"] is guard
+
+
+@pytest.mark.asyncio
+async def test_merge_flow_ci_wait_sleep_refreshes_truthful_task_activity(monkeypatch, tmp_path):
+    """黑樣本回歸：正常輪詢 CI 時 worker=0，不得因 session events 不動被判 dead_task。"""
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
+    spy, flow = _install(monkeypatch, {**_HAS_CHANGE})
+
+    result = await autopilot._commit_push_merge("/clone", _TASK)
+
+    assert result[0] is True
+    assert spy.push_cmd() is not None
+    sleep_hook = flow.calls[0][2].get("sleep")
+    assert callable(sleep_hook), "autopilot 必須把可觀測 CI sleep hook 接進 merge flow"
+
+    stale = time.time() - 301
+    autopilot._write_status(
+        "running",
+        task_id=_TASK["id"],
+        last_activity_at=stale,
+        workers={"count": 0, "cpu_active": False},
+    )
+    before = autopilot._read_status()
+    assert autopilot.liveness_verdict(before, now=time.time(), stale_threshold_s=300) == "dead_task"
+
+    await sleep_hook(0)
+
+    after = autopilot._read_status()
+    assert after["state"] == "running"
+    assert after["task_id"] == _TASK["id"]
+    assert after["last_activity_at"] > stale
+    assert autopilot.liveness_verdict(after, now=time.time(), stale_threshold_s=300) == "alive"
 
 
 # === 情境 2：遠端已存在 + 非 force → 中止且不 push ====================

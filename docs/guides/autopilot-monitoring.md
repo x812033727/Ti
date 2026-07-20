@@ -21,7 +21,7 @@
 | `sleep_until` | float/null | 睡到何時（quota/budget/rotate sleep） |
 | `updated_at` | float | 每次寫入的 epoch 秒——**主迴圈存活訊號**，任務中每 ~60s 前進一次 |
 | `quota` | dict | 各 provider 用量快照 |
-| `last_activity_at` | float/null | 最近一次「有進展」的 epoch 秒——**事件驅動**取工具/發言事件時間，60s 保底 tick 另取當前 session events jsonl 檔 mtime 的較新者。判新鮮度**以此欄為準**，取代早期掃 journal 間接推斷 |
+| `last_activity_at` | float/null | 最近一次「有進展」的 epoch 秒——**事件驅動**取工具/發言事件時間，60s 保底 tick 另取當前 session events jsonl 檔 mtime 的較新者；等待 GitHub CI 時，每次完成 poll、準備下一輪 sleep 也會刷新。若 poll 或 event loop 真卡死，刷新會停止。判新鮮度**以此欄為準**，取代早期掃 journal 間接推斷 |
 | `current_expert` | str/null | 目前輪到的專家 key（turn 進行中）；任務收尾或無 turn 時為 `null` |
 | `turn_started_at` | float/null | 目前專家 turn 的起始 epoch 秒；`now - turn_started_at` 即該專家已跑時長。無 turn 時為 `null` |
 | `workers` | dict/null | 子行程活性；`{"count": int\|null, "cpu_active": bool\|null}` |
