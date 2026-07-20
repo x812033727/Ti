@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import autopilot, config, interventions, lessons, notify
+from studio import autonomy, autopilot, config, interventions, lessons, notify
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +67,10 @@ async def test_distills_notes_and_events_into_lessons(monkeypatch):
     assert len(texts) == 3, "至多 3 條"
     assert texts[0] == "開工前先確認規格已寫清楚"
     assert all(it["source"] == "intervention" for it in lessons.all_lessons())
+    event = next(
+        row for row in autonomy.read_events() if row.get("outcome") == "norms_distill_screened"
+    )
+    assert event["payload"]["accepted_lessons"] == texts
 
 
 @pytest.mark.asyncio
@@ -76,6 +80,16 @@ async def test_once_per_day(monkeypatch):
     await autopilot._maybe_norms_distill()
     await autopilot._maybe_norms_distill()
     assert calls["n"] == 1, "同日只蒸餾一次"
+    # deploy 後 execv 會清掉 module global，持久 marker 仍須維持同日一次。
+    autopilot._norms_distill_day = None
+    await autopilot._maybe_norms_distill()
+    assert calls["n"] == 1
+    assert autopilot._norms_day_marker().is_file()
+
+    autopilot._write_day_marker(autopilot._norms_day_marker(), "1970-01-01", "complete")
+    autopilot._norms_distill_day = None
+    await autopilot._maybe_norms_distill()
+    assert calls["n"] == 2, "舊日 marker 不得抑制今日蒸餾"
 
 
 @pytest.mark.asyncio
@@ -84,6 +98,25 @@ async def test_no_material_skips_llm(monkeypatch):
     calls = _fake_llm(monkeypatch, "規範: 不該出現")
     await autopilot._maybe_norms_distill()
     assert calls["n"] == 0 and lessons.all_lessons() == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_or_unwritable_claim_fails_closed_before_provider(monkeypatch):
+    interventions.record("task_action", "output_review", task_id=1, detail="x")
+    calls = _fake_llm(monkeypatch, "規範: 不得執行")
+    autopilot._norms_day_marker().write_text("1970-01-01\n", encoding="utf-8")
+    await autopilot._maybe_norms_distill()
+    assert calls["n"] == 0
+
+    autopilot._norms_day_marker().unlink()
+    autopilot._norms_distill_day = None
+
+    def claim_disk_down(path, day, status="complete"):
+        raise OSError("claim disk unavailable")
+
+    monkeypatch.setattr(autopilot, "_write_day_marker", claim_disk_down)
+    await autopilot._maybe_norms_distill()
+    assert calls["n"] == 0
 
 
 @pytest.mark.asyncio
@@ -98,3 +131,43 @@ async def test_llm_failure_swallowed(monkeypatch):
     monkeypatch.setattr(providers_mod, "complete_once", boom)
     await autopilot._maybe_norms_distill()  # 不得拋
     assert lessons.all_lessons() == []
+
+    # 失敗不寫成功 marker；模擬重啟後仍可重試，不會整日永久抑制。
+    autopilot._norms_distill_day = None
+    calls = _fake_llm(monkeypatch, "規範: provider 恢復後重新執行")
+    await autopilot._maybe_norms_distill()
+    assert calls["n"] == 1
+    assert [item["text"] for item in lessons.all_lessons()] == ["provider 恢復後重新執行"]
+
+
+@pytest.mark.asyncio
+async def test_completion_marker_failure_keeps_unknown_claim_without_llm_retry(monkeypatch):
+    interventions.record("task_action", "output_review", task_id=1, detail="x")
+    calls = _fake_llm(monkeypatch, "規範: 開工前先確認可驗收範圍")
+    original_write = autopilot._write_day_marker
+
+    writes = {"n": 0}
+
+    def completion_marker_disk_down(path, day, status="complete"):
+        writes["n"] += 1
+        if writes["n"] >= 2:
+            raise OSError("marker disk unavailable")
+        return original_write(path, day, status)
+
+    monkeypatch.setattr(autopilot, "_write_day_marker", completion_marker_disk_down)
+    await autopilot._maybe_norms_distill()
+    assert [item["text"] for item in lessons.all_lessons()] == ["開工前先確認可驗收範圍"]
+    assert (
+        autopilot._read_day_marker(autopilot._norms_day_marker(), autopilot._utc_day_string())
+        == "in_progress"
+    )
+
+    monkeypatch.setattr(autopilot, "_write_day_marker", original_write)
+    autopilot._norms_distill_day = None
+    await autopilot._maybe_norms_distill()
+    assert calls["n"] == 1
+    assert [item["text"] for item in lessons.all_lessons()] == ["開工前先確認可驗收範圍"]
+    assert (
+        autopilot._read_day_marker(autopilot._norms_day_marker(), autopilot._utc_day_string())
+        == "in_progress"
+    )

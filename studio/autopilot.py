@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import contextlib
+import fcntl
 import hashlib
 import json
 import logging
@@ -1345,8 +1346,107 @@ def _token_set_similarity(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+_DEDUP_PAREN_RE = re.compile(r"[（(]([^（）()]{0,500})[）)]")
+_DEDUP_FILE_REF_RE = re.compile(
+    r"`?[/\\\w.-]+\.(?:py|js|jsx|ts|tsx|go|rs|java|cs|html|css|md)"
+    r"(?::[\d/-]+)?`?",
+    re.IGNORECASE,
+)
+_DEDUP_RATIONALE_SPLIT_RE = re.compile(
+    r"(?:——|；|;|，(?:現況|目前|否則|避免|使|導致|造成|違反|兌現|顧客|使用者|讓顧客|別讓))"
+)
+_DEDUP_CODE_ANCHOR_RE = re.compile(r"\b_?[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b")
+_DEDUP_EVIDENCE_RE = re.compile(r":\d|%[A-Za-z]|現況|目前|否則|證據|對照")
+
+
+def _is_dedup_evidence(text: str) -> bool:
+    return bool(
+        _DEDUP_FILE_REF_RE.search(text)
+        or _DEDUP_CODE_ANCHOR_RE.search(text)
+        or _DEDUP_EVIDENCE_RE.search(text)
+    )
+
+
+def _is_dedup_evidence_prefix(text: str) -> bool:
+    """冒號後只有「一開始就是證據」才可截斷；尾端稍後出現目前/檔名不算。"""
+    tail = text.lstrip(" 　\t`「『")
+    return bool(
+        _DEDUP_FILE_REF_RE.match(tail)
+        or _DEDUP_CODE_ANCHOR_RE.match(tail)
+        or re.match(r"(?:現況|目前|否則|證據|對照)", tail)
+    )
+
+
+def _dedup_subject(title: str) -> str:
+    """取自治提案的「交付主旨」，排除長證據／理由造成的相似度稀釋。
+
+    intent/discovery 標題依品質契約常長成「主旨（檔案:行號＋證據），所以風險…」。完整
+    Jaccard 會把各輪不同的行號、症狀說明都算進 union，使同一交付（例如都修改
+    ``_confirm_text`` 補預約時間）的分數跌到 0.3 左右。這裡只用確定性規則去掉括號證據、
+    檔案定位，並在第一個理由分隔符截斷；原完整標題仍保留給既有 Jaccard 作第一道判斷。
+    """
+    subject = str(title or "")
+    # 兩輪可處理常見的外層括號再包一層短括號；不做任意遞迴，避免病態輸入耗時。
+    for _ in range(2):
+        reduced = _DEDUP_PAREN_RE.sub(
+            lambda match: " " if _is_dedup_evidence(match.group(1)) else match.group(0),
+            subject,
+        )
+        if reduced == subject:
+            break
+        subject = reduced
+    # 冒號可能是「主旨：檔案/現況證據」，也可能是產品維度（付款方式：Apple Pay）。
+    # 只有尾端帶可辨識證據時才截斷，避免把不同平台/支付方式錯併。
+    colon = re.search(r"[：:]", subject)
+    if colon and _is_dedup_evidence_prefix(subject[colon.end() :]):
+        subject = subject[: colon.start()]
+    subject = _DEDUP_FILE_REF_RE.sub(" ", subject)
+    subject = _DEDUP_RATIONALE_SPLIT_RE.split(subject, maxsplit=1)[0]
+    return re.sub(r"\s+", " ", subject).strip()
+
+
+def _title_similarity(a: str, b: str) -> float:
+    """自治提案相似度：完整 Jaccard 與主旨 overlap coefficient 取大者。
+
+    overlap coefficient 能辨識「新提案只是既有較完整任務的子集合」，但短標題很容易因
+    共用「修正／新增」而假相似，因此主旨任一邊少於 6 個 token 時停用這道，且一般主旨
+    overlap 至少須 0.8。若兩邊共享 ``snake_case`` 程式碼錨點（如 ``_confirm_text``、
+    ``price_cents``），0.7 即足以證明是在同一修改點重提。這仍保留既有完整 Jaccard 行為。
+    """
+    score = _token_set_similarity(a, b)
+    subject_a = _dedup_subject(a)
+    subject_b = _dedup_subject(b)
+    ta = _tokenize_for_dedup(subject_a)
+    tb = _tokenize_for_dedup(subject_b)
+    if min(len(ta), len(tb)) >= 6:
+        overlap = len(ta & tb) / min(len(ta), len(tb))
+        general_threshold = max(config.AUTOPILOT_DEDUP_RATIO, 0.8)
+        anchors_a = {
+            token.strip("_").casefold()
+            for token in _DEDUP_CODE_ANCHOR_RE.findall(str(a or ""))
+            if "_" in token.strip("_")
+        }
+        anchors_b = {
+            token.strip("_").casefold()
+            for token in _DEDUP_CODE_ANCHOR_RE.findall(str(b or ""))
+            if "_" in token.strip("_")
+        }
+        # `實作模組 A` / `實作模組 B` 這類標題雖只有一個 ASCII 識別子不同，仍是兩個
+        # 明確交付；主旨 overlap 不得把它們誤併。canonical 動詞不是領域識別子，先排除。
+        generic_ascii = {"add", "fix", "improve", "dedup"}
+        ascii_a = set(_ASCII_TOKEN_RE.findall(_normalize_for_dedup(subject_a))) - generic_ascii
+        ascii_b = set(_ASCII_TOKEN_RE.findall(_normalize_for_dedup(subject_b))) - generic_ascii
+        conflicting_identifiers = bool((ascii_a - ascii_b) and (ascii_b - ascii_a))
+        if conflicting_identifiers:
+            # 也覆蓋完整字元 Jaccard：短識別子只佔 union 一格，否則 A/B 仍會得到 0.78。
+            return 0.0
+        if overlap >= general_threshold or (anchors_a & anchors_b and overlap >= 0.7):
+            score = max(score, config.AUTOPILOT_DEDUP_RATIO)
+    return score
+
+
 def _first_similar_title(title: str, corpus: Iterable[str]) -> str | None:
-    """相似度去重的共用判定：回傳 corpus 中第一個與 title 詞集 Jaccard 相似度
+    """相似度去重的共用判定：回傳 corpus 中第一個與 title 自治提案相似度
     ≥ `AUTOPILOT_DEDUP_RATIO` 的標題（供 debug log 指出「近似哪一筆」），皆不相似回 None。
 
     done（`improver._discover`）與 pending（`_filter_pending_duplicates`）兩條防線共用此單一來源，
@@ -1355,7 +1455,7 @@ def _first_similar_title(title: str, corpus: Iterable[str]) -> str | None:
     使 done corpus 為空，與舊精確比對關閉行為逐位等價，向後相容不加分支。
     """
     return next(
-        (e for e in corpus if _token_set_similarity(title, e) >= config.AUTOPILOT_DEDUP_RATIO),
+        (e for e in corpus if _title_similarity(title, e) >= config.AUTOPILOT_DEDUP_RATIO),
         None,
     )
 
@@ -1564,10 +1664,11 @@ async def _prefilter_implemented_match(task: dict, clone: str) -> str | None:
 
 def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str]) -> list[str]:
     """進場 pre-filter：兩道互補防線，皆只作用於本次提案進場，皆不回溯刪改 backlog、不動
-    `backlog._is_duplicate` 的字串等值去重契約。第一道相似度用 `_token_set_similarity`
-    （詞集 Jaccard，取代舊字元序列比對）以捕中文同義改寫與語序調換。
+    `backlog._is_duplicate` 的字串等值去重契約。第一道相似度用 `_title_similarity`
+    （完整詞集 Jaccard + 去證據主旨 overlap）以捕中文同義改寫、語序調換與長證據稀釋。
 
-    第一道（相似度）：丟掉與任一 existing 標題相似度 ≥ `AUTOPILOT_DEDUP_RATIO` 者（擋換句話說的重複）。
+    第一道（相似度）：丟掉與任一 existing／本批已接受標題相似度 ≥
+        `AUTOPILOT_DEDUP_RATIO` 者（擋換句話說及同批重複）。
     第二道（子系統覆蓋廣度）：以 regex 從標題抽「涉及子系統」，若某子系統在 existing 已達
         `AUTOPILOT_SUBSYSTEM_MAX_PENDING`(K) 筆，該子系統的新提案一律拒——擋 LLM 不換標題卻反覆對同一
         模組疊加（topic echo chamber）。已通過第一道的提案，其子系統計入 running count，避免同一批提案
@@ -1576,20 +1677,17 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
     比對/計數範圍與 `_pending_awareness_context` 注入 prompt 的禁止清單對齊（pending + in_progress）。
     # O(n×m)，其中 n=proposals 數、m=existing 數；existing 預期 < 50 筆，若規模增長需重估。
     """
-    if not existing_titles:
-        return proposals
-    kept: list[str] = []
-    for p in proposals:
-        hit = _first_similar_title(p, existing_titles)
-        if hit is not None:
-            log.debug("pre-filter 丟棄與排隊任務高相似的提案：%r（近似 %r）", p, hit)
-            continue
-        kept.append(p)
-    # 第二道：子系統覆蓋廣度防線。coverage 以 existing 為基底，接受的提案逐筆累加進去。
+    # 兩道判斷逐筆執行；接受的提案立即加入 corpus/coverage。如此即使 existing 為空，
+    # 同一批 LLM 回覆內的換句話重提也只能保留第一筆，不再等下一輪才被 backlog 擋。
+    corpus = list(existing_titles)
     coverage = _count_subsystem_coverage(existing_titles)
     k = config.AUTOPILOT_SUBSYSTEM_MAX_PENDING
     final: list[str] = []
-    for p in kept:
+    for p in proposals:
+        hit = _first_similar_title(p, corpus)
+        if hit is not None:
+            log.debug("pre-filter 丟棄與排隊/同批任務高相似的提案：%r（近似 %r）", p, hit)
+            continue
         subs = _extract_subsystems(p)
         crowded = sorted(s for s in subs if coverage[s] >= k)
         if crowded:
@@ -1598,6 +1696,7 @@ def _filter_pending_duplicates(proposals: list[str], existing_titles: list[str])
         for s in subs:
             coverage[s] += 1
         final.append(p)
+        corpus.append(p)
     return final
 
 
@@ -3558,6 +3657,72 @@ _NORMS_SYSTEM = (
 _norms_distill_day: tuple | None = None
 
 
+def _utc_day_string(day: tuple | None = None) -> str:
+    value = day or time.gmtime()[:3]
+    return f"{value[0]:04d}-{value[1]:02d}-{value[2]:02d}"
+
+
+def _acquire_daily_automation_lock(name: str):
+    """跨行程非阻塞鎖；拿不到或鎖檔不可寫即 fail closed，不等待另一個 LLM 長回合。"""
+    path = config.AUTOPILOT_STATE_DIR / f"{name}.lock"
+    lock = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock = path.open("w")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock
+    except OSError:
+        if lock is not None:
+            with contextlib.suppress(Exception):
+                lock.close()
+        log.info("每日自治鎖正由另一行程持有或不可用，跳過：%s", name)
+        return None
+
+
+def _release_daily_automation_lock(lock) -> None:
+    with contextlib.suppress(Exception):
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    with contextlib.suppress(Exception):
+        lock.close()
+
+
+def _norms_day_marker() -> Path:
+    return config.AUTOPILOT_STATE_DIR / "norms_distill.v1.json"
+
+
+def _read_day_marker(path: Path, day: str) -> str:
+    """回今日狀態；損壞/不可讀一律 ``invalid``，不得被誤當舊日重跑。"""
+    try:
+        if not path.exists():
+            return "missing"
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        log.warning("每日自治 marker 無法驗證，為避免重複外部動作而跳過：%s", path.name)
+        return "invalid"
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        return "invalid"
+    marker_day = str(value.get("day") or "")
+    status = str(value.get("status") or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", marker_day):
+        return "invalid"
+    if status not in ("in_progress", "complete", "failed"):
+        return "invalid"
+    return status if marker_day == day else "old"
+
+
+def _write_day_marker(path: Path, day: str, status: str = "complete") -> None:
+    if status not in ("in_progress", "complete", "failed"):
+        raise ValueError("invalid daily marker status")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {
+        "schema_version": 1,
+        "day": day,
+        "status": status,
+        "updated_at": time.time(),
+    }
+    secure_write_root(path, (json.dumps(body, ensure_ascii=False, indent=2) + "\n").encode())
+
+
 def _event_material_line(e: dict) -> str:
     parts = [str(e.get("kind") or "")]
     for key in ("title", "gate", "detail"):
@@ -3579,44 +3744,199 @@ async def _maybe_norms_distill() -> None:
     day = time.gmtime()[:3]
     if _norms_distill_day == day:
         return
-    _norms_distill_day = day
+    daily_lock = _acquire_daily_automation_lock("norms_distill")
+    if daily_lock is None:
+        return
     try:
-        from . import interventions, lessons, providers
-
-        notes = [
-            f"人工介入（{i.get('kind')}）：{str(i.get('detail'))[:160]}"
-            for i in interventions.read_window(7)
-            if i.get("category") == "output_review" and i.get("detail")
-        ]
-        fails = [
-            _event_material_line(e)
-            for e in notify.read_events(7)
-            if e.get("kind") in ("task_failed", "gate_failure")
-        ]
-        material = "\n".join((notes + fails)[:40])
-        if not material:
+        # 等待鎖期間另一 coroutine 可能已完成；拿鎖後重查行程與持久兩層狀態。
+        if _norms_distill_day == day:
             return
-        text = await providers.complete_once(
-            _NORMS_SYSTEM,
-            material,
-            session_id=f"norms-distill-{day[0]:04d}{day[1]:02d}{day[2]:02d}",
-            cwd=Path(config.AUTOPILOT_DEPLOY_DIR),
-        )
-        norms = [
-            ln.split("規範:", 1)[1].strip().lstrip("：: ")
-            for ln in (text or "").replace("規範：", "規範:").splitlines()
-            if ln.strip().startswith("規範:")
-        ]
-        norms = [n for n in norms if n][:3]
-        if norms:
-            added = lessons.add_many(norms, source="intervention")
-            log.info("規範迴路：蒸餾出 %d 條、入庫 %d 條（去重後）", len(norms), added)
-    except Exception:  # noqa: BLE001 — 規範迴路失敗不得影響主迴圈
-        log.warning("規範迴路蒸餾失敗（忽略）", exc_info=True)
+        day_str = _utc_day_string(day)
+        persisted = _read_day_marker(_norms_day_marker(), day_str)
+        if persisted in ("complete", "in_progress", "invalid"):
+            # in_progress 代表前一行程的結果未知：鎖已釋放也不得重呼叫非決定性 LLM。
+            _norms_distill_day = day
+            return
+        try:
+            # Durable claim 必須先於 provider；若之後 hard crash/complete marker 寫失敗，
+            # 新行程會看到 in_progress 而 fail closed，不會以不同回覆重做同一天。
+            _write_day_marker(_norms_day_marker(), day_str, "in_progress")
+        except Exception:  # noqa: BLE001 — claim 不可持久化就不得執行
+            _norms_distill_day = day
+            log.warning("規範迴路 claim 無法持久化，fail closed", exc_info=True)
+            return
+        _norms_distill_day = day
+        phase = "before_provider"
+        try:
+            from . import interventions, lessons, providers
+
+            notes = [
+                f"人工介入（{i.get('kind')}）：{str(i.get('detail'))[:160]}"
+                for i in interventions.read_window(7)
+                if i.get("category") == "output_review" and i.get("detail")
+            ]
+            fails = [
+                _event_material_line(e)
+                for e in notify.read_events(7)
+                if e.get("kind") in ("task_failed", "gate_failure")
+            ]
+            material = "\n".join((notes + fails)[:40])
+            if not material:
+                _write_day_marker(_norms_day_marker(), day_str, "complete")
+                return
+            text = await providers.complete_once(
+                _NORMS_SYSTEM,
+                material,
+                session_id=f"norms-distill-{day[0]:04d}{day[1]:02d}{day[2]:02d}",
+                cwd=Path(config.AUTOPILOT_DEPLOY_DIR),
+            )
+            phase = "provider_completed"
+            norms = [
+                ln.split("規範:", 1)[1].strip().lstrip("：: ")
+                for ln in (text or "").replace("規範：", "規範:").splitlines()
+                if ln.strip().startswith("規範:")
+            ]
+            norms = [n for n in norms if n][:3]
+            if norms:
+                autonomy.emit_event(
+                    "autonomy_decision",
+                    project_id=autonomy.CORE_PROJECT_ID,
+                    outcome="norms_distill_screened",
+                    payload={"day": day_str, "accepted_lessons": norms},
+                )
+                added = lessons.add_many(norms, source="intervention")
+                log.info("規範迴路：蒸餾出 %d 條、入庫 %d 條（去重後）", len(norms), added)
+            _write_day_marker(_norms_day_marker(), day_str, "complete")
+        except Exception:  # noqa: BLE001 — 規範迴路失敗不得影響主迴圈
+            if phase == "before_provider":
+                # provider/材料讀取明確失敗且尚無非決定性結果，可在下次重啟安全重試。
+                with contextlib.suppress(Exception):
+                    _write_day_marker(_norms_day_marker(), day_str, "failed")
+            # provider 已回覆後的任何部分提交維持 in_progress；自動重試可能產生不同規範。
+            log.warning("規範迴路蒸餾失敗（忽略）", exc_info=True)
+    finally:
+        _release_daily_automation_lock(daily_lock)
 
 
 # --- 意圖迴路自動化(軌 G2) ---------------------------------------------------
 _intent_discovery_day: tuple | None = None
+_INTENT_DISCOVERY_STATE_VERSION = 1
+
+
+def _intent_discovery_marker() -> Path:
+    return config.AUTOPILOT_STATE_DIR / "intent_discovery.v1.json"
+
+
+def _read_intent_discovery_days() -> dict[str, dict] | None:
+    """讀每專案 durable claim；損壞/不可讀時回 None，避免未知狀態下重複產生 backlog。"""
+    path = _intent_discovery_marker()
+    try:
+        if not path.exists():
+            return {}
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        log.warning("意圖探索 marker 無法讀取，為避免重複產生任務而 fail closed", exc_info=True)
+        return None
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != _INTENT_DISCOVERY_STATE_VERSION
+    ):
+        log.warning("意圖探索 marker schema 無效，為避免重複產生任務而 fail closed")
+        return None
+    rows = value.get("projects")
+    if not isinstance(rows, dict):
+        return None
+    out: dict[str, dict] = {}
+    for pid, record in rows.items():
+        if not isinstance(record, dict):
+            return None
+        day = str(record.get("day") or "")
+        status = str(record.get("status") or "")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or status not in (
+            "in_progress",
+            "complete",
+            "failed",
+        ):
+            return None
+        out[str(pid)] = {
+            "day": day,
+            "status": status,
+            "updated_at": record.get("updated_at", "unknown"),
+        }
+    return out
+
+
+def _write_intent_discovery_days(days: dict[str, dict]) -> None:
+    path = _intent_discovery_marker()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {
+        "schema_version": _INTENT_DISCOVERY_STATE_VERSION,
+        "projects": dict(sorted(days.items())),
+        "updated_at": time.time(),
+    }
+    secure_write_root(path, (json.dumps(body, ensure_ascii=False, indent=2) + "\n").encode())
+
+
+_GENERIC_AUTONOMY_TASK_RE = re.compile(
+    r"^(?:實作需求|完成需求|處理需求|改善系統|改進系統|優化系統|修復問題|新增功能|待辦|todo|tbd)$",
+    re.IGNORECASE,
+)
+
+
+def _is_actionable_generated_title(title: str) -> bool:
+    """生成任務的最低良構門檻；拒絕 parser 保底與無法驗收的短泛稱。"""
+    clean = re.sub(r"\s+", " ", str(title or "")).strip()
+    normalized = clean.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
+    if not normalized or _GENERIC_AUTONOMY_TASK_RE.fullmatch(normalized):
+        return False
+    # 品質 prompt 要求具體缺口與證據；少於 6 個資訊 token 的自治標題無法提供足夠驗收範圍。
+    return len(_tokenize_for_dedup(normalized)) >= 6
+
+
+def _retain_items_for_titles(items: list[dict], titles: list[str]) -> list[dict]:
+    """把保序子序列 titles 映回原 dict；不使用 set，才能真的丟掉同批同名第二筆。"""
+    out: list[dict] = []
+    idx = 0
+    for item in items:
+        title = str(item.get("title") or "").strip()
+        if idx < len(titles) and title == titles[idx]:
+            out.append(item)
+            idx += 1
+    return out
+
+
+def _screen_generated_items(
+    items: list[dict], *, state_dir: Path | None
+) -> tuple[list[dict], dict[str, int]]:
+    """自治生成任務的單一進場閘：良構、近期 done、active backlog 與同批語意去重。"""
+    proposed = len(items)
+    quality = [
+        item
+        for item in items
+        if isinstance(item, dict) and _is_actionable_generated_title(item.get("title", ""))
+    ]
+    done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY, state_dir=state_dir)
+    novel = [
+        item
+        for item in quality
+        if _first_similar_title(str(item.get("title") or "").strip(), done) is None
+    ]
+    existing = [
+        str(task.get("title") or "").strip()
+        for task in backlog.list_tasks(state_dir=state_dir)
+        if task.get("status") in ("pending", "in_progress", "merging")
+        and str(task.get("title") or "").strip()
+    ]
+    titles = [str(item.get("title") or "").strip() for item in novel]
+    kept_titles = _filter_pending_duplicates(titles, existing)
+    kept = _retain_items_for_titles(novel, kept_titles)
+    return kept, {
+        "proposed": proposed,
+        "quality_rejected": proposed - len(quality),
+        "done_duplicate": len(quality) - len(novel),
+        "active_or_batch_duplicate": len(novel) - len(kept),
+        "accepted": len(kept),
+    }
 
 
 async def _maybe_intent_discovery() -> None:
@@ -3642,72 +3962,165 @@ async def _maybe_intent_discovery() -> None:
     day = time.gmtime()[:3]
     if _intent_discovery_day == day:
         return
-    _intent_discovery_day = day
+    daily_lock = _acquire_daily_automation_lock("intent_discovery")
+    if daily_lock is None:
+        return
     try:
-        from . import flow, improver
-        from .experts import Expert
-        from .roles import SENIOR
+        if _intent_discovery_day == day:
+            return
+        _intent_discovery_day = day
+        day_str = _utc_day_string(day)
+        completed_days = _read_intent_discovery_days()
+        if completed_days is None:
+            return
+        try:
+            from . import flow, improver
+            from .experts import Expert
+            from .roles import SENIOR
 
-        async def _noop(_ev):
-            return None
+            async def _noop(_ev):
+                return None
 
-        for meta in project_rows:
-            pid = str(meta.get("id") or "")
-            planner_status = autonomy.stage4_planner_status(pid)
-            if planner_status["managed"]:
-                intent_context = autonomy.planner_context(pid)
-                if not intent_context:
+            for meta in project_rows:
+                pid = str(meta.get("id") or "")
+                prior = completed_days.get(pid) or {}
+                if prior.get("day") == day_str and prior.get("status") in (
+                    "complete",
+                    "in_progress",
+                ):
+                    # in_progress + 此刻已拿到跨行程鎖＝前一 owner 已死/退出、結果未知；
+                    # 不自動重呼叫 LLM，避免不同有效回覆繞過任何字面/語意冪等。
+                    continue
+                planner_status = autonomy.stage4_planner_status(pid)
+                if planner_status["managed"]:
+                    intent_context = autonomy.planner_context(pid)
+                    if not intent_context:
+                        autonomy.emit_event(
+                            "autonomy_decision",
+                            project_id=pid,
+                            outcome="planner_blocked",
+                            severity="warning",
+                            payload={"reasons": planner_status["blocking_reasons"]},
+                        )
+                        continue
+                else:
+                    if not legacy_enabled:
+                        continue
+                    intent = str(meta.get("intent") or "").strip()
+                    if not intent:
+                        continue
+                    intent_context = f"【專案常駐意圖(北極星指令)】{intent}\n"
+                cwd = projects.workspace_dir(pid)
+                if not cwd.is_dir():
+                    continue
+                sid = f"intent-disc-{pid[:8]}-{day[0]:04d}{day[1]:02d}{day[2]:02d}"
+                prompt = (
+                    f"你正在審視長期產品專案「{meta.get('name', '')}」(程式碼就在你的工作目錄)。\n"
+                    + intent_context
+                    + "請用 Read/Grep 檢視現況並做差距分析:只提「離意圖最近的缺口」任務 1~5 點,"
+                    "每點獨立一行,格式固定 `任務: [P0/bug] <動詞開頭的具體任務>`(標籤可省視為 P1);"
+                    "若是要改 Ti 核心框架本身(非本產品程式碼),改用 `核心改動: <描述>`。"
+                    "只輸出任務行或核心改動行。" + improver._DISCOVERY_QUALITY_BAR
+                )
+                side_effects_started = False
+                provider_completed = False
+                try:
+                    completed_days[pid] = {
+                        "day": day_str,
+                        "status": "in_progress",
+                        "updated_at": time.time(),
+                    }
+                    # Durable claim 先於 provider/audit/backlog；claim 寫不成便由 except
+                    # 標 failed（若連 failed 也寫不成，仍未呼叫 provider，安全重試）。
+                    _write_intent_discovery_days(completed_days)
+                    ex = Expert(SENIOR, sid, cwd)
+                    try:
+                        text = await ex.speak(prompt, _noop)
+                        provider_completed = True
+                    finally:
+                        with contextlib.suppress(Exception):
+                            await ex.stop()
+                    sdir = projects.state_dir(pid)
+                    project_raw = flow.parse_structured_tasks(text or "", fallback=False)
+                    core_raw = flow.parse_core_changes(text or "")
+                    project_items, project_screen = _screen_generated_items(
+                        project_raw, state_dir=sdir
+                    )
+                    core_items, core_screen = _screen_generated_items(core_raw, state_dir=None)
+                    project_overflow = max(0, len(project_items) - improver.DISCOVERY_MAX)
+                    core_overflow = max(0, len(core_items) - improver.DISCOVERY_MAX)
+                    project_items = project_items[: improver.DISCOVERY_MAX]
+                    core_items = core_items[: improver.DISCOVERY_MAX]
+                    project_screen["capacity_rejected"] = project_overflow
+                    project_screen["accepted"] = len(project_items)
+                    core_screen["capacity_rejected"] = core_overflow
+                    core_screen["accepted"] = len(core_items)
+                    # 寫 backlog 前先寫版本化決策 audit；audit 不可寫時 emit_event 會 raise，
+                    # 本專案 fail closed 且不標成功，其他專案仍可獨立進行。
                     autonomy.emit_event(
                         "autonomy_decision",
                         project_id=pid,
-                        outcome="planner_blocked",
-                        severity="warning",
-                        payload={"reasons": planner_status["blocking_reasons"]},
+                        outcome="intent_discovery_screened",
+                        payload={
+                            "day": day_str,
+                            "project": project_screen,
+                            "core": core_screen,
+                            # 接受與拒絕候選都留 immutable 原文，若確定性 filter 誤判，
+                            # 營運可從 audit 重建而不必重呼叫非決定性 LLM。
+                            "project_proposed_titles": [
+                                str(item.get("title") or "")[:300] for item in project_raw
+                            ],
+                            "core_proposed_titles": [
+                                str(item.get("title") or "")[:300] for item in core_raw
+                            ],
+                            # 回滾/營運分診可依 source=intent + 精確標題 park 候選副作用；
+                            # audit 在 backlog 前寫，故即使後續部分提交也保有可逆清單。
+                            "project_accepted_titles": [
+                                str(item.get("title") or "")[:300] for item in project_items
+                            ],
+                            "core_accepted_titles": [
+                                str(item.get("title") or "")[:300] for item in core_items
+                            ],
+                        },
                     )
-                    continue
-            else:
-                if not legacy_enabled:
-                    continue
-                intent = str(meta.get("intent") or "").strip()
-                if not intent:
-                    continue
-                intent_context = f"【專案常駐意圖(北極星指令)】{intent}\n"
-            cwd = projects.workspace_dir(pid)
-            if not cwd.is_dir():
-                continue
-            sid = f"intent-disc-{pid[:8]}-{day[0]:04d}{day[1]:02d}{day[2]:02d}"
-            prompt = (
-                f"你正在審視長期產品專案「{meta.get('name', '')}」(程式碼就在你的工作目錄)。\n"
-                + intent_context
-                + "請用 Read/Grep 檢視現況並做差距分析:只提「離意圖最近的缺口」任務 1~5 點,"
-                "每點獨立一行,格式固定 `任務: [P0/bug] <動詞開頭的具體任務>`(標籤可省視為 P1);"
-                "若是要改 Ti 核心框架本身(非本產品程式碼),改用 `核心改動: <描述>`。"
-                "只輸出任務行或核心改動行。" + improver._DISCOVERY_QUALITY_BAR
-            )
-            ex = Expert(SENIOR, sid, cwd)
-            try:
-                text = await ex.speak(prompt, _noop)
-            finally:
-                with contextlib.suppress(Exception):
-                    await ex.stop()
-            sdir = projects.state_dir(pid)
-            done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY, state_dir=sdir)
-            items = [
-                t
-                for t in flow.parse_structured_tasks(text or "")
-                if t.get("title", "").strip() and t["title"].strip() not in done
-            ]
-            n_proj = backlog.add_items(
-                items[: improver.DISCOVERY_MAX], source="intent", state_dir=sdir
-            )
-            n_core = backlog.route_core_changes(
-                flow.parse_core_changes(text or ""), source="intent"
-            )
-            log.info(
-                "意圖差距分析(%s):專案任務 %d、核心改動 %d", meta.get("name", pid), n_proj, n_core
-            )
-    except Exception:  # noqa: BLE001 — 意圖迴路是加值,不得影響主迴圈
-        log.warning("意圖差距分析失敗(忽略)", exc_info=True)
+                    # 從第一個 backlog RMW 起，任何例外都屬未知部分提交；保留磁碟上的
+                    # in_progress，不改 failed，下一行程因上方守門而不重呼叫 LLM。
+                    side_effects_started = True
+                    n_proj = backlog.add_items(project_items, source="intent", state_dir=sdir)
+                    n_core = backlog.route_core_changes(core_items, source="intent")
+                    completed_days[pid] = {
+                        "day": day_str,
+                        "status": "complete",
+                        "updated_at": time.time(),
+                    }
+                    _write_intent_discovery_days(completed_days)
+                    dropped = (
+                        project_screen["proposed"]
+                        + core_screen["proposed"]
+                        - project_screen["accepted"]
+                        - core_screen["accepted"]
+                    )
+                    log.info(
+                        "意圖差距分析(%s):專案任務 %d、核心改動 %d、源頭擋掉 %d",
+                        meta.get("name", pid),
+                        n_proj,
+                        n_core,
+                        dropped,
+                    )
+                except Exception:  # noqa: BLE001 — 單一專案失敗不得阻斷其他專案
+                    if not provider_completed and not side_effects_started:
+                        completed_days[pid] = {
+                            "day": day_str,
+                            "status": "failed",
+                            "updated_at": time.time(),
+                        }
+                        with contextlib.suppress(Exception):
+                            _write_intent_discovery_days(completed_days)
+                    log.warning("意圖差距分析(%s)失敗(忽略)", meta.get("name", pid), exc_info=True)
+        except Exception:  # noqa: BLE001 — 意圖迴路是加值,不得影響主迴圈
+            log.warning("意圖差距分析失敗(忽略)", exc_info=True)
+    finally:
+        _release_daily_automation_lock(daily_lock)
 
 
 # --- 排程任務入列(Kimi 化 PR10) ---------------------------------------------
