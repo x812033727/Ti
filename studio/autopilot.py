@@ -639,7 +639,33 @@ async def _reclaim_stale_branch(clone: str, repo: str, branch: str) -> tuple[boo
     return True, "已刪除殘留遠端分支"
 
 
-async def _fast_wait_auto_merge(pr_number: int) -> bool:
+async def _task_progress_sleep(
+    task_id: int | str | None,
+    delay: float,
+    *,
+    sleep=asyncio.sleep,
+) -> None:
+    """在可預期的遠端等待邊界留下真實任務活動，再進入可取消 sleep。
+
+    CI 輪詢時沒有 agent 子行程，session events 也不會變；若只靠一般 task heartbeat，
+    ``workers.cpu_active=False`` 與舊 ``last_activity_at`` 會把仍在正常查 GitHub 的任務誤判成
+    ``dead_task``。這裡只在每次實際完成一次 poll、準備等待下一輪時刷新 activity；若 API
+    呼叫或 event loop 真正卡死，函式不會再被執行，300 秒判死能力仍保留。
+
+    只在 status 仍屬同一個 running task 時寫入；``liveness_only=True`` 再避免這個旁路刷新
+    覆蓋主迴圈後來寫入的 state/task_id。
+    """
+    current = _read_status()
+    if current.get("state") == "running" and str(current.get("task_id")) == str(task_id):
+        _write_running_status_preserving(
+            task_id,
+            liveness_only=True,
+            last_activity_at=time.time(),
+        )
+    await sleep(delay)
+
+
+async def _fast_wait_auto_merge(pr_number: int, *, task_id: int | str | None = None) -> bool:
     """auto-merge 掛上後的短窗輪詢（完成率第三輪修法二B）。
 
     多數 CI 幾分鐘內就綠：窗內（AUTOPILOT_MERGE_FAST_WAIT 秒）合併完成即回 True，行為與
@@ -652,7 +678,7 @@ async def _fast_wait_auto_merge(pr_number: int) -> bool:
         data = await publisher._get_pr_status(pr_number, retries=0)
         if data and data.get("merged"):
             return True
-        await asyncio.sleep(config.PUBLISH_CI_INTERVAL)
+        await _task_progress_sleep(task_id, config.PUBLISH_CI_INTERVAL)
     return False
 
 
@@ -895,7 +921,7 @@ async def _commit_push_merge(
                 timeout=60,
             )
             if rc == 0:
-                if await _fast_wait_auto_merge(pr_number):
+                if await _fast_wait_auto_merge(pr_number, task_id=task["id"]):
                     return MergeResult(
                         True,
                         f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}"
@@ -921,6 +947,14 @@ async def _commit_push_merge(
             "ci_interval": config.PUBLISH_CI_INTERVAL,
             "retries": config.PUBLISH_MERGE_RETRIES,
         }
+
+        # publisher 的 sleep hook 涵蓋 CI pending、API retry、merge backoff 與 check 註冊等待。
+        # 每完成一次真實 poll 才刷新 activity，避免正常 CI wait 在零子行程時被判 dead_task；
+        # 若 poll / event loop 真卡死，hook 不會再執行，外部 stale 門檻仍能如期抓到。
+        async def _ci_progress_sleep(delay: float) -> None:
+            await _task_progress_sleep(task["id"], delay)
+
+        merge_kwargs["sleep"] = _ci_progress_sleep
         if pre_write_guard is not None:
             merge_kwargs["pre_merge_guard"] = pre_write_guard
         outcome, detail = await publisher._merge_flow(
