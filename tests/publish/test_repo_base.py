@@ -106,6 +106,30 @@ async def test_pristine_clone_argv_full_depth_with_token(spy, tmp_path):
     assert clones[0]["sandbox"] is False  # clone 需網路，沙箱預設斷網
 
 
+async def test_pristine_clone_ignores_legacy_token_url_fallback(spy, tmp_path, monkeypatch):
+    """repo_base clone 即使 legacy 閥開啟，也必須固定乾淨 URL + env 認證。"""
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
+    ws = tmp_path / "ws"
+
+    r = await repo_base.ensure_base(ws, "me/product")
+
+    assert r.status == "cloned" and r.based
+    clone = spy.by_sub("clone")[0]
+    assert "https://github.com/me/product" in clone["argv"]
+    assert not any(TOKEN in p or "x-access-token:" in p for p in clone["argv"])
+    assert clone["env"]["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    assert TOKEN not in "".join(clone["env"].values())
+    old_argv = [
+        "git",
+        "clone",
+        "--branch",
+        "main",
+        f"https://x-access-token:{TOKEN}@github.com/me/product",
+        ".",
+    ]
+    assert clone["argv"] != old_argv
+
+
 async def test_pristine_remote_missing_starts_blank(spy, tmp_path):
     """repo 不存在/無 base 分支：remote_unavailable、workspace 維持空白（首發佈接手）。"""
     spy.outputs["clone"] = (128, "fatal: remote: Repository not found.")
@@ -119,11 +143,14 @@ async def test_pristine_clone_error_is_fatal_and_redacted(spy, tmp_path):
     """全新 workspace 拿不到基底（憑證/網路）→ fatal；detail 不得洩 token。"""
     spy.outputs["clone"] = (
         128,
-        f"fatal: unable to access 'https://x-access-token:{TOKEN}@github.com/me/product/'",
+        "fatal: unable to access "
+        f"'https://x-access-token:{TOKEN}@github.com/me/product/' "
+        f"Authorization: Basic {git_cred.auth_b64(TOKEN)}",
     )
     r = await repo_base.ensure_base(tmp_path / "ws", "me/product")
     assert r.status == "error" and r.fatal
     assert TOKEN not in r.detail
+    assert git_cred.auth_b64(TOKEN) not in r.detail
 
 
 async def test_fetch_label_and_detail_carry_no_token(spy, tmp_path):
@@ -145,8 +172,8 @@ async def test_fetch_label_and_detail_carry_no_token(spy, tmp_path):
     assert all(TOKEN not in (c["label"] or "") for c in spy.calls)
 
 
-async def test_fetch_legacy_uses_token_url(spy, tmp_path, monkeypatch):
-    """legacy 閥開啟時，fetch 回退舊 token-in-URL。"""
+async def test_fetch_ignores_legacy_token_url_fallback(spy, tmp_path, monkeypatch):
+    """repo_base fetch 即使 legacy 閥開啟，也必須固定乾淨 URL + env 認證。"""
     monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
     ws = tmp_path / "ws"
     (ws / ".git").mkdir(parents=True)
@@ -156,8 +183,17 @@ async def test_fetch_legacy_uses_token_url(spy, tmp_path, monkeypatch):
 
     assert r.status == "up_to_date" and r.based
     fetch = spy.by_sub("fetch")[0]
-    assert f"https://x-access-token:{TOKEN}@github.com/me/product" in fetch["argv"]
-    assert not fetch["env"]
+    assert "https://github.com/me/product" in fetch["argv"]
+    assert not any(TOKEN in p or "x-access-token:" in p for p in fetch["argv"])
+    assert fetch["env"]["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    assert TOKEN not in "".join(fetch["env"].values())
+    old_argv = [
+        "git",
+        "fetch",
+        f"https://x-access-token:{TOKEN}@github.com/me/product",
+        "refs/heads/main",
+    ]
+    assert fetch["argv"] != old_argv
 
 
 async def test_fetch_non_github_host_does_not_add_credentials(spy, tmp_path):

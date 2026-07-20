@@ -70,7 +70,14 @@ def _redact(text: str, token: str | None) -> str:
     # git 失敗訊息會原樣回顯 remote URL（含 x-access-token:<token>@），輸出前必遮。
     if token and text:
         text = text.replace(token, "***")
+        text = text.replace(git_cred.auth_b64(token), "***")
     return text
+
+
+def _auth_env(token: str | None, url: str) -> dict[str, str]:
+    """repo_base 專用 git 認證 env：固定乾淨 URL，legacy 閥也不回退 token-in-URL。"""
+    clean_url = git_cred.clean_url((url or "").strip())
+    return git_cred.make_env(token, url=clean_url, honor_legacy=False)
 
 
 async def _git(
@@ -119,6 +126,7 @@ async def sync_workspace(
     url 顯式注入（不在此處讀 config），測試可用 file:///…/bare.git 走真 git 不碰網路。
     """
     root = Path(cwd)
+    clean_url = git_cred.clean_url((url or "").strip())
     state = await workspace_state(root)
 
     if state == "local_files":
@@ -130,9 +138,17 @@ async def sync_workspace(
 
     if state == "pristine":
         root.mkdir(parents=True, exist_ok=True)
-        clone = await runner.git_clone(url, root, token=token, branch=base, depth=None)
+        clone = await runner.git_clone(
+            clean_url,
+            root,
+            token=token,
+            branch=base,
+            depth=None,
+            auth_env=_auth_env(token, clean_url),
+            legacy=False,
+        )
         if clone.ok:
-            return SyncResult("cloned", f"已以 {url} 的 {base} 分支為工作基底")
+            return SyncResult("cloned", f"已以 {clean_url} 的 {base} 分支為工作基底")
         out = _redact(clone.output, token)
         if any(mark in out.lower() for mark in _REMOTE_MISSING_MARKS):
             return SyncResult(
@@ -153,8 +169,8 @@ async def sync_workspace(
         return SyncResult("error", "安全檢查失敗：無法確認 Git remote 已移除內嵌憑證")
 
     # unborn / has_history：fetch 遠端 base（fetch 直接用 URL，不持久化帶 token 的 remote）。
-    fetch_url = runner.build_clone_url(url, token, legacy=config.TI_GIT_CRED_LEGACY)
-    fetch_env = git_cred.make_env(token, url=fetch_url)
+    fetch_url = clean_url
+    fetch_env = _auth_env(token, fetch_url)
     fetch = await _git(
         root,
         ["git", "fetch", fetch_url, f"refs/heads/{base}"],
@@ -175,7 +191,7 @@ async def sync_workspace(
         if not r.ok:
             return SyncResult("error", "工作基底注入失敗：" + _redact(r.output, token)[:300])
         await _git(root, ["git", "branch", "-M", base], "git branch")
-        return SyncResult("cloned", f"已以 {url} 的 {base} 分支為工作基底")
+        return SyncResult("cloned", f"已以 {clean_url} 的 {base} 分支為工作基底")
 
     # has_history：先收掉上場中斷殘留的未提交變更（無變更時為 no-op），再做快轉判定。
     await runner.git_commit(root, "場次開始：保存未提交變更")
