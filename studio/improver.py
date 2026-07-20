@@ -313,7 +313,8 @@ class ProjectImprover:
             "source_repo": base_repo,
             "workspace": str(cwd),
             "base_branch": base_branch,
-            "lane": str(task.get("lane") or "main"),
+            # 專案 task 的 fast/full 是工作流路由；來源契約的 lane 是固定 root workspace。
+            "lane": autonomy.SOURCE_WORKSPACE_LANE,
             "publish_repo": base_repo,
             "source_worktree_clean": source_worktree_clean,
             "deployed_identity_verified": bool(deployed_sha),

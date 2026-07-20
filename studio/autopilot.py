@@ -2667,7 +2667,9 @@ async def run_one_task(task: dict) -> None:
                 "source_repo": source_repo,
                 "workspace": str(clone),
                 "base_branch": base_branch,
-                "lane": str(task.get("lane") or "main"),
+                # source.lane 描述固定 working clone，不是 fast/full 工作流路由；
+                # 後者另記於既有 audit lane，不能被誤判成來源漂移。
+                "lane": autonomy.SOURCE_WORKSPACE_LANE,
                 "publish_repo": config.AUTOPILOT_REPO,
                 "source_worktree_clean": source_worktree_clean,
                 "deployed_identity_verified": bool(deployed_sha),

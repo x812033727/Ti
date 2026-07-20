@@ -33,6 +33,7 @@ from .repo_ident import repo_key
 SCHEMA_VERSION = 1
 CALCULATION_VERSION = "autonomy-maturity-v1"
 CORE_PROJECT_ID = "ti-studio"
+SOURCE_WORKSPACE_LANE = "main"
 
 MODES = ("shadow", "canary", "full", "degraded", "paused")
 RISK_LEVELS = ("low", "medium", "high-reversible", "irreversible")
