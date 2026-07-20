@@ -420,7 +420,7 @@ def _expert_hooks(cwd: Path) -> dict:
 
 # 專家技能白名單(單一真相,測試與 _build_client 共用):名稱=SKILL.md name/目錄名,
 # 檔案在 repo 的 .claude/skills/(working clone 自然帶著;外部專案 cwd 無此目錄=無害)。
-EXPERT_SKILLS_LIST = ("ti-shipping", "ti-investigation")
+EXPERT_SKILLS_LIST = ("ti-shipping", "ti-investigation", "ti-fast-implement")
 
 
 def _skills_options(role: Role) -> dict:

@@ -2468,15 +2468,15 @@ def _fast_lane_prompt(requirement: str, clone: str) -> str:
         )
         if p
     )
+    # 程序性知識放 ti-fast-implement skill(原生 progressive disclosure,軌 J):
+    # prompt 只留任務+脈絡+一句導引;sentinel 契約在 prompt 也保一句(skill 未載入
+    # 時的保底——EXPERT_SKILLS 關閉或外部 clone 無 skill 目錄都不致失約)。
     return (
-        head
-        + "你是資深工程師,請獨立完成以下任務(工作目錄即 repo 根,直接改檔):\n"
+        head + "你是快車道工程師,請先讀 ti-fast-implement skill 並依其程序獨立完成以下任務"
+        "(工作目錄即 repo 根,直接改檔;收尾前照 skill 的自查清單走):\n"
         + requirement
-        + "\n\n要求:\n"
-        "- 小步實作;完成後自行執行 `ruff check .`、`ruff format .` 與相關 pytest,修到綠再收尾。\n"
-        "- 不要 git push/開 PR(系統會接手 lint/測試閘門與合併)。\n"
-        "- 若你判斷此任務需要跨子系統大改、高風險遷移或多視角評審,不要動手,"
-        "只輸出一行 `需完整管線: <一句原因>`。"
+        + "\n\n保底契約:不要 git push/開 PR;若任務需跨子系統大改、高風險遷移或多視角評審,"
+        "不要動手,只輸出一行 `需完整管線: <一句原因>`。"
     )
 
 
