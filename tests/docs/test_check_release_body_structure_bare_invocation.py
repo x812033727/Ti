@@ -31,3 +31,4 @@ def test_check_release_body_structure_bare_invocation_from_non_repo_cwd(tmp_path
     )
 
     assert result.returncode == 0, result.stderr
+    assert "核對通過" in result.stdout
