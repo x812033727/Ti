@@ -5954,6 +5954,12 @@ async def _main_loop(startup_sig: float) -> None:
             continue
         _note_resumed()
 
+        # 排程入列必須在 admission/額度/預算三道 sleep-continue 之前——排程入列是
+        # 零 LLM 純檔案操作,不花任何預算;放在 sleep 之後會讓 budget_sleep/quota_sleep
+        # 期間的 occurrence 整批蒸發(daily key 跨日即作廢,錯過=永久漏拍),實證:
+        # 「每日健檢」23:30 UTC 連兩天沒觸發。60 秒節流照舊。
+        _maybe_enqueue_schedules()
+
         if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
             admission = autonomy.admission_decision(autonomy.CORE_PROJECT_ID)
             if not admission["allowed"]:
@@ -6054,8 +6060,6 @@ async def _main_loop(startup_sig: float) -> None:
         await _maybe_intent_discovery()
         # async clarify(B4,灰度):[待澄清] parked 逾時自動依假設前進(15 分鐘掃一次)。
         _maybe_clarify_timeout()
-        # 排程任務(PR10):到期排程入列(60 秒節流;店面空=零成本)。
-        _maybe_enqueue_schedules()
         # 任務邊界部署自查：放在取任務之前——此刻保證無 autopilot 討論，是 autodeploy
         # 飢餓下唯一可靠的部署窗口（成功且自身碼有變會 execv，不返回）。
         await _maybe_boundary_redeploy()
