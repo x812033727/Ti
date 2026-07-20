@@ -213,6 +213,15 @@ def test_update_rejects_nan_clarify_timeout_without_persisting(sandbox, monkeypa
     assert not env_file.exists() or "TI_CLARIFY_TIMEOUT" not in env_file.read_text()
 
 
+def test_update_rejects_infinite_clarify_timeout_without_persisting(sandbox, monkeypatch):
+    monkeypatch.delenv("TI_CLARIFY_TIMEOUT", raising=False)
+    settings.update({"TI_CLARIFY_TIMEOUT": "inf"})
+    assert "TI_CLARIFY_TIMEOUT" not in os.environ
+    assert config.CLARIFY_TIMEOUT == 180.0
+    env_file = sandbox / ".env"
+    assert not env_file.exists() or "TI_CLARIFY_TIMEOUT" not in env_file.read_text()
+
+
 def test_update_rejects_bad_clarify_timeout_without_persisting(sandbox, monkeypatch):
     monkeypatch.delenv("TI_CLARIFY_TIMEOUT", raising=False)
     settings.update({"TI_CLARIFY_TIMEOUT": "abc"})
