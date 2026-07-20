@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import re
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -55,9 +56,15 @@ WRITE_DEPS = [Depends(auth.require_admin)]
 # --- 健康檢查 -----------------------------------------------------------
 @router.get("/api/health")
 async def health() -> JSONResponse:
+    git_sha = (await deploy.current_head(str(config.AUTOPILOT_DEPLOY_DIR))).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", git_sha):
+        git_sha = "unknown"
     return JSONResponse(
         {
             "ok": True,
+            # 公開部署身分契約：只回不可逆推出憑證的 commit SHA，供自治部署
+            # 在健康檢查同時證明「正在服務的版本就是剛合併的版本」。
+            "git_sha": git_sha,
             "has_api_key": config.has_api_key(),
             "offline": config.OFFLINE_MODE,
             "provider": config.PROVIDER,
