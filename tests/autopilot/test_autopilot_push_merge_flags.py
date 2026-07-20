@@ -22,6 +22,7 @@ monkeypatch publisher._merge_flow 控制合併結局；全程不發起真實 git
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 import pytest
 
@@ -144,6 +145,51 @@ async def test_governed_prewrite_guard_blocks_before_push_or_pr(monkeypatch):
     assert spy.push_cmd() is None
     assert not spy.called("pr create")
     assert flow.calls == []
+
+
+@pytest.mark.asyncio
+async def test_approved_diff_disappearance_is_integrity_block_not_noop(monkeypatch):
+    """黑樣本：reviewer 核可後把 diff 清空，不得被算成合法 no_changes。"""
+    spy, flow = _install(
+        monkeypatch,
+        {**_HAS_CHANGE, "git diff --binary origin/main": (0, "")},
+    )
+
+    result = await autopilot._commit_push_merge(
+        "/clone",
+        _TASK,
+        approved_diff_sha="a" * 64,
+    )
+
+    assert result[0] is False
+    assert result.policy_blocked is True
+    assert result.integrity_violation is True
+    assert result.no_changes is False
+    assert "diff_sha_changed" in result[1]
+    assert not spy.called("checkout -B")
+    assert spy.push_cmd() is None
+    assert flow.calls == []
+
+
+@pytest.mark.asyncio
+async def test_approved_diff_is_revalidated_before_and_after_local_commit(monkeypatch):
+    diff = "diff --git a/a b/a\nindex 111..222 100644\n--- a/a\n+++ b/a\n"
+    expected = hashlib.sha256(diff.encode()).hexdigest()
+    spy, _ = _install(
+        monkeypatch,
+        {**_HAS_CHANGE, "git diff --binary origin/main": (0, diff)},
+    )
+
+    result = await autopilot._commit_push_merge(
+        "/clone",
+        _TASK,
+        approved_diff_sha=expected,
+    )
+
+    assert result[0] is True
+    diff_checks = [call for call in spy.joined() if "git diff --binary origin/main" in call]
+    assert len(diff_checks) == 2
+    assert spy.push_cmd() is not None
 
 
 @pytest.mark.asyncio

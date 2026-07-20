@@ -7,14 +7,16 @@
 心跳由 `studio.autopilot` 每輪主迴圈寫一次；任務執行中改為**事件驅動**刷新——專家發言完成
 （`final` 的 `expert_message`）與關鍵工具事件（`tool_use`）會即時更新 `last_activity_at` 與
 目前專家 turn，不必等背景 tick；另有背景任務每 ~60s 保底刷新（涵蓋長 thinking／單則超長串流
-的無事件窗）。狀態落在 `<AUTOPILOT_STATE_DIR>/status.json`，並由 `GET /api/autopilot` 原樣
+的無事件窗）。取任務前的規範蒸餾／intent 分析也以 `starting` 背景心跳每 ~60s 刷新；任務交接
+到 `running` 時首 tick 立即寫入，不留下 activity/workers 皆空的判死窗口。狀態落在
+`<AUTOPILOT_STATE_DIR>/status.json`，並由 `GET /api/autopilot` 原樣
 併入回應的 `heartbeat` 欄位（免直接讀檔）。
 
 ## `status.json` 欄位
 
 | 欄位 | 型別 | 意義 |
 |------|------|------|
-| `state` | str | `idle` / `running` / `quota_sleep` / `budget_sleep` / `rotate_restart` / `stopped` |
+| `state` | str | `starting` / `idle` / `running` / `paused` / `quota_sleep` / `budget_sleep` / `rotate_restart` / `stopped` |
 | `task_id` | int/str/null | 當前任務 id（`running` 時） |
 | `sleep_until` | float/null | 睡到何時（quota/budget/rotate sleep） |
 | `updated_at` | float | 每次寫入的 epoch 秒——**主迴圈存活訊號**，任務中每 ~60s 前進一次 |

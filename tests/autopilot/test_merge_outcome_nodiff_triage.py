@@ -159,6 +159,18 @@ def test_auth_failure_not_tagged_infra(out):
 def test_merge_result_no_changes_flag_defaults_false():
     plain = MergeResult(True, "ok")
     assert plain.no_changes is False, "預設 no_changes 必須為 False（不影響既有路徑）"
+    assert plain.integrity_violation is False
+    assert plain.observed_diff_sha == ""
     assert (plain[0], plain[1]) == (True, "ok"), "MergeResult 仍以 (ok, msg) 解包"
     noop = MergeResult(False, "x", no_changes=True)
     assert noop.no_changes is True and noop == (False, "x")
+    blocked = MergeResult(
+        False,
+        "approved_diff_revalidation:diff_sha_changed",
+        policy_blocked=True,
+        integrity_violation=True,
+        observed_diff_sha="B" * 64,
+    )
+    assert blocked.integrity_violation is True
+    assert blocked.no_changes is False
+    assert blocked.observed_diff_sha == "b" * 64

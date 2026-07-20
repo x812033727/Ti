@@ -6,6 +6,7 @@ pkg/formatted.py 未進 HEAD commit 而紅；恢復實作後轉綠。
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -67,7 +68,13 @@ async def test_autoformat_writeback_diff_is_committed_via_commit_push_merge(
     monkeypatch.setattr(config, "PUBLISH_REPO", "")
     monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"core"}))
 
-    ok, msg = await autopilot._commit_push_merge(str(clone), _TASK)
+    reviewed_diff = _git(clone, "diff", "--binary", "origin/main")
+    reviewed_diff_sha = hashlib.sha256(reviewed_diff.encode()).hexdigest()
+    ok, msg = await autopilot._commit_push_merge(
+        str(clone),
+        _TASK,
+        approved_diff_sha=reviewed_diff_sha,
+    )
 
     assert ok is True, msg
     assert "[dryrun]" in msg
