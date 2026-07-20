@@ -21,7 +21,7 @@ import json
 
 import pytest
 
-from studio import autopilot, backlog, config, publisher
+from studio import autonomy, autopilot, backlog, config, publisher
 
 
 class GhSpy:
@@ -207,6 +207,23 @@ async def test_pending_ci_over_age_closes_with_infra_note(monkeypatch, state):
     assert backlog.INFRA_FAILURE_RE.search(updated["note"]), "逾齡 note 須可被 triage 分診"
 
 
+@pytest.mark.asyncio
+async def test_managed_legacy_merging_pr_is_closed_for_fresh_revalidation(monkeypatch, state):
+    autonomy.ensure_policy(autonomy.CORE_PROJECT_ID)
+    autonomy.save_policy(autonomy.CORE_PROJECT_ID, {"mode": "canary"})
+    task = _merging_task()
+    spy, updates, _ = _install(monkeypatch, {})
+
+    await autopilot._maybe_reconcile_open_prs()
+
+    assert spy.called("pr close 42")
+    assert not spy.called("pr view 42")
+    assert updates == []
+    current = _load(task["id"])
+    assert current["status"] == "pending"
+    assert "重新核可" in current["note"]
+
+
 # --- Pass 2：孤兒 PR --------------------------------------------------------
 
 
@@ -229,6 +246,30 @@ async def test_orphan_pr_for_pending_task_is_claimed(monkeypatch, state):
     updated = _load(t["id"])
     assert updated["status"] == "merging"
     assert updated["pr"] == 77
+
+
+@pytest.mark.asyncio
+async def test_managed_orphan_pr_is_closed_not_rearmed(monkeypatch, state):
+    autonomy.ensure_policy(autonomy.CORE_PROJECT_ID)
+    autonomy.save_policy(autonomy.CORE_PROJECT_ID, {"mode": "canary"})
+    task = backlog.add("被中斷的納管任務")
+    spy, _, _ = _install(
+        monkeypatch,
+        {
+            "pr list": (
+                0,
+                json.dumps([{"number": 78, "headRefName": f"autopilot/task-{task['id']}"}]),
+            ),
+        },
+    )
+
+    await autopilot._maybe_reconcile_open_prs()
+
+    assert spy.called("pr close 78")
+    assert not spy.called("pr merge 78")
+    current = _load(task["id"])
+    assert current["status"] == "pending"
+    assert "重新核可" in current["note"]
 
 
 @pytest.mark.asyncio

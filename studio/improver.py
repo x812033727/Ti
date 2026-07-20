@@ -403,6 +403,49 @@ class ProjectImprover:
                     payload={"reasons": contract["blocking_reasons"]},
                 )
                 return False, "Stage 4 部署健康契約不完整，fail-closed"
+            if managed:
+                observed_source_sha = await publisher.base_head_sha(base_repo, base_branch)
+                deployed_still_pinned = False
+                if contract["ready"] and source_sha:
+                    deployed_still_pinned, _ = await project_health.verify(
+                        policy["deployment"], source_sha
+                    )
+                revalidation = autonomy.revalidate_run_baseline(
+                    pid,
+                    baseline,
+                    {
+                        "deployed_sha": source_sha if deployed_still_pinned else "",
+                        "source_sha": observed_source_sha,
+                        "source_repo": base_repo,
+                        "workspace": str(cwd),
+                        "base_branch": base_branch,
+                        "lane": autonomy.SOURCE_WORKSPACE_LANE,
+                        "publish_repo": base_repo,
+                        "deployed_identity_verified": deployed_still_pinned,
+                    },
+                    phase=f"{attempt}_pre_external_write",
+                    run_id=sid,
+                    task_id=task["id"],
+                    strict=policy["mode"] != "shadow",
+                )
+                if not revalidation["allowed"]:
+                    publish_state.update({"evaluated": True, "allowed": False})
+                    return False, "baseline_revalidation:" + ",".join(revalidation["reasons"])
+                admission = autonomy.admission_decision(pid)
+                if not admission["allowed"]:
+                    autonomy.emit_event(
+                        "policy_violation",
+                        run_id=sid,
+                        project_id=pid,
+                        task_id=task["id"],
+                        source_sha=observed_source_sha or "unknown",
+                        risk=decision["risk"],
+                        outcome="prewrite_admission_blocked",
+                        severity="critical",
+                        payload={"reasons": admission["reasons"]},
+                    )
+                    publish_state.update({"evaluated": True, "allowed": False})
+                    return False, "admission:" + ",".join(admission["reasons"])
             diff_result = await runner.run_command_exec(
                 cwd,
                 ["git", "diff", "--binary", source_sha],

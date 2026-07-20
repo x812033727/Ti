@@ -239,6 +239,53 @@ async def test_blocked_405_never_retries(_flow):
 
 
 @pytest.mark.asyncio
+async def test_pre_merge_governance_guard_blocks_before_merge_or_update(_flow):
+    calls = []
+
+    async def guard():
+        calls.append("guard")
+        return False, "source_sha_drift"
+
+    outcome, detail = await publisher._merge_flow(
+        7,
+        {},
+        ci_timeout=60,
+        ci_interval=5,
+        retries=3,
+        pre_merge_guard=guard,
+        sleep=_flow["sleep"],
+    )
+    assert outcome is MergeOutcome.BLOCKED
+    assert "governance_guard_blocked:source_sha_drift" in detail
+    assert calls == ["guard"]
+    assert _flow["merge_calls"] == 0
+    assert _flow["update_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_governed_behind_never_updates_to_an_unreviewed_base(_flow):
+    _flow["mergeable_state"] = "behind"
+    _flow["merge_seq"] = [(MergeOutcome.CONFLICT, "409 base moved", True)]
+
+    async def guard():
+        return True, "exact baseline"
+
+    outcome, detail = await publisher._merge_flow(
+        7,
+        {},
+        ci_timeout=60,
+        ci_interval=5,
+        retries=3,
+        pre_merge_guard=guard,
+        sleep=_flow["sleep"],
+    )
+    assert outcome is MergeOutcome.CONFLICT
+    assert detail == "governed_base_moved_retry_required"
+    assert _flow["merge_calls"] == 1
+    assert _flow["update_calls"] == 0
+
+
+@pytest.mark.asyncio
 async def test_5xx_exhausted_returns_error_with_detail(_flow):
     """5xx 一直失敗 → 達上限回 ERROR 且有 detail（不 silent、不丟例外）。"""
     _flow["mergeable_state"] = "clean"

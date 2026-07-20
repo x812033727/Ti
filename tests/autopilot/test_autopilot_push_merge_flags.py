@@ -129,6 +129,45 @@ async def test_default_push_is_non_forced(monkeypatch):
     assert ok is True
 
 
+@pytest.mark.asyncio
+async def test_governed_prewrite_guard_blocks_before_push_or_pr(monkeypatch):
+    spy, flow = _install(monkeypatch, {**_HAS_CHANGE})
+
+    async def guard():
+        return False, "baseline_revalidation:source_sha_drift"
+
+    result = await autopilot._commit_push_merge("/clone", _TASK, pre_write_guard=guard)
+
+    assert result[0] is False
+    assert result.policy_blocked is True
+    assert "source_sha_drift" in result[1]
+    assert spy.push_cmd() is None
+    assert not spy.called("pr create")
+    assert flow.calls == []
+
+
+@pytest.mark.asyncio
+async def test_governed_path_disables_native_auto_merge_and_rechecks_in_merge_flow(
+    monkeypatch,
+):
+    monkeypatch.setattr(config, "AUTOPILOT_AUTO_MERGE", True)
+    spy, flow = _install(monkeypatch, {**_HAS_CHANGE}, merge_detail="b" * 40)
+    guard_calls = []
+
+    async def guard():
+        guard_calls.append("guard")
+        return True, "exact baseline"
+
+    result = await autopilot._commit_push_merge("/clone", _TASK, pre_write_guard=guard)
+
+    assert result[0] is True
+    assert result.merge_sha == "b" * 40
+    assert guard_calls == ["guard"], "merge-flow stub receives the same guard for its final check"
+    assert not spy.called("pr merge 42")
+    assert len(flow.calls) == 1
+    assert flow.calls[0][2]["pre_merge_guard"] is guard
+
+
 # === 情境 2：遠端已存在 + 非 force → 中止且不 push ====================
 
 

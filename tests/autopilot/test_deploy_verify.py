@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import config, deploy
+from studio import autonomy, config, deploy
 
 
 def _fake_curl(monkeypatch, responses):
@@ -130,3 +130,82 @@ async def test_redeploy_verify_disabled_by_default(monkeypatch, tmp_path):
 
     ok, msg = await deploy.redeploy()
     assert ok and probes["n"] == 0, "旗標關=探針零呼叫(既有行為不變)"
+
+
+@pytest.mark.asyncio
+async def test_governed_redeploy_blocks_when_remote_base_moved_after_approval(
+    monkeypatch, tmp_path
+):
+    pinned = "a" * 40
+    approved_merge = "b" * 40
+    moved_remote = "c" * 40
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(config, "AUTOPILOT_DEPLOY_DIR", tmp_path / "deploy")
+    autonomy.ensure_policy(autonomy.CORE_PROJECT_ID)
+    autonomy.save_policy(autonomy.CORE_PROJECT_ID, {"mode": "canary", "stage": 3})
+
+    calls = []
+
+    async def fake_run(cmd, cwd=None, timeout=600):
+        calls.append(cmd)
+        if cmd[:3] == ["git", "fetch", "origin"]:
+            return 0, ""
+        if cmd == ["git", "rev-parse", f"origin/{config.AUTOPILOT_BRANCH}"]:
+            return 0, moved_remote + "\n"
+        raise AssertionError(f"unexpected external command after drift: {cmd}")
+
+    async def head(_dir):
+        return pinned
+
+    reinstalled = []
+
+    async def reinstall(*args):
+        reinstalled.append(args)
+        return True, "should not run"
+
+    diff_sha = "d" * 64
+    evidence_sha = "e" * 64
+    approvals = [
+        {
+            "provider": provider,
+            "verdict": "approve",
+            "rationale": "bounded and reversible",
+            "diff_sha": diff_sha,
+            "evidence_sha": evidence_sha,
+        }
+        for provider in ("claude", "codex")
+    ]
+    governance = {
+        "risk": "high-reversible",
+        "diff_sha": diff_sha,
+        "evidence_sha": evidence_sha,
+        "rollback": {
+            "dry_run": True,
+            "backup": True,
+            "verified": True,
+            "scope_limit": "single deploy",
+        },
+        "approval_verdicts": approvals,
+        "source_sha": pinned,
+        "expected_source_sha": approved_merge,
+        "run_id": "deploy-drift",
+        "task_id": 11,
+    }
+    monkeypatch.setattr(deploy, "_run", fake_run)
+    monkeypatch.setattr(deploy, "current_head", head)
+    monkeypatch.setattr(deploy, "_reinstall_and_restart", reinstall)
+    monkeypatch.setattr(deploy.notify, "send_bg", lambda *args, **kwargs: None)
+
+    ok, detail = await deploy.redeploy(governance=governance)
+
+    assert ok is False and "source_sha_drift" in detail
+    assert ["git", "reset", "--hard", f"origin/{config.AUTOPILOT_BRANCH}"] not in calls
+    assert reinstalled == []
+    assert autonomy.brake_status()["global"]["active"] is True
+    event = next(
+        event
+        for event in autonomy.read_events(1)
+        if event.get("outcome") == "deploy_baseline_blocked"
+    )
+    assert event["payload"]["expected_source_sha"] == approved_merge

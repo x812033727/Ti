@@ -4023,8 +4023,14 @@ class StudioSession:
                 await self.broadcast(events.publish_result(self.session_id, unavailable))
             return
         await self.broadcast(events.phase_change(self.session_id, "發佈", "推送成果到 GitHub"))
+        publish_kwargs = {"merge": config.PUBLISH_MERGE}
+        if self._publish_guard is not None:
+            publish_kwargs["pre_write_guard"] = self._publisher_pre_write_guard
         result = await publisher.publish(
-            self.cwd, self.session_id, self._requirement, merge=config.PUBLISH_MERGE
+            self.cwd,
+            self.session_id,
+            self._requirement,
+            **publish_kwargs,
         )
         self._publish_result = result.to_dict()
         if result.merged:
@@ -4103,7 +4109,12 @@ class StudioSession:
             await self.broadcast(
                 events.phase_change(self.session_id, "CI 驗證", f"第 {attempt + 1}/{rounds} 輪")
             )
-            outcome, detail = await publisher.verify_and_merge(result.pr_number, result.branch)
+            verify_kwargs = {}
+            if self._publish_guard is not None:
+                verify_kwargs["pre_merge_guard"] = self._publisher_pre_write_guard
+            outcome, detail = await publisher.verify_and_merge(
+                result.pr_number, result.branch, **verify_kwargs
+            )
             if self._publish_result is not None:
                 self._publish_result.update(
                     {
@@ -4172,3 +4183,11 @@ class StudioSession:
         self._publish_result = blocked
         await self.broadcast(events.publish_result(self.session_id, blocked))
         return False
+
+    async def _publisher_pre_write_guard(self) -> tuple[bool, str]:
+        """Adapter used by publisher immediately before push and again before merge."""
+        allowed = await self._publish_allowed("pre_external_write")
+        if allowed:
+            return True, "live publish governance passed"
+        detail = str((self._publish_result or {}).get("detail") or "publish governance blocked")
+        return False, detail[:500]

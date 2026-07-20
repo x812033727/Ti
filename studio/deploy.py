@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import fcntl
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -173,7 +174,11 @@ async def redeploy(*, governance: dict | None = None) -> tuple[bool, str]:
     if config.AUTOPILOT_DRYRUN:
         return True, f"[dryrun] 會把 {deploy_dir} 重佈到 origin/{branch} 並重啟 {service}"
 
-    if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+    governed = autonomy.policy_exists(autonomy.CORE_PROJECT_ID)
+    evidence: dict = {}
+    expected_source_sha = ""
+    pinned_deployed_sha = ""
+    if governed:
         policy = autonomy.load_policy(autonomy.CORE_PROJECT_ID)
         evidence = dict(governance or {})
         evidence.setdefault("risk", "high-reversible" if policy["stage"] >= 3 else "medium")
@@ -195,6 +200,43 @@ async def redeploy(*, governance: dict | None = None) -> tuple[bool, str]:
             )
             notify.send_bg("policy_violation", detail, project_id=autonomy.CORE_PROJECT_ID)
             return False, detail
+        expected_source_sha = str(evidence.get("expected_source_sha") or "").strip().lower()
+        pinned_deployed_sha = str(evidence.get("source_sha") or "").strip().lower()
+
+        def block_baseline(
+            reason: str, *, observed_source_sha: str = "unknown"
+        ) -> tuple[bool, str]:
+            autonomy.emit_event(
+                "policy_violation",
+                run_id=str(evidence.get("run_id") or "unknown"),
+                project_id=autonomy.CORE_PROJECT_ID,
+                task_id=evidence.get("task_id", "unknown"),
+                source_sha=observed_source_sha or "unknown",
+                risk=str(evidence.get("risk") or "unknown"),
+                outcome="deploy_baseline_blocked",
+                severity="critical",
+                payload={
+                    "phase": "pre_deploy_revalidation",
+                    "reason": reason,
+                    "expected_source_sha": expected_source_sha or "unknown",
+                    "pinned_deployed_sha": pinned_deployed_sha or "unknown",
+                },
+            )
+            autonomy.trip_brake(
+                "global",
+                "deploy_baseline_revalidation:" + reason,
+                project_id=autonomy.CORE_PROJECT_ID,
+                run_id=str(evidence.get("run_id") or "unknown"),
+            )
+            detail = "部署前來源基線重驗失敗：" + reason
+            notify.send_bg("policy_violation", detail, project_id=autonomy.CORE_PROJECT_ID)
+            return False, detail
+
+        sha_re = re.compile(r"[0-9a-f]{40,64}")
+        if not sha_re.fullmatch(expected_source_sha):
+            return block_baseline("expected_source_sha_missing")
+        if not sha_re.fullmatch(pinned_deployed_sha):
+            return block_baseline("pinned_deployed_sha_missing")
 
     # 跨程序互斥：避免 autopilot / autodeploy timer / /api/redeploy 同時 reset+pip+restart 互撞。
     with _deploy_lock() as acquired:
@@ -202,6 +244,8 @@ async def redeploy(*, governance: dict | None = None) -> tuple[bool, str]:
             return False, "另一個部署進行中，略過本輪"
 
         last_good = await current_head(deploy_dir)
+        if governed and last_good.lower() != pinned_deployed_sha:
+            return block_baseline("deployed_sha_drift", observed_source_sha=last_good)
 
         # deploy_dir 是 origin 單向鏡像；force refspec 避免並行 fetch 的 ref CAS 競爭。
         rc, out = await _run(
@@ -211,6 +255,16 @@ async def redeploy(*, governance: dict | None = None) -> tuple[bool, str]:
         )
         if rc != 0:
             return False, f"git fetch 失敗：\n{out[-400:]}"
+        if governed:
+            rc, remote_head = await _run(
+                ["git", "rev-parse", f"origin/{branch}"], cwd=deploy_dir, timeout=30
+            )
+            remote_head = remote_head.strip().lower() if rc == 0 else ""
+            if remote_head != expected_source_sha:
+                return block_baseline(
+                    "source_sha_drift" if remote_head else "source_sha_unavailable",
+                    observed_source_sha=remote_head,
+                )
         rc, out = await _run(
             ["git", "reset", "--hard", f"origin/{branch}"], cwd=deploy_dir, timeout=60
         )
