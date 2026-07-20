@@ -1757,6 +1757,59 @@ def clear_brake(
     return changed
 
 
+_DAILY_BRAKE_REASON_PREFIXES = (
+    "daily_cost_budget_exceeded",
+    "platform_daily_pr_budget_exceeded",
+    "project_daily_cost_budget_exceeded",
+    "daily_pr_budget_exceeded",
+)
+
+
+def _expire_daily_brakes(*, state_dir: Path | None = None) -> bool:
+    """UTC 跨日後自動解除「每日額度」類煞車。
+
+    每日預算打滿是正常營運節流，不是需要人工 ack 的事故；若不按日過期，
+    durable 煞車會在跨日、計數歸零後仍永久擋住 admission（heartbeat 明文
+    承諾「UTC 跨日自動恢復」）。只回收 tripped_at 落在前一 UTC 日以前的
+    每日額度類條目；consecutive_failures / rollback / drift 等事故型煞車
+    維持 durable、仍需管理員 clear。當日仍超額者由 admission 重算重觸發。
+    """
+    path = _brakes_path(state_dir)
+    now = time.time()
+    day = time.gmtime(now)
+    today_start = float(calendar.timegm((day.tm_year, day.tm_mon, day.tm_mday, 0, 0, 0)))
+
+    def _stale(entry: dict | None) -> bool:
+        entry = entry or {}
+        reason_kind = str(entry.get("reason") or "").split(":", 1)[0]
+        return (
+            bool(entry.get("active"))
+            and reason_kind in _DAILY_BRAKE_REASON_PREFIXES
+            and float(entry.get("tripped_at") or 0) < today_start
+        )
+
+    expired: list[str] = []
+    with _locked(path):
+        data = _read_json(path, _empty_brakes())
+        if _stale(data.get("global")):
+            expired.append("global:" + str((data.get("global") or {}).get("reason") or ""))
+            data["global"] = None
+        for key, entry in list((data.get("projects") or {}).items()):
+            if _stale(entry):
+                expired.append(f"project:{key}:" + str((entry or {}).get("reason") or ""))
+                data["projects"].pop(key)
+        if expired:
+            _atomic_json(path, data)
+    if expired:
+        emit_event(
+            "autonomy_decision",
+            outcome="brake_expired",
+            payload={"kind": "daily_budget_utc_rollover", "expired": expired},
+            state_dir=state_dir,
+        )
+    return bool(expired)
+
+
 def _daily_pr_identities(
     events: list[dict], today: tuple, *, project_id: str | None = None
 ) -> set[tuple[str, str]]:
@@ -1773,6 +1826,8 @@ def _daily_pr_identities(
 def admission_decision(project_id: str, *, state_dir: Path | None = None) -> dict:
     """取新任務前的全域/per-project 煞車與政策模式判定。"""
     policy = load_policy(project_id, state_dir=state_dir)
+    # 每日額度類煞車先按 UTC 日過期，再以本日原始事件重算——當日仍超額會立刻重觸發。
+    _expire_daily_brakes(state_dir=state_dir)
     # 先把可由事件確定判定的硬門檻轉成 durable brake；未知成本不當作 0，也不假裝超標。
     today = time.gmtime()[:3]
     recent_events = read_events(90, state_dir=state_dir)

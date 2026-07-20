@@ -64,6 +64,10 @@ base 已被別人推進、revert 衝突或內容不等時一律不 push，改為
 政策的 `source` 應釘住 `repo`、`workspace`、`publish_repo` 與 `lane`。每次任務開工還會核對
 deployed SHA、source SHA、base branch、來源工作樹潔淨度與部署身分證據；本機部署另核對部署
 工作樹潔淨度。canary／full／degraded 下任何漂移或未證明狀態都會觸發持久煞車。
+煞車分兩類:「每日額度」類(daily PR／daily cost,平台與專案層皆是)在 UTC 跨日後由
+admission 自動過期並以本日原始事件重算,當日仍超額會立刻重觸發——額度打滿是營運節流,
+不需人工 ack;「事故」類(連續失敗、rollback 失敗率、漂移、rollout 異常)維持 durable,
+只認管理員顯式 clear。
 觀察窗 preflight 預設直接檢查 `TI_AUTOPILOT_WORK_DIR` 的實際來源 clone，並與部署目錄分開
 驗證；因此部署本身乾淨但仍有 in-flight／遺留來源修改時，也不得開始觀察窗。
 任務的 `eligible` 必須在開工前明定為布林值；舊資料的 `unknown` 在 shadow 只留下 warning，

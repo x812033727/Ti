@@ -1214,3 +1214,75 @@ async def test_shadow_policy_blocks_deploy_before_git_mutation(monkeypatch):
     ok, message = await deploy.redeploy()
     assert ok is False and "shadow" in message
     assert touched == []
+
+
+def _age_active_brakes(seconds: float = 86_400.0) -> None:
+    """把現存煞車的 tripped_at 往回撥，模擬跨 UTC 日後的殘留條目。"""
+    path = autonomy._brakes_path()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    aged = time.time() - seconds
+    if data.get("global"):
+        data["global"]["tripped_at"] = aged
+    for entry in (data.get("projects") or {}).values():
+        entry["tripped_at"] = aged
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_daily_budget_brakes_expire_at_utc_rollover():
+    """每日額度煞車跨日必須自動過期，否則計數歸零後仍永久擋 admission。"""
+    autonomy.ensure_policy("p1")
+    autonomy.save_policy("p1", {"mode": "canary"})
+    autonomy.trip_brake("global", "platform_daily_pr_budget_exceeded:20", project_id="p1")
+    autonomy.trip_brake("project", "daily_pr_budget_exceeded:20", project_id="p1")
+    assert autonomy.admission_decision("p1")["allowed"] is False
+
+    _age_active_brakes()
+    admission = autonomy.admission_decision("p1")
+    assert admission["allowed"] is True
+    brakes = autonomy.brake_status()
+    assert not (brakes.get("global") or {}).get("active")
+    assert not (brakes.get("projects") or {}).get("p1", {}).get("active")
+
+
+def test_daily_budget_brake_same_day_stays_active():
+    """當日觸發的每日額度煞車不得提前解除——過期只認 UTC 跨日。"""
+    autonomy.ensure_policy("p1")
+    autonomy.save_policy("p1", {"mode": "canary"})
+    autonomy.trip_brake("project", "project_daily_cost_budget_exceeded:6.0", project_id="p1")
+    admission = autonomy.admission_decision("p1")
+    assert admission["allowed"] is False
+    assert admission["reasons"] == ["project_brake:project_daily_cost_budget_exceeded:6.0"]
+
+
+def test_incident_brakes_survive_utc_rollover():
+    """事故型煞車(連敗/回滾/漂移)跨日仍 durable,只認管理員 clear。"""
+    autonomy.ensure_policy("p1")
+    autonomy.save_policy("p1", {"mode": "canary"})
+    autonomy.trip_brake("project", "consecutive_failures:3", project_id="p1")
+    autonomy.trip_brake("global", "platform_rollout_misaligned", project_id="p1")
+    _age_active_brakes()
+    admission = autonomy.admission_decision("p1")
+    assert admission["allowed"] is False
+    assert set(admission["reasons"]) == {
+        "global_brake:platform_rollout_misaligned",
+        "project_brake:consecutive_failures:3",
+    }
+
+
+def test_daily_budget_brake_retrips_when_still_over_after_rollover():
+    """跨日過期後若「本日」原始事件仍超額,admission 重算必須立刻重觸發。"""
+    autonomy.ensure_policy("p1")
+    autonomy.save_policy("p1", {"mode": "canary", "limits": {"daily_cost_usd": 5}})
+    autonomy.emit_event(
+        "autonomy_decision",
+        run_id="r1",
+        project_id="p1",
+        eligible=True,
+        cost_usd=6.0,
+        outcome="failed",
+    )
+    assert autonomy.admission_decision("p1")["allowed"] is False
+    _age_active_brakes()
+    admission = autonomy.admission_decision("p1")
+    assert admission["allowed"] is False
+    assert any("project_daily_cost_budget_exceeded" in r for r in admission["reasons"])
