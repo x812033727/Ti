@@ -49,7 +49,7 @@ def test_prompt_assembly(monkeypatch):
     monkeypatch.setattr(lessons, "context", lambda requirement="", **k: "[教訓]")
     monkeypatch.setattr(adr, "context", lambda cwd, limit=None: "[ADR]")
     p = autopilot._fast_lane_prompt("修 X bug", "/tmp/clone")
-    for marker in ("[北極星]", "[教訓]", "[ADR]", "修 X bug", "需完整管線", "ruff check"):
+    for marker in ("[北極星]", "[教訓]", "[ADR]", "修 X bug", "需完整管線", "ti-fast-implement"):
         assert marker in p, marker
 
 
