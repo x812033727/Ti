@@ -53,7 +53,7 @@ def test_task2_row_has_20260707_key_values_and_copyable_compare_command():
         "2026-07-07 PASS",
         f"verdict={evidence['verdict']}",
         "problems=[]",
-        "timeout 60 env PYTHONPATH=. python3 scripts/check_release_body_structure.py",
+        "timeout 60 python3 scripts/check_release_body_structure.py",
         "jq -S '{verdict, checks, problems}'",
         "diff -u",
         "docs/evidence/release-v0.2.0-body-structure-verdict.json",
@@ -99,9 +99,9 @@ expected="$TMPDIR/task2_qa_body_structure_expected.json"
 actual="$TMPDIR/task2_qa_body_structure_actual.json"
 diff_out="$TMPDIR/task2_qa_body_structure_diff.txt"
 
-timeout 60 env PYTHONPATH=. python3 scripts/check_release_body_structure.py >"$check_log"
+timeout 60 python3 scripts/check_release_body_structure.py >"$check_log"
 jq -S '{verdict, checks, problems}' docs/evidence/release-v0.2.0-body-structure-verdict.json >"$expected"
-PYTHONPATH=. python3 - <<'PY' >"$actual"
+python3 - <<'PY' >"$actual"
 import json
 from pathlib import Path
 
