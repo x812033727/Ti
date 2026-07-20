@@ -11,6 +11,7 @@ import os
 import re
 import stat
 import subprocess
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -220,6 +221,38 @@ exit 99
     assert "疑似殘留 token" in combined
     for token in black_tokens:
         assert token not in combined, "掃描輸出不得吐出 token 明文"
+
+
+def test_scan_grep_fallback_scans_zip_contents_and_hides_values(tmp_path: Path) -> None:
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    _write_executable(
+        fakebin / "gitleaks",
+        """#!/bin/sh
+if [ "$1" = "detect" ] && [ "$2" = "--help" ]; then
+  echo "fake gitleaks help without redact"
+  exit 0
+fi
+exit 99
+""",
+    )
+
+    token = _fake_token("ghp_", "Z", 36)
+    zip_path = tmp_path / "downloaded-workspace.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("nested/session-output.txt", f"leaked {token}\n")
+
+    proc = _run_script(
+        "--scan",
+        str(zip_path),
+        env={"PATH": f"{fakebin}:{os.environ['PATH']}"},
+    )
+
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "zip 內容" in combined
+    assert "疑似殘留 token" in combined
+    assert token not in combined, "zip 掃描輸出不得吐出 token 明文"
 
 
 def test_scan_grep_fallback_allows_white_samples(tmp_path: Path) -> None:
