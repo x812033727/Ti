@@ -317,6 +317,47 @@ async def test_git_commit_default_forbidden_paths_none_keeps_legacy_return_type(
 
 
 @pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_uses_acmrt_staged_name_filter(tmp_path, monkeypatch):
+    """禁改檢查必須用驗收指定的 staged diff 檔名篩選 argv。"""
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(runner.config, "ENABLE_GIT", True)
+    monkeypatch.setattr(runner, "_git_available", lambda: True)
+    calls = []
+
+    async def fake_run_command_exec(cwd, argv, **kwargs):
+        calls.append(list(argv))
+        if argv == ["git", "add", "-A"]:
+            return runner.RunOutput("git add", 0, "", False)
+        if argv[:3] == ["git", "diff", "--staged"]:
+            return runner.RunOutput("git diff --staged", 0, "safe.txt\n", False)
+        if argv[:5] == [
+            "git",
+            "-c",
+            f"user.name={runner._GIT_USER_NAME}",
+            "-c",
+            f"user.email={runner._GIT_USER_EMAIL}",
+        ]:
+            return runner.RunOutput("git commit", 0, "", False)
+        if argv == ["git", "rev-parse", "--short", "HEAD"]:
+            return runner.RunOutput("git rev-parse", 0, "abc123\n", False)
+        raise AssertionError(f"未預期 git argv：{argv!r}")
+
+    monkeypatch.setattr(runner, "run_command_exec", fake_run_command_exec)
+
+    result = await runner.git_commit(tmp_path, "allowed", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash == "abc123"
+    assert [
+        "git",
+        "diff",
+        "--staged",
+        "--diff-filter=ACMRT",
+        "--name-only",
+    ] in calls
+
+
+@pytest.mark.asyncio
 async def test_git_commit_no_change_returns_none_head_unmoved(tmp_path):
     """無變更時回 None，且 HEAD 不移動（不產生空 commit）。"""
     assert await runner.git_init(tmp_path) is True

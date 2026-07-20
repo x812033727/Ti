@@ -864,7 +864,7 @@ async def git_commit(
     if forbidden_paths is not None:
         staged = await run_command_exec(
             root,
-            ["git", "diff", "--staged", "--name-only", "--no-renames"],
+            ["git", "diff", "--staged", "--diff-filter=ACMRT", "--name-only"],
             timeout=20,
             label="git diff --staged",
         )
@@ -877,6 +877,18 @@ async def git_commit(
             )
             return done(None)
         staged_paths = [line.strip() for line in staged.output.splitlines() if line.strip()]
+
+        # 補充：捕獲被刪除的檔案與 rename 舊名（--no-renames 把 rename 拆成 D+A，D 即舊路徑）。
+        # ACMRT 過濾器不含 D，且 R 只顯示新名，兩種情境需第二次 diff 補足。
+        deleted = await run_command_exec(
+            root,
+            ["git", "diff", "--staged", "--diff-filter=D", "--name-only", "--no-renames"],
+            timeout=20,
+            label="git diff --staged (deleted/renamed-source)",
+        )
+        if deleted.ok:
+            staged_paths += [line.strip() for line in deleted.output.splitlines() if line.strip()]
+
         violations = check_forbidden_paths(staged_paths, forbidden_paths)
         if violations:
             log.warning("禁改路徑命中，略過 commit：%s", ", ".join(violations))
