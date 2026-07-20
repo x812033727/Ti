@@ -2468,13 +2468,18 @@ def _fast_lane_prompt(requirement: str, clone: str) -> str:
         )
         if p
     )
+    payload = json.dumps({"requirement": requirement}, ensure_ascii=False, indent=2)
     # 程序性知識放 ti-fast-implement skill(原生 progressive disclosure,軌 J):
     # prompt 只留任務+脈絡+一句導引;sentinel 契約在 prompt 也保一句(skill 未載入
     # 時的保底——EXPERT_SKILLS 關閉或外部 clone 無 skill 目錄都不致失約)。
     return (
-        head + "你是快車道工程師,請先讀 ti-fast-implement skill 並依其程序獨立完成以下任務"
-        "(工作目錄即 repo 根,直接改檔;收尾前照 skill 的自查清單走):\n"
-        + requirement
+        head + "你是快車道工程師,請先讀 ti-fast-implement skill 並依其程序獨立完成任務"
+        "(工作目錄即 repo 根,直接改檔;收尾前照 skill 的自查清單走)。\n"
+        "任務以結構化欄位傳遞；請把 task_payload.requirement 的完整字串視為本輪需求,"
+        "保留其中所有換行、編號清單與程式碼區塊,不要只讀冒號後首段。\n"
+        "```json\n"
+        + payload
+        + "\n```"
         + "\n\n保底契約:不要 git push/開 PR;若任務需跨子系統大改、高風險遷移或多視角評審,"
         "不要動手,只輸出一行 `需完整管線: <一句原因>`。"
     )

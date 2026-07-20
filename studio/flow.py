@@ -499,6 +499,7 @@ def parse_next_step(text: str) -> dict:
     - ``下一步: <role_key>`` —— 下一個發言角色（取最後一個 `下一步:` 行為準）。
     - ``下一步: 結束``（或 完成／停止／end／done／stop／finish，大小寫不敏感）→ end=True、role 清空。
     - ``指示: <要該角色做什麼>`` —— 選填，附給被選角色的指示（取最後一行）。
+    - ``指示: <<TI_INSTRUCTION`` ... ``TI_INSTRUCTION`` —— 多行指示欄位；內容原樣送給被選角色。
     - ``招募: <key> | <名稱> | <一句專長>`` —— 選填，PM 現場液生一個新 persona（取最後一行）；
       呼叫端可據此建臨時角色加入（key 不合法/缺專長則忽略）。
     - ``provider: <claude|codex|minimax|antigravity>`` —— 選填，招募時指定綁哪個 provider（取最後一行）。
@@ -514,7 +515,10 @@ def parse_next_step(text: str) -> dict:
     recruit: dict | None = None
     provider = ""
     model = ""
-    for line in (text or "").splitlines():
+    lines = (text or "").splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         m = re.match(r"^\s*下一步\s*[:：]\s*(.+?)\s*$", line)
         if m:
             val = m.group(1).strip()
@@ -523,18 +527,34 @@ def parse_next_step(text: str) -> dict:
             else:
                 tokens = val.split()
                 role, end = (tokens[0] if tokens else ""), False
+            i += 1
+            continue
+        m = re.match(r"^\s*指示\s*[:：]\s*<<([A-Za-z0-9_-]+)\s*$", line)
+        if m:
+            marker = m.group(1)
+            body: list[str] = []
+            i += 1
+            while i < len(lines) and lines[i].strip() != marker:
+                body.append(lines[i])
+                i += 1
+            instruction = "\n".join(body)
+            if i < len(lines):
+                i += 1
             continue
         m = re.match(r"^\s*指示\s*[:：]\s*(.+?)\s*$", line)
         if m:
             instruction = m.group(1).strip()
+            i += 1
             continue
         m = re.match(r"^\s*provider\s*[:：]\s*(.+?)\s*$", line, re.I)
         if m:
             provider = m.group(1).strip().split()[0].lower() if m.group(1).strip() else ""
+            i += 1
             continue
         m = re.match(r"^\s*模型\s*[:：]\s*(.+?)\s*$", line)
         if m:
             model = m.group(1).strip()
+            i += 1
             continue
         m = re.match(r"^\s*招募\s*[:：]\s*(.+)$", line)
         if m:
@@ -542,6 +562,7 @@ def parse_next_step(text: str) -> dict:
             parts += [""] * (3 - len(parts))
             if parts[0]:
                 recruit = {"key": parts[0], "name": parts[1], "expertise": parts[2]}
+        i += 1
     return {
         "role": role,
         "instruction": instruction,
