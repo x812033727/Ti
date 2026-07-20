@@ -75,6 +75,28 @@ def test_non_loopback_refused_smoke_errors_are_hard_failures(
         )
 
 
+def test_socks_proxy_socksio_traceback_is_a_hard_failure() -> None:
+    stderr = "\n".join(
+        [
+            "Traceback (most recent call last):",
+            '  File "tests/server/smoke_ws_attach_real_server.py", line 44, in main',
+            "    ws1 = await loopback_websocket_connect(url, max_size=2**22)",
+            '  File "websockets/asyncio/client.py", line 543, in __await_impl__',
+            "    proxy = await connect_socks_proxy(proxy, self.uri)",
+            '  File "websockets/asyncio/client.py", line 688, in connect_socks_proxy',
+            "    import socksio",
+            "ModuleNotFoundError: No module named 'socksio'",
+        ]
+    )
+
+    with pytest.raises(Failed):
+        assert_smoke_client_ok(
+            _client(stderr=stderr, returncode=1),
+            "QA guard",
+            "Uvicorn running on http://127.0.0.1:8021",
+        )
+
+
 @pytest.mark.parametrize(
     "stderr",
     [
