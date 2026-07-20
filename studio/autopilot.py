@@ -2529,13 +2529,53 @@ def _fast_lane_prompt(requirement: str, clone: str) -> str:
     )
 
 
+_ADVISOR_SYSTEM = (
+    "你是快審顧問:針對 diff 只抓會讓客觀閘門(lint/測試)紅掉或違反 repo 鐵則的問題——"
+    "明顯破壞(語法/引用斷鏈)、新 TI_ 旋鈕漏登記(config 頂層+reload+.env.example)、"
+    "新端點漏登記文件、明顯未自查跡象。不吹毛求疵、不談風格。"
+    "沒問題只回一行 `OK`;有問題每行一條 `建議: <一句具體修正>`,最多 3 條。"
+)
+_ADVISOR_DIFF_CAP = 30_000
+
+
+async def _fast_lane_advisor(clone: str, requirement: str, sid: str) -> list[str]:
+    """FAST 快審顧問(軌 K):秒級檢查工作樹 diff,回建議清單(空=放行)。
+
+    經濟學:幾秒 FAST oneshot 換掉閘門紅的 ~10 分整場重跑。complete_once 永不
+    raise;diff 空/取失敗/顧問空回或格式外回應=一律放行(顧問只加值不擋路)。
+    """
+    if not config.FAST_ADVISOR:
+        return []
+    try:
+        rc, diff = await _run(["git", "diff", "HEAD"], cwd=clone, timeout=60)
+        if rc != 0 or not diff.strip():
+            return []
+        from .providers import complete_once
+
+        text = await complete_once(
+            _ADVISOR_SYSTEM,
+            f"任務需求:\n{requirement[:2000]}\n\ndiff:\n{diff[:_ADVISOR_DIFF_CAP]}",
+            session_id=f"{sid}:advisor",
+            cwd=Path(clone),
+        )
+        tips = [
+            ln.split("建議:", 1)[1].strip().lstrip("：: ")
+            for ln in (text or "").replace("建議：", "建議:").splitlines()
+            if ln.strip().startswith("建議:")
+        ]
+        return [t for t in tips if t][:3]
+    except Exception:  # noqa: BLE001 — 顧問只加值,任何失敗不得擋快車道
+        log.debug("快審顧問失敗(忽略,放行)", exc_info=True)
+        return []
+
+
 async def _run_fast_lane(task: dict, clone: str, sid: str, requirement: str, broadcast) -> dict:
     """快車道執行:單 engineer 原生 agent 迴圈一場到底,回 session-result 形狀 dict。
 
     completed=True 只是「工程師收工」——真正把關交後續客觀閘門(lint/collect/test/
     merge,與完整管線同一套)。sentinel「需完整管線:」→ fast_escalate(呼叫端標
-    lane=full 退回重排,不燒 attempts)。逾時走 wait_for → 外層既有 TimeoutError
-    處置;例外冒泡走外層既有 failed 處置。
+    lane=full 退回重排,不燒 attempts)。收工後過 FAST 快審顧問(軌 K):有建議追加
+    **一輪**回修再進閘門。逾時走 wait_for → 外層既有 TimeoutError 處置。
     """
     from .providers import make_expert
     from .roles import BY_KEY
@@ -2546,12 +2586,25 @@ async def _run_fast_lane(task: dict, clone: str, sid: str, requirement: str, bro
             ex.speak(_fast_lane_prompt(requirement, clone), broadcast),
             timeout=config.AUTOPILOT_TASK_TIMEOUT or None,
         )
+        m = _FAST_ESCALATE_RE.search(text or "")
+        if m:
+            return {"completed": False, "fast_escalate": m.group(1).strip()[:200]}
+        tips = await _fast_lane_advisor(clone, requirement, sid)
+        if tips:
+            with contextlib.suppress(Exception):
+                backlog.annotate(task["id"], "[advisor] " + "|".join(tips)[:300])
+            log.info("任務 #%s 快審顧問 %d 建議,追加一輪回修", task["id"], len(tips))
+            await asyncio.wait_for(
+                ex.speak(
+                    "快審顧問對你剛才的變更提出以下修正建議,請逐條處理"
+                    "(不同意者說明理由即可),修正後重跑收尾自查:\n- " + "\n- ".join(tips),
+                    broadcast,
+                ),
+                timeout=config.AUTOPILOT_TASK_TIMEOUT or None,
+            )
     finally:
         with contextlib.suppress(Exception):
             await ex.stop()
-    m = _FAST_ESCALATE_RE.search(text or "")
-    if m:
-        return {"completed": False, "fast_escalate": m.group(1).strip()[:200]}
     return {"completed": True}
 
 

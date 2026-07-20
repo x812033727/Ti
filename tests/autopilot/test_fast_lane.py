@@ -199,3 +199,76 @@ def test_implement_fast_workflow_validates():
     v = workflow.coerce(workflow.implement_fast_workflow())
     assert v["name"] == workflow.IMPLEMENT_FAST_NAME, "coerce 不得退回 default"
     assert workflow.IMPLEMENT_FAST_NAME in workflow._BUILTIN_WORKFLOWS
+
+
+# --- 軌 K:FAST 快審顧問 --------------------------------------------------------
+
+
+class _AdvisorEnv:
+    def __init__(self, monkeypatch, diff="+ x = 1", advice="OK"):
+        from studio import providers
+
+        self.speaks: list[str] = []
+        env = self
+
+        class _Ex:
+            def __init__(self, *a, **k):
+                pass
+
+            async def speak(self, prompt, broadcast):
+                env.speaks.append(prompt)
+                return "完成"
+
+            async def stop(self):
+                return None
+
+        async def _run(cmd, cwd=None, timeout=600, **kw):
+            if cmd[:2] == ["git", "diff"]:
+                return (0, diff)
+            return (0, "")
+
+        async def _advise(system, user, *, session_id, cwd, **kw):
+            env.advise_called = True
+            return advice
+
+        self.advise_called = False
+        monkeypatch.setattr(providers, "make_expert", lambda role, sid, cwd, **k: _Ex())
+        monkeypatch.setattr(providers, "complete_once", _advise)
+        monkeypatch.setattr(autopilot, "_run", _run)
+        monkeypatch.setattr(config, "FAST_ADVISOR", True)
+
+
+async def _noop_bc(_e):
+    return None
+
+
+@pytest.mark.asyncio
+async def test_advisor_ok_no_second_round(monkeypatch):
+    env = _AdvisorEnv(monkeypatch, advice="OK")
+    r = await autopilot._run_fast_lane({"id": 1}, "/tmp/c", "sid", "req", _noop_bc)
+    assert r == {"completed": True} and env.advise_called
+    assert len(env.speaks) == 1, "顧問放行=不追加回修輪"
+
+
+@pytest.mark.asyncio
+async def test_advisor_tips_trigger_one_revision(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
+    monkeypatch.setattr(backlog, "_read_cache", {}, raising=False)
+    t = backlog.add("x")
+    env = _AdvisorEnv(monkeypatch, advice="建議: config 少了 reload 區塊\n建議: .env.example 沒補")
+    r = await autopilot._run_fast_lane({"id": t["id"]}, "/tmp/c", "sid", "req", _noop_bc)
+    assert r == {"completed": True}
+    assert len(env.speaks) == 2, "有建議=恰好一輪回修"
+    assert "config 少了 reload 區塊" in env.speaks[1]
+    assert "[advisor]" in (backlog.list_tasks()[0].get("note") or "")
+
+
+@pytest.mark.asyncio
+async def test_advisor_flag_off_and_empty_diff(monkeypatch):
+    env = _AdvisorEnv(monkeypatch, advice="建議: 假建議")
+    monkeypatch.setattr(config, "FAST_ADVISOR", False)
+    await autopilot._run_fast_lane({"id": 1}, "/tmp/c", "sid", "req", _noop_bc)
+    assert env.advise_called is False, "旗標關=零顧問成本"
+    env2 = _AdvisorEnv(monkeypatch, diff="", advice="建議: 假建議")
+    await autopilot._run_fast_lane({"id": 1}, "/tmp/c", "sid", "req", _noop_bc)
+    assert env2.advise_called is False, "空 diff=跳過顧問"
