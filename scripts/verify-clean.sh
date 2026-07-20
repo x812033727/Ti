@@ -32,11 +32,33 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 LANE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 SANITIZED_BRANCH="$(printf '%s' "$LANE_BRANCH" | tr '/\\' '__')"
 TMP_BASE="${TMPDIR:-/tmp}"
-OUT_FILE="${TMP_BASE}/clean-verify-output-${SANITIZED_BRANCH}-${TS}.txt"
-WARN_FILE="${TMP_BASE}/git-warnings-${SANITIZED_BRANCH}-${TS}.log"
+ARTIFACT_DIR="${TMP_BASE}/verify-clean-artifacts"
+mkdir -p "$ARTIFACT_DIR" || exit 99
+
+cleanup_stale_artifacts() {
+  for stale in \
+    "$TMP_BASE"/clean-verify-output-*.txt \
+    "$TMP_BASE"/git-warnings-*.log
+  do
+    [ -e "$stale" ] || continue
+    rm -f -- "$stale"
+  done
+  find "$ARTIFACT_DIR" -maxdepth 1 -type f \( \
+    -name 'clean-verify-output-*.txt' -o \
+    -name 'git-warnings-*.log' -o \
+    -name 'manifest-*.env' \
+  \) -mtime +7 -exec rm -f -- {} + 2>/dev/null || true
+}
+
+cleanup_stale_artifacts
+
+RUN_ID="${SANITIZED_BRANCH}-${TS}-$$"
+OUT_FILE="${ARTIFACT_DIR}/clean-verify-output-${RUN_ID}.txt"
+WARN_FILE="${ARTIFACT_DIR}/git-warnings-${RUN_ID}.log"
+MANIFEST_FILE="${ARTIFACT_DIR}/manifest-${RUN_ID}.env"
+LATEST_MANIFEST_FILE="${ARTIFACT_DIR}/manifest.env"
 RUN_TMP_DIR="$(mktemp -d "${TMP_BASE}/verify-clean-tmp.XXXXXX")"
 WT_DIR="$(mktemp -d "${TMP_BASE}/clean-main.XXXXXX")"
-trap 'rm -rf "$RUN_TMP_DIR"' EXIT
 RUNNER="$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)"
 
 # --- worktree cleanup（EXIT INT TERM 兜底）----------------------------
@@ -45,8 +67,12 @@ cleanup_worktree() {
     git worktree remove --force "$WT_DIR" 2>/dev/null || rm -rf "$WT_DIR"
   fi
 }
-trap cleanup_worktree EXIT
-trap 'cleanup_worktree; exit 99' INT TERM
+cleanup_all() {
+  rm -rf "$RUN_TMP_DIR"
+  cleanup_worktree
+}
+trap cleanup_all EXIT
+trap 'cleanup_all; exit 99' INT TERM
 
 # --- 環境前置 --------------------------------------------------------
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -65,6 +91,30 @@ if ! OM_HASH="$(resolve_origin_main)"; then
 fi
 HEAD_HASH_LANE="$(git rev-parse HEAD)"
 LANE_AHEAD="$(git rev-list --count origin/main..HEAD)"
+
+write_manifest() {
+  local exit_code="$1"
+  local manifest_tmp="${MANIFEST_FILE}.$$"
+  {
+    printf 'artifact_dir=%s\n' "$ARTIFACT_DIR"
+    printf 'manifest_file=%s\n' "$MANIFEST_FILE"
+    printf 'latest_manifest_file=%s\n' "$LATEST_MANIFEST_FILE"
+    printf 'out_file=%s\n' "$OUT_FILE"
+    printf 'warn_file=%s\n' "$WARN_FILE"
+    printf 'run_id=%s\n' "$RUN_ID"
+    printf 'run_time_utc=%s\n' "$TS"
+    printf 'lane_branch=%s\n' "$LANE_BRANCH"
+    printf 'lane_head=%s\n' "$HEAD_HASH_LANE"
+    printf 'origin_main=%s\n' "$OM_HASH"
+    printf 'runner=%s\n' "$RUNNER"
+    printf 'exit_code=%s\n' "$exit_code"
+  } > "$manifest_tmp" \
+    && mv -f "$manifest_tmp" "$MANIFEST_FILE" \
+    && cp "$MANIFEST_FILE" "${LATEST_MANIFEST_FILE}.$$" \
+    && mv -f "${LATEST_MANIFEST_FILE}.$$" "$LATEST_MANIFEST_FILE"
+}
+
+write_manifest "running"
 
 # --- 失敗路徑下也寫出 close-out 標頭（給讀者事實而非空字串）-----------
 write_failure_evidence() {
@@ -92,6 +142,7 @@ write_failure_evidence() {
   echo "# 驗證對象 1        : published origin/main (via detached worktree) — release gate 視角"
   echo "# 驗證對象 2        : sandbox lane HEAD (直接跑) — 審計視角"
   echo "# worktree 路徑     : $WT_DIR"
+  echo "# artefact manifest : $MANIFEST_FILE"
   echo "# 輸出證據檔        : $OUT_FILE"
   echo "# stderr warning 檔 : $WARN_FILE"
   echo "# run time (UTC)    : $TS"
@@ -376,6 +427,7 @@ write_failure_evidence() {
 } > "$OUT_FILE" 2> "$WARN_FILE"
 
 OVERALL_RC="${fail:-$?}"
+write_manifest "$OVERALL_RC"
 if [ -f "$OUT_FILE" ]; then
   cat "$OUT_FILE"
 fi
