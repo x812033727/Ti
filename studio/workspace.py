@@ -230,11 +230,20 @@ def zip_workspace(session_id: str) -> bytes | None:
         return None
     safe_root = root.resolve()
     buf = io.BytesIO()
+    written = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel in files:
             # 與 read_file 對齊：跳過指向沙箱外的 symlink，避免外洩。
             target = safe_resolve(safe_root, rel)
-            if target is None:
+            if target is None or not target.is_file():
+                continue
+            try:
+                if target.stat().st_size > config.MAX_READ_FILE_BYTES:
+                    continue
+            except OSError:
                 continue
             zf.write(target, arcname=rel)
+            written += 1
+    if written == 0:
+        return None
     return buf.getvalue()
