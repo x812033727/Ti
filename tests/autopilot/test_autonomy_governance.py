@@ -454,6 +454,7 @@ def test_metrics_use_eligible_denominator_intervention_types_and_cost():
     assert metrics["eligible"] == 2 and metrics["completed"] == 1
     assert metrics["completion_rate"] == 0.5 and metrics["zero_touch"] == 0
     assert metrics["interventions"]["by_type"]["bug_design_fix"] == 1
+    assert metrics["interventions"]["by_path"] == {"bug_design_fix:fix": 1}
     assert metrics["cost"]["known_usd"] == 5.0
     assert metrics["cost"]["unknown_runs"] == 0
     assert metrics["cost"]["max_daily_usd"] == 5.0
@@ -1007,6 +1008,51 @@ def test_weekly_improvements_enqueue_at_most_three_and_are_idempotent(tmp_path):
     path.write_text(json.dumps(tampered), encoding="utf-8")
     with pytest.raises(autonomy.AuditWriteError, match="完整性"):
         autonomy.write_weekly_improvements(now=0)
+
+
+def test_weekly_improvements_need_actionable_evidence_not_unknown_or_aggregate():
+    base = {
+        "eligible": 0,
+        "completion_rate": None,
+        "failures_by_outcome": {},
+        "interventions": {
+            "by_type": {"ops_rescue": 8, "bug_design_fix": 3},
+            "by_path": {
+                "ops_rescue:pause": 4,
+                "bug_design_fix:task_action": 3,
+                "ops_rescue:baseline_drift_recovery": 1,
+            },
+        },
+        "alerts": {"red_drills_complete": True},
+        "rollback": {"success_rate": 1.0},
+        "cost": {"unknown_runs": 0},
+    }
+    assert autonomy.weekly_improvements(base) == []
+
+    base["eligible"] = 3
+    base["completion_rate"] = 0.5
+    # Incomplete runs without a terminal failure category still must not create
+    # a synthetic "unknown" implementation task.
+    assert autonomy.weekly_improvements(base) == []
+
+
+def test_weekly_improvements_name_repeated_failure_and_intervention_paths():
+    metrics = {
+        "eligible": 5,
+        "completion_rate": 0.6,
+        "failures_by_outcome": {"deploy_failed": 2, "blocked": 1},
+        "interventions": {
+            "by_type": {"ops_rescue": 2},
+            "by_path": {"ops_rescue:deploy_health_recovery": 2},
+        },
+        "alerts": {"red_drills_complete": True},
+        "rollback": {"success_rate": 1.0},
+        "cost": {"unknown_runs": 0},
+    }
+    items = autonomy.weekly_improvements(metrics)
+    assert items[0]["title"].endswith("deploy_failed）")
+    assert items[1]["title"] == "消除重複人工介入：ops_rescue/deploy_health_recovery"
+    assert "ops_rescue:deploy_health_recovery" in items[1]["acceptance"]
 
 
 def test_weekly_improvements_reject_meta_and_duplicate_work(monkeypatch):

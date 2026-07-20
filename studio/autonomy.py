@@ -31,7 +31,7 @@ from . import config, jsonl_log, secure_write
 from .repo_ident import repo_key
 
 SCHEMA_VERSION = 1
-CALCULATION_VERSION = "autonomy-maturity-v1"
+CALCULATION_VERSION = "autonomy-maturity-v2"
 CORE_PROJECT_ID = "ti-studio"
 SOURCE_WORKSPACE_LANE = "main"
 
@@ -2016,9 +2016,13 @@ def maturity_metrics(
     failed = [r for r in eligible_runs if r.get("outcome") in _TERMINAL_FAILURE]
     zero_touch = [r for r in completed if r["run_id"] not in intervention_runs]
     by_intervention: dict[str, int] = dict.fromkeys(INTERVENTION_TYPES, 0)
+    by_intervention_path: dict[str, int] = {}
     for event in interventions:
-        kind = str(event.get("intervention_type") or _UNKNOWN)
-        by_intervention[kind] = by_intervention.get(kind, 0) + 1
+        intervention_type = str(event.get("intervention_type") or _UNKNOWN)
+        by_intervention[intervention_type] = by_intervention.get(intervention_type, 0) + 1
+        intervention_kind = str((event.get("payload") or {}).get("kind") or _UNKNOWN)[:100]
+        path = f"{intervention_type}:{intervention_kind}"
+        by_intervention_path[path] = by_intervention_path.get(path, 0) + 1
     rollback_ok = sum(1 for e in rollbacks if e.get("outcome") == "success")
     rollback_fail = sum(1 for e in rollbacks if e.get("outcome") != "success")
     verified_drills = [event for event in rollbacks if verified_rollback_drill(event)]
@@ -2216,6 +2220,7 @@ def maturity_metrics(
         "interventions": {
             "total": len(interventions),
             "by_type": by_intervention,
+            "by_path": dict(sorted(by_intervention_path.items())),
             "per_week": round(len(interventions) / days * 7, 2),
         },
         "rollback": {
@@ -2480,8 +2485,16 @@ def _promotion(
 def weekly_improvements(metrics: dict) -> list[dict]:
     """依真實弱項產生至多三個可驗收改善項；不產生純盤點／純文件 meta-work。"""
     proposals: list[dict] = []
-    if (metrics.get("completion_rate") or 0) < 0.8:
-        by_outcome = metrics.get("failures_by_outcome") or {}
+    completion_rate = metrics.get("completion_rate")
+    by_outcome = metrics.get("failures_by_outcome") or {}
+    # 沒有 eligible 分母、只有尚未終局的 run，或沒有具名失敗類型時，不得把
+    # 「unknown」本身派成工作；那只是量測尚未收斂，不是可修改的 failure path。
+    if (
+        int(metrics.get("eligible") or 0) > 0
+        and isinstance(completion_rate, int | float)
+        and completion_rate < 0.8
+        and by_outcome
+    ):
         top_failure = max(by_outcome, key=by_outcome.get) if by_outcome else "unknown"
         proposals.append(
             {
@@ -2493,16 +2506,48 @@ def weekly_improvements(metrics: dict) -> list[dict]:
                 "priority": 0,
             }
         )
-    non_background = sum(
-        v
-        for k, v in metrics.get("interventions", {}).get("by_type", {}).items()
-        if k != "background"
-    )
-    if non_background:
+    # 介入總數不是 failure path。只有同一個具名路徑在 7 日窗重複至少兩次，
+    # 才能派出一個指向明確子系統的改善；一般 UI/營運動作留在信任指標，不轉成
+    # 「把數字降為零」這類不可實作的 meta 任務。
+    generic_intervention_kinds = {
+        _UNKNOWN,
+        "account_switch",
+        "account_unpin",
+        "clear_brake",
+        "manual_task",
+        "pause",
+        "project_intent",
+        "resume",
+        "schedule_create",
+        "schedule_delete",
+        "schedule_update",
+        "settings",
+        "task_action",
+    }
+    actionable_paths: dict[str, int] = {}
+    for path, raw_count in (metrics.get("interventions", {}).get("by_path") or {}).items():
+        intervention_type, separator, intervention_kind = str(path).partition(":")
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            continue
+        if (
+            separator
+            and intervention_type not in ("background", _UNKNOWN)
+            and intervention_kind not in generic_intervention_kinds
+            and count >= 2
+        ):
+            actionable_paths[f"{intervention_type}:{intervention_kind}"] = count
+    if actionable_paths:
+        top_path = max(actionable_paths, key=actionable_paths.get)
+        intervention_type, intervention_kind = top_path.split(":", 1)
         proposals.append(
             {
-                "title": "消除需要人工修正的最高頻失敗路徑",
-                "acceptance": "下一個 7 日窗 product_decision、bug_design_fix、ops_rescue 合計為 0",
+                "title": f"消除重複人工介入：{intervention_type}/{intervention_kind}",
+                "acceptance": (
+                    f"下一個 7 日窗 {top_path} 介入次數為 0，"
+                    "且對應 eligible run 皆留下結構化終局 outcome"
+                ),
                 "priority": 0,
             }
         )
