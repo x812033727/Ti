@@ -4478,7 +4478,8 @@ def _write_status(
 ) -> None:
     """心跳：把當前狀態原子寫入 ``<AUTOPILOT_STATE_DIR>/status.json``。
 
-    state ∈ {"idle", "running", "paused", "quota_sleep", "budget_sleep", "rotate_restart", "stopped"}；
+    state ∈ {"starting", "idle", "running", "paused", "quota_sleep", "budget_sleep", "rotate_restart", "stopped"}；
+    starting＝systemd 已就緒、主迴圈正在做 quota／規範／intent 等取任務前工作；
     paused＝pause 檔存在、主迴圈刻意空轉(非卡死,每 10s 刷新 updated_at);
     /api/autopilot 讀此檔回報「迴圈還活著、正在做什麼、睡到何時、各 provider 用量」。
     帳號輪替時 quota 另帶 ``rotated_to``（切換目標 label）；budget_sleep＝每日 PR 預算
@@ -4908,6 +4909,8 @@ async def main() -> None:
     # Type=notify 啟動握手:不發 READY systemd 會判啟動失敗,故放 main 最早期、任何可能
     # 耗時的步驟(git/部署檢查)之前。execv 自我重載後 NOTIFY_SOCKET 保留,會再發一次(無害)。
     _sd_notify("READY=1")
+    # 先覆寫前一個行程殘留的 stale status；連下面的 git rev-parse 都不能留下 monitor 誤殺窗。
+    _write_status("starting")
     # 啟動時擷取一次「執行中程式碼」的 commit（磁碟 HEAD 可能已被 reset 但行程未重載，
     # 兩者語意不同）；隨 status.json 供 /api/autopilot 顯示部署漂移。失敗留空不擋啟動。
     global _running_commit
@@ -4915,6 +4918,11 @@ async def main() -> None:
         _running_commit = await deploy.current_head(str(config.AUTOPILOT_DEPLOY_DIR))
     startup_sig = _self_sig()
     _install_signal_handlers()
+    # READY=1 代表 systemd 可以開始監控，但舊 status.json 可能還是上一個行程留下的
+    # stopped/running。主迴圈第一輪在寫 idle/running 前還會等 quota、規範與 intent
+    # LLM；layer3 若在此窗口讀到 stale stopped，會把健康的新行程當死迴圈重啟。
+    # 所以在任何耗時 startup work 前再發一筆帶 running_commit 的真實 starting 心跳。
+    _write_status("starting")
 
     try:
         # 加值監督,建不起來不擋啟動(既有 main-loop 測試以 SimpleNamespace stub 本模組的

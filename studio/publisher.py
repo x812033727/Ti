@@ -27,7 +27,7 @@ from datetime import datetime
 from enum import Enum
 
 from . import config, git_cred, runner
-from .repo_ident import repo_key, repo_owner
+from .repo_ident import repo_key, repo_owner, repo_slug
 
 log = logging.getLogger("ti.publisher")
 
@@ -556,7 +556,7 @@ async def base_head_sha(repo: str | None = None, base: str | None = None) -> str
     """
     import httpx
 
-    target = repo_key(repo or current_repo())
+    target = repo_slug(repo or current_repo())
     branch = str(base or config.PUBLISH_BASE).strip()
     if not target or not branch:
         return ""

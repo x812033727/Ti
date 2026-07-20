@@ -83,6 +83,7 @@ async def test_busy_defers_and_accumulates_observation(state, monkeypatch, tmp_p
     d = _deferred(tmp_path)
     assert stub.redeploy_calls == 0
     assert d["deferrals"] == 2 and d["remote"] == "bbb222"
+    assert d["reason"] == "busy_sessions"
     assert d["first_deferred_at"] > 0
 
 
@@ -109,6 +110,33 @@ async def test_idle_redeploys_and_clears_deferred(state, monkeypatch, tmp_path):
     assert await autodeploy.run_once() == 0
     assert stub.redeploy_calls == 1
     assert _deferred(tmp_path) is None
+
+
+@pytest.mark.asyncio
+async def test_governed_drift_defers_once_without_fake_high_risk_operations(
+    state, monkeypatch, tmp_path
+):
+    stub = DeployStub()
+    _install(monkeypatch, stub)
+    events = []
+    notifications = []
+    monkeypatch.setattr(autodeploy.autonomy, "policy_exists", lambda _project_id: True)
+    monkeypatch.setattr(
+        autodeploy.autonomy, "emit_event", lambda *args, **kwargs: events.append((args, kwargs))
+    )
+    monkeypatch.setattr(
+        autodeploy.notify, "send_bg", lambda *args, **kwargs: notifications.append((args, kwargs))
+    )
+
+    assert await autodeploy.run_once() == 0
+    assert await autodeploy.run_once() == 0
+
+    deferred = _deferred(tmp_path)
+    assert stub.redeploy_calls == 0
+    assert deferred["deferrals"] == 2
+    assert deferred["reason"] == "governance_evidence_required"
+    assert len(events) == 1 and events[0][1]["outcome"] == "autodeploy_governance_deferred"
+    assert len(notifications) == 1
 
 
 @pytest.mark.asyncio

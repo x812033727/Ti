@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from studio import autopilot, config, publisher, repo_ident, runner
@@ -36,6 +37,68 @@ def test_repo_owner_fails_closed_on_non_github_or_garbage():
     assert repo_ident.repo_owner("") == ""
     assert repo_ident.repo_owner("not-a-repo") == ""
     assert repo_ident.repo_owner("a/b/c") == ""
+
+
+def test_repo_slug_normalizes_bare_https_scp_and_ssh_urls():
+    expected = "x812033727/ti"
+    assert repo_ident.repo_slug("x812033727/Ti") == expected
+    assert repo_ident.repo_slug("https://github.com/x812033727/Ti.git") == expected
+    assert repo_ident.repo_slug("git@github.com:x812033727/Ti.git") == expected
+    assert repo_ident.repo_slug("ssh://git@github.com/x812033727/Ti.git") == expected
+    assert repo_ident.repo_slug("ssh://git@github.com:x812033727/Ti.git") == ""
+    assert repo_ident.repo_slug("https://evil.example/x812033727/Ti.git") == ""
+
+
+@pytest.mark.asyncio
+async def test_base_head_sha_uses_owner_repo_slug_for_every_supported_identity(
+    _default_allowlist, monkeypatch
+):
+    calls: list[str] = []
+    sha = "a" * 40
+
+    class _Response:
+        status_code = 200
+
+        def json(self):
+            return {"commit": {"sha": sha}}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            calls.append(url)
+            return _Response()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    identities = (
+        "x812033727/Ti",
+        "https://github.com/x812033727/Ti.git",
+        "git@github.com:x812033727/Ti.git",
+        "ssh://git@github.com/x812033727/Ti.git",
+    )
+    for identity in identities:
+        result = await publisher.base_head_sha(identity, "main")
+        assert calls[-1] == "https://api.github.com/repos/x812033727/ti/branches/main"
+        assert result == sha
+
+    assert calls == ["https://api.github.com/repos/x812033727/ti/branches/main"] * len(identities)
+
+
+@pytest.mark.asyncio
+async def test_base_head_sha_rejects_foreign_host_without_network(_default_allowlist, monkeypatch):
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("foreign repo identity must fail before network")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    assert await publisher.base_head_sha("https://evil.example/x812033727/Ti.git", "main") == ""
 
 
 def test_autopilot_repo_key_is_repo_ident_single_source():
