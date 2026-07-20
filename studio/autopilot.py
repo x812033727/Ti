@@ -82,6 +82,9 @@ _MERGED_TITLE_CACHE_TTL = 3600.0
 _MERGED_TITLE_CACHE: dict[tuple[str, int], tuple[float, list[str]]] = {}
 _PREFILTER_IMPLEMENTED_LANE = "prefilter-implemented"
 _PREFILTER_IMPLEMENTED_NOTE = "[prefilter-implemented]"
+_consecutive_fail_count = 0
+_consecutive_fail_notified = False
+_consecutive_fail_pause_active = False
 # 自我重載：autopilot 跑討論依賴整個 studio 套件（orchestrator／experts／flow／providers…），
 # 故監看整包 studio/*.py 的 mtime——只盯少數檔會漏掉 orchestrator-only 的部署（如 #218），
 # 讓 autopilot 一直跑舊 orchestration 邏輯（self-reload 在任務之間做、安全）。
@@ -3372,10 +3375,56 @@ async def run_one_task(task: dict) -> None:
         clear_turn_status()
 
 
-def _pause(reason: str) -> None:
-    with contextlib.suppress(OSError):
+def _pause(reason: str) -> bool:
+    try:
         config.AUTOPILOT_PAUSE_FILE.write_text(f"{reason}\n{time.ctime()}\n", encoding="utf-8")
+    except OSError:
+        log.exception("暫停 autopilot 失敗：%s", reason)
+        return False
     log.warning("已暫停 autopilot：%s", reason)
+    return True
+
+
+def _record_consecutive_fail_outcome(task_id: int) -> None:
+    """依任務最終狀態更新主迴圈連續 failed 煞車。"""
+    global _consecutive_fail_count, _consecutive_fail_notified, _consecutive_fail_pause_active
+
+    threshold = int(config.AUTOPILOT_CONSECUTIVE_FAIL_PAUSE or 0)
+    if threshold <= 0:
+        return
+
+    status = (backlog.get(task_id) or {}).get("status")
+    if status == "failed":
+        _consecutive_fail_count += 1
+    elif status == "done":
+        _reset_consecutive_fail_period()
+        return
+    else:
+        return
+
+    if _consecutive_fail_count < threshold or _consecutive_fail_notified:
+        return
+
+    reason = f"連續 {_consecutive_fail_count} 次任務 failed，SLO 煞車暫停待人工檢視"
+    if not _pause(reason):
+        return
+    _consecutive_fail_pause_active = True
+    notify.send_bg(
+        "consecutive_fail_pause",
+        reason,
+        task_id=task_id,
+        consecutive_fail_count=_consecutive_fail_count,
+        threshold=threshold,
+    )
+    _consecutive_fail_notified = True
+
+
+def _reset_consecutive_fail_period() -> None:
+    global _consecutive_fail_count, _consecutive_fail_notified, _consecutive_fail_pause_active
+
+    _consecutive_fail_count = 0
+    _consecutive_fail_notified = False
+    _consecutive_fail_pause_active = False
 
 
 # --- 規範迴路(第 3 階 A3) ---------------------------------------------------
@@ -5339,6 +5388,8 @@ async def _main_loop(startup_sig: float) -> None:
             )
             await asyncio.sleep(_ROTATE_RESTART_SLEEP)
             continue
+        if _consecutive_fail_pause_active:
+            _reset_consecutive_fail_period()
 
         if config.autopilot_paused():
             await _pause_tick()
@@ -5482,6 +5533,8 @@ async def _main_loop(startup_sig: float) -> None:
         except Exception as exc:  # noqa: BLE001 — 單一任務出錯不該弄死整個迴圈
             log.exception("任務 #%s 例外", task.get("id"))
             backlog.set_status(task["id"], "failed", note=f"{type(exc).__name__}: {exc}")
+
+        _record_consecutive_fail_outcome(task["id"])
 
         # 部署後若自身程式碼有更新 → 重載自己,避免跑舊邏輯
         _task_running = False

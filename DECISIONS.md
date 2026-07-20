@@ -2093,6 +2093,360 @@
 
 ## 不新增依賴、不改 `config.py`/`publisher.py` 任何公開介面；`_REPO_OVERRIDE` / `set_repo_override` / `reset_repo_override` 契約完整保留
 - 時間：2026-06-28 20:39
+## 新增單一模組 `studio/bench.py`（loader + async runner + JSONL writer），三者不拆散
+- 時間：2026-06-28 21:41
+- 理由：耦合高，早期不值得分層
+- 否決方案：多模組分層（過度設計）
+
+## Fixture 格式 JSON，目錄 `tests/fixtures/improvement_bench/`，缺欄位或格式錯即 `ValueError`
+- 時間：2026-06-28 21:41
+- 理由：無新依賴；tests/ 目錄軟隔離，autopilot 慣例改 studio/ 不改 tests/
+- 否決方案：物理隔離 protected branch（本輪排除項）
+
+## bench runner 的 `broadcast` 傳 `async def collect(ev): events_seen.append(ev.type)`，不得傳同步 lambda
+- 時間：2026-06-28 21:41
+- 理由：`StudioSession` 內部 `await self._broadcast_sink(ev)`，同步 callback 首次廣播即 TypeError
+- 否決方案：`lambda e: None`（高工確認會炸）
+
+## bench runner 顯式傳 `experts=build_fake_experts()` / `critics=build_fake_critics()` 給 `StudioSession`，不依賴 `config.OFFLINE_MODE` 自動切換
+- 時間：2026-06-28 21:41
+- 理由：高工確認 OFFLINE_MODE 只影響外層 WebSocket 路徑注入，`_get_experts()` 仍建真 provider
+- 否決方案：只 `setattr(config, "OFFLINE_MODE", True)`（不可靠，走真 provider）
+
+## Fixture schema 四欄位 `task_id(str)` / `requirement(str)` / `expected_completed(bool)` / `expected_event_types(list[str])`
+- 時間：2026-06-28 21:41
+
+## BenchResult 五欄位 `task_id` / `success` / `duration_s` / `iterations`（expert_message 事件計數）/ `tokens`（fake_experts 下填 0，欄位保留供 M3 擴展）
+- 時間：2026-06-28 21:41
+
+## `flow.compare_bench_runs(baseline, post)` 先驗 task_id 集合一致；不一致回 `("regress", "fixture 集漂移：task_id 集合不符")`；baseline 為空回 `("neutral", "baseline 為空，無法對比")`；post success_rate < baseline 任何下降回 `regress`
+- 時間：2026-06-28 21:41
+- 理由：先驗 task_id 才能防 fixture 漂移被誤判為進步或退步
+- 否決方案：只比 success_rate 不驗 task_id 一致性
+
+## baseline bench 串接點放在 `run_one_task()` 的 `_prepare_clone()` 後、`StudioSession.run()` 前；post bench 放在 `deploy.redeploy()` 成功後立即
+- 時間：2026-06-28 21:41
+
+## `redeploy()` 前讀 `git rev-parse HEAD` 取 `pre_deploy_sha`（即將成為 last_good）；post bench regress 時先驗 `HEAD == new_merge_head`（本輪合入 SHA）再 rollback；不符則跳過 rollback 並寫 audit 說明「HEAD 已被新部署替換，跳過 rollback」
+- 時間：2026-06-28 21:41
+- 理由：部署鎖在 `redeploy()` 函式內釋放，post bench 期間鎖已放，另一個 deploy 可能進來；rollback 前驗 HEAD 避免誤回滾新 deploy
+- 否決方案：直接 rollback 不驗 HEAD（竟態下誤殺新部署）
+
+## audit.jsonl 路徑 `AUTOPILOT_STATE_DIR / "audit.jsonl"`，append-only，欄位 `ts / task_title / judge / baseline_rate / post_rate / detail / skipped_rollback(bool)`
+- 時間：2026-06-28 21:41
+
+## `GET /api/bench/latest` 掛 `require_auth`，與 `/api/metrics` 一致
+- 時間：2026-06-28 21:41
+- 理由：audit 含 task_title/detail，不應裸露
+- 否決方案：無 auth（高工指出）
+
+## 不動 `config.py`/`publisher.py` 公開介面；deploy.py 只讀 `redeploy()` 回傳值，不改其簽名
+- 時間：2026-06-28 21:41
+
+## 測試檔 `tests/autopilot/test_improvement_bench.py`（bench 串接 + regress→rollback 反向斷言）與 `tests/test_flow_bench.py`（compare 純函式三向 + 黑樣本）；兩份皆 `async def`
+- 時間：2026-06-28 21:41
+
+## pre-flight 重綁 hook 點置於 orchestrator._run() 的 _get_experts() 後、LaneContext 建立前；對每個 ROSTER 成員呼叫 _pick_provider()，若回傳 provider 與 effective_provider(role) 不同，立即以 make_expert(role, session_id, cwd, provider=alt) 重建該 expert 物件並替換 experts dict 對應項。
+- 時間：2026-06-28 23:32
+- 理由：expert 物件在 _build_experts 時已靜態綁定 provider；只改 map 不重建物件，speak 仍走舊 provider，重綁形同虛設。
+- 否決方案：僅更新 _recruit_providers / role_provider_map 而不重建 expert——高工指摘「UI 顯示已改綁，實際仍走舊 provider」，否決。
+
+## 使用者意圖護欄在 _pick_provider() 開頭實作：config.role_provider(role.key) 非空時，不論 provider_hint 與 quota 狀態，直接 early-return 使用者明示 provider，後續所有重綁邏輯完全跳過。
+- 時間：2026-06-28 23:32
+- 理由：使用者意圖優先於 PM hint 與系統自動優化；混用時若未明確定義優先序，半年後維護者無從判斷。
+- 否決方案：provider_hint 優先於 TI_PROVIDER_<ROLE> 覆寫——否決，PM hint 屬系統建議，不應壓過使用者明示。
+
+## 優先序明確為「TI_PROVIDER_<ROLE> 非空 > PM provider_hint > effective_provider(role) > 額度感知重綁」；測試用黑樣本驗證：TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex。
+- 時間：2026-06-28 23:32
+
+## _pick_provider() 維持同步函式，只返回 provider string；廣播 provider_constrained 事件與 append audit 的 async 邏輯移到 async caller（pre-flight loop 與 _recruit()），統一 await _handle_all_constrained(role_key, from_prov, snap)。
+- 時間：2026-06-28 23:32
+- 理由：不改 _pick_provider 同步簽名可避免牽動所有既有 callsite；async 副作用集中在 caller 層，邊界清楚。
+- 否決方案：將 _pick_provider 改為 async——會牽動所有 callsite（recruit / pre-flight loop），增量風險高於效益。
+
+## _handle_all_constrained(role_key, from_prov, snap) 為 async 私有方法，作：①await broadcast(StudioEvent(type=EventType.PROVIDER_CONSTRAINED, ...))；②try/except 吞所有 IO 例外並 log.warning 後 append audit.jsonl；③不 raise、不 sleep、不設排程。
+- 時間：2026-06-28 23:32
+- 理由：session 不能因審計檔目錄不存在或權限問題掛掉；audit 屬可觀測性，非核心路徑。
+
+## events.py 新增 EventType.PROVIDER_CONSTRAINED = "provider_constrained" 到 EventType enum；不加前端 handleEvent() 處理（本輪後端邏輯為主）；JSONL 自動留存供 P2 儀表板。
+- 時間：2026-06-28 23:32
+- 否決方案：用 Literal 聯集替換 enum——現況已是 enum，不必要重構。
+
+## audit append 在 _handle_all_constrained 中先確保 AUTOPILOT_STATE_DIR 存在（mkdir parents=True, exist_ok=True），再 open("a") append JSON；整段包 try/except OSError 並 log.warning，確保 IO 失敗不中斷 session。
+- 時間：2026-06-28 23:32
+
+## pre-flight 重綁迴圈只對 self._experts 非 None 時執行，不強制重建 _experts；若測試已注入 stub experts，_experts 為 stub 物件時也對每個 stub 角色過一遍 _pick_provider，但只有 isinstance(expert, ExpertLike) 且 provider 屬性可覆寫時才替換——保護既有測試不因重建邏輯破壞 stub。
+- 時間：2026-06-28 23:32
+- 理由：工程師指摘「小心測試注入的 self._experts stub 不要被無條件重建破壞」。
+
+## provider_quota.py / config.py / make_expert / redeploy 公開簽名全不動；所有新邏輯以私有方法加在 orchestrator.py；_refresh_quota_snapshot() 呼叫時機從「動態 stage 開頭」提前至 _run() 入口，原動態 stage 呼叫保留（二次刷新確保長場次額度新鮮）。
+- 時間：2026-06-28 23:32
+
+## 測試新增 tests/autopilot/test_provider_routing_contract.py，含六黑白樣本＋「TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex」優先序樣本；並斷言 provider_constrained 事件 payload 與 audit 欄位一致（為 P2 儀表板預留接縫）；既有 10 個 provider_quota 測試與離線 e2e 不允許回歸。
+- 時間：2026-06-28 23:32
+
+## 在 `config.py` 的 `role_provider()` 後（line 102 後）新增 `is_user_explicit_provider(key: str) -> bool`，實作為 `return bool(role_provider(key))`，含繁中 docstring 說明「以 `role_provider` 為單一真值來源；值不在 PROVIDERS 白名單時 `role_provider` 已回空字串，helper 同樣回 False，不另寫白名單」
+- 時間：2026-06-29 00:49
+- 理由：布林語意獨立具名後，`_explicit_provider_overrides` 與 `_pick_provider` 的「是否使用者明示覆寫」意圖可讀；之後 autopilot/improver 要判斷同事也能直接 import，不必看懂 `bool(role_provider(...))`；白名單邏輯仍封在 `role_provider` 不外洩
+- 否決方案：把 helper 放 `orchestrator.py` 私有 — orchestrator 是有狀態執行層，純設定語意的 helper 不該藏在裡面；否決把 `effective_provider(role)` 的 `or config.PROVIDER` 邏輯也合進 helper — 會混淆「使用者意圖」與「執行期兜底」兩個不同層次
+
+## `_pick_provider`（line 1503-1505）改寫為 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)`，行為與原本 `explicit = ...; if explicit: return explicit` 完全等價，value 取得路徑不變
+- 時間：2026-06-29 00:49
+
+## `_explicit_provider_overrides`（line 1397-1399）dict comprehension 改為 `k: config.role_provider(ex.role.key) for ... if config.is_user_explicit_provider(ex.role.key)`，消除同一 key 兩次呼叫 `role_provider` 的重複
+- 時間：2026-06-29 00:49
+- 理由：兩次呼叫雖然是純函式無副作用，但讀者看到 value 和 filter 邏輯是同一表達式時容易懷疑「filter 和 value 是否完全對應」；改用 helper 後意圖明確
+
+## `_apply_preflight_rebind` 沿用現有的 `make_expert(..., provider=to_provider)` 重建路徑，不改成原地覆寫 `.provider` 屬性
+- 時間：2026-06-29 00:49
+- 理由：工程師與高工一致指出真 expert 把 provider 綁在內部 client，原地改屬性顯示值與執行值會分離，是隱性 bug；重建路徑已有測試 `test_apply_preflight_rebind_uses_injected_factory` 覆蓋，不回歸
+
+## 新增 `tests/test_user_explicit_provider_contract.py`，只放 helper 純合約測試（白：`TI_PROVIDER_engineer=codex` → `True`；`pm` 無覆寫 → `False`；黑：`TI_PROVIDER_engineer=BogusProvider` → `False`）；**不**在此檔重覆 routing E2E
+- 時間：2026-06-29 00:49
+- 理由：helper 合約測試與 routing 行為測試關注點不同，分開可獨立失敗；但重複已有的 `test_explicit_role_provider_is_not_rebound_or_reported` 等 E2E 只增維護成本，應在既有 `test_provider_routing_contract.py` 補缺口即可
+- 否決方案：把 helper 樣本全部塞進 `tests/autopilot/test_provider_routing_contract.py` — helper 是 `config` 層的 unit contract，概念上不屬於 autopilot 子目錄，獨立檔案讓 `ruff / pytest -k` 按名稱定位更乾淨
+
+## `config.reload()` 不需修改，現有 line 961 `ROLE_PROVIDERS = _role_providers()` 已在 reload 時重設，測試 monkeypatch 環境變數後呼叫 `config.reload()` 即可拿到正確值，helper 讀的是模組層 `ROLE_PROVIDERS`，同步生效
+- 時間：2026-06-29 00:49
+
+## `_handle_all_constrained`、`provider_constrained` 廣播、audit.jsonl 寫入，以及 `flow.plan_preflight_rebind` 介面，本輪一律不動；本次改動邊界是「config helper 新增 + 兩處呼叫點替換 + helper 合約測試」，不碰 preflight/rebind 流程
+- 時間：2026-06-29 00:49
+
+## **現況為已落地**——`config.is_user_explicit_provider`、`_pick_provider` early-return、`_preflight_rebind_experts`、`_apply_preflight_rebind`、`_explicit_provider_overrides`、`_handle_all_constrained`、`flow.plan_preflight_rebind`、`events.EventType.PROVIDER_CONSTRAINED` 均已存在於 workspace；全 13 個 `test_provider_preflight_routing_qa.py` 測試通過，本輪任務定位為「驗收結案 + 假綠排除」，不新增生產碼。
+- 時間：2026-06-29 01:23
+- 理由：設計文件與 `/opt/ti/` 主目錄對比（未含 workspace 子目錄），造成「尚未實作」誤判；正確基準是 `/opt/ti/workspaces/project-ea851408a641/`。
+
+## **明示覆寫角色受限時，不發 `provider_constrained` 事件、不寫 audit**——此為明確產品語意，非 early-return 偶然副作用。
+- 時間：2026-06-29 01:23
+- 理由：使用者透過 `TI_PROVIDER_<KEY>=X` 顯式選定 provider，等同聲明「我知道這個選擇，不需要系統干預或警告」；若仍發事件，儀表板會被使用者自願接受的受限噪音淹沒，降低事件信噪比。
+- 否決方案：「明示覆寫仍發事件但加 reason=user_explicit 欄位」——增加事件語意複雜度，且 P2 儀表板尚未定義如何區分展示，過早承諾介面。
+
+## **驗收指標改為「雙軌黑樣本各守一個合約」**，不依賴「13 / 6 / 3 測」數字契約——`_pick_provider` early-return 守「選哪個 provider」：`tests/core/test_provider_preflight_routing_qa.py::test_pick_provider_explicit_override_wins_under_all_constrained` 以 PM hint「claude」+ 全受限 + 明示 codex 確認回傳 codex 且 `_provider_constrained_pending` 不含 engineer；`_explicit_provider_overrides` 過濾守「事件/audit 名單」：`tests/core/test_provider_preflight_routing_qa.py::test_explicit_override_under_all_constrained_emits_no_event_or_audit` 確認 `provider_constrained` 事件集合為 `{"pm", "qa"}`、audit 角色集合同上，engineer 缺一不可。
+- 時間：2026-06-29 01:23
+- 理由：數字契約隨補白樣本浮動，核心行為合約才是不變式。
+
+## **假綠排除方法改為雙軌各別破壞**——破壞 A：暫時移除 `_pick_provider` 第一行 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)`，只要求 `test_pick_provider_explicit_override_wins_under_all_constrained` 轉 FAIL（prov 回 "claude" 而非 "codex"；pending marker 被設）；破壞 B：暫時破壞 `_explicit_provider_overrides` 的 `if config.is_user_explicit_provider(ex.role.key)` 過濾，只要求 `test_explicit_override_under_all_constrained_emits_no_event_or_audit` 轉 FAIL（engineer 進入 provider_constrained/audit 名單）。各別還原後兩黑樣本皆 PASS，工作樹 `git status` 無殘留。
+- 時間：2026-06-29 01:23；修正：2026-06-29 雙軌驗收模型取代單一 mutation 模型。
+- 第 3 輪實測：破壞 A 後 `_pick_provider` 黑樣本 FAIL；還原後 PASS。破壞 B 後 pre-flight event/audit 黑樣本 FAIL；還原後 PASS。完整相關驗收 6 檔 `56 passed`。
+- 否決方案：要求「移除 `_pick_provider` early-return 後兩黑樣本都紅」——pre-flight 黑樣本不走 `_pick_provider`，此驗收條件本身錯誤，會造成恆綠樣本與反覆卡關。
+
+## **`_explicit_provider_overrides` 以 `is_user_explicit_provider` 過濾**——dict comprehension 為 `{k: config.role_provider(ex.role.key) for k, ex in experts.items() if config.is_user_explicit_provider(ex.role.key)}`；空字串角色（未設 env）不進 overrides，避免「所有角色都被視為明示鎖定」永遠關閉自動重綁。
+- 時間：2026-06-29 01:23
+
+## **`plan_preflight_rebind(bindings, snap, explicit_overrides)` 介面不變**——純函式在 `flow.py`，接收三個參數，遇到 `role_key in explicit_overrides` 或 `provider == ""` 或 snap 無此 provider 時跳過不重綁；決策與副作用邊界維持 `flow.py`（無狀態）vs `orchestrator.py`（有副作用）既有架構。
+- 時間：2026-06-29 01:23
+
+## **離線 e2e 三個失敗標注為「環境限制」不列入本輪驗收**——根因是 `/opt/ti/lessons.lock` 寫入沙箱 read-only 磁碟，CI 正常環境無此限制；完整驗收指令為 `tests/core/test_provider_quota_helpers.py tests/settings/test_provider_quota.py tests/test_user_explicit_provider_contract.py tests/core/test_provider_preflight_routing_qa.py tests/autopilot/test_provider_routing_contract.py`。
+- 時間：2026-06-29 01:23
+## 截圖驅動選型——純 urllib W3C WebDriver HTTP，零新增依賴，不裝 selenium/playwright
+- 時間：2026-06-29 02:25
+- 理由：venv 無 selenium；chromedriver 已存在；stdlib urllib 足夠驅動 W3C JSON Wire Protocol
+- 否決方案：selenium（需 pip install，違反「不新增 runtime 依賴」）
+
+## 腳本單一入口 scripts/capture_metrics.py，分五段：seed → start_server → wait_ready → webdriver_session → assert+screenshot+cleanup
+- 時間：2026-06-29 02:25
+- 理由：單一腳本讓驗收指令一條執行完畢，不需協調多個 process
+
+## Server 啟動環境變數固定為 TI_PORT=8799 TI_OFFLINE=1 TI_HOST=127.0.0.1，無 TI_ACCESS_PASSWORD（空值門禁放行）
+- 時間：2026-06-29 02:25
+- 理由：TI_HOST=127.0.0.1 確保 /api/metrics 不暴露到非本機介面；8799 避免衝撞預設 8765
+- 否決方案：不設 TI_HOST（空值 Password 下 metrics 端點會暴露在 0.0.0.0）
+
+## Health poll 端點為 /api/health（非 /health），最多 15 秒 / 0.5s 間隔，超時 exit 1
+- 時間：2026-06-29 02:25
+- 理由：工程師與高工雙重確認 routes.py 實作路徑為 /api/health
+
+## History seeding 透過匯入 studio.history 模組內部函式完成（不手寫最小 JSON），以程式碼為 schema 唯一真相；若無可直接呼叫的 write API 則 fallback 到複製 history.py 的 meta dataclass 結構再序列化，並在腳本開頭 assert 欄位名稱仍與 _aggregate_scorecard 消費端一致
+- 時間：2026-06-29 02:25
+- 理由：手寫最小 JSON 有 schema 漂移風險——_aggregate_scorecard 改欄位後 fixture 靜默失效
+- 否決方案：手寫最小 meta JSON（漂移風險）；跑真實 offline session（慢、有 race、腳本複雜度倍增）
+
+## History fixture 路徑從 config.HISTORY_ROOT（env TI_HISTORY_ROOT）讀取，不硬寫路徑
+- 時間：2026-06-29 02:25
+- 理由：config.py 為 SSOT，硬寫路徑會在改設定時靜默寫錯位置
+
+## 開面板走 JS execute script（window.openMetrics()），不模擬 DOM 點擊
+- 時間：2026-06-29 02:25
+- 理由：openMetrics 在 app.js 為全域函式，比找按鈕位置穩；但文件明示這是白箱 UI 驗證，不是使用者互動 E2E
+
+## 最小斷言集三條：① #metricsPanel class 不含 hidden ② #metricsBody innerText 含「活躍場次」③ #metricsBody innerText 含「記分卡」；三條全通才 exit 0，任一不符即印 FAIL 並 exit 1
+- 時間：2026-06-29 02:25
+
+## Console log 掃描——建立 WebDriver session 時明確帶入 Chrome logging capability（loggingPrefs: {browser: ALL}）；取到 log 且有 SEVERE 條目印 WARN；若 /session/{id}/log/browser 回 404 或空，報告寫「瀏覽器 log 不可取得（capability 未支援）」而非「無錯誤」；兩種情況均不阻斷 exit 0
+- 時間：2026-06-29 02:25
+- 理由：高工指出不設 capability 時 log endpoint 可能靜默回空，混淆「無錯誤」與「未量測」
+
+## PNG 僅在 docs/screenshots/metrics_panel.png 不存在時寫入；已存在時印 WARN 並提示加 --overwrite 覆寫，避免每次執行造成二進位 churn
+- 時間：2026-06-29 02:25
+- 理由：手動驗收截圖不應自動覆寫；CI 若未來整合需明確 flag
+
+## docs/screenshots/metrics_panel.png 進 repo（非 CI artifact，一次性手動驗收截圖）
+- 時間：2026-06-29 02:25
+- 否決方案：.gitignore 排除（reviewer 無法直接看到眼見驗證結果）
+
+## 假綠排除——腳本支援 --skip-open-panel flag，跳過 openMetrics() 呼叫後斷言①必含 hidden → exit 1；驗收報告記錄此反向實跑結果（含 exit code）
+- 時間：2026-06-29 02:25
+
+## 腳本 finally 段保證：DELETE WebDriver session、SIGTERM server process、等最多 5 秒確認 8799 port 釋放，確保無殘留 process
+- 時間：2026-06-29 02:25
+
+## docs/VERIFY_metrics_panel.md 格式——含執行指令、exit code、截圖路徑、三條斷言各別 PASS/FAIL、console log 狀態（取到/不可取得/有 SEVERE）、假綠排除實跑記錄（--skip-open-panel 的 exit code 與斷言輸出）
+- 時間：2026-06-29 02:25
+
+## 新建 studio/notify.py，零新依賴，stdlib urllib 實作 webhook sink
+- 時間：2026-07-20 04:20
+- 理由：workspace 無任何通知模組；urllib 零依賴且與 CLAUDE.md「不隨意新增依賴」一致
+- 否決方案：aiosmtplib（新依賴）、email sink（SMTP TLS 雙模式複雜度 > 效益）
+
+## notify.py 公開介面為 send_bg(kind, title, **extra)，daemon thread 非同步送出
+- 時間：2026-07-20 04:20
+- 理由：autopilot 主迴圈是 async；daemon thread 保證呼叫端零阻塞、行程結束不等未送通知
+- 否決方案：直接 await（阻塞主迴圈）、asyncio.create_task（需在同 event loop 內且複雜化呼叫）
+
+## SEVERITY 分級表登記 task_failed/loop_task_error/deploy_failed 為 page，gate_failure 為 digest
+- 時間：2026-07-20 04:20
+- 理由：gate_failure 是重試過程中的常態訊號（重試可能通過），推播出去是噪音；只有最終放棄才推
+- 否決方案：全部 page（噪音過多）；全部 digest（失去即時告警意義）
+
+## send_bg 無 sink 設定時 early return，零網路呼叫
+- 時間：2026-07-20 04:20
+- 理由：TI_ALERT_WEBHOOK 空時任何掛載點都不應有副作用；確保「未設定 = 無回歸」
+- 否決方案：送失敗再吞（多一次 socket 建立成本）
+
+## config.py 新增 ALERT_WEBHOOK，頂層與 reload() 兩處同步定義
+- 時間：2026-07-20 04:20
+- 理由：專案鐵則——config 旋鈕必須頂層與 reload() 兩處同步，否則 reload 後不生效
+- 否決方案：只頂層不加 reload()（熱更新失效）；沿用 TI_NOTIFY_* 命名（任務明確要求 TI_ALERT_*）
+
+## _deliver() 讀 config.ALERT_WEBHOOK，不讀舊鍵
+- 時間：2026-07-20 04:20
+- 理由：workspace 本無舊鍵，無需向後相容；直接讀新鍵，無間接層
+
+## broadcast(891-892) 本體不改；notify 以 send_bg 明確掛在三個失敗路徑
+- 時間：2026-07-20 04:20
+- 理由：broadcast 是每個事件都呼叫的通用 hook，在此過濾會讓 notify 判斷與事件型別耦合；
+- 否決方案：在 broadcast 內部依 event.type 過濾推播（增加 broadcast 的職責、難以 monkeypatch 測試）
+
+## _handle_gate_failure else 分支（最終放棄，標 failed）補 send_bg("task_failed",...)；重試分支不推
+- 時間：2026-07-20 04:20
+- 理由：重試中推播是噪音且可能誤報；放棄才是紅色事件需人介入
+
+## deploy 失敗(982) 補 send_bg("deploy_failed",...) 於 _pause() 之前
+- 時間：2026-07-20 04:20
+- 理由：_pause() 是人工介入訊號，需同步推播讓人知道
+
+## 主迴圈例外(1048) 補 send_bg("loop_task_error", task_id=task.get("id",""), ...)
+- 時間：2026-07-20 04:20
+- 理由：task 在此已確定存在（next_pending 非 None 才往下走），task.get("id","") 安全取值
+- 否決方案：locals().get("task_id","")（不必要，task 已明確 bound）
+
+## tests/test_notify.py 三條斷言：空config零urllib呼叫、有config觸發POST、URL不出現在 log
+- 時間：2026-07-20 04:20
+- 理由：覆蓋核心合約：無設定零副作用、有設定真的送、憑證不洩漏
+- 否決方案：monkeypatch config.ALERT_WEBHOOK 直接改全域（易與 reload 機制混淆）；測試用 patch + env var 方式
+
+## autopilot 紅色路徑測試 monkeypatch notify.send_bg 計數，走最短失敗路徑，不拆主流程
+- 時間：2026-07-20 04:20
+- 理由：工程師明確提醒：「不要為測試製造新抽象」；monkeypatch 是最小侵入驗證
+
+## TI_ALERT_WEBHOOK 未設時整個系統行為與現況完全一致（無回歸）
+- 時間：2026-07-20 04:20
+- 理由：所有掛載點均在 send_bg early return 保護下；新增呼叫不影響 None-config 路徑
+
+## 改動目標為 `/opt/ti/studio/autopilot.py` 與 `/opt/ti/studio/config.py`（核心 repo），非 workspace 副本。
+- 時間：2026-07-20 05:08
+- 理由：Ti 核心框架改動依雙軌路由規則走核心 repo，workspace 是專案用途。
+
+## 新增 `AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`（`TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`，預設 5，0 停用）至 `config.py` 頂層宣告與 `reload()` 兩處，與所有現有旋鈕格式一致。
+- 時間：2026-07-20 05:08
+
+## 在 `_main_loop` 每輪迭代的 try/except 區塊**之前**，宣告區域變數 `_infra_transient = False`（每輪重置）。
+- 時間：2026-07-20 05:08
+- 理由：必須是區域變數，不可為模組全域——否則上輪的 `True` 殘留會誤排除下輪的真 failed，直接導致漏計 bug。
+- 否決方案：以模組全域變數儲存旗標——跨輪殘留語意不正確。
+
+## 只在 `AutopilotTaskStalled` exception handler 內設 `_infra_transient = True`；`TimeoutError` 分支**不設旗標**。
+- 時間：2026-07-20 05:08
+- 理由：`TimeoutError` 落 `_handle_task_timeout` → status 為 `parked`（非 `failed`），事後查 status 自然排除，旗標冗餘。`AutopilotTaskStalled` 雖寫 `status=failed`，但屬 infra 自癒（triage 自動重試），必須明確排除。
+- 否決方案：timeout 分支也設旗標——製造「timeout==failed 需排除」的錯誤讀法，且防禦性程式碼應有明確理由才加。
+
+## try/except 區塊結束後、`_task_running = False` 之後，查 `(backlog.get(task["id"]) or {}).get("status")` 更新全域計數器：`failed` 且 `not _infra_transient` → 計數 `+1`；`done` 或 `merging` → 計數歸零並重置通知旗標；其餘（`pending`/`parked`/`None`）→ 不動計數。含 `or {}` 的 None-guard 防任務歸檔後 `["status"]` 崩潰。
+- 時間：2026-07-20 05:08
+
+## 模組全域宣告 `_consecutive_fail_count: int = 0` 與 `_consecutive_fail_notified: bool = False`，位置仿 `_slo_brake_notified_day`（約 1820 行）。行程重啟歸零可容忍。
+- 時間：2026-07-20 05:08
+- 否決方案：持久化計數——增加子系統複雜度；重啟歸零是合理的「重設視窗」。
+
+## 達門檻時：`_pause(f"連續 {n} 次任務 failed，SLO 煞車暫停待人工檢視")` + `notify.send_bg("consecutive_fail_pause", ...)`；`_consecutive_fail_notified` 去重確保同一連續失敗期只發一次通知；計數歸零時同步重置 `_consecutive_fail_notified = False`。
+- 時間：2026-07-20 05:08
+
+## **測試必含以下四個精確樣本**（寫入 `tests/autopilot/test_consecutive_fail_brake.py`）：
+- 時間：2026-07-20 05:08
+- 否決方案：只寫泛型「infra 黑樣本」——無法證明 stalled 路徑的判別力（歷次教訓：自證對應 + 排除假綠）。
+
+## **不改 `budget_sleep` 為 `_pause`**。
+- 時間：2026-07-20 05:08
+- 理由：`budget_sleep`（UTC 跨日自癒）語意對應「速率上限，明天自動重來」；`_pause`（需人工 `rm` 才恢復）對應「真問題需診斷」。兩機制自然分流——budget 超標≠失控，每天要人手動恢復比睡到午夜更差。PM 的翻案前提（誤以為 `budget_sleep` 不存在）已不成立。
+- 否決方案：budget 超標改走 `_pause`——語意過強，且使用者每日需人工介入才能恢復，實際上是退化。
+
+## Task #2 縮減為「補 notify 通知 + 修 CLAUDE.md」：在 `autopilot.py:4647` `_write_status("budget_sleep", ...)` 之後，以 `_budget_notified_day` 行程記憶體去重，插入 `notify.send_bg("daily_pr_budget_sleep", f"已達每日 PR 預算 {config.AUTOPILOT_DAILY_PR_BUDGET}，UTC 跨日自動恢復", ...)`。
+- 時間：2026-07-20 05:08
+
+## 新增模組全域 `_budget_notified_day: tuple | None = None`，位置、去重邏輯與 `_slo_brake_notified_day` 完全對稱（每 UTC 日一次）。
+- 時間：2026-07-20 05:08
+
+## `AUTOPILOT_DAILY_PR_BUDGET` **不新增至 config.py**——已在 :844/:1558 兩處存在，本輪不動。
+- 時間：2026-07-20 05:08
+
+## 回寫 CLAUDE.md **兩處**（`/opt/ti/CLAUDE.md` 與 `/opt/ti/workspaces/project-ea851408a641/CLAUDE.md`）：將 `AUTOPILOT_DAILY_PR_BUDGET 每日 PR 成本熔斷` 從「移交待辦」移出，補記「已實作，語意為 `budget_sleep`（UTC 跨日自癒）而非 `_pause`（人工恢復），計數讀 `audit.jsonl` 持久化」。
+- 時間：2026-07-20 05:08
+
+## **測試含以下兩個樣本**（寫入 `tests/autopilot/test_budget_brake.py`）：
+- 時間：2026-07-20 05:08
+
+## 範圍鎖定 webhook-only，本輪只開 `NOTIFY_WEBHOOK` 一個 config 鍵
+- 時間：2026-07-20 07:19
+- 理由：單一 sink 已達「紅色事件抵達人工」；email/Telegram 需外部憑證管理，複雜度不對等
+- 否決方案：同時實作 email/Telegram sink——本輪 scope 過大，憑證管理問題留後
+
+## `config.py` 只新增 `NOTIFY_WEBHOOK`（`TI_NOTIFY_WEBHOOK`，預設空字串），三段同步（頂層宣告、`reload() global`、`reload()` 賦值）
+- 時間：2026-07-20 07:19
+- 理由：唯一可調旋鈕是「要不要推」，不是「等多久」
+- 否決方案：同時新增 `NOTIFY_TIMEOUT` 進 config——與宣稱「對照範式不自創」自我矛盾；範式本身用模組常數、不進 config；多鍵三段同步是永久維護債，實益為零（無 settings.py 接線）
+
+## timeout 用模組常數 `_TIMEOUT_S = 10.0` 置於 `notify.py` 頂層，不進 config
+- 時間：2026-07-20 07:19
+- 理由：與 `/opt/ti/studio/notify.py` line 37 範式完全對齊；真要可調另案，不在本輪
+
+## `notify.py` 新增 `_post_webhook(url: str, data: bytes) -> None`，urllib POST JSON，try/except 全吞任何例外，`log.debug` 只帶 event 名稱不含 URL
+- 時間：2026-07-20 07:19
+- 理由：webhook URL 可能含 secret（query param token），不得出現在 log
+
+## `notify.py` 新增 `_deliver(event: str, message: str, extra: dict) -> None`，組 payload `{"source":"ti","event":...,"message":...,...extra}` 後呼叫 `_post_webhook`；docstring 明記「extra 不得挾帶 log 全文或憑證」
+- 時間：2026-07-20 07:19
+- 否決方案：直接在 `send_bg` 裡組 payload 發送——抽出 `_deliver` 便於測試與後續多 sink 擴充
+
+## `send_bg(event, message, **payload)` 簽名不變（相容現有兩處 `autopilot.py` 呼叫端）；webhook 空時 early-return（零網路零 thread）；非空時 `threading.Thread(target=_deliver, daemon=True).start()`
+- 時間：2026-07-20 07:19
+- 理由：daemon=True 確保行程退出不被未送完通知卡住
+
+## payload 欄位命名統一用 `event` / `message`，不用範式的 `kind` / `title`
+- 時間：2026-07-20 07:19
+- 理由：工作目錄呼叫端與現有 `send_bg` 合約皆用 `event/message`；混用會造成消費端解析錯亂
+- 否決方案：改用 `kind/title` 對齊 `/opt/ti/studio/notify.py`——會 breaking 現有呼叫端，超出本輪範圍
+
+## 測試檔 `tests/autopilot/test_notify_webhook.py` 五條精確樣本（增至五條）
+- 時間：2026-07-20 07:19
+
+## 測試中 `threading.Thread` monkeypatch 為同步執行（呼叫 `target()` 再 return mock），不讓 daemon thread 帶來競態
+- 時間：2026-07-20 07:19
+- 理由：非同步 thread 下 `urlopen` 可能在 assert 前未執行，造成偶發假綠
+
+## 不新增任何第三方依賴，僅用 `urllib.request`、`threading`、`json`
+- 時間：2026-07-20 07:19
+
+## 跟進待辦（明列、不混入本輪）：email sink（SMTP）、Telegram sink、severity 分級、`send_bg` early-return 未來擴 sink 需同步更新判斷條件、`/opt/ti` 主版本 settings.py 接線
+- 時間：2026-07-20 07:19
 ## 本輪零改動原則——只做執行驗證，不寫新碼、不改介面、不補文件。
 - 時間：2026-07-04 01:32
 - 理由：基線已確認問題不存在；任何新改動都會讓「已完成」重新變成「待 CI 驗證」，成本高於收益。

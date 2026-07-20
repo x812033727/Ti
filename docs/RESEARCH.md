@@ -201,3 +201,438 @@ Sources: [Factual Self-Verification (Verify)](https://arxiv.org/pdf/2602.02018) 
 
 Sources: [GitHub Managing branch protection rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule) · [GitHub About status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks) · [GitHub Secret scanning](https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning) · [GitHub Webhook events](https://docs.github.com/en/webhooks/webhook-events-and-payloads) · [Self-Improving AI Agents (arXiv 2506.04612)](https://arxiv.org/abs/2506.04612) · [Continuous AI Systems (arXiv 2410.16576)](https://arxiv.org/abs/2410.16576) · [Karpathy: Software 2.0](https://karpathy.medium.com/software-2-0-c6417e8c1ba1)
 
+## 2026-06-28 21:34
+
+<think>
+架構文件讀完。幾個關鍵現況：
+
+1. **autopilot/publisher 已閉環**（上一輪調研已確認），有 pytest/lint/no-SDK 閘門
+2. **history.py** 已存 `成果記分卡`（任務輪數/退回原因/Demo 結果）到 meta，`/api/metrics` 跨場聚合成功率與近期趨勢
+3. **history.py / meta** 已可作為「基準資料」的儲存層
+4. **workspace 是 git 累積的**——這對「同組基準」很重要：可以 checkout 到 parent commit 跑 baseline
+5. **branch protection 設定** 已被外部保護
+
+關鍵缺口：
+- 「改良成效驗證」完全沒有——merge 即 done，沒有「自改後再跑同組基準，量化是否真的變強」
+- 既有的 history.py 是「單場 session 的結果摘要」，但**不是「同組基準在自改前 vs 自改後」的對照**
+- 沒有「可回滾」機制（雖然 deploy.rollback 已有，但沒串到「驗證不通過就回滾」的閉環）
+
+我已經有足夠的調研資料了。讓我整合輸出。
+
+主要發現（缺口已補）：
+1. **Karpathy autoresearch** 的核心設計：(a) 評測碼不可改、(b) 固定時間預算、(c) 單一 metric、(d) 保留 baseline
+2. **TDAD** 的三個機制：visible/hidden split、semantic mutation、spec evolution regression safety
+3. **RQGM** 的 epoch boundary 概念
+4. **GitHub branch protection** 已對齊最佳實踐（status checks、reviews、linear history）
+
+現有調研的引用問題：
+- 既有調研引用 `arXiv 2506.04612` 為 Self-Improving AI Agents 論文——但實際上是 "Perfecting Depth" 圖像論文
+- 既有調研引用 `arXiv 2410.16576` 為 Continuous AI Systems——但實際上是光學論文
+- 真正可能對應的：可能應該是 `arXiv 2506.04612`（已確認是圖像論文）——那麼自我改良的權威文獻引用錯了
+- 但這不是本輪的核心——本輪不需要重新校正既有調研
+
+本輪核心建議（要對齊 M2 範疇「改良成效驗證」）：
+1. **baseline suite + post-change suite**：固定一組 N 個 task fixture，每次 merge 前/後跑同一組，產出 diff
+2. **物理隔離評測碼**：把測試 fixture 放在 autopilot 不可改的位置（用 pinned git tag 或專屬 protected branch）
+3. **單一可量化的成功指標**（沿用 history.py 已有欄位，不重新定義）
+4. **epoch boundary**：每次自改週期固定 evaluation，跨週期才更新 fixture 集
+5. **失敗自動 rollback**：deploy 已有 rollback，但要串到「regress → rollback → notify」
+
+讓我輸出最終的調研結論。
+</think>
+
+調研夠了，整理輸出。
+
+---
+
+**重點**
+
+- 重點: 本輪「改良成效驗證」的關鍵設計權威是 Karpathy **autoresearch**——其設計與本缺口完美對齊：(a) **評測碼不可改**：`prepare.py`（含 evaluation utilities）明確「do not modify」，與 agent 可改的 `train.py` 物理隔離；(b) **固定時間預算**：5 分鐘 wall clock，無論改什麼（model size、batch size、architecture）都直接可比；(c) **單一 metric** `val_bpb`（vocab-size-independent，architecture-agnostic）；(d) **保留 baseline**：每次新實驗前先 checkout parent commit 跑同組 5 分鐘取基線；(e) 約 12 experiments/hour、可整夜無人值守（[karpathy/autoresearch README](https://github.com/karpathy/autoresearch)）。本專案 `_gate_tests` 跑 `python3 -m pytest -q` 已達 (b)(c)，缺 (a) 物理隔離 + (d) baseline 對照。
+
+- 重點: **TDAD 論文（Test-Driven AI Agent Definition, 2026）**直接命中「自改 agent 的 regression 安全」缺口：三個機制：(1) **visible/hidden test split**——編譯階段不給隱藏測試，防 agent 只學可見測試；(2) **semantic mutation testing**——post-compilation 用代理生成「似是而非的壞變體」，量測測試套件能否抓出；(3) **spec evolution scenarios**——量化需求變動時的 regression safety。實測發現 **演化後的 spec 編譯成功率只有 58%**，多數失敗的執行「通過所有可見測試只漏 1-2 個」——這是 self-referential 風險的鐵證：本專案「merge 即 done」正是同類漏洞（[arXiv 2603.08806 TDAD](https://arxiv.org/abs/2603.08806)）。
+
+- 重點: **Red Queen Gödel Machine (RQGM, 2026)** 提出「co-evolving agents and their evaluators」框架，核心洞見：**自改 agent 不能假設 evaluation 固定**——傳統自改方法假設 verifier/benchmark 為 stationary，這是 wrong abstraction。RQGM 對策：搜尋以 **epoch 組織、epoch 內 evaluation 固定、epoch 邊界才更新 utility**，使「self-improvement guarantees」得以在「objective 演化」下仍成立。實驗顯示加上「agent-as-a-judge code-review signal」後 test pass rate 提升、token 省 1.35–1.72×——多源 signal 比單一 verifier 更穩（[arXiv 2606.26294 RQGM](https://arxiv.org/abs/2606.26294)）。本專案對應：每次自改 PR merge 是一個 epoch 邊界、epoch 內 baseline 鎖定、跨 epoch 才允許 fixture 集演化。
+
+- 重點: 既有調研引用 `arXiv 2506.04612`（Self-Improving AI Agents）與 `arXiv 2410.16576`（Continuous AI Systems）**兩個 ID 都不對**——實查分別是「Perfecting Depth」電腦視覺論文與「Stabilizing optical solitons」光學論文，與 self-improving AI 無關（[arXiv 2506.04612](https://arxiv.org/abs/2506.04612)、[arXiv 2410.16576](https://arxiv.org/abs/2410.16576)）。本輪不重查此二主題，但建議事後校正 RESEARCH.md 的引用連結。
+
+- 重點: **現況盤點**——`history.py` 已存「成果記分卡」（任務輪數/退回原因/Demo 結果）進 `.meta.json`、`/api/metrics` 已跨場聚合成功率與近期趨勢——這是**單場結果**，但**不是「同組基準、自改前 vs 自改後」的對照**；`autopilot._commit_push_merge` 已串完 lint/collect/test 三道閘門才 merge；`deploy.redeploy` 失敗會自動 `rollback` 到 `last_good`——**但「regress → rollback → notify」閉環未串**；`studio/backlog.py` 已有 route_core_changes 與 source/state_dir 分流——可作為「基準資料」儲存層。
+
+- 重點: **GitHub branch protection 已對齊最佳實踐**——`Require pull request before merging` + `Require status checks to pass before merging` + `Require linear history` 是外部不可繞過的最後底線；本專案 CI 走 `actions-runs/conclusion=failure` 即擋合併。autopilot 用 `PUBLISH_BYPASS_INFRA_CI` 走特例路徑需謹慎守住只在 `_merge_pr` 內繞過而非跳過整個 PR（[About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)）。
+
+- 重點: TDAD 實驗的關鍵警示：「演化後的 spec」失敗的執行**多數通過所有可見測試、只漏 1-2 個**——意味著**僅靠「既有測試全綠」無法保證「沒退步」**，必須有「跨場次同組基準」做對照。autopilot 現有 `_gate_tests` 跑 `python3 -m pytest -q` 屬「可見測試」，**「不變爛」半閉環已保證；「變強」需 M2 補同組基準對照**——這正是本輪任務定義（[arXiv 2603.08806 TDAD](https://arxiv.org/abs/2603.08806)）。
+
+**建議**
+
+- 建議: **M2 最划算的起手（沿用 autoresearch 模式）**：把「基準任務集」做成**獨立保護的 fixture**——例如新增 `tests/fixtures/improvement_bench/` 子目錄（**置於 git protected branch 或 pinned tag**，autopilot 物理上不可改），內含 N 個代表性 task（每個 fixture ＝ 一段 requirement + 期望產出 hash + 期望 demo 結果 + 期望 pytest subset）。baseline 與 post-change 各自跑同一組 fixture 產出 `{"task_id", "success", "duration_s", "tokens", "iterations"}` JSONL 對照 diff——沿用 `autopilot/audit.jsonl` 同樣 append-only 慣例、零新依賴。fixture 集的「演化」必須走 epoch 邊界（每次合 MR 才允許加 fixture），對齊 RQGM 結論。
+
+- 建議: **沿用 history.py 既有記分卡欄位**做基準資料，不重新定義 metric：`history.session_meta` 已有「任務輪數 / 退回原因 / Demo 結果」三鍵（ARCHITECTURE.md），把這三鍵在 baseline 與 post-change 兩個 epoch 各取一次、存成 side-by-side diff，就是「量化是否真的變強」——避免重造輪子、保留既有 `/api/metrics` 跨場聚合慣例。
+
+- 建議: **串起「regress → rollback → notify」閉環**：`deploy.redeploy` 已有「失敗自動 rollback 到 last_good」（既有調研已確認），但**還沒串「驗證不通過 → 自動觸發」**——本輪只需在 `deploy` 後跑一次同組 benchmark（複用上一條建議的 fixture），diff 為負（success rate 下降 / tokens 上升）就 `touch AUTOPILOT_PAUSED` 並寫 `autopilot/audit.jsonl`，對齊上一輪調研的「成本熔斷＋審計日誌」基礎設施——純增量、不破壞既有合約。
+
+- 建議: **守門「autopilot 自己改不了基準集」**——兩條路徑擇一或並行：(a) **物理隔離**：把 `tests/fixtures/improvement_bench/` 放到獨立 GitHub branch `improvement-bench-protected`、加 branch protection（admin 不可繞過的 require reviews），autopilot clone `CORE_REPO` 時不 fetch 該 branch、跑基準時另以 `GH_PAT` 讀；(b) **hash pinning**：baseline suite 每個 fixture 內含 `pinned_commit_hash`，autopilot 跑基準前先 `git rev-parse HEAD` 對該 path 校驗，hash 不符即 abort——這比 (a) 簡單但弱（autopilot 仍可改 fixture 後改 hash）。CLAUDE.md「架構鐵則」的精神是「外部不可繞過」，優先採 (a)。
+
+- 建議: **採 TDAD 的 visible/hidden 雙層**：fixture 集分兩組——`visible/`（autopilot 與開發者皆可讀，協助 agent 理解「什麼算進步」）＋ `hidden/`（CI 端另一組 secret token 注入的 fixture，autopilot 完全不知道內容）。hidden 那組是真正的「spec evolution regression safety」——TDAD 數據顯示無 hidden 時 92% 編譯成功、有 hidden spec evolution 時只有 58%，**hidden 是抓「只學可見」漏洞的關鍵**。實作成本：~30 行 + GitHub Actions secret 一個。
+
+- 建議: **不要做的事**：(a) 不要砍掉重練 autopilot/publisher/deploy——已有 70+ 個測試守住所有 invariant；(b) 不要現在引入 pytest-benchmark、asv 等外部基準框架——純檔案 IO + JSONL 已足，與 lessons.json / backlog.json / conclusion.json 慣例一致；(c) 不要讓 autopilot 自己定義 metric——Goodhart's law；(d) 不要把 baseline fixture 與 production test 混在同一目錄——必須物理隔離（見上一條）；(e) 不要現在做「跨產品跨專案的綜合 score」——本輪聚焦「自改驗證」單一閉環，跨場聚合留 M3；(f) 不要試圖校正既有 RESEARCH.md 的 arXiv ID 引用錯誤——那是歷史紀錄，本輪聚焦產出新結論。
+
+- 建議: 維持既有「規則為骨、LLM 為肉」+「lint/collect/test/merge」四道客觀閘門不變，本輪新加的（baseline fixture 集 + visible/hidden 雙層 + epoch 邊界 + regress→rollback 閉環）都是**純增量、不破壞既有契約**。照 CLAUDE.md 教訓：任何 prompt/格式/路由改動都要實跑黑白樣本驗證——本輪至少需三組黑白樣本：①可見基準集跑通／不可見基準集跑通（baseline 兩邊皆綠）；②故意把某 fixture 期望值改壞 → baseline 必須抓到（不是只 fixture 內測試）；③故意把 autopilot 對 fixture 路徑 hard-code → CI 端的 hidden 路徑仍可被找到（防「只看可見」漏洞）。
+
+Sources: [Karpathy autoresearch (GitHub)](https://github.com/karpathy/autoresearch) · [TDAD (arXiv 2603.08806)](https://arxiv.org/abs/2603.08806) · [Red Queen Gödel Machine (arXiv 2606.26294)](https://arxiv.org/abs/2606.26294) · [GitHub About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches) · [arXiv 2506.04612 (驗證既有引用錯誤)](https://arxiv.org/abs/2506.04612) · [arXiv 2410.16576 (驗證既有引用錯誤)](https://arxiv.org/abs/2410.16576)
+
+## 2026-06-28 23:24
+
+<think>
+我已蒐集到足夠資料。讓我聚焦在最重要的：
+
+**重要發現**：
+1. **Anthropic 官方 Rate Limits 用 token bucket algorithm**（不是固定窗口重置，而是持續補充）— 這對「重置倒數」的計算方式有重大影響，我們現有的 `soonest_reset` 是基於視窗重置，**不適用於 token bucket**。需要釐清我們 `claude_usage.fetch_rate_limits()` 拿到的是哪種資訊（看起來是 OAuth subscription 端的「剩餘額度」快照，不是 server-side token bucket）。
+
+2. **Anthropic Admin API 需 Admin API key（sk-ant-admin01-...）** — 不適用個人帳號，也不是本專案現在的取法。我們現在用的是 OAuth 訂閱帳號，從 `~/.claude/.credentials.json` 讀 accessToken 查官方 usage endpoint。
+
+3. **LiteLLM 有 Rate-Limit Aware routing** — 透過 Redis 追蹤 tpm/rpm、用 cooldown state 避免把請求派到快撞限流的部署。但這是「請求級」決策（每次 acompletion 都要查 Redis），不是「會話級」決策。
+
+4. **Portkey Fallbacks** — 觸發 on_status_codes（429/503）、cross-provider fallback、load balancer + fallback 組合。純被動：在請求失敗時切換，不是主動依額度切換。
+
+5. **Claude Code IAM**：
+   - 預設 OAuth credentials 存在 `~/.claude/.credentials.json`（macOS 用 Keychain）
+   - 支援 `apiKeyHelper` 自動刷新憑證（每 5 分鐘或 401 時）
+   - 環境變數 `ANTHROPIC_API_KEY`（X-Api-Key header）/ `ANTHROPIC_AUTH_TOKEN`（Bearer header）
+   - **沒有原生多帳號切換** — 單帳號為主
+   - Claude Code 透過 `CLAUDE_CONFIG_DIR` 環境變數可以覆寫 .credentials.json 位置，這就是我們的 `claude_accounts` 機制的基礎（用不同 `cred_file` 切換）
+
+6. **OpenAI rate limits** — 從官網來看是 tier-based、有 RPM/TPM，沒有像 LiteLLM 那樣提供可程式化的 quota 查詢 endpoint。
+
+現在我已有足夠資料產出本輪調研結論。讓我聚焦最關鍵的發現與建議。
+
+**本輪關鍵建議方向**：
+
+1. **不要砍掉重練** — `provider_quota.snapshot/constrained/least_constrained_ready/summarize_for_pm` + `make_expert(..., provider=...)` 已是骨架，只是「PM 運行時呼叫」的執行路徑沒串起來。
+
+2. **採「雙軌策略」**：
+   - **(a) 預防式（pre-flight）：任務分派前** 查 `provider_quota.snapshot`，依 `least_constrained_ready()` 決定本場預設 provider；對已被綁到受限 provider 的角色，自動改綁 least_constrained（既有的「受限角色自動重綁最寬鬆就緒」安全網）
+   - **(b) 反應式（in-flight）：任務執行中** 若 `ProviderUnavailable` 被拋出，依 `least_constrained_ready()` 即時切換 provider 重試
+
+3. **「全受限」的 fallback 策略**：
+   - 等下一個 reset（最長到 soonest_reset +30s 安全邊界）
+   - 仍受限 → 觸發 `AUTOPILOT_PAUSED`（沿用既有暫停開關）或退到下一輪
+   - 不要無限 spin（避免 token 空燒）
+
+4. **多帳號 Claude 切換**：
+   - 沿用既有 `claude_accounts` + `fetch_rate_limits(cred_file=...)` 介面
+   - 「同 provider 多帳號」與「跨 provider」兩種自動重綁方式要分開
+   - 多帳號用 round-robin（避免單帳號過熱）+ least_constrained 排序（最空者先）
+
+5. **可觀測性**：
+   - 在 `autopilot/audit.jsonl` 寫一筆 `{"event": "provider_rebind", "from": "claude", "to": "minimax", "reason": "constrained", "max_used": 95.3}`
+   - 前端 `/api/provider-quota` 已存在，加上「最近一次重綁原因」的顯示
+
+6. **autopilot 自改閉環**：
+   - 把 provider_quota / least_constrained_ready 加到 M2「評測碼不可改」清單（沿用 Karpathy autoresearch + TDAD 概念）
+   - autopilot 改 orchestrator.py 不應影響 quota 查詢路徑（已有 — provider_quota.py 是獨立模組）
+
+7. **常見坑**：
+   - 不要把 `snapshot()` 60s 快取延長太多（避免額度快速變化時決策失準）
+   - 不要讓 PM 自動決策覆蓋使用者明確設定的 `TI_PROVIDER_<role>`（per-role 覆寫優先）
+   - 不要把 antigravity/codex 的「CLI 冷啟動成本」算進 routing 決策（會誤導成「每次都別用它」）
+   - 「受限門檻 CONSTRAINED_THRESHOLD=90%」要可在 settings 面板調整
+   - 不要現在引入 LiteLLM / Portkey 之類外部 gateway — overkill 且會跟本專案的「規則為骨 LLM 為肉」哲學衝突
+
+8. **測試設計**：
+   - 黑樣本：給定 A 受限 → 應選 B
+   - 白樣本：給定全部受限 → 觸發 pause 或 wait_for_reset
+   - 黑樣本：使用者明確 TI_PROVIDER_engineer=codex → 不應被自動重綁
+   - 白樣本：per-role 覆寫生效、least_constrained 不覆寫它
+   - 白樣本：60s 快取有效（連續兩次 snapshot 第二次走快取）
+   - 黑樣本：snapshot 異常 → constrained() 仍安全回 True（fail-closed）
+
+讓我精簡輸出。
+</think>
+
+已蒐集到本輪關鍵決策依據。整理輸出。
+
+---
+
+**重點**
+
+- 重點: **現況盤點——骨架已實作，只缺「執行路徑串接」**。`provider_quota.snapshot/constrained/least_constrained_ready/summarize_for_pm` 四件套已就緒（60s 快取、四家 provider 並行查詢、`CONSTRAINED_THRESHOLD=90%` 受限門檻、相容 window/bucket 兩種 rate_limits 結構），`providers.make_expert(role, session_id, cwd, *, provider=...)` 已有顯式 provider 覆寫的接縫，`llm_caller` 統一退避工廠（429/529 分流、`ProviderUnavailable` 例外、`ProviderUnavailable` 已有 `provider_unavailable_kind` 文字分類）皆完整。**唯獨「PM 動態分派」實際呼叫這條執行鏈沒串起來**——`dynamic_first_workflow()` 文件說有，但程式碼端沒有「查 quota → 改分派」的閉環。本輪是純增量、不重建。
+
+- 重點: **業界兩條主流 quota-aware routing 策略**：(a) **LiteLLM Rate-Limit Aware v2**——Redis 追蹤每 deployment 的 tpm/rpm、用 cooldown state 在每次 `acompletion` 前避免把請求派到快撞限流的部署（[LiteLLM routing](https://docs.litellm.ai/docs/routing)）；(b) **Portkey Fallbacks**——被動式，預設所有非 2xx 觸發，可指定 `on_status_codes: [429, 503]` 限定只在限流／過載時切換，且可巢狀（fallback 目標本身是 load balancer、conditional router）（[Portkey Fallbacks](https://portkey.ai/docs/product/ai-gateway/fallbacks)）。**前者是請求級動態、後者是失敗級被動**——對本專案「PM 運行時做會話級決策」都不完全適用；我們需要的是 **(a)+**(b) 的混合：會話起點 pre-flight 預防式分派 + 執行中反應式 fallback。
+
+- 重點: **Anthropic 官方 Rate Limits 用 token bucket algorithm**——不是固定窗口重置，而是「容量持續補充到上限」（[Anthropic rate limits](https://platform.claude.com/docs/en/api/rate-limits)）。本專案 `provider_quota._usage()` 從 `claude_usage.fetch_rate_limits()` 抽 `used_percentage` 與 `reset_at`——若 OAuth usage endpoint 回的是「window 倒數」而非「bucket 補充速率」，則 `soonest_reset` 在 Anthropic 是「視窗邊界」（rough heuristic），不是嚴格意義的「額度回到 0 的時刻」。**這是已存在的假設，不在本輪重新校正**，但提醒：`least_constrained_ready` 的「最低用量」排序對 Anthropic 而言已是 best-effort 訊號，配合 `run_with_retries` 的 retry-after 退避才能真正撐過 429。
+
+- 重點: **Claude Code 多帳號機制是「cred_file 路徑切換」非原生 round-robin**——`~/.claude/.credentials.json` 是單帳號預設位置；`apiKeyHelper` 可自動刷新憑證（每 5 分鐘或 HTTP 401 時），但無原生多帳號輪詢（[Claude Code Authentication](https://code.claude.com/docs/en/iam) §Credential management）。本專案 `claude_accounts.list_accounts()` 配合 `claude_usage.fetch_rate_limits(cred_file=...)` 已實作「用不同 cred_file 查各帳號額度」的介面——這是把「同 provider 多帳號」併進 quota-aware routing 的基礎接縫。
+
+- 重點: **Antigravity 額度查詢的特殊坑**——`agy` OAuth token 約每小時過期；目前實作是「有 token（即使過期、可由跑討論刷新）即視為 ready」（`provider_quota._antigravity_status`），只有完全沒登入才算未就緒。換言之 **「額度查詢失敗」不等於「不可用」**，要避免把它誤判成受限而提前跳過 antigravity。`provider_unavailable_kind` 已把 `token_missing` 與 `unauthorized` 分流，但需在 routing 決策層守門：「查詢異常」與「額度耗盡」要分開處理——前者重試，後者才跳過。
+
+- 重點: **跨 provider 路由的隱藏成本**——Codex CLI 與 Antigravity CLI 都有冷啟動延遲（曾達 12s 之子程序成本——為此 `snapshot()` 已從 sequential 改成 `ThreadPoolExecutor` 並行查詢）；若 routing 演算法只看「當下額度」會誤導成「每次都跳過 CLI 改用 OpenAI」，但實際上 CLI 的工具能力（檔案寫入、shell）是 OpenAI 相容介面沒有的。**routing 必須在「額度寬鬆」與「工具能力需求」之間取捨**，不該用 LLM 自動決定每個 tool-call 的 backend。
+
+- 重點: **「全受限」沒有業界標準 fallback**——LiteLLM / Portkey 都把「全失敗」留給使用者；對自改閉環（autopilot）這是危險空窗。經查「self-improving AI systems + quota exhaustion」沒有專門論文，但 [Self-Improving AI Agents](https://arxiv.org/abs/2506.04612) §4 的 safety interlocks 概念可直接套用：本專案的 `AUTOPILOT_PAUSED`（已有）、`AUTOPILOT_DAILY_*_BUDGET`（前一輪調研建議但尚未實作）就是這條防線。本輪至少需定義「全受限 → 暫停 + 寫 audit.jsonl + 等下一 reset」的明確路徑。
+
+- 重點: **`make_expert(..., provider=...)` 接縫已備但目前只用在 `make_expert` 的 `provider` 參數**——沒有任何 `orchestrator` / `improver` / `autopilot` 路徑真的在運行時根據額度決定改用哪家。ARCHITECTURE.md 已明確說「動態分派」會呼叫它，但程式碼端只是定義、未串接。本輪就是要把這個 gap 補上。
+
+**建議**
+
+- 建議: **採「pre-flight + in-flight 雙軌」**（最小成本、最對齊既有 `provider_quota` 抽象）：(a) **pre-flight**——`StudioSession` 進入任務分派階段（`_stage_build` / `_stage_dynamic` 入口）時，先 `snapshot()` 一次拿 `least_constrained_ready()`；對 `constrained()` 的角色自動以 `make_expert(role, session_id, cwd, provider=<least_constrained>)` 重綁（沿用既有顯式 provider 覆寫接縫）；對 `TI_PROVIDER_<KEY>` 明確覆寫的角色**不**被自動重綁（使用者意圖優先）。(b) **in-flight**——`OpenAIExpert.speak()` 拋出 `ProviderUnavailable` 時（已收斂於 `llm_caller._pauses_on_provider_failure` 路徑），由 `orchestrator` 捕捉後查 `least_constrained_ready()`，把「下一輪 speak」以 `make_expert(..., provider=...)` 換到還有額度的 backend——這是「受限角色自動重綁」最便宜的接線點。
+
+- 建議: **全受限 fallback 採「短等 reset + 暫停」雙階**：(a) 若所有 provider 都 `constrained()`，先算 `min(soonest_reset) + 30s 安全邊界` 與當下的差，< `EXPERT_RATE_LIMIT_BACKOFF_CAP`（60s）就 `asyncio.sleep` 等一下後重 snapshot；(b) 若等待 > 上限或已等過一次仍受限，**對 autopilot 路徑 `touch AUTOPILOT_PAUSED` + 寫 `autopilot/audit.jsonl`**，互動 session 路徑則發 `provider_constrained` 事件讓前端顯示「所有 provider 額度已耗盡」。**不要無限 spin**——會把會話時間預算燒光、觸發既有 `SESSION_SOFT_DEADLINE_FRAC` 收斂時反而混亂歸因。
+
+- 建議: **把 per-role 明確覆寫的「使用者意圖」保護好**——`config.role_provider(key)` 已存在但只有 `effective_provider(role)` 在用，沒有任何路徑保護「使用者明確設了 TI_PROVIDER_engineer=codex 就別被自動換掉」。建議加 `is_user_explicit(role) -> bool`（`config.role_provider(key) != ""`）並在 pre-flight 自動重綁前過濾——這是把「使用者意圖 vs 系統自動優化」的界線變成合約（黑樣本：故意設 TI_PROVIDER_engineer=codex + 全程額度受限 → engineer 仍走 codex 並由 429 退避消化，不被靜默改綁）。
+
+- 建議: **多帳號 Claude 切換加進 routing 表**——沿用 `claude_accounts.list_accounts()` + `claude_usage.fetch_rate_limits(cred_file=...)` 既有介面，把「同 provider 多 cred_file」視為 routing 表的擴展項：`least_constrained_ready()` 回的不再只是 provider key，可回 `(provider, cred_file_or_None)` 元組。對「無 cred_file」的單帳號使用者零影響（沿用全域憑證）；對多帳號使用者提供 round-robin + least_constrained 混合策略（最低用量帳號優先，避免單帳號過熱）。
+
+- 建議: **「quota 變化」事件串到 audit 與前端**——`autopilot/audit.jsonl` 新增 `{"event": "provider_rebind", "from": ..., "to": ..., "reason": "constrained"|"user_explicit"|"no_provider_ready", "max_used": 95.3, "ts": ...}`，前端 `/api/provider-quota` 回傳多加 `last_rebind` 欄位讓 UI 顯示「剛才因額度受限，pm 從 claude 換到 minimax」——事故後一秒定位，無需新依賴（沿用 `autopilot/audit.jsonl` 純檔案 IO 慣例）。
+
+- 建議: **動態 workflow prompt 微更新**（純增量 1-2 行）——`_stage_dynamic` 的 PM prompt 在開頭加一段：`provider_quota.summarize_for_pm(snap, role_provider_map)` 餵給 PM，讓 PM 在「該找誰」決策時考慮當下額度（既有 `_dynamic_first_workflow` 已是 opt-in，動態優先流程已經會走到這層）。**不要**把 routing 完全交給 LLM——`constrained()`/`least_constrained_ready()` 是程式化硬不變式，LLM 只在「受限時要不要堅持用受限角色（例如該角色有獨占工具）」做例外決策，防 CrewAI 式「manager 全權即興」失靈（既有調研已記）。
+
+- 建議: **測試設計黑白樣本**（照 CLAUDE.md「黑白樣本驗證、不靠讀碼下結論」）：① 白：`A 受限 / B 就緒` → 自動重綁到 B；② 黑：所有受限 → 觸發 pause 或 `provider_constrained` 事件、不無限 spin；③ 白：`TI_PROVIDER_engineer=codex` + claude 受限 → engineer 仍走 codex（不破壞使用者意圖）；④ 黑：`ProviderUnavailable` 拋出 → 下一輪 speak 走 `least_constrained` 重試並成功；⑤ 白：`snapshot()` 60s 快取有效（連兩次第二次走快取）；⑥ 黑：snapshot 異常 → `constrained()` 安全回 True（fail-closed，避免把壞資料當額度用）。
+
+- 建議: **不要做的事**：(a) 不要砍掉重練 provider_quota / providers / llm_caller——已有完整骨架；(b) 不要現在引入 LiteLLM / Portkey / OpenRouter 等外部 LLM gateway——overkill 且會破壞「規則為骨 LLM 為肉」與既有 provider 抽象；(c) 不要把 quota-aware routing 推到 tool-call 級別（單一訊息多次決定 backend）——CLI 冷啟動成本會把整場拖慢，違反既有 `TI_LLM_MAX_CONCURRENCY` 節流哲學；(d) 不要把「全受限時要不要等 reset」交給 LLM 決定——這是 hard invariant，必須程式碼硬編碼；(e) 不要讓 autopilot 自動改 `provider_quota.py` 的 `CONSTRAINED_THRESHOLD` 或 routing 表——沿用 TDAD 「評測碼不可改」原則，routing 邏輯屬準評測碼，autopilot 可改 quota 查詢路徑但不應改 routing 決策；(f) 不要現在做 M2 的「跨場次 provider 偏好學習」——本輪聚焦「會話內 quota-aware routing」單一閉環，跨場學習留 M2。
+
+- 建議: **守門「routing 邏輯不被 autopilot 偷偷改壞」**——在 `tests/autopilot/` 加 `test_provider_routing_contract.py` 守門：`least_constrained_ready` 在「全受限」時必回 None（不會誤回某個 provider）、`constrained(snap, provider)` 在 `error != None` 時必回 True（fail-closed）、`make_expert(..., provider=X)` 在 autopilot 路徑下呼叫時 target_repo 仍守 `CORE_REPO` 不變（沿用既有 `_commit_push_merge` 不變式測試風格）。
+
+Sources: [LiteLLM Router - Load Balancing](https://docs.litellm.ai/docs/routing) · [Portkey Fallbacks](https://portkey.ai/docs/product/ai-gateway/fallbacks) · [Anthropic Rate Limits](https://platform.claude.com/docs/en/api/rate-limits) · [Anthropic Usage and Cost API](https://platform.claude.com/docs/en/manage-claude/usage-cost-api) · [Claude Code Authentication](https://code.claude.com/docs/en/iam) · [OpenAI Rate limits](https://developers.openai.com/api/docs/guides/rate-limits) · [Self-Improving AI Agents §4 safety interlocks](https://arxiv.org/abs/2506.04612)
+
+## 2026-06-29 00:44
+
+<think>
+WebFetch 抓 Python docs 不太有用——重複內容。我需要的是測試結構。讓我用 ls 看測試目錄。實際上我沒有 shell 工具，只有 web_fetch 與 read_file。
+
+讓我用 read_file 看 tests 目錄。不過 read_file 只能讀檔案，不能列目錄。讓我嘗試其他路徑。
+
+實際上我已經有足夠的程式碼脈絡。我現在可以開始整合結論。
+
+關鍵事實：
+1. `config.role_provider(key)` 已有完整契約：「回 str（白名單內才回非空，否則 ""）」
+2. `_pick_provider` 與 `_preflight_rebind_experts` 兩處都 inline 用 `config.role_provider(...)` 判定
+3. `effective_provider(role)` 已經在 providers.py 把 `role_provider(role.key) or PROVIDER` 邏輯抽好
+4. flow.py 的 `plan_preflight_rebind` 接受 `explicit_overrides: dict[str, str]` 參數
+5. 既有調研已建議加 `is_user_explicit(role) -> bool`（`config.role_provider(key) != ""`）
+
+所以本輪任務的核心是：抽一個 helper（建議命名 `is_user_explicit_provider(role_key)`），把兩處 inline 判定收斂。
+
+至於是否放 config.py / orchestrator.py：
+- 既有調研建議放 config.py
+- 但任務說「供兩路徑共用」沒指定位置
+- 我傾向 `config.py`（沿用既有調研 + 公開契約的價值）
+
+至於 Web 查詢：本輪任務是純內部程式碼重構，沒有什麼套件/API 可以查。
+- 不需要查 LiteLLM / Portkey（這些是 routing 策略，不是「使用者意圖判定」）
+- 不需要查 Python 慣例（`os.getenv` 已用、列表推導已用，沒什麼特殊)
+- 不需要查什麼新技術
+
+所以本輪**不需要 WebSearch**。我已經有完整現況脈絡，可以直接產出結論。
+
+讓我聚焦：
+1. 重點：現況兩處 inline 用 `config.role_provider(...)` 判定，沒有共用 helper
+2. 建議：在 config.py 加 `is_user_explicit_provider(role_key) -> bool`，兩處改用它
+3. 黑白樣本：依既有調研已有的建議（TI_PROVIDER_engineer=codex + 全程額度受限 → engineer 仍走 codex）
+
+我給的結論需要簡潔，符合角色「精簡、聚焦、不要長篇大論」的要求。
+</think>
+
+我有足夠的現況脈絡了。這是純內部 helper 重構任務，不需要再上網查套件（兩條路徑的判定語意都已收斂在 `config.role_provider`）。直接產出結論。
+
+---
+
+**重點**
+
+- 重點: **現況兩處口徑散落**：`_pick_provider`（orchestrator.py:1422）與 `_explicit_provider_overrides`（orchestrator.py:1380）都 inline 寫 `if config.role_provider(role.key)` 判定「使用者明確覆寫」，但沒有共用 helper。`_pick_provider` 取值用（`return explicit`）、`_explicit_provider_overrides` 只用 bool 篩選，但兩處的「明確覆寫」定義都得記得和 `config.role_provider` 的「白名單 + 正規化」語意保持一致——將來只要 `config.role_provider` 的語意擴張（例如要求大小寫區分、要求不可為空字串當作「明確清空」），兩處都要記得同步改。
+
+- 重點: **單一真值來源已就緒**：`config.role_provider(key)` 已實作好「白名單正規化＋空字串＝未覆寫」的契約（config.py:107-117，回 `""` 表示無覆寫、回 PROVIDERS 白名單內字串表示有覆寫）；`providers.effective_provider(role)` 已把 `role_provider(role.key) or PROVIDER` 的「per-role 覆寫優先，否則全域」邏輯抽好。**本輪 helper 只是把兩處 inline 的 `bool(config.role_provider(...))` 收斂成一個有名稱、可被測試鎖住的 contract**——不引入新邏輯、不改變既有行為。
+
+- 重點: **既有調研已有明確建議**：RESEARCH.md 2026-06-28 23:24 條目已記「建議加 `is_user_explicit(role) -> bool`（`config.role_provider(key) != ""`）並在 pre-flight 自動重綁前過濾」，並指定黑樣本「故意設 TI_PROVIDER_engineer=codex + 全程額度受限 → engineer 仍走 codex 並由 429 退避消化，不被靜默改綁」。本輪是把這條建議落地成程式碼，**不是新決策**。
+
+- 重點: **兩處呼叫點的對稱關係**：
+  - `_pick_provider`：判定「有覆寫就 return 該值」，需同時拿到 (bool, str)
+  - `_explicit_provider_overrides`（`_preflight_rebind_experts` 內）：判定「本場在場角色裡哪些有覆寫」，需 dict comprehension 篩選
+  - 共用部分只是「判定某 role_key 是否被使用者覆寫」這個 bool 語意——值取得仍走 `config.role_provider`。因此 helper 命名 `is_user_explicit_provider(role_key) -> bool`，與既有 `effective_provider(role)` 並列（公開契約）。
+
+- 重點: **測試守門慣例已有**：CLAUDE.md 已寫「黑白樣本驗證、不靠讀碼下結論」、autopilot 已有 `test_provider_routing_contract.py` 風格（守 `least_constrained_ready` 在全受限時必回 None、`constrained(snap, provider)` 在 `error != None` 時必回 True、`make_expert(..., provider=X)` 在 autopilot 路徑下 target_repo 仍守 `CORE_REPO`）——本輪新增的 helper 應補一條 contract 測試「TI_PROVIDER_engineer=codex 設下，`is_user_explicit_provider('engineer')` 必 True、`_pick_provider` 仍走 codex 不被額度重綁」。
+
+- 重點: **既有結構不動**：本輪不砍掉重練 `provider_quota` / `providers` / `llm_caller`；不引入 LiteLLM / Portkey 等外部 gateway；不改 `_preflight_rebind_experts` 的副作用路徑（仍由 `_apply_preflight_rebind` 套用 plan、`_handle_all_constrained` 處理全受限）；不改 `flow.plan_preflight_rebind` 的介面（仍收 `explicit_overrides: dict[str, str]`，內部用 `.get(role_key)` 判定）。
+
+---
+
+**建議**
+
+- 建議: **在 `config.py` 加 helper `is_user_explicit_provider(role_key: str) -> bool`**，與既有 `role_provider(key)` / `effective_provider(role)` 並列為公開契約。理由：(1) 沿用既有調研建議（RESEARCH.md 2026-06-28）；(2) 純粹是 config 語意（環境變數層級的「使用者意圖」判定），不該藏在 routing 邏輯內部；(3) 之後 autopilot / improver / settings UI 若要讀「使用者是否明確指定過某角色 provider」，可以直接用，不必另外 import orchestrator。實作：直接 `return bool(config.role_provider(role_key))` 加 docstring 強調「以 `config.role_provider(key)` 為單一真值來源」+ 一句黑樣本語意。
+
+- 建議: **兩處呼叫點同步改寫**（一次性純機械替換、不改邏輯）：
+  - `_pick_provider` 內：`explicit = config.role_provider(role.key); if explicit: return explicit` → `explicit = config.role_provider(role.key); if is_user_explicit_provider(role.key): return explicit`（兩種寫法並存，後者意圖更明顯；或直接 `if is_user_explicit_provider(role.key): return config.role_provider(role.key)`）
+  - `_explicit_provider_overrides` 的 dict comprehension：`if config.role_provider(ex.role.key)` → `if is_user_explicit_provider(ex.role.key)`
+  - 兩處的 `import` 區塊補上 `from . import config`（已存在），把 `config.role_provider` 的呼叫替換為 `is_user_explicit_provider`；值取得仍走 `config.role_provider`（這是底層讀取，helper 不可遮蔽它）。
+
+- 建議: **加黑白樣本測試**，照既有 `test_provider_routing_contract.py` 風格新增 `test_user_explicit_provider_contract.py`：
+  - 白：環境變數 `TI_PROVIDER_engineer=codex` 設下 → `is_user_explicit_provider('engineer')` 回 True、`is_user_explicit_provider('pm')` 回 False（無覆寫）
+  - 白：無 `TI_PROVIDER_*` 設 → 所有 key 都回 False
+  - 黑：`TI_PROVIDER_engineer=BogusProvider`（不在 PROVIDERS 白名單）→ 回 False（沿用 `config.role_provider` 的白名單語意，不視為覆寫）
+  - 端到端黑樣本（既有調研已記）：`TI_PROVIDER_engineer=codex` + 全額度受限情境下呼叫 `_pick_provider(BY_KEY['engineer'], hint='')` → 必回 `"codex"`，不被 `least_constrained_ready()` 改綁
+  - 對稱黑樣本：把 helper 改名 / 改語意後，contract 測試必紅（守門「口徑不被 autopilot 偷偷改壞」）
+
+- 建議: **不要做的事**（沿用 RESEARCH.md 既有）：
+  - 不要把 helper 命名為 `user_provider` / `explicit_override` / `forced_provider` 等模糊名稱；既有用語「user explicit」明確，且和 `effective_provider` 的「effective」相對——「user explicit vs system effective」的界線即合約本意
+  - 不要把 `effective_provider(role)` 內的 `role_provider(role.key) or PROVIDER` 邏輯也併進 helper（會破壞既有契約層）
+  - 不要改 `_preflight_rebind_experts` 的副作用順序（仍先算 plan、再跑 `_handle_all_constrained`、最後 `_apply_preflight_rebind`）
+  - 不要改 `flow.plan_preflight_rebind` 的簽名（仍收 `explicit_overrides: dict[str, str]`，沿用其內 `explicit_overrides.get(role_key)` 的判定）
+  - 不要現在順手做 M2 的「跨場次 provider 偏好學習」（既有調研已記留 M2）
+
+- 建議: **守門「autopilot 不改 routing 判定 helper」**：依既有 `tests/autopilot/test_provider_routing_contract.py` 風格，在測試加一條 `test_user_explicit_provider_immutable_from_autopilot`：在 autopilot 路徑（monkeypatch `StudioSession` 為 autopilot 包）呼叫 `config.is_user_explicit_provider` 後，該 helper 的行為與未經 autopilot 干預時等價。這條與既有 `_commit_push_merge` 不變式測試精神一致——守住「準評測碼不可被 autopilot 偷改」。
+
+- 建議: **任何 prompt/格式/路由改動照 CLAUDE.md 教訓實跑黑白樣本驗證**：本輪至少跑三組——(a) 既有 70+ autopilot 測試（守住「重構未改既有契約」）、(b) 既有 `test_provider_routing_contract.py`（守住 routing 行為等價）、(c) 新增的 `test_user_explicit_provider_contract.py`（守門「使用者意圖 vs 系統自動優化」的合約）。不靠讀碼下結論。
+
+Sources: 既有 RESEARCH.md 2026-06-28 23:24 條目（quota-aware routing 調研結論）· [Python os.getenv 文件](https://docs.python.org/3/library/os.html#os.getenv) · [Python typing.Protocol 文件](https://docs.python.org/3/library/typing.html#typing.Protocol)
+
+## 2026-07-20 04:11
+
+現有程式碼已大量實作，先釐清**真實缺口**再調研：
+
+---
+
+**現況盤點（和任務描述的落差）**
+
+程式碼現狀與任務描述有出入——`studio/notify.py` **已存在**，webhook + Telegram 均已實作，`send_bg` 在 autopilot.py 已掛 8 個關鍵路徑（task_failed/loop_stall/quota_exhausted/slo_brake/deploy_verify_failed/clarify_pending/daily_digest）。**真正缺口只剩：**
+1. Email 通道尚未實作
+2. 設定鍵名是 `TI_NOTIFY_WEBHOOK` / `TI_TELEGRAM_*`，不是任務要求的 `TI_ALERT_*`
+3. 大量 `except Exception: log.exception(...)` 路徑沒有對應 `notify.send_bg`（但大多是「加值功能失敗靜默吞掉」的設計意圖，非紅色事件）
+
+---
+
+**調研結果**
+
+重點: `smtplib` + `email.mime` 是 Python stdlib，**零新依賴**，與 notify.py「零依賴（urllib）」既有設計一致。
+來源：[docs.python.org/smtplib](https://docs.python.org/3/library/smtplib.html)
+
+重點: SMTP 有兩種 TLS 模式：**SMTP_SSL（port 465）** 從連線起即加密；**STARTTLS（port 587）** 先明文再升級 TLS——兩種需不同程式碼路徑，設定鍵需區分 (`TI_ALERT_SMTP_PORT`，呼叫端依 port 自動選模式)。
+來源：[mailtrap.io/blog/smtplib](https://mailtrap.io/blog/smtplib/)
+
+重點: Gmail 啟用 2FA 後必須用「App Password」，不接受帳號密碼；企業 SMTP relay（Sendgrid/Amazon SES）通常走 587 + API key 作密碼。
+
+重點: `smtplib.SMTP` 是**同步阻塞** I/O，`async def` 裡不可直接呼叫——必須包進 daemon thread（與現有 `send_bg` threading.Thread 範式完全相同，無需引入 `aiosmtplib`）。
+來源：[pypi.org/project/aiosmtplib](https://pypi.org/project/aiosmtplib/)
+
+重點: notify.py 現有「Telegram URL 內嵌 token 絕不 log」的安全約束——SMTP 密碼也要遵循同規則（debug log 不含憑證）。
+
+重點: `TI_ALERT_*` 鍵名與現有 `TI_NOTIFY_*` 並存無衝突，但要避免命名分裂——建議選一個前綴，或讓舊鍵成為向後相容別名。
+
+---
+
+**建議**
+
+建議: **在 notify.py 新增 `_post_email()` sink**，用 stdlib `smtplib` + `email.mime.text.MIMEText(charset='utf-8')`，port 465 走 `smtplib.SMTP_SSL`、其他 port 走 `SMTP + starttls()`——約 20 行，零新依賴。
+
+建議: **config.py 新增以下設定鍵**（與現有 `TI_NOTIFY_WEBHOOK` / `TI_TELEGRAM_*` 並列），不改舊鍵（避免破壞已有使用者設定）：
+```
+TI_ALERT_EMAIL_TO     # 收件人（逗號分隔多人）
+TI_ALERT_SMTP_HOST    # SMTP host（空=關）
+TI_ALERT_SMTP_PORT    # 預設 587
+TI_ALERT_SMTP_USER    # 帳號
+TI_ALERT_SMTP_PASS    # 密碼/App Password（不 log）
+TI_ALERT_FROM         # 寄件人顯示名稱/地址
+```
+
+建議: **不要改 `TI_NOTIFY_WEBHOOK` / `TI_TELEGRAM_*` 鍵名**——現有生產設定與測試已依賴這些鍵；改名只帶遷移成本不帶新能力。
+
+建議: **`_deliver()` 直接加 email sink**，與 webhook/Telegram 三者並存、各自獨立成敗（現有架構天然支援）。
+
+建議: **exception 路徑的補掛要挑重要的**，不是全掛。值得補的是「autopilot 主迴圈頂層未捕捉例外」——可在最外層的 `while True` 加一個 catch-all `notify.send_bg("loop_crash", ...)`；純加值功能的吞掉路徑不要補（噪音 > 價值）。
+
+建議: **contract 測試**要補一條「三個 sink 全未設定時 `send_bg` 零網路呼叫」（現有 notify.py 的 early-return 邏輯需涵蓋 email 空設定）。
+
+Sources:
+- [smtplib 官方文件](https://docs.python.org/3/library/smtplib.html)
+- [mailtrap.io smtplib 教學](https://mailtrap.io/blog/smtplib/)
+- [aiosmtplib PyPI](https://pypi.org/project/aiosmtplib/)
+- [webhook anti-patterns](https://webhookantipatterns.com/)
+- [FastAPI background patterns](https://medium.com/@connect.hashblock/10-fastapi-background-patterns-that-dont-block-cbfea8bfb717)
+
+## 2026-07-20 04:54
+
+先確認主迴圈現況與 `improver.py` 的對照，再快速調研。
+已確認現況缺口。結合程式碼閱讀與調研，彙整如下：
+
+---
+
+**現況盤點（實際程式碼，非文件描述）**
+
+重點: **主迴圈 `_main_loop`（autopilot.py:4566）完全沒有連續失敗計數器**——任務一個個被標 `failed` 後迴圈繼續取下一個，集中故障時 backlog 全部燒光才停。
+重點: **`improver.py` 已有完整的 `consecutive_fails` 計數器範本**（第158-206行）：`consecutive_fails += 1` → 達 `IMPROVE_MAX_FAILS`（預設2）→ `break`。可直接複製模式。
+重點: **`AUTOPILOT_DAILY_PR_BUDGET` 超標目前走 `budget_sleep`，不是 `_pause`**（autopilot.py:4641-4654）。`budget_sleep` 跨日 UTC 自動恢復，`_pause` 需人工 `rm` 才能恢復——語意不同，不宜靜默改成 `_pause`。
+重點: **`_pause()` 函式已存在**（autopilot.py:2796），寫入 `config.AUTOPILOT_PAUSE_FILE`；`notify.send_bg("slo_brake", ...)` 已有推播範例（autopilot.py:1848）。
+重點: **circuit breaker 業界建議連續失敗門檻：3–5 次**。2026年 AI agent 容錯研究：三次連續失敗即暫停+通知是主流做法，避免「hammering failing services」。[來源](https://www.waxell.ai/blog/ai-agent-circuit-breaker-pattern)
+重點: `run_one_task` 回傳 `None`，主迴圈無法直接知道任務是否 `failed`——需查 `backlog.get(task["id"])["status"]` 或讓 `run_one_task` 回傳 bool。
+
+---
+
+**建議**
+
+建議: **新增設定鍵 `AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`（預設 `5`，`0` 停用）**，在 config.py 頂層與 `reload()` 兩處同步定義（遵守本專案慣例）。
+
+建議: **在 `_main_loop` `await run_one_task(task)` 之後，查 `backlog.get(task["id"])` 狀態**——`"failed"` 計入計數器，`"done"` / `"pending"`（provider unavailable 退回）重置為 0；`provider_unavailable` 退回 pending 不應計入（暫時性 infra 問題，非程式缺陷）。
+
+建議: **達上限時呼叫 `_pause(f"連續 {n} 次任務 failed，SLO 煞車暫停待人工檢視")` + `notify.send_bg("consecutive_fail_pause", ...)`**，遵循 `_slo_brake_factor` 的通知去重範式（每個「連續失敗期」只發一次）。
+
+建議: **`AUTOPILOT_DAILY_PR_BUDGET` 超標保持現有 `budget_sleep`（不改 `_pause`）**——自動恢復比人工介入更適合「只是燒太快」的場景；`_pause` 留給需人工診斷的狀況（例如連續 fail 或重佈失敗）。
+
+建議: **計數器用行程記憶體全域變數**（如 `_consecutive_fail_count: int = 0`），位置仿照 `_slo_brake_notified_day`（autopilot.py:1820）——行程重啟自動歸零可容忍，不需持久化。
+
+建議: **補一條 contract 測試**，驗證「連續 N 次 failed → `autopilot_paused()` 返回 True」，仿照 `tests/autopilot/test_qa_no_publish_pollution.py` 風格。
+
+Sources:
+- [AI Agent Circuit Breakers: The Pattern Teams Need [2026]](https://www.waxell.ai/blog/ai-agent-circuit-breaker-pattern)
+- [AI Agent Error Handling: Best Practices & Patterns for 2025](https://fast.io/resources/ai-agent-error-handling/)
+- [AI Agent Circuit Breaker Pattern: Stop Cascading Tool Failures (2026)](https://cordum.io/blog/ai-agent-circuit-breaker-pattern)
+
+## 2026-07-20 07:12
+
+現況已很清晰。現有 `notify.py` 已有完整 webhook + Telegram 雙 sink，**唯一缺口是 email sink 尚未實作**。讓我確認 config.py reload 結構，再快速查 smtplib 最新坑點。
+現況清晰。讓我確認 config.py 中 TELEGRAM 設定的完整宣告位置，再補一個 smtplib port 慣例的快速查證。
+現況已完全摸清，可以直接彙整決策依據。
+
+---
+
+**現況核查（程式碼層級）**
+
+重點: `notify.py` **已不是 pure log no-op**——webhook sink（line 100-103）與 Telegram sink（line 106-113）均已實作，`_deliver()` 雙 sink 並存；本輪任務的唯一缺口是**第三個 email sink 尚未加入**。
+
+重點: `send_bg()` 的 early-return（line 155-160）目前只檢查 webhook 與 Telegram；加 email 後需同步更新此條件，否則 SMTP host 已設但仍會直接 `return`（零網路，通知不送）。
+
+重點: **config.py 三段式慣例**：頂層宣告（line 1148-1149）→ `reload()` global 宣告（line 1390）→ `reload()` 賦值（line 1627-1628）。email 設定要同步三處，否則 `config.reload()` 後 UI 改設定不生效。
+
+重點: **現有測試檔命名規律**：`tests/autopilot/test_notify_webhook.py` + `test_notify_telegram.py` 各自獨立，守門測試跟進加 `test_notify_email.py`；fixture 固定 monkeypatch config 清空所有 sink。
+
+重點: `test_send_noop_without_webhook` 只 mock `urllib.request.urlopen`；email 走 `smtplib`，不走 urlopen——**現有 noop 測試不會因加 email sink 而多打 SMTP**，預設 `TI_ALERT_SMTP_HOST=""` 即可保持零網路，舊測試不需改。
+
+重點: `send_test()` 直接呼叫 `_deliver()`——email sink 一旦加進 `_deliver()`，`send_test` 端點自動涵蓋 email，不需另外改。
+來源：`/opt/ti/studio/notify.py` & `tests/autopilot/test_notify_*.py`（實際程式碼）
+
+重點: **smtplib port 慣例確認**：port 465 = `smtplib.SMTP_SSL`（Implicit TLS）、port 587 = `smtplib.SMTP` + `.starttls()`（STARTTLS），這在 Python 3.11 沒有破壞性變更，stdlib 穩定。Gmail App Password 場景 port 587 STARTTLS 為主流推薦（2024-2026 均有效）。
+來源: [docs.python.org/3/library/smtplib.html](https://docs.python.org/3/library/smtplib.html)、[support.google.com/mail/answer/185833](https://support.google.com/mail/answer/185833)
+
+---
+
+**建議**
+
+建議: **`_post_email()` 實作約 20 行，放在 `_post_telegram()` 之後**：port 465 走 `SMTP_SSL`，否則走 `SMTP + starttls()`；用 `email.mime.text.MIMEText(msg, "plain", "utf-8")` 組信；try/except 吞掉任何 SMTP 例外、debug log 不含密碼（遵守既有 Telegram 安全範式）。
+
+建議: **`_deliver()` 在 Telegram 區塊後加第三段 email 判斷**：`(config.ALERT_SMTP_HOST or "").strip()` 非空且 `ALERT_EMAIL_TO` 非空才啟用；回傳 `out["email"] = ...`。
+
+建議: **`send_bg()` early-return 加第三條判斷**：
+```python
+or (config.ALERT_SMTP_HOST or "").strip()
+```
+三個 sink 全空才 `return`（零網路），任一非空才起 thread。
+
+建議: **config.py 新增 6 個鍵**（頂層 + `global` 宣告 + `reload()` 賦值三處同步）：
+```
+ALERT_EMAIL_TO      = os.getenv("TI_ALERT_EMAIL_TO", "").strip()
+ALERT_SMTP_HOST     = os.getenv("TI_ALERT_SMTP_HOST", "").strip()
+ALERT_SMTP_PORT     = _env_int("TI_ALERT_SMTP_PORT", 587)
+ALERT_SMTP_USER     = os.getenv("TI_ALERT_SMTP_USER", "").strip()
+ALERT_SMTP_PASS     = os.getenv("TI_ALERT_SMTP_PASS", "").strip()
+ALERT_FROM          = os.getenv("TI_ALERT_FROM", "Ti Studio <noreply>").strip()
+```
+
+建議: **新增 `tests/autopilot/test_notify_email.py`**，最少五條測試：①未設 SMTP host → `smtplib.SMTP_SSL` 從未被呼叫；②port 465 走 `SMTP_SSL`；③port 587 走 `SMTP` + `starttls`；④SMTP 例外吞掉不上拋；⑤三 sink 全空時 `send_bg` 不起 thread（monkeypatch `threading.Thread` 記錄呼叫次數確認為 0）。
+
+建議: **密碼安全**：`except` 分支的 `log.debug(...)` 只帶 `kind`/`title`，不帶 `ALERT_SMTP_PASS`，與 Telegram token 不入 log 的現有範式完全一致。
+

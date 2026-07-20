@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import shutil
 import time
@@ -58,6 +59,7 @@ from .flow import (
     parse_tasks as parse_tasks,
     parse_tasks_with_deps as parse_tasks_with_deps,
     parse_vision as parse_vision,
+    plan_preflight_rebind as plan_preflight_rebind,
     pm_done as pm_done,
     qa_passed as qa_passed,
     security_approved as security_approved,
@@ -301,6 +303,7 @@ class StudioSession:
         # 招募成員「實際綁定」的 provider（key→provider）。招募時 _pick_provider 可能把受限/PM 指定的
         # provider 自動重綁，與 effective_provider(role) 不同；額度摘要/roster 顯示須以此為準才正確。
         self._recruit_providers: dict[str, str] = {}
+        self._provider_constrained_pending: dict[str, str] = {}
         # 額度感知 per-task 派工狀態：PM 拆解時的 `派工:` 建議（task_id→{provider, model}）、
         # 已派 provider 序列（同分時避開剛用過的、把任務分攤到各家）、任務期間的暫時綁定
         # （併入 _role_provider_map 供額度摘要顯示正確）。_dispatch_factory 供測試注入 stub
@@ -1213,6 +1216,8 @@ class StudioSession:
         """
         self._requirement = requirement
         experts = self._get_experts()
+        await self._refresh_quota_snapshot()
+        await self._preflight_rebind_experts(experts)
         # 主（循序）lane：cwd/experts 即 session 本身。逐任務迭代與其 helper 全走它，
         # 行為與重構前逐字等價；並行模式（後續階段）才會另建隔離 lane。
         self._main_ctx = LaneContext(
@@ -1595,13 +1600,45 @@ class StudioSession:
         其次招募成員的實際綁定（`_recruit_providers`，可能因額度受限自動重綁／PM 指定而異於
         角色預設）；其餘走 `effective_provider`。讓額度摘要/roster「誰用哪家額度」顯示正確。
         """
+        return {k: self._actual_provider_for_expert(k, ex) for k, ex in experts.items()}
+
+    def _actual_provider_for_expert(self, role_key: str, expert: ExpertLike) -> str:
         from .providers import effective_provider
 
+        # per-task 派工的暫時綁定最優先（任務期間實作者換綁到別家），其次招募實際綁定。
+        return (
+            self._dispatch_bindings.get(role_key)
+            or self._recruit_providers.get(role_key)
+            or getattr(expert, "provider", None)
+            or getattr(expert, "_provider", None)
+            or effective_provider(expert.role)
+        )
+
+    def _current_provider_bindings(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
+        from .providers import effective_provider
+
+        out: dict[str, str] = {}
+        for role_key, expert in experts.items():
+            provider = (
+                self._recruit_providers.get(role_key)
+                or getattr(expert, "provider", None)
+                or getattr(expert, "_provider", None)
+            )
+            if provider:
+                out[role_key] = provider
+            elif type(expert).__module__.startswith("studio."):
+                out[role_key] = effective_provider(expert.role)
+            else:
+                # 外部注入的無 provider stub 沒有可安全重建的 provider metadata；
+                # preflight plan 看到空值會跳過，但 roster 顯示仍由 _role_provider_map fallback。
+                out[role_key] = ""
+        return out
+
+    def _explicit_provider_overrides(self, experts: dict[str, ExpertLike]) -> dict[str, str]:
         return {
-            k: self._dispatch_bindings.get(k)
-            or self._recruit_providers.get(k)
-            or effective_provider(ex.role)
+            k: config.role_provider(ex.role.key)
             for k, ex in experts.items()
+            if config.is_user_explicit_provider(ex.role.key)
         }
 
     async def _refresh_quota_snapshot(self) -> None:
@@ -1610,6 +1647,9 @@ class StudioSession:
         snapshot 內各 usage 模組 60s 快取＋未設定 provider 不打外網，故成本低；存於 self 供本
         stage 的 PM 摘要與招募自動重綁共用，不每 hop 重查。
         """
+        if config.OFFLINE_MODE:
+            self._quota_snap = None
+            return
         try:
             self._quota_snap = await asyncio.to_thread(provider_quota.snapshot)
         except Exception:  # noqa: BLE001 — 額度查詢失敗不該拖垮討論，退回「無額度資訊」
@@ -1644,6 +1684,51 @@ class StudioSession:
             "各成員所用 provider 目前額度（混合模式每家不同，分派/招募時優先用還有額度的、"
             "避開受限者）：\n" + summary + "\n\n"
         )
+
+    def _apply_preflight_rebind(
+        self,
+        plan: list[tuple[str, str, str]],
+        *,
+        expert_factory=None,
+    ) -> None:
+        """套用 preflight plan：這層只處理 expert 重建與 dict 寫回。"""
+        if not self.cwd:
+            return
+        if expert_factory is None:
+            from .providers import make_expert
+
+            expert_factory = make_expert
+        for role_key, from_provider, to_provider in plan:
+            if role_key not in self._experts or role_key not in BY_KEY:
+                continue
+            log.info(
+                "場次起點 %s：provider %s 受限，自動重綁 %s",
+                role_key,
+                from_provider,
+                to_provider,
+            )
+            self._experts[role_key] = expert_factory(
+                BY_KEY[role_key],
+                self.session_id,
+                self.cwd,
+                provider=to_provider,
+            )
+            self._recruit_providers[role_key] = to_provider
+
+    async def _preflight_rebind_experts(self, experts: dict[str, ExpertLike]) -> None:
+        """場次起點檢查所有在場成員；決策走 flow，副作用由 _apply_preflight_rebind 套用。"""
+        if not self.cwd or not self._quota_snap:
+            return
+        current_bindings = self._current_provider_bindings(experts)
+        explicit_overrides = self._explicit_provider_overrides(experts)
+        plan = plan_preflight_rebind(current_bindings, self._quota_snap, explicit_overrides)
+        planned_roles = {role_key for role_key, _from, _to in plan}
+        for role_key, provider in current_bindings.items():
+            if role_key in planned_roles or explicit_overrides.get(role_key):
+                continue
+            if provider and provider_quota.constrained(self._quota_snap, provider):
+                await self._handle_all_constrained(role_key, provider, self._quota_snap)
+        self._apply_preflight_rebind(plan)
 
     # --- 考核（Appraisal）：績效聚合注入與 per-task 客觀指標收集 ----------------
     async def _appraisal_perf(self) -> dict:
@@ -1866,12 +1951,15 @@ class StudioSession:
         )
 
     def _pick_provider(self, role: Role, hint: str) -> str:
-        """招募綁定 provider：PM 明指（hint）優先，否則角色有效 provider；受限則自動重綁最寬鬆就緒者。"""
+        """選 provider：使用者明示覆寫優先；其後才採 PM hint/預設與 quota 重綁。"""
         from .providers import effective_provider
 
+        if config.is_user_explicit_provider(role.key):
+            return config.role_provider(role.key)
         prov = (hint or "").strip() or effective_provider(role)
         if prov not in config.PROVIDERS:
             prov = effective_provider(role)
+        self._provider_constrained_pending.pop(role.key, None)
         snap = self._quota_snap
         threshold = provider_quota.CONSTRAINED_THRESHOLD
         if self._dispatch_auto:
@@ -1886,7 +1974,82 @@ class StudioSession:
             if alt and alt != prov:
                 log.info("招募 %s：provider %s 受限，自動重綁 %s", role.key, prov, alt)
                 prov = alt
+            elif alt is None:
+                log.warning("招募 %s：provider %s 受限，且沒有可重綁的 provider", role.key, prov)
+                self._provider_constrained_pending[role.key] = prov
         return prov
+
+    def _quota_audit_providers(self, snap: dict | None) -> list[dict]:
+        providers: list[dict] = []
+        for entry in (snap or {}).get("providers", []):
+            rl = entry.get("rate_limits") or {}
+            if isinstance(rl.get("buckets"), list):
+                windows = [w for w in rl["buckets"] if isinstance(w, dict)]
+            else:
+                windows = [v for v in rl.values() if isinstance(v, dict)]
+            used = [
+                w.get("used_percentage")
+                for w in windows
+                if isinstance(w.get("used_percentage"), (int, float))
+            ]
+            resets = [
+                w.get("reset_at") for w in windows if isinstance(w.get("reset_at"), (int, float))
+            ]
+            providers.append(
+                {
+                    "key": entry.get("key", ""),
+                    "ready": bool(entry.get("ready")),
+                    "error": rl.get("error"),
+                    "max_used": max(used) if used else None,
+                    "soonest_reset": min(resets) if resets else None,
+                }
+            )
+        return providers
+
+    def _quota_snapshot_for_audit(self, snap: dict | None) -> dict:
+        return {
+            p["key"]: {
+                "ready": p["ready"],
+                "error": p["error"],
+                "max_used": p["max_used"],
+                "soonest_reset": p["soonest_reset"],
+            }
+            for p in self._quota_audit_providers(snap)
+            if p.get("key")
+        }
+
+    async def _handle_all_constrained(
+        self, role_key: str, provider: str, snap: dict | None
+    ) -> None:
+        reason = "no_provider_ready"
+        providers = self._quota_audit_providers(snap)
+        snapshot = self._quota_snapshot_for_audit(snap)
+        await self.broadcast(
+            events.provider_constrained(
+                self.session_id,
+                role_key,
+                provider,
+                reason,
+                providers,
+                snapshot,
+            )
+        )
+        try:
+            config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
+            row = {
+                "ts": time.time(),
+                "event": "provider_constrained",
+                "session_id": self.session_id,
+                "role": role_key,
+                "provider": provider,
+                "reason": reason,
+                "providers": providers,
+                "snapshot": snapshot,
+            }
+            with (config.AUTOPILOT_STATE_DIR / "audit.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        except OSError as exc:
+            log.warning("provider_constrained audit 寫入失敗：%s", exc)
 
     async def _recruit(
         self, ctx: LaneContext, role: Role, provider_hint: str, reason: str, model: str = ""
@@ -1899,6 +2062,8 @@ class StudioSession:
         provider 的白名單時傳給 make_expert，否則棄用、沿用該家預設模型槽。
         """
         prov = self._pick_provider(role, provider_hint)
+        if self._provider_constrained_pending.pop(role.key, None) == prov:
+            await self._handle_all_constrained(role.key, prov, self._quota_snap)
         if model:
             if self._dispatch_auto and prov in config.AUTO_DISPATCH_PROVIDERS:
                 # auto 派工：模型直通不查白名單，但僅限實際綁定＝PM 指定的家
@@ -2563,13 +2728,22 @@ class StudioSession:
         experts = self._get_experts()
         if self._lane_expert_factory is not None:
             factory = self._lane_expert_factory
+            return {
+                key: factory(experts[key].role, f"{self.session_id}:{suffix}", cwd)
+                for key in experts
+            }
         else:
             from .providers import make_expert
 
-            factory = make_expert
-        return {
-            key: factory(experts[key].role, f"{self.session_id}:{suffix}", cwd) for key in experts
-        }
+            return {
+                key: make_expert(
+                    experts[key].role,
+                    f"{self.session_id}:{suffix}",
+                    cwd,
+                    provider=self._recruit_providers.get(key),
+                )
+                for key in experts
+            }
 
     async def _teardown_lane(self, ctx: LaneContext) -> None:
         """收掉一條並行 lane 的專家連線與 worktree（best-effort，整段有界收斂）。

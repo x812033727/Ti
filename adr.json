@@ -1,629 +1,6 @@
 {
   "entries": [
     {
-      "decision": "B 段採 `git diff --stat HEAD -- web/app.js` 先看彙整，零差即收。",
-      "rationale": "高工建議；零差時完整 diff 為空但有 noise。",
-      "rejected": "直接跑 `git diff HEAD` 完整輸出。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624675
-    },
-    {
-      "decision": "範圍外清單須由 `git log --oneline -n 5` + `git show --stat <sha>` 撈實 commit 與檔名/SHA，不接受舉例式標註。",
-      "rationale": "PM 要據此判斷是否 revert，必須是實資料。",
-      "rejected": "沿用研究快照的範例 SHA。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624682
-    },
-    {
-      "decision": "範圍外清單增「流程守則」——下次需求 doc 附 `git rev-parse HEAD` + `git status --short` 自驗。",
-      "rationale": "高工指出為流程債，趁現在記。",
-      "rejected": "留待下個 task（會重演同樣卡點）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624694
-    },
-    {
-      "decision": "介面格式明註「一次性驗收物、不為後續自動化保留介面」。",
-      "rationale": "高工次要建議；防被誤當 API 接 CI。",
-      "rejected": "產結構化檔預留未來介面（YAGNI）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624706
-    },
-    {
-      "decision": "沿用：任務 = 驗證型 no-op，全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 寫入子命令；技術選型 = 純 git CLI + grep，無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」；範圍 = 只處理 staged/working tree，已 commit 不相關檔排除；驗收 = 逐項精確、任一失敗即停，綁死 PM 四項標準；三段模組各自可單獨重跑。",
-      "rationale": "既有紀律延伸；不再展開取捨避免冗述。",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624723
-    },
-    {
-      "decision": "任務性質 = 驗證型 no-op；技術選型 = 純 git CLI + grep，無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」；範圍 = 只處理 staged/working tree，已 commit 不相關檔排除；驗收 = 逐項精確、任一失敗即停，綁死 PM 四項；模組 = A/B/C 三段各自可單獨重跑；不變性 = 全程 read-only、禁 `restore`/`reset`/`rm`/`checkout` 寫入子命令。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624737
-    },
-    {
-      "decision": "沿用：任務性質 = 驗證型 no-op。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624747
-    },
-    {
-      "decision": "沿用：技術選型 = 純 git CLI + grep，無 wrapper。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624752
-    },
-    {
-      "decision": "沿用：介面 = 單一 markdown 區塊，三段「指令/預期/實測」分欄。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624756
-    },
-    {
-      "decision": "沿用：範圍 = 只處理 staged/working tree 層級，已 commit 進 origin/main 的不相關檔排除。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.86248
-    },
-    {
-      "decision": "沿用：驗收 = 逐項精確、任一失敗即停回報 PM，綁死 PM 四項標準。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624809
-    },
-    {
-      "decision": "沿用：模組 = A 工作樹乾淨 / B app.js == HEAD / C 渲染邏輯存在，三段各自可單獨重跑。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624818
-    },
-    {
-      "decision": "沿用：不變性 = 全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 寫入子命令。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624828
-    },
-    {
-      "decision": "產物頂端置「本任務實為驗證型 no-op，無任何寫入操作」結論句，三段證據為佐證；PM 第一眼掌握任務性質。",
-      "rationale": "避免讀完整份才發現是空包，縮短決策路徑。",
-      "rejected": "三段平鋪、由 PM 自推結論（推導成本不該丟給 PM）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624837
-    },
-    {
-      "decision": "C 段 grep pattern 綁死為 `criteria` + `render` 兩組關鍵字，皆需命中；命中後輸出含行號與前後 2 行 context，不得只貼行號。",
-      "rationale": "高工指為最大設計洞；防「grep 隨便找」黑箱化為「為了過而過」。",
-      "rejected": "執行端自由發揮 pattern（工程師原案「先 cat 再定」未綁死判定邏輯）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624845
-    },
-    {
-      "decision": "B 段採 `git diff --stat HEAD -- web/app.js` 先看彙整，零差即收；非零差再跑完整 diff。",
-      "rationale": "高工建議；零差時完整 diff 雖空但有 noise，stat 先看更省時。",
-      "rejected": "直接跑完整 `git diff HEAD -- web/app.js`（零差時多餘輸出）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.862485
-    },
-    {
-      "decision": "範圍外清單須由 `git log --oneline -n 5` + `git show --stat <sha>` 撈出實際「不相關 commit」與其檔名/SHA，不接受舉例式標註。",
-      "rationale": "PM 須據此判斷是否 revert，必須是實資料不是猜測。",
-      "rejected": "沿用研究快照的範例 SHA（如「@ 4572a49」）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624864
-    },
-    {
-      "decision": "範圍外清單增一條「流程守則給 PM」——下次需求 doc 須附 `git rev-parse HEAD` 與 `git status --short` 自驗，避免舊快照重演。",
-      "rationale": "高工指出此為流程債，趁現在順手記下；不修下個 task 會重演同樣卡點。",
-      "rejected": "留待下個 task 再處理。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624873
-    },
-    {
-      "decision": "沿用既有設計——任務性質 = 驗證型 no-op；技術選型 = 純 git CLI + grep、無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」；範圍 = 只處理 staged/working tree、已 commit 不相關檔排除；驗收 = 逐項精確、任一失敗即停，綁死 PM 四項標準；模組 = A/B/C 三段各自可單獨重跑；不變性 = 全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 寫入子命令。",
-      "rationale": "既有紀律延伸，PM 已核可方向；不再展開取捨避免冗述。",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624885
-    },
-    {
-      "decision": "C 段 grep pattern 綁死為 `criteria` + `render` 兩組關鍵字，皆需命中才算「渲染邏輯存在」；命中後輸出含行號與前後 2 行 context，不得只貼行號。",
-      "rationale": "高工指為最大設計洞；防「grep 隨便找」黑箱化為「為了過而過」捷徑。",
-      "rejected": "執行端自由發揮 pattern（工程師原案「先 cat 再定」未綁死判定邏輯，仍有操作空間）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624902
-    },
-    {
-      "decision": "B 段採 `git diff --stat HEAD -- web/app.js` 先看一行彙整，零差即收；非零差再跑完整 `git diff`。",
-      "rationale": "高工建議；零差時完整 diff 雖空但有 noise，stat 先看更省時。",
-      "rejected": "直接跑完整 `git diff HEAD -- web/app.js`（零差時多餘輸出）。",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624911
-    },
-    {
-      "decision": "沿用既有設計——任務性質 = 驗證型 no-op；技術選型 = 純 git CLI + grep、無 wrapper；介面 = 單一 markdown 區塊、三段「指令/預期/實測」分欄；範圍 = 只處理 staged/working tree 層級、已 commit 進 origin/main 的不相關檔排除；驗收 = 逐項精確、任一失敗即停回報 PM，綁死 PM 四項標準；模組 = A 工作樹乾淨 / B app.js == HEAD / C 渲染邏輯存在，三段各自可單獨重跑；不變性 = 全程 read-only，禁 `restore` / `reset` / `rm` / `checkout` 任何寫入子命令。",
-      "rationale": "既有紀律延伸，PM/工程師/高工三方已核可方向；不再展開取捨避免冗述。",
-      "rejected": "",
-      "session_id": "ap867ab655c0",
-      "created_at": 1781698221.8624938
-    },
-    {
-      "decision": "技術選型沿用既有 Ruff + pre-commit + CI，規則來源維持 `pyproject.toml` 單一配置。",
-      "rationale": "降低規則分歧與維護成本。",
-      "rejected": "自製 parser、額外掃描器、平行 lint 規則集。",
-      "session_id": "apdcee1140ae",
-      "created_at": 1781795257.6555743
-    },
-    {
-      "decision": "不基於「`ruff --fix` 可能不停下」直接改 hook；先做一次 pre-commit 實測確認 hook 修改檔案後是否阻擋提交。",
-      "rationale": "避免用錯誤假設堆補丁。",
-      "rejected": "未驗證就新增第二套防線。",
-      "session_id": "apdcee1140ae",
-      "created_at": 1781795257.6555762
-    },
-    {
-      "decision": "若實測確認 pre-commit 已會因自動修正而失敗，實作範圍只補文件或驗收紀錄，不改現有 hook。",
-      "rationale": "現有 CI 已有 `ruff check .` 與 `ruff format --check .` 非修正式 gate。",
-      "rejected": "為了形式安全而增加重複檢查。",
-      "session_id": "apdcee1140ae",
-      "created_at": 1781795257.6555777
-    },
-    {
-      "decision": "若實測發現 hook 會吞掉自動修正，才最小化補強為「修正式 Ruff 後接非修正式 Ruff check」。",
-      "rationale": "保留自動修正體驗，同時確保提交不可靜默通過。",
-      "rejected": "拆出新 workflow、改用 wrapper script、擴大 CI 架構。",
-      "session_id": "apdcee1140ae",
-      "created_at": 1781795257.6555784
-    },
-    {
-      "decision": "依賴方向固定為工具設定驅動流程，業務程式碼不得依賴 lint/pre-commit 實作細節。",
-      "rationale": "讓未來替換 hook 或升級 Ruff 可逆。",
-      "rejected": "",
-      "session_id": "apdcee1140ae",
-      "created_at": 1781795257.655579
-    },
-    {
-      "decision": "新增獨立 CI job `deploy-test`，既有 `lint`、`test`、`sandbox-test` 不改。",
-      "rationale": "明確形成 deploy merge gate。",
-      "rejected": "不併入矩陣、不用 path filter。",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.3147242
-    },
-    {
-      "decision": "`deploy-test` job id/name 固定不改名，作為 GitHub required check 介面。",
-      "rationale": "保護規則依賴 check 名稱，穩定性優先。",
-      "rejected": "",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.314727
-    },
-    {
-      "decision": "README 記錄 required check 為 `deploy-test`，但實際 ruleset 設定時需以 GitHub Actions 顯示名稱確認一次。",
-      "rationale": "README 只是文件，真正擋 merge 仍靠 branch protection/ruleset。",
-      "rejected": "",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.3147287
-    },
-    {
-      "decision": "branch protection/ruleset 必須手動或以 IaC 同步加入 `deploy-test` required check。",
-      "rationale": "CI 檔新增 job 不等於自動啟用 merge gate。",
-      "rejected": "",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.31473
-    },
-    {
-      "decision": "`deploy-test` 使用 Python `3.12`、`TI_SANDBOX=0`、`timeout-minutes: 10`。",
-      "rationale": "對齊部署實跑環境與既有 CI 沙箱策略。",
-      "rejected": "",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.3147311
-    },
-    {
-      "decision": "依賴安裝沿用現有 `test` job 的最小 pip 依賴集合。",
-      "rationale": "",
-      "rejected": "不新增 marker、xdist、專用 wrapper 或額外套件。",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.3147326
-    },
-    {
-      "decision": "測試指令固定為 `python -m pytest tests/deploy -q`。",
-      "rationale": "保留 pytest 原生失敗語意，包含 tests 被清空時 exit code 5 直接紅燈。",
-      "rejected": "",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.3147337
-    },
-    {
-      "decision": "不設 `continue-on-error`，不設 workflow/job path filter。",
-      "rationale": "required check 要穩定出現且不可假綠。",
-      "rejected": "",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.314735
-    },
-    {
-      "decision": "接受 deploy 測試被矩陣全測與 `deploy-test` 重複跑一次。",
-      "rationale": "放棄省 CI 分鐘，換取清楚、可要求的 merge gate。",
-      "rejected": "",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.3147364
-    },
-    {
-      "decision": "實作範圍只限 `.github/workflows/ci.yml` 與 `README.md`。",
-      "rationale": "",
-      "rejected": "不改業務程式碼、不改 `tests/deploy/` 測試內容。",
-      "session_id": "ap678b6e6e74",
-      "created_at": 1781809353.314737
-    },
-    {
-      "decision": "變更範圍限於 `studio/providers.py` 與 `tests/core/test_providers.py`。",
-      "rationale": "缺陷在 `CodexExpert` 子程序生命週期，無需動 runner/orchestrator。",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520875
-    },
-    {
-      "decision": "使用 Python 標準庫 `asyncio`、`os`、`signal`，不引入 `psutil`。",
-      "rationale": "",
-      "rejected": "不新增跨平台 process-tree 抽象。",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520902
-    },
-    {
-      "decision": "`CodexExpert` 持有單一 `self._proc`，代表目前執行中的 `codex exec`。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520914
-    },
-    {
-      "decision": "同一個 `CodexExpert` instance 不支援並發 speak；若已有執行中 proc，新的執行必須明確失敗，不可 silent overwrite。",
-      "rationale": "保護生命週期引用正確性，放棄同角色並發換取可預期停止語意。",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520923
-    },
-    {
-      "decision": "`_run_codex()` 在 `create_subprocess_exec()` 成功後立即設定 `self._proc = proc`。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.552093
-    },
-    {
-      "decision": "`_run_codex()` 的 `finally` 只在 `self._proc is proc` 時清空引用。",
-      "rationale": "避免舊輪收尾誤清新輪 proc。",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520942
-    },
-    {
-      "decision": "`_run_codex()` 必須處理取消路徑；若 coroutine 被取消且 proc 仍執行，需終止並回收後再重新拋出 `CancelledError`。",
-      "rationale": "不依賴外部一定會補呼叫 `stop()`。",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520947
-    },
-    {
-      "decision": "`stop()` 維持 async 且語意為「停止完成」；呼叫 `_terminate(proc)` 後必須 bounded `await proc.wait()`。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520954
-    },
-    {
-      "decision": "`stop()` 若等待逾時，必須升級強制 kill，再 bounded 等待回收。",
-      "rationale": "上層使用 `await expert.stop()`，不能只送訊號就返回。",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520964
-    },
-    {
-      "decision": "`_terminate()` 對齊 runner 策略：用 `os.getpgid(proc.pid)` 取得 process group 後送訊號，捕捉 `PermissionError/OSError`，fallback 到 `proc.kill()`。",
-      "rationale": "",
-      "rejected": "不採用只 `os.killpg(proc.pid, SIGTERM)` 的窄版實作。",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520968
-    },
-    {
-      "decision": "`_terminate()` 保持低階 helper，只負責送訊號；等待、逾時、升級 kill 由 `stop()` 與取消清理路徑負責。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520973
-    },
-    {
-      "decision": "測試使用 fake process 與 monkeypatch，不啟動真 Codex CLI、不連外。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.5520976
-    },
-    {
-      "decision": "測試需覆蓋 `_proc` 保存、`stop()` 終止與等待、逾時升級 kill、重複 stop 冪等、finally 不誤清新 proc、取消時清理回收、並發 speak 明確失敗。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apd35212a234",
-      "created_at": 1781816495.552098
-    },
-    {
-      "decision": "稽核 log 落在 `auth.set_password()`，且只在 `.env`、`os.environ`、`config.ACCESS_PASSWORD` 全部更新成功後發一筆 `WARNING`。",
-      "rationale": "讓 log 代表實際成功狀態，並涵蓋 API 以外的未來呼叫路徑。",
-      "rejected": "不在 route 層補 log，避免呼叫路徑分散後漏記。",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.9181824
-    },
-    {
-      "decision": "使用 auth 模組 logger `ti.auth`，不新增 audit subsystem。",
-      "rationale": "本輪只有單一安全事件，抽象成本高於收益。",
-      "rejected": "",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.918185
-    },
-    {
-      "decision": "log 只記錄狀態，不記錄任何舊密碼、新密碼、hash、token、cookie 或可還原敏感資訊。",
-      "rationale": "稽核需要可觀測性，不需要秘密值。",
-      "rejected": "",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.918186
-    },
-    {
-      "decision": "非空密碼記錄「門禁已啟用／密碼已變更」語意；空字串記錄「門禁已停用／密碼已清空」語意。",
-      "rationale": "稽核者能分辨一般變更與停用認證。",
-      "rejected": "",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.9181867
-    },
-    {
-      "decision": "失敗路徑不得發成功稽核 log；測試需覆蓋 `write_secret_file` 失敗時沒有 warning。",
-      "rationale": "防止未來重構把 log 移到寫入前。",
-      "rejected": "",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.9181876
-    },
-    {
-      "decision": "本輪不修改 `/api/auth/password` 的長度限制；空字串停用只保留 `auth.set_password(\"\")` 直呼能力。",
-      "rationale": "",
-      "rejected": "不把 API/UI 停用門禁混入本需求。",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.9181883
-    },
-    {
-      "decision": "測試放在 `tests/server/test_auth.py`，沿用 `pw_env` 隔離環境，使用 `caplog` 驗證 `ti.auth` 的 warning。",
-      "rationale": "貼合現有測試邊界，不新增依賴。",
-      "rejected": "",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.918189
-    },
-    {
-      "decision": "測試覆蓋非空密碼、空字串停用、失敗不記錄三條路徑，並驗證實際舊密碼與新密碼值不出現在 log。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "apf8e2650944",
-      "created_at": 1781819865.9181912
-    },
-    {
-      "decision": "在 `studio/adr.py` 新增私有 `_MAX_STORE = 500` 作為 `adr.json` 持久化上限。",
-      "rationale": "對齊 `lessons.py` 模式，並切開儲存容量與 prompt 注入筆數。",
-      "rejected": "不使用 `config.ADR_MAX` 控制落盤容量。",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5714972
-    },
-    {
-      "decision": "`adr.record()` 在鎖內完成讀取、既有保留資料去重、追加、裁切、`tmp.replace` 落盤。",
-      "rationale": "讓落盤狀態本身有上限，避免讀取時補救造成不一致。",
-      "rejected": "不引入新儲存層或外部檔案鎖依賴。",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5714998
-    },
-    {
-      "decision": "裁切策略為 `entries[-_MAX_STORE:]`，保留最新 500 筆且維持舊到新順序。",
-      "rationale": "行為簡單、可預測，符合目前 JSON 索引用途。",
-      "rejected": "",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.571501
-    },
-    {
-      "decision": "去重範圍只保證目前 `adr.json` 內保留的 500 筆。",
-      "rationale": "接受機讀索引有限容量後的有限去重。",
-      "rejected": "不為了全歷史去重反掃 `DECISIONS.md` 或建立額外索引。",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.571502
-    },
-    {
-      "decision": "重提仍在保留範圍內的舊 ADR 時，不刷新其位置；同批新增後若被裁掉即消失於 `adr.json`。",
-      "rationale": "維持既有「完全去重、不刷新」語意，避免暗中改變排序模型。",
-      "rejected": "",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.571503
-    },
-    {
-      "decision": "已被裁掉的很舊 ADR 未來若重提，可重新進入 `adr.json`，且 `DECISIONS.md` 會再次 append。",
-      "rationale": "這是容量治理的明確代價，換取實作簡單與依賴方向乾淨。",
-      "rejected": "",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5715039
-    },
-    {
-      "decision": "不裁切 `DECISIONS.md`。",
-      "rationale": "它是人讀審計歷史，保留完整追溯價值。",
-      "rejected": "不讓 UI 或 prompt 直接掃整份 `DECISIONS.md`。",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5715046
-    },
-    {
-      "decision": "`context()` 繼續只用呼叫端 `limit` / `config.ADR_MAX` 控制注入筆數。",
-      "rationale": "`context` 是讀取展示策略，不承擔持久化容量治理。",
-      "rejected": "",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5715053
-    },
-    {
-      "decision": "`record()` 的 `session_id`、`created_at`、回傳 `len(added)` 等 API 語意不變。",
-      "rationale": "本輪只處理儲存容量，不擴大行為面。",
-      "rejected": "",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5715065
-    },
-    {
-      "decision": "測試放在 `tests/core/test_adr.py`，用 `monkeypatch` 將 `_MAX_STORE` 降為 3，覆蓋最新保留、`context()` 不含裁掉資料、`DECISIONS.md` 保留完整 append。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5715075
-    },
-    {
-      "decision": "補測重提最舊既有 ADR 並同批新增時，不刷新位置且可能被裁掉的行為。",
-      "rationale": "釘住刻意取捨，避免未來重構誤改語意。",
-      "rejected": "",
-      "session_id": "ap2886da28d2",
-      "created_at": 1781821530.5715082
-    },
-    {
-      "decision": "`DiscussionEngine.__init__` 新增 `own_history_recent_n: int | None = 3`。",
-      "rationale": "預設限制自身歷史最近 3 筆，降低 prompt 膨脹。",
-      "rejected": "不新增 env/config，避免擴大設定面。",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.460921
-    },
-    {
-      "decision": "`own_history_recent_n=0` 代表完全不注入「你先前的發言」。",
-      "rationale": "必須特判，避免 Python `[-0:]` 變成全量。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609237
-    },
-    {
-      "decision": "`own_history_recent_n=None` 代表不截斷、全量注入。",
-      "rationale": "保留除錯與相容逃生口。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.460925
-    },
-    {
-      "decision": "`own_history_recent_n < 0` 在建構時直接 `ValueError`。",
-      "rationale": "負數 slicing 語意隱晦，應明確拒絕。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609256
-    },
-    {
-      "decision": "`None` 判斷必須先於 `< 0` 檢查。",
-      "rationale": "避免 `None < 0` 型別錯誤。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609265
-    },
-    {
-      "decision": "截斷邏輯集中在 `_build_prompt` 前的一小段前處理，不散落到 prompt 組字串流程。",
-      "rationale": "保持單一資料流，降低維護成本。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609277
-    },
-    {
-      "decision": "`parallel` 與 `round_robin` 都沿用 `_build_prompt` 單一入口，不各自實作歷史截斷。",
-      "rationale": "保護依賴方向，避免分支行為漂移。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609282
-    },
-    {
-      "decision": "`run()` 繼續完整累積 `own[name]`、`transcript` 與 summary 所需資料，只限制 prompt 注入。",
-      "rationale": "本輪只控 prompt 成本，不改流程語意。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609294
-    },
-    {
-      "decision": "最近 N 筆輸出仍維持原時間順序，由舊到新。",
-      "rationale": "對齊既有 `memory.recent_n` 語意。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.46093
-    },
-    {
-      "decision": "每段自身歷史仍保留既有 `SELF_SEGMENT_MAX_CHARS=1200`。",
-      "rationale": "本輪限制的是筆數，不是 token 或字元總量。",
-      "rejected": "不導入 token budget、LangChain、LlamaIndex。",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.460931
-    },
-    {
-      "decision": "同步更新 `studio/discussion.py` 檔頭的實際建構子簽名/驗收文件。",
-      "rationale": "該段會被驗收抽查，漏改會造成低價值回歸。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609318
-    },
-    {
-      "decision": "測試放在 `tests/core/test_discussion.py`，覆蓋預設最近 3 筆、`0` 不注入、`None` 不截斷、順序不反轉、`-1` 觸發 `ValueError`。",
-      "rationale": "直接鎖住這次新增的 API 語意與主要陷阱。",
-      "rejected": "",
-      "session_id": "apcc428d35ab",
-      "created_at": 1781822828.4609325
-    },
-    {
-      "decision": "本輪只處理 `studio/auth.py::set_password()` 稽核與 Ruff I001，不觸碰 discussion/prompt 截斷流程。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.8812482
-    },
-    {
-      "decision": "稽核點集中在 `set_password()`，維持密碼門禁狀態變更的單一入口。",
-      "rationale": "保護依賴方向，route 層不承擔 auth 內部狀態細節。",
-      "rejected": "在 route、middleware 或多處呼叫點分散記錄。",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.881251
-    },
-    {
-      "decision": "沿用既有 `ti.auth` logger 與標準庫 `logging`，成功事件用 WARNING。",
-      "rationale": "",
-      "rejected": "導入 loguru、structlog 或完整 audit subsystem。",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.8812523
-    },
-    {
-      "decision": "資料流固定為寫入 `.env` 成功後，才更新 `os.environ`、`config.ACCESS_PASSWORD` 並發稽核 log。",
-      "rationale": "避免「記錄成功但實際失敗」的假 audit。",
-      "rejected": "",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.881253
-    },
-    {
-      "decision": "log 只記「門禁已啟用」或「門禁已停用」。",
-      "rationale": "",
-      "rejected": "記錄密碼、hash、token、cookie、session 或差異內容。",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.8812542
-    },
-    {
-      "decision": "停用時維持 `TI_ACCESS_PASSWORD=\"\"`，不移除 env key。",
-      "rationale": "對齊既有 `bool(\"\") == False` 語意。",
-      "rejected": "",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.8812547
-    },
-    {
-      "decision": "`set_password()` 的 `.strip()` 既有語意維持，不支援前後空白作為密碼內容。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.8812551
-    },
-    {
-      "decision": "`write_secret_file` 失敗時自然拋例外，不更新 runtime state，也不發成功稽核 log。",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ape0567d5a5d",
-      "created_at": 1781828910.8812556
-    },
-    {
       "decision": "測試放在 `tests/server/test_auth.py`，用 `caplog` 覆蓋啟用、停用、失敗不誤記與秘密不外洩。",
       "rationale": "",
       "rejected": "",
@@ -792,69 +169,6 @@
       "created_at": 1781974433.9478242
     },
     {
-      "decision": "**Patch 接縫統一用 `sys.modules[\"openai\"]`，禁用 `studio.providers.openai`**",
-      "rationale": "`_openai_chat` 是 lazy import，patch alias 會是假綠；此規則強制寫入各新測試 docstring，`monkeypatch` 自動還原",
-      "rejected": "patch `studio.providers.openai`——lazy import 路徑下對應到錯誤接縫，測試會恆通過",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.111695
-    },
-    {
-      "decision": "**任務 #2 新增獨立檔案 `tests/core/test_providers_max_retries_gemini_task2_qa.py`，不擴充既有 openai/minimax 檔案**",
-      "rationale": "單一 provider 失敗時可精確定位；blast radius 隔離；與既有 openai/minimax 各自獨立的慣例一致",
-      "rejected": "三 provider 同一檔——對稱性好看，但任一 provider 新需求會汙染其他 provider 的穩定測試",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1116998
-    },
-    {
-      "decision": "**任務 #3 錯誤分類測試採「注入 `expert._chat` callable」，fake exception 物件須符合 `llm_caller.py` 實際分類型別，不得只丟泛用 `Exception`**",
-      "rationale": "`run_with_retries` 依例外類型分流（429/503/401 等），丟錯型別會跑到錯的分支，測試喪失判別力",
-      "rejected": "mock SDK class——比注入 callable 多一層間接，且與 lazy import 接縫不符",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1117024
-    },
-    {
-      "decision": "**任務 #3 每個錯誤 case 須有反向黑樣本，最低要求：`max_retries=0` 情況下斷言 `fake_fn` 只被呼叫一次**",
-      "rationale": "防止 retry 測試假綠——若斷言只看「最終未拋出」而不看呼叫次數，retry 邏輯壞掉也會通過",
-      "rejected": "",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1117039
-    },
-    {
-      "decision": "**任務 #4 範圍重定：本輪測試「工具解析失敗回退 content」＋「驗證現有 `DedupCache/execute_deduped` 機制覆蓋 OpenAI 相容路徑（gemini/minimax）」，新增檔案 `tests/core/test_providers_compat_tool_behavior_task4_qa.py`**",
-      "rationale": "`DedupCache`（providers.py:847）與 `execute_deduped`（providers.py:896）在 production 已存在，且 `test_providers_dedup_task3.py:77` 已有 e2e 覆蓋；本輪缺口是「OpenAI 相容後端是否確實走同一去重路徑」，而非「機制不存在」",
-      "rejected": "以「production 無 idempotency 機制」為由排除非冪等測試——與現況不符，會誤導 PR reviewer 和後續維護者",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1117055
-    },
-    {
-      "decision": "**任務 #4「工具解析失敗回退 content」須含反向黑樣本：格式正確的 tool_call 應觸發工具迴圈，不被誤當 content 吞掉**",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1117063
-    },
-    {
-      "decision": "**移交待辦（明文記入 PR）改寫為：「確認 `test_providers_dedup_task3.py` 現有覆蓋是否已涵蓋 gemini/minimax 相容後端的去重語意；若有路徑缺口，另開任務補特定 provider 的 `DedupCache` 行為驗證」**",
-      "rationale": "不能以「機制不存在」當理由——機制已在；真實移交項是「相容路徑的覆蓋完整度確認」",
-      "rejected": "待辦寫「非冪等去重機制設計」——暗示 production 待開發，與現況矛盾",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1117077
-    },
-    {
-      "decision": "**三支新測試檔案統一放 `tests/core/`，命名遵循 `test_*_taskN_qa.py` 慣例，fixture 寫同檔不動 `conftest.py`**",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1117082
-    },
-    {
-      "decision": "**驗收命令為 `python3 -m pytest tests/core/ -q`，基線 765 passed，新增後數量增加且無迴歸；不以 `-k` 排除作主要手段**",
-      "rationale": "",
-      "rejected": "",
-      "session_id": "ap95dbedbae9",
-      "created_at": 1782005809.1117086
-    },
-    {
       "decision": "`live` fixture 第 109 行改 `env[\"TI_ACCESS_PASSWORD\"] = \"\"`，取代現有 `env.pop(\"TI_ACCESS_PASSWORD\", None)`",
       "rationale": "`pop` 後鍵不存在，子行程 import `config.py` 時 `load_dotenv(override=False)` 從 `.env` 補回密碼，門禁重啟；設空字串讓鍵存在於 subprocess env，dotenv 不覆寫，`auth_enabled()` 返回 False，門禁確實停用",
       "rejected": "維持 `pop` 並搭配 `.env` 備份清除密碼——侵入真實 `.env` 結構、teardown 順序脆弱，不可接受",
@@ -916,6 +230,69 @@
       "rejected": "",
       "session_id": "apffa66565fc",
       "created_at": 1781982930.4382167
+    },
+    {
+      "decision": "**Patch 接縫統一用 `sys.modules[\"openai\"]`，禁用 `studio.providers.openai`**",
+      "rationale": "`_openai_chat` 是 lazy import，patch alias 會是假綠；此規則強制寫入各新測試 docstring，`monkeypatch` 自動還原",
+      "rejected": "patch `studio.providers.openai`——lazy import 路徑下對應到錯誤接縫，測試會恆通過",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.111695
+    },
+    {
+      "decision": "**任務 #2 新增獨立檔案 `tests/core/test_providers_max_retries_gemini_task2_qa.py`，不擴充既有 openai/minimax 檔案**",
+      "rationale": "單一 provider 失敗時可精確定位；blast radius 隔離；與既有 openai/minimax 各自獨立的慣例一致",
+      "rejected": "三 provider 同一檔——對稱性好看，但任一 provider 新需求會汙染其他 provider 的穩定測試",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1116998
+    },
+    {
+      "decision": "**任務 #3 錯誤分類測試採「注入 `expert._chat` callable」，fake exception 物件須符合 `llm_caller.py` 實際分類型別，不得只丟泛用 `Exception`**",
+      "rationale": "`run_with_retries` 依例外類型分流（429/503/401 等），丟錯型別會跑到錯的分支，測試喪失判別力",
+      "rejected": "mock SDK class——比注入 callable 多一層間接，且與 lazy import 接縫不符",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1117024
+    },
+    {
+      "decision": "**任務 #3 每個錯誤 case 須有反向黑樣本，最低要求：`max_retries=0` 情況下斷言 `fake_fn` 只被呼叫一次**",
+      "rationale": "防止 retry 測試假綠——若斷言只看「最終未拋出」而不看呼叫次數，retry 邏輯壞掉也會通過",
+      "rejected": "",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1117039
+    },
+    {
+      "decision": "**任務 #4 範圍重定：本輪測試「工具解析失敗回退 content」＋「驗證現有 `DedupCache/execute_deduped` 機制覆蓋 OpenAI 相容路徑（gemini/minimax）」，新增檔案 `tests/core/test_providers_compat_tool_behavior_task4_qa.py`**",
+      "rationale": "`DedupCache`（providers.py:847）與 `execute_deduped`（providers.py:896）在 production 已存在，且 `test_providers_dedup_task3.py:77` 已有 e2e 覆蓋；本輪缺口是「OpenAI 相容後端是否確實走同一去重路徑」，而非「機制不存在」",
+      "rejected": "以「production 無 idempotency 機制」為由排除非冪等測試——與現況不符，會誤導 PR reviewer 和後續維護者",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1117055
+    },
+    {
+      "decision": "**任務 #4「工具解析失敗回退 content」須含反向黑樣本：格式正確的 tool_call 應觸發工具迴圈，不被誤當 content 吞掉**",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1117063
+    },
+    {
+      "decision": "**移交待辦（明文記入 PR）改寫為：「確認 `test_providers_dedup_task3.py` 現有覆蓋是否已涵蓋 gemini/minimax 相容後端的去重語意；若有路徑缺口，另開任務補特定 provider 的 `DedupCache` 行為驗證」**",
+      "rationale": "不能以「機制不存在」當理由——機制已在；真實移交項是「相容路徑的覆蓋完整度確認」",
+      "rejected": "待辦寫「非冪等去重機制設計」——暗示 production 待開發，與現況矛盾",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1117077
+    },
+    {
+      "decision": "**三支新測試檔案統一放 `tests/core/`，命名遵循 `test_*_taskN_qa.py` 慣例，fixture 寫同檔不動 `conftest.py`**",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1117082
+    },
+    {
+      "decision": "**驗收命令為 `python3 -m pytest tests/core/ -q`，基線 765 passed，新增後數量增加且無迴歸；不以 `-k` 排除作主要手段**",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "ap95dbedbae9",
+      "created_at": 1782005809.1117086
     },
     {
       "decision": "`_derive_scorecard`（`history.py`）新增四個欄位：`qa_total`、`qa_pass`、`critic_total`、`critic_pass`，從事件流確定性推導，原有欄位（rejects、demo_passed 等）原樣保留。",
@@ -1133,6 +510,363 @@
       "rejected": "",
       "session_id": "pje194f13623",
       "created_at": 1782650377.9864852
+    },
+    {
+      "decision": "新增單一模組 `studio/bench.py`（loader + async runner + JSONL writer），三者不拆散",
+      "rationale": "耦合高，早期不值得分層",
+      "rejected": "多模組分層（過度設計）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820896
+    },
+    {
+      "decision": "Fixture 格式 JSON，目錄 `tests/fixtures/improvement_bench/`，缺欄位或格式錯即 `ValueError`",
+      "rationale": "無新依賴；tests/ 目錄軟隔離，autopilot 慣例改 studio/ 不改 tests/",
+      "rejected": "物理隔離 protected branch（本輪排除項）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820922
+    },
+    {
+      "decision": "bench runner 的 `broadcast` 傳 `async def collect(ev): events_seen.append(ev.type)`，不得傳同步 lambda",
+      "rationale": "`StudioSession` 內部 `await self._broadcast_sink(ev)`，同步 callback 首次廣播即 TypeError",
+      "rejected": "`lambda e: None`（高工確認會炸）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820958
+    },
+    {
+      "decision": "bench runner 顯式傳 `experts=build_fake_experts()` / `critics=build_fake_critics()` 給 `StudioSession`，不依賴 `config.OFFLINE_MODE` 自動切換",
+      "rationale": "高工確認 OFFLINE_MODE 只影響外層 WebSocket 路徑注入，`_get_experts()` 仍建真 provider",
+      "rejected": "只 `setattr(config, \"OFFLINE_MODE\", True)`（不可靠，走真 provider）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820972
+    },
+    {
+      "decision": "Fixture schema 四欄位 `task_id(str)` / `requirement(str)` / `expected_completed(bool)` / `expected_event_types(list[str])`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6820986
+    },
+    {
+      "decision": "BenchResult 五欄位 `task_id` / `success` / `duration_s` / `iterations`（expert_message 事件計數）/ `tokens`（fake_experts 下填 0，欄位保留供 M3 擴展）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821
+    },
+    {
+      "decision": "`flow.compare_bench_runs(baseline, post)` 先驗 task_id 集合一致；不一致回 `(\"regress\", \"fixture 集漂移：task_id 集合不符\")`；baseline 為空回 `(\"neutral\", \"baseline 為空，無法對比\")`；post success_rate < baseline 任何下降回 `regress`",
+      "rationale": "先驗 task_id 才能防 fixture 漂移被誤判為進步或退步",
+      "rejected": "只比 success_rate 不驗 task_id 一致性",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.682101
+    },
+    {
+      "decision": "baseline bench 串接點放在 `run_one_task()` 的 `_prepare_clone()` 後、`StudioSession.run()` 前；post bench 放在 `deploy.redeploy()` 成功後立即",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821022
+    },
+    {
+      "decision": "`redeploy()` 前讀 `git rev-parse HEAD` 取 `pre_deploy_sha`（即將成為 last_good）；post bench regress 時先驗 `HEAD == new_merge_head`（本輪合入 SHA）再 rollback；不符則跳過 rollback 並寫 audit 說明「HEAD 已被新部署替換，跳過 rollback」",
+      "rationale": "部署鎖在 `redeploy()` 函式內釋放，post bench 期間鎖已放，另一個 deploy 可能進來；rollback 前驗 HEAD 避免誤回滾新 deploy",
+      "rejected": "直接 rollback 不驗 HEAD（竟態下誤殺新部署）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821036
+    },
+    {
+      "decision": "audit.jsonl 路徑 `AUTOPILOT_STATE_DIR / \"audit.jsonl\"`，append-only，欄位 `ts / task_title / judge / baseline_rate / post_rate / detail / skipped_rollback(bool)`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.682105
+    },
+    {
+      "decision": "`GET /api/bench/latest` 掛 `require_auth`，與 `/api/metrics` 一致",
+      "rationale": "audit 含 task_title/detail，不應裸露",
+      "rejected": "無 auth（高工指出）",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.682106
+    },
+    {
+      "decision": "不動 `config.py`/`publisher.py` 公開介面；deploy.py 只讀 `redeploy()` 回傳值，不改其簽名",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821074
+    },
+    {
+      "decision": "測試檔 `tests/autopilot/test_improvement_bench.py`（bench 串接 + regress→rollback 反向斷言）與 `tests/test_flow_bench.py`（compare 純函式三向 + 黑樣本）；兩份皆 `async def`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj166c627422",
+      "created_at": 1782654116.6821084
+    },
+    {
+      "decision": "pre-flight 重綁 hook 點置於 orchestrator._run() 的 _get_experts() 後、LaneContext 建立前；對每個 ROSTER 成員呼叫 _pick_provider()，若回傳 provider 與 effective_provider(role) 不同，立即以 make_expert(role, session_id, cwd, provider=alt) 重建該 expert 物件並替換 experts dict 對應項。",
+      "rationale": "expert 物件在 _build_experts 時已靜態綁定 provider；只改 map 不重建物件，speak 仍走舊 provider，重綁形同虛設。",
+      "rejected": "僅更新 _recruit_providers / role_provider_map 而不重建 expert——高工指摘「UI 顯示已改綁，實際仍走舊 provider」，否決。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174117
+    },
+    {
+      "decision": "使用者意圖護欄在 _pick_provider() 開頭實作：config.role_provider(role.key) 非空時，不論 provider_hint 與 quota 狀態，直接 early-return 使用者明示 provider，後續所有重綁邏輯完全跳過。",
+      "rationale": "使用者意圖優先於 PM hint 與系統自動優化；混用時若未明確定義優先序，半年後維護者無從判斷。",
+      "rejected": "provider_hint 優先於 TI_PROVIDER_<ROLE> 覆寫——否決，PM hint 屬系統建議，不應壓過使用者明示。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174124
+    },
+    {
+      "decision": "優先序明確為「TI_PROVIDER_<ROLE> 非空 > PM provider_hint > effective_provider(role) > 額度感知重綁」；測試用黑樣本驗證：TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741257
+    },
+    {
+      "decision": "_pick_provider() 維持同步函式，只返回 provider string；廣播 provider_constrained 事件與 append audit 的 async 邏輯移到 async caller（pre-flight loop 與 _recruit()），統一 await _handle_all_constrained(role_key, from_prov, snap)。",
+      "rationale": "不改 _pick_provider 同步簽名可避免牽動所有既有 callsite；async 副作用集中在 caller 層，邊界清楚。",
+      "rejected": "將 _pick_provider 改為 async——會牽動所有 callsite（recruit / pre-flight loop），增量風險高於效益。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174127
+    },
+    {
+      "decision": "_handle_all_constrained(role_key, from_prov, snap) 為 async 私有方法，作：①await broadcast(StudioEvent(type=EventType.PROVIDER_CONSTRAINED, ...))；②try/except 吞所有 IO 例外並 log.warning 後 append audit.jsonl；③不 raise、不 sleep、不設排程。",
+      "rationale": "session 不能因審計檔目錄不存在或權限問題掛掉；audit 屬可觀測性，非核心路徑。",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174129
+    },
+    {
+      "decision": "events.py 新增 EventType.PROVIDER_CONSTRAINED = \"provider_constrained\" 到 EventType enum；不加前端 handleEvent() 處理（本輪後端邏輯為主）；JSONL 自動留存供 P2 儀表板。",
+      "rationale": "",
+      "rejected": "用 Literal 聯集替換 enum——現況已是 enum，不必要重構。",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.17413
+    },
+    {
+      "decision": "audit append 在 _handle_all_constrained 中先確保 AUTOPILOT_STATE_DIR 存在（mkdir parents=True, exist_ok=True），再 open(\"a\") append JSON；整段包 try/except OSError 並 log.warning，確保 IO 失敗不中斷 session。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741307
+    },
+    {
+      "decision": "pre-flight 重綁迴圈只對 self._experts 非 None 時執行，不強制重建 _experts；若測試已注入 stub experts，_experts 為 stub 物件時也對每個 stub 角色過一遍 _pick_provider，但只有 isinstance(expert, ExpertLike) 且 provider 屬性可覆寫時才替換——保護既有測試不因重建邏輯破壞 stub。",
+      "rationale": "工程師指摘「小心測試注入的 self._experts stub 不要被無條件重建破壞」。",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.174132
+    },
+    {
+      "decision": "provider_quota.py / config.py / make_expert / redeploy 公開簽名全不動；所有新邏輯以私有方法加在 orchestrator.py；_refresh_quota_snapshot() 呼叫時機從「動態 stage 開頭」提前至 _run() 入口，原動態 stage 呼叫保留（二次刷新確保長場次額度新鮮）。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741333
+    },
+    {
+      "decision": "測試新增 tests/autopilot/test_provider_routing_contract.py，含六黑白樣本＋「TI_PROVIDER_engineer=codex + provider_hint=claude + claude 受限 → 回 codex」優先序樣本；並斷言 provider_constrained 事件 payload 與 audit 欄位一致（為 P2 儀表板預留接縫）；既有 10 個 provider_quota 測試與離線 e2e 不允許回歸。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjecba63d3f1",
+      "created_at": 1782660765.1741343
+    },
+    {
+      "decision": "在 `config.py` 的 `role_provider()` 後（line 102 後）新增 `is_user_explicit_provider(key: str) -> bool`，實作為 `return bool(role_provider(key))`，含繁中 docstring 說明「以 `role_provider` 為單一真值來源；值不在 PROVIDERS 白名單時 `role_provider` 已回空字串，helper 同樣回 False，不另寫白名單」",
+      "rationale": "布林語意獨立具名後，`_explicit_provider_overrides` 與 `_pick_provider` 的「是否使用者明示覆寫」意圖可讀；之後 autopilot/improver 要判斷同事也能直接 import，不必看懂 `bool(role_provider(...))`；白名單邏輯仍封在 `role_provider` 不外洩",
+      "rejected": "把 helper 放 `orchestrator.py` 私有 — orchestrator 是有狀態執行層，純設定語意的 helper 不該藏在裡面；否決把 `effective_provider(role)` 的 `or config.PROVIDER` 邏輯也合進 helper — 會混淆「使用者意圖」與「執行期兜底」兩個不同層次",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.704373
+    },
+    {
+      "decision": "`_pick_provider`（line 1503-1505）改寫為 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)`，行為與原本 `explicit = ...; if explicit: return explicit` 完全等價，value 取得路徑不變",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043815
+    },
+    {
+      "decision": "`_explicit_provider_overrides`（line 1397-1399）dict comprehension 改為 `k: config.role_provider(ex.role.key) for ... if config.is_user_explicit_provider(ex.role.key)`，消除同一 key 兩次呼叫 `role_provider` 的重複",
+      "rationale": "兩次呼叫雖然是純函式無副作用，但讀者看到 value 和 filter 邏輯是同一表達式時容易懷疑「filter 和 value 是否完全對應」；改用 helper 後意圖明確",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.704383
+    },
+    {
+      "decision": "`_apply_preflight_rebind` 沿用現有的 `make_expert(..., provider=to_provider)` 重建路徑，不改成原地覆寫 `.provider` 屬性",
+      "rationale": "工程師與高工一致指出真 expert 把 provider 綁在內部 client，原地改屬性顯示值與執行值會分離，是隱性 bug；重建路徑已有測試 `test_apply_preflight_rebind_uses_injected_factory` 覆蓋，不回歸",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043848
+    },
+    {
+      "decision": "新增 `tests/test_user_explicit_provider_contract.py`，只放 helper 純合約測試（白：`TI_PROVIDER_engineer=codex` → `True`；`pm` 無覆寫 → `False`；黑：`TI_PROVIDER_engineer=BogusProvider` → `False`）；**不**在此檔重覆 routing E2E",
+      "rationale": "helper 合約測試與 routing 行為測試關注點不同，分開可獨立失敗；但重複已有的 `test_explicit_role_provider_is_not_rebound_or_reported` 等 E2E 只增維護成本，應在既有 `test_provider_routing_contract.py` 補缺口即可",
+      "rejected": "把 helper 樣本全部塞進 `tests/autopilot/test_provider_routing_contract.py` — helper 是 `config` 層的 unit contract，概念上不屬於 autopilot 子目錄，獨立檔案讓 `ruff / pytest -k` 按名稱定位更乾淨",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043865
+    },
+    {
+      "decision": "`config.reload()` 不需修改，現有 line 961 `ROLE_PROVIDERS = _role_providers()` 已在 reload 時重設，測試 monkeypatch 環境變數後呼叫 `config.reload()` 即可拿到正確值，helper 讀的是模組層 `ROLE_PROVIDERS`，同步生效",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043877
+    },
+    {
+      "decision": "`_handle_all_constrained`、`provider_constrained` 廣播、audit.jsonl 寫入，以及 `flow.plan_preflight_rebind` 介面，本輪一律不動；本次改動邊界是「config helper 新增 + 兩處呼叫點替換 + helper 合約測試」，不碰 preflight/rebind 流程",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj16f915fcc8",
+      "created_at": 1782665346.7043886
+    },
+    {
+      "decision": "**現況為已落地**——`config.is_user_explicit_provider`、`_pick_provider` early-return、`_preflight_rebind_experts`、`_apply_preflight_rebind`、`_explicit_provider_overrides`、`_handle_all_constrained`、`flow.plan_preflight_rebind`、`events.EventType.PROVIDER_CONSTRAINED` 均已存在於 workspace；全 13 個 `test_provider_preflight_routing_qa.py` 測試通過，本輪任務定位為「驗收結案 + 假綠排除」，不新增生產碼。",
+      "rationale": "設計文件與 `/opt/ti/` 主目錄對比（未含 workspace 子目錄），造成「尚未實作」誤判；正確基準是 `/opt/ti/workspaces/project-ea851408a641/`。",
+      "rejected": "",
+      "session_id": "pj0555d1514e",
+      "created_at": 1782667428.9319558
+    },
+    {
+      "decision": "**明示覆寫角色受限時，不發 `provider_constrained` 事件、不寫 audit**——此為明確產品語意，非 early-return 偶然副作用。",
+      "rationale": "使用者透過 `TI_PROVIDER_<KEY>=X` 顯式選定 provider，等同聲明「我知道這個選擇，不需要系統干預或警告」；若仍發事件，儀表板會被使用者自願接受的受限噪音淹沒，降低事件信噪比。",
+      "rejected": "「明示覆寫仍發事件但加 reason=user_explicit 欄位」——增加事件語意複雜度，且 P2 儀表板尚未定義如何區分展示，過早承諾介面。",
+      "session_id": "pj0555d1514e",
+      "created_at": 1782667428.9319596
+    },
+    {
+      "decision": "**驗收指標改為「核心黑樣本有真判別力」**，不依賴「13 / 6 / 3 測」數字契約——黑樣本 `test_pick_provider_explicit_override_wins_under_all_constrained` 以 PM hint「claude」+ 全受限 + 明示 codex 確認回傳 codex 且 `_provider_constrained_pending` 為空；`test_explicit_override_under_all_constrained_emits_no_event_or_audit` 確認 `provider_constrained` 事件集合為 `{\"pm\", \"qa\"}`、audit 角色集合同上，缺一不可。",
+      "rationale": "數字契約隨補白樣本浮動，核心行為合約才是不變式。",
+      "rejected": "",
+      "session_id": "pj0555d1514e",
+      "created_at": 1782667428.9319608
+    },
+    {
+      "decision": "**假綠排除方法**——暫時移除 `_pick_provider` 第一行 `if config.is_user_explicit_provider(role.key): return config.role_provider(role.key)` 後，至少以下兩個黑樣本必須轉 FAIL：`test_pick_provider_explicit_override_wins_under_all_constrained`（prov 回 \"claude\" 而非 \"codex\"；pending marker 被設）與 `test_explicit_override_under_all_constrained_emits_no_event_or_audit`（engineer 出現在 pc/audit 集合）；還原後兩者轉 PASS，工作樹 `git status` 無殘留。",
+      "rationale": "",
+      "rejected": "只讀測試碼確認行為——CLAUDE.md 明確「審查要親自實跑，不靠看起來對」。",
+      "session_id": "pj0555d1514e",
+      "created_at": 1782667428.9319618
+    },
+    {
+      "decision": "**`_explicit_provider_overrides` 以 `is_user_explicit_provider` 過濾**——dict comprehension 為 `{k: config.role_provider(ex.role.key) for k, ex in experts.items() if config.is_user_explicit_provider(ex.role.key)}`；空字串角色（未設 env）不進 overrides，避免「所有角色都被視為明示鎖定」永遠關閉自動重綁。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj0555d1514e",
+      "created_at": 1782667428.931963
+    },
+    {
+      "decision": "**`plan_preflight_rebind(bindings, snap, explicit_overrides)` 介面不變**——純函式在 `flow.py`，接收三個參數，遇到 `role_key in explicit_overrides` 或 `provider == \"\"` 或 snap 無此 provider 時跳過不重綁；決策與副作用邊界維持 `flow.py`（無狀態）vs `orchestrator.py`（有副作用）既有架構。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj0555d1514e",
+      "created_at": 1782667428.931964
+    },
+    {
+      "decision": "**離線 e2e 三個失敗標注為「環境限制」不列入本輪驗收**——根因是 `/opt/ti/lessons.lock` 寫入沙箱 read-only 磁碟，CI 正常環境無此限制；完整驗收指令為 `tests/core/test_provider_quota_helpers.py tests/settings/test_provider_quota.py tests/test_user_explicit_provider_contract.py tests/core/test_provider_preflight_routing_qa.py tests/autopilot/test_provider_routing_contract.py`。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj0555d1514e",
+      "created_at": 1782667428.9319646
+    },
+    {
+      "decision": "截圖驅動選型——純 urllib W3C WebDriver HTTP，零新增依賴，不裝 selenium/playwright",
+      "rationale": "venv 無 selenium；chromedriver 已存在；stdlib urllib 足夠驅動 W3C JSON Wire Protocol",
+      "rejected": "selenium（需 pip install，違反「不新增 runtime 依賴」）",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761772
+    },
+    {
+      "decision": "腳本單一入口 scripts/capture_metrics.py，分五段：seed → start_server → wait_ready → webdriver_session → assert+screenshot+cleanup",
+      "rationale": "單一腳本讓驗收指令一條執行完畢，不需協調多個 process",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761808
+    },
+    {
+      "decision": "Server 啟動環境變數固定為 TI_PORT=8799 TI_OFFLINE=1 TI_HOST=127.0.0.1，無 TI_ACCESS_PASSWORD（空值門禁放行）",
+      "rationale": "TI_HOST=127.0.0.1 確保 /api/metrics 不暴露到非本機介面；8799 避免衝撞預設 8765",
+      "rejected": "不設 TI_HOST（空值 Password 下 metrics 端點會暴露在 0.0.0.0）",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761815
+    },
+    {
+      "decision": "Health poll 端點為 /api/health（非 /health），最多 15 秒 / 0.5s 間隔，超時 exit 1",
+      "rationale": "工程師與高工雙重確認 routes.py 實作路徑為 /api/health",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761822
+    },
+    {
+      "decision": "History seeding 透過匯入 studio.history 模組內部函式完成（不手寫最小 JSON），以程式碼為 schema 唯一真相；若無可直接呼叫的 write API 則 fallback 到複製 history.py 的 meta dataclass 結構再序列化，並在腳本開頭 assert 欄位名稱仍與 _aggregate_scorecard 消費端一致",
+      "rationale": "手寫最小 JSON 有 schema 漂移風險——_aggregate_scorecard 改欄位後 fixture 靜默失效",
+      "rejected": "手寫最小 meta JSON（漂移風險）；跑真實 offline session（慢、有 race、腳本複雜度倍增）",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.476183
+    },
+    {
+      "decision": "History fixture 路徑從 config.HISTORY_ROOT（env TI_HISTORY_ROOT）讀取，不硬寫路徑",
+      "rationale": "config.py 為 SSOT，硬寫路徑會在改設定時靜默寫錯位置",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.476184
+    },
+    {
+      "decision": "開面板走 JS execute script（window.openMetrics()），不模擬 DOM 點擊",
+      "rationale": "openMetrics 在 app.js 為全域函式，比找按鈕位置穩；但文件明示這是白箱 UI 驗證，不是使用者互動 E2E",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761844
+    },
+    {
+      "decision": "最小斷言集三條：① #metricsPanel class 不含 hidden ② #metricsBody innerText 含「活躍場次」③ #metricsBody innerText 含「記分卡」；三條全通才 exit 0，任一不符即印 FAIL 並 exit 1",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761848
+    },
+    {
+      "decision": "Console log 掃描——建立 WebDriver session 時明確帶入 Chrome logging capability（loggingPrefs: {browser: ALL}）；取到 log 且有 SEVERE 條目印 WARN；若 /session/{id}/log/browser 回 404 或空，報告寫「瀏覽器 log 不可取得（capability 未支援）」而非「無錯誤」；兩種情況均不阻斷 exit 0",
+      "rationale": "高工指出不設 capability 時 log endpoint 可能靜默回空，混淆「無錯誤」與「未量測」",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761856
+    },
+    {
+      "decision": "PNG 僅在 docs/screenshots/metrics_panel.png 不存在時寫入；已存在時印 WARN 並提示加 --overwrite 覆寫，避免每次執行造成二進位 churn",
+      "rationale": "手動驗收截圖不應自動覆寫；CI 若未來整合需明確 flag",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.476186
+    },
+    {
+      "decision": "docs/screenshots/metrics_panel.png 進 repo（非 CI artifact，一次性手動驗收截圖）",
+      "rationale": "",
+      "rejected": ".gitignore 排除（reviewer 無法直接看到眼見驗證結果）",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761884
+    },
+    {
+      "decision": "假綠排除——腳本支援 --skip-open-panel flag，跳過 openMetrics() 呼叫後斷言①必含 hidden → exit 1；驗收報告記錄此反向實跑結果（含 exit code）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761908
+    },
+    {
+      "decision": "腳本 finally 段保證：DELETE WebDriver session、SIGTERM server process、等最多 5 秒確認 8799 port 釋放，確保無殘留 process",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.4761915
+    },
+    {
+      "decision": "docs/VERIFY_metrics_panel.md 格式——含執行指令、exit code、截圖路徑、三條斷言各別 PASS/FAIL、console log 狀態（取到/不可取得/有 SEVERE）、假綠排除實跑記錄（--skip-open-panel 的 exit code 與斷言輸出）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pjeaf1f783d0",
+      "created_at": 1782671139.476192
     },
     {
       "decision": "本輪零改動原則——只做執行驗證，不寫新碼、不改介面、不補文件。",
@@ -2829,69 +2563,6 @@
       "created_at": 1783672304.9377236
     },
     {
-      "decision": "**修法選 `+` force refspec**：三處 fetch argv 均改為 `[\"git\", \"fetch\", \"origin\", f\"+refs/heads/{branch}:refs/remotes/origin/{branch}\"]`",
-      "rationale": "`+` 前綴精確跳過目標 ref 的 CAS，不影響其他 ref；deploy_dir 為 origin 單向鏡像，force 覆蓋 remote-tracking ref 是預期行為",
-      "rejected": "`--force` flag（語意過寬，未來新增 refspec 行為不確定）；重試保險層（根修後多餘，隱藏同類 bug）；架構重構（消除鎖外 fetch，改動面大、非此輪範圍）",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955102
-    },
-    {
-      "decision": "**修改範圍鎖定三處**：`studio/autodeploy.py:60`、`studio/deploy.py:159`、`studio/autopilot.py:2324`",
-      "rationale": "三者均以 deploy_dir 為 cwd，fetch 後即讀/reset `origin/<branch>`，存在多寫者 CAS 競爭，修法統一不設例外",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955167
-    },
-    {
-      "decision": "**明確排除 `repo_base.py:143`**",
-      "rationale": "該行 fetch 只寫 FETCH_HEAD，不寫 `refs/remotes/origin/*`，CAS 不適用",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955179
-    },
-    {
-      "decision": "**明確排除 `autopilot.py:120`**",
-      "rationale": "autopilot work clone 為單寫者，不存在並發競爭；加 force refspec 無害但掩蓋「此處走不同路徑」的資訊",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955188
-    },
-    {
-      "decision": "**守門測試採 argv 捕捉（monkeypatch `_run`），不實跑 git**",
-      "rationale": "驗收閉環禁止對 `/opt/ti` 打真實 fetch（會重現 bug 現場）；字串錨 `+refs/heads/` 鎖定 argv 形式",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955198
-    },
-    {
-      "decision": "**測試必須逐一覆蓋三個 call site，不得以單處代表全部**",
-      "rationale": "高工指出「黑樣本 FAIL 只證錨字串有效，不證三處都改到」——漏改一處、單一測試仍可能綠；三處需各自捕捉 argv 驗 `+refs/heads/`",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955205
-    },
-    {
-      "decision": "**force 語意須在 commit message 或行內加註**：`deploy_dir 單向鏡像，force 更新 remote-tracking ref 為預期行為`",
-      "rationale": "`+` 前綴半年後接手者會疑惑「是否吞本地 commit」，隱含前提須文字化，防止後人「安全起見拿掉」引發 regression",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955212
-    },
-    {
-      "decision": "**測試檔位置：`tests/deploy/test_fetch_force_refspec.py`**，三處 call site 同一檔驗收",
-      "rationale": "與既有 deploy 守門測試同目錄，CI `tests/deploy` job 自動涵蓋；三處同一 argv 契約，集中管理",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955222
-    },
-    {
-      "decision": "**diff 邊界鐵則：五個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`、`tests/test_task1_retry_doc.py`；超出須另立任務",
-      "rationale": "2026-07-11 修正：原宣稱四檔，實際 diff 含第五檔 tests/test_task1_retry_doc.py，為必要伴隨護欄修正。SCOPE_GUARD_MAINTENANCE_GLOBS 白名單不含 studio/*.py，舊版 test_no_py_changed 會對本 lane 三個 studio .py 判 FAIL；修正改為看是否實際改動 ARCHITECTURE.md（未改則 skip），保留版實測 SKIPPED，不擋 #1 合法改動。護欄以 lane 編號當任務身分屬核心測試基建缺陷，另立核心改動任務根治。",
-      "rejected": "",
-      "session_id": "apeb88e51698",
-      "created_at": 1783695627.5955229
-    },
-    {
       "decision": "所有 prefilter 邏輯集中於 `studio/autopilot.py`，不新增模組",
       "rationale": "prefilter 是 pick 前同步判定，與 investigation lane、`_token_set_similarity`、`_tokenize_for_dedup` 同倉庫，跨模組界面為零",
       "rejected": "放 `flow.py`——flow.py 契約為無狀態純函式，async 取 merged 標題無法放入",
@@ -3016,6 +2687,69 @@
       "rejected": "",
       "session_id": "ap73fa9dd999",
       "created_at": 1783689318.5531564
+    },
+    {
+      "decision": "**修法選 `+` force refspec**：三處 fetch argv 均改為 `[\"git\", \"fetch\", \"origin\", f\"+refs/heads/{branch}:refs/remotes/origin/{branch}\"]`",
+      "rationale": "`+` 前綴精確跳過目標 ref 的 CAS，不影響其他 ref；deploy_dir 為 origin 單向鏡像，force 覆蓋 remote-tracking ref 是預期行為",
+      "rejected": "`--force` flag（語意過寬，未來新增 refspec 行為不確定）；重試保險層（根修後多餘，隱藏同類 bug）；架構重構（消除鎖外 fetch，改動面大、非此輪範圍）",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955102
+    },
+    {
+      "decision": "**修改範圍鎖定三處**：`studio/autodeploy.py:60`、`studio/deploy.py:159`、`studio/autopilot.py:2324`",
+      "rationale": "三者均以 deploy_dir 為 cwd，fetch 後即讀/reset `origin/<branch>`，存在多寫者 CAS 競爭，修法統一不設例外",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955167
+    },
+    {
+      "decision": "**明確排除 `repo_base.py:143`**",
+      "rationale": "該行 fetch 只寫 FETCH_HEAD，不寫 `refs/remotes/origin/*`，CAS 不適用",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955179
+    },
+    {
+      "decision": "**明確排除 `autopilot.py:120`**",
+      "rationale": "autopilot work clone 為單寫者，不存在並發競爭；加 force refspec 無害但掩蓋「此處走不同路徑」的資訊",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955188
+    },
+    {
+      "decision": "**守門測試採 argv 捕捉（monkeypatch `_run`），不實跑 git**",
+      "rationale": "驗收閉環禁止對 `/opt/ti` 打真實 fetch（會重現 bug 現場）；字串錨 `+refs/heads/` 鎖定 argv 形式",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955198
+    },
+    {
+      "decision": "**測試必須逐一覆蓋三個 call site，不得以單處代表全部**",
+      "rationale": "高工指出「黑樣本 FAIL 只證錨字串有效，不證三處都改到」——漏改一處、單一測試仍可能綠；三處需各自捕捉 argv 驗 `+refs/heads/`",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955205
+    },
+    {
+      "decision": "**force 語意須在 commit message 或行內加註**：`deploy_dir 單向鏡像，force 更新 remote-tracking ref 為預期行為`",
+      "rationale": "`+` 前綴半年後接手者會疑惑「是否吞本地 commit」，隱含前提須文字化，防止後人「安全起見拿掉」引發 regression",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955212
+    },
+    {
+      "decision": "**測試檔位置：`tests/deploy/test_fetch_force_refspec.py`**，三處 call site 同一檔驗收",
+      "rationale": "與既有 deploy 守門測試同目錄，CI `tests/deploy` job 自動涵蓋；三處同一 argv 契約，集中管理",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955222
+    },
+    {
+      "decision": "**diff 邊界鐵則：五個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`、`tests/test_task1_retry_doc.py`；超出須另立任務",
+      "rationale": "2026-07-11 修正：原宣稱四檔，實際 diff 含第五檔 tests/test_task1_retry_doc.py，為必要伴隨護欄修正。SCOPE_GUARD_MAINTENANCE_GLOBS 白名單不含 studio/*.py，舊版 test_no_py_changed 會對本 lane 三個 studio .py 判 FAIL；修正改為看是否實際改動 ARCHITECTURE.md（未改則 skip），保留版實測 SKIPPED，不擋 #1 合法改動。護欄以 lane 編號當任務身分屬核心測試基建缺陷，另立核心改動任務根治。",
+      "rejected": "",
+      "session_id": "apeb88e51698",
+      "created_at": 1783695627.5955229
     },
     {
       "decision": "`make_env(token: str | None, url: str | None = None) -> dict[str, str]`；url 提供且 host 非 `github.com` 時回空 dict；url 為 None 時仍產生 github.com per-host env（key 已釘死 host，不跨域）",
@@ -3459,6 +3193,195 @@
       "created_at": 1784476240.1805305
     },
     {
+      "decision": "新建 studio/notify.py，零新依賴，stdlib urllib 實作 webhook sink",
+      "rationale": "workspace 無任何通知模組；urllib 零依賴且與 CLAUDE.md「不隨意新增依賴」一致",
+      "rejected": "aiosmtplib（新依賴）、email sink（SMTP TLS 雙模式複雜度 > 效益）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.871221
+    },
+    {
+      "decision": "notify.py 公開介面為 send_bg(kind, title, **extra)，daemon thread 非同步送出",
+      "rationale": "autopilot 主迴圈是 async；daemon thread 保證呼叫端零阻塞、行程結束不等未送通知",
+      "rejected": "直接 await（阻塞主迴圈）、asyncio.create_task（需在同 event loop 內且複雜化呼叫）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712256
+    },
+    {
+      "decision": "SEVERITY 分級表登記 task_failed/loop_task_error/deploy_failed 為 page，gate_failure 為 digest",
+      "rationale": "gate_failure 是重試過程中的常態訊號（重試可能通過），推播出去是噪音；只有最終放棄才推",
+      "rejected": "全部 page（噪音過多）；全部 digest（失去即時告警意義）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712268
+    },
+    {
+      "decision": "send_bg 無 sink 設定時 early return，零網路呼叫",
+      "rationale": "TI_ALERT_WEBHOOK 空時任何掛載點都不應有副作用；確保「未設定 = 無回歸」",
+      "rejected": "送失敗再吞（多一次 socket 建立成本）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.871228
+    },
+    {
+      "decision": "config.py 新增 ALERT_WEBHOOK，頂層與 reload() 兩處同步定義",
+      "rationale": "專案鐵則——config 旋鈕必須頂層與 reload() 兩處同步，否則 reload 後不生效",
+      "rejected": "只頂層不加 reload()（熱更新失效）；沿用 TI_NOTIFY_* 命名（任務明確要求 TI_ALERT_*）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712287
+    },
+    {
+      "decision": "_deliver() 讀 config.ALERT_WEBHOOK，不讀舊鍵",
+      "rationale": "workspace 本無舊鍵，無需向後相容；直接讀新鍵，無間接層",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.87123
+    },
+    {
+      "decision": "broadcast(891-892) 本體不改；notify 以 send_bg 明確掛在三個失敗路徑",
+      "rationale": "broadcast 是每個事件都呼叫的通用 hook，在此過濾會讓 notify 判斷與事件型別耦合；",
+      "rejected": "在 broadcast 內部依 event.type 過濾推播（增加 broadcast 的職責、難以 monkeypatch 測試）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712306
+    },
+    {
+      "decision": "_handle_gate_failure else 分支（最終放棄，標 failed）補 send_bg(\"task_failed\",...)；重試分支不推",
+      "rationale": "重試中推播是噪音且可能誤報；放棄才是紅色事件需人介入",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712318
+    },
+    {
+      "decision": "deploy 失敗(982) 補 send_bg(\"deploy_failed\",...) 於 _pause() 之前",
+      "rationale": "_pause() 是人工介入訊號，需同步推播讓人知道",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712327
+    },
+    {
+      "decision": "主迴圈例外(1048) 補 send_bg(\"loop_task_error\", task_id=task.get(\"id\",\"\"), ...)",
+      "rationale": "task 在此已確定存在（next_pending 非 None 才往下走），task.get(\"id\",\"\") 安全取值",
+      "rejected": "locals().get(\"task_id\",\"\")（不必要，task 已明確 bound）",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712335
+    },
+    {
+      "decision": "tests/test_notify.py 三條斷言：空config零urllib呼叫、有config觸發POST、URL不出現在 log",
+      "rationale": "覆蓋核心合約：無設定零副作用、有設定真的送、憑證不洩漏",
+      "rejected": "monkeypatch config.ALERT_WEBHOOK 直接改全域（易與 reload 機制混淆）；測試用 patch + env var 方式",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712344
+    },
+    {
+      "decision": "autopilot 紅色路徑測試 monkeypatch notify.send_bg 計數，走最短失敗路徑，不拆主流程",
+      "rationale": "工程師明確提醒：「不要為測試製造新抽象」；monkeypatch 是最小侵入驗證",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712354
+    },
+    {
+      "decision": "TI_ALERT_WEBHOOK 未設時整個系統行為與現況完全一致（無回歸）",
+      "rationale": "所有掛載點均在 send_bg early return 保護下；新增呼叫不影響 None-config 路徑",
+      "rejected": "",
+      "session_id": "pj958e6a57bc",
+      "created_at": 1784492419.8712358
+    },
+    {
+      "decision": "改動目標為 `/opt/ti/studio/autopilot.py` 與 `/opt/ti/studio/config.py`（核心 repo），非 workspace 副本。",
+      "rationale": "Ti 核心框架改動依雙軌路由規則走核心 repo，workspace 是專案用途。",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.785086
+    },
+    {
+      "decision": "新增 `AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`（`TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE`，預設 5，0 停用）至 `config.py` 頂層宣告與 `reload()` 兩處，與所有現有旋鈕格式一致。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850895
+    },
+    {
+      "decision": "在 `_main_loop` 每輪迭代的 try/except 區塊**之前**，宣告區域變數 `_infra_transient = False`（每輪重置）。",
+      "rationale": "必須是區域變數，不可為模組全域——否則上輪的 `True` 殘留會誤排除下輪的真 failed，直接導致漏計 bug。",
+      "rejected": "以模組全域變數儲存旗標——跨輪殘留語意不正確。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850912
+    },
+    {
+      "decision": "只在 `AutopilotTaskStalled` exception handler 內設 `_infra_transient = True`；`TimeoutError` 分支**不設旗標**。",
+      "rationale": "`TimeoutError` 落 `_handle_task_timeout` → status 為 `parked`（非 `failed`），事後查 status 自然排除，旗標冗餘。`AutopilotTaskStalled` 雖寫 `status=failed`，但屬 infra 自癒（triage 自動重試），必須明確排除。",
+      "rejected": "timeout 分支也設旗標——製造「timeout==failed 需排除」的錯誤讀法，且防禦性程式碼應有明確理由才加。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850916
+    },
+    {
+      "decision": "try/except 區塊結束後、`_task_running = False` 之後，查 `(backlog.get(task[\"id\"]) or {}).get(\"status\")` 更新全域計數器：`failed` 且 `not _infra_transient` → 計數 `+1`；`done` 或 `merging` → 計數歸零並重置通知旗標；其餘（`pending`/`parked`/`None`）→ 不動計數。含 `or {}` 的 None-guard 防任務歸檔後 `[\"status\"]` 崩潰。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850924
+    },
+    {
+      "decision": "模組全域宣告 `_consecutive_fail_count: int = 0` 與 `_consecutive_fail_notified: bool = False`，位置仿 `_slo_brake_notified_day`（約 1820 行）。行程重啟歸零可容忍。",
+      "rationale": "",
+      "rejected": "持久化計數——增加子系統複雜度；重啟歸零是合理的「重設視窗」。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850933
+    },
+    {
+      "decision": "達門檻時：`_pause(f\"連續 {n} 次任務 failed，SLO 煞車暫停待人工檢視\")` + `notify.send_bg(\"consecutive_fail_pause\", ...)`；`_consecutive_fail_notified` 去重確保同一連續失敗期只發一次通知；計數歸零時同步重置 `_consecutive_fail_notified = False`。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850943
+    },
+    {
+      "decision": "**測試必含以下四個精確樣本**（寫入 `tests/autopilot/test_consecutive_fail_brake.py`）：",
+      "rationale": "",
+      "rejected": "只寫泛型「infra 黑樣本」——無法證明 stalled 路徑的判別力（歷次教訓：自證對應 + 排除假綠）。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850952
+    },
+    {
+      "decision": "**不改 `budget_sleep` 為 `_pause`**。",
+      "rationale": "`budget_sleep`（UTC 跨日自癒）語意對應「速率上限，明天自動重來」；`_pause`（需人工 `rm` 才恢復）對應「真問題需診斷」。兩機制自然分流——budget 超標≠失控，每天要人手動恢復比睡到午夜更差。PM 的翻案前提（誤以為 `budget_sleep` 不存在）已不成立。",
+      "rejected": "budget 超標改走 `_pause`——語意過強，且使用者每日需人工介入才能恢復，實際上是退化。",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850957
+    },
+    {
+      "decision": "Task #2 縮減為「補 notify 通知 + 修 CLAUDE.md」：在 `autopilot.py:4647` `_write_status(\"budget_sleep\", ...)` 之後，以 `_budget_notified_day` 行程記憶體去重，插入 `notify.send_bg(\"daily_pr_budget_sleep\", f\"已達每日 PR 預算 {config.AUTOPILOT_DAILY_PR_BUDGET}，UTC 跨日自動恢復\", ...)`。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850964
+    },
+    {
+      "decision": "新增模組全域 `_budget_notified_day: tuple | None = None`，位置、去重邏輯與 `_slo_brake_notified_day` 完全對稱（每 UTC 日一次）。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850971
+    },
+    {
+      "decision": "`AUTOPILOT_DAILY_PR_BUDGET` **不新增至 config.py**——已在 :844/:1558 兩處存在，本輪不動。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850978
+    },
+    {
+      "decision": "回寫 CLAUDE.md **兩處**（`/opt/ti/CLAUDE.md` 與 `/opt/ti/workspaces/project-ea851408a641/CLAUDE.md`）：將 `AUTOPILOT_DAILY_PR_BUDGET 每日 PR 成本熔斷` 從「移交待辦」移出，補記「已實作，語意為 `budget_sleep`（UTC 跨日自癒）而非 `_pause`（人工恢復），計數讀 `audit.jsonl` 持久化」。",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.7850983
+    },
+    {
+      "decision": "**測試含以下兩個樣本**（寫入 `tests/autopilot/test_budget_brake.py`）：",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj8ee4edef1a",
+      "created_at": 1784495313.785099
+    },
+    {
       "decision": "閒置逾時（`TURN_IDLE_TIMEOUT`）語意鎖死為「距上次收到 chunk 的時間差」，不是累積發言總長度",
       "rationale": "長但持續輸出的正常發言不應被誤殺；`TURN_HARD_TIMEOUT` 仍作獨立的發言總長上限旋鈕，兩者並存但語意完全分離",
       "rejected": "total-duration 複用作閒置逾時語意——兩種計時混用是線上最常見誤判來源",
@@ -3499,6 +3422,83 @@
       "rejected": "獨立 watchdog class 包住 speak()——層次過多，否決",
       "session_id": "ap19571d7f83",
       "created_at": 1784503094.8255394
+    },
+    {
+      "decision": "範圍鎖定 webhook-only，本輪只開 `NOTIFY_WEBHOOK` 一個 config 鍵",
+      "rationale": "單一 sink 已達「紅色事件抵達人工」；email/Telegram 需外部憑證管理，複雜度不對等",
+      "rejected": "同時實作 email/Telegram sink——本輪 scope 過大，憑證管理問題留後",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811287
+    },
+    {
+      "decision": "`config.py` 只新增 `NOTIFY_WEBHOOK`（`TI_NOTIFY_WEBHOOK`，預設空字串），三段同步（頂層宣告、`reload() global`、`reload()` 賦值）",
+      "rationale": "唯一可調旋鈕是「要不要推」，不是「等多久」",
+      "rejected": "同時新增 `NOTIFY_TIMEOUT` 進 config——與宣稱「對照範式不自創」自我矛盾；範式本身用模組常數、不進 config；多鍵三段同步是永久維護債，實益為零（無 settings.py 接線）",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811316
+    },
+    {
+      "decision": "timeout 用模組常數 `_TIMEOUT_S = 10.0` 置於 `notify.py` 頂層，不進 config",
+      "rationale": "與 `/opt/ti/studio/notify.py` line 37 範式完全對齊；真要可調另案，不在本輪",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811327
+    },
+    {
+      "decision": "`notify.py` 新增 `_post_webhook(url: str, data: bytes) -> None`，urllib POST JSON，try/except 全吞任何例外，`log.debug` 只帶 event 名稱不含 URL",
+      "rationale": "webhook URL 可能含 secret（query param token），不得出現在 log",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811342
+    },
+    {
+      "decision": "`notify.py` 新增 `_deliver(event: str, message: str, extra: dict) -> None`，組 payload `{\"source\":\"ti\",\"event\":...,\"message\":...,...extra}` 後呼叫 `_post_webhook`；docstring 明記「extra 不得挾帶 log 全文或憑證」",
+      "rationale": "",
+      "rejected": "直接在 `send_bg` 裡組 payload 發送——抽出 `_deliver` 便於測試與後續多 sink 擴充",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811354
+    },
+    {
+      "decision": "`send_bg(event, message, **payload)` 簽名不變（相容現有兩處 `autopilot.py` 呼叫端）；webhook 空時 early-return（零網路零 thread）；非空時 `threading.Thread(target=_deliver, daemon=True).start()`",
+      "rationale": "daemon=True 確保行程退出不被未送完通知卡住",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811366
+    },
+    {
+      "decision": "payload 欄位命名統一用 `event` / `message`，不用範式的 `kind` / `title`",
+      "rationale": "工作目錄呼叫端與現有 `send_bg` 合約皆用 `event/message`；混用會造成消費端解析錯亂",
+      "rejected": "改用 `kind/title` 對齊 `/opt/ti/studio/notify.py`——會 breaking 現有呼叫端，超出本輪範圍",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811375
+    },
+    {
+      "decision": "測試檔 `tests/autopilot/test_notify_webhook.py` 五條精確樣本（增至五條）",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811382
+    },
+    {
+      "decision": "測試中 `threading.Thread` monkeypatch 為同步執行（呼叫 `target()` 再 return mock），不讓 daemon thread 帶來競態",
+      "rationale": "非同步 thread 下 `urlopen` 可能在 assert 前未執行，造成偶發假綠",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.981139
+    },
+    {
+      "decision": "不新增任何第三方依賴，僅用 `urllib.request`、`threading`、`json`",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811397
+    },
+    {
+      "decision": "跟進待辦（明列、不混入本輪）：email sink（SMTP）、Telegram sink、severity 分級、`send_bg` early-return 未來擴 sink 需同步更新判斷條件、`/opt/ti` 主版本 settings.py 接線",
+      "rationale": "",
+      "rejected": "",
+      "session_id": "pj86339a5a6c",
+      "created_at": 1784503145.9811401
     }
   ]
 }

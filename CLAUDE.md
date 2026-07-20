@@ -148,6 +148,12 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
 - 守門測試在 `tests/autopilot/test_qa_no_publish_pollution.py`；黑白樣本需涵蓋
   `PUBLISH_REPO` 空值、同 repo 放行、不同 repo/非 GitHub 同 path 擋下，以及 origin push URL 不符時
   push 前中止。
+- 本輪範圍外移交待辦：結構化 `autopilot/audit.jsonl` 審計紀錄。不要混進 repo 污染防護修補。
+- `AUTOPILOT_DAILY_PR_BUDGET` 每日 PR 成本熔斷**已實作**（`_check_daily_pr_budget`）：於
+  `_commit_push_merge` squash-merge 成功點以行程記憶體＋UTC 日戳計數，跨日歸零；達門檻走 `_pause`
+  （人工恢復，**非**跨日自癒），同一 UTC 日只 `notify.send_bg("daily_pr_budget_pause", ...)` 一次；
+  `0`＝停用。計數為行程記憶體，行程重啟歸零可容忍（未持久化 `audit.jsonl`）。守門測試在
+  `tests/autopilot/test_budget_brake.py`。
 - 本輪範圍外移交待辦：結構化 `autopilot/audit.jsonl` 審計紀錄、`AUTOPILOT_DAILY_PR_BUDGET`
   每日 PR 成本熔斷。不要混進 repo 污染防護修補。
 

@@ -367,6 +367,14 @@ def list_tasks(status: str | None = None, *, state_dir: Path | None = None) -> l
     return tasks
 
 
+def get(task_id: int, *, state_dir: Path | None = None) -> dict | None:
+    """依 id 讀取單一任務；找不到回 None。"""
+    for task in _load(state_dir)["tasks"]:
+        if task["id"] == task_id:
+            return task
+    return None
+
+
 def claim_next(predicate, *, state_dir: Path | None = None) -> dict | None:
     """原子認領:單一 _locked() 內找第一筆滿足 predicate 的 pending 任務並就地標
     in_progress(attempts+1,與 set_status 語意一致),回傳任務或 None。

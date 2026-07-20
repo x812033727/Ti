@@ -65,6 +65,14 @@ def test_least_constrained_ready():
     # 全部不可用 → None
     none_snap = _snap([{"key": "claude", "ready": False, "rate_limits": None}])
     assert pq.least_constrained_ready(none_snap) is None
+    # 全部 ready 但用量達受限門檻 → None
+    exhausted_snap = _snap(
+        [
+            {"key": "claude", "ready": True, "rate_limits": _win(90)},
+            {"key": "codex", "ready": True, "rate_limits": _win(95)},
+        ]
+    )
+    assert pq.least_constrained_ready(exhausted_snap) is None
 
 
 def test_summarize_for_pm():

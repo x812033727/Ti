@@ -33,7 +33,7 @@ def test_pin_provider_empty_releases(monkeypatch):
 
 
 def test_pin_provider_invalid_value_treated_as_released(monkeypatch):
-    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "openai")  # 不在 config.PROVIDERS 白名單
+    monkeypatch.setattr(config, "PM_PIN_PROVIDER", "nosuch")  # 不在 config.PROVIDERS 白名單
     monkeypatch.setattr(config, "PROVIDER", "codex")
     monkeypatch.setattr(config, "ROLE_PROVIDERS", {})
     assert providers.effective_provider(BY_KEY["pm"]) == "codex"

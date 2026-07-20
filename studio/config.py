@@ -77,7 +77,8 @@ def _role_models() -> dict[str, str]:
 ROLE_MODELS = _role_models()
 
 # 合法的 provider 名單；per-role 覆寫只接受其一，其餘（含 auto／空）＝不覆寫。
-PROVIDERS = ("claude", "minimax", "codex", "antigravity")
+# 須與 providers.make_expert() 可建立的 provider 保持一致，避免明示覆寫被誤判為非法。
+PROVIDERS = ("claude", "openai", "minimax", "gemini", "codex", "antigravity")
 
 # auto 派工模式（dispatch_auto()）下 PM 全權派工的 provider 子集與受限門檻：
 # PM 只能在這兩家之間分配、模型 ID 直通不查白名單；僅當指定家不可用或用量達門檻才兜底改派。
@@ -103,6 +104,15 @@ ROLE_PROVIDERS = _role_providers()
 def role_provider(key: str) -> str:
     """角色的 per-role provider 覆寫（無覆寫回 ""）。"""
     return ROLE_PROVIDERS.get(key, "")
+
+
+def is_user_explicit_provider(key: str) -> bool:
+    """使用者是否明示指定該角色 provider。
+
+    以 role_provider(key) 為單一真值來源；空值、auto 或不在 PROVIDERS 白名單內的值，
+    會先被 role_provider 正規化為 ""，因此不視為明示覆寫。
+    """
+    return bool(role_provider(key))
 
 
 # PM 釘選 provider／模型：PM 是分派、檢驗與表決的最終決策者，判斷品質必須穩定，
@@ -858,6 +868,10 @@ AUTOPILOT_TRIAGE_TIMEOUT = _env_int("TI_AUTOPILOT_TRIAGE_TIMEOUT", 60)
 # 讓設定面板、orchestrator 派工與 autopilot 額度閘門等關鍵路徑不必同步等最慢 provider。
 # 設 0 停用 SWR（快取一過期就同步查，回到舊行為）。
 QUOTA_STALE_MAX = _env_float("TI_QUOTA_STALE_MAX", 300.0)
+# 主迴圈連續 failed 任務 SLO 煞車；0＝停用。pending（如 provider unavailable 退回）不計入也不重置。
+AUTOPILOT_CONSECUTIVE_FAIL_PAUSE = _env_int("TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 5)
+# 通知送出 timeout（秒），供 notify 各 sink 共用；預設 10。
+NOTIFY_TIMEOUT = _env_float("TI_NOTIFY_TIMEOUT", 10.0)
 # 軟性時間預算：session 在硬 timeout（AUTOPILOT_TASK_TIMEOUT，由 autopilot 的 wait_for 套用）的
 # 此比例處主動收斂——停止派發新任務、把已完成的走 Demo/出貨、未動的記 known-limit/followup，
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
@@ -1351,6 +1365,7 @@ def reload() -> None:
     global PUBLISH_CI_TIMEOUT, PUBLISH_CI_INTERVAL, PUBLISH_MERGE_RETRIES
     global PUBLISH_CI_MAX_ROUNDS, PUBLISH_CI_GRACE, PUBLISH_OWNER_ALLOWLIST
     global MERGE_BEHIND_RETRIES
+    global AUTOPILOT_CONSECUTIVE_FAIL_PAUSE, NOTIFY_TIMEOUT
     global LEAD_ROLES, OPTIONAL_ROLES, MAX_TASKS, TASK_MAX_ROUNDS, DEBATE_ROUNDS
     global DISCUSS_MAX_ROUNDS, DISCUSS_MODE, AGENDA_ROUNDS
     global PARALLEL_TASKS_ENABLED, PARALLEL_LANES, LLM_MAX_CONCURRENCY
@@ -1500,6 +1515,8 @@ def reload() -> None:
     MERGE_BEHIND_RETRIES = _env_int("TI_MERGE_BEHIND_RETRIES", 4)
     PUBLISH_CI_MAX_ROUNDS = _env_int("TI_PUBLISH_CI_MAX_ROUNDS", 5)
     PUBLISH_CI_GRACE = _env_int("TI_PUBLISH_CI_GRACE", 120)
+    AUTOPILOT_CONSECUTIVE_FAIL_PAUSE = _env_int("TI_AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 5)
+    NOTIFY_TIMEOUT = _env_float("TI_NOTIFY_TIMEOUT", 10.0)
     # 進階流程開關（設定面板「進階」組）。消費端皆讀即時全域值，故 reload 後下次討論生效。
     # 預設值須與檔頂宣告一致（critic 為唯一預設關閉者，理由見檔頂註解）。
     HUDDLE_ENABLED = os.getenv("TI_HUDDLE", "1") not in ("0", "false", "False", "")

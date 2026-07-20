@@ -27,6 +27,7 @@ class EventType(str, Enum):
     WORKFLOW_PLAN = "workflow_plan"  # 動態流程定義快照（stage 序列），開場廣播供前端與重播
     AGENDA_PLAN = "agenda_plan"  # 拆解結果快照（議程子題、任務、分派表），入 history 供重看
     CONCLUSION = "conclusion"  # 結論彙整：一場討論收斂後產出 CONCLUSION.md 的終局快照
+    PROVIDER_CONSTRAINED = "provider_constrained"  # provider 全受限：無可自動重綁目標
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
     DISPATCH_DECISION = "dispatch_decision"  # 額度感知 per-task 派工（任務暫換 provider/model）
@@ -324,6 +325,30 @@ def conclusion(session_id: str, path: str, summary: dict) -> StudioEvent:
         EventType.CONCLUSION,
         session_id,
         {"path": path, "summary": summary},
+    )
+
+
+def provider_constrained(
+    session_id: str,
+    role_key: str,
+    provider: str,
+    reason: str | list[dict] = "no_provider_ready",
+    providers: list[dict] | None = None,
+    snapshot: dict | None = None,
+) -> StudioEvent:
+    if not isinstance(reason, str):
+        providers = reason
+        reason = "no_provider_ready"
+    return StudioEvent(
+        EventType.PROVIDER_CONSTRAINED,
+        session_id,
+        {
+            "role": role_key,
+            "provider": provider,
+            "reason": reason,
+            "providers": providers or [],
+            "snapshot": snapshot or {},
+        },
     )
 
 

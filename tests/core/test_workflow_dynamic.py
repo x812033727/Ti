@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from studio import config, events, flow
@@ -217,6 +219,47 @@ def _stub_snapshot():
     }
 
 
+def _all_constrained_snapshot():
+    return {
+        "ok": True,
+        "updated_at": 1000.0,
+        "providers": [
+            {
+                "key": "claude",
+                "ready": True,
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 100, "reset_at": 1600.0},
+                    "error": None,
+                },
+            },
+            {
+                "key": "codex",
+                "ready": True,
+                "rate_limits": {
+                    "five_hour": {"used_percentage": 95, "reset_at": 1700.0},
+                    "error": None,
+                },
+            },
+            {
+                "key": "minimax",
+                "ready": True,
+                "rate_limits": {
+                    "one_day": {"used_percentage": 92, "reset_at": 1800.0},
+                    "error": None,
+                },
+            },
+            {
+                "key": "antigravity",
+                "ready": True,
+                "rate_limits": {
+                    "buckets": [{"used_percentage": 91, "reset_at": 1900.0}],
+                    "error": None,
+                },
+            },
+        ],
+    }
+
+
 @pytest.mark.asyncio
 async def test_dynamic_prompt_includes_quota_summary(monkeypatch):
     from studio import provider_quota
@@ -302,6 +345,35 @@ async def test_dynamic_recruit_respects_provider_and_rebind(monkeypatch):
     # 額度摘要/roster 的 provider 對照須以「實際綁定」為準（重綁後的 claude），
     # 而非角色預設 effective_provider——否則 PM 看到的「誰用哪家額度」會錯。
     assert s._role_provider_map(s._main_ctx.experts)["architect"] == "claude"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_recruit_all_constrained_emits_event_and_audit(monkeypatch, tmp_path):
+    from studio import provider_quota
+
+    monkeypatch.setattr(provider_quota, "snapshot", _all_constrained_snapshot)
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
+    s, experts, bucket = _session(["下一步: architect\n指示: 看\nprovider: claude", "下一步: 結束"])
+    recruited: dict = {}
+    s._recruit_factory = _recording_factory(recruited)
+
+    await s._stage_dynamic({"type": "dynamic", "budget": 5})
+
+    assert recruited["architect"]["provider"] == "claude"
+    evs = [e for e in bucket if e.type is events.EventType.PROVIDER_CONSTRAINED]
+    assert len(evs) == 1
+    assert evs[0].payload["role"] == "architect"
+    assert evs[0].payload["provider"] == "claude"
+    assert evs[0].payload["reason"] == "no_provider_ready"
+    audit_rows = (
+        (config.AUTOPILOT_STATE_DIR / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+    row = json.loads(audit_rows[-1])
+    assert row["event"] == "provider_constrained"
+    assert row["role"] == "architect"
+    assert row["provider"] == "claude"
+    assert row["providers"][0]["key"] == "claude"
+    assert row["providers"][0]["max_used"] == 100
 
 
 @pytest.mark.asyncio

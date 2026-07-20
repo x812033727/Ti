@@ -94,4 +94,7 @@ projects/
 tmp
 venv/
 workspaces/
+
+# --- Ti baseline（自動補上,避免追蹤/交付沙箱/環境 junk）---
+.tmp/
 .ci-evidence/

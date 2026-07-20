@@ -444,6 +444,9 @@ export function handleEvent(ev) {
       // ttft_s 為選填欄位，老 JSONL / 舊 replay 沒有時也要安全略過。
       void p.ttft_s;
       break;
+    case "provider_constrained":
+      addSystem(`⚠️ Provider 額度受限：${p.role || "role"} 目前無可重綁後端（${p.provider || "unknown"}）`);
+      break;
     case "task_result": {
       // 任務結果 log-line：顯示實際用的 provider/模型與耗時/QA/費用（缺欄位一律省略不崩潰）。
       const who = (p.role || "") + "@" + (p.provider || "?") + (p.model ? "/" + p.model : "");

@@ -37,7 +37,12 @@ from . import config, jsonl_log
 
 log = logging.getLogger("ti.notify")
 
-_TIMEOUT_S = 10.0
+
+def _timeout_s() -> float:
+    """送出 timeout（秒）：TI_NOTIFY_TIMEOUT 可調，reload 後即時生效。"""
+    return float(getattr(config, "NOTIFY_TIMEOUT", 10.0) or 10.0)
+
+
 _SENSITIVE_KEY_MARKS = ("token", "secret", "password", "authorization", "webhook")
 _SENSITIVE_PATH_RE = re.compile(r"(?<![\w:/])/(?:root|home|opt|etc|var|tmp|srv)/[^\s,;]*")
 
@@ -93,6 +98,7 @@ SEVERITY: dict[str, str] = {
     "rollback_result": "page",  # rollback 失敗必須立即通知；成功演練由呼叫端標 drill
     "ci_failed": "page",  # 本機/遠端 CI 客觀閘門重試用罄
     "manual_paused": "page",  # 人工暫停與政策 paused 都須離帶通知
+    "consecutive_fail_pause": "page",  # 主迴圈連續 failed SLO 煞車暫停
     "test": "page",
     "gate_failure": "digest",
     "critic_reject": "digest",
@@ -187,7 +193,7 @@ def _post_json(url: str, payload: dict, kind: str, title: str, sink: str) -> boo
         req = urllib.request.Request(
             url, data=body, headers={"Content-Type": "application/json"}, method="POST"
         )
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S):
+        with urllib.request.urlopen(req, timeout=_timeout_s()):
             pass
         return True
     except Exception:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 URL（Telegram URL 內嵌 token）
