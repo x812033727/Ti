@@ -224,8 +224,6 @@ def main(argv: list[str] | None = None) -> int:
     checker_cmd = [
         "timeout",
         "60",
-        "env",
-        "PYTHONPATH=.",
         "python3",
         "scripts/check_release_body_structure.py",
     ]
