@@ -147,3 +147,17 @@ def test_jsonl_log_compaction(tmp_path, monkeypatch):
     assert kinds == ["fresh", "fresh2"], "保留期外舊紀錄被歸檔"
     archived = (tmp_path / "ap" / "x.jsonl.old").read_text(encoding="utf-8")
     assert '"kind": "old"' in archived
+
+
+def test_trust_metrics_excludes_drill_events(tmp_path):
+    """演練事件(drill=true)驗證告警管道,不得計入營運事件——否則做演練
+    反而懲罰升階條件(deploy_verify_green 的 7 天失敗數)。"""
+    notify.record("deploy_verify_failed", "[演練] 外部告警送達測試", drill=True)
+    notify.record("deploy_verify_failed", "真部署驗證失敗")
+    notify.record("task_failed", "演練假失敗", drill=True)
+
+    m = insights.trust_metrics(days=7)
+    assert m["events"]["deploy_verify_failed"] == 1, "drill 不計數"
+    assert m["events"]["task_failed"] == 0, "drill 不計數"
+    # 明細仍完整留在 events.jsonl,只是彙整口徑排除演練。
+    assert len(notify.read_events(1)) == 3

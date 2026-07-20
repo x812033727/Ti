@@ -194,6 +194,10 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
         by_cat[cat] = by_cat.get(cat, 0) + 1
     events: dict[str, int] = dict.fromkeys(_TRUST_EVENT_KINDS, 0)
     for e in notify.read_events(days, state_dir=state_dir):
+        # 演練事件(drill=true)驗證的是告警管道,不是營運健康——計入會讓
+        # 「做演練」反過來懲罰升階條件(如 deploy_verify_green 的 7 天失敗數)。
+        if e.get("drill"):
+            continue
         kind = str(e.get("kind") or "unknown")
         events[kind] = events.get(kind, 0) + 1
     return {
