@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio as real_asyncio
 import contextlib
 import json
+import time
 import types
 
 import pytest
@@ -334,6 +335,45 @@ async def test_task_heartbeat_refreshes_status_and_keeps_fields(state_dir, monke
         "last_activity_at 應為 session events 檔 mtime"
     )
     assert "workers" in status, "workers 欄位須恆存在（契約）"
+
+
+async def test_task_heartbeat_writes_first_tick_without_waiting_interval(state_dir, monkeypatch):
+    """running 交接後首 tick 必須立即閉合 activity/workers 判死窗口。"""
+    monkeypatch.setattr(autopilot, "_HEARTBEAT_INTERVAL_S", 3600)
+    history.start_session("ap-hb-immediate", "req")
+    autopilot._write_status("running", task_id=8, last_activity_at=time.time())
+    before = _read_status(state_dir)
+
+    hb = real_asyncio.create_task(autopilot._task_heartbeat(8, "ap-hb-immediate"))
+    await real_asyncio.sleep(0.01)
+    hb.cancel()
+    with contextlib.suppress(real_asyncio.CancelledError):
+        await hb
+
+    status = _read_status(state_dir)
+    assert status["updated_at"] > before["updated_at"]
+    assert isinstance(status["workers"], dict)
+    assert autopilot.liveness_verdict(status, now=time.time(), stale_threshold_s=300) == "alive"
+
+
+async def test_starting_heartbeat_refreshes_only_starting_state(state_dir, monkeypatch):
+    monkeypatch.setattr(autopilot, "_STARTING_HEARTBEAT_INTERVAL_S", 0.01)
+    autopilot._write_status("starting", quota={"claude": 7})
+    before = _read_status(state_dir)
+    hb = real_asyncio.create_task(autopilot._starting_heartbeat())
+    await real_asyncio.sleep(0.03)
+    refreshed = _read_status(state_dir)
+    assert refreshed["state"] == "starting"
+    assert refreshed["quota"] == {"claude": 7}
+    assert refreshed["updated_at"] > before["updated_at"]
+
+    autopilot._write_status("running", task_id=9, last_activity_at=time.time())
+    running = _read_status(state_dir)
+    await real_asyncio.sleep(0.03)
+    hb.cancel()
+    with contextlib.suppress(real_asyncio.CancelledError):
+        await hb
+    assert _read_status(state_dir) == running, "starting 心跳不得覆蓋較新的 running 狀態"
 
 
 # --- 執行中活動停滯 supervisor（issue #286：死鎖就地自癒）------------------------

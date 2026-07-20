@@ -538,6 +538,8 @@ class MergeResult(tuple):
         no_changes: bool = False,
         auto_merge_pending: bool = False,
         policy_blocked: bool = False,
+        integrity_violation: bool = False,
+        observed_diff_sha: str = "",
         merge_sha: str = "",
     ):
         self = super().__new__(cls, (ok, msg))
@@ -553,6 +555,8 @@ class MergeResult(tuple):
         no_changes: bool = False,
         auto_merge_pending: bool = False,
         policy_blocked: bool = False,
+        integrity_violation: bool = False,
+        observed_diff_sha: str = "",
         merge_sha: str = "",
     ):
         self.pr_number = pr_number
@@ -568,6 +572,10 @@ class MergeResult(tuple):
         # policy_blocked=True：任務成果本身未失敗，而是外部寫入前的即時基線／政策重驗
         # fail-closed。呼叫端退回 pending 且不消耗 task retry；terminal audit 仍誠實記 blocked。
         self.policy_blocked = policy_blocked
+        # integrity_violation=True：獨立審查核可的 diff 在 publisher 接手時已消失或改變。
+        # 這不是合法 no-op；呼叫端須 fail-closed 並觸發全域煞車，避免用錯誤分母掩蓋事故。
+        self.integrity_violation = integrity_violation
+        self.observed_diff_sha = str(observed_diff_sha or "").strip().lower()
         self.merge_sha = str(merge_sha or "").strip().lower()
 
 
@@ -653,6 +661,7 @@ async def _commit_push_merge(
     task: dict,
     *,
     pre_write_guard: Callable[[], Awaitable[tuple[bool, str]]] | None = None,
+    approved_diff_sha: str = "",
 ) -> tuple[bool, str]:
     """把成果開分支、push、squash-merge 進 main。dryrun 只回報。
 
@@ -687,6 +696,38 @@ async def _commit_push_merge(
     try:
         branch = f"autopilot/task-{task['id']}"
         title = f"autopilot: {task['title']}"[:72]
+        expected_diff_sha = str(approved_diff_sha or "").strip().lower()
+
+        async def _revalidate_approved_diff() -> MergeResult | None:
+            """重算 reviewer 所見 diff；不一致不是 no-op，而是治理完整性事故。"""
+            if not expected_diff_sha:
+                return None
+            rc_live, live_diff = await _run(
+                ["git", "diff", "--binary", f"origin/{config.AUTOPILOT_BRANCH}"],
+                cwd=clone,
+                timeout=60,
+            )
+            observed = hashlib.sha256(live_diff.encode()).hexdigest() if rc_live == 0 else ""
+            if rc_live == 0 and observed == expected_diff_sha:
+                return None
+            detail = (
+                "approved_diff_revalidation:diff_unavailable"
+                if rc_live != 0
+                else "approved_diff_revalidation:diff_sha_changed"
+            )
+            return MergeResult(
+                False,
+                detail,
+                policy_blocked=True,
+                integrity_violation=True,
+                observed_diff_sha=observed,
+            )
+
+        # Reviewer 是 agent runtime，即使 prompt 宣告唯讀也不能把「沒有改 workspace」當假設。
+        # 在任何 branch/commit 動作前先驗一次，讓被清空的核可 diff 不會落入合法 no-op。
+        integrity_failure = await _revalidate_approved_diff()
+        if integrity_failure is not None:
+            return integrity_failure
         # 確保所有變更都已 commit（session 通常已 commit，這裡兜底）
         await _run(["git", "checkout", "-B", branch], cwd=clone, timeout=60)
         await _run(["git", "add", "-A"], cwd=clone, timeout=60)
@@ -715,6 +756,12 @@ async def _commit_push_merge(
             # 零 diff：不是合併失敗，而是「沒有可出貨的變更」。以 no_changes 旗標讓呼叫端
             # 收斂為 parked no-op（不燒重試、不落入失敗桶），而非白燒 3 次 session。
             return MergeResult(False, "沒有產生任何變更（無 commit 可合併）", no_changes=True)
+
+        # commit 會改 index/HEAD，但相對 origin/main 的內容 diff 必須與 reviewer 所見完全相同。
+        # 第二次驗證封住首驗到 push 之間的本機競態；仍然只做唯讀 git diff。
+        integrity_failure = await _revalidate_approved_diff()
+        if integrity_failure is not None:
+            return integrity_failure
 
         if config.AUTOPILOT_DRYRUN:
             return True, f"[dryrun] 會 push {branch} 並 squash-merge 進 {config.AUTOPILOT_BRANCH}"
@@ -2737,6 +2784,7 @@ async def run_one_task(task: dict) -> None:
     managed_terminal_override: str | None = None
     managed_source_sha = "unknown"
     deploy_governance: dict | None = None
+    approved_diff_sha = ""
     if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
 
         async def _git_value(argv: list[str], cwd) -> str:
@@ -3207,6 +3255,8 @@ async def run_one_task(task: dict) -> None:
                 "task_id": task["id"],
                 "source_sha": managed_source_sha,
             }
+            # publisher 必須重新計算並逐位匹配 reviewer 所見 diff；不能只信這份記憶體值。
+            approved_diff_sha = diff_sha
 
         # commit / push / squash-merge 進 main
         if managed_pre_write_guard is None:
@@ -3216,26 +3266,23 @@ async def run_one_task(task: dict) -> None:
                 clone,
                 task,
                 pre_write_guard=managed_pre_write_guard,
+                approved_diff_sha=approved_diff_sha,
             )
         merged, msg = merge_res
         no_changes = getattr(merge_res, "no_changes", False)
         auto_pending = getattr(merge_res, "auto_merge_pending", False)
         policy_blocked = getattr(merge_res, "policy_blocked", False)
+        integrity_violation = getattr(merge_res, "integrity_violation", False)
         # 結構化審計：成功與失敗都記（失敗也燒了成本、審計要能回溯）；dryrun 不落檔。
         # pr 非空＝實際開出 PR（計入每日預算）；push 前就被擋（無 PR）→ pr=None，記錄不計數。
         # no_changes 走獨立 outcome，不污染 merge_failed 桶（診斷分類與看板據此分流）。
         if not config.AUTOPILOT_DRYRUN:
             rc_sha, head_sha = await _run(["git", "rev-parse", "HEAD"], cwd=clone, timeout=30)
-            _append_audit(
-                {
-                    "ts": time.time(),
-                    "task_id": task.get("id"),
-                    "source": str(task.get("source") or ""),
-                    "lane": "fast" if use_fast else "full",  # 快車道效能對比用(軌 I)
-                    "pr": getattr(merge_res, "pr_number", None),
-                    "branch": getattr(merge_res, "branch", ""),
-                    "head_sha": head_sha.strip() if rc_sha == 0 else "",
-                    "outcome": "no_changes"
+            audit_outcome = (
+                "integrity_blocked"
+                if integrity_violation
+                else (
+                    "no_changes"
                     if no_changes
                     else (
                         "merged"
@@ -3245,12 +3292,47 @@ async def run_one_task(task: dict) -> None:
                             if auto_pending
                             else ("policy_blocked" if policy_blocked else "merge_failed")
                         )
-                    ),
+                    )
+                )
+            )
+            _append_audit(
+                {
+                    "ts": time.time(),
+                    "task_id": task.get("id"),
+                    "source": str(task.get("source") or ""),
+                    "lane": "fast" if use_fast else "full",  # 快車道效能對比用(軌 I)
+                    "pr": getattr(merge_res, "pr_number", None),
+                    "branch": getattr(merge_res, "branch", ""),
+                    "head_sha": head_sha.strip() if rc_sha == 0 else "",
+                    "outcome": audit_outcome,
                     "detail": msg[-400:],
                     "duration_s": round(time.time() - t0, 1),
                     "attempts": int(task.get("attempts") or 0),
                 }
             )
+        if integrity_violation:
+            observed_diff_sha = getattr(merge_res, "observed_diff_sha", "")
+            autonomy.emit_event(
+                "policy_violation",
+                run_id=sid,
+                project_id=autonomy.CORE_PROJECT_ID,
+                task_id=task["id"],
+                source_sha=managed_source_sha,
+                risk=str(task.get("risk") or "unknown"),
+                outcome="approved_diff_revalidation_blocked",
+                severity="critical",
+                payload={
+                    "expected_diff_sha": approved_diff_sha or "unknown",
+                    "observed_diff_sha": observed_diff_sha or "unknown",
+                },
+            )
+            autonomy.trip_brake(
+                "global",
+                "governance_integrity:approved_diff_changed_before_publish",
+                project_id=autonomy.CORE_PROJECT_ID,
+                run_id=sid,
+            )
+
         if no_changes:
             # 零 diff＝沒有可出貨的變更（多為收尾驗收/QA 類元任務，本就無事可做）：收斂為
             # parked no-op——不燒重試（省下重跑整場 session）、不落失敗桶（非任務缺陷）。
@@ -4790,6 +4872,23 @@ def _refresh_status_for_event(
 # 任務中心跳的刷新間隔（秒）。status.json 原本只在任務揀起時寫一次，任務一超過外部監控
 # 的 stale 門檻（如 45 分鐘）就被誤判死鎖；每分鐘刷新從源頭消滅這種假 stale。
 _HEARTBEAT_INTERVAL_S = 60.0
+_STARTING_HEARTBEAT_INTERVAL_S = 60.0
+
+
+async def _starting_heartbeat() -> None:
+    """長啟動／任務間前處理期間，持續刷新真實 ``starting`` 狀態。
+
+    規範蒸餾與逐專案 intent 分析各自都可能超過 layer3 的 stale 門檻；只在 main() 最早期
+    寫一次 starting 仍會於第二個長 LLM turn 被誤殺。此背景心跳只在目前狀態仍是 starting
+    時刷新，絕不覆蓋 running／sleep／paused 等較新的主迴圈狀態。
+    """
+    while True:
+        await asyncio.sleep(_STARTING_HEARTBEAT_INTERVAL_S)
+        prev = _read_status()
+        if prev.get("state") != "starting":
+            continue
+        quota = prev.get("quota")
+        _write_status("starting", quota=quota if isinstance(quota, dict) else None)
 
 
 async def _task_heartbeat(
@@ -4808,7 +4907,8 @@ async def _task_heartbeat(
     """
     prev_cpu: dict[int, int] | None = None
     while True:
-        await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
+        # 首 tick 立即寫入：主迴圈先把 state 切成 running，若在此先睡 60s，缺少
+        # last_activity/workers 的短窗會被 layer3 立刻判成 dead_task。
         cur_cpu = _proc_descendant_cpu()
         workers = _workers_field(prev_cpu, cur_cpu)
         prev = _read_status()
@@ -4821,6 +4921,7 @@ async def _task_heartbeat(
             workers=workers,
         )
         prev_cpu = cur_cpu
+        await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
 
 
 # --- 優雅停機（SIGTERM/SIGINT） -------------------------------------------
@@ -4982,6 +5083,7 @@ async def main() -> None:
         reconciler = asyncio.create_task(_reconciler_loop())
         digester = asyncio.create_task(_digest_scheduler())
         improver_lane = asyncio.create_task(_project_improve_lane())
+        startup_heartbeat = asyncio.create_task(_starting_heartbeat())
     except AttributeError:
         monitor = None
         sideline = None
@@ -4989,6 +5091,7 @@ async def main() -> None:
         reconciler = None
         improver_lane = None
         digester = None
+        startup_heartbeat = None
     try:
         await _main_loop(startup_sig)
     except CancelledError:
@@ -5003,7 +5106,15 @@ async def main() -> None:
     finally:
         # 先收尾旁路調查再 cancel:sideline 的 finally 會清掉 _sideline_task_info。
         _requeue_sideline_task("優雅停機")
-        for aux in (monitor, sideline, notifier, reconciler, digester, improver_lane):
+        for aux in (
+            monitor,
+            sideline,
+            notifier,
+            reconciler,
+            digester,
+            improver_lane,
+            startup_heartbeat,
+        ):
             if aux is not None:
                 aux.cancel()
                 with contextlib.suppress(BaseException):
@@ -5482,6 +5593,10 @@ async def _main_loop(startup_sig: float) -> None:
             await asyncio.sleep(sleep_s)
             continue
 
+        # 下方規範／intent／reconcile 都是「尚未認領任務」的啟動前處理，可能包含數分鐘
+        # LLM turn。先切成 starting，並由 _starting_heartbeat 每分鐘續命；不可沿用上一場
+        # running 造成看板與 layer3 誤判仍在舊任務。
+        _write_status("starting", quota=quota)
         _maybe_triage_failed()
         # Rule 2：Rule 1（triage_failed）退不了的歷史 timeout-parked，每輪挑 1 筆交專家自動拆分。
         await _maybe_triage_timeout_parked()
@@ -5510,7 +5625,14 @@ async def _main_loop(startup_sig: float) -> None:
                 await asyncio.sleep(max(config.AUTOPILOT_COOLDOWN, 60))
             continue
 
-        _write_status("running", task_id=task.get("id"), quota=quota)
+        # 先給新任務一個真實 activity 起點；run_one_task 內的背景 heartbeat 會立即補上
+        # workers/session mtime。這封住 running 但 last_activity/workers 皆空的判死短窗。
+        _write_status(
+            "running",
+            task_id=task.get("id"),
+            quota=quota,
+            last_activity_at=time.time(),
+        )
         global _task_running
         _task_running = True
         try:
