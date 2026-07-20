@@ -1,0 +1,326 @@
+/* 討論串：訊息/工具/系統列、結果卡、並行支線、commit chip、Demo、發佈、插話列。 */
+
+/* ---------- 討論串 ---------- */
+.discussion > h2 { margin-bottom: 8px; }
+.stream {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 6px;
+}
+.stream > *, .lane-col-body > * { animation: rise var(--t-med) var(--ease-out) backwards; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+.placeholder { margin: auto; text-align: center; color: var(--muted); font-size: var(--fs-3); }
+.placeholder::before {
+  content: "✦";
+  display: block;
+  font-size: 30px;
+  margin-bottom: 12px;
+  background: var(--grad-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 14px rgba(124, 134, 255, .4));
+}
+
+.msg { display: flex; gap: 10px; }
+.msg .av {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-4);
+  flex-shrink: 0;
+}
+.msg .body {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px 14px 14px 14px;
+  padding: 10px 14px;
+  max-width: 88%;
+  min-width: 0;
+}
+.msg .who {
+  font-size: var(--fs-0);
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  background: var(--grad-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  width: fit-content;
+}
+.msg .txt { font-size: var(--fs-3); line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+
+/* 人類插話：靠右、綠色系，跟 AI 拉開視覺差 */
+.msg.human { flex-direction: row-reverse; align-self: flex-end; max-width: 100%; }
+.msg.human .body {
+  background: var(--good-bg);
+  border-color: rgba(45, 212, 167, .35);
+  border-radius: 14px 4px 14px 14px;
+}
+.msg.human .who { background: none; -webkit-background-clip: initial; background-clip: initial; color: var(--good); }
+
+.tool {
+  font-size: var(--fs-2);
+  color: var(--muted);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-left: 42px;
+  min-width: 0;
+}
+.tool > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool .badge {
+  font-family: var(--font-mono);
+  font-size: var(--fs-0);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  padding: 2px 9px 2px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-2);
+}
+.tool .badge::before {
+  content: "";
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(124, 134, 255, .7);
+}
+
+.sys {
+  text-align: center;
+  font-size: var(--fs-0);
+  color: var(--muted);
+  padding: 1px 0;
+  opacity: .88;
+  overflow-wrap: anywhere;
+}
+/* 系統行/結果行的行內圖示：縮小對齊文字基線，與文字留 6px 呼吸 */
+.sys-ic {
+  width: 13px; height: 13px;
+  margin-right: 6px;
+  vertical-align: -2.5px;
+}
+
+/* 階段切換分隔線：前後 hairline 漸層線，一眼可辨流程推進 */
+.sys.phase {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  opacity: 1;
+  padding: 4px 0;
+}
+.sys.phase::before,
+.sys.phase::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong));
+}
+.sys.phase::after {
+  background: linear-gradient(90deg, var(--border-strong), transparent);
+}
+
+.result {
+  align-self: center;
+  max-width: 92%;
+  text-align: center;
+  font-weight: 600;
+  font-size: var(--fs-2);
+  padding: 7px 16px;
+  border-radius: var(--r-lg);
+  border: 1px solid;
+}
+.result.pass { color: var(--good); background: var(--good-bg); border-color: rgba(45, 212, 167, .35); }
+.result.fail { color: var(--bad); background: var(--bad-bg); border-color: rgba(255, 107, 107, .35); }
+.ci.result { align-self: stretch; max-width: none; text-align: left; padding-left: 14px; }
+.result .log { text-align: left; font-weight: 400; margin-top: 8px; }
+.result .log summary { cursor: pointer; color: var(--muted); font-size: var(--fs-1); }
+.result .log summary:hover { color: var(--text-2); }
+.result .log pre,
+.demo pre {
+  background: var(--surface-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-0);
+  line-height: 1.55;
+  overflow: auto;
+  max-height: 220px;
+  color: var(--code-text);
+  margin: 6px 0 0;
+}
+
+/* 並行支線多欄看板 */
+.lanes-board {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 0;
+  align-items: flex-start;
+  scroll-snap-type: x proximity;
+}
+.lane-0 { --lane-c: #7c86ff; }
+.lane-1 { --lane-c: #2dd4a7; }
+.lane-2 { --lane-c: #c084fc; }
+.lane-3 { --lane-c: #f5a85f; }
+.lane-4 { --lane-c: #ff7d9c; }
+.lane-5 { --lane-c: #4fd6d6; }
+.lane-col {
+  flex: 1 1 0;
+  min-width: 230px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  scroll-snap-align: start;
+  position: relative;
+}
+.lane-col::before {
+  content: "";
+  display: block;
+  height: 3px;
+  background: linear-gradient(90deg, var(--lane-c), transparent 85%);
+}
+.lane-col-head {
+  font-family: var(--font-mono);
+  font-size: var(--fs-0);
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--lane-c);
+}
+.lane-col-body { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.lane-col-body .msg .body { max-width: 100%; }
+.lane-col-body .tool { padding-left: 4px; }
+.msg.lane .body { border-left: 3px solid var(--lane-c); }
+
+/* git commit chip */
+.commit { display: flex; gap: 8px; align-items: center; font-size: var(--fs-2); color: var(--muted); padding-left: 42px; min-width: 0; }
+.commit > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit .hash {
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  background: rgba(124, 134, 255, .12);
+  border: 1px solid rgba(124, 134, 255, .3);
+  border-radius: var(--r-full);
+  padding: 2px 9px;
+  color: var(--accent);
+  flex: none;
+  transition: background var(--t-fast);
+}
+.commit .hash:hover { background: rgba(124, 134, 255, .2); }
+
+/* Demo 區塊 */
+.demo {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--r-md);
+  padding: 12px;
+  background: var(--surface-1);
+}
+.demo.pass { border-left-color: var(--good); }
+.demo.fail { border-left-color: var(--bad); }
+.demo .demohead { font-weight: 600; font-size: var(--fs-2); margin-bottom: 6px; }
+.demo .demohead code { font-family: var(--font-mono); font-weight: 400; font-size: var(--fs-0); color: var(--muted); }
+/* 消毒重試備註：原始壞指令＋首次 exit code（稽核弱化顯示） */
+.demo .demoretry { font-family: var(--font-mono); font-size: var(--fs-0); color: var(--muted); margin-bottom: 6px; }
+
+/* 發佈到 GitHub */
+.publish-cta { text-align: center; }
+.publish-cta button {
+  padding: 10px 22px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-weight: 600;
+  font-size: var(--fs-3);
+  border: 1px solid rgba(255, 255, 255, .08);
+  box-shadow: var(--shadow-1);
+}
+.publish-cta button:hover:not(:disabled) { background: var(--accent); box-shadow: var(--glow-accent); }
+.publish {
+  text-align: center;
+  font-size: var(--fs-2);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.publish.ok { border-color: rgba(45, 212, 167, .35); }
+.publish.fail { border-color: rgba(255, 107, 107, .35); color: var(--bad); }
+.publish code {
+  font-family: var(--font-mono);
+  background: var(--surface-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 1px 7px;
+  font-size: var(--fs-1);
+}
+.publish a { color: var(--accent); }
+.merge-outcome {
+  display: inline-block;
+  padding: 1px 9px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-1);
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+.merge-outcome.merged { background: var(--good-bg); border-color: rgba(45, 212, 167, .4); color: var(--good); }
+.merge-outcome.ci_failed, .merge-outcome.error { background: var(--bad-bg); border-color: rgba(255, 107, 107, .4); color: var(--bad); }
+.merge-outcome.blocked, .merge-outcome.conflict, .merge-outcome.timeout { background: var(--warn-bg); border-color: rgba(245, 184, 95, .4); color: var(--warn); }
+
+/* ---------- 插話列 ---------- */
+.interject { display: flex; gap: 8px; margin-top: 12px; }
+.interject input { flex: 1; }
+.interject input:focus { border-color: var(--good); box-shadow: 0 0 0 3px rgba(45, 212, 167, .15); }
+.interject button {
+  padding: 10px 20px;
+  background: var(--good);
+  color: #04211a;
+  font-weight: 600;
+  font-size: var(--fs-3);
+}
+.interject button:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 0 16px rgba(45, 212, 167, .35); }
+
+/* 氣泡內 markdown(PR3):緊湊間距,碼塊/清單/引用不撐破氣泡 */
+.msg .txt.md p { margin: 0 0 6px; }
+.msg .txt.md p:last-child { margin-bottom: 0; }
+.msg .txt.md h3, .msg .txt.md h4 { margin: 8px 0 4px; font-size: var(--fs-2); }
+.msg .txt.md ul, .msg .txt.md ol { margin: 4px 0 6px; padding-left: 20px; }
+.msg .txt.md li { margin: 2px 0; }
+.msg .txt.md blockquote {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-2);
+}
+.msg .txt.md pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--bg-deep);
+  overflow-x: auto;
+  font-size: var(--fs-0);
+}
+.msg .txt.md code { font-family: var(--font-mono); font-size: 0.92em; }
+.msg .txt.md p code, .msg .txt.md li code {
+  background: var(--surface-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.msg .txt.md a { color: var(--accent); text-decoration: underline; }

@@ -80,7 +80,7 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
 4. 每個事件即時渲染並寫入 `history/<id>.jsonl`；前端可送 `{"type":"interject"}` 或 `{"type":"stop"}`。
 5. `done` 結束；歷史可從 `/api/history` 列出並重播。
 
-事件型別是前後端契約，定義集中在 `events.py`，前端在 `web/app.js` 的 `handleEvent()` 對應。詳見 `ARCHITECTURE.md`。
+事件型別是前後端契約，定義集中在 `events.py`，前端在 `web/js/events-render.js` 的 `handleEvent()` 對應（`web/app.js` 為 ES module 入口，模組拆分見 `ARCHITECTURE.md`「前端（web/）」）。
 
 ## 關鍵慣例（給 AI 的硬規則）
 
@@ -154,6 +154,8 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
   （人工恢復，**非**跨日自癒），同一 UTC 日只 `notify.send_bg("daily_pr_budget_pause", ...)` 一次；
   `0`＝停用。計數為行程記憶體，行程重啟歸零可容忍（未持久化 `audit.jsonl`）。守門測試在
   `tests/autopilot/test_budget_brake.py`。
+- 本輪範圍外移交待辦：結構化 `autopilot/audit.jsonl` 審計紀錄、`AUTOPILOT_DAILY_PR_BUDGET`
+  每日 PR 成本熔斷。不要混進 repo 污染防護修補。
 
 ## 發佈鏈 DoD 與 `GH_PAT` 設定
 
@@ -172,6 +174,11 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
 - 驗證邊界必須明講：單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證。換句話說：
   真實 tag-push 端到端尚待生產驗證；第一次正式打 `v*` tag 後，需確認
   `publish-release -> release-smoke` 生產鏈實際通過。
+- 移交待辦：真實 `v*` tag-push 生產 E2E 仍是半閉環，正式發 release 時要先人工確認 `body.md`：
+  1. 先跑 `python3 scripts/publish_release.py` 產出 `body.md`。
+  2. 開 `body.md`，確認頂部就是 `## ⚠️ Breaking Changes`，沒有被放到其他章節後面。
+  3. 確認該區塊內仍有四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙。
+  4. 再做 `gh release create "$TAG" -F body.md`，並在 GitHub release 頁核對 body 與本機一致。
 - 本輪不加 `--verify-tag`：現有觸發條件已由 `push.tags: v*` 保證 tag 存在，且 workflow 另有
   `github.ref_name == v{pyproject_version()}` fail-fast。若未來新增 `workflow_dispatch` 手動發佈，需重審此決策。
 - 任務 #3 最小硬化決策：已將 `publish-release.yml` 的 workflow-level `permissions.contents` 下修為
@@ -220,6 +227,15 @@ release-smoke` 驗收鏈，留待專門供應鏈硬化任務處理。
 ### shell 偵測腳本的可攜性
 沿用 rg→grep fallback 範式時，正則限 **ERE**，禁用 lookbehind/PCRE（grep `-P` 非 GNU 環境沒有）。fallback 環境可能連 `sed`/`awk` 都沒有——剝字串改用純 grep（如「白名單優先交替、`grep -oE` 抽片段」），別引入 sed 破壞可攜性。
 
+## 資安審查員 — 長期經驗
+
+從「憑證輪替工作單」資安審查場提煉，作為安全閘門時固定沿用：
+
+1. **審文件型交付也要實跑驗證其安全宣稱，不看文字下結論**。文件若聲稱「`.env` 已在 `.gitignore`」「無 token 明文」，必實 `grep .gitignore`／`grep -E '<token 前綴正則>' <file>` 兌現，避免給人虛假安全感。文件不是程式碼不代表可略讀放行——宣稱要能實查對應。
+2. **核可要鎖死範圍，不讓「安全核可」溢出到未審的相鄰攻擊面**。工作單引用了 `docs/token-rotation-runbook.md` 與 `scripts/verify_token_rotation.sh`（`--verify`/`--scan`/`--report`），我只審了 markdown 本身，就明講「核可僅限本文件、不延伸到所引用腳本/runbook」，並把那支腳本列為待另案審查的移交（實跑前需補審指令注入/明文落地）。否則「文件過了」會被誤讀成「整條輪替鏈都安全」。
+3. **憑證輪替工作單的資安檢查清單（可複用）**：①先發後撤順序鎖死，新值驗證通過前絕不撤舊（誤撤斷鏈＝403）；②明文絕不進對話/版控/工具輸出，貼證欄位只收 exit code/HTTP 碼/帳號名等非敏感回報；③最小權限 PAT＝本 repo + 僅 `Contents: Read and write` + 設到期日；④人工/AI 分界照「是否接觸明文、是否不可逆帳號操作」切，AI 只做唯讀掃描/報表、不代持明文；⑤驗證指令 `gh auth status` 不可裸跑（驗 keyring 舊值會假綠），`/user` 200 只證身分不證 scope。
+4. **`Authorization: Bearer $TOKEN` 的 curl 是低度但真實的明文洩漏點**：token 會在 process args 與 shell history 展開，共用主機 `ps` 可見。優先推環境變數式（`GH_TOKEN=... gh auth status`）；curl 僅列 fallback。此類單人主機下的低度風險列「跟進建議」而非退回理由——聚焦真實風險，不為挑剔而退。
+
 ## 向高級工程師學習（跨任務通用的協作習慣）
 
 從與高工的協作中，值得我之後固定沿用：
@@ -229,3 +245,13 @@ release-smoke` 驗收鏈，留待專門供應鏈硬化任務處理。
 3. **區分「任務範圍內」與「跟進待辦」**。當前接點可核可上線，同時把範圍外的缺陷明確列為移交待辦——不阻擋進度，也不讓問題消失。下結論時把「這條過了」和「但這幾項要記著」分開講清楚。
 4. **對自己的判斷也保持懷疑（元認知）**。最關鍵的一點：他承認「這次攔住純屬運氣」，把僥倖提煉成可執行硬規則（驗證須自證對應…），而不是自我安慰。沿用：問「下次同類問題，現有流程能穩定攔住嗎？」若答案是否，就補規則而非賭運氣。
 5. **誠實暴露流程缺陷，不粉飾**。「誠實說：不能」比一句「應該沒問題」有價值得多——把不確定與漏洞講出來，團隊才能補。
+
+## PM 主持蒐證/驗證場的經驗（CI 失敗 log 蒐證任務）
+
+從一次「取 CI 失敗 log、記失敗測試名/關鍵訊息/行號」的純蒐證場提煉，PM 派工與驗收時固定沿用：
+
+1. **蒐證派工要把「路徑＋檔名＋自身 sha256」一次釘死**。本場最大返工點：我執行指令只寫死產生器腳本名（`collect_ci_failure.py`），卻沒規定「產出報告的檔名」，於是 engineer 自由命名——口頭宣稱 `CI_FAILURE_REPORT_…md`、實際落地 `run-…authority-report.md`，兩者不符。留任何自由命名空間，必生「宣稱檔名 ≠ 實際落地」分歧。交付物三要素（絕對路徑、確切檔名、報告自身 sha256）在派工當下就講死，不留給執行端自訂。
+2. **「不接受口頭宣稱」要靠實查目錄兌現**。engineer 回報完成且列了檔名，但 PM 一跑 `ls` 就發現宣稱檔名不存在。口頭交付＝未驗證；PM 收貨必實 `ls`/`Read`/雜湊實算，光看回報必漏。
+3. **PM 驗證雜湊一律「單命令落檔＋Read 讀取」，禁複合管線**。本場我用 `sha256sum … | tail`、`{ 多命令 } ; cat` 等複合結構，自造輸出交錯、誤讀 sha256，浪費數輪。正解：`sha256sum X > out.txt`（單一目的）再用 Read 工具讀 `out.txt`，一次一件事。呼應上方「非預期輸出先懷疑自己命令」。
+4. **全工具通道吞輸出＝回傳層故障，不是命令錯，也不是「環境污染」**。當 `printf 'x'`、`echo`、`Read` 一個已知存在的檔、`Glob` 全數回傳空白時，用「最簡命令證偽」即可確認是工具回傳通道故障：既非我命令寫錯（printf 不可能錯），亦非污染幻覺。判別後**立即停止重試探測**（無限探測只燒輪次），改為「據通道故障前已確鑿掌握的事實下判定」，並誠實在結論裡標明「哪幾證因通道故障未能當場閉環、待恢復補做」，不粉飾為「應該沒問題」。
+5. **蒐證場多腳本/多中間檔並存時，權威檔要自帶「唯一權威＋應忽略殘檔」聲明**。本場 `.ci-evidence/` 同時有產生器、解析腳本、JSON、failed-only log、authority-report 等多檔；消費端易誤取。權威報告須在檔內聲明唯一權威來源，並列出所有應忽略的中間產物/殘影檔名（含曾出現又被清掉的命名），避免下游取到相反或過期結論。

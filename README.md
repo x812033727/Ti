@@ -316,6 +316,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_REFLEXION` / `TI_REFLEXION_MAX` | 任務級反思記憶（補「只帶上一輪原文」缺口）：失敗輪把 QA/高工意見蒸餾成反思存 per-session JSONL，後續輪/huddle 重試 prepend 回工程師 context／`MAX` 為注入筆數。進階開關（env 或設定面板「進階」組） | 開啟 / 5 |
 | `TI_OBJECTIVE_GATE` | 客觀驗收閘門：交付前自測「實際執行」失敗 → 該輪強制退回，不讓 QA/高工的文字裁決推翻真實 exit code（守住反 reward-hacking）。`1`=工程師本輪宣告的自測指令實敗才否決（fallback 整體指令只回報不硬退）；`strict`=fallback 失敗與「未宣告執行指令」皆視為未通過 | 1（開啟） |
 | `TI_SELF_REFINE_ITERS` | 單輪內自我精修：自測未過時讓同一工程師就地依執行紀錄再修一次（交付驗證前），上限 N 次 | 1（開啟） |
+| `TI_TASK_HELP` / `TI_TASK_HELP_MAX` | 中途求助 PM：工程師實作卡關時輸出一行 `求助: <問題>`，PM 即時給指示後續作再交付（輪內輕量通道，與跑滿輪數才觸發的 huddle 互補）；`MAX` 為每任務上限 | 1（開啟） / 1 |
 | `TI_RLIMITS` / `TI_RLIMIT_MEM_MB` / `TI_RLIMIT_CPU_S` / `TI_RLIMIT_FSIZE_MB` | 子進程資源上限：runner 執行指令時套 RLIMIT，補 bwrap 沒有的記憶體/CPU/檔案大小防線（各上限 0=略過該項） | 1 / 4096 / 300 / 512 |
 | `TI_DEMO_TIMEOUT` / `TI_DEMO_MAX_OUTPUT` | 自測/Demo 的逾時秒數與輸出字數上限 | 60 / 8000 |
 | `TI_ENABLE_GIT` | 是否在 workspace 內做階段性 commit | 1 |
@@ -328,6 +329,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_PUBLISH_MERGE` | push／開 PR 後是否自動合併（先等 CI 通過才合併） | 0 |
 | `TI_PUBLISH_CI_TIMEOUT` / `TI_PUBLISH_CI_INTERVAL` | 自動合併前等待 CI 的最長秒數 / 輪詢間隔 | 600 / 10 |
 | `TI_PUBLISH_MERGE_RETRIES` | 對 stale／`Base branch was modified`（409）的重試次數 | 3 |
+| `TI_MERGE_BEHIND_RETRIES` | PR 落後 base（`behind`→merge 405）時自動 update-branch→等 CI→重試合併的最多輪數；0＝停用（behind 直接退回） | 2 |
 | `TI_OFFLINE` / `TI_OFFLINE_DELAY` | 離線示範模式（不需金鑰）/ 發言節奏秒數 | 0 / 0.4 |
 | `TI_PROVIDER` | 後端 provider：`claude`、`openai`、`minimax`、`gemini`、`codex` 或 `antigravity` | claude |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 金鑰 / 相容端點（可指向本地模型） | 未設定 |
@@ -450,6 +452,8 @@ TI_ANTIGRAVITY_SANDBOX=0
 
 開發流程、分支與提交慣例見 [CONTRIBUTING.md](CONTRIBUTING.md)；
 模組與資料流的完整說明見 [ARCHITECTURE.md](ARCHITECTURE.md)。
+第 3／4 階的政策、煞車、演練與升階門檻見
+[自治治理操作指南](docs/guides/autonomy-governance.md)。
 
 ## 架構
 
@@ -469,6 +473,8 @@ studio/
   history.py       session 事件存檔/讀取（供歷史列表與重播）
   projects.py      專案（長期產品）：固定 workspace、專屬 backlog、session 足跡
   improver.py      專案持續改良迴圈：消化 backlog → 跑討論 → 回填 → 找問題
+  autonomy.py      版本化自治政策/事件、風險裁決、煞車與成熟度報告
+  project_health.py Stage 4 外部專案部署健康＋merge revision 黑盒驗證
   publisher.py     把 workspace 成果推成 GitHub 分支並開 PR（預設關閉）
   fake_experts.py  離線示範用的假專家（真的寫檔，供無金鑰試用/端到端驗證）
   routes.py        REST API 路由（health / 登入 / workspace / history / publish）

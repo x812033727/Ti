@@ -34,7 +34,7 @@ def test_write_meta_routes_through_secure_write(monkeypatch):
     monkeypatch.setattr(history, "secure_write_root", spy)
     history._write_meta("sess", {"k": 1})
     assert seen["path"].endswith("sess.meta.json")
-    assert isinstance(seen["data"], (bytes, bytearray))
+    assert isinstance(seen["data"], bytes | bytearray)
 
 
 def test_backlog_save_routes_through_secure_write(monkeypatch):
@@ -47,7 +47,7 @@ def test_backlog_save_routes_through_secure_write(monkeypatch):
     monkeypatch.setattr(backlog, "secure_write_root", spy)
     backlog._save({"seq": 0, "tasks": []}, None)
     assert seen["path"].endswith("backlog.json")
-    assert isinstance(seen["data"], (bytes, bytearray))
+    assert isinstance(seen["data"], bytes | bytearray)
 
 
 # ---- strict + chown 失敗：呼叫端往上拋，不靜默、不落地 ----

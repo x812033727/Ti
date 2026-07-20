@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import zipfile
 from datetime import datetime
@@ -84,19 +85,24 @@ def count_workspaces() -> int:
 
 
 def list_files(session_id: str) -> list[str]:
-    """列出 workspace 內的相對檔案路徑（排除雜訊目錄）。"""
+    """列出 workspace 內的相對檔案路徑（排除雜訊目錄）。
+
+    用 os.walk 於「遍歷層」剪掉 _IGNORE 目錄（不進入 node_modules/.git 等子樹），
+    而非 rglob 全樹走訪後才過濾——大 workspace 的檔案面板刷新從 O(全樹) 降到
+    O(有效檔)。輸出（相對路徑、排序）與舊行為完全一致。
+    """
     root = workspace_path(session_id)
     if not root.exists():
         return []
     files: list[str] = []
-    for p in sorted(root.rglob("*")):
-        if p.is_dir():
-            continue
-        rel_parts = p.relative_to(root).parts
-        if any(part in _IGNORE for part in rel_parts):
-            continue
-        files.append(str(p.relative_to(root)))
-    return files
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _IGNORE]  # 就地剪枝：不進入雜訊子樹
+        rel_dir = Path(dirpath).relative_to(root)
+        for name in filenames:
+            if name in _IGNORE:
+                continue
+            files.append(str(rel_dir / name) if rel_dir.parts else name)
+    return sorted(files)
 
 
 def read_file(session_id: str, rel_path: str) -> str | None:
@@ -224,11 +230,20 @@ def zip_workspace(session_id: str) -> bytes | None:
         return None
     safe_root = root.resolve()
     buf = io.BytesIO()
+    written = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel in files:
             # 與 read_file 對齊：跳過指向沙箱外的 symlink，避免外洩。
             target = safe_resolve(safe_root, rel)
-            if target is None:
+            if target is None or not target.is_file():
+                continue
+            try:
+                if target.stat().st_size > config.MAX_READ_FILE_BYTES:
+                    continue
+            except OSError:
                 continue
             zf.write(target, arcname=rel)
+            written += 1
+    if written == 0:
+        return None
     return buf.getvalue()

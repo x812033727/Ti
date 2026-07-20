@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import contextlib
+import difflib
 import fcntl
 import json
 import math
@@ -22,6 +23,14 @@ from . import config
 
 # 檔案最多保留幾筆（由新到舊截斷），封住長跑下只增不減。注入時另以 LESSONS_MAX 取最新 N 筆。
 _MAX_STORE = 500
+# investigation=調查分流管線的結論沉澱(2026-07-10 修:autopilot 以 source="investigation"
+# 呼叫 add_many,但白名單漏列 → ValueError 被呼叫端 suppress 吞掉,調查結論從未真正入庫)。
+_VALID_SOURCES = {"retro", "vote", "appraisal", "investigation", "intervention"}
+
+# 目前工作目錄沒有既有 lessons.json，可直接校準的實庫為空；因此用 repo 既有 tests/docs 的教訓句型
+# 抽樣校準：明顯近似句 ratio 0.909~0.973，跨主題句 ratio 0.143~0.571。取 0.90 可擋表層
+# 近重複，又不把「同領域但不同教訓」合併。固定模板 vote 由接線端傳 exact_only=True 避免前綴墊高誤擋。
+_FUZZY_DUP_RATIO = 0.90
 
 
 def _path() -> Path:
@@ -45,13 +54,36 @@ def _locked():
         lock.close()
 
 
-def _load() -> dict:
+# 唯讀 mtime 快取(同 backlog 範式):lessons.json 生產 ~268KB,context()/all_lessons()
+# 每場注入都全量 parse。寫路徑 mutable=True 繞過、_save 後刷新;快取物件唯讀共享。
+_read_cache: dict[str, tuple[tuple[int, int], dict]] = {}
+
+
+def _stat_sig(p: Path) -> tuple[int, int] | None:
+    try:
+        st = p.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _load(*, mutable: bool = False) -> dict:
     p = _path()
     if not p.is_file():
         return {"lessons": []}
+    key = str(p)
+    if not mutable:
+        sig = _stat_sig(p)
+        cached = _read_cache.get(key)
+        if sig is not None and cached is not None and cached[0] == sig:
+            return cached[1]
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("lessons"), list):
+            if not mutable:
+                sig = _stat_sig(p)
+                if sig is not None:
+                    _read_cache[key] = (sig, data)
             return data
     except (OSError, json.JSONDecodeError):
         pass
@@ -63,26 +95,54 @@ def _save(data: dict) -> None:
     tmp = _path().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(_path())
+    sig = _stat_sig(_path())
+    if sig is not None:
+        _read_cache[str(_path())] = (sig, data)
+
+
+def _is_fuzzy_duplicate(text: str, existing: list[str]) -> bool:
+    """以標準庫做表層近似去重；不嘗試語意 paraphrase。"""
+    nums = set(re.findall(r"\d+", text))
+    for old in existing:
+        # 現有資料常用「第 0 條/第 1 條」這類編號測試不同教訓；數字不同時不做模糊合併。
+        if nums != set(re.findall(r"\d+", old)):
+            continue
+        if difflib.SequenceMatcher(None, text, old, autojunk=False).ratio() >= _FUZZY_DUP_RATIO:
+            return True
+    return False
 
 
 def add_many(
-    texts: list[str], *, session_id: str = "", requirement: str = "", scope: str = "global"
+    texts: list[str],
+    *,
+    session_id: str = "",
+    requirement: str = "",
+    scope: str = "global",
+    source: str = "retro",
+    exact_only: bool = False,
 ) -> int:
     """批次新增教訓（對既有內容去重），回傳實際新增數。
 
-    去重採「全文（去前後空白）完全相符」：同一句教訓只留一筆，避免每場重提把庫塞爆。
+    去重預設採「全文完全相符 + difflib 表層近似」：同一句或幾乎同文的教訓只留一筆。
+    exact_only=True 時只做全文比對，供固定模板但結論可不同的來源使用。
     scope 預設 "global"（可跨專案重用）；傳入專案 id 則為該專案專屬教訓（見 _scope_ok）。
+    source 可為 retro/vote/appraisal，只落檔供追溯，不參與挑選；舊資料無此鍵時讀取端無感。
     新筆附 scope 與 use_count（被注入選中時 +1，供未來淘汰排序）；舊資料無此鍵時讀取端取預設。
     """
+    if source not in _VALID_SOURCES:
+        raise ValueError(f"invalid lesson source: {source}")
     cleaned = [t.strip() for t in texts if t and t.strip()]
     if not cleaned:
         return 0
     with _locked():
-        data = _load()
-        existing = {item["text"].strip() for item in data["lessons"]}
+        data = _load(mutable=True)
+        existing_texts = [
+            text for item in data["lessons"] if (text := item.get("text", "").strip())
+        ]
+        existing = set(existing_texts)
         n = 0
         for text in cleaned:
-            if text in existing:
+            if text in existing or (not exact_only and _is_fuzzy_duplicate(text, existing_texts)):
                 continue
             data["lessons"].append(
                 {
@@ -91,9 +151,11 @@ def add_many(
                     "requirement": (requirement or "")[:200],
                     "created_at": time.time(),
                     "scope": scope,
+                    "source": source,
                     "use_count": 0,
                 }
             )
+            existing_texts.append(text)
             existing.add(text)
             n += 1
         if n:
@@ -171,7 +233,7 @@ def _bump_use_count(texts: list[str]) -> None:
     if not wanted:
         return
     with _locked():
-        data = _load()
+        data = _load(mutable=True)
         changed = False
         for item in data["lessons"]:
             if item.get("text", "").strip() in wanted:
@@ -197,8 +259,11 @@ def context(limit: int | None = None, requirement: str = "", scope: str = "") ->
         rows = recent(cap, scope=scope)
     if not rows:
         return ""
-    _bump_use_count([r["text"] for r in rows])
-    body = "\n".join(f"- {r['text']}" for r in rows)
+    texts = [r.get("text", "") for r in rows if r.get("text", "").strip()]
+    _bump_use_count(texts)
+    body = "\n".join(f"- {t}" for t in texts)
+    if not body:
+        return ""
     note = "依本次需求相關性挑選" if picked_by_relevance else "最新數筆"
     return (
         f"【跨場次教訓庫（過往各場討論檢討蒸餾，{note}；請避免重蹈覆轍、善用既有結論）】\n"
@@ -238,7 +303,7 @@ async def distill(*, session_id: str = "", cwd=None) -> int:
         return 0
     # 1) 鎖內讀快照 + 前置閘
     with _locked():
-        data = _load()
+        data = _load(mutable=True)
         last = data.get("meta", {}).get("last_distill_at", 0)
         snapshot = [
             it.get("text", "")
@@ -271,7 +336,7 @@ async def distill(*, session_id: str = "", cwd=None) -> int:
 
     # 4) 套用（重新進鎖；防併發重複套用：last_distill_at 變動代表他人已蒸餾過）
     with _locked():
-        data = _load()
+        data = _load(mutable=True)
         if data.get("meta", {}).get("last_distill_at", 0) != last:
             return 0
         snap_set = set(snapshot)
@@ -290,6 +355,7 @@ async def distill(*, session_id: str = "", cwd=None) -> int:
                 "requirement": "",
                 "created_at": now,
                 "scope": "global",
+                "source": "retro",
                 "use_count": 0,
             }
             for t in distilled

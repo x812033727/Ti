@@ -1,6 +1,6 @@
 # 設定頁手動驗收清單（UAT Checklist）
 
-> 對象：設定 ⚙️ 面板（後端 Provider／模型／API Key／GitHub／並行／進階 等欄位、儲存、重新部署、改密碼）
+> 對象：設定面板（後端 Provider／模型／API Key／GitHub／並行／進階 等欄位、儲存、重新部署、改密碼）
 > 用法：由真人逐列操作並填寫「實際結果」與「Pass/Fail」。每一列只驗一個點。
 
 ---
@@ -15,8 +15,8 @@
    ```
 2. 開啟瀏覽器，進入 <http://localhost:8000>。
 3. 完成登入（如系統要求帳號／密碼）。
-4. 點右上角 **⚙️ 設定** 按鈕，開啟設定面板。
-5. 確認面板內欄位依分組顯示：**一般 / Claude / OpenAI / MiniMax / Gemini / Codex / Antigravity / 混用（每角色 provider） / GitHub / 並行 / 進階**，下方另有 **重新部署** 與 **變更密碼** 區。
+4. 點右上角 **設定**（滑桿圖示鈕，滑鼠懸停提示「設定」），開啟設定面板。
+5. 確認面板內欄位依分組顯示：**一般 / Claude / OpenAI / MiniMax / Gemini / Codex / Antigravity / 混用（每角色 provider） / GitHub / 並行 / 進階 / Autopilot**，下方另有 **重新部署** 與 **變更密碼** 區。
 
 > 備註：設定會寫入伺服器的 `.env`，儲存後下次討論即生效。秘密欄位（API Key／Token）只顯示「是否已設定」，不會顯示明文。
 
@@ -57,9 +57,9 @@
 
 | # | 功能區塊 | 操作步驟 | 預期結果 | 實際結果 | Pass/Fail | 備註 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1.1 | 頁面載入與現值顯示 | 在已登入頁面點右上角「⚙️ 設定」按鈕 | 設定面板（彈窗）出現，左側有分類導覽，右側顯示 provider 狀態與額度、設定表單與「儲存」按鈕，右上角有「✕」關閉鈕 | | | |
+| 1.1 | 頁面載入與現值顯示 | 在已登入頁面點右上角「設定」圖示鈕按鈕 | 設定面板（彈窗）出現，左側有分類導覽，右側顯示 provider 狀態與額度、設定表單與「儲存」按鈕，右上角有「✕」關閉鈕 | | | |
 | 1.2 | 頁面載入與現值顯示 | 觀察面板剛開啟到表單出現的瞬間 | 表單載入時短暫出現「載入中…」字樣，額度區短暫顯示「載入 provider 狀態與額度中…」，隨後被實際內容取代 | | | 載入很快時可能一閃即過，屬正常 |
-| 1.3 | 分組導覽 | 由左側分類導覽與右側分組標題由上往下看 | 依序出現分組：「一般」→「Claude」→「OpenAI」→「MiniMax」→「Gemini」→「Codex」→「Antigravity」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」 | | | |
+| 1.3 | 分組導覽 | 由左側分類導覽與右側分組標題由上往下看 | 依序出現分組：「一般」→「Claude」→「OpenAI」→「MiniMax」→「Gemini」→「Codex」→「Antigravity」→「混用（每角色 provider）」→「GitHub」→「並行」→「進階」→「Autopilot」（Autopilot 組頂部有「需重啟 ti-autopilot 服務才生效」的組級提示）→「通知」（組頂部有「autopilot 端需重啟才生效」提示,組尾有「發送測試通知」按鈕） | | | |
 | 1.4 | 分組導覽 | 點左側任一分類（例如 Codex 或 Antigravity） | 右側內容捲到對應分組；被點選分類呈現目前選取狀態 | | | |
 | 1.5 | 搜尋設定 | 在搜尋框輸入 provider、模型名稱或環境變數（例如 `codex` 或 `TI_PROVIDER`），再清空搜尋 | 只顯示符合關鍵字的設定列與分組；清空後所有設定列恢復顯示，版面不破裂 | | | |
 | 1.6 | 額度與狀態 | 看設定表單上方的「Provider 狀態與額度」區 | 顯示目前啟用 provider、各 provider 可用／需確認／未設定狀態、近 5 小時／近 7 天／近 30 天 Ti 本機 token/call 用量；Antigravity 登入時可看到可列出的模型；不顯示 API Key、OAuth token 或任何秘密明文 | | | 官方訂閱剩餘額度若 CLI 未提供穩定 API，僅顯示狀態與本機用量 |
@@ -70,7 +70,7 @@
 | 1.11 | 頁面載入與現值顯示 | 看一個**尚未設定**的秘密欄位（例如未填過的 GitHub Token） | 欄位呈空白，灰色提示字為該欄範例（例如 ghp_...），**不會**出現「已設定」字樣 | | | 用來區分「已設定 vs 未設定」 |
 | 1.12 | 頁面載入與現值顯示 | 看「並行」分組的「並行支線數上限」下拉 | 下拉目前值（1～6 其中一個）已被選取顯示，與伺服器目前設定一致 | | | |
 | 1.13 | 頁面載入與現值顯示 | 看「GitHub」分組的「發佈後自動合併 PR」與「並行」分組的「任務並行」下拉 | 兩者皆為 0／1 下拉，且目前值已被選取顯示 | | | |
-| 1.14 | 頁面載入與現值顯示 | 點面板右上角「✕」 | 設定面板關閉、回到主畫面；再次點「⚙️ 設定」可重新開啟並顯示相同現值 | | | |
+| 1.14 | 頁面載入與現值顯示 | 點面板右上角「✕」 | 設定面板關閉、回到主畫面；再次點「設定」圖示鈕可重新開啟並顯示相同現值 | | | |
 | 1.15 | 頁面載入與現值顯示 | 看最下方「進階」分組（卡關討論／異議檢查／共用筆記／跨場次教訓／反思記憶／客觀驗收閘門／單輪自我精修／子進程資源上限） | 各為下拉，目前值已被選取顯示；其中「子進程資源上限」未特別設定時應顯示預設「1」（開），其餘預設「0」（關），閘門預設「0」 | | | 進階組對應 .env 的 power-user 旗標，顯示「有效預設」而非空白 |
 
 ## ② 各欄位輸入與驗證
@@ -92,6 +92,7 @@
 | 2.2d | 後端 Provider（select，高風險） | 展開「後端 Provider」下拉，選 antigravity | 可選取 antigravity，下拉顯示 antigravity（生效後改走伺服器上的 Antigravity CLI 登入／模型設定） | | | 正常值 |
 | 2.3 | 後端 Provider（select，高風險） | 下拉只有 claude／openai／minimax／gemini／codex／antigravity 六個選項，確認無空白選項可選 | 下拉內僅 claude、openai、minimax、gemini、codex、antigravity，無空值可選（select 本身不會是空的） | | | 空值象限：UI 不允許空 |
 | 2.4 | 後端 Provider（select，高風險） | 用開發者工具把 option 改成 `bogus`（或直接 `POST /api/settings` 送 `TI_PROVIDER=bogus`）後儲存，再重開面板 | 非法值被後端忽略不寫入，Provider 仍維持原本合法值（claude／openai／minimax／gemini／codex／antigravity） | | | 非法值：後端白名單擋下 |
+| 2.90 | 各欄位輸入與驗證 | 以 API 對 `TI_DEFAULT_VIEW`(預設視圖)送非法選項(例如 `xxx`) | 後端 update() 白名單忽略非法值,原設定不變;UI 下拉僅列 home/dash/studio | | | 非法值一律忽略 |
 | 2.5 | Claude API Key（password／秘密，高風險） | 在 Claude API Key 欄輸入一組正常金鑰（如 sk-ant-xxxx）後儲存 | 顯示「已儲存」提示；重開面板該欄為空白、提示「已設定（留空＝不變更）」，不顯示明文 | | | 正常值＋不外洩 |
 | 2.6 | Claude API Key（password／秘密，高風險） | 在**已設定**的 Claude API Key 欄留空，直接儲存 | 既有金鑰不被清空（留空＝不變更）；重開仍顯示「已設定」 | | | 空值象限（高風險，與④呼應） |
 | 2.7 | Claude API Key（password／秘密，高風險） | 在 Claude API Key 欄貼上一段超長字串（例如 2000 字元）後儲存 | 欄位與面板版面不變形（不出現水平捲軸或溢出破版）；可儲存，重開顯示「已設定」 | | | 邊界：超長輸入 |
@@ -106,6 +107,7 @@
 | 2.16 | Claude 模型欄（select） | 展開「主力模型」「快速模型」下拉，各選一個官方模型（如 claude-opus-4-8）並儲存 | 可選取並儲存成功；重開顯示所選模型 | | | 正常值；兩欄共用同一份官方清單 |
 | 2.17 | Claude 模型欄（select） | 確認「主力模型」「快速模型」下拉僅列官方模型 ID，無空白選項可選 | 下拉內僅清單中的模型，無空值可選（select 本身不會是空的） | | | 空值象限：UI 不允許空 |
 | 2.18 | Claude 模型欄（select，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送 `TI_MODEL_LEAD=bogus`（`TI_MODEL_FAST` 同）後重開面板 | 非法值被後端忽略不寫入，主力模型／快速模型維持原本合法值 | | | 非法值：後端白名單擋下 |
+| 2.18a | PM 釘選模型欄（select，非法） | 展開「PM 釘選模型」選 claude-opus-4-8 儲存並重開面板；再用 `POST /api/settings` 送 `TI_PM_PIN_MODEL=bogus` 後重開面板 | 合法模型可儲存並於下一場 session 生效（PM 固定用所選模型）；非法值被後端忽略不寫入，欄位維持原本合法值 | | | 正常值＋非法值：後端白名單擋下；預設 claude-fable-5 |
 | 2.19 | OpenAI 模型欄（combo 可選可打，低風險） | 「OpenAI 主力模型」從建議清單選 gpt-4o 儲存；再改手動輸入本地模型名（如 llama3）儲存 | 兩種方式皆可儲存成功；重開顯示所存值（combo 不限建議清單） | | | 正常值：建議清單＋自由輸入；快速模型同規則 |
 | 2.20 | OpenAI 模型欄（combo，低風險） | 將「OpenAI 主力模型」清空儲存；再貼超長字串（如 2000 字元）儲存 | 可清空（非秘密欄留空＝清空該設定）；超長輸入版面不變形、可儲存 | | | 空值＋超長輸入 |
 | 2.21 | Base URL／發佈 repo（文字，低風險） | 對「OpenAI Base URL」「發佈目標 repo」各做正常值、清空、超長三項 | 三項皆可輸入／清空／儲存，版面不變形；本頁不驗 URL 或 owner/repo 格式 | | | 低風險文字欄收斂規則 |
@@ -116,7 +118,7 @@
 | 2.21e | Antigravity 模型欄（combo）／CLI 欄／Sandbox 欄 | 「Antigravity 主力模型」從建議清單選 Gemini 3.5 Flash (High) 儲存，再手動輸入 `agy models` 列出的清單外名稱儲存；「Antigravity CLI 執行檔」做正常值／清空／超長；「Antigravity Sandbox」「Antigravity 自動核准工具權限」選 0／1，另用 `POST /api/settings` 送非法值：`TI_ANTIGRAVITY_SANDBOX=2`、`TI_ANTIGRAVITY_SKIP_PERMISSIONS=2` 後重開面板 | combo 兩種方式皆可存、不限建議清單；CLI 執行檔可輸入／清空／儲存且版面不變形；兩個 0/1 欄合法選項可儲存、非法值被後端忽略並維持原本合法值 | | | combo＋文字＋select：登入／額度沿用伺服器 `agy` |
 | 2.22 | 進階流程開關（select 0/1，低風險） | 對「需求澄清／卡關討論／異議檢查／共用筆記／跨場次教訓／反思記憶／子進程資源上限／知識沉澱／產品藍圖／架構決策記錄／實作中即時研究」任一下拉，於 0 與 1 間切換並儲存 | 可切換並儲存成功；重開顯示所選值（下次討論生效） | | | 0/1 正常值 |
 | 2.23 | 客觀驗收閘門／單輪自我精修／架構討論模式（select 固定選項） | 「客觀驗收閘門」選 0／1／strict，「單輪自我精修」選 0～3，「架構討論模式」選 legacy／round_robin／parallel，分別儲存 | 閘門可在 0、1、strict 間切換；自我精修可選 0～3；討論模式可在三選項間切換；皆儲存成功、重開顯示所選值 | | | 正常值＋邊界（固定選項集） |
-| 2.24 | 進階組非法選項（後端白名單） | 用 `POST /api/settings` 送非法值：`TI_CLARIFY`／`TI_HUDDLE`／`TI_CRITIC`／`TI_NOTES`／`TI_LESSONS`／`TI_REFLEXION`／`TI_RLIMITS`／`TI_KNOWLEDGE`／`TI_BLUEPRINT`／`TI_ADR`／`TI_RESEARCH_TOOLS`（即時研究）非 0/1、`TI_OBJECTIVE_GATE` 非 0/1/strict、`TI_SELF_REFINE_ITERS` 非 0～3、`TI_DISCUSS_MODE`（架構討論模式）非 legacy/round_robin/parallel，後重開面板 | 非法值一律被後端忽略，各進階開關（含需求澄清／閘門／自我精修／討論模式／資源上限／知識沉澱／產品藍圖／架構決策記錄／即時研究）維持原值 | | | 非法值：後端白名單擋下 |
+| 2.24 | 進階組非法選項（後端白名單） | 用 `POST /api/settings` 送非法值：`TI_CLARIFY`／`TI_HUDDLE`／`TI_TASK_HELP`（中途求助）／`TI_CRITIC`／`TI_NOTES`／`TI_LESSONS`／`TI_REFLEXION`／`TI_RLIMITS`／`TI_KNOWLEDGE`／`TI_BLUEPRINT`／`TI_ADR`／`TI_RESEARCH_TOOLS`（即時研究）非 0/1、`TI_OBJECTIVE_GATE` 非 0/1/strict、`TI_SELF_REFINE_ITERS` 非 0～3、`TI_DISCUSS_MODE`（架構討論模式）非 legacy/round_robin/parallel、`TI_LINT_AUTOFORMAT`／`TI_EXPERT_LINT_HOOK`／`TI_CONVENTIONS_CARD`／`TI_EXPERT_SKILLS`／`TI_AUTOPILOT_AUTO_MERGE`／`TI_AUTOPILOT_WORKFLOW_TRIAGE`／`TI_AUTOPILOT_INVESTIGATION_LANE`／`TI_AUTOPILOT_INVESTIGATION_REFUTE`／`TI_AUTOPILOT_INVESTIGATION_PARALLEL` 非 0/1，後重開面板 | 非法值一律被後端忽略，各進階開關（含需求澄清／中途求助／閘門／自我精修／討論模式／資源上限／知識沉澱／產品藍圖／架構決策記錄／即時研究）維持原值 | | | 非法值：後端白名單擋下 |
 | 2.25 | 角色模型欄（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_MODEL_PM`／`TI_MODEL_ENGINEER`／`TI_MODEL_QA`／`TI_MODEL_SENIOR`／`TI_MODEL_RESEARCHER`／`TI_MODEL_ARCHITECT`／`TI_MODEL_SECURITY`／`TI_MODEL_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色模型維持原值（auto＝沿用主力/快速規則）；帶「（推薦）」尾綴的選項與「✨ 套用推薦模型」按鈕可一鍵填入推薦配置 | | | 非法值：後端白名單擋下 |
 | 2.26 | 每角色 provider 混用（select，8 欄，正常） | 在「混用（每角色 provider）」分組把某角色（如「工程師 provider」）選 antigravity、另一角色（如「專案經理 provider」）選 gemini，其餘留 auto，儲存 | 可逐角色選 auto／claude／openai／minimax／gemini／codex／antigravity 並儲存；重開顯示所選值（auto＝沿用上方全域 Provider，達成 Claude／MiniMax／Gemini／Codex／Antigravity 混用） | | | 正常值＋邊界（固定選項集） |
 | 2.27 | 每角色 provider 混用（select，8 欄，非法） | 用開發者工具竄改 option 或 `POST /api/settings` 送非法值：`TI_PROVIDER_PM`／`TI_PROVIDER_ENGINEER`／`TI_PROVIDER_QA`／`TI_PROVIDER_SENIOR`／`TI_PROVIDER_RESEARCHER`／`TI_PROVIDER_ARCHITECT`／`TI_PROVIDER_SECURITY`／`TI_PROVIDER_DEVOPS` 設為 `bogus` 後重開面板 | 非法值一律被後端忽略，各角色 provider 維持原值（auto＝沿用全域） | | | 非法值：後端白名單擋下 |
@@ -129,7 +131,7 @@
 | 3.1 | 儲存 | 改動任一欄位（如把某模型名稱改一字），點「儲存」 | 提示先顯示「儲存中…」，成功後變「已儲存，下次討論即生效。」並跳出「設定已儲存」綠色 toast | | | |
 | 3.2 | 儲存（連點，高風險） | 改一欄後，**快速連點「儲存」按鈕 3～5 下**；開瀏覽器開發者工具 Network 面板觀察 | 請求期間「儲存」鈕為禁用狀態，連點不會重複觸發；Network 僅見一筆 `POST /api/settings`，完成後按鈕恢復可點、儲存值與輸入一致 | | | 高風險：儲存鈕有防連點（請求期間禁用）；若 Network 出現多筆 POST 或值不一致則 Fail |
 | 3.3 | 儲存（失敗回饋） | 暫時中斷網路（或關閉後端）後點「儲存」 | 提示顯示「儲存請求失敗」之類錯誤字樣，不會誤報成功、不跳成功 toast | | | 錯誤回饋 |
-| 3.4 | 取消／放棄變更 | 改動任一欄位但**不**儲存，直接點面板右上「✕」關閉，再重新點「⚙️ 設定」開啟 | 先前未儲存的變更不生效，欄位顯示伺服器目前的值（等同放棄變更） | | | 本頁無獨立「取消」鈕，關閉即放棄未存變更 |
+| 3.4 | 取消／放棄變更 | 改動任一欄位但**不**儲存，直接點面板右上「✕」關閉，再重新點「設定」圖示鈕開啟 | 先前未儲存的變更不生效，欄位顯示伺服器目前的值（等同放棄變更） | | | 本頁無獨立「取消」鈕，關閉即放棄未存變更 |
 | 3.5 | 重新部署（二次確認） | 點「♻️ 重新部署並重啟」 | 跳出確認對話框，內容提醒「服務會重啟，進行中的工作與連線會中斷」 | | | |
 | 3.6 | 重新部署（取消確認） | 在確認對話框點「取消」 | 不執行重新部署，面板與服務維持原狀，無任何狀態變化 | | | |
 | 3.7 | 重新部署（執行） | 在確認對話框點「確定」 | 「重新部署」按鈕變為不可點、文字變「重新部署中…」，旁邊狀態顯示「正在拉取最新 main 並重啟…」 | | | |
@@ -145,7 +147,7 @@
 
 | # | 功能區塊 | 操作步驟 | 預期結果 | 實際結果 | Pass/Fail | 備註 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 4.1 | 持久性（重整，高風險） | 修改一個非秘密欄（如主力模型名稱）並儲存成功後，按 F5 重新整理頁面、重開「⚙️ 設定」 | 該欄仍顯示剛剛儲存的值，未還原成舊值（**儲存後重整值還在**） | | | 高風險必含 |
+| 4.1 | 持久性（重整，高風險） | 修改一個非秘密欄（如主力模型名稱）並儲存成功後，按 F5 重新整理頁面、重開「設定」圖示鈕 | 該欄仍顯示剛剛儲存的值，未還原成舊值（**儲存後重整值還在**） | | | 高風險必含 |
 | 4.2 | 持久性（秘密欄重整） | 在某秘密欄（如 GitHub Token）填入金鑰並儲存後，重整頁面、重開設定 | 該秘密欄顯示「已設定（留空＝不變更）」，代表金鑰已持久保存且不外洩明文 | | | |
 | 4.3 | 持久性（秘密欄留空不清空，高風險） | 對一個**已設定**的秘密欄，保持留空、改動其他欄後儲存，再重整、重開設定 | 既有金鑰未被清空，該秘密欄仍顯示「已設定」（**留空＝不變更**） | | | 高風險：避免誤清既有金鑰 |
 | 4.4 | 持久性（重新登入） | 儲存設定後登出，再重新登入並開啟設定面板 | 先前儲存的值（非秘密欄顯示值、秘密欄顯示「已設定」）皆仍在 | | | |
@@ -156,7 +158,7 @@
 
 | # | 功能區塊 | 操作步驟 | 預期結果 | 實際結果 | Pass/Fail | 備註 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 5.1 | 載入失敗回饋 | 關閉後端伺服器後，於頁面點「⚙️ 設定」 | 面板顯示「無法載入設定」之類訊息，不顯示空白或殘缺表單、不報成功 | | | 對應前端載入錯誤分支 |
+| 5.1 | 載入失敗回饋 | 關閉後端伺服器後，於頁面點「設定」圖示鈕 | 面板顯示「無法載入設定」之類訊息，不顯示空白或殘缺表單、不報成功 | | | 對應前端載入錯誤分支 |
 | 5.2 | 權限（未登入讀取） | 門禁啟用下，登出後直接在網址列或工具呼叫 `GET /api/settings` | 回應 401 未授權，不回傳任何設定內容；正常情況下未登入根本看不到設定面板 | | | `/api/settings` 受 require_auth 保護 |
 | 5.3 | 權限（外網寫入） | 門禁啟用下，由外網未登入呼叫 `POST /api/settings`；另於門禁停用時由外網呼叫同端點 | 門禁啟用未登入回應 401 需要登入；門禁停用時 fail-safe 僅限本機，回應 403 | | | POST 受 require_admin 複合門禁（登入門禁＋停用時 fail-safe 限本機） |
 | 5.4 | 錯誤（格式錯誤） | 用工具對 `POST /api/settings` 送出非物件 body（如純字串或陣列） | 後端回應 400，訊息為「格式錯誤」，不寫入任何設定 | | | 需以 API 工具模擬 |

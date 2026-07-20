@@ -31,7 +31,7 @@ class RunSpy:
         self.overrides = overrides or {}
         self.calls: list[list[str]] = []
 
-    async def __call__(self, cmd, cwd=None, timeout=600):
+    async def __call__(self, cmd, cwd=None, timeout=600, **kwargs):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
         for key, val in self.overrides.items():
@@ -83,7 +83,17 @@ def _install(monkeypatch, overrides):
     而非裸 gh pr merge」。`gh pr view --json number` 需回一個數字，否則
     _commit_push_merge 會在取 PR 編號處提早失敗。
     """
-    spy = RunSpy({**overrides, "pr view": (0, "123")})
+    branch = config.AUTOPILOT_BRANCH
+    repo = config.AUTOPILOT_REPO
+    # 新增的 branch protection 防線在呼叫 _commit_push_merge 時會打兩條 API；在 E2E 單元中提供
+    # 穩定 mock，避免 test 受未模擬 GitHub API 輸出影響而誤判。
+    protection_overrides = {
+        f"repos/{repo}/rules/branches/{branch}": (0, "[]"),
+        f"repos/{repo}/branches/{branch}/protection": (1, "HTTP 404"),
+        "git remote get-url --push origin": (0, f"https://github.com/{repo}.git"),
+        "pr view": (0, "123"),
+    }
+    spy = RunSpy({**overrides, **protection_overrides})
     spy._merge_flow_called = False
     monkeypatch.setattr(autopilot, "_run", spy)
 
@@ -92,6 +102,14 @@ def _install(monkeypatch, overrides):
         return publisher.MergeOutcome.MERGED, "deadbeef"
 
     monkeypatch.setattr(publisher, "_merge_flow", _fake_merge_flow)
+
+    # 隔離：本檔聚焦「push 旗標安全」；合併目標的保護狀態檢查是各自獨立的第二道防線、
+    # 另有專測（tests/autopilot/test_qa_task2_protection_merge_gate）。此處 stub 成「明確無保護」
+    # 放行，避免 RunSpy 未模擬保護 API 而回 unknown 觸發 fail-safe 中止、淹沒本檔要驗的 push 旗標。
+    async def _fake_protection(*args, **kwargs):
+        return "unprotected", ""
+
+    monkeypatch.setattr(autopilot, "_check_branch_protection", _fake_protection)
     return spy
 
 

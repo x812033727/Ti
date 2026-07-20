@@ -183,7 +183,7 @@ Sources: [Factual Self-Verification (Verify)](https://arxiv.org/pdf/2602.02018) 
 
 - 重點: **成本熔斷缺口**：`SESSION_TOKEN_BUDGET` / `SESSION_USD_BUDGET` 已存在於 config（autopilot 透過 `time_budget_s` 串入），但**沒有「每日/每週 PR 上限」或「每日 token 預算」**——若 autopilot 進入「反覆重試同一任務」的循環（已被 `_handle_gate_failure` 限 attempts=3 部分緩解），或 LLM 幻覺大量生成任務，仍可能在單一 session 燒光整月額度。
 
-- 重點: **「持續改良成效驗證」（P1）**目前完全缺——merge 即 done，沒有「自改後再跑同組基準，量化是否真的變強」的 hook。本輪屬 M1 範疇（落地一次改良），這條缺口屬 M2 但**已在 CI 上半閉環**（autopilot 跑 `pytest -q` 必綠才 merge，故「不變爛」已保證；「變強」需 M2 補基準）。
+- 重點: **「持續改良成效驗證」（P1）**目前完全缺——merge 即 done，沒有「自改後再跑同組基準，量化是否真的變強」的 hook。本輪屬 M1 範疇（落地一次改良），這條缺口屬 M2 但**已在 CI 上半閉環**（autopilot 跑 `python3 -m pytest -q` 必綠才 merge，故「不變爛」已保證；「變強」需 M2 補基準）。
 
 **建議**
 
@@ -247,7 +247,7 @@ Sources: [GitHub Managing branch protection rules](https://docs.github.com/en/re
 
 **重點**
 
-- 重點: 本輪「改良成效驗證」的關鍵設計權威是 Karpathy **autoresearch**——其設計與本缺口完美對齊：(a) **評測碼不可改**：`prepare.py`（含 evaluation utilities）明確「do not modify」，與 agent 可改的 `train.py` 物理隔離；(b) **固定時間預算**：5 分鐘 wall clock，無論改什麼（model size、batch size、architecture）都直接可比；(c) **單一 metric** `val_bpb`（vocab-size-independent，architecture-agnostic）；(d) **保留 baseline**：每次新實驗前先 checkout parent commit 跑同組 5 分鐘取基線；(e) 約 12 experiments/hour、可整夜無人值守（[karpathy/autoresearch README](https://github.com/karpathy/autoresearch)）。本專案 `_gate_tests` 跑 `pytest -q` 已達 (b)(c)，缺 (a) 物理隔離 + (d) baseline 對照。
+- 重點: 本輪「改良成效驗證」的關鍵設計權威是 Karpathy **autoresearch**——其設計與本缺口完美對齊：(a) **評測碼不可改**：`prepare.py`（含 evaluation utilities）明確「do not modify」，與 agent 可改的 `train.py` 物理隔離；(b) **固定時間預算**：5 分鐘 wall clock，無論改什麼（model size、batch size、architecture）都直接可比；(c) **單一 metric** `val_bpb`（vocab-size-independent，architecture-agnostic）；(d) **保留 baseline**：每次新實驗前先 checkout parent commit 跑同組 5 分鐘取基線；(e) 約 12 experiments/hour、可整夜無人值守（[karpathy/autoresearch README](https://github.com/karpathy/autoresearch)）。本專案 `_gate_tests` 跑 `python3 -m pytest -q` 已達 (b)(c)，缺 (a) 物理隔離 + (d) baseline 對照。
 
 - 重點: **TDAD 論文（Test-Driven AI Agent Definition, 2026）**直接命中「自改 agent 的 regression 安全」缺口：三個機制：(1) **visible/hidden test split**——編譯階段不給隱藏測試，防 agent 只學可見測試；(2) **semantic mutation testing**——post-compilation 用代理生成「似是而非的壞變體」，量測測試套件能否抓出；(3) **spec evolution scenarios**——量化需求變動時的 regression safety。實測發現 **演化後的 spec 編譯成功率只有 58%**，多數失敗的執行「通過所有可見測試只漏 1-2 個」——這是 self-referential 風險的鐵證：本專案「merge 即 done」正是同類漏洞（[arXiv 2603.08806 TDAD](https://arxiv.org/abs/2603.08806)）。
 
@@ -259,7 +259,7 @@ Sources: [GitHub Managing branch protection rules](https://docs.github.com/en/re
 
 - 重點: **GitHub branch protection 已對齊最佳實踐**——`Require pull request before merging` + `Require status checks to pass before merging` + `Require linear history` 是外部不可繞過的最後底線；本專案 CI 走 `actions-runs/conclusion=failure` 即擋合併。autopilot 用 `PUBLISH_BYPASS_INFRA_CI` 走特例路徑需謹慎守住只在 `_merge_pr` 內繞過而非跳過整個 PR（[About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)）。
 
-- 重點: TDAD 實驗的關鍵警示：「演化後的 spec」失敗的執行**多數通過所有可見測試、只漏 1-2 個**——意味著**僅靠「既有測試全綠」無法保證「沒退步」**，必須有「跨場次同組基準」做對照。autopilot 現有 `_gate_tests` 跑 `pytest -q` 屬「可見測試」，**「不變爛」半閉環已保證；「變強」需 M2 補同組基準對照**——這正是本輪任務定義（[arXiv 2603.08806 TDAD](https://arxiv.org/abs/2603.08806)）。
+- 重點: TDAD 實驗的關鍵警示：「演化後的 spec」失敗的執行**多數通過所有可見測試、只漏 1-2 個**——意味著**僅靠「既有測試全綠」無法保證「沒退步」**，必須有「跨場次同組基準」做對照。autopilot 現有 `_gate_tests` 跑 `python3 -m pytest -q` 屬「可見測試」，**「不變爛」半閉環已保證；「變強」需 M2 補同組基準對照**——這正是本輪任務定義（[arXiv 2603.08806 TDAD](https://arxiv.org/abs/2603.08806)）。
 
 **建議**
 

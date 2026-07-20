@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config, redeploy, runner
+from studio import config, deploy, redeploy, runner
 
 
 @pytest.fixture
@@ -17,9 +19,11 @@ def client():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_restart(monkeypatch):
+def _no_real_restart(monkeypatch, tmp_path):
     """確保測試永遠不會真的 exec 掉行程；並讓 exec 前的 import smoke 預設通過
     （個別測試可再覆寫成失敗）。"""
+
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
 
     async def _smoke_ok():
@@ -33,6 +37,30 @@ def test_redact_masks_token(monkeypatch):
     out = redeploy._redact("error using ghp_secret here")
     assert "ghp_secret" not in out
     assert "***" in out
+
+
+@pytest.mark.asyncio
+async def test_redeploy_busy_when_lock_not_acquired(monkeypatch):
+    @contextmanager
+    def fake_busy_lock():
+        yield False
+
+    calls = {"pull": 0, "restart": 0}
+
+    async def fake_pull():
+        calls["pull"] += 1
+        return runner.RunOutput("git pull", 0, "ok", False)
+
+    monkeypatch.setattr(deploy, "_deploy_lock", fake_busy_lock)
+    monkeypatch.setattr(redeploy, "pull_main", fake_pull)
+    monkeypatch.setattr(
+        redeploy, "schedule_restart", lambda *a, **k: calls.__setitem__("restart", 1)
+    )
+
+    res = await redeploy.redeploy()
+    assert not res["ok"] and not res["pulled"] and not res["restarting"]
+    assert "部署進行中" in res["detail"]
+    assert calls == {"pull": 0, "restart": 0}
 
 
 @pytest.mark.asyncio

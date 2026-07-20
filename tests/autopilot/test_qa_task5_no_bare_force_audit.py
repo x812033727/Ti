@@ -43,7 +43,7 @@ def _func_string_constants(src: str, func_name: str) -> list[str]:
     tree = ast.parse(src)
     out: list[str] = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == func_name:
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
                     out.append(sub.value)
@@ -67,7 +67,7 @@ def test_ast_function_exists_and_isolated():
     # 確認確實在分析目標函式（避免函式改名造成假綠）
     tree = ast.parse(_SRC)
     names = {
-        n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
     }
     assert "_commit_push_merge" in names
 
@@ -80,7 +80,7 @@ class RunSpy:
         self.overrides = overrides or {}
         self.calls: list[list[str]] = []
 
-    async def __call__(self, cmd, cwd=None, timeout=600):
+    async def __call__(self, cmd, cwd=None, timeout=600, **kwargs):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
         for key, val in self.overrides.items():
@@ -107,6 +107,8 @@ def _no_subprocess(monkeypatch):
 def _base_cfg(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
     monkeypatch.setattr(config, "AUTOPILOT_REPO", "owner/repo")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"owner"}))
 
 
 def _assert_no_bare_force(argv):

@@ -30,10 +30,14 @@ class EventType(str, Enum):
     PROVIDER_CONSTRAINED = "provider_constrained"  # provider 全受限：無可自動重綁目標
     HUDDLE = "huddle"  # 卡關討論（任務連續失敗時召集團隊找替代方案）
     CRITIC_REVIEW = "critic_review"  # 異議檢查（放行前由獨立 critic 挑錯，防錯誤共識）
+    DISPATCH_DECISION = "dispatch_decision"  # 額度感知 per-task 派工（任務暫換 provider/model）
     RETROSPECTIVE = "retrospective"  # 檢討回顧
     TOKEN_USAGE = "token_usage"  # LLM 呼叫 token / cost 用量
     DONE = "done"  # 專案完成
     ERROR = "error"  # 錯誤
+    VOTE_RESULT = "vote_result"  # 3-AI 表決結果（PM 無法決定時跨 provider 多數決）
+    APPRAISAL = "appraisal"  # 考核：收尾檢討時 PM 對參與 AI 的績效評分（1–5 分＋評語）
+    TASK_RESULT = "task_result"  # 任務收尾結果事件
 
 
 @dataclass
@@ -64,18 +68,31 @@ def expert_message(
     *,
     streaming: bool = False,
     final: bool = False,
+    duration_s: float | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    role: str | None = None,
 ) -> StudioEvent:
+    payload = {
+        "speaker": speaker_key,
+        "name": name,
+        "avatar": avatar,
+        "text": text,
+        "streaming": streaming,
+        "final": final,
+    }
+    if duration_s is not None:
+        payload["duration_s"] = duration_s
+    if provider is not None:
+        payload["provider"] = provider
+    if model is not None:
+        payload["model"] = model
+    if role is not None:
+        payload["role"] = role
     return StudioEvent(
         EventType.EXPERT_MESSAGE,
         session_id,
-        {
-            "speaker": speaker_key,
-            "name": name,
-            "avatar": avatar,
-            "text": text,
-            "streaming": streaming,
-            "final": final,
-        },
+        payload,
     )
 
 
@@ -133,23 +150,33 @@ def token_usage(
     total_tokens: int,
     *,
     cost_usd: float | None = None,
+    duration_ms: int | None = None,
+    ttft_s: float | None = None,
     cache_read: int = 0,
     cache_write: int = 0,
+    task_id: int | None = None,
 ) -> StudioEvent:
+    payload = {
+        "speaker": speaker_key,
+        "provider": provider,
+        "model": model,
+        "prompt_tokens": int(prompt_tokens or 0),
+        "completion_tokens": int(completion_tokens or 0),
+        "total_tokens": int(total_tokens or 0),
+        "cost_usd": cost_usd,
+        "cache_read": int(cache_read or 0),
+        "cache_write": int(cache_write or 0),
+    }
+    if duration_ms is not None:
+        payload["duration_ms"] = duration_ms
+    if ttft_s is not None:
+        payload["ttft_s"] = float(ttft_s)
+    if task_id is not None:
+        payload["task_id"] = task_id
     return StudioEvent(
         EventType.TOKEN_USAGE,
         session_id,
-        {
-            "speaker": speaker_key,
-            "provider": provider,
-            "model": model,
-            "prompt_tokens": int(prompt_tokens or 0),
-            "completion_tokens": int(completion_tokens or 0),
-            "total_tokens": int(total_tokens or 0),
-            "cost_usd": cost_usd,
-            "cache_read": int(cache_read or 0),
-            "cache_write": int(cache_write or 0),
-        },
+        payload,
     )
 
 
@@ -170,17 +197,60 @@ def run_result(session_id: str, passed: bool, detail: str, log: str = "") -> Stu
 
 
 def demo_result(
-    session_id: str, command: str, exit_code: int, output: str, *, label: str = "Demo"
+    session_id: str,
+    command: str,
+    exit_code: int,
+    output: str,
+    *,
+    label: str = "Demo",
+    retried_cmd: str | None = None,
+    first_exit: int | None = None,
 ) -> StudioEvent:
+    """Demo 執行結果事件。``retried_cmd``／``first_exit``：demo 指令 usage error 消毒重試
+
+    （runner.sanitize_demo_command）有發生時，記錄重試用的消毒指令與首次 exit code——
+    exit_code/passed/output 為「最終一次」執行的結果，兩次嘗試皆可稽核。未重試時不帶欄位。
+    """
+    payload = {
+        "label": label,
+        "command": command,
+        "exit_code": exit_code,
+        "passed": exit_code == 0,
+        "output": output,
+    }
+    if retried_cmd is not None:
+        payload["retried_cmd"] = retried_cmd
+        payload["first_exit"] = first_exit
+    return StudioEvent(EventType.DEMO_RESULT, session_id, payload)
+
+
+def dispatch_decision(
+    session_id: str,
+    task_id: int,
+    title: str,
+    role: str,
+    provider: str,
+    model: str,
+    reason: str,
+    mode: str = "manual",
+) -> StudioEvent:
+    """額度感知 per-task 派工：任務 #task_id 的實作者（role）暫時換綁 provider/model 的決策快照。
+
+    ``model`` 空字串＝沿用該 provider 的預設模型槽；``reason`` 為 flow.choose_dispatch 的
+    繁中一句話決策理由（前端以 log-line 顯示、入 history 供重播）。``mode``＝派工模式
+    （"auto"＝PM 全權、"manual"＝規則裁決；預設 manual 向後相容舊 history）。
+    """
     return StudioEvent(
-        EventType.DEMO_RESULT,
+        EventType.DISPATCH_DECISION,
         session_id,
         {
-            "label": label,
-            "command": command,
-            "exit_code": exit_code,
-            "passed": exit_code == 0,
-            "output": output,
+            "task_id": task_id,
+            "title": title,
+            "role": role,
+            "provider": provider,
+            "model": model,
+            "reason": reason,
+            "mode": mode,
         },
     )
 
@@ -337,3 +407,97 @@ def task_status(session_id: str, task_id: int, title: str, status: str) -> Studi
 
 def error(session_id: str, message: str) -> StudioEvent:
     return StudioEvent(EventType.ERROR, session_id, {"message": message})
+
+
+def vote_result(
+    session_id: str,
+    topic: str,
+    options: list[str],
+    ballots: list[dict],
+    winner: str,
+    tie: bool,
+    degraded: bool = False,
+) -> StudioEvent:
+    """3-AI 表決結果：PM 無法決定時，找兩位不同 provider 的 AI 與 PM 多數決的終局快照。
+
+    ``ballots``＝``[{voter, provider, choice}]``（choice 空字串＝棄權）；``tie``＝最高票
+    平手（此時以 PM 票定案）；``degraded``＝可用外部 provider 不足兩位、未建投票員、
+    退化為 PM 單票定案。經既有 broadcast→record_event 管道入 history 供重播。
+    """
+    return StudioEvent(
+        EventType.VOTE_RESULT,
+        session_id,
+        {
+            "topic": topic,
+            "options": options,
+            "ballots": ballots,
+            "winner": winner,
+            "tie": tie,
+            "degraded": degraded,
+        },
+    )
+
+
+def appraisal(
+    session_id: str,
+    provider: str,
+    model: str,
+    role: str,
+    score: int,
+    comment: str,
+) -> StudioEvent:
+    """一筆 AI 成員考核：收尾檢討時 PM 對參與者打的 1–5 分（5 最佳）＋一句評語。
+
+    ``provider``／``role`` 至少一者非空（PM 以 provider 名或在場 role key 指認對象）；
+    ``model`` 可為空字串（未知或該 provider 預設模型槽）。前端以 log-line 顯示、經既有
+    broadcast→record_event 入 history 供重播；持久化聚合另走 studio/appraisal 考核庫。
+    """
+    return StudioEvent(
+        EventType.APPRAISAL,
+        session_id,
+        {
+            "provider": provider,
+            "model": model,
+            "role": role,
+            "score": int(score),
+            "comment": comment,
+        },
+    )
+
+
+def task_result(
+    session_id: str,
+    task_id: int,
+    *,
+    role: str,
+    provider: str,
+    model: str | None,
+    duration_s: float | None,
+    qa_rounds: int | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    total_tokens: int | None,
+    cost_usd: float | None,
+    cost_source: str | None,
+) -> StudioEvent:
+    """單一任務執行結果：包含耗時、QA 輪數、LLM token 及費用等。
+
+    消費端可用 task_id 與 dispatch_decision 進行 join。
+    """
+    return StudioEvent(
+        EventType.TASK_RESULT,
+        session_id,
+        {
+            "task_id": task_id,
+            "role": role,
+            "provider": provider,
+            "model": model,
+            "duration_s": duration_s,
+            "qa_rounds": qa_rounds,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": cost_usd,
+            "cost_source": cost_source,
+        },
+    )

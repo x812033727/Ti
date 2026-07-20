@@ -14,9 +14,11 @@ import contextlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
-from . import config, events, llm_caller, runner, tools
+from . import config, conventions, events, llm_caller, runner, tools
+from .expert_wrap import with_timing
 from .experts import _make_retry_observer as make_retry_observer, make_retry_config
 from .roles import Role, effective_tools
 
@@ -24,11 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 def effective_provider(role: Role) -> str:
-    """角色的有效 provider：per-role 覆寫（TI_PROVIDER_<KEY>）優先，否則全域 PROVIDER。
+    """角色的有效 provider：PM 釘選最優先，其次 per-role 覆寫（TI_PROVIDER_<KEY>），否則全域 PROVIDER。
 
     讓 Claude／MiniMax／Gemini／Codex／Antigravity 可混用——例如把 tool-calling 吃重的
-    工程師留 Codex 或 Antigravity、討論型角色走 Gemini 或 MiniMax。
+    工程師留 Codex 或 Antigravity、討論型角色走 Gemini 或 MiniMax。PM 是分派／檢驗／表決的
+    最終決策者，判斷品質必須穩定，故預設釘在 claude（config.PM_PIN_PROVIDER；設空＝解除
+    釘選、非法值視同解除），不隨 TI_PROVIDER_PM 或全域 provider 漂移。
     """
+    if role.key == "pm" and config.PM_PIN_PROVIDER in config.PROVIDERS:
+        return config.PM_PIN_PROVIDER
     return config.role_provider(role.key) or config.PROVIDER
 
 
@@ -84,8 +90,12 @@ def _codex_sandbox_for(role: Role) -> str:
     return "workspace-write" if allowed & _CODEX_WRITE_TOOLS else "read-only"
 
 
-def _codex_argv(role: Role, cwd: Path) -> list[str]:
-    """建立 codex exec argv；測試可直接檢查，不經 shell。"""
+def _codex_argv(role: Role, cwd: Path, model_override: str = "") -> list[str]:
+    """建立 codex exec argv；測試可直接檢查，不經 shell。
+
+    ``model_override`` 非空時優先於角色模型槽（per-task 派工／招募指定模型）；空＝沿用
+    config 的 CODEX_MODEL_LEAD/FAST 槽（缺省行為不變）。
+    """
     argv = [
         config.CODEX_BIN,
         "exec",
@@ -99,7 +109,7 @@ def _codex_argv(role: Role, cwd: Path) -> list[str]:
     else:
         argv += ["--sandbox", _codex_sandbox_for(role), "-c", 'approval_policy="never"']
     argv += ["--color", "never"]
-    model = codex_model_for(role)
+    model = model_override or codex_model_for(role)
     if model:
         argv += ["--model", model]
     argv.append("-")
@@ -157,15 +167,21 @@ class CodexExpert:
 
     Codex CLI 自己負責工具執行與檔案修改；本類只負責把角色 prompt 餵進 CLI、把 JSONL 事件轉成
     Ti Studio 事件，並維持短期文字歷史，讓同一位專家的下一次 speak() 有基本脈絡。
+    ``model`` 非空時覆寫角色模型槽（per-task 派工／招募指定模型）；空＝沿用 config 槽。
     """
 
-    def __init__(self, role: Role, session_id: str, cwd: Path):
-        self.role = role
+    def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
+        self.role = conventions.apply(role, cwd)  # 慣例卡（見 studio/conventions.py）
         self.session_id = session_id
         self.cwd = cwd
+        self._model_override = model
         self._history: list[tuple[str, str]] = []
         self._proc = None
         self._stop_lock = asyncio.Lock()
+
+    def effective_model(self) -> str:
+        """實際生效的模型；空字串＝沿用 Codex CLI 自身設定——供任務結果（task_result）顯示。"""
+        return self._model_override or codex_model_for(self.role)
 
     async def speak(self, prompt: str, broadcast) -> str:
         r = self.role
@@ -213,7 +229,7 @@ class CodexExpert:
         return "\n".join(parts)
 
     async def _run_codex(self, prompt: str, broadcast) -> str:
-        argv = _codex_argv(self.role, self.cwd)
+        argv = _codex_argv(self.role, self.cwd, self._model_override)
         final_messages: list[str] = []
         errors: list[str] = []
         stderr_tail = ""
@@ -357,6 +373,14 @@ class CodexExpert:
 
             text = "\n".join(m for m in final_messages if m).strip()
             if text:
+                decision = _codex_pause_or_soft(text)
+                if decision == "pause":
+                    raise ProviderUnavailable("codex", text)
+                if decision == "soft":
+                    return await self._system_note(
+                        "【系統】Codex 本輪暫時不可用，略過本輪發言。\n" + text,
+                        broadcast,
+                    )
                 return text
             if stdout_error is not None:
                 return await self._system_note(
@@ -426,6 +450,8 @@ class CodexExpert:
         if typ == "item.completed" and item.get("type") == "agent_message":
             text = str(item.get("text") or "").strip()
             if text:
+                if llm_caller.provider_unavailable_kind(text) is not None:
+                    return text
                 await broadcast(
                     events.expert_message(
                         self.session_id,
@@ -493,14 +519,18 @@ def _duration_arg(seconds: float) -> str:
     return f"{int(seconds)}s" if float(seconds).is_integer() else f"{seconds:g}s"
 
 
-def _antigravity_argv(role: Role) -> list[str]:
-    """建立 agy print-mode argv；測試可直接檢查，不經 shell。"""
+def _antigravity_argv(role: Role, model_override: str = "") -> list[str]:
+    """建立 agy print-mode argv；測試可直接檢查，不經 shell。
+
+    ``model_override`` 非空時優先於角色模型槽（per-task 派工／招募指定模型）；空＝沿用
+    config 的 ANTIGRAVITY_MODEL_LEAD/FAST 槽（缺省行為不變）。
+    """
     argv = [config.ANTIGRAVITY_BIN]
     if config.ANTIGRAVITY_SANDBOX:
         argv.append("--sandbox")
     if config.ANTIGRAVITY_SKIP_PERMISSIONS:
         argv.append("--dangerously-skip-permissions")
-    model = antigravity_model_for(role)
+    model = model_override or antigravity_model_for(role)
     if model:
         argv += ["--model", model]
     timeout = _turn_timeout_seconds()
@@ -550,15 +580,21 @@ class AntigravityExpert:
 
     Antigravity CLI 自己負責工具執行與檔案修改；本類只負責把角色 prompt 餵進 CLI、把 stdout
     收斂成 Studio 專家發言，並把未登入／額度耗盡／卡住轉成 ProviderUnavailable，避免任務空轉。
+    ``model`` 非空時覆寫角色模型槽（per-task 派工／招募指定模型）；空＝沿用 config 槽。
     """
 
-    def __init__(self, role: Role, session_id: str, cwd: Path):
-        self.role = role
+    def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
+        self.role = conventions.apply(role, cwd)  # 慣例卡（見 studio/conventions.py）
         self.session_id = session_id
         self.cwd = cwd
+        self._model_override = model
         self._history: list[tuple[str, str]] = []
         self._proc = None
         self._stop_lock = asyncio.Lock()
+
+    def effective_model(self) -> str:
+        """實際生效的模型；空字串＝沿用 Antigravity CLI 自身設定——供任務結果顯示。"""
+        return self._model_override or antigravity_model_for(self.role)
 
     async def speak(self, prompt: str, broadcast) -> str:
         r = self.role
@@ -608,7 +644,7 @@ class AntigravityExpert:
         return "\n".join(parts)
 
     async def _run_antigravity(self, prompt: str, broadcast) -> str:
-        argv = [*_antigravity_argv(self.role), self._prompt(prompt)]
+        argv = [*_antigravity_argv(self.role, self._model_override), self._prompt(prompt)]
         out_chunks: list[str] = []
         errors: list[str] = []
         stderr_tail = ""
@@ -821,6 +857,7 @@ class OpenAIExpert:
         model: str,
         provider: str = "openai",
     ):
+        role = conventions.apply(role, cwd)  # 慣例卡（見 studio/conventions.py）
         self.role = role
         self.session_id = session_id
         self.cwd = cwd
@@ -832,6 +869,10 @@ class OpenAIExpert:
         # per-speak 去重快取：speak() 入口會換上新實例（防跨 speak 結果洩漏）。此處先建一份，
         # 避免有人新增旁路呼叫路徑時踩 AttributeError（架構決策）。
         self._dedup_cache = tools.DedupCache()
+
+    def effective_model(self) -> str:
+        """實際生效的模型（建構時已解析為具體模型 ID）——供任務結果（task_result）顯示。"""
+        return self._model
 
     def _pauses_on_provider_failure(self) -> bool:
         """OpenAI-compatible 第三方 provider 失敗時暫停任務；保留 openai 既有 fallback 契約。"""
@@ -854,6 +895,8 @@ class OpenAIExpert:
         寫入型／非冪等工具的重執行防護由 **providers 層 per-speak `_dedup_cache`** 處理
         （`tools.execute_deduped`：同一 key 第二次命中回首次結果、不重跑副作用），非 tools.execute
         層。Claude provider 路徑尚無此保護（已開核心 backlog 票，見任務 #2 架構決策）。
+
+        `duration_ms` 以 perf_counter 量整輪工具迴圈 wall-clock，非單次 API 呼叫時長。
         """
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
@@ -948,6 +991,10 @@ class OpenAIExpert:
             # 回傳不含核可關鍵詞的系統 note，沿用既有「未過→失敗回饋」收斂路徑，orchestrator 無需改動。
             hard_timeout = config.TURN_HARD_TIMEOUT or None
             timed_out = False
+            # 整輪工具迴圈的 wall-clock（非單次 API 呼叫）：非 Claude provider SDK 回應不含
+            # 時延，此處以 perf_counter 包住整個多步 speak 迴圈計時，與 Claude 端的
+            # duration_api_ms（單次 API 通訊）語意不同——聚合時視為「整輪」時延。
+            loop_started_at = time.perf_counter()
             try:
                 if hard_timeout is not None:
                     await asyncio.wait_for(_run_loop(), timeout=hard_timeout)
@@ -955,6 +1002,7 @@ class OpenAIExpert:
                     await _run_loop()
             except asyncio.TimeoutError:
                 timed_out = True
+            duration_ms = int((time.perf_counter() - loop_started_at) * 1000)
 
             if usage["calls"]:
                 await broadcast(
@@ -966,6 +1014,7 @@ class OpenAIExpert:
                         usage["prompt"],
                         usage["completion"],
                         usage["total"],
+                        duration_ms=duration_ms,
                     )
                 )
             if timed_out:
@@ -1135,30 +1184,40 @@ def _chat_for(provider: str):
     return chat
 
 
-def make_expert(role: Role, session_id: str, cwd: Path, *, provider: str | None = None):
+def make_expert(
+    role: Role,
+    session_id: str,
+    cwd: Path,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+):
     """依角色的「有效 provider」建立一位專家（支援 Claude／MiniMax／Gemini／Codex／Antigravity 混用）。
 
-    ``provider`` 顯式覆寫角色的有效 provider（動態招募時依即時額度把新人綁到還有額度的 provider）；
-    缺省則取 effective_provider(role)，行為與既有完全一致。
+    ``provider`` 顯式覆寫角色的有效 provider（動態招募／額度感知 per-task 派工時依即時額度綁定）；
+    ``model`` 顯式覆寫該 provider 的模型（單一任務或招募成員指定模型），空＝沿用該 provider 的
+    預設模型槽。兩者缺省時行為與既有完全一致。
     """
     prov = provider or effective_provider(role)
     if prov == "codex":
-        return CodexExpert(role, session_id, cwd)
-    if prov == "antigravity":
-        return AntigravityExpert(role, session_id, cwd)
-    if prov in ("openai", "minimax", "gemini"):
-        return OpenAIExpert(
+        expert = CodexExpert(role, session_id, cwd, model=model or "")
+    elif prov == "antigravity":
+        expert = AntigravityExpert(role, session_id, cwd, model=model or "")
+    elif prov in ("openai", "minimax", "gemini"):
+        expert = OpenAIExpert(
             role,
             session_id,
             cwd,
             chat=_chat_for(prov),
-            model=openai_model_for(role, prov),
+            model=model or openai_model_for(role, prov),
             provider=prov,
         )
-    # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
-    from .experts import Expert
+    else:
+        # 預設：Claude Agent SDK（延後 import，避免無 SDK 時就失敗）
+        from .experts import Expert
 
-    return Expert(role, session_id, cwd)
+        expert = Expert(role, session_id, cwd, model=model or "")
+    return with_timing(expert, provider=prov)
 
 
 async def complete_once(
@@ -1168,6 +1227,7 @@ async def complete_once(
     session_id: str,
     cwd: Path | None,
     timeout: float = 120.0,
+    provider: str | None = None,
 ) -> str:
     """單輪「system + user → 純文字」呼叫，供反思等廉價用途；永不 raise。
 
@@ -1186,7 +1246,8 @@ async def complete_once(
     （`asyncio.wait_for` 的 `asyncio.TimeoutError`）與未預期錯誤（含上游骨幹原樣 re-raise
     的未知例外），維持「永不 raise」合約；並記 warning（含 traceback）供生產診斷，不靜默吞噬。
     """
-    if cwd is None or config.OFFLINE_MODE or not config.provider_ready():
+    ready = config.provider_ready() if provider is None else config.provider_ready(provider)
+    if cwd is None or config.OFFLINE_MODE or not ready:
         # provider 無憑證時直接走模板 fallback：避免每次失敗輪都白等 SDK 啟動失敗
         # （無金鑰環境下可達數十秒），拖慢主迴圈與測試。
         return ""
@@ -1206,7 +1267,10 @@ async def complete_once(
 
     expert = None
     try:
-        expert = make_expert(role, f"{session_id}:reflect", cwd)
+        if provider is None:
+            expert = make_expert(role, f"{session_id}:reflect", cwd)
+        else:
+            expert = make_expert(role, f"{session_id}:reflect", cwd, provider=provider)
         return await asyncio.wait_for(expert.speak(user, _noop), timeout=timeout)
     except Exception:
         # 最終兜底層：守住「永不 raise」合約。退避是 speak() 層職責，兩端皆已收斂於

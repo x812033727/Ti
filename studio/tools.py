@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from . import config, runner
+from . import config, lint, runner
 from .workspace import safe_resolve
 
 # OpenAI function-calling 工具規格
@@ -308,6 +308,7 @@ async def _http_get(url: str, timeout: float):
     """
     import httpx
 
+    # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
     async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
         return await client.get(url)
 
@@ -372,7 +373,10 @@ async def execute(name: str, args: dict, cwd: Path) -> str:
                 return "錯誤：路徑超出 workspace"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(args.get("content", ""), encoding="utf-8")
-            return f"已寫入 {args.get('path')}"
+            # 寫時 lint（fail-open，None＝無事）：違規回饋附進回傳文字。注意附加段不得以
+            # 「錯誤：」開頭——_ERROR_PREFIXES 會把它誤判為副作用失敗、影響去重快取。
+            note = await lint.lint_file(cwd, str(target))
+            return f"已寫入 {args.get('path')}" + (f"\n{note}" if note else "")
 
         if name == "edit_file":
             target = _safe_path(cwd, args.get("path", ""))
@@ -383,7 +387,8 @@ async def execute(name: str, args: dict, cwd: Path) -> str:
             if text.count(old) != 1:
                 return f"錯誤：old 在檔案中出現 {text.count(old)} 次，需唯一"
             target.write_text(text.replace(old, args.get("new", "")), encoding="utf-8")
-            return f"已修改 {args.get('path')}"
+            note = await lint.lint_file(cwd, str(target))
+            return f"已修改 {args.get('path')}" + (f"\n{note}" if note else "")
 
         if name == "run_bash":
             # 刻意保留 shell：run_bash 工具的本質就是執行呼叫端給定的任意 bash 指令

@@ -1,8 +1,6 @@
-// 中斷恢復按鈕前端驗證：載入真實 web/app.js，backlog 有 in_progress 任務時
-// 面板應渲染「恢復」按鈕；點擊後 POST /recover，成功且尚有待辦 → 自動以
-// improve 模式重啟（勾選持續改良＋建立 WebSocket）。
-import fs from 'node:fs';
-import vm from 'node:vm';
+// 中斷恢復按鈕前端驗證：先掛全域 stub 再 import 真實 web/js/panels/project.js，
+// backlog 有 in_progress 任務時面板應渲染「恢復」按鈕；點擊後 POST /recover，
+// 成功且尚有待辦 → 自動以 improve 模式重啟（勾選持續改良＋建立 WebSocket）。
 
 // --- 記錄式 DOM（同 frontend_project_panel_test 範式）---
 class RecEl {
@@ -22,6 +20,7 @@ class RecEl {
   querySelectorAll() { return []; }
   querySelector() { return new RecEl('div'); }
   addEventListener() {}
+  setAttribute() {}
   focus() {}
 }
 
@@ -47,11 +46,12 @@ const noop = () => {};
 const windowObj = { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } };
 function WebSocket() { wsCount += 1; return new RecEl('ws'); }
 
-const ctx = vm.createContext({
+Object.assign(globalThis, {
   document: {
     querySelector: (s) => $(s),
     querySelectorAll: () => [],
     createElement: (t) => new RecEl(t),
+    createElementNS: (_ns, t) => new RecEl(t),
     createTextNode: () => new RecEl('text'),
     getElementById: () => new RecEl('div'),
     body: new RecEl('body'),
@@ -71,11 +71,10 @@ const ctx = vm.createContext({
       json: () => Promise.resolve(String(url).includes('/api/projects/p1') ? fixture() : {}),
     });
   },
-  console, setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
+  setTimeout: noop, setInterval: noop, clearTimeout: noop, clearInterval: noop,
 });
 
-const src = fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-vm.runInContext(src, ctx, { filename: 'app.js' });
+const ctx = await import('../web/js/panels/project.js');
 
 function expect(cond, msg) {
   if (!cond) { console.error('FAIL: ' + msg + '\nfetch 紀錄：\n' + calls.join('\n')); process.exit(1); }

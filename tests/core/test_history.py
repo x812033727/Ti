@@ -62,3 +62,35 @@ def test_missing_session():
     assert history.get_meta("nope") is None
     assert history.load_events("nope") == []
     assert history.finish_session("nope") is None
+
+
+# --- iter_events：惰性疊代（load_events 的底層，計數路徑 O(1) 記憶體）------
+
+
+def test_iter_events_matches_load_events():
+    history.start_session("s1", "req")
+    for i in range(5):
+        history.record_event("s1", _ev("phase_change", phase=f"p{i}"))
+    assert list(history.iter_events("s1")) == history.load_events("s1")
+
+
+def test_iter_events_skips_blank_and_corrupt_lines():
+    history.start_session("s1", "req")
+    history.record_event("s1", _ev("phase_change", phase="a"))
+    with history._events_path("s1").open("a", encoding="utf-8") as f:
+        f.write("\n{ 不是 JSON\n")
+    history.record_event("s1", _ev("done", completed=True))
+    types = [e["type"] for e in history.iter_events("s1")]
+    assert types == ["phase_change", "done"]  # 空行/壞行跳過、順序不變
+
+
+def test_iter_events_missing_session_yields_nothing():
+    assert list(history.iter_events("nosuch")) == []
+
+
+def test_mark_interrupted_counts_via_iterator():
+    history.start_session("s1", "req")
+    for i in range(3):
+        history.record_event("s1", _ev("phase_change", phase=f"p{i}"))
+    assert history.mark_interrupted("s1", "test")
+    assert history.get_meta("s1")["n_events"] == 3

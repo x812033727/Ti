@@ -23,7 +23,8 @@ try:
 except ImportError:  # pragma: no cover - 僅非 POSIX 平台
     resource = None  # type: ignore[assignment]
 
-from . import config
+from . import config, git_cred
+from .flow import check_forbidden_paths
 
 log = logging.getLogger("ti.runner")
 
@@ -60,6 +61,16 @@ class RunOutput:
     @property
     def ok(self) -> bool:
         return self.exit_code == 0 and not self.timed_out
+
+
+@dataclass(frozen=True)
+class GitCommitResult:
+    commit_hash: str | None
+    forbidden_violations: list[str]
+
+    @property
+    def ok(self) -> bool:
+        return self.commit_hash is not None
 
 
 def _truncate(text: str, limit: int | None = None) -> str:
@@ -358,6 +369,7 @@ async def run_command_exec(
     timeout: int | None = None,
     sandbox: bool | None = None,
     label: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> RunOutput:
     """以參數式（argv list）執行指令，不經 /bin/sh，shell metacharacters 天然安全。
 
@@ -368,6 +380,12 @@ async def run_command_exec(
 
     label 為 RunOutput.command 的顯示標籤（如 "git commit"），預設取 argv[0]，
     不內插完整參數，避免多行訊息污染日誌。
+
+    env 為額外環境變數：僅 env is not None 時，以 {**os.environ, **env} 合併後傳入
+    子行程（create_subprocess_exec 的 env 會整包取代，故必須 merge 才不吞掉 PATH/HOME）；
+    預設 None＝繼承父行程環境，向後相容。用於把敏感資料（如 git extraHeader token）
+    走 env 傳遞、不落 argv/ps。注意：sandbox=True 時 bwrap 是否轉發 env 另案處理，
+    本專案 push 路徑均 sandbox=False。
     """
     if not argv:
         raise ValueError("run_command_exec 需要非空的 argv")
@@ -375,6 +393,7 @@ async def run_command_exec(
     use_sandbox = config.SANDBOX_ENABLED if sandbox is None else sandbox
     display = label or argv[0]
     preexec = _rlimit_preexec()
+    run_env = {**os.environ, **env} if env is not None else None
     if use_sandbox:
         if not config._sandbox_available():
             return _sandbox_blocked(display)
@@ -385,6 +404,7 @@ async def run_command_exec(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
             preexec_fn=preexec,
+            env=run_env,
         )
     else:
         proc = await asyncio.create_subprocess_exec(
@@ -394,6 +414,7 @@ async def run_command_exec(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
             preexec_fn=preexec,
+            env=run_env,
         )
     return await _finalize_proc(proc, display, timeout)
 
@@ -421,13 +442,59 @@ def detect_entrypoint(cwd: Path | str) -> str | None:
     return None
 
 
+_INLINE_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_LEADING_INLINE_CODE_SPAN_RE = re.compile(r"^`+([^`\n]+)`+")
+_INLINE_CODE_SEPARATOR_RE = re.compile(r"^[\s;&|()<>]+$")
+_EXPLANATORY_COMMAND_TAIL_RE = re.compile(r"^(?:[（(，,。:：#]|//)")
+
+
+def _unwrap_markdown_command_spans(raw: str) -> str | None:
+    """解開 `cmd1`; `cmd2` 這類 Markdown code span 串接。
+
+    若反引號看起來是 shell 自身語法（例如 echo `date`），外側會有一般文字，
+    這裡回傳 None 讓原命令保持不動。
+    """
+    spans = list(_INLINE_CODE_SPAN_RE.finditer(raw))
+    if not spans:
+        return None
+    if len(spans) == 1 and spans[0].span() == (0, len(raw)):
+        return spans[0].group(1).strip()
+
+    pieces: list[str] = []
+    pos = 0
+    for span in spans:
+        outside = raw[pos : span.start()]
+        if outside and not _INLINE_CODE_SEPARATOR_RE.fullmatch(outside):
+            return None
+        pieces.append(outside)
+        pieces.append(span.group(1).strip())
+        pos = span.end()
+
+    tail = raw[pos:]
+    if tail and not _INLINE_CODE_SEPARATOR_RE.fullmatch(tail):
+        return None
+    return "".join(pieces).strip()
+
+
+def _leading_markdown_command(raw: str) -> str | None:
+    """取出「開頭 inline code 是命令、後面是說明文字」的保守案例。"""
+    m = _LEADING_INLINE_CODE_SPAN_RE.match(raw)
+    if not m:
+        return None
+    tail = raw[m.end() :].strip()
+    if tail and not _EXPLANATORY_COMMAND_TAIL_RE.match(tail):
+        return None
+    return m.group(1).strip() or None
+
+
 def parse_run_command(text: str) -> str | None:
     """從專家文字解析 `執行指令: ...`（也接受 run command / 執行：）。"""
     m = re.search(r"(?:執行指令|執行命令|run command)\s*[:：]\s*(.+)", text, re.I)
     if not m:
         return None
-    cmd = m.group(1).strip().strip("`").strip()
-    return cmd or None
+    raw = m.group(1).strip()
+    cmd = _unwrap_markdown_command_spans(raw) or _leading_markdown_command(raw) or raw
+    return cmd.strip() or None
 
 
 def resolve_demo_command(cwd: Path | str, declared: str | None) -> str | None:
@@ -436,6 +503,101 @@ def resolve_demo_command(cwd: Path | str, declared: str | None) -> str | None:
         return declared
     entry = detect_entrypoint(cwd)
     return f"python3 {entry}" if entry else None
+
+
+# Demo 指令 usage-error 消毒：偵測「參數寫壞」的特徵與 stderr 點名的違規 token。
+# unrecognized arguments＝argparse/pytest 慣例、no such option＝click/optparse 慣例。
+_USAGE_ERROR_TOKENS_RE = re.compile(
+    r"(?:unrecognized arguments|no such option)\s*[:：]?\s*(.+)", re.IGNORECASE
+)
+# shell 控制符（pipe／&&／;／重導向／反引號／$( ）：token 化重組會把它們引號化而破壞語法，
+# 這類指令一律不消毒。單獨的 $VAR 不在此列（僅作未設變數偵測）。
+_SHELL_CONTROL_RE = re.compile(r"[|&;<>`]|\$\(")
+_ENV_VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+
+
+def _looks_like_usage_error(exit_code: int, output: str) -> bool:
+    """demo 指令失敗是否為「參數寫壞」型 usage error（而非產品真的壞）。
+
+    - stderr 出現 unrecognized arguments / no such option（工具明確點名違規參數）；
+    - exit 4＝pytest 的 usage error 慣例；
+    - exit 2 且輸出帶 argparse 慣例的 usage:/error: 樣式。
+    """
+    if _USAGE_ERROR_TOKENS_RE.search(output):
+        return True
+    if exit_code == 4:
+        return True
+    return exit_code == 2 and bool(re.search(r"(?im)^\s*usage:|\berror:", output))
+
+
+def _has_unset_env_var(token: str) -> bool:
+    """token 是否引用了未設定的環境變數（$VAR／${VAR} 且 VAR 不在 os.environ）。"""
+    return any(m.group(1) not in os.environ for m in _ENV_VAR_REF_RE.finditer(token))
+
+
+def sanitize_demo_command(
+    cmd: str, exit_code: int, output: str, protected_text: str = ""
+) -> str | None:
+    """usage-error 型 demo 失敗的一次性消毒：剝掉 stderr 點名的違規參數，回傳消毒後指令。
+
+    背景（#248）：PM 給的 demo 指令帶了目標工具不認得的參數（如 `pytest --cache-dir=…` →
+    exit 4「unrecognized arguments」），數小時綠色成果被 demo_veto 全數丟棄——指令寫壞
+    不等於產品壞。此函式為純函式，只在「像 usage error」時動作（_looks_like_usage_error），
+    消毒規則刻意保守：
+      - 剝掉 stderr 明確點名的 token（含其 `--opt=value` 同名 option 的變體）；
+      - 剝掉引用「未設定環境變數」的 token（$VAR 展不開、必然是壞路徑片段）；
+      - 指令含 shell 控制符（pipe／&&／重導向…）不動——token 化重組會破壞語法；
+      - **交付物護欄**：要剝的 token（或其 `--opt=value` 的底名）出現在
+        ``protected_text``（需求＋PM 計畫＋任務標題）中即回 None——「工具不認得
+        --fast-lane」可能正是本場要交付的新旗標壞掉，消毒重試會讓壞交付物假綠出貨；
+      - **展開語意護欄**：保留的 token 含 shell 展開字元（$VAR/glob/~）也回 None——
+        shlex.join 會把它引號化、無聲關掉展開，重試跑的已不是同一個指令；
+      - 消毒後與原指令相同（無可剝除）或會剝成空指令時回 None。
+    回 None＝不建議重試；呼叫端（orchestrator demo 階段）拿到非 None 才重試「一次」，
+    絕不迴圈。
+    """
+    if not _looks_like_usage_error(exit_code, output):
+        return None
+    if _SHELL_CONTROL_RE.search(cmd):
+        return None
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return None
+    # stderr 點名的違規 token（同一行內以空白分隔，可能含 option 與其值兩個 token）。
+    bad: set[str] = set()
+    for m in _USAGE_ERROR_TOKENS_RE.finditer(output):
+        with contextlib.suppress(ValueError):
+            bad.update(shlex.split(m.group(1).strip()))
+    # 同名 option 變體：點名 `--opt` 也剝 `--opt=value`；點名 `--opt=value` 也剝其他 `--opt=…`。
+    bad_opts = {t.split("=", 1)[0] for t in bad if t.startswith("-")}
+    kept: list[str] = []
+    for t in tokens:
+        if t in bad:
+            continue
+        if t.startswith("-") and t.split("=", 1)[0] in bad_opts:
+            continue
+        if "$" in t and _has_unset_env_var(t):
+            continue
+        kept.append(t)
+    if not kept or kept == tokens:
+        return None
+    # 交付物護欄：被剝掉的 token 若在需求/計畫/任務文字中被點名，代表它可能是「本場交付
+    # 的功能本身」——被工具拒絕更可能是實作壞了，不是指令寫錯；不重試，讓 demo_veto 誠實
+    # 擋下。底名（--opt=value → --opt）也比對，涵蓋「文字提旗標、指令帶值」的常態。
+    if protected_text:
+        kept_set = set(kept)
+        for t in tokens:
+            if t in kept_set:
+                continue
+            base = t.split("=", 1)[0]
+            if t in protected_text or (base != t and base in protected_text):
+                return None
+    # 展開語意護欄：shlex.join 會把含特殊字元的保留 token 引號化（'$TMPDIR/x' 變字面值），
+    # 使 $VAR/glob/~ 失去展開——重試語意與原指令不同，寧可不重試。
+    if any(shlex.quote(t) != t and re.search(r"[$*?~\[]", t) for t in kept):
+        return None
+    return shlex.join(kept)
 
 
 def parse_demo_url(text: str) -> str | None:
@@ -623,12 +785,101 @@ def is_valid_repo_url(url: str) -> bool:
     return bool(_REPO_RE.match((url or "").strip()))
 
 
-def build_clone_url(url: str, token: str | None) -> str:
-    """私有倉庫時把 token 注入 https URL；否則原樣回傳。"""
-    url = (url or "").strip()
-    if token and url.startswith("https://github.com/"):
-        return url.replace("https://", f"https://x-access-token:{token}@", 1)
-    return url
+def build_clone_url(url: str, token: str | None, *, legacy: bool) -> str:
+    """回傳 clone/fetch 用 URL；預設清掉 userinfo，legacy 才走舊 token-in-URL。"""
+    clean = git_cred.clean_url((url or "").strip())
+    if legacy and token and clean.startswith("https://github.com/"):
+        return clean.replace("https://", f"https://x-access-token:{token}@", 1)
+    return clean
+
+
+async def git_sanitize_remote_urls(
+    cwd: Path | str, *, expected_origin_url: str | None = None
+) -> bool:
+    """移除 Ti 管理的 remote URL userinfo，且不把原值寫進任何對外輸出。
+
+    ``expected_origin_url`` 僅供剛完成的 clone 使用：clone 必然建立 origin，因此直接以呼叫端
+    已知的乾淨 URL 覆寫，完全不必讀回可能含憑證的設定。既有 workspace 則先以固定
+    label 讀取 ``origin`` 與 ``ti_publish`` 的 local config，只在 userinfo 確實存在時
+    改寫；兩者都不存在視為安全 no-op。
+
+    回傳 False 時呼叫端必須 fail-closed。所有錯誤細節刻意丟棄，避免 Git 將原始 URL
+    （以及其中的 token）原樣回顯到 audit、websocket 或 API。
+    """
+
+    root = Path(cwd)
+    if expected_origin_url is not None:
+        try:
+            clean = git_cred.clean_url(expected_origin_url.strip())
+        except ValueError:
+            return False
+        if not clean or any(ch in clean for ch in "\r\n"):
+            return False
+        updated = await run_command_exec(
+            root,
+            ["git", "remote", "set-url", "origin", clean],
+            timeout=20,
+            sandbox=False,
+            label="git sanitize origin",
+        )
+        return updated.ok
+
+    inspected = await run_command_exec(
+        root,
+        [
+            "git",
+            "config",
+            "--null",
+            "--get-regexp",
+            r"^remote\.(origin|ti_publish)\.url$",
+        ],
+        timeout=20,
+        sandbox=False,
+        label="git inspect remotes",
+    )
+    # git-config 用 exit 1 表示沒有相符 key；沒有 Ti 管理的 remote 即安全 no-op。
+    if inspected.exit_code == 1 and not inspected.timed_out:
+        return True
+    if not inspected.ok:
+        return False
+    allowed = {"remote.origin.url", "remote.ti_publish.url"}
+    targets: dict[str, str] = {}
+    replacements: dict[str, str] = {}
+    for entry in inspected.output.split("\0"):
+        if not entry:
+            continue
+        key, separator, current = entry.partition("\n")
+        if (
+            not separator
+            or key not in allowed
+            or not current
+            or any(ch in current for ch in "\r\n")
+        ):
+            return False
+        try:
+            clean = git_cred.clean_url(current)
+        except ValueError:
+            return False
+        if not clean or any(ch in clean for ch in "\r\n"):
+            return False
+        previous = targets.get(key)
+        if previous is not None and previous != clean:
+            # 同一 managed remote 指向多個不同目標時，不擅自壓成其中一個。
+            return False
+        targets[key] = clean
+        if clean != current:
+            replacements[key] = clean
+    for key, clean in replacements.items():
+        updated = await run_command_exec(
+            root,
+            ["git", "config", "--replace-all", key, clean],
+            timeout=20,
+            sandbox=False,
+            label="git sanitize remote",
+        )
+        if not updated.ok:
+            return False
+    return True
 
 
 async def git_clone(
@@ -646,34 +897,62 @@ async def git_clone(
     """
     if not _git_available():
         return RunOutput("git clone", -1, "（環境沒有 git，無法 clone）", False)
-    authed = build_clone_url(url, token)
+    legacy = config.TI_GIT_CRED_LEGACY
+    clone_url = build_clone_url(url, token, legacy=legacy)
+    auth_env = git_cred.make_env(token, url=clone_url)
     parts = ["git", "clone"] + (["--depth", str(depth)] if depth else [])
     if branch and _BRANCH_RE.match(branch):
         parts += ["--branch", branch]
-    # 直接組 argv 走 exec，shell 不參與解析（authed url / branch 一律當純文字）。
-    # label 固定為 "git clone"，嚴禁帶含 token 的 authed，避免 token 寫進日誌。
-    argv = parts + [authed, "."]
-    result = await run_command_exec(dest, argv, timeout=180, sandbox=False, label="git clone")
+    # 直接組 argv 走 exec，shell 不參與解析（clone_url / branch 一律當純文字）。
+    # label 固定為 "git clone"，嚴禁帶含 token 的 URL，避免 token 寫進日誌。
+    argv = parts + [clone_url, "."]
+    run_kwargs = {"timeout": 180, "sandbox": False, "label": "git clone"}
+    if auth_env:
+        run_kwargs["env"] = auth_env
+    result = await run_command_exec(dest, argv, **run_kwargs)
     # 避免 token 出現在回報的指令 / 輸出裡（保持在遮蔽之後、return 之前）
     if token:
         result.output = result.output.replace(token, "***")
-    result.command = "git clone " + (url or "").strip()
+    clean_url = git_cred.clean_url((url or "").strip())
+    result.command = "git clone " + clean_url
+    # legacy 回退會讓 Git 把 argv URL 持久化成 origin；clone 一成功就改回乾淨 URL。
+    # 清理失敗不得讓上層誤認 clone 可用，否則憑證會長期留在 .git/config。
+    if result.ok and clone_url != clean_url:
+        sanitized = await git_sanitize_remote_urls(dest, expected_origin_url=url)
+        if not sanitized:
+            return RunOutput(
+                result.command,
+                -1,
+                "（安全防護：clone 完成但無法移除 Git remote 內嵌憑證）",
+                False,
+            )
     return result
 
 
-async def git_commit(cwd: Path | str, message: str) -> str | None:
+async def git_commit(
+    cwd: Path | str, message: str, forbidden_paths: list[str] | None = None
+) -> str | GitCommitResult | None:
     """把 workspace 全部變更 commit，回傳短 hash；無變更或失敗回 None。
 
-    三步全走參數式 exec（`run_command_exec`），commit 訊息以 argv 單一元素傳遞，
+    基礎三步全走參數式 exec（`run_command_exec`），commit 訊息以 argv 單一元素傳遞，
     shell 不參與解析——backtick / `$(...)` / `;` / 換行 等一律當純文字，免跳脫、
     多行原樣保留。沙箱沿用 `SANDBOX_ENABLED`；bwrap 缺失則 fail-closed 回 None。
+    傳入 `forbidden_paths` 時，`git add -A` 後先檢查 staged 檔名；命中禁改規則則不 commit，
+    並回 `GitCommitResult(commit_hash=None, forbidden_violations=[...])`。
     """
+    wants_result = forbidden_paths is not None
+
+    def done(commit_hash: str | None, violations: list[str] | None = None):
+        if wants_result:
+            return GitCommitResult(commit_hash, list(violations or []))
+        return commit_hash
+
     if not config.ENABLE_GIT or not _git_available():
-        return None
+        return done(None)
     root = Path(cwd)
     if not (root / ".git").exists():
         if not await git_init(root):
-            return None
+            return done(None)
 
     add = await run_command_exec(root, ["git", "add", "-A"], timeout=30, label="git add")
     if not add.ok:
@@ -681,7 +960,40 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
         log.warning(
             "git add 失敗（exit=%s, timed_out=%s）：%s", add.exit_code, add.timed_out, add.output
         )
-        return None
+        return done(None)
+
+    if forbidden_paths is not None:
+        staged = await run_command_exec(
+            root,
+            ["git", "diff", "--staged", "--diff-filter=ACMRT", "--name-only"],
+            timeout=20,
+            label="git diff --staged",
+        )
+        if not staged.ok:
+            log.warning(
+                "git diff --staged 失敗（exit=%s, timed_out=%s）：%s",
+                staged.exit_code,
+                staged.timed_out,
+                staged.output,
+            )
+            return done(None)
+        staged_paths = [line.strip() for line in staged.output.splitlines() if line.strip()]
+
+        # 補充：捕獲被刪除的檔案與 rename 舊名（--no-renames 把 rename 拆成 D+A，D 即舊路徑）。
+        # ACMRT 過濾器不含 D，且 R 只顯示新名，兩種情境需第二次 diff 補足。
+        deleted = await run_command_exec(
+            root,
+            ["git", "diff", "--staged", "--diff-filter=D", "--name-only", "--no-renames"],
+            timeout=20,
+            label="git diff --staged (deleted/renamed-source)",
+        )
+        if deleted.ok:
+            staged_paths += [line.strip() for line in deleted.output.splitlines() if line.strip()]
+
+        violations = check_forbidden_paths(staged_paths, forbidden_paths)
+        if violations:
+            log.warning("禁改路徑命中，略過 commit：%s", ", ".join(violations))
+            return done(None, violations)
 
     # commit 直接帶 git identity 兜底，消滅 clone 流程下 identity 缺失整類失敗。
     r = await run_command_exec(
@@ -703,12 +1015,12 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
         label="git commit",
     )
     if not r.ok:
-        return None  # 通常是「無變更可提交」
+        return done(None)  # 通常是「無變更可提交」
 
     h = await run_command_exec(
         root, ["git", "rev-parse", "--short", "HEAD"], timeout=20, label="git rev-parse"
     )
-    return h.output.strip() if h.ok else None
+    return done(h.output.strip()) if h.ok else done(None)
 
 
 # --- git worktree（並行支線隔離）--------------------------------------
@@ -853,6 +1165,7 @@ _BASELINE_IGNORE_PATTERNS = [
     ".bashrc",
     ".bash_profile",
     ".profile",
+    ".tmp/",
     ".zshrc",
     ".zprofile",
     ".gitconfig",
@@ -876,6 +1189,7 @@ _JUNK_PATHS = [
     ".bashrc",
     ".bash_profile",
     ".profile",
+    ".tmp/",
     ".zshrc",
     ".zprofile",
     ".gitconfig",
@@ -937,6 +1251,45 @@ async def git_sanitize_workspace(repo: Path | str) -> None:
         timeout=60,
         sandbox=False,
         label="git rm --cached junk",
+    )
+
+
+def _ruff_project(root: Path) -> bool:
+    """workspace 是否為使用 ruff 的專案（pyproject 含 [tool.ruff] 或有 ruff.toml/.ruff.toml）。"""
+    for name in ("ruff.toml", ".ruff.toml"):
+        if (root / name).is_file():
+            return True
+    pp = root / "pyproject.toml"
+    if pp.is_file():
+        try:
+            return "[tool.ruff" in pp.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return False
+    return False
+
+
+async def ruff_format_workspace(repo: Path | str) -> None:
+    """發佈前對使用 ruff 的專案自動套排版（`ruff format`），避免改良迴圈/autopilot 產出的程式碼
+    因格式漂移被目標 repo 的 CI lint（`ruff format --check`）擋住、PR 無法合併。
+
+    背景：autopilot 有 `_gate_lint`（ruff check＋format --check）把關自己的核心 PR,但改良迴圈
+    （improver,專案 session 經 publisher 發佈）無此閘門——當專案就是 Ti(本身跑 ruff CI)時,未排版的
+    交付碼會讓 lint 與 tree-wide format meta-test 雙紅、擋住合併。此步在發佈前自動排版補上這個缺口。
+
+    僅在偵測到 ruff 設定時動作;`ruff format` 為純排版、不改邏輯(刻意不跑 `ruff check --fix`,避免
+    動到交付的程式邏輯)。ruff 未裝/執行失敗一律吞掉不拋（格式化不可拖垮發佈）。應在「發佈前的最後
+    一次 commit」之前呼叫。"""
+    if not config.ENABLE_GIT:
+        return
+    root = Path(repo)
+    if not (root / ".git").exists() or not _ruff_project(root):
+        return
+    await run_command_exec(
+        root,
+        [sys.executable, "-m", "ruff", "format", "."],
+        timeout=120,
+        sandbox=False,
+        label="ruff format",
     )
 
 

@@ -13,14 +13,15 @@ import os
 from dataclasses import dataclass
 
 from . import config
-from .secretfile import write_secret_file
+from .secretfile import remove_secret_key, write_secret_file
 
 
 @dataclass(frozen=True)
 class Field:
     env: str
     label: str
-    kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）
+    kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）| textarea
+    numeric: bool = False  # True＝非空值必須可 int() 解析,否則拒收(防 config.reload 的 int() 炸)
     secret: bool = False
     options: tuple[str, ...] = ()
     placeholder: str = ""
@@ -92,6 +93,14 @@ FIELDS: tuple[Field, ...] = (
         group="一般",
     ),
     Field(
+        "TI_DEFAULT_VIEW",
+        "預設視圖（home＝助手首頁／dash＝監控／studio＝工作室）",
+        kind="select",
+        options=("home", "dash", "studio"),
+        default="home",
+        group="一般",
+    ),
+    Field(
         "ANTHROPIC_API_KEY",
         "Claude API Key",
         kind="password",
@@ -113,6 +122,16 @@ FIELDS: tuple[Field, ...] = (
         kind="select",
         options=CLAUDE_MODELS,
         default="claude-sonnet-4-6",  # 與 config.MODEL_FAST 預設一致
+        group="Claude",
+    ),
+    # PM 釘選模型：PM 是分派/檢驗/表決的最終決策者，模型固定不隨派工漂移（config.PM_PIN_MODEL）。
+    # 預設 fable-5、可改 opus-4.8 等；嚴格白名單，改了下一場 session 生效。
+    Field(
+        "TI_PM_PIN_MODEL",
+        "PM 釘選模型（分派/檢驗/表決決策者）",
+        kind="select",
+        options=CLAUDE_MODELS,
+        default="claude-fable-5",  # 與 config.PM_PIN_MODEL 預設一致
         group="Claude",
     ),
     # 每個角色可分開覆寫模型（auto＝沿用上面主力/快速的二分法；僅 Claude provider 適用）。
@@ -319,6 +338,7 @@ FIELDS: tuple[Field, ...] = (
         "TI_CLARIFY_TIMEOUT",
         "澄清等待回覆秒數（逾時按 PM 預設假設續行）",
         placeholder="180",
+        numeric=True,
         group="進階",
     ),
     Field(
@@ -375,6 +395,20 @@ FIELDS: tuple[Field, ...] = (
         kind="select",
         options=("0", "1", "2", "3"),
         default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_TASK_HELP",
+        "中途求助 PM（工程師實作卡關時輸出 `求助:` 即時要指示，預設開）",
+        kind="select",
+        options=("0", "1"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_TASK_HELP_MAX",
+        "中途求助次數上限（每任務，空／非法＝1）",
+        placeholder="1",
         group="進階",
     ),
     Field(
@@ -473,7 +507,7 @@ FIELDS: tuple[Field, ...] = (
         "互動 session 預設動態流程（未在啟動列指定時走此流程；空＝退回安全骨架；"
         "autopilot／改良迴圈不受影響）",
         kind="combo",
-        options=("動態優先", "預設流程"),
+        options=("動態優先", "預設流程", "快速模式"),
         default="動態優先",
         group="進階",
     ),
@@ -488,6 +522,130 @@ FIELDS: tuple[Field, ...] = (
         "動態招募上限（單場 PM 最多招募幾位新成員，含庫招募＋液生 persona；空／非法＝3）",
         placeholder="3",
         group="進階",
+    ),
+    # --- 進階:專家層新機制(web 行程也消費,存檔後下次討論生效) ---
+    Field(
+        "TI_LINT_AUTOFORMAT",
+        "autopilot lint 閘門自動修復（ruff format/check --fix safe;0=閘門紅直接退回）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_EXPERT_LINT_HOOK",
+        "寫時 lint（專家寫入 .py 當下 ruff 修復+違規回饋;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_CONVENTIONS_CARD",
+        "專家慣例卡（執行環境慣例注入 system prompt;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="進階",
+    ),
+    Field(
+        "TI_EXPERT_SKILLS",
+        "專家 skills 技能包（.claude/skills 漸進揭露,僅 Claude 專家;預設 0 灰度）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="進階",
+    ),
+    # --- Autopilot 組(⚠️消費端是 ti-autopilot 行程:存檔後需 systemctl restart ti-autopilot 才生效) ---
+    Field(
+        "TI_AUTOPILOT_NORTH_STAR",
+        "北極星（長期目標,注入自評與找問題 prompt;空=用內建預設句）",
+        kind="textarea",
+        placeholder="持續提升 Ti 程式品質；強化 agent 間與跨 provider 溝通協作效能",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_AUTO_MERGE",
+        "原生 auto-merge（開 PR 後交 GitHub 背景合併+reconciler 收斂;0=回同步等 CI）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_WORKFLOW_TRIAGE",
+        "任務開場 PM 流程分診（快速模式/預設流程;0=一律預設流程）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_INVESTIGATION_LANE",
+        "調查任務分流輕量管線（單專家出結論,不進多專家/merge 閘門;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_INVESTIGATION_REFUTE",
+        "調查結論對抗性驗證（done 前一次廉價呼叫試圖推翻;0=關）",
+        kind="select",
+        options=("1", "0"),
+        default="1",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_INVESTIGATION_PARALLEL",
+        "調查旁路併行（背景線併行消化調查任務;0=關,預設灰度）",
+        kind="select",
+        options=("0", "1"),
+        default="0",
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_INVESTIGATION_TIMEOUT",
+        "調查管線單次專家呼叫逾時（秒;空=1200）",
+        placeholder="1200",
+        numeric=True,
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK",
+        "衍生任務扇出寬度上限（單任務一場最多回填幾個 followup;0=不限;空=3）",
+        placeholder="3",
+        numeric=True,
+        group="Autopilot",
+    ),
+    Field(
+        "TI_AUTOPILOT_FOLLOWUP_MAX_GEN",
+        "衍生任務血緣代數上限（斷 followup 生 followup 深鏈;0=不限;空=3）",
+        placeholder="3",
+        numeric=True,
+        group="Autopilot",
+    ),
+    # --- 通知組(第 3 階 A1):web 端(含「發送測試通知」)存檔即生效;autopilot 端的
+    # 事件推播(task_failed/loop_stall/quota_exhausted)需 restart ti-autopilot 才生效 ---
+    Field(
+        "TI_NOTIFY_WEBHOOK",
+        "主動通知 webhook URL（空=關;異常事件 POST JSON,Slack/Discord relay 皆可）",
+        placeholder="https://...",
+        group="通知",
+    ),
+    Field(
+        "TI_TELEGRAM_BOT_TOKEN",
+        "Telegram bot token（@BotFather 建 bot 取得;與 chat id 皆填才啟用）",
+        kind="password",
+        secret=True,
+        placeholder="123456789:AA...",
+        group="通知",
+    ),
+    Field(
+        "TI_TELEGRAM_CHAT_ID",
+        "Telegram chat id（對 bot 說話後由 getUpdates 查得;私訊為正整數）",
+        placeholder="1234567890",
+        group="通知",
     ),
 )
 
@@ -536,6 +694,21 @@ def update(payload: dict) -> dict:
             continue  # 秘密留空＝不變更
         if f.kind == "select" and f.options and val not in f.options:
             continue  # 不接受非法選項
+        if f.numeric:
+            if not val:
+                # 數字欄清空＝「回到程式預設」:必須真移除而非寫空值——空字串會蓋掉
+                # os.getenv 的預設(2026-07-19 事故:INVESTIGATION_TIMEOUT='' 落檔後
+                # config import 期 int('') 炸,autopilot 重啟即 crashloop)。
+                remove_secret_key(path, key)
+                os.environ.pop(key, None)
+                continue
+            try:
+                int(val)
+            except ValueError:
+                continue  # 非法數值不落檔:config.reload() 的 int(os.getenv(...)) 會炸
+        if f.kind == "textarea":
+            # .env 單行格式:多行文字摺成空白(北極星語意上一段話即可)
+            val = " ".join(val.split())
         write_secret_file(path, key, val)
         os.environ[key] = val
     config.reload()

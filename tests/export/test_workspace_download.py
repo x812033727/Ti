@@ -55,6 +55,25 @@ def test_zip_skips_symlink_escaping_sandbox(session, tmp_path):
     assert "main.py" in names
 
 
+def test_zip_skips_oversize_file(session, monkeypatch):
+    monkeypatch.setattr(config, "MAX_READ_FILE_BYTES", 10)
+    root = workspace.workspace_path(session)
+    (root / "large.bin").write_bytes(b"x" * 20)
+    data = workspace.zip_workspace(session)
+    assert data is not None
+    names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+    assert "large.bin" not in names
+    assert "sub/util.py" in names
+
+
+def test_zip_returns_none_when_all_files_oversize(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setattr(config, "MAX_READ_FILE_BYTES", 1)
+    root = workspace.create_workspace("onlybig")
+    (root / "big.txt").write_text("xx", encoding="utf-8")
+    assert workspace.zip_workspace("onlybig") is None
+
+
 def test_zip_missing_session_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
     assert workspace.zip_workspace("nope") is None

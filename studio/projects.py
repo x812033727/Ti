@@ -69,7 +69,20 @@ def create(name: str, vision: str = "") -> dict | None:
     }
     _dir(pid).mkdir(parents=True, exist_ok=True)
     _write_meta(pid, meta)
-    workspace_dir(pid)  # 一併備妥固定 workspace
+    # 未來新增專案一律從 shadow 起步；本地工作可照跑，但任何外部發佈由政策引擎擋下。
+    from . import autonomy
+
+    project_workspace = workspace_dir(pid)  # 一併備妥固定 workspace
+    default_repo = (config.PUBLISH_REPO or "").strip()
+    autonomy.ensure_policy(
+        pid,
+        source={
+            "repo": default_repo,
+            "workspace": str(project_workspace),
+            "publish_repo": default_repo,
+            "lane": "main",
+        },
+    )
     return meta
 
 
@@ -118,6 +131,44 @@ def set_publish_repo(project_id: str, repo: str) -> dict | None:
     meta["publish_repo"] = repo
     meta["updated_at"] = time.time()
     _write_meta(project_id, meta)
+    try:
+        from . import autonomy
+
+        autonomy.save_policy(
+            project_id,
+            {"source": {"repo": repo, "publish_repo": repo}},
+            actor="project_publish_repo_api",
+        )
+    except (OSError, ValueError):
+        pass
+    return meta
+
+
+def set_intent(project_id: str, intent: str) -> dict | None:
+    """設定/覆寫專案常駐意圖(第 4 階 B3;空字串=清除)。
+
+    與 vision 的差別:vision 是建案時的一句話願景(update_vision 只補空不覆寫),
+    intent 是可隨時更新的「北極星指令」——意圖迴路(TI_INTENT_LOOP,improver 找問題
+    的差距分析)持續消費的輸入。只存欄位,不觸發任何執行。
+    """
+    meta = get(project_id)
+    if meta is None:
+        return None
+    meta["intent"] = (intent or "").strip()[:2000]
+    meta["updated_at"] = time.time()
+    _write_meta(project_id, meta)
+    # intent/north-star 的版本化副本由自治政策持有；舊 meta.intent 仍保留供既有 UI/迴路相容。
+    try:
+        from . import autonomy
+
+        autonomy.save_policy(
+            project_id,
+            {"intent": {"north_star": meta["intent"]}},
+            actor="project_intent_api",
+        )
+    except (OSError, ValueError):
+        # meta 寫入是既有公開契約；政策寫失敗由 API/觀測層揭露，不反向毀掉既有 intent。
+        pass
     return meta
 
 
@@ -154,6 +205,9 @@ def delete(project_id: str) -> bool:
     """
     if get(project_id) is None:
         return False
+    from . import autonomy
+
+    autonomy.delete_policy(project_id)
     shutil.rmtree(_dir(project_id), ignore_errors=True)
     ws_dir = workspace.workspace_path(workspace_id(project_id))
     if ws_dir.exists():

@@ -22,6 +22,26 @@ def test_parse_run_command():
     assert runner.parse_run_command("沒有宣告") is None
 
 
+def test_parse_run_command_unwraps_chained_inline_code_spans():
+    text = "完成\n執行指令: `echo A`; `echo B`; `echo C`"
+    assert runner.parse_run_command(text) == "echo A; echo B; echo C"
+
+
+def test_parse_run_command_keeps_shell_backtick_substitution():
+    text = "完成\n執行指令: echo `printf A`"
+    assert runner.parse_run_command(text) == "echo `printf A`"
+
+
+def test_parse_run_command_ignores_explanatory_tail_after_inline_code():
+    text = "完成\n執行指令: `.venv/bin/python -m pytest tests/docs -q`（外層加 timeout 60）"
+    assert runner.parse_run_command(text) == ".venv/bin/python -m pytest tests/docs -q"
+
+
+def test_parse_run_command_handles_extra_leading_markdown_backtick():
+    text = "完成\n執行指令: ``.venv/bin/python -m pytest tests/docs -q`（外層加 `timeout 60`）`"
+    assert runner.parse_run_command(text) == ".venv/bin/python -m pytest tests/docs -q"
+
+
 # --- 偵測入口 -----------------------------------------------------------
 
 
@@ -280,6 +300,63 @@ async def test_git_commit_normal_returns_valid_hash(tmp_path):
     assert head.output.strip() == h
 
 
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_default_forbidden_paths_none_keeps_legacy_return_type(tmp_path):
+    """未傳 forbidden_paths 時維持舊介面：成功回短 hash 字串，不回 GitCommitResult。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "legacy.txt").write_text("v1")
+
+    result = await runner.git_commit(tmp_path, "legacy return type")
+
+    assert isinstance(result, str)
+    assert not isinstance(result, runner.GitCommitResult)
+    assert result
+
+
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_uses_acmrt_staged_name_filter(tmp_path, monkeypatch):
+    """禁改檢查必須用驗收指定的 staged diff 檔名篩選 argv。"""
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(runner.config, "ENABLE_GIT", True)
+    monkeypatch.setattr(runner, "_git_available", lambda: True)
+    calls = []
+
+    async def fake_run_command_exec(cwd, argv, **kwargs):
+        calls.append(list(argv))
+        if argv == ["git", "add", "-A"]:
+            return runner.RunOutput("git add", 0, "", False)
+        if argv[:3] == ["git", "diff", "--staged"]:
+            return runner.RunOutput("git diff --staged", 0, "safe.txt\n", False)
+        if argv[:5] == [
+            "git",
+            "-c",
+            f"user.name={runner._GIT_USER_NAME}",
+            "-c",
+            f"user.email={runner._GIT_USER_EMAIL}",
+        ]:
+            return runner.RunOutput("git commit", 0, "", False)
+        if argv == ["git", "rev-parse", "--short", "HEAD"]:
+            return runner.RunOutput("git rev-parse", 0, "abc123\n", False)
+        raise AssertionError(f"未預期 git argv：{argv!r}")
+
+    monkeypatch.setattr(runner, "run_command_exec", fake_run_command_exec)
+
+    result = await runner.git_commit(tmp_path, "allowed", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash == "abc123"
+    assert [
+        "git",
+        "diff",
+        "--staged",
+        "--diff-filter=ACMRT",
+        "--name-only",
+    ] in calls
+
+
 @pytest.mark.asyncio
 async def test_git_commit_no_change_returns_none_head_unmoved(tmp_path):
     """無變更時回 None，且 HEAD 不移動（不產生空 commit）。"""
@@ -292,6 +369,101 @@ async def test_git_commit_no_change_returns_none_head_unmoved(tmp_path):
         tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
     )
     assert head.output.strip() == h1, "無變更不應移動 HEAD"
+
+
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_blocks_commit_and_returns_violations(tmp_path):
+    """帶禁改清單時，staged 命中即不 commit，且回傳違規檔清單。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "safe.txt").write_text("base")
+    base_hash = await runner.git_commit(tmp_path, "base")
+    assert isinstance(base_hash, str)
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "blocked.md").write_text("blocked")
+    (tmp_path / "safe.txt").write_text("changed")
+    result = await runner.git_commit(tmp_path, "should be blocked", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash is None
+    assert result.forbidden_violations == ["docs/blocked.md"]
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == base_hash, "違規時 HEAD 不應前進"
+
+
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_blocks_deleted_protected_file(tmp_path):
+    """刪除禁改檔也算變更，必須擋下且不前進 HEAD。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "docs").mkdir()
+    protected = tmp_path / "docs" / "protected.md"
+    protected.write_text("base")
+    base_hash = await runner.git_commit(tmp_path, "base")
+    assert isinstance(base_hash, str)
+
+    protected.unlink()
+    result = await runner.git_commit(tmp_path, "delete protected", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash is None
+    assert result.forbidden_violations == ["docs/protected.md"]
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == base_hash, "刪除禁改檔時 HEAD 不應前進"
+
+
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_blocks_renamed_protected_file_out(tmp_path):
+    """把禁改檔移出保護目錄時，來源路徑必須被檢出並擋下。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "docs").mkdir()
+    protected = tmp_path / "docs" / "protected.md"
+    protected.write_text("base")
+    base_hash = await runner.git_commit(tmp_path, "base")
+    assert isinstance(base_hash, str)
+
+    protected.rename(tmp_path / "moved.md")
+    result = await runner.git_commit(tmp_path, "move protected out", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash is None
+    assert result.forbidden_violations == ["docs/protected.md"]
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == base_hash, "搬出禁改目錄時 HEAD 不應前進"
+
+
+@pytest.mark.realgit
+@pytest.mark.asyncio
+async def test_git_commit_forbidden_paths_allows_non_matching_commit(tmp_path):
+    """帶禁改清單但未命中時仍照常 commit，結果物件帶短 hash 與空違規清單。"""
+    if not runner._git_available():
+        pytest.skip("環境無 git")
+    assert await runner.git_init(tmp_path) is True
+    (tmp_path / "safe.txt").write_text("v1")
+
+    result = await runner.git_commit(tmp_path, "allowed", forbidden_paths=["docs/"])
+
+    assert isinstance(result, runner.GitCommitResult)
+    assert result.commit_hash and result.ok
+    assert result.forbidden_violations == []
+    head = await runner.run_command_exec(
+        tmp_path, ["git", "rev-parse", "--short", "HEAD"], sandbox=False
+    )
+    assert head.output.strip() == result.commit_hash
 
 
 @pytest.mark.asyncio

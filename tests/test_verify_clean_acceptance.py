@@ -235,9 +235,9 @@ def test_false_diff_exclusion_policy_evidence() -> None:
     """
     evidence = {}
 
-    # 1. .gitmodules
+    # 1. .gitmodules（用 is_file() 避免 character device 誤判為可讀）
     gitmodules = REPO_ROOT / ".gitmodules"
-    if gitmodules.exists():
+    if gitmodules.is_file():
         sm_count = sum(
             1
             for ln in gitmodules.read_text(encoding="utf-8").splitlines()

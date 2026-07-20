@@ -25,7 +25,6 @@ import pytest
 from _repo import REPO_ROOT
 
 ROOT = REPO_ROOT
-ENV = ROOT / ".env"
 HOST = "127.0.0.1"
 PORT = 8011  # 避開 8000，互不干擾
 BASE = f"http://{HOST}:{PORT}"
@@ -39,25 +38,18 @@ def _get(path: str, timeout: float = 3.0):
 
 @pytest.fixture(scope="module")
 def fields():
-    backup = ENV.read_bytes() if ENV.exists() else None
     env = dict(os.environ)
-    env.pop("TI_ACCESS_PASSWORD", None)  # 門禁停用 → /api/settings 直接放行
+    # 空字串遮罩而非 pop：config.py 的 load_dotenv() 不覆蓋「已存在」的環境變數，
+    # 設 "" 可同時擋掉 .env 補值（pop 掉的鍵視同不存在、會被 .env 讀回——在含 .env
+    # 的樹跑會門禁重新啟用→永遠 401 假性「服務未就緒」），且語意等同未設定
+    # （auth_enabled()=bool("")=False；settings 欄位 set=bool("")=False）。
+    # 因此不再需要暫時改寫真實 .env（舊作法若測試被硬殺，還原不會執行，
+    # 門禁密碼/GITHUB_TOKEN 會直接從部署環境消失）。
+    env["TI_ACCESS_PASSWORD"] = ""  # 門禁停用 → /api/settings 直接放行
     for k in SECRET_ENVS:
-        env.pop(k, None)  # 確保秘密欄位「未設定」→ set=false
+        env[k] = ""  # 秘密欄位「未設定」→ set=false
     env["TI_HOST"] = HOST
     env["TI_PORT"] = str(PORT)
-
-    # config.py 的 load_dotenv() 會在 server import 時把 .env 內的值補回
-    # os.environ；光從子程序 env dict 移除秘密欄位並不夠——必須同步把這些 key
-    # 從 .env 暫時拿掉，否則「未設定」前提失效（set 會變 True、門禁被重新啟用）。
-    # finally 區段會還原原始 .env。
-    if backup is not None:
-        kept = [
-            ln
-            for ln in backup.decode("utf-8", "replace").splitlines(keepends=True)
-            if ln.split("=", 1)[0].strip() not in (SECRET_ENVS | {"TI_ACCESS_PASSWORD"})
-        ]
-        ENV.write_text("".join(kept), encoding="utf-8")
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
@@ -90,8 +82,6 @@ def fields():
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-        if backup is not None:
-            ENV.write_bytes(backup)
 
 
 def _by_env(fields):

@@ -1,0 +1,136 @@
+/* 設計 token（單一權威）：底色/文字/主色/語意色/字體/圓角/陰影/動態。
+   深色為預設（:root）；淺色以 [data-theme="light"] 覆寫同名 token——
+   規則檔一律引用 token，不落硬編碼色，主題切換才不會漏。 */
+
+:root {
+  color-scheme: dark;
+
+  /* 底色層 */
+  --bg: #0a0a0f;
+  --bg-deep: #060609;
+  --surface-1: rgba(255, 255, 255, .035);
+  --surface-2: rgba(255, 255, 255, .06);
+  --surface-3: rgba(255, 255, 255, .09);
+  --surface-solid: #12131a;            /* pre/code 用實色保可讀性 */
+  --border: rgba(255, 255, 255, .08);
+  --border-strong: rgba(255, 255, 255, .16);
+
+  /* 文字 */
+  --text: #f4f5f9;
+  --text-2: #c2c7d4;
+  --muted: #868c9c;
+
+  /* 主色：靛→紫漸層 */
+  --accent: #7c86ff;
+  --accent-strong: #5e6ad2;
+  --accent-2: #b49dff;
+  --grad-accent: linear-gradient(135deg, #6e79ff 0%, #a78bfa 55%, #c084fc 100%);
+  --glow-accent: 0 0 0 1px rgba(124, 134, 255, .28), 0 4px 18px rgba(124, 134, 255, .16);
+
+  /* 語意色 */
+  --good: #2dd4a7;  --good-bg: rgba(45, 212, 167, .10);
+  --bad:  #ff6b6b;  --bad-bg:  rgba(255, 107, 107, .10);
+  --warn: #f5b85f;  --warn-bg: rgba(245, 184, 95, .10);
+  --info: #59b7ff;
+
+  /* 環境光暈（body / 登入頁背景） */
+  --glow-c1: rgba(110, 121, 255, .10);
+  --glow-c2: rgba(192, 132, 252, .06);
+  --glow-login: rgba(110, 121, 255, .14);
+
+  /* 雜項表面（選取、捲軸、code 文字、浮層/卡片底、內凹底、狀態點） */
+  --selection: rgba(124, 134, 255, .35);
+  --scroll-thumb: rgba(255, 255, 255, .12);
+  --scroll-thumb-hover: rgba(255, 255, 255, .22);
+  --code-text: #c9d1d9;
+  --overlay-bg: rgba(22, 23, 32, .88);
+  --card-bg: rgba(18, 19, 26, .92);
+  --card-bg-solid: rgba(18, 19, 26, .96);
+  --inset-bg: rgba(0, 0, 0, .16);
+  --inset-strong: rgba(0, 0, 0, .25);
+  --dot-idle: #3a4150;
+  --dot-muted: #5a6072;
+
+  /* 字體（不掛 CDN webfont：離線示範模式也要能跑） */
+  --font-sans: "Inter", -apple-system, "SF Pro Text", "Segoe UI",
+               "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+               Menlo, Consolas, monospace;
+
+  /* 字級刻度：小字固定保可讀，標題級流式（隨視窗微幅放大） */
+  --fs-0: 11.5px;
+  --fs-1: 12.5px;
+  --fs-2: 13.5px;
+  --fs-3: 14.5px;
+  --fs-4: clamp(16px, .95rem + .35vw, 18px);
+  --fs-5: clamp(20px, 1.15rem + .9vw, 25px);
+
+  /* 間距刻度 */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 22px; --sp-6: 30px; --sp-7: 40px;
+
+  /* 焦點環（鍵盤導覽一致的可視焦點） */
+  --ring: 0 0 0 3px rgba(124, 134, 255, .28);
+
+  /* 圓角 / 陰影 / 動態 */
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-full: 999px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .30);
+  --shadow-2: 0 2px 10px rgba(0, 0, 0, .32);
+  --shadow-3: 0 12px 36px rgba(0, 0, 0, .46);
+  --t-fast: 120ms; --t-med: 200ms; --t-slow: 320ms;
+  --ease: cubic-bezier(.25, .8, .25, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+
+  /* 相容別名：避免任何殘留舊規則拿不到顏色 */
+  --panel: var(--surface-1);
+  --panel-2: var(--surface-2);
+}
+
+/* 淺色主題：只覆寫顏色類 token（字體/圓角/動態沿用），語意色加深保 ≥4.5:1 對比 */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f6f7fb;
+  --bg-deep: #eceef5;
+  --surface-1: rgba(16, 18, 35, .03);
+  --surface-2: rgba(16, 18, 35, .055);
+  --surface-3: rgba(16, 18, 35, .085);
+  --surface-solid: #ffffff;
+  --border: rgba(16, 18, 35, .10);
+  --border-strong: rgba(16, 18, 35, .20);
+
+  --text: #191b26;
+  --text-2: #3d4254;
+  --muted: #5d6375;
+
+  --accent: #5e6ad2;
+  --accent-strong: #4d58c4;
+  --accent-2: #7c5cd6;
+  --glow-accent: 0 0 0 1px rgba(94, 106, 210, .24), 0 4px 18px rgba(94, 106, 210, .13);
+  --ring: 0 0 0 3px rgba(94, 106, 210, .25);
+
+  --good: #0d8f6c;  --good-bg: rgba(13, 143, 108, .10);
+  --bad:  #cf4040;  --bad-bg:  rgba(207, 64, 64, .09);
+  --warn: #9a6a14;  --warn-bg: rgba(154, 106, 20, .10);
+  --info: #1f6fb8;
+
+  --glow-c1: rgba(110, 121, 255, .12);
+  --glow-c2: rgba(192, 132, 252, .08);
+  --glow-login: rgba(110, 121, 255, .16);
+
+  --selection: rgba(94, 106, 210, .22);
+  --scroll-thumb: rgba(16, 18, 35, .18);
+  --scroll-thumb-hover: rgba(16, 18, 35, .32);
+  --code-text: #24292f;
+  --overlay-bg: rgba(255, 255, 255, .92);
+  --card-bg: rgba(252, 252, 255, .95);
+  --card-bg-solid: rgba(250, 250, 253, .97);
+  --inset-bg: rgba(16, 18, 35, .04);
+  --inset-strong: rgba(16, 18, 35, .06);
+  --dot-idle: #b7bdca;
+  --dot-muted: #99a0b1;
+
+  --shadow-1: 0 1px 2px rgba(23, 26, 45, .08);
+  --shadow-2: 0 2px 10px rgba(23, 26, 45, .10);
+  --shadow-3: 0 12px 36px rgba(23, 26, 45, .16);
+}

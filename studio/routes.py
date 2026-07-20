@@ -7,19 +7,30 @@ WebSocket 與應用組裝分別在 ws.py / server.py。
 from __future__ import annotations
 
 import asyncio
-import subprocess
+import itertools
+import json
+import re
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    appraisal,
     auth,
+    autonomy,
+    autonomy_preflight,
     backlog,
     blueprint,
     claude_accounts,
     config,
+    deploy,
+    digest,
     history,
+    insights,
+    interventions,
+    lessons,
+    notify,
     projects,
     provider_quota,
     publisher,
@@ -27,6 +38,7 @@ from . import (
     repo_base,
     role_store,
     roles,
+    schedules,
     settings,
     workflow,
     workspace,
@@ -44,13 +56,20 @@ WRITE_DEPS = [Depends(auth.require_admin)]
 # --- 健康檢查 -----------------------------------------------------------
 @router.get("/api/health")
 async def health() -> JSONResponse:
+    git_sha = (await deploy.current_head(str(config.AUTOPILOT_DEPLOY_DIR))).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", git_sha):
+        git_sha = "unknown"
     return JSONResponse(
         {
             "ok": True,
+            # 公開部署身分契約：只回不可逆推出憑證的 commit SHA，供自治部署
+            # 在健康檢查同時證明「正在服務的版本就是剛合併的版本」。
+            "git_sha": git_sha,
             "has_api_key": config.has_api_key(),
             "offline": config.OFFLINE_MODE,
             "provider": config.PROVIDER,
             "provider_ready": config.provider_ready(),
+            "default_view": config.DEFAULT_VIEW,
         }
     )
 
@@ -64,6 +83,7 @@ async def metrics() -> JSONResponse:
     for m in sessions:
         s = m.get("status", "unknown")
         by_status[s] = by_status.get(s, 0) + 1
+    project_ids = [autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())]
     return JSONResponse(
         {
             "sessions": {
@@ -81,78 +101,17 @@ async def metrics() -> JSONResponse:
             "workspaces": {"count": workspace.count_workspaces()},
             "parallel": _aggregate_parallel(sessions),
             "scorecard": _aggregate_scorecard(sessions),
+            # 新契約為 additive；既有 sessions/history/parallel/scorecard 欄位完全保留。
+            "autonomy": await asyncio.to_thread(
+                autonomy.maturity_metrics, 28, project_ids=project_ids
+            ),
         }
     )
 
 
-def _aggregate_scorecard(sessions: list[dict]) -> dict:
-    """跨 session 聚合成果記分卡：成功率、平均輪數、一次過率、退回原因，與近期趨勢。
-
-    趨勢取「最近 10 場 vs 再前 10 場」（sessions 已新→舊排序）——這是『工作室有沒有
-    越做越進步』的直接量測：成功率升、平均輪數降＝在進步。
-    """
-    rows = [
-        (m, m["scorecard"])
-        for m in sessions
-        if m.get("status") != "running" and isinstance(m.get("scorecard"), dict)
-    ]
-    if not rows:
-        return {
-            "n": 0,
-            "qa_pass_rate": None,
-            "critic_pass_rate": None,
-            "demo_pass_rate": None,
-        }
-
-    def _slice_stats(part: list[tuple[dict, dict]]) -> dict:
-        if not part:
-            return {"n": 0}
-        done = sum(1 for m, _ in part if m.get("status") == "completed")
-        rounds = [s["avg_rounds"] for _, s in part if s.get("avg_rounds")]
-        return {
-            "n": len(part),
-            "completed_rate": round(done / len(part), 2),
-            "avg_rounds": round(sum(rounds) / len(rounds), 2) if rounds else None,
-        }
-
-    rejects = {"qa_fail": 0, "smoke_fail": 0, "gate_veto": 0, "critic": 0, "stall": 0}
-    tasks_total = tasks_done = first_try = 0
-    qa_total = qa_pass = 0
-    critic_total = critic_pass = 0
-    demo_total = demo_pass = 0
-    for _, s in rows:
-        for k in rejects:
-            rejects[k] += (s.get("rejects") or {}).get(k, 0)
-        tasks_total += s.get("tasks_total", 0)
-        tasks_done += s.get("tasks_done", 0)
-        first_try += s.get("first_try_done", 0)
-        qa_total += s.get("qa_total", 0)
-        qa_pass += s.get("qa_pass", 0)
-        critic_total += s.get("critic_total", 0)
-        critic_pass += s.get("critic_pass", 0)
-        demo = s.get("demo_passed")
-        if demo is not None:
-            demo_total += 1
-            if demo is True:
-                demo_pass += 1
-
-    def _rate(passed: int, total: int) -> float | None:
-        return round(passed / total, 2) if total else None
-
-    return {
-        **_slice_stats(rows),
-        "qa_pass_rate": _rate(qa_pass, qa_total),
-        "critic_pass_rate": _rate(critic_pass, critic_total),
-        "demo_pass_rate": _rate(demo_pass, demo_total),
-        "tasks": {
-            "total": tasks_total,
-            "done": tasks_done,
-            "first_try_done": first_try,
-            "first_try_rate": round(first_try / tasks_done, 2) if tasks_done else None,
-        },
-        "rejects": rejects,
-        "trend": {"recent": _slice_stats(rows[:10]), "previous": _slice_stats(rows[10:20])},
-    }
+# 聚合邏輯平移至 history.aggregate_scorecard（history 為 scorecard SSOT、改良迴圈共用）；
+# 保留原名 alias 讓既有測試與呼叫端不受影響。
+_aggregate_scorecard = history.aggregate_scorecard
 
 
 def _aggregate_parallel(sessions: list[dict]) -> dict:
@@ -274,7 +233,9 @@ async def post_settings(request: Request) -> JSONResponse:
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "detail": "格式錯誤"}, status_code=400)
-    return JSONResponse({"ok": True, **settings.update(body)})
+    updated = settings.update(body)  # 可能拋錯(非法值 config.reload 會炸):成功才記介入
+    interventions.record("settings", "context_feeding")
+    return JSONResponse({"ok": True, **updated})
 
 
 @router.get("/api/provider-quota", dependencies=[Depends(auth.require_auth)])
@@ -295,42 +256,31 @@ _provider_quota_snapshot = provider_quota.snapshot
 
 # --- Claude 多帳號切換（受保護）----------------------------------------
 class ClaudeAccountSwitch(BaseModel):
-    """POST /api/claude-account/switch 的請求本體。"""
+    """POST /api/claude-account/switch 的請求本體。``force``＝忙碌時仍立即切換（中斷
+    進行中討論，UI 忙碌路徑）；``queue``＝忙碌時改排隊（寫 pin，由 autopilot 在任務
+    空檔代切；API 選項）。兩者皆 False 時忙碌回 409。force 優先於 queue。"""
 
     label: str
+    force: bool = False
+    queue: bool = False
 
 
-def _schedule_service_restart() -> None:
-    """1 秒後重啟 ti.service + ti-autopilot，讓換檔後的新 Claude 認證生效。
-
-    用 systemd-run 起一次性 transient timer：它脫離 ti.service 的 cgroup，故 restart 殺掉
-    本服務時不會把「重啟動作本身」一起殺掉；1 秒延遲確保切換端點的 200 回應已送達前端。
-    無 systemd-run（權限/環境）時退回 detached subprocess，盡力而為。
-    """
-    cmd = ["systemctl", "restart", "ti.service", "ti-autopilot"]
-    try:
-        subprocess.Popen(
-            ["systemd-run", "--no-block", "--on-active=1", "--", *cmd],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return
-    except OSError:
-        pass
-    subprocess.Popen(
-        ["bash", "-c", "sleep 1; " + " ".join(cmd)],
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+# 重啟排程本體已抽到 deploy.schedule_service_restart（autopilot 自動輪替共用同一 SSOT）；
+# 保留模組層名稱給既有測試 monkeypatch（tests/server/test_claude_account_switch.py）。
+_schedule_service_restart = deploy.schedule_service_restart
 
 
 @router.post("/api/claude-account/switch", dependencies=WRITE_DEPS)
 async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
-    """切換 Claude 在線訂閱帳號（換憑證檔 + 重啟服務使新認證生效）。
+    """切換 Claude 在線訂閱帳號（換憑證檔 + 重啟服務使新認證生效）＝進入手動模式。
 
     認證在 SDK 啟動時載入記憶體，換檔後須重啟 ti.service/ti-autopilot 才生效；重啟會中斷
-    互動討論與 autopilot 任務，故先擋下「進行中」狀態（回 409），閒置才放行。
+    互動討論與 autopilot 任務，故「進行中」狀態預設不立即切換：``force=True``（UI 忙碌
+    路徑）＝使用者明示強制切換，跳過守衛立即切＋重啟——被中斷的 autopilot 任務由優雅
+    停機退回 pending 自動重排，只損失該場討論進度；``queue=True``（API 選項）寫 pin 檔
+    回 202，由 autopilot 的 ``_maybe_apply_pinned_account`` 在任務空檔代切；兩者皆無 →
+    回 409（附 ``queueable: true``）。成功切換（立即/強制/排隊）都會釘選目標帳號＝凍結
+    自動輪替（手動選擇不再被政策切回）；解除見 DELETE /api/claude-account/pin。
     """
     busy: list[str] = []
     if ws.active_session_count() > 0:
@@ -338,16 +288,44 @@ async def claude_account_switch(body: ClaudeAccountSwitch) -> JSONResponse:
     in_prog = backlog.list_tasks("in_progress")
     if in_prog:
         busy.append(f"autopilot 有 {len(in_prog)} 個任務進行中")
-    if busy:
-        return JSONResponse({"ok": False, "error": "busy", "reasons": busy}, status_code=409)
+    if busy and not body.force:
+        if body.queue:
+            if not claude_accounts.label_exists(body.label):
+                return JSONResponse(
+                    {"ok": False, "error": f"找不到帳號 {body.label} 的憑證檔"},
+                    status_code=400,
+                )
+            claude_accounts.set_pinned(body.label)
+            return JSONResponse(
+                {"ok": True, "queued": True, "label": body.label, "reasons": busy},
+                status_code=202,
+            )
+        return JSONResponse(
+            {"ok": False, "error": "busy", "reasons": busy, "queueable": True},
+            status_code=409,
+        )
 
     try:
         claude_accounts.switch(body.label)
     except ValueError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
+    claude_accounts.set_pinned(body.label)  # 手動切換＝釘選（switch 成功才寫）
+    interventions.record("account_switch", "ops", detail=body.label)
     _schedule_service_restart()
-    return JSONResponse({"ok": True, "label": body.label, "restarting": True})
+    payload: dict = {"ok": True, "label": body.label, "restarting": True, "pinned": True}
+    if busy:  # force 蓋過 busy 守衛時標記，供前端/log 辨識這是中斷式切換
+        payload["forced"] = True
+    return JSONResponse(payload)
+
+
+@router.delete("/api/claude-account/pin", dependencies=WRITE_DEPS)
+async def claude_account_unpin() -> JSONResponse:
+    """解除帳號釘選＝回自動模式：恢復自動輪替；排隊中的切換一併取消。無需重啟
+    （輪替在 autopilot 下輪額度檢查自然接手）。"""
+    claude_accounts.set_pinned(None)
+    interventions.record("account_unpin", "ops")
+    return JSONResponse({"ok": True, "pinned": None})
 
 
 # --- 角色管理（受保護）--------------------------------------------------
@@ -499,11 +477,23 @@ async def history_list() -> JSONResponse:
 
 
 @router.get("/api/history/{session_id}/events", dependencies=[Depends(auth.require_auth)])
-async def history_events(session_id: str) -> JSONResponse:
+async def history_events(session_id: str, offset: int = 0, limit: int = 0) -> JSONResponse:
+    """session 事件（預設全量——前端重播依賴全量，向後相容）；offset/limit 可選分頁。
+
+    limit<=0＝不設限。以 iter_events+islice 惰性切片，避免大 session（數千事件）在只要
+    尾段時仍整檔物化；讀檔丟 to_thread 不卡 event loop。
+    """
     meta = history.get_meta(session_id)
     if meta is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    return JSONResponse({"meta": meta, "events": history.load_events(session_id)})
+    offset = max(0, offset)
+
+    def _slice() -> list[dict]:
+        it = history.iter_events(session_id)
+        stop = offset + limit if limit > 0 else None
+        return list(itertools.islice(it, offset, stop))
+
+    return JSONResponse({"meta": meta, "events": await asyncio.to_thread(_slice)})
 
 
 @router.delete("/api/history/{session_id}", dependencies=[Depends(auth.require_auth)])
@@ -534,6 +524,14 @@ class ProjectTaskBody(BaseModel):
     detail: str = ""
     priority: int = 1  # P0 必須 ~ P2 加分（越小越優先；越界由 backlog 夾值）
     type: str = "improvement"  # feature | bug | improvement
+    risk: str = "medium"
+    eligible: bool = True
+    exclusion_reason: str = ""
+    rollback: dict = Field(default_factory=dict)
+    approval_verdicts: list[dict] = Field(default_factory=list)
+    diff_sha: str = ""
+    evidence_sha: str = ""
+    human_approved: bool = False
 
 
 @router.get("/api/projects", dependencies=[Depends(auth.require_auth)])
@@ -584,25 +582,61 @@ async def projects_detail(project_id: str) -> JSONResponse:
 
 
 @router.post("/api/projects/{project_id}/backlog", dependencies=[Depends(auth.require_auth)])
-async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONResponse:
+async def projects_add_task(
+    project_id: str, body: ProjectTaskBody, request: Request
+) -> JSONResponse:
     """手動往專案 backlog 排一個改良任務（持續改良迴圈會撿走）。"""
     if projects.get(project_id) is None:
         return JSONResponse({"error": "not found"}, status_code=404)
+    # 不可逆操作的人工批准本身是治理寫入；一般登入者只能建立待批准任務，不能自簽。
+    if body.human_approved:
+        auth.require_admin(request)
+    # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
     task = backlog.add(
         body.title,
-        body.detail,
+        body.detail[:4000],
         source="user",
         state_dir=projects.state_dir(project_id),
         priority=body.priority,
         item_type=body.type,
+        risk=body.risk,
+        eligible=body.eligible,
+        exclusion_reason=body.exclusion_reason,
+        rollback=body.rollback,
+        approval_verdicts=body.approval_verdicts,
+        diff_sha=body.diff_sha,
+        evidence_sha=body.evidence_sha,
+        human_approved=body.human_approved,
     )
     if task is None:
         return JSONResponse({"error": "標題不可為空或與待辦重複"}, status_code=400)
+    interventions.record(
+        "project_manual_task",
+        "product_decision" if body.human_approved else "context_feeding",
+        project_id=project_id,
+        task_id=task["id"],
+        intervention_type="product_decision" if body.human_approved else "background",
+    )
     return JSONResponse({"task": task})
 
 
 class PublishRepoBody(BaseModel):
     repo: str = ""
+
+
+class ProjectIntentBody(BaseModel):
+    intent: str = ""
+
+
+@router.post("/api/projects/{project_id}/intent", dependencies=[Depends(auth.require_auth)])
+async def projects_set_intent(project_id: str, body: ProjectIntentBody) -> JSONResponse:
+    """設定/覆寫專案常駐意圖(空=清除):意圖迴路(TI_INTENT_LOOP)差距分析的輸入。"""
+    meta = await asyncio.to_thread(projects.set_intent, project_id, body.intent)
+    if meta is None:
+        return JSONResponse({"ok": False, "detail": "專案不存在"}, status_code=404)
+    # 設定意圖=補背景型介入——這正是第 3/4 階人類的核心職責,入信任指標分類。
+    interventions.record("project_intent", "context_feeding")
+    return JSONResponse({"ok": True, "project": meta})
 
 
 @router.post("/api/projects/{project_id}/publish-repo", dependencies=[Depends(auth.require_auth)])
@@ -622,6 +656,12 @@ async def projects_set_publish_repo(project_id: str, body: PublishRepoBody) -> J
     meta = projects.set_publish_repo(project_id, body.repo)
     if meta is None:
         return JSONResponse({"error": "格式須為 owner/repo（或留空清除）"}, status_code=400)
+    interventions.record(
+        "project_publish_repo",
+        "background",
+        project_id=project_id,
+        intervention_type="background",
+    )
     state = await repo_base.workspace_state(projects.workspace_dir(project_id))
     warning = None
     if (body.repo or "").strip() and state in ("has_history", "local_files"):
@@ -645,6 +685,19 @@ async def projects_delete(project_id: str) -> JSONResponse:
         return JSONResponse({"error": "not found"}, status_code=404)
     if project_id in ws._active_projects:
         return JSONResponse({"error": "專案有進行中的討論，請先停止執行再刪除"}, status_code=409)
+    autonomy.emit_event(
+        "autonomy_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        outcome="project_deletion_approved",
+        payload={"target_project_id": project_id, "actor": "admin_api"},
+    )
+    interventions.record(
+        "project_delete",
+        "product_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision",
+        detail=project_id,
+    )
     ok = projects.delete(project_id)
     return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 
@@ -716,10 +769,23 @@ async def publish_now(session_id: str) -> JSONResponse:
 
 
 # --- 重新佈署重啟（受保護）--------------------------------------------
+class RedeployBody(BaseModel):
+    risk: str = "high-reversible"
+    diff_sha: str = ""
+    evidence_sha: str = ""
+    rollback: dict = Field(default_factory=dict)
+    approval_verdicts: list[dict] = Field(default_factory=list)
+    human_approved: bool = False
+    source_sha: str = "unknown"
+
+
 @router.post("/api/redeploy", dependencies=WRITE_DEPS)
-async def redeploy_now() -> JSONResponse:
+async def redeploy_now(body: RedeployBody | None = None) -> JSONResponse:
     """拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。"""
-    result = await redeploy.redeploy()
+    if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+        result = await redeploy.redeploy(governance=body.model_dump() if body else None)
+    else:
+        result = await redeploy.redeploy()
     return JSONResponse(result)
 
 
@@ -862,16 +928,72 @@ async def workflows_delete(name: str) -> JSONResponse:
 class TaskBody(BaseModel):
     title: str = ""
     detail: str = ""
+    # 完整下任務表單(功能強化 C2):priority/type 防線沿用 backlog.add 既有的
+    # _clamp_priority/_norm_type,routes 不重複驗證;舊 client 只送 title 行為不變。
+    priority: int = 1
+    type: str = "improvement"
+    risk: str = "medium"
+    eligible: bool = True
+    exclusion_reason: str = ""
+    rollback: dict = Field(default_factory=dict)
+    approval_verdicts: list[dict] = Field(default_factory=list)
+    diff_sha: str = ""
+    evidence_sha: str = ""
+    human_approved: bool = False
+
+
+def _todays_pr_used() -> int:
+    """UTC 當日已開 PR 數（audit.jsonl 中 pr 非空筆數）。autopilot._todays_pr_count 的
+    輕量鏡像——web 行程不 import autopilot（會拉整條 orchestrator/SDK 依賴鏈）。"""
+    import time as _time
+
+    path = config.AUTOPILOT_STATE_DIR / "audit.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+    day, n = _time.gmtime()[:3], 0
+    for line in lines:
+        try:
+            rec = json.loads(line)
+            if rec.get("pr") is not None and _time.gmtime(float(rec.get("ts", 0)))[:3] == day:
+                n += 1
+        except (ValueError, TypeError):
+            continue
+    return n
 
 
 @router.get("/api/autopilot", dependencies=[Depends(auth.require_auth)])
 async def autopilot_status() -> JSONResponse:
+    # 心跳：autopilot 主迴圈每輪寫入的 status.json（state=idle/running/quota_sleep/
+    # rotate_restart、task_id、sleep_until、各 provider 用量）。檔案不存在或壞損＝null
+    # （尚未跑過/未寫入）。
+    try:
+        heartbeat = json.loads(
+            (config.AUTOPILOT_STATE_DIR / "status.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        heartbeat = None
     return JSONResponse(
         {
             "paused": config.autopilot_paused(),
-            "counts": backlog.counts(),
+            # counts+completion 一次載入(backlog.overview):舊寫法每次輪詢連打三發全量 parse。
+            # completion=近窗完成率(done/(done+failed),排除 parked/pending)——counts 的終身
+            # 數字會被舊史與永不清的 parked 灌水/拖低,此欄反映真實近況。
+            **(await asyncio.to_thread(backlog.overview)),
+            # 部署漂移觀測（30s TTL 快取）：disk_head/origin_head/behind；autopilot 行程
+            # 「執行中」的 commit 在 heartbeat.running_commit（status.json）。已合併修法
+            # 是否真的進了執行碼，看板據此可判（完成率第三輪修法二A）。
+            "deploy": await deploy.drift_stats(),
             "dryrun": config.AUTOPILOT_DRYRUN,
             "repo": config.AUTOPILOT_REPO,
+            "heartbeat": heartbeat,
+            "dispatch_mode": "auto" if config.dispatch_auto() else "manual",
+            # 每日 PR 預算（功能第五輪 F4）：預算透明化——budget_sleep 前看板先看得到逼近。
+            "pr_budget": {
+                "used": await asyncio.to_thread(_todays_pr_used),
+                "cap": config.AUTOPILOT_DAILY_PR_BUDGET,
+            },
         }
     )
 
@@ -884,18 +1006,500 @@ async def autopilot_backlog() -> JSONResponse:
 @router.post("/api/autopilot/pause", dependencies=WRITE_DEPS)
 async def autopilot_pause() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.write_text("paused via UI\n", encoding="utf-8")
+    interventions.record("pause", "ops")
+    notify.send_bg("manual_paused", "Autopilot 已由管理者暫停")
     return JSONResponse({"ok": True, "paused": True})
 
 
 @router.post("/api/autopilot/resume", dependencies=WRITE_DEPS)
 async def autopilot_resume() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.unlink(missing_ok=True)
+    interventions.record("resume", "ops")
     return JSONResponse({"ok": True, "paused": config.autopilot_paused()})
+
+
+class DispatchModeBody(BaseModel):
+    mode: str = ""
+
+
+@router.post("/api/autopilot/dispatch-mode", dependencies=WRITE_DEPS)
+async def autopilot_dispatch_mode(body: DispatchModeBody) -> JSONResponse:
+    """切換派工模式哨兵檔：auto＝PM 全權派工、manual＝現行規則裁決（下一場 session 生效）。"""
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("auto", "manual"):
+        return JSONResponse({"ok": False, "detail": "mode 須為 auto 或 manual"}, status_code=400)
+    if mode == "auto":
+        config.DISPATCH_AUTO_FILE.write_text("auto via UI\n", encoding="utf-8")
+    else:
+        config.DISPATCH_AUTO_FILE.unlink(missing_ok=True)
+    interventions.record("dispatch_mode", "ops", detail=mode)
+    return JSONResponse(
+        {"ok": True, "dispatch_mode": "auto" if config.dispatch_auto() else "manual"}
+    )
 
 
 @router.post("/api/autopilot/task", dependencies=WRITE_DEPS)
 async def autopilot_add_task(body: TaskBody) -> JSONResponse:
-    task = backlog.add(body.title, body.detail, source="manual")
+    # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
+    task = backlog.add(
+        body.title,
+        body.detail[:4000],
+        source="manual",
+        priority=body.priority,
+        item_type=body.type,
+        risk=body.risk,
+        eligible=body.eligible,
+        exclusion_reason=body.exclusion_reason,
+        rollback=body.rollback,
+        approval_verdicts=body.approval_verdicts,
+        diff_sha=body.diff_sha,
+        evidence_sha=body.evidence_sha,
+        human_approved=body.human_approved,
+    )
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
+    interventions.record(
+        "manual_task",
+        "product_decision" if body.human_approved else "context_feeding",
+        task_id=task["id"],
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision" if body.human_approved else "background",
+    )
     return JSONResponse({"ok": True, "task": task})
+
+
+# --- 排程任務(Kimi 化 PR10):週期性把任務插進 autopilot backlog ---------------
+class ScheduleBody(BaseModel):
+    title: str = ""
+    detail: str = ""
+    priority: int = 1
+    type: str = "improvement"
+    recurrence: dict = Field(default_factory=dict)
+    enabled: bool | None = None
+
+
+@router.get("/api/schedules", dependencies=[Depends(auth.require_auth)])
+async def schedules_list() -> JSONResponse:
+    """唯讀:排程清單(到期由 autopilot 主迴圈入列,執行仍走既有 backlog)。"""
+    return JSONResponse({"schedules": await asyncio.to_thread(schedules.list_schedules)})
+
+
+@router.post("/api/schedules", dependencies=WRITE_DEPS)
+async def schedules_create(body: ScheduleBody) -> JSONResponse:
+    sched, err = await asyncio.to_thread(
+        schedules.create,
+        body.title,
+        body.detail,
+        body.recurrence,
+        priority=body.priority,
+        item_type=body.type,
+    )
+    if sched is None:
+        return JSONResponse({"ok": False, "detail": err}, status_code=400)
+    interventions.record("schedule_create", "context_feeding")
+    return JSONResponse({"ok": True, "schedule": sched})
+
+
+@router.put("/api/schedules/{sched_id}", dependencies=WRITE_DEPS)
+async def schedules_update(sched_id: str, body: ScheduleBody) -> JSONResponse:
+    fields = body.model_dump(exclude_unset=True)
+    sched, err = await asyncio.to_thread(schedules.update, sched_id, fields)
+    if sched is None:
+        status = 404 if err.startswith("不存在") else 400
+        return JSONResponse({"ok": False, "detail": err}, status_code=status)
+    interventions.record("schedule_update", "context_feeding")
+    return JSONResponse({"ok": True, "schedule": sched})
+
+
+@router.delete("/api/schedules/{sched_id}", dependencies=WRITE_DEPS)
+async def schedules_delete(sched_id: str) -> JSONResponse:
+    ok = await asyncio.to_thread(schedules.delete, sched_id)
+    if not ok:
+        return JSONResponse({"ok": False, "detail": "不存在的排程"}, status_code=404)
+    interventions.record("schedule_delete", "context_feeding")
+    return JSONResponse({"ok": True})
+
+
+@router.get("/api/autopilot/digest", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digest(days: int = 7) -> JSONResponse:
+    """週報 digest(純模板零 LLM,即時生成):成果/完成率對比/PR 清單/教訓/北極星。"""
+
+    def _build() -> dict:
+        d = digest.build_digest(days)
+        return {"digest": d, "markdown": digest.render_markdown(d)}
+
+    return JSONResponse(await asyncio.to_thread(_build))
+
+
+@router.get("/api/autopilot/digests", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digests() -> JSONResponse:
+    """已落盤 digest 歷史清單（第五輪 F6：autopilot 每日排程寫檔，不再關掉即失）。"""
+    return JSONResponse({"digests": await asyncio.to_thread(digest.list_digests)})
+
+
+@router.get("/api/autopilot/digests/{name}", dependencies=[Depends(auth.require_auth)])
+async def autopilot_digest_read(name: str) -> JSONResponse:
+    """讀單一落盤 digest；檔名白名單正則（digest-YYYY-MM-DD.md）擋路徑穿越。"""
+    md = await asyncio.to_thread(digest.read_digest, name)
+    if md is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    return JSONResponse({"name": name, "markdown": md})
+
+
+@router.get("/api/autopilot/audit-trend", dependencies=[Depends(auth.require_auth)])
+async def autopilot_audit_trend(days: int = 30) -> JSONResponse:
+    """audit.jsonl 每日 outcome 分佈與完成率趨勢(近 N 天,UTC 日;口徑=insights.OK/FAIL)。"""
+    trend = await asyncio.to_thread(insights.audit_trend, days)
+    # additive v1：eligible 分母/zero-touch/介入/rollback/告警/成本/四週升階判定。
+    trend["autonomy"] = await asyncio.to_thread(
+        autonomy.maturity_metrics,
+        days,
+        project_ids=[autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())],
+    )
+    return JSONResponse(trend)
+
+
+# --- 版本化自治政策與平台狀態 -----------------------------------------------
+@router.get("/api/autonomy/status", dependencies=[Depends(auth.require_auth)])
+async def autonomy_status() -> JSONResponse:
+    return JSONResponse(await asyncio.to_thread(autonomy.status_snapshot, projects.list_projects()))
+
+
+@router.get("/api/autonomy/preflight", dependencies=[Depends(auth.require_auth)])
+async def autonomy_preflight_status() -> JSONResponse:
+    """唯讀檢查 Stage 3/4 觀察窗啟動條件；不執行演練或外部寫入。"""
+    return JSONResponse(
+        await asyncio.to_thread(autonomy_preflight.collect, project_rows=projects.list_projects())
+    )
+
+
+@router.post("/api/autonomy/preflight/snapshot", dependencies=WRITE_DEPS)
+async def autonomy_preflight_snapshot() -> JSONResponse:
+    """保存帶內容 hash 的 preflight 證據；結果紅燈也保存，禁止用挑選綠報告掩蓋。"""
+    report = await asyncio.to_thread(
+        autonomy_preflight.write_report, project_rows=projects.list_projects()
+    )
+    return JSONResponse({"ok": True, "report": report})
+
+
+@router.post("/api/autonomy/rollback-drills", dependencies=WRITE_DEPS)
+async def autonomy_rollback_drills() -> JSONResponse:
+    """Rehearse exact-tree rollback locally for every managed current project."""
+    project_rows = projects.list_projects()
+    project_ids = [autonomy.CORE_PROJECT_ID, *(row["id"] for row in project_rows)]
+    preview = await asyncio.to_thread(autonomy_preflight.collect, project_rows=project_rows)
+    active_check = preview["stage3_observation"]["checks"]["all_tasks_quiescent"]
+    if not active_check["ok"]:
+        return JSONResponse(
+            {
+                "detail": "rollback drill 需要所有任務先安全收斂",
+                "active_by_project": active_check["evidence"]["active_by_project"],
+            },
+            status_code=409,
+        )
+    missing = [pid for pid in project_ids if not autonomy.policy_exists(pid)]
+    if missing:
+        return JSONResponse(
+            {"detail": "rollback drill 需要先建立所有自治政策", "project_ids": missing},
+            status_code=409,
+        )
+    workspace_by_project = {
+        autonomy.CORE_PROJECT_ID: config.AUTOPILOT_WORK_DIR,
+        **{row["id"]: projects.workspace_dir(row["id"]) for row in project_rows},
+    }
+    results = await asyncio.gather(
+        *(
+            asyncio.to_thread(autonomy.run_rollback_drill, pid, workspace_by_project[pid])
+            for pid in project_ids
+        )
+    )
+    return JSONResponse({"ok": all(row["ok"] for row in results), "results": results})
+
+
+class PlatformModeBody(BaseModel):
+    mode: str
+
+
+class StagePromotionBody(BaseModel):
+    stage: int
+
+
+@router.put("/api/autonomy/platform-mode", dependencies=WRITE_DEPS)
+async def autonomy_platform_mode(body: PlatformModeBody) -> JSONResponse:
+    project_ids = [autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())]
+    if body.mode == "canary":
+        preflight = await asyncio.to_thread(
+            autonomy_preflight.collect, project_rows=projects.list_projects()
+        )
+        if not preflight["stage3_observation"]["ready"]:
+            return JSONResponse(
+                {
+                    "detail": "Stage 3 preflight 尚未全綠",
+                    "blocking_reasons": preflight["stage3_observation"]["blocking_reasons"],
+                    "report_hash": preflight["report_hash"],
+                },
+                status_code=409,
+            )
+    try:
+        rollout = await asyncio.to_thread(
+            autonomy.set_platform_mode,
+            project_ids,
+            body.mode,
+            actor="admin_api",
+        )
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    interventions.record(
+        "autonomy_platform_mode",
+        "product_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision",
+        detail=body.mode,
+    )
+    return JSONResponse({"ok": True, "rollout": rollout})
+
+
+@router.post("/api/autonomy/promote", dependencies=WRITE_DEPS)
+async def autonomy_promote(body: StagePromotionBody) -> JSONResponse:
+    """以不可變成熟度快照正式升階；Stage 3/4 觀察窗不可重疊。"""
+    project_ids = [autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())]
+    try:
+        result = await asyncio.to_thread(
+            autonomy.promote_stage,
+            project_ids,
+            body.stage,
+            actor="admin_api",
+        )
+    except autonomy.PolicyError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+    interventions.record(
+        "autonomy_stage_promotion",
+        "product_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision",
+        detail=f"stage={body.stage};report_hash={result.get('report_hash', 'unchanged')}",
+    )
+    return JSONResponse(result)
+
+
+@router.get("/api/autonomy/policies/{project_id}", dependencies=[Depends(auth.require_auth)])
+async def autonomy_policy_get(project_id: str) -> JSONResponse:
+    if project_id != autonomy.CORE_PROJECT_ID and projects.get(project_id) is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    try:
+        policy = await asyncio.to_thread(autonomy.load_policy, project_id)
+    except autonomy.PolicyError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=500)
+    return JSONResponse({"policy": policy})
+
+
+@router.put("/api/autonomy/policies/{project_id}", dependencies=WRITE_DEPS)
+async def autonomy_policy_update(project_id: str, request: Request) -> JSONResponse:
+    if project_id != autonomy.CORE_PROJECT_ID and projects.get(project_id) is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+        policy = await asyncio.to_thread(autonomy.save_policy, project_id, body, actor="admin_api")
+    except (ValueError, json.JSONDecodeError) as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    return JSONResponse({"ok": True, "policy": policy})
+
+
+class BrakeClearBody(BaseModel):
+    project_id: str = "unknown"
+
+
+@router.post("/api/autonomy/brakes/{scope}/clear", dependencies=WRITE_DEPS)
+async def autonomy_brake_clear(scope: str, body: BrakeClearBody) -> JSONResponse:
+    if scope not in ("global", "project"):
+        return JSONResponse({"detail": "scope 須為 global 或 project"}, status_code=400)
+    if scope == "project" and body.project_id == "unknown":
+        return JSONResponse({"detail": "project scope 需要 project_id"}, status_code=400)
+    changed = await asyncio.to_thread(
+        autonomy.clear_brake, scope, project_id=body.project_id, actor="admin_api"
+    )
+    interventions.record(
+        "autonomy_brake_clear",
+        "ops_rescue",
+        project_id=body.project_id,
+        intervention_type="ops_rescue",
+    )
+    return JSONResponse({"ok": True, "changed": changed})
+
+
+@router.get("/api/autonomy/events", dependencies=[Depends(auth.require_auth)])
+async def autonomy_events(days: int = 30, include_legacy: bool = True) -> JSONResponse:
+    """版本化事件契約；legacy 投影不回寫原檔，缺欄顯式為 unknown。"""
+    rows = await asyncio.to_thread(autonomy.read_events, days)
+    if include_legacy:
+        rows += await asyncio.to_thread(autonomy.legacy_events, days)
+    rows.sort(key=lambda row: row.get("ts", 0), reverse=True)
+    return JSONResponse(
+        {"schema_version": autonomy.SCHEMA_VERSION, "events": rows[:5000], "total": len(rows)}
+    )
+
+
+@router.post("/api/notify/test", dependencies=WRITE_DEPS)
+async def notify_test() -> JSONResponse:
+    """端到端驗證推播管道:同步發一則 test 事件,回報各 sink(webhook/telegram)送達狀況。"""
+    return JSONResponse(await asyncio.to_thread(notify.send_test))
+
+
+@router.post("/api/notify/red-drills", dependencies=WRITE_DEPS)
+async def notify_red_drills() -> JSONResponse:
+    """安全演練全部紅色通知類型；只送合成告警，不觸發部署/rollback/煞車。"""
+    return JSONResponse(await asyncio.to_thread(notify.send_red_drills))
+
+
+@router.get("/api/autopilot/stage", dependencies=[Depends(auth.require_auth)])
+async def autopilot_stage() -> JSONResponse:
+    """唯讀:升階儀表(八 canary 現值+第 3 階四條件快照+階段判定)。"""
+    return JSONResponse(await asyncio.to_thread(insights.stage_readiness))
+
+
+@router.get("/api/autopilot/trust", dependencies=[Depends(auth.require_auth)])
+async def autopilot_trust(days: int = 7) -> JSONResponse:
+    """信任指標(第 3 階 A0 基線):零人工介入合併率/介入分類/系統事件計數。"""
+    return JSONResponse(await asyncio.to_thread(insights.trust_metrics, days))
+
+
+@router.get("/api/autopilot/attention", dependencies=[Depends(auth.require_auth)])
+async def autopilot_attention(days: int = 7) -> JSONResponse:
+    """「需要你」例外收件匣(第 4 階按例外監控):澄清待答/停放+原因/page 級事件。"""
+    return JSONResponse(await asyncio.to_thread(insights.attention, days))
+
+
+@router.get("/api/autopilot/investigations", dependencies=[Depends(auth.require_auth)])
+async def autopilot_investigations(limit: int = 50) -> JSONResponse:
+    """調查任務結論清單(backlog note 前綴 + audit investigation_* join)。"""
+    return JSONResponse({"investigations": await asyncio.to_thread(insights.investigations, limit)})
+
+
+@router.get("/api/skills", dependencies=[Depends(auth.require_auth)])
+async def skills_list() -> JSONResponse:
+    """唯讀:內部專家技能清單(名稱白名單+SKILL.md 描述+啟用狀態/適用角色)。"""
+    from . import skills_info
+
+    return JSONResponse(await asyncio.to_thread(skills_info.list_skills))
+
+
+@router.get("/api/lessons", dependencies=[Depends(auth.require_auth)])
+async def lessons_browse(q: str = "", limit: int = 50) -> JSONResponse:
+    """教訓庫唯讀瀏覽:q=大小寫不敏感子字串(text+requirement),由新到舊。"""
+    limit = max(1, min(limit, 500))
+
+    def _query() -> dict:
+        items = list(reversed(lessons.all_lessons()))
+        needle = (q or "").strip().lower()
+        if needle:
+            items = [
+                it
+                for it in items
+                if needle in str(it.get("text", "")).lower()
+                or needle in str(it.get("requirement", "")).lower()
+            ]
+        return {"lessons": items[:limit], "total": len(items)}
+
+    return JSONResponse(await asyncio.to_thread(_query))
+
+
+class TaskActionBody(BaseModel):
+    action: str = ""
+    priority: int | None = None
+    note: str = ""
+
+
+@router.post("/api/autopilot/task/{task_id}/action", dependencies=WRITE_DEPS)
+async def autopilot_task_action(task_id: int, body: TaskActionBody) -> JSONResponse:
+    """看板手動操作單一任務:retry/park/unpark/priority(護欄與語意見 backlog.apply_action)。"""
+    task, err = await asyncio.to_thread(
+        backlog.apply_action, task_id, body.action, priority=body.priority, note=body.note
+    )
+    if task is not None:
+        # note 一併留痕:規範迴路(A3)把人工筆記蒸餾成慣例——筆記是最有價值的蒸餾材料。
+        interventions.record(
+            "task_action",
+            "output_review",
+            task_id=task_id,
+            detail=f"{body.action}｜{body.note}".rstrip("｜") if body.note else body.action,
+        )
+        return JSONResponse({"ok": True, "task": task})
+    status = 404 if err.startswith("不存在") else (409 if err.startswith("不可") else 400)
+    return JSONResponse({"ok": False, "detail": err}, status_code=status)
+
+
+@router.post("/api/autopilot/triage", dependencies=WRITE_DEPS)
+async def autopilot_triage() -> JSONResponse:
+    """failed 任務確定性分診（無 LLM）：基礎設施型失敗退回 pending、陳年失敗歸檔 parked。"""
+    stats = await asyncio.to_thread(backlog.triage_failed)
+    interventions.record("triage", "output_review")
+    return JSONResponse({"ok": True, **stats})
+
+
+# activity 每筆任務輸出的 backlog 欄位（pr/merged_branch/deploy_msg 由 autopilot 成功路徑落檔）。
+_ACTIVITY_FIELDS = (
+    "id",
+    "title",
+    "status",
+    "updated_at",
+    "note",
+    "clarify",
+    "attempts",
+    "source",
+    "session_id",
+    "pr",
+    "merged_branch",
+    "deploy_msg",
+)
+
+
+def _activity_snapshot(limit: int) -> dict:
+    """聚合 backlog 全部任務（updated_at 倒序、取前 limit 筆）＋各自 history meta 的
+    記分卡與 token 用量（有 session_id 才查；meta 缺欄位即略過，容錯舊資料）。"""
+    tasks = sorted(backlog.list_tasks(), key=lambda t: t.get("updated_at") or 0, reverse=True)
+    rows: list[dict] = []
+    for t in tasks[:limit]:
+        row = {k: t.get(k) for k in _ACTIVITY_FIELDS}
+        sid = t.get("session_id")
+        meta = history.get_meta(sid) if sid else None
+        if meta:
+            if meta.get("scorecard"):
+                row["scorecard"] = meta["scorecard"]
+            usage = meta.get("token_usage") or {}
+            if usage:
+                # 只帶 timeline 會用到的維度（total + per-provider/model），不整包塞給前端。
+                token_usage = {
+                    "total": usage.get("total"),
+                    "by_provider": usage.get("by_provider") or {},
+                    "by_model": usage.get("by_model") or {},
+                }
+                ttft_s = usage.get("ttft_s")
+                if ttft_s is not None:
+                    token_usage["ttft_s"] = ttft_s
+                # per-task 成本可見性（功能第五輪 F4）：history 已累計在 total 桶，補帶給 timeline。
+                cost_usd = (usage.get("total") or {}).get("cost_usd")
+                if cost_usd is not None:
+                    token_usage["cost_usd"] = cost_usd
+                row["token_usage"] = token_usage
+        rows.append(row)
+    return {"tasks": rows, "total": len(tasks)}
+
+
+@router.get("/api/autopilot/activity", dependencies=[Depends(auth.require_auth)])
+async def autopilot_activity(limit: int = 50) -> JSONResponse:
+    """工作室動態視圖：backlog 任務 × history 成果（記分卡/token 用量）聚合，updated_at 倒序。"""
+    limit = max(1, min(int(limit), 500))  # 夾範圍：防 limit=0/負值/超大值拖垮回應
+    return JSONResponse(await asyncio.to_thread(_activity_snapshot, limit))
+
+
+# --- 考核（Appraisal；受保護）-------------------------------------------
+def _appraisals_snapshot(limit: int) -> dict:
+    """考核總覽：近期聚合（per provider／per provider+model 平均分/樣本/通過率）＋最近 N 筆。"""
+    return {"summary": appraisal.summary(), "recent": appraisal.recent(limit)}
+
+
+@router.get("/api/appraisals", dependencies=[Depends(auth.require_auth)])
+async def appraisals_view(limit: int = 50) -> JSONResponse:
+    """AI 成員考核總覽（前端「績效榜」用）。純檔案 IO 仍走 to_thread，不卡事件迴圈。"""
+    limit = max(1, min(int(limit), 500))  # 夾範圍：防 limit=0/負值/超大值拖垮回應
+    return JSONResponse(await asyncio.to_thread(_appraisals_snapshot, limit))

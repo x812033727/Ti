@@ -35,7 +35,7 @@ class RunSpy:
         self.overrides = overrides or {}
         self.calls: list[list[str]] = []
 
-    async def __call__(self, cmd, cwd=None, timeout=600):
+    async def __call__(self, cmd, cwd=None, timeout=600, **kwargs):
         self.calls.append(list(cmd))
         joined = " ".join(cmd)
         for key, val in self.overrides.items():
@@ -61,6 +61,8 @@ def _forbid_real_subprocess(monkeypatch):
 def _base_config(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_REPO", _REPO)
     monkeypatch.setattr(config, "AUTOPILOT_BRANCH", _BRANCH)
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"octo"}))
 
 
 async def _check(monkeypatch, overrides):

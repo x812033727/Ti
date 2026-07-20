@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import config, events, llm_caller, tools
+from . import claude_accounts, claude_usage, config, conventions, events, lint, llm_caller, tools
 from .roles import Role, effective_tools
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,14 @@ if TYPE_CHECKING:
     )
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
+
+# interrupt()/disconnect() 在疑似 wedged 的 stdio 控制通道上的硬上限（秒）。這兩個呼叫
+# 都走可能已死鎖的控制通道；未加逾時時，一旦通道卡住，發言層 watchdog 的回收（_abort_turn）
+# 與 session.run 收尾（orchestrator finally → Expert.stop）都會永久卡死，連外層任務逾時
+# 取消都無法收斂（見 issue #286）。stop() 已採 kill-first：先 SIGKILL SDK 子程序群，再以
+# 此上限等 disconnect；_abort_turn 目前仍只用同一上限圈住 interrupt/drain/disconnect，
+# 並在 disconnect 退化路徑兜底 kill，尚未改成 kill-first。
+_CTRL_TIMEOUT = 30.0
 
 
 class ExpertTurnTimeout(Exception):
@@ -224,16 +234,103 @@ def _make_fs_guard_hook(cwd: Path):
     return pre_tool_use
 
 
+# 寫時 lint 只掛在「會改 .py 內容」的三個工具上（NotebookEdit 是 ipynb、刻意不含）。
+_LINT_TOOLS = ("Write", "Edit", "MultiEdit")
+
+
+def _make_lint_hook(cwd: Path):
+    """產生綁定該專家 cwd 的 PostToolUse hook：寫入/編輯 .py 後就地 ruff 修復＋回饋殘餘違規。
+
+    治「lint 事後才紅」（#249/#496/#364/#367 連續三輪各燒 1-2 小時只為空格）：問題在寫檔
+    的當下被修掉/回饋，不再穿越整場 session 到收尾閘門才爆。回饋走 additionalContext
+    （溫和注入，不用 block——寫檔已成功，標成失敗只會誤導）；lint.lint_file 內部 fail-open
+    （非 .py/無 ruff/逾時/例外一律 None），hook 這層再兜一層，絕不擋工具流程。
+    """
+    root = Path(cwd)
+
+    async def post_tool_use(input_data, tool_use_id, context):
+        try:
+            tool_name = (input_data or {}).get("tool_name", "")
+            if tool_name not in _LINT_TOOLS:  # matcher 已過濾，這裡是防禦性雙保險
+                return {}
+            data = (input_data or {}).get("tool_input", {}) or {}
+            raw = str(data.get("file_path") or "")
+            if not raw:
+                return {}
+            feedback = await lint.lint_file(root, raw)
+            if feedback:
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PostToolUse",
+                        "additionalContext": feedback,
+                    }
+                }
+        except Exception:  # noqa: BLE001 — 寫時 lint 絕不能弄死工具呼叫
+            logger.debug("lint hook 失敗（靜默放行）", exc_info=True)
+        return {}
+
+    return post_tool_use
+
+
+def _scoped_exhausted(model: str, models_usage: dict, threshold: float) -> bool:
+    """該 claude 模型是否撞上「按模型 scoped」週限。
+
+    models_usage＝claude_usage.fetch_rate_limits()["models"]，鍵為模型 display_name（如
+    "Fable"）。比對規則（display_name 小寫出現在 model id 小寫內，涵蓋 fable→claude-fable-5）
+    集中在 ``claude_accounts.scoped_used_pct``（SSOT，帳號輪替第 1.5 層亦用同一比對）；
+    用量達 threshold 即視為撞滿。
+    """
+    pct = claude_accounts.scoped_used_pct(model, models_usage)
+    return pct is not None and pct >= threshold
+
+
+def _reroute_if_scoped_exhausted(model: str) -> str:
+    """在線 claude 帳號對 model 的 scoped 週限已達門檻時，改派非 scoped 備援模型（預設 Opus）。
+
+    補額度閘門盲點：provider_quota 只看全域 5h/7d、刻意不含 scoped 週限，故 Fable 週限滿了
+    閘門仍判 claude「可用」→ 釘 Fable 的專家一直撞滿額度空轉。此處在每次建 session（LLM 呼叫前）
+    無條件攔一手，把撞滿 scoped 的模型換成走全域額度的備援，讓工作室續跑到週限重置。
+    保守原則：額度查不到（error）、無 scoped 資訊、未撞門檻、或備援自身也撞 scoped → 一律不改派。
+    """
+    fallback = config.CLAUDE_SCOPED_FALLBACK_MODEL
+    threshold = config.CLAUDE_SCOPED_LIMIT_THRESHOLD
+    if not fallback or not model or model == fallback:
+        return model
+    rl = claude_usage.fetch_rate_limits()
+    if rl.get("error"):
+        return model
+    models_usage = rl.get("models") or {}
+    if not models_usage or not _scoped_exhausted(model, models_usage, threshold):
+        return model
+    if _scoped_exhausted(fallback, models_usage, threshold):
+        # 備援也撞 scoped 週限 → 改派無益，維持原模型，交回既有額度閘門/帳號輪替處理。
+        return model
+    logger.warning(
+        "claude 模型 %s scoped 週限達 %.0f%%，本場自動改派備援模型 %s（走全域 weekly 額度）",
+        model,
+        threshold,
+        fallback,
+    )
+    return fallback
+
+
 def _model_for(role: Role) -> str:
     """在建立專家時（每個 session）即時讀取設定，讓模型選擇變更可於下次討論生效。
 
-    優先序：該角色的個別覆寫（config.ROLE_MODELS，設定面板「<角色>模型」欄位）
-    → 沒覆寫（auto）就沿用 LEAD_ROLES → MODEL_LEAD/FAST 的二分法。
+    優先序：PM 釘選（config.PM_PIN_MODEL——PM 是分派/檢驗/表決的決策者，判斷品質須穩定，
+    預設釘 claude-fable-5；設空字串＝解除釘選）→ 該角色的個別覆寫（config.ROLE_MODELS，
+    設定面板「<角色>模型」欄位）→ 沒覆寫（auto）就沿用 LEAD_ROLES → MODEL_LEAD/FAST 的二分法。
+    末段套 _reroute_if_scoped_exhausted：選定的模型若在線帳號 scoped 週限已滿，改派備援模型。
     """
-    override = config.ROLE_MODELS.get(role.key, "")
-    if override:
-        return override
-    return config.MODEL_LEAD if role.key in config.LEAD_ROLES else config.MODEL_FAST
+    if role.key == "pm" and config.PM_PIN_MODEL:
+        model = config.PM_PIN_MODEL
+    else:
+        override = config.ROLE_MODELS.get(role.key, "")
+        if override:
+            model = override
+        else:
+            model = config.MODEL_LEAD if role.key in config.LEAD_ROLES else config.MODEL_FAST
+    return _reroute_if_scoped_exhausted(model)
 
 
 def _summarize_tool(name: str, tool_input: dict) -> str:
@@ -265,11 +362,21 @@ def _usage_int(obj, key: str) -> int:
         return 0
 
 
+def _stream_block_has_content(block) -> bool:
+    text = getattr(block, "text", None)
+    if isinstance(text, str):
+        return bool(text.strip())
+    return hasattr(block, "name") and hasattr(block, "input")
+
+
 async def _emit_claude_token_usage(
     msg,
     session_id: str,
     role: Role,
     broadcast: Broadcast,
+    *,
+    ttft_s: float | None = None,
+    model: str | None = None,
 ) -> None:
     usage = getattr(msg, "usage", None)
     if usage is None:
@@ -279,37 +386,76 @@ async def _emit_claude_token_usage(
     total = prompt + completion
     if total <= 0:
         return
+    # Claude 端時延直取 SDK ResultMessage.duration_api_ms（API 通訊時間），不自造計時；無則 None。
+    duration_ms = getattr(msg, "duration_api_ms", None)
     await broadcast(
         events.token_usage(
             session_id,
             role.key,
             "claude",
-            _model_for(role),
+            model or _model_for(role),
             prompt,
             completion,
             total,
             cost_usd=getattr(msg, "total_cost_usd", None),
+            duration_ms=duration_ms,
+            ttft_s=ttft_s,
             cache_read=_usage_int(usage, "cache_read_input_tokens"),
             cache_write=_usage_int(usage, "cache_creation_input_tokens"),
         )
     )
 
 
-def _build_client(role: Role, session_id: str, cwd: Path):
+def _expert_hooks(cwd: Path) -> dict:
+    """組專家的 hooks 設定：PreToolUse FS guard 恆在；寫時 lint（PostToolUse）受旋鈕保護。"""
+    from claude_agent_sdk import HookMatcher
+
+    hooks: dict = {"PreToolUse": [HookMatcher(matcher=None, hooks=[_make_fs_guard_hook(cwd)])]}
+    if config.EXPERT_LINT_HOOK:
+        hooks["PostToolUse"] = [
+            HookMatcher(matcher="Write|Edit|MultiEdit", hooks=[_make_lint_hook(cwd)], timeout=60)
+        ]
+    return hooks
+
+
+# 專家技能白名單(單一真相,測試與 _build_client 共用):名稱=SKILL.md name/目錄名,
+# 檔案在 repo 的 .claude/skills/(working clone 自然帶著;外部專案 cwd 無此目錄=無害)。
+EXPERT_SKILLS_LIST = ("ti-shipping", "ti-investigation", "ti-fast-implement")
+
+
+def _skills_options(role: Role) -> dict:
+    """組 skills 相關的 ClaudeAgentOptions 欄位(受旋鈕保護,預設關)。
+
+    只給會用到的角色(EXPERT_SKILLS_ROLES,預設 engineer/senior/qa)。列名白名單而非
+    "all"——"all" 會把任何塞進 clone 的技能全開,面太大。**顯式鎖 setting_sources=
+    ["project"]**:SDK 一設 skills 就會自動把 setting_sources 改成 ["user","project"],
+    會誤吃主機 user 層(~/.claude/skills)技能、丟掉 local;只吃 working clone 自帶的
+    project 層是刻意的隔離決策。
+    """
+    if not config.EXPERT_SKILLS or role.key not in config.EXPERT_SKILLS_ROLES:
+        return {}
+    return {"skills": list(EXPERT_SKILLS_LIST), "setting_sources": ["project"]}
+
+
+def _build_client(role: Role, session_id: str, cwd: Path, model: str = ""):
     """建立該專家的 ClaudeSDKClient。
 
     抽成模組級函式以開出注入縫：測試可 monkeypatch 本函式回傳假 client，
     從而在未安裝 claude-agent-sdk、不連線的情況下驗證 Expert 生命週期。
-    執行期內容與原 __init__ 完全相同。
+    執行期內容與原 __init__ 完全相同。``model`` 非空時覆寫 _model_for(role)
+    （per-task 派工／招募指定模型）；空＝缺省行為不變。
 
     # 重試由 speak() 層的 run_with_retries 統一管控；ClaudeSDKClient 本身不做額外退避，避免雙層疊乘。
-    # ClaudeAgentOptions 不暴露 max_retries 旋鈕（與 OpenAI SDK 不同），故無需也無從顯式設 0——
-    # Claude 路徑天然即為單層退避；切勿在此 client 層另加任何重試/退避旋鈕，否則會與外層
-    # run_with_retries 疊乘。對比 OpenAI 路徑：openai SDK 內建 max_retries（預設 2），須在
+    # ClaudeAgentOptions 不暴露 max_retries 旋鈕（與 OpenAI SDK 不同），故無需也無從顯式設 0。
+    # 【可控層邊界】Python SDK 層（query.py／subprocess_cli.py）原始碼確認無 429/529 retry 邏輯；
+    # CLI subprocess（Node.js 層）是否對 API 429/529 做內部 retry 不可從 Python SDK 原始碼驗證，
+    # 為已知邊界——types.py:api_error_status 顯示 CLI 最終確實透傳 429/529，但透傳前的嘗試次數未知。
+    # 切勿在此 client 層另加任何重試/退避旋鈕，否則會與外層 run_with_retries 疊乘。
+    # 對比 OpenAI 路徑：openai SDK 內建 max_retries（預設 2），須在
     # providers.py 的 AsyncOpenAI(...) 另行顯式設 max_retries=0 才能達到同等的「單層退避」語意
     # （該對應義務由 OpenAI 路徑各自落實）。
     """
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
     return ClaudeSDKClient(
         options=ClaudeAgentOptions(
@@ -319,11 +465,17 @@ def _build_client(role: Role, session_id: str, cwd: Path):
             can_use_tool=_auto_allow_tool,
             # PreToolUse hook 把寫檔限制在該專家的 cwd 內（並行 lane 隔離的真正防線；
             # can_use_tool 對預先允許的寫檔工具不觸發，見 _make_fs_guard_hook 說明）。
-            hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_make_fs_guard_hook(cwd)])]},
+            # PostToolUse hook（受旋鈕保護）＝寫時 lint：.py 寫入後就地 ruff 修復＋回饋。
+            hooks=_expert_hooks(cwd),
             sandbox=config.expert_sandbox_settings(),
             cwd=str(cwd),
-            model=_model_for(role),
+            model=model or _model_for(role),
             max_turns=config.MAX_TURNS_PER_TURN,
+            # 推理深度(None=SDK 預設,零行為改變):唯一建構點,自動涵蓋 roster/lane/
+            # critic/voter/oneshot(反思可用 TI_EXPERT_EFFORT_MAP="oneshot:low" 降檔)。
+            effort=config.effort_for(role.key),
+            # skills(預設關):見 _skills_options——技能漸進揭露,程序知識不占常駐 prompt。
+            **_skills_options(role),
         )
     )
 
@@ -336,6 +488,7 @@ async def stream_to_events(
     *,
     idle_timeout: float | None = None,
     hard_timeout: float | None = None,
+    model: str | None = None,
 ) -> str:
     """把 SDK 串流訊息翻譯成 StudioEvent，回傳整段發言文字。
 
@@ -353,6 +506,8 @@ async def stream_to_events(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + hard_timeout if hard_timeout else None
     it = messages.__aiter__()
+    request_sent_at = loop.time()
+    ttft_s: float | None = None
     while True:
         wait: float | None = idle_timeout or None
         reason = "idle"
@@ -371,6 +526,7 @@ async def stream_to_events(
             break
         except TimeoutError:
             raise ExpertTurnTimeout(reason, "\n".join(collected)) from None
+        msg_arrived_at = loop.time()
         if isinstance(msg, AssistantMessage):
             for block in msg.content:
                 if isinstance(block, TextBlock):
@@ -388,13 +544,24 @@ async def stream_to_events(
                             if hit[0] == "overloaded":
                                 raise ExpertOverloaded(str(hit[1]), text[:300], partial)
                             raise ExpertAPIError(str(hit[1]), text[:300], partial)
+                        unavailable = llm_caller.provider_unavailable_kind(text)
+                        if unavailable is not None and unavailable[0] in {
+                            "usage_limit",
+                            "quota",
+                            "billing",
+                        }:
+                            raise ExpertAPIError(unavailable[0], text[:300], "\n".join(collected))
                         collected.append(text)
+                        if ttft_s is None and _stream_block_has_content(block):
+                            ttft_s = msg_arrived_at - request_sent_at
                         await broadcast(
                             events.expert_message(
                                 session_id, role.key, role.name, role.avatar, text
                             )
                         )
                 elif isinstance(block, ToolUseBlock):
+                    if ttft_s is None and _stream_block_has_content(block):
+                        ttft_s = msg_arrived_at - request_sent_at
                     await broadcast(events.expert_status(session_id, role.key, "working"))
                     await broadcast(
                         events.tool_use(
@@ -405,18 +572,41 @@ async def stream_to_events(
                         )
                     )
         elif isinstance(msg, ResultMessage):
-            await _emit_claude_token_usage(msg, session_id, role, broadcast)
+            await _emit_claude_token_usage(
+                msg, session_id, role, broadcast, ttft_s=ttft_s, model=model
+            )
             break
     return "\n".join(collected)
 
 
 class Expert:
-    def __init__(self, role: Role, session_id: str, cwd: Path):
+    def __init__(self, role: Role, session_id: str, cwd: Path, model: str = ""):
+        # 慣例卡：執行環境慣例附進 system prompt（依 cwd 分層、無工具角色跳過、冪等）。
+        # 在 __init__ 注入而非 make_expert——涵蓋 autopilot 直接建構的路徑（調查分流/自評/拆分）。
+        role = conventions.apply(role, cwd)
         self.role = role
         self.session_id = session_id
         self._cwd = cwd  # 逾時斷線後重建 client 需要
-        self._client = _build_client(role, session_id, cwd)
+        self._model = model  # 非空＝per-task 派工／招募指定的模型覆寫；空＝沿用 _model_for
+        self._client = self._new_client()
         self._connected = False
+        # 閒置回收(B1)用:最後活動時刻與 in-flight 旗標(reaper 絕不回收發言中的專家)。
+        self._last_used = time.monotonic()
+        self._in_flight = False
+
+    def effective_model(self) -> str:
+        """實際生效的模型（覆寫優先，否則角色模型槽）——供任務結果（task_result）顯示。"""
+        return self._model or _model_for(self.role)
+
+    def _new_client(self):
+        """建 client（含逾時斷線後重建）。
+
+        無模型覆寫時維持既有三參數呼叫形——大量既有測試以 ``lambda role, sid, cwd: ...``
+        monkeypatch `_build_client`，此處不無故破壞其簽名相容。
+        """
+        if self._model:
+            return _build_client(self.role, self.session_id, self._cwd, self._model)
+        return _build_client(self.role, self.session_id, self._cwd)
 
     async def start(self) -> None:
         if not self._connected:
@@ -424,11 +614,86 @@ class Expert:
             self._connected = True
 
     async def stop(self) -> None:
-        if self._connected:
+        client = self._client
+        was_connected = self._connected
+        self._connected = False  # 先標離線，讓重入 stop() 直接 no-op。
+        if not was_connected:
+            return
+
+        # kill-first：SDK disconnect() 可能卡在 anyio/stdio teardown；先殺子程序群再斷線，
+        # 不把 event loop 活性押在控制通道能協作取消上。
+        self._best_effort_kill_subprocess()
+
+        disconnect_task = asyncio.create_task(client.disconnect())
+
+        def _consume_disconnect_result(task: asyncio.Task) -> None:
             try:
-                await self._client.disconnect()
-            finally:
-                self._connected = False
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 — 斷線失敗不得拖垮回收
+                logger.debug("disconnect SDK client 失敗（忽略）", exc_info=True)
+
+        try:
+            done, pending = await asyncio.wait({disconnect_task}, timeout=_CTRL_TIMEOUT)
+        except asyncio.CancelledError:
+            disconnect_task.cancel()
+            disconnect_task.add_done_callback(_consume_disconnect_result)
+            raise
+        if pending:
+            disconnect_task.cancel()
+            disconnect_task.add_done_callback(_consume_disconnect_result)
+            logger.debug("disconnect SDK client 逾時（忽略）")
+            return
+        if disconnect_task in done:
+            _consume_disconnect_result(disconnect_task)
+
+    def idle_for(self) -> float:
+        """距最後活動的秒數(發言中恆 0——reaper 判斷用)。"""
+        if self._in_flight:
+            return 0.0
+        return time.monotonic() - self._last_used
+
+    async def release(self) -> None:
+        """閒置回收:斷線+重建 client(下次 speak 經 start() 冪等自動重連)。
+
+        對話脈絡歸零——與 _abort_turn 重建 client 同語義,由 NOTES/reflexion 補償;
+        SDK 子行程(RSS 270-500MB)隨 disconnect 結束,這是回收的全部意義。
+        發言中(in-flight)呼叫為 no-op(防 reaper 競態)。
+        """
+        if self._in_flight:
+            return
+        await self.stop()
+        self._client = self._new_client()
+
+    def _best_effort_kill_subprocess(self) -> None:
+        """盡力對 SDK 內部子程序送 SIGKILL（整個 process group）。
+
+        stop() 的正常路徑也會先呼叫此方法，再進入 disconnect；這是刻意的 kill-first
+        回收契約，避免把 event loop 活性押在 SDK 控制通道能協作取消上。
+
+        純 best-effort——任何 claude_agent_sdk 版本差異（`_transport`／`_process` 形狀改變、
+        取不到 pid）都被 except 吞掉，退化成「殘留一個 idle 子程序」而非崩潰。迴圈活性由
+        呼叫端『丟棄 client 參考並重建』保證（子程序卡在 ep_poll 零 CPU，殘留成本有限），
+        此處只是回收資源，絕不 load-bearing。
+        """
+        try:
+            from . import runner
+
+            transport = getattr(self._client, "_transport", None)
+            proc = getattr(transport, "_process", None)
+            if proc is not None and getattr(proc, "pid", None) is not None:
+                # ⚠️ SDK 子程序「不是」runner 啟動的,沒有 start_new_session=True 的自成
+                # group 保證(runner.kill_process_group 的契約只對 runner 生的程序成立)。
+                # 與本行程同 process group 時,killpg=殺整組=autopilot 自殺——
+                # 2026-07-19 事故:每個調查任務 stop() 即自殺,SIGKILL crashloop
+                # restart counter 14。同組 → 退回只殺該 pid;確認異組才可整組殺。
+                if os.getpgid(proc.pid) == os.getpgid(0):
+                    proc.kill()
+                else:
+                    runner.kill_process_group(proc)
+        except Exception:  # noqa: BLE001 — 兜底殺程序失敗不得影響回收流程
+            logger.debug("best-effort 殺 SDK 子程序失敗（忽略）", exc_info=True)
 
     async def speak(self, prompt: str, broadcast: Broadcast) -> str:
         """送出 prompt，串流回應為事件，回傳完整文字。
@@ -444,9 +709,13 @@ class Expert:
         """
         r = self.role
         await broadcast(events.expert_status(self.session_id, r.key, "thinking"))
+        self._last_used = time.monotonic()
+        self._in_flight = True
         try:
             return await self._speak_with_retries(prompt, broadcast)
         finally:
+            self._in_flight = False
+            self._last_used = time.monotonic()
             await broadcast(events.expert_status(self.session_id, r.key, "idle"))
 
     async def _speak_with_retries(self, prompt: str, broadcast: Broadcast) -> str:
@@ -489,6 +758,7 @@ class Expert:
                 broadcast,
                 idle_timeout=config.TURN_IDLE_TIMEOUT or None,
                 hard_timeout=config.TURN_HARD_TIMEOUT or None,
+                model=self.effective_model(),
             )
 
         async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:
@@ -574,21 +844,24 @@ class Expert:
         try:
             from claude_agent_sdk import ResultMessage
 
-            await self._client.interrupt()
+            # interrupt()／drain 都走 stdio 控制通道；通道 wedged 時未加逾時會永久卡死，
+            # 使本回收路徑（發言層 watchdog 觸發後的收斂）自己也死鎖。以 _CTRL_TIMEOUT 圈住
+            # interrupt()；其 TimeoutError 為 Exception 子類，會自然落到下方斷線/重建分支。
+            await asyncio.wait_for(self._client.interrupt(), _CTRL_TIMEOUT)
 
             async def _drain() -> None:
                 async for msg in self._client.receive_response():
                     if isinstance(msg, ResultMessage):
                         return
 
-            await asyncio.wait_for(_drain(), 30)
+            await asyncio.wait_for(_drain(), _CTRL_TIMEOUT)
         except Exception:
             try:
-                await self._client.disconnect()
-            except Exception:
-                pass
+                await asyncio.wait_for(self._client.disconnect(), _CTRL_TIMEOUT)
+            except Exception:  # noqa: BLE001 — 含 TimeoutError；斷線也卡就 SIGKILL 兜底
+                self._best_effort_kill_subprocess()
             self._connected = False
-            self._client = _build_client(r, self.session_id, self._cwd)
+            self._client = self._new_client()  # 重建沿用同一模型覆寫（若有）
             note += "（會話無法中斷，已重建；此前脈絡遺失）"
         if exc.partial_text:
             note += f"\n逾時前的部分輸出：\n{exc.partial_text}"

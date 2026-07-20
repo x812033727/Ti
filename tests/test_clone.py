@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from studio import runner
+from studio import config, git_cred, runner
 
 
 @pytest.fixture(autouse=True)
@@ -43,8 +43,9 @@ class CloneSpy:
     exit_code: int = 0
     command_label: str = "git clone (fake)"
     calls: list[dict] = field(default_factory=list)
+    label_exit_codes: dict[str, int] = field(default_factory=dict)
 
-    async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None):
+    async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None, env=None):
         self.calls.append(
             {
                 "cwd": cwd,
@@ -52,12 +53,13 @@ class CloneSpy:
                 "timeout": timeout,
                 "sandbox": sandbox,
                 "label": label,
+                "env": env,
             }
         )
         # 回傳的 command 故意給「非還原值」，以證明 git_clone 會無條件重設它（L313）
         return runner.RunOutput(
             command=self.command_label,
-            exit_code=self.exit_code,
+            exit_code=self.label_exit_codes.get(label or "", self.exit_code),
             output=self.output,
             timed_out=False,
         )
@@ -79,6 +81,8 @@ def clone_spy(monkeypatch):
     spy = CloneSpy()
     monkeypatch.setattr(runner, "run_command_exec", spy)
     monkeypatch.setattr(runner, "_git_available", lambda: True)
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
+    monkeypatch.setattr(git_cred, "_GIT_ENV_SUPPORTED", True)
     return spy
 
 
@@ -93,13 +97,31 @@ def test_is_valid_repo_url():
     assert not runner.is_valid_repo_url("")
 
 
-def test_build_clone_url_injects_token():
+def test_build_clone_url_cleans_by_default_and_legacy_injects_token():
     url = "https://github.com/owner/repo.git"
+    assert runner.build_clone_url(url, "tok", legacy=False) == url
+    assert runner.build_clone_url(url, None, legacy=False) == url
+    assert runner.build_clone_url(url, "", legacy=False) == url
     assert (
-        runner.build_clone_url(url, "tok") == "https://x-access-token:tok@github.com/owner/repo.git"
+        runner.build_clone_url(
+            "https://x-access-token:old@github.com/owner/repo.git",
+            "tok",
+            legacy=False,
+        )
+        == url
     )
-    assert runner.build_clone_url(url, None) == url
-    assert runner.build_clone_url(url, "") == url
+    assert (
+        runner.build_clone_url(url, "tok", legacy=True)
+        == "https://x-access-token:tok@github.com/owner/repo.git"
+    )
+    assert (
+        runner.build_clone_url(
+            "https://x-access-token:old@example.com/owner/repo.git",
+            "tok",
+            legacy=True,
+        )
+        == "https://example.com/owner/repo.git"
+    )
 
 
 @pytest.mark.asyncio
@@ -111,7 +133,7 @@ async def test_git_clone_masks_token(clone_spy, tmp_path):
     """
     url = "https://github.com/owner/repo.git"
     token = "ghp_SECRETtoken1234567890"
-    authed = runner.build_clone_url(url, token)  # https://x-access-token:<token>@...
+    authed = runner.build_clone_url(url, token, legacy=True)  # https://x-access-token:<token>@...
 
     # spy 回傳的假 output 同時塞「裸 token」與「含 token 的 authed url」，
     # 確保 git_clone 的 result.output.replace(token, "***")（L312）兩處都清掉。
@@ -136,15 +158,66 @@ async def test_git_clone_masks_token(clone_spy, tmp_path):
 
 @pytest.mark.asyncio
 async def test_git_clone_label_carries_no_token(clone_spy, tmp_path):
-    """遷移後仍須防 token 經由 label 外洩：label 固定 "git clone"，不得含 authed url。"""
+    """遷移後 token 只走 env；argv/label 固定不得含 authed url。"""
     url = "https://github.com/owner/repo.git"
     token = "ghp_SECRETtoken1234567890"
 
     await runner.git_clone(url, tmp_path, token=token)
 
     assert clone_spy.last["label"] == "git clone"
-    # argv 內雖含 authed（交給 git 用），但 label 絕不可帶 token。
+    assert clone_spy.last["argv"][-2] == url
+    assert not any(token in p or "x-access-token:" in p for p in clone_spy.last["argv"])
     assert token not in (clone_spy.last["label"] or "")
+    assert clone_spy.last["env"]["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    assert token not in "".join(clone_spy.last["env"].values())
+
+
+@pytest.mark.asyncio
+async def test_git_clone_legacy_uses_token_url(clone_spy, tmp_path, monkeypatch):
+    """緊急回退閥可用 token-in-URL clone，但完成後立即清乾淨 origin。"""
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
+    url = "https://github.com/owner/repo.git"
+    token = "ghp_SECRETtoken1234567890"
+
+    result = await runner.git_clone(url, tmp_path, token=token)
+
+    clone, sanitize = clone_spy.calls
+    assert f"https://x-access-token:{token}@github.com/owner/repo.git" in clone["argv"]
+    assert not clone["env"]
+    assert sanitize["argv"] == ["git", "remote", "set-url", "origin", url]
+    assert sanitize["label"] == "git sanitize origin"
+    assert token not in "".join(sanitize["argv"])
+    assert result.command == "git clone " + url
+    assert token not in result.command
+
+
+@pytest.mark.asyncio
+async def test_git_clone_legacy_fails_closed_when_origin_cannot_be_sanitized(
+    clone_spy, monkeypatch, tmp_path
+):
+    token = "ghp_SECRETtoken1234567890"
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
+    clone_spy.output = f"leak {token}"
+    clone_spy.label_exit_codes["git sanitize origin"] = 1
+
+    result = await runner.git_clone("https://github.com/owner/repo.git", tmp_path, token=token)
+
+    assert not result.ok
+    assert "安全防護" in result.output
+    assert token not in result.output
+    assert len(clone_spy.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_git_clone_non_github_host_does_not_add_credentials(clone_spy, tmp_path):
+    url = "https://example.com/owner/repo.git"
+    token = "ghp_SECRETtoken1234567890"
+
+    await runner.git_clone(url, tmp_path, token=token)
+
+    assert url in clone_spy.last["argv"]
+    assert not any(token in p or "x-access-token:" in p for p in clone_spy.last["argv"])
+    assert not clone_spy.last["env"]
 
 
 @pytest.mark.asyncio
@@ -185,7 +258,7 @@ async def test_git_clone_url_injection_is_single_argv(clone_spy, tmp_path, paylo
     argv = clone_spy.last["argv"]
 
     # 無 token 時 authed == 原始 url。
-    authed = runner.build_clone_url(payload_url, None)
+    authed = runner.build_clone_url(payload_url, None, legacy=False)
     assert authed == payload_url
 
     # 主斷言 1：payload 原樣作為單一 argv 元素存在。

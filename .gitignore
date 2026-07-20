@@ -22,6 +22,9 @@
 # 沙箱 ro-bind 測試的 host 探針檔（test_qa_ro_bind_reject_qa.py，正常即時清理；防誤 commit）
 # 跨場次教訓庫（LESSONS_FILE，預設 PROJECT_ROOT/lessons.json）+ 其鎖檔，屬執行期狀態，不進版控。
 # 錨定 repo 根：原 `autopilot/`（無錨定）會誤殺 tests/autopilot/ 測試目錄，
+# 任務過程產物（盤點 hits／task 收尾報告／驗證證據），不進版控；
+# 若日後有證據文件需刻意入庫，請用 `!` 反白名單逐檔放行。
+*-EVIDENCE.md
 *.db
 *.db-shm
 *.db-wal
@@ -33,7 +36,11 @@
 .Python
 .bash_profile
 .bashrc
+# .claude/ 整體不追蹤(本地 settings/hookify 屬個人環境),但 skills 技能包是產品的一部分
+# (working clone 要帶著給專家用),顯式豁免。
 .claude/
+!.claude/skills/
+!.claude/skills/**
 .coverage
 .coverage.*
 .eggs/
@@ -42,13 +49,18 @@
 .gitconfig
 .gitmodules
 .idea
+.local/
 .mcp.json
 .pc-cache-qa/
 .profile
 .pytest_cache/
+.qa_artifacts/
+.qa-tmp/
 .qa-tmp-nopath/
+.tmp/
 .qa-venv/
 .qa_venv/
+.run/
 .ripgreprc
 .ti_ro_bind_probe_*.txt
 .venv-ruff/
@@ -56,11 +68,21 @@
 .vscode
 .zprofile
 .zshrc
+*_hits*.txt
 /autopilot/
+/AUTOPILOT_PAUSED
+/DISPATCH_AUTO
 /body.md
+/pytest_full.log
+BASELINE_task*.md
+CLOSURE_task*.md
 ENV/
+VERIFICATION_REPORT_*.md
 __pycache__/
 adr.lock
+appraisals.json
+appraisals.json.tmp
+appraisals.lock
 build/
 dist/
 env/
@@ -75,3 +97,4 @@ workspaces/
 
 # --- Ti baseline（自動補上,避免追蹤/交付沙箱/環境 junk）---
 .tmp/
+.ci-evidence/

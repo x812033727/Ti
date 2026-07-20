@@ -19,6 +19,8 @@ def _configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"o"}))
 
     async def _noop(*a, **k):
         return True
@@ -26,7 +28,7 @@ def _configured(monkeypatch):
     monkeypatch.setattr(runner, "git_init", _noop)
     monkeypatch.setattr(runner, "git_commit", _noop)
 
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):

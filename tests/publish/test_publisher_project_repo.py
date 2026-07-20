@@ -12,6 +12,8 @@ def _configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "global/repo")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"global", "me", "other"}))
 
 
 def _ok_run(label="git"):
@@ -47,6 +49,7 @@ def test_current_repo_falls_back_to_global(_configured):
 def test_override_makes_publish_configured_without_global(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "")  # 全域未設
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"me"}))
     assert not publisher.is_configured()
     token = publisher.set_repo_override("me/product")
     try:
@@ -66,7 +69,7 @@ async def test_publish_project_repo_ready_opens_pr_there(monkeypatch, _configure
         seen["ensure"] = (repo, base)
         return "ready"
 
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         seen["push_url"] = url
         return _ok_run("git push")
 
@@ -94,7 +97,7 @@ async def test_publish_project_repo_empty_initializes_base(monkeypatch, _configu
 
     pushed = {}
 
-    async def fake_push_base(cwd, base, url):
+    async def fake_push_base(cwd, base, url, **kwargs):
         pushed["base"] = base
         return _ok_run("git push init")
 
@@ -128,7 +131,7 @@ async def test_publish_without_override_skips_ensure(monkeypatch, _configured, _
         called["ensure"] += 1
         return "ready"
 
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return _ok_run("git push")
 
     monkeypatch.setattr(publisher, "_ensure_repo", fake_ensure)

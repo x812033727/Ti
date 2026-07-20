@@ -13,7 +13,7 @@ import asyncio
 import os
 import sys
 
-from . import config, deploy, runner
+from . import autonomy, config, deploy, notify, runner
 
 
 def _redact(text: str) -> str:
@@ -69,11 +69,32 @@ def schedule_restart(delay: float = 0.5) -> None:
     loop.call_later(delay, _do_restart)
 
 
-async def redeploy(*, restart: bool = True) -> dict:
+async def redeploy(*, restart: bool = True, governance: dict | None = None) -> dict:
     """拉取最新 main，成功後（restart=True）排程自我重啟。
 
     回傳 dict：{ok, pulled, restarting, detail}。任何失敗皆不丟例外。
     """
+    if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+        policy = autonomy.load_policy(autonomy.CORE_PROJECT_ID)
+        evidence = dict(governance or {})
+        evidence.setdefault("risk", "high-reversible" if policy["stage"] >= 3 else "medium")
+        decision = autonomy.evaluate_operation(
+            autonomy.CORE_PROJECT_ID,
+            "deploy",
+            evidence,
+            approvals=evidence.get("approval_verdicts") or [],
+            human_approved=bool(evidence.get("human_approved")),
+            source_sha=str(evidence.get("source_sha") or "unknown"),
+        )
+        if not decision["external_write_allowed"]:
+            detail = (
+                "shadow 模式禁止實際重新部署"
+                if decision["allowed"]
+                else "重新部署前自治政策拒絕：" + ",".join(decision["reasons"])
+            )
+            notify.send_bg("policy_violation", detail, project_id=autonomy.CORE_PROJECT_ID)
+            return {"ok": False, "pulled": False, "restarting": False, "detail": detail}
+
     # 與 autopilot / autodeploy timer 的 deploy.redeploy() 共用同一把 flock，避免並行部署互撞。
     with deploy._deploy_lock() as acquired:
         if not acquired:

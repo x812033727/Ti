@@ -79,6 +79,8 @@ async def test_session_uses_project_publish_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PUBLISH_AUTO", True)
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "")  # 全域未設，靠專案自己的 repo
+    # owner allowlist 護欄：放行本測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"me"}))
 
     seen = {}
 

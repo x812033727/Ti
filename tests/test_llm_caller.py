@@ -69,8 +69,16 @@ def test_task3_normal_model_text_with_rate_limit_and_error_is_not_failure():
     assert lc.classify_failure(RuntimeError(text)) == ("unknown", None, "", "")
 
 
-def test_provider_unavailable_reason_detects_usage_limit():
-    text = "You've hit your usage limit. Visit settings to purchase more credits."
+@pytest.mark.parametrize(
+    "text",
+    [
+        "You've hit your usage limit. Visit settings to purchase more credits.",
+        "You're out of usage credits · resets Jul 11, 7am (Asia/Taipei)",
+        "You've run out of usage credits. Resets Jul 11, 7am.",
+        "Out of credits. Resets tomorrow.",
+    ],
+)
+def test_provider_unavailable_reason_detects_usage_limit(text):
     assert lc.provider_unavailable_kind(text) == ("usage_limit", "usage limit reached")
     assert lc.provider_unavailable_reason(text) == "usage limit reached"
 
@@ -90,6 +98,36 @@ def test_provider_unavailable_reason_detects_provider_failures(text, kind):
     hit = lc.provider_unavailable_kind(text)
     assert hit is not None
     assert hit[0] == kind
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "rate limit exceeded",  # 裸 CLI 典型輸出（無 HTTP 前綴/JSON token）
+        "Too Many Requests",  # 整行慣用語
+        "You have hit the rate limit, retry later",  # 動詞在前
+        "HTTP 429 Too Many Requests",  # 帶錨定前綴
+        "error: too many requests, please slow down",  # error 錨
+    ],
+)
+def test_provider_unavailable_detects_bare_cli_rate_limit(text):
+    """裸 CLI 限流文字（Codex/Antigravity returncode 路徑）須判為 rate_limit → 落 soft。"""
+    assert lc.provider_unavailable_kind(text) == ("rate_limit", "rate limit reached")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 白樣本：專家正常輸出討論限流設計，不得誤判（Antigravity 的 detail 含 stdout）
+        "我們應該替 API 加上 rate limit 設計，並記錄每個 client 的用量。",
+        "rate limiting is a common pattern for public APIs",
+        "the design discussed how rate limits work in distributed systems",
+        "we should handle the too many requests scenario gracefully in the client",
+        "The settings panel should display usage credits and reset time clearly.",
+    ],
+)
+def test_provider_unavailable_ignores_rate_limit_discussion(text):
+    assert lc.provider_unavailable_kind(text) is None
 
 
 def test_classify_failure_plain_quota_text_is_api_error():

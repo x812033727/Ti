@@ -7,21 +7,31 @@
 合併不再「不等 CI 直接 PUT」：先等 CI（`_wait_for_ci`），再合併（`_merge_pr` + `_merge_flow`
 重試）。四／六種結局（MERGED / CI_FAILED / BLOCKED / CONFLICT / TIMEOUT / ERROR）皆寫進
 `PublishResult.outcome` 與 detail，全程不丟例外，杜絕 silent failed。
+
+機械性 BEHIND 自動修復：分支保護要求「與 base 同步」時，落後 base 的 PR 直接 PUT merge
+會回 405（不可重試）。`_merge_flow` 對此不再直接退回，而是 update-branch 把 base 併進來、
+等新 head 的 CI 綠後重試合併，最多 `TI_MERGE_BEHIND_RETRIES` 輪（0＝停用，恢復舊行為）。
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-from . import config, runner
+from . import config, git_cred, runner
+from .repo_ident import repo_key, repo_owner
+
+log = logging.getLogger("ti.publisher")
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
+_SHA_RE = re.compile(r"(?:merge sha=)?\b([0-9a-fA-F]{7,64})\b")
 
 # 發佈目標 repo 的 per-session 覆寫（長期專案可設定自己的 publish_repo）。
 # 用 contextvar 而非函式參數逐層傳遞：publish 之後的 CI 驗證／自我修復迴圈
@@ -37,9 +47,33 @@ def current_repo() -> str:
     return _REPO_OVERRIDE.get() or config.PUBLISH_REPO
 
 
+def assert_repo_allowed(repo: str) -> None:
+    """發佈安全護欄：目標 repo 的 owner 必須在 config.PUBLISH_OWNER_ALLOWLIST 內。
+
+    owner 解析走 repo_ident.repo_owner（host-aware 單一真相）：bare `owner/repo`、
+    GitHub HTTPS、GitHub SSH 皆可；非 GitHub host／格式不符解析不出 owner，一律
+    fail-closed。owner 不在 allowlist（TI_PUBLISH_OWNER_ALLOWLIST）→ raise ValueError，
+    阻止任何對 allowlist 外 repo 的 push／PR／merge／建庫。
+    """
+    owner = repo_owner(repo)
+    if not owner or owner not in config.PUBLISH_OWNER_ALLOWLIST:
+        allowed = "、".join(sorted(config.PUBLISH_OWNER_ALLOWLIST)) or "（空）"
+        raise ValueError(
+            f"發佈目標 repo 被 owner allowlist 擋下：{repo!r}"
+            f"（解析出的 owner：{owner or '無法解析'}；允許的 owner：{allowed}）"
+        )
+
+
 def set_repo_override(repo: str | None) -> contextvars.Token:
-    """設定 repo 覆寫（None/空＝無覆寫），回傳 token 供 reset_repo_override 還原。"""
-    return _REPO_OVERRIDE.set((repo or "").strip())
+    """設定 repo 覆寫（None/空＝無覆寫），回傳 token 供 reset_repo_override 還原。
+
+    護欄 chokepoint：非空覆寫必須通過 owner allowlist（assert_repo_allowed），
+    否則 raise ValueError——擋在覆寫生效之前，後續所有 REST/push 都不會看到違規 repo。
+    """
+    value = (repo or "").strip()
+    if value:
+        assert_repo_allowed(value)
+    return _REPO_OVERRIDE.set(value)
 
 
 def reset_repo_override(token: contextvars.Token) -> None:
@@ -84,6 +118,7 @@ class PublishResult:
     pr_number: int | None = None
     merged: bool = False
     outcome: MergeOutcome | None = None  # 合併結局（未嘗試合併時為 None）
+    merge_sha: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -97,7 +132,14 @@ class PublishResult:
             "merged": self.merged,
             # 以字串輸出（MergeOutcome 繼承 str），未嘗試合併為 None，不破壞既有鍵。
             "outcome": self.outcome.value if self.outcome else None,
+            "merge_sha": self.merge_sha,
         }
+
+
+def merge_sha_from_detail(detail: str) -> str | None:
+    """從 GitHub merge 成功回傳取 revision；infra bypass 訊息也可回收。"""
+    matches = _SHA_RE.findall(str(detail or ""))
+    return matches[-1].lower() if matches else None
 
 
 # --- 純邏輯（可單測，無 IO）-------------------------------------------
@@ -113,14 +155,33 @@ def branch_name(session_id: str) -> str:
     return f"ti-studio/{safe}"
 
 
-def remote_url(repo: str, token: str) -> str:
-    return f"https://x-access-token:{token}@github.com/{repo}.git"
+def remote_url(repo: str) -> str:
+    """組出**乾淨裸 URL**（不含 token）作 push remote。認證改走 git_auth_env 的
+    http.extraHeader（token 不落 remote.url/config/argv）。護欄 chokepoint：
+    owner 不在 allowlist → raise ValueError。
+    """
+    assert_repo_allowed(repo)
+    return f"https://github.com/{repo}.git"
+
+
+def git_auth_env(token: str) -> dict[str, str]:
+    """把認證 header 走 GIT_CONFIG_* env 注入 git（token 不進 argv/ps）。
+
+    委派 SSOT `git_cred.make_env`：token 走 GIT_CONFIG_* env（等價
+    `git -c http.https://github.com/.extraheader=...` 但值走 env 而非 argv，ps 短窗
+    也看不到 token），per-host key（github.com）收斂作用域，並先清空系統 credential.helper。
+    legacy 閥開啟或 git <2.31 時回 {}；publisher push 仍只帶乾淨 push 指令，
+    遠端缺認證時以 403 fail-closed。"""
+    return git_cred.make_env(token)
 
 
 def redact(text: str, token: str | None = None) -> str:
+    """遮蔽 token 明文；同步遮蔽其 base64 形式（extraHeader 走 env，但值仍可能外洩到
+    日誌/錯誤訊息）。base64 走 git_cred.auth_b64（與注入完全相同的編碼、無尾換行）算出同一字串再遮。"""
     token = token or config.GITHUB_TOKEN
     if token and text:
         text = text.replace(token, "***")
+        text = text.replace(git_cred.auth_b64(token), "***")
     return text
 
 
@@ -315,9 +376,12 @@ def _api(path: str) -> str:
     return f"https://api.github.com/repos/{current_repo()}{path}"
 
 
-async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
-    # 全程走參數式 exec：branch/url 當單一 argv，免 shell 解析（防注入）；
-    # 且用簡短 label，避免帶 token 的 remote url 出現在 RunOutput.command。
+async def _push(
+    cwd, branch: str, url: str, *, env: dict[str, str] | None = None
+) -> runner.RunOutput:
+    # 全程走參數式 exec：branch/url 當單一 argv，免 shell 解析（防注入）。
+    # url 為乾淨裸 URL（不含 token），故 remote.url 不洩密；認證走 env（extraHeader），
+    # 只在真正需要認證的 `git push` 帶 env，其餘本地 git 操作不需。
     await runner.run_command_exec(
         cwd, ["git", "branch", "-M", branch], timeout=30, sandbox=False, label="git branch"
     )
@@ -341,6 +405,7 @@ async def _push(cwd, branch: str, url: str) -> runner.RunOutput:
         timeout=120,
         sandbox=False,
         label="git push",
+        env=env,
     )
 
 
@@ -360,14 +425,24 @@ def pr_failure_detail(status_code: int, body: str) -> str:
     return f"PR 建立失敗（{status_code}）：{body[:200]}"
 
 
-async def _push_base(cwd, base: str, url: str) -> runner.RunOutput:
-    """把 workspace HEAD 直接推成遠端 base 分支（空 repo 的首次發佈初始化）。"""
+async def _push_base(
+    cwd, base: str, url: str, *, env: dict[str, str] | None = None
+) -> runner.RunOutput:
+    """把 workspace HEAD 直接推成遠端 base 分支（空 repo 的首次發佈初始化）。
+
+    url 為乾淨裸 URL（不含 token），認證走 env 帶 extraHeader。"""
     return await runner.run_command_exec(
         cwd,
-        ["git", "push", url, f"HEAD:refs/heads/{base}"],
+        [
+            "git",
+            "push",
+            url,
+            f"HEAD:refs/heads/{base}",
+        ],
         timeout=120,
         sandbox=False,
         label="git push (init base)",
+        env=env,
     )
 
 
@@ -376,14 +451,34 @@ async def _ensure_repo(repo: str, base: str) -> str:
 
     - "ready"：repo 存在且 base 分支存在 → 走正常「分支＋PR」流程。
     - "empty"：repo 存在但沒有 base 分支（空 repo，含剛自動建立者）→ 首次發佈直接初始化 base。
-    - "unavailable: <原因>"：不存在且無法自動建立（owner 非 token 使用者／權限不足）。
+    - "unavailable: <原因>"：不存在且無法自動建立（owner 非 token 使用者／權限不足），
+      或屬「既有 repo 但非已知發佈目標」的拒推（見下）。
+
+    護欄 chokepoint（owner allowlist 之外的第二道防線）：**既有** repo 只有
+    config.AUTOPILOT_REPO／config.PUBLISH_REPO 這兩個已知目標可推；其他既有 repo 一律
+    拒推，避免污染任何外部既有 repo。允許在同 owner 底下**建立全新 repo**（SaaS 工作流），
+    放行憑據是本流程 create API 的成功回傳（201）——不用二次 GET 判斷，避免競態。
     """
     import httpx
 
+    # owner allowlist：不在名單內直接 raise（fail-closed），連查詢都不必做。
+    assert_repo_allowed(repo)
+
     headers = _headers()
-    async with httpx.AsyncClient(timeout=30) as client:
+    # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
+    async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
         r = await client.get(f"https://api.github.com/repos/{repo}", headers=headers)
         if r.status_code == 200:
+            # 既有 repo：只有已知發佈目標（AUTOPILOT_REPO／PUBLISH_REPO）可推。
+            known_targets = {
+                repo_key(config.AUTOPILOT_REPO),
+                repo_key(config.PUBLISH_REPO),
+            } - {""}
+            if repo_key(repo) not in known_targets:
+                return (
+                    "unavailable: repo 已存在且非 AUTOPILOT_REPO／PUBLISH_REPO，"
+                    "拒絕推送以免污染既有 repo"
+                )
             b = await client.get(
                 f"https://api.github.com/repos/{repo}/branches/{base}", headers=headers
             )
@@ -401,6 +496,7 @@ async def _ensure_repo(repo: str, base: str) -> str:
             headers=headers,
         )
         if c.status_code in (200, 201):
+            # 剛由本流程 create 成功的全新 repo：以 create 回傳為憑據直接放行初始化。
             return "empty"
         return f"unavailable: 自動建立 repo 失敗（{c.status_code}）：{c.text[:120]}"
 
@@ -410,7 +506,8 @@ async def _open_pr(payload: dict) -> tuple[bool, str]:
     import httpx
 
     headers = _headers()
-    async with httpx.AsyncClient(timeout=30) as client:
+    # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
+    async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
         r = await client.post(_api("/pulls"), json=payload, headers=headers)
     if r.status_code in (200, 201):
         return True, r.json().get("html_url", "")
@@ -432,6 +529,7 @@ async def _get_pr_status(
     data: dict | None = None
     for i in range(retries + 1):
         try:
+            # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
             async with httpx.AsyncClient(timeout=30) as client:
                 r = await client.get(_api(f"/pulls/{number}"), headers=headers)
         except Exception:
@@ -454,6 +552,7 @@ async def _fetch_ci(head_sha: str) -> tuple[list, dict] | None:
     headers = _headers()
     runs: list = []
     try:
+        # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
         async with httpx.AsyncClient(timeout=30) as client:
             page = 1
             while page <= 20:  # 上限 2000 個 check，足夠且避免異常無限翻頁
@@ -539,6 +638,7 @@ async def _update_branch(number: int) -> bool:
 
     headers = _headers()
     try:
+        # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.put(_api(f"/pulls/{number}/update-branch"), headers=headers)
         return r.status_code in (200, 202)
@@ -560,6 +660,7 @@ async def _merge_pr(number: int, payload: dict) -> tuple[MergeOutcome, str, bool
 
     headers = _headers()
     try:
+        # trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.put(_api(f"/pulls/{number}/merge"), json=payload, headers=headers)
     except Exception as e:  # 網路等例外也不外拋，轉成可讀錯誤
@@ -597,13 +698,20 @@ async def _merge_flow(
         - 其餘暫時性錯誤（409 race／5xx／網路）→ 純指數 backoff 重試，不做多餘的 update-branch
           （避免製造多餘 merge commit 與整輪 CI 重跑）。
       超過次數才放棄並回報。
+    - 機械性 BEHIND 修復（不可重試的 405）：分支保護開「與 base 同步」時，落後的 PR 直接
+      PUT merge 會回 405（retryable=False），舊行為在此終局退回、整場任務被丟棄重跑
+      （生產案例：任務 #250 兩小時討論產出 PR #283，因討論期間 main 前進而整場退回）。
+      改為：重查即時狀態，確為 `behind` 且還有額度 → update-branch → 重等新 head 的 CI →
+      重試合併；最多 `TI_MERGE_BEHIND_RETRIES` 輪（0＝停用，恢復舊行為），與一般重試
+      各自計數。update 後 CI 紅或 `dirty`（真衝突）維持原退回行為；其餘失敗路徑不變。
     """
     if await_registration:
         grace = config.PUBLISH_CI_GRACE if registration_grace is None else registration_grace
         await _await_checks_registered(number, grace, sleep=sleep)
 
-    last_outcome, last_detail = MergeOutcome.ERROR, "未知錯誤"
-    for attempt in range(retries + 1):
+    attempt = 0  # 一般（可重試錯誤）的合併嘗試輪數；behind 自動更新輪數獨立計數
+    behind_rounds = 0
+    while True:
         status = await _get_pr_status(number, sleep=sleep)
         if status is None:
             return MergeOutcome.ERROR, "無法取得 PR 狀態（API／網路錯誤）"
@@ -626,10 +734,31 @@ async def _merge_flow(
             if ci_state == "infra_fail":
                 detail = f"已繞過基礎設施/帳務 CI 失敗合併（{ci_detail}）；merge sha={detail}"
             return outcome, detail
-        last_outcome, last_detail = outcome, detail
 
         exhausted = attempt >= retries
         if not retryable or exhausted:
+            # 機械性 BEHIND 自動修復：405（不可重試）時重查一次即時狀態——等 CI 期間
+            # base 可能才剛前進，此刻 PR 其實是 behind。確為 behind 且還有自動更新額度
+            # → update-branch 把 base 併進來，回迴圈頂端重抓新 head、重等 CI 再試合併。
+            # 額度用盡或 update 失敗 → fall through 走原終局分類退回（不無限追趕）。
+            if not retryable and behind_rounds < config.MERGE_BEHIND_RETRIES:
+                refreshed = await _get_pr_status(number, sleep=sleep)
+                if refreshed is not None:
+                    status = refreshed
+                if (status.get("mergeable_state") or "") == "behind":
+                    behind_rounds += 1
+                    log.info(
+                        "PR #%s 落後 base，自動更新分支後重試合併（第 %d/%d 輪）",
+                        number,
+                        behind_rounds,
+                        config.MERGE_BEHIND_RETRIES,
+                    )
+                    if await _update_branch(number):
+                        # 給 GitHub 一點時間產生 update commit 並重算 mergeable；
+                        # 迴圈頂端會重抓（新）head sha 並重等該 sha 的 CI。
+                        await sleep(ci_interval)
+                        continue
+                    detail = f"{detail}（update-branch 失敗，無法自動更新分支）"
             # 用結構化狀態精準分類卡關原因（CI 已過卻 BLOCKED → 多半是缺審核／保護規則）。
             refined = classify_merge_state(status)
             if refined in (MergeOutcome.BLOCKED, MergeOutcome.CONFLICT):
@@ -639,14 +768,15 @@ async def _merge_flow(
                 outcome = refined
             if retryable and exhausted:
                 detail = f"{detail}（已達重試上限 {retries} 次）"
+            elif behind_rounds and (status.get("mergeable_state") or "") == "behind":
+                detail = f"{detail}（已自動更新分支 {behind_rounds} 輪仍落後 base，放棄追趕）"
             return outcome, detail
 
         # 可重試：只有 stale（behind）才 update-branch 真正修分支；其餘暫時性錯誤純退避重試。
         if (status.get("mergeable_state") or "") == "behind":
             await _update_branch(number)
         await sleep(_backoff(attempt, ci_interval))
-
-    return last_outcome, last_detail
+        attempt += 1
 
 
 async def publish(
@@ -658,13 +788,196 @@ async def publish(
     merge: bool = False,
     repo: str | None = None,
 ) -> PublishResult:
-    """發佈 workspace 成果。repo 給值＝per-project 覆寫（含自動建 repo／空 repo 初始化）。"""
-    token = set_repo_override(repo) if repo else None
+    """發佈 workspace 成果。repo 給值＝per-project 覆寫（含自動建 repo／空 repo 初始化）。
+
+    維持「publish 全程不丟例外」的對外合約：owner allowlist 護欄（set_repo_override／
+    remote_url／_ensure_repo）攔下違規目標時，轉成 ok=False 的 PublishResult 回報，
+    不外拋 ValueError。
+    """
+    try:
+        token = set_repo_override(repo) if repo else None
+    except ValueError as e:
+        return PublishResult(False, str(e), repo=repo)
     try:
         return await _publish_inner(cwd, session_id, requirement, make_pr=make_pr, merge=merge)
+    except ValueError as e:
+        return PublishResult(False, str(e), repo=current_repo())
     finally:
         if token is not None:
             reset_repo_override(token)
+
+
+async def rollback_merge(
+    cwd,
+    session_id: str,
+    *,
+    bad_merge_sha: str,
+    previous_sha: str,
+    repo: str | None = None,
+) -> PublishResult:
+    """以受 CI 保護的 revert PR 回復一次已合併但部署不健康的變更。
+
+    自動 rollback 只在遠端 base 仍精確等於 ``bad_merge_sha`` 時執行，避免覆蓋其他人
+    後續提交；revert 後的 tree 也必須逐位等於先前已由 health revision 證明健康的
+    ``previous_sha``。任一證據缺失都在 push 前 fail-closed。
+    """
+    try:
+        token = set_repo_override(repo) if repo else None
+    except ValueError as exc:
+        return PublishResult(False, str(exc), repo=repo)
+    try:
+        return await _rollback_merge_inner(
+            cwd,
+            session_id,
+            bad_merge_sha=bad_merge_sha,
+            previous_sha=previous_sha,
+        )
+    except ValueError as exc:
+        return PublishResult(False, str(exc), repo=current_repo())
+    finally:
+        if token is not None:
+            reset_repo_override(token)
+
+
+async def _rollback_merge_inner(
+    cwd,
+    session_id: str,
+    *,
+    bad_merge_sha: str,
+    previous_sha: str,
+) -> PublishResult:
+    repo = current_repo()
+    bad = str(bad_merge_sha or "").strip().lower()
+    previous = str(previous_sha or "").strip().lower()
+    sha_re = re.compile(r"[0-9a-f]{40,64}")
+    if not is_configured():
+        return PublishResult(False, "rollback publish 設定未完整", repo=repo)
+    if not sha_re.fullmatch(bad) or not sha_re.fullmatch(previous):
+        return PublishResult(False, "rollback revision 證據不完整", repo=repo)
+
+    base = config.PUBLISH_BASE
+    rollback_remote = "ti_rollback"
+    url = remote_url(repo)
+    auth_env = git_auth_env(config.GITHUB_TOKEN)
+
+    async def git(argv: list[str], label: str, *, env: dict[str, str] | None = None):
+        return await runner.run_command_exec(
+            cwd,
+            ["git", *argv],
+            timeout=120,
+            sandbox=False,
+            label=label,
+            env=env,
+        )
+
+    with contextlib.suppress(Exception):
+        await git(["remote", "remove", rollback_remote], "git rollback remote remove")
+    added = await git(
+        ["remote", "add", rollback_remote, url],
+        "git rollback remote add",
+    )
+    if not added.ok:
+        return PublishResult(False, "rollback 無法建立安全 remote", repo=repo)
+    fetched = await git(
+        ["fetch", "--no-tags", rollback_remote, base],
+        "git rollback fetch base",
+        env=auth_env,
+    )
+    if not fetched.ok:
+        return PublishResult(False, "rollback 無法讀取遠端 base", repo=repo)
+    remote_ref = f"refs/remotes/{rollback_remote}/{base}"
+    remote_head = await git(["rev-parse", remote_ref], "git rollback remote head")
+    if not remote_head.ok or remote_head.output.strip().lower() != bad:
+        return PublishResult(
+            False,
+            "rollback 已拒絕：遠端 base 已移動或無法證明仍是本次 merge",
+            repo=repo,
+        )
+    ancestor = await git(
+        ["merge-base", "--is-ancestor", previous, bad],
+        "git rollback ancestor proof",
+    )
+    if not ancestor.ok:
+        return PublishResult(
+            False, "rollback 已拒絕：先前健康 revision 不是本次 merge 祖先", repo=repo
+        )
+
+    branch = branch_name(f"{session_id}-rollback")
+    checked_out = await git(
+        ["checkout", "-B", branch, remote_ref],
+        "git rollback checkout",
+    )
+    if not checked_out.ok:
+        return PublishResult(False, "rollback 無法建立隔離分支", branch=branch, repo=repo)
+    parents = await git(["rev-list", "--parents", "-n", "1", bad], "git rollback parents")
+    if not parents.ok:
+        return PublishResult(False, "rollback 無法判定 merge parents", branch=branch, repo=repo)
+    parent_count = max(0, len(parents.output.split()) - 1)
+    if parent_count < 1:
+        return PublishResult(False, "rollback merge 沒有可回復的 parent", branch=branch, repo=repo)
+    revert_argv = ["revert", "--no-edit"]
+    if parent_count > 1:
+        revert_argv.extend(["-m", "1"])
+    revert_argv.append(bad)
+    reverted = await git(revert_argv, "git rollback revert")
+    if not reverted.ok:
+        return PublishResult(False, "rollback revert 產生衝突或失敗", branch=branch, repo=repo)
+    exact_tree = await git(["diff", "--quiet", previous, "HEAD"], "git rollback tree proof")
+    if not exact_tree.ok:
+        return PublishResult(
+            False,
+            "rollback 已拒絕：revert 後內容不等於先前健康 revision",
+            branch=branch,
+            repo=repo,
+        )
+
+    pushed = await _push(cwd, branch, url, env=auth_env)
+    if not pushed.ok:
+        return PublishResult(False, "rollback push 失敗", branch=branch, repo=repo)
+    payload = pr_payload(f"Rollback unhealthy merge {bad[:12]}", branch, base)
+    payload["title"] = f"Rollback unhealthy merge {bad[:12]}"
+    opened, info = await _open_pr(payload)
+    if not opened:
+        return PublishResult(
+            False,
+            "rollback PR 建立失敗：" + redact(info)[:200],
+            branch=branch,
+            repo=repo,
+            pushed=True,
+        )
+    result = PublishResult(
+        True,
+        "rollback PR 已建立",
+        branch=branch,
+        repo=repo,
+        pushed=True,
+        pr_url=info,
+        pr_number=parse_pr_number(info),
+    )
+    if result.pr_number is None:
+        result.ok = False
+        result.outcome = MergeOutcome.ERROR
+        result.detail = "rollback PR 編號無法解析"
+        return result
+    outcome, detail = await _merge_flow(
+        result.pr_number,
+        merge_payload(branch),
+        ci_timeout=config.PUBLISH_CI_TIMEOUT,
+        ci_interval=config.PUBLISH_CI_INTERVAL,
+        retries=config.PUBLISH_MERGE_RETRIES,
+        await_registration=True,
+        registration_grace=config.PUBLISH_CI_GRACE,
+    )
+    result.outcome = outcome
+    result.merged = outcome == MergeOutcome.MERGED
+    result.merge_sha = merge_sha_from_detail(detail) if result.merged else None
+    result.ok = result.merged and bool(result.merge_sha)
+    result.detail = (
+        "rollback PR 已通過 CI 並合併"
+        if result.ok
+        else "rollback PR 未能完成健康可驗證的合併：" + redact(detail)[:200]
+    )
+    return result
 
 
 async def _publish_inner(
@@ -681,6 +994,9 @@ async def _publish_inner(
     # 發佈前淨化:剔除沙箱/環境污染(.venv／*.db／HOME dotfiles／.claude),避免交付膨脹的髒 repo。
     # 必須趕在下面這次「成果」commit 之前,讓交付的 HEAD 工作樹乾淨。
     await runner.git_sanitize_workspace(cwd)
+    # ruff 專案發佈前自動排版:改良迴圈無 lint 閘門,未排版的交付碼會被目標 repo 的 CI（ruff
+    # format --check）擋住合併。在「成果」commit 前自動 ruff format,讓 PR 不因格式漂移卡 CI。
+    await runner.ruff_format_workspace(cwd)
     await runner.git_commit(cwd, "Ti Studio 成果")
 
     # per-project 覆寫的 repo 可能不存在（自動建立）或是空的（首次發佈直接初始化 base）。
@@ -692,9 +1008,21 @@ async def _publish_inner(
                 False, "無法發佈：" + redact(state.partition(":")[2].strip() or state), repo=repo
             )
         if state == "empty":
-            init = await _push_base(cwd, config.PUBLISH_BASE, remote_url(repo, config.GITHUB_TOKEN))
+            init = await _push_base(
+                cwd,
+                config.PUBLISH_BASE,
+                remote_url(repo),
+                env=git_auth_env(config.GITHUB_TOKEN),
+            )
             if not init.ok:
                 return PublishResult(False, "首次發佈初始化失敗：" + redact(init.output), repo=repo)
+            head = await runner.run_command_exec(
+                cwd,
+                ["git", "rev-parse", "HEAD"],
+                timeout=30,
+                sandbox=False,
+                label="git head",
+            )
             return PublishResult(
                 True,
                 f"首次發佈：已初始化 {repo} 的 {config.PUBLISH_BASE}（成果已在主分支，無需 PR）",
@@ -702,9 +1030,10 @@ async def _publish_inner(
                 repo=repo,
                 pushed=True,
                 merged=True,
+                merge_sha=head.output.strip().lower() if head.ok else None,
             )
 
-    push = await _push(cwd, branch, remote_url(repo, config.GITHUB_TOKEN))
+    push = await _push(cwd, branch, remote_url(repo), env=git_auth_env(config.GITHUB_TOKEN))
     if not push.ok:
         return PublishResult(False, "push 失敗：" + redact(push.output), branch=branch, repo=repo)
 
@@ -746,6 +1075,7 @@ async def _publish_inner(
     res.outcome = outcome
     if outcome == MergeOutcome.MERGED:
         res.merged = True
+        res.merge_sha = merge_sha_from_detail(minfo)
         res.detail = "已 push、建立 PR 並合併"
     else:
         label = _OUTCOME_LABEL.get(outcome, "未合併")
@@ -854,11 +1184,14 @@ async def ci_failure_logs(repo: str, branch: str, ref: str) -> str:
 
 
 async def repush(cwd, branch: str) -> runner.RunOutput:
-    """把工程師修正後的 commit 重推同一分支（remote ti_publish 由初次 _push 已建好）。"""
+    """把工程師修正後的 commit 重推同一分支（remote ti_publish 由初次 _push 已建好）。
+
+    remote.url 現為乾淨裸 URL（不含 token），故重推同樣需帶 extraHeader 認證 env。"""
     return await runner.run_command_exec(
         cwd,
         ["git", "push", "ti_publish", branch],
         timeout=120,
         sandbox=False,
         label="git push",
+        env=git_auth_env(config.GITHUB_TOKEN),
     )

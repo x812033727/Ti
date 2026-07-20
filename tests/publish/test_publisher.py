@@ -9,6 +9,19 @@ from studio import config, publisher, runner
 # --- 純邏輯 -------------------------------------------------------------
 
 
+def _force_modern_git_auth(monkeypatch):
+    """顯式鎖定 modern-git 路徑（git ≥ 2.31 + GIT_CONFIG_* env 注入）。
+
+    原本是 autouse fixture `_git_env_supported`，語意是「繞過 argv 斷言」
+    （autouse 讓 git_cred_argv 回 [] 使 token 不進 argv）。
+    publisher._push/_push_base/repush 移除 argv splice 後，語意改為「明確測試
+    modern-git 路徑」——各測試改為**顯式呼叫**，避免環境中 git < 2.31 時
+    git_auth_env 回 {} 導致 env 斷言退化為假綠。
+    """
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", False)
+    monkeypatch.setattr(publisher.git_cred, "_GIT_ENV_SUPPORTED", True)
+
+
 def test_is_configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "")
     monkeypatch.setattr(config, "PUBLISH_REPO", "")
@@ -42,11 +55,208 @@ def test_branch_name_empty_fallback():
     assert publisher.branch_name("@#%/. ") == "ti-studio/session"
 
 
-def test_remote_url_and_redact():
-    url = publisher.remote_url("octo/repo", "secrettoken")
-    assert url == "https://x-access-token:secrettoken@github.com/octo/repo.git"
-    assert "secrettoken" not in publisher.redact(url, "secrettoken")
-    assert "***" in publisher.redact(url, "secrettoken")
+def test_merge_sha_extraction_handles_plain_and_infra_bypass_details():
+    sha = "a" * 40
+    assert publisher.merge_sha_from_detail(sha) == sha
+    assert publisher.merge_sha_from_detail(f"CI bypass; merge sha={sha}") == sha
+    assert publisher.merge_sha_from_detail("merged without revision") is None
+
+
+def test_remote_url_and_redact(monkeypatch):
+    token = "secrettoken"
+    monkeypatch.setattr(config, "GITHUB_TOKEN", token)
+    # remote_url 掛了 owner allowlist 護欄：放行本測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"octo"}))
+    url = publisher.remote_url("octo/repo")
+    # 乾淨裸 URL：逐字不含 x-access-token 與 token 明文
+    assert url == "https://github.com/octo/repo.git"
+    assert "x-access-token" not in url
+    assert token not in url
+
+
+def test_git_auth_env_carries_base64_header(monkeypatch):
+    """認證改走 env 帶 base64(extraHeader)：驗 header 格式正確、無尾換行，且 b64decode 可反推。"""
+    import base64
+
+    _force_modern_git_auth(monkeypatch)
+    token = "secrettoken"
+    env = publisher.git_auth_env(token)
+    # 走 GIT_CONFIG_* env 注入；先清空 credential.helper，再掛 per-host extraHeader。
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
+    assert env["GIT_CONFIG_VALUE_0"] == ""
+    assert env["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+    value = env["GIT_CONFIG_VALUE_1"]
+    expected_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    assert value == f"Authorization: Basic {expected_b64}"
+    header_b64 = value.rsplit(" ", 1)[-1]
+    assert header_b64 == expected_b64
+    # 釘死「-n 尾換行坑」：b64 內不得有換行
+    assert "\n" not in header_b64
+    # 反驗：解回來必須逐字等於 x-access-token:token
+    assert base64.b64decode(header_b64).decode() == f"x-access-token:{token}"
+    # token 明文不得出現在整包 env 的任一值
+    assert all(token not in v for v in env.values())
+
+
+def test_redact_masks_token_plain_and_base64():
+    """redact 須同時遮蔽 token 明文與其 base64 形式，杜絕「改乾淨 URL 卻從 header 漏 token」。"""
+    import base64
+
+    token = "secrettoken"
+    header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    leak = f"token={token} header=Authorization: Basic {header_b64}"
+    red = publisher.redact(leak, token)
+    assert token not in red
+    assert header_b64 not in red
+    assert "***" in red
+
+
+@pytest.mark.asyncio
+async def test_push_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_path):
+    """_push 必須只在 git push 帶 extraHeader env，且 argv/command 不含 token 或 b64。"""
+    import base64
+
+    _force_modern_git_auth(monkeypatch)
+    token = "secrettoken"
+    env = publisher.git_auth_env(token)
+    header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    calls = []
+
+    async def spy_exec(cwd, argv, **kwargs):
+        calls.append((list(argv), dict(kwargs)))
+        return runner.RunOutput(
+            command=kwargs.get("label", argv[0]),
+            exit_code=0,
+            output="ok",
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(runner, "run_command_exec", spy_exec)
+
+    out = await publisher._push(
+        tmp_path,
+        "ti-studio/s1",
+        "https://github.com/octo/repo.git",
+        env=env,
+    )
+
+    assert out.ok
+    assert len(calls) == 4
+    assert calls[2][0] == [
+        "git",
+        "remote",
+        "add",
+        "ti_publish",
+        "https://github.com/octo/repo.git",
+    ]
+    assert calls[3][0] == ["git", "push", "-u", "ti_publish", "ti-studio/s1"]
+    assert calls[3][1]["env"] == env
+    assert all(call[1].get("env") is None for call in calls[:3])
+
+    for argv, kwargs in calls:
+        joined_argv = "\0".join(argv)
+        assert token not in joined_argv
+        assert header_b64 not in joined_argv
+        assert "Authorization:" not in joined_argv
+        assert token not in kwargs["label"]
+        assert header_b64 not in kwargs["label"]
+
+
+@pytest.mark.asyncio
+async def test_push_base_uses_auth_env_without_leaking_to_argv(monkeypatch, tmp_path):
+    """首次發佈初始化 base 也必須走 env，不可把 header 塞進 argv。"""
+    import base64
+
+    _force_modern_git_auth(monkeypatch)
+    token = "secrettoken"
+    env = publisher.git_auth_env(token)
+    header_b64 = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    calls = []
+
+    async def spy_exec(cwd, argv, **kwargs):
+        calls.append((list(argv), dict(kwargs)))
+        return runner.RunOutput(
+            command=kwargs.get("label", argv[0]),
+            exit_code=0,
+            output="ok",
+            timed_out=False,
+        )
+
+    monkeypatch.setattr(runner, "run_command_exec", spy_exec)
+
+    out = await publisher._push_base(
+        tmp_path,
+        "main",
+        "https://github.com/octo/repo.git",
+        env=env,
+    )
+
+    assert out.ok
+    assert calls == [
+        (
+            ["git", "push", "https://github.com/octo/repo.git", "HEAD:refs/heads/main"],
+            {
+                "timeout": 120,
+                "sandbox": False,
+                "label": "git push (init base)",
+                "env": env,
+            },
+        )
+    ]
+    joined_argv = "\0".join(calls[0][0])
+    assert token not in joined_argv
+    assert header_b64 not in joined_argv
+    assert "Authorization:" not in joined_argv
+
+
+@pytest.mark.asyncio
+async def test_run_command_exec_env_reaches_child_without_entering_command(monkeypatch, tmp_path):
+    """實跑子行程確認 env 到達；預期值只用 hash 比對，避免 token/b64 進 argv。"""
+    import hashlib
+    import sys
+
+    _force_modern_git_auth(monkeypatch)
+    token = "secrettoken"
+    env = publisher.git_auth_env(token)
+    header_b64 = env["GIT_CONFIG_VALUE_1"].rsplit(" ", 1)[-1]
+    probe_env = {
+        **env,
+        "EXPECTED_HEADER_SHA": hashlib.sha256(env["GIT_CONFIG_VALUE_1"].encode()).hexdigest(),
+    }
+
+    probe = (
+        "import hashlib, os, sys\n"
+        "value = os.environ.get('GIT_CONFIG_VALUE_1', '')\n"
+        "ok = (\n"
+        "    os.environ.get('GIT_CONFIG_COUNT') == '2'\n"
+        "    and os.environ.get('GIT_CONFIG_KEY_0') == "
+        "'credential.helper'\n"
+        "    and os.environ.get('GIT_CONFIG_VALUE_0') == ''\n"
+        "    and os.environ.get('GIT_CONFIG_KEY_1') == "
+        "'http.https://github.com/.extraheader'\n"
+        "    and hashlib.sha256(value.encode()).hexdigest()\n"
+        "    == os.environ.get('EXPECTED_HEADER_SHA')\n"
+        ")\n"
+        "print('env-ok' if ok else 'env-missing')\n"
+        "sys.exit(0 if ok else 1)\n"
+    )
+    out = await runner.run_command_exec(
+        tmp_path,
+        [sys.executable, "-c", probe],
+        timeout=10,
+        sandbox=False,
+        label="env probe",
+        env=probe_env,
+    )
+
+    assert out.ok
+    assert out.output.strip() == "env-ok"
+    assert out.command == "env probe"
+    assert token not in out.command
+    assert header_b64 not in out.command
+    assert token not in probe
+    assert header_b64 not in probe
 
 
 def test_pr_payload():
@@ -70,14 +280,88 @@ def test_merge_payload():
     assert "ti-studio/x" in p["commit_title"]
 
 
+@pytest.mark.asyncio
+async def test_rollback_merge_requires_unchanged_remote_and_exact_previous_tree(
+    monkeypatch, tmp_path, _configured
+):
+    previous, bad, restored = "a" * 40, "b" * 40, "c" * 40
+    calls = []
+
+    async def command(_cwd, argv, **kwargs):
+        calls.append(list(argv))
+        if argv[1:3] == ["rev-parse", "refs/remotes/ti_rollback/main"]:
+            output = bad + "\n"
+        elif argv[1:4] == ["rev-list", "--parents", "-n"]:
+            output = f"{bad} {previous} {'d' * 40}\n"
+        else:
+            output = "ok"
+        return runner.RunOutput(kwargs.get("label", "git"), 0, output, False)
+
+    async def push(*args, **kwargs):
+        return runner.RunOutput("push", 0, "ok", False)
+
+    async def open_pr(_payload):
+        return True, "https://github.com/o/r/pull/77"
+
+    async def merge_flow(*args, **kwargs):
+        return publisher.MergeOutcome.MERGED, f"merge sha={restored}"
+
+    monkeypatch.setattr(runner, "run_command_exec", command)
+    monkeypatch.setattr(publisher, "_push", push)
+    monkeypatch.setattr(publisher, "_open_pr", open_pr)
+    monkeypatch.setattr(publisher, "_merge_flow", merge_flow)
+
+    result = await publisher.rollback_merge(
+        tmp_path,
+        "session1",
+        bad_merge_sha=bad,
+        previous_sha=previous,
+    )
+
+    assert result.ok is True and result.merged is True
+    assert result.pr_number == 77 and result.merge_sha == restored
+    assert ["git", "revert", "--no-edit", "-m", "1", bad] in calls
+    assert ["git", "diff", "--quiet", previous, "HEAD"] in calls
+
+
+@pytest.mark.asyncio
+async def test_rollback_merge_refuses_when_remote_base_has_moved(
+    monkeypatch, tmp_path, _configured
+):
+    pushed = False
+
+    async def command(_cwd, argv, **kwargs):
+        output = "c" * 40 if argv[1] == "rev-parse" else "ok"
+        return runner.RunOutput(kwargs.get("label", "git"), 0, output, False)
+
+    async def push(*args, **kwargs):
+        nonlocal pushed
+        pushed = True
+        return runner.RunOutput("push", 0, "ok", False)
+
+    monkeypatch.setattr(runner, "run_command_exec", command)
+    monkeypatch.setattr(publisher, "_push", push)
+    result = await publisher.rollback_merge(
+        tmp_path,
+        "session1",
+        bad_merge_sha="b" * 40,
+        previous_sha="a" * 40,
+    )
+    assert result.ok is False and "遠端 base 已移動" in result.detail
+    assert pushed is False
+
+
 # --- publish 流程（mock IO）-------------------------------------------
 
 
 @pytest.fixture
 def _configured(monkeypatch):
+    _force_modern_git_auth(monkeypatch)
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"o"}))
 
     # 跳過實際 git init/commit
     async def _noop(*a, **k):
@@ -98,7 +382,27 @@ async def test_publish_not_configured(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_push_then_pr(monkeypatch, _configured):
-    async def fake_push(cwd, branch, url):
+    import base64
+
+    seen = {}
+
+    async def fake_push(cwd, branch, url, **kwargs):
+        seen["url"] = url
+        seen["env"] = kwargs.get("env")
+        assert url == "https://github.com/o/r.git"
+        assert "x-access-token" not in url
+        assert "tok" not in url
+        env = kwargs["env"]
+        assert env["GIT_CONFIG_COUNT"] == "2"
+        assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
+        assert env["GIT_CONFIG_VALUE_0"] == ""
+        assert env["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
+        value = env["GIT_CONFIG_VALUE_1"]
+        assert value.startswith("Authorization: Basic ")
+        header_b64 = value.rsplit(" ", 1)[-1]
+        assert "\n" not in header_b64
+        assert base64.b64decode(header_b64).decode() == "x-access-token:tok"
+        assert "tok" not in value
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
@@ -111,11 +415,13 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
     assert res.ok and res.pushed
     assert res.branch == "ti-studio/s1"
     assert res.pr_url.endswith("/pull/9")
+    assert seen["url"] == "https://github.com/o/r.git"
+    assert seen["env"]["GIT_CONFIG_VALUE_1"].startswith("Authorization: Basic ")
 
 
 @pytest.mark.asyncio
 async def test_publish_push_fail(monkeypatch, _configured):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(
             command="git push",
             exit_code=1,
@@ -132,7 +438,7 @@ async def test_publish_push_fail(monkeypatch, _configured):
 
 @pytest.mark.asyncio
 async def test_publish_pr_fail_still_ok(monkeypatch, _configured):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
@@ -151,7 +457,7 @@ async def test_publish_pr_fail_still_ok(monkeypatch, _configured):
 
 @pytest.fixture
 def _ok_push_pr(monkeypatch):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):

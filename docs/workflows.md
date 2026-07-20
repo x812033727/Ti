@@ -18,9 +18,9 @@ stage 序列」驅動。讓全流程（架構討論→任務波次→整合→De
 
 | 來源 | 怎麼用 |
 |---|---|
-| 內建保留流程 | 「預設流程」（等價現有寫死骨架）與「動態優先」（dynamic-first，PM 運行時溝通/分派/招募為主）兩個內建定義，永遠可選、不可被同名檔案覆蓋 |
+| 內建保留流程 | 「預設流程」（等價現有寫死骨架）、「動態優先」（dynamic-first，PM 運行時溝通/分派/招募為主）與「快速模式」（fast-track，動態討論分派→實作→QA 單審→PM 收尾驗收，砍三審與任務級 critic）三個內建定義，永遠可選、不可被同名檔案覆蓋 |
 | 互動預設 | **互動 session（WS，非 improve）未指定時走 `TI_DEFAULT_WORKFLOW`（預設「動態優先」）**；autopilot／improver 不受影響（維持安全骨架） |
-| 網頁編輯器 | 頂列「🧭 流程」開編輯器：列出/新增/編輯（stages 為 JSON）/刪除，可「載入預設範本」當起點，儲存即經 `/api/workflows` 後端驗證 |
+| 網頁編輯器 | 頂列「🧭 流程」開編輯器：列出/新增/編輯/刪除；stages 預設以**結構化卡片**編輯（型別/角色/閘門/巢狀 task_pipeline），「{} JSON」可切進階原文模式，可「載入預設範本」當起點，儲存即經 `/api/workflows` 後端驗證 |
 | API / 檔案 | `GET/POST/PUT/DELETE /api/workflows` 或直接編 `workflows.yaml`；寫入走 `require_admin` |
 | 啟動選用 | 前端啟動列「動態流程」下拉，或 WS 握手帶 `{"workflow": "<名稱>"}` |
 
@@ -119,6 +119,30 @@ stages:
   - {type: wrap_up}
 ```
 
+### 內建「快速模式」（`fast_track_workflow()`）
+```yaml
+name: 快速模式
+stages:
+  - {type: clarify}
+  - {type: decompose}
+  - {type: dynamic, name: 快速討論與分派, budget: 3, fallback: engineer}
+  - type: build
+    task_pipeline:
+      - {type: implement, assignee: engineer}
+      - type: review
+        gate: [{role: qa, verdict: qa_passed}]
+  - {type: demo}
+  - {type: wrap_up}
+  - {type: publish}
+```
+
+設計取捨：任務級驗收單留 qa 而非 pm，因為 PM 的最終驗收本來就在 `wrap_up`（引擎路徑），
+而 QA 有 Bash 能實際跑測試、輸出 `驗證: PASS/FAIL`，是唯一能給執行面證據的驗收角色。
+客製者若要任務級改由 PM 驗收，把 gate 換成 `{role: pm, verdict: pm_done}` 即可
+（generic 審查 prompt 會指示輸出 `決議: 完成/未完成`）。實作中卡關則由引擎級「中途求助」
+承接（工程師輸出一行 `求助: <問題>`，PM 即時給指示後續作；`TI_TASK_HELP`／
+`TI_TASK_HELP_MAX` 控制）——「有問題問 PM」在任務內也成立，不只在 dynamic 分派階段。
+
 ## 動態 step（`dynamic`）
 
 `_stage_dynamic` 是有界迴圈：每 hop 餵 PM 黑板摘要＋roster（含角色描述）＋需求，要求輸出
@@ -156,6 +180,39 @@ dynamic step 中，PM 的 `下一步: <role_key>` 若指到不在場的角色：
 - **行動閉環**：下一場 `decompose` 把 `docs/IMPROVEMENT.md` 讀回注入 PM 規劃，讓改善計畫被消化——
   形成「驗證 → 改善計畫 → 下一場行動」迴圈（一次性 session 每場新 workspace 無此檔→零行為差；
   專案模式固定 workspace 才跨場累積生效）。
+
+## 禁改路徑（`禁改:` marker）
+
+PM 在任務行之後可輸出 `禁改:` 行，告知工程師該任務不得修改哪些檔案；
+引擎在 commit 前自動比對 staged 檔案，違規則攔截並廣播警告。
+
+### marker 格式
+
+```
+任務: #<id> <標題>
+禁改: #<id> <pattern>[, <pattern>...]
+```
+
+- `#<id>` 必須與緊鄰的任務行 id 對應（懸空 id 會被安全丟棄）。
+- 多個 pattern 以英文逗號加空白分隔。
+
+### pattern 比對語意
+
+| pattern 形式 | 比對行為 |
+|---|---|
+| 以 `/` 結尾（如 `docs/`） | 目錄前綴比對：staged 路徑以此字串開頭即命中 |
+| 其他（如 `studio/config.py`、`*.lock`） | `PurePath.match` 比對（`*` 不跨 `/`） |
+
+> 注意：使用 Python 標準庫 `pathlib.PurePath.match`，不引入 `pathspec` 等外部依賴；`**` 跨目錄語意不支援，請用目錄前綴（`/` 結尾）代替。
+
+### 範例
+
+```
+任務: #2 接線 orchestrator
+禁改: #2 studio/config.py, docs/
+```
+
+上述宣告在任務 #2 的 commit 前，會攔截 `studio/config.py` 及 `docs/` 目錄下任何被修改的檔案。
 
 ## 相關設定
 

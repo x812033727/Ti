@@ -28,11 +28,18 @@
 
 | 項目 | 判定 | 具體描述 |
 |---|---|---|
-| 真實 `v*` tag-push 端到端 | 缺口 | 三個檔案與守護測試能證明結構半閉環，但無法證明 GitHub 生產環境已實際跑過 `push tag -> gh release create -> release:published -> release-smoke`。需用真實 tag-push 驗證一次。 |
+| 真實 `v*` tag-push 端到端 | 缺口 | 三個檔案與守護測試能證明結構半閉環，但無法證明 GitHub 生產環境已實際跑過 `push tag -> gh release create -> release:published -> release-smoke`。正式發 release 時先照下方人工清單開 `body.md` 確認頂部 `## ⚠️ Breaking Changes`，再做真實 tag-push 驗證一次。 |
 | `GH_PAT` 正式設定/輪替文件 | 缺口 | `publish-release.yml:11-14` 有 workflow 註解，但 repo 協作文件尚未固定列出 fine-grained、本 repo only、`Contents: Read and write`、secret 名稱 `GH_PAT`、過期後 Step 5 會 403 與輪替方式。 |
 | 半閉環聲明文件化 | 缺口 | workflow 註解說明觸發鏈設計，但協作文件尚未明文標註「單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證」。 |
 | PAT 過期/撤銷 fail-fast | 缺口 | `publish-release.yml:36-44` 只檢查 secret 非空；`publish-release.yml:36-39` 已註明過期 PAT 仍會到 Create release 才以 403 失敗。這是運維缺口，不是目前程式碼功能缺口。 |
 | Actions 未以 commit SHA 鎖版 | 非阻塞待辦 | `publish-release.yml:29`、`publish-release.yml:32`、`release-smoke.yml:16`、`release-smoke.yml:19` 使用 `actions/checkout@v4` / `actions/setup-python@v5` 可移動標籤；本輪不補，因為不影響 release 驗收鏈，留待專門供應鏈硬化任務處理。 |
 | `--verify-tag` | 決策：不補 | `publish-release.yml:89` 目前未加 `--verify-tag`。在現行 `on.push.tags: v*` 與 `Assert tag matches version` 下，tag 已存在且版本有 fail-fast；本輪不需作為驗收必要硬化。若未來新增 `workflow_dispatch` 手動發佈，再重審。 |
+
+### 發 release 時人工確認清單
+
+1. 先跑 `python3 scripts/publish_release.py` 產出 `body.md`。
+2. 開 `body.md`，確認最上方就是 `## ⚠️ Breaking Changes`。
+3. 確認該區塊內仍有四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙。
+4. 再做真實 `v*` tag-push 或 `gh release create "$TAG" -F body.md`，若 body 不對先停發。
 
 結論：三個核心檔的發佈鏈功能已大致達成；任務 #3 最小硬化只實作 `GITHUB_TOKEN` 權限下修，`--verify-tag` 與 actions commit SHA 鎖版明確不補並記錄理由。殘留缺口集中在生產端到端驗證與操作文件，不是 `gh release create`、body 注入或 `release-smoke` 觸發鏈的實作缺失。

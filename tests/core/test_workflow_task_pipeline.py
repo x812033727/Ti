@@ -98,6 +98,16 @@ def test_no_build_stage_falls_back_to_defaults():
     assert s._task_critic_enabled() is True
 
 
+def test_fast_track_single_reviewer_and_no_critic():
+    # 內建「快速模式」：任務級只留 qa 單審、無 gate stage → critic 整關跳過。
+    from studio.workflow import fast_track_workflow
+
+    s = _session(fast_track_workflow())
+    experts = {k: object() for k in ("pm", "engineer", "qa", "senior", "security")}
+    assert s._task_reviewers(experts) == [("qa", "qa_passed")]
+    assert s._task_critic_enabled() is False
+
+
 # --- 資料驅動 reviewer / implementer / max_rounds 的存取器 -------------------
 
 
@@ -236,6 +246,23 @@ async def test_work_task_uses_custom_implementer():
     assert ok is True
     assert experts["architect"].calls >= 1  # 客製實作者有發言（實作）
     assert experts["engineer"].calls == 0  # 預設 engineer 未被用作實作者
+
+
+@pytest.mark.asyncio
+async def test_fast_track_work_task_only_calls_qa():
+    # 快速模式跑單任務：engineer 實作、qa 單審；senior/security 被砍、任務級不叫 PM。
+    from studio.workflow import fast_track_workflow
+
+    experts = _experts_with("pm", "engineer", "qa", "senior", "security")
+    s = StudioSession("t", _noop, experts=experts, cwd=None, workflow=fast_track_workflow())
+    ctx = LaneContext("main", None, experts, None)
+    ok = await s._work_task(ctx, {"id": 1, "title": "做個東西", "status": "todo"}, "計畫")
+    assert ok is True
+    assert experts["engineer"].calls >= 1  # 實作者
+    assert experts["qa"].calls >= 1  # 唯一驗收者
+    assert experts["senior"].calls == 0  # 三審被砍
+    assert experts["security"].calls == 0
+    assert experts["pm"].calls == 0  # 無任務級 critic/dynamic → 不叫 PM
 
 
 # --- task 級 dynamic stage：PM 任務內動態追加把關 --------------------------

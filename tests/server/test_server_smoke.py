@@ -9,10 +9,27 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
-def test_server_imports_and_health_ok():
+def test_server_imports_and_health_ok(monkeypatch):
+    from studio import routes
     from studio.server import app  # import 進入點 → 抓語法/import 錯誤
 
+    async def current_head(_repo_dir):
+        return "a" * 40
+
+    monkeypatch.setattr(routes.deploy, "current_head", current_head)
     client = TestClient(app)
     res = client.get("/api/health")
     assert res.status_code == 200
     assert res.json()["ok"] is True
+    assert res.json()["git_sha"] == "a" * 40
+
+
+def test_health_fails_closed_on_unparseable_deploy_revision(monkeypatch):
+    from studio import routes
+    from studio.server import app
+
+    async def current_head(_repo_dir):
+        return "fatal: not a git repository"
+
+    monkeypatch.setattr(routes.deploy, "current_head", current_head)
+    assert TestClient(app).get("/api/health").json()["git_sha"] == "unknown"

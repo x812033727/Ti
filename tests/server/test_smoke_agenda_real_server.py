@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _real_server_client import assert_smoke_client_ok, scrub_proxy_env
 
 pytest.importorskip("websockets")
 pytest.importorskip("httpx")
@@ -71,6 +72,7 @@ def test_real_server_agenda_smoke(tmp_path):
             "TI_HISTORY_ROOT": str(tmp_path / "hist"),
         }
     )
+    scrub_proxy_env(env)
     log = tmp_path / "server.log"
     with log.open("w", encoding="utf-8") as logf:
         server = subprocess.Popen(
@@ -98,12 +100,14 @@ def test_real_server_agenda_smoke(tmp_path):
             [sys.executable, str(SCRIPT), str(port)],
             cwd=ROOT,
             capture_output=True,
+            env=env,
             text=True,
             timeout=180,
         )
-        assert client.returncode == 0, (
-            f"真實 server 冒煙 FAIL（rc={client.returncode}）：\n"
-            f"{client.stdout}\n{client.stderr}\n--- server log ---\n{log.read_text()[-2000:]}"
+        assert_smoke_client_ok(
+            client,
+            "真實 server 冒煙",
+            log.read_text(encoding="utf-8", errors="replace")[-2000:],
         )
         assert "SMOKE PASS" in client.stdout
     finally:

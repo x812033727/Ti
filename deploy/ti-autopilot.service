@@ -4,7 +4,12 @@ After=network-online.target ti.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+# Type=notify＋WatchdogSec（穩定強化 γ，最外層兜底）：行程啟動即發 READY=1、之後每
+# 60s 發 WATCHDOG=1（暫停中也發——paused 是活著）；整個行程無聲凍結（event loop 卡死、
+# 連 log 都吐不出來的那種）連漏 5 次 ping，systemd 直接殺掉並由 Restart=always 拉起。
+# 非 systemd 環境（測試／手動跑）NOTIFY_SOCKET 不存在，通知自動 no-op。
+Type=notify
+WatchdogSec=300
 User=root
 # 走 Claude 訂閱（沿用 /root/.claude 憑證），刻意不設 ANTHROPIC_API_KEY。
 Environment=HOME=/root
@@ -16,15 +21,18 @@ Environment=TI_LESSONS=1
 Environment=TI_AUTOPILOT_EVAL_MEMORY=20
 WorkingDirectory=/opt/ti
 ExecStart=/opt/ti/.venv/bin/python -m studio.autopilot
-Restart=on-failure
+# 長跑不間斷：on-failure 對「exit 0 收場的非預期停止」不會拉起來，一停就永久停擺。
+# 改 always＋10 秒間隔——額度耗盡由迴圈內的額度閘門睡眠處理，不靠 restart 空轉。
+Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 
-# 安裝：
+# 安裝（unit 內容變更後需重做這兩步，autodeploy 不會代勞；於下次 restart 生效）：
 #   cp /opt/ti/deploy/ti-autopilot.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now ti-autopilot.service
+# 驗證 watchdog 生效：systemctl show ti-autopilot -p WatchdogUSec  （應為 5min）
 # 暫停：touch /opt/ti/AUTOPILOT_PAUSED  （或網頁 Autopilot 面板按「暫停」）
 # 恢復：rm /opt/ti/AUTOPILOT_PAUSED
 # 觀察：journalctl -u ti-autopilot.service -f

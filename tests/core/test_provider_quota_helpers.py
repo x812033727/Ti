@@ -95,3 +95,31 @@ def test_summarize_empty_map():
     snap = _snap([{"key": "claude", "ready": True, "rate_limits": _win(10)}])
     out = pq.summarize_for_pm(snap)
     assert out.startswith("- claude：") and "用量 10%" in out
+
+
+# --- 按模型 scoped 限額（如 Fable 週限）：獨立顯示、不混進 provider max_used -----
+
+
+def _win_with_models(used, models, reset=None):
+    return {**_win(used, reset), "models": models}
+
+
+def test_model_scoped_limits_not_folded_into_max_used():
+    # Fable 週限 92% 不得把整個 claude 判受限（全域窗才 45%）。
+    rl = _win_with_models(45, {"Fable": {"used_percentage": 92.0, "reset_at": 2800.0}})
+    snap = _snap([{"key": "claude", "ready": True, "rate_limits": rl}])
+    assert pq._usage({"ready": True, "rate_limits": rl})["max_used"] == 45
+    assert pq.constrained(snap, "claude") is False
+    assert pq.digest(snap)["claude"]["max_used"] == 45
+
+
+def test_summarize_for_pm_shows_model_scoped_limits():
+    rl = _win_with_models(45, {"Fable": {"used_percentage": 92.0, "reset_at": 1000.0 + 1800}})
+    snap = _snap([{"key": "claude", "ready": True, "rate_limits": rl}])
+    out = pq.summarize_for_pm(snap)
+    assert "用量 45%" in out
+    assert "Fable 模型限額 ⚠️92%" in out and "約 30 分後重置" in out
+    # 長重置以小時顯示。
+    rl2 = _win_with_models(10, {"Fable": {"used_percentage": 50.0, "reset_at": 1000.0 + 7200}})
+    out2 = pq.summarize_for_pm(_snap([{"key": "claude", "ready": True, "rate_limits": rl2}]))
+    assert "Fable 模型限額 50%" in out2 and "約 2 小時後重置" in out2

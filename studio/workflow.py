@@ -98,8 +98,13 @@ VERDICTS: dict[str, object] = {
 # 內建 workflow 的保留名稱：get_workflow 命中不到時回對應內建定義；不可被同名檔案覆蓋。
 DEFAULT_WORKFLOW_NAME = "預設流程"  # 等價現有寫死骨架
 DYNAMIC_FIRST_NAME = "動態優先"  # dynamic-first：PM 運行時溝通/分派/招募為主（互動預設）
+FAST_TRACK_NAME = "快速模式"  # fast-track：動態討論分派→實作→QA 單審，砍三審與任務級 critic 求速度
+QUICK_ANSWER_NAME = "快答"  # 單一資深專家直接回答/完成小事(Kimi 化 PR13,home 快答模式)
+IMPLEMENT_FAST_NAME = (
+    "原生快車道"  # 軌 I3:單 engineer 直做(decompose+implement+demo+publish),零多專家儀式
+)
 # 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
-RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME)
+RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME, QUICK_ANSWER_NAME)
 
 WORKFLOWS_FILENAME = "workflows.yaml"
 
@@ -338,7 +343,9 @@ def dynamic_first_workflow() -> dict:
     與預設骨架的差異：把固定的架構辯論（discuss）換成 session 級 `dynamic`（PM 動態溝通、依
     額度分派、可招募新人），並在任務 pipeline 末加 task 級 `dynamic`（PM 動態追加把關）。
     保留全部安全閘門（review／critic／客觀閘門／demo 驗證／wrap_up 檢討＝改善計畫）。
-    不存檔、保留名、不可被覆寫；autopilot／improver 不走此流程（維持安全骨架）。
+    不存檔、保留名、不可被覆寫；autopilot／improver 預設不走此流程（維持安全骨架），
+    但 `TI_AUTOPILOT_WORKFLOW_TRIAGE` 開啟時 autopilot 可由 PM 開場分診選用
+    （autopilot._select_workflow，白名單直取本工廠、不經 get_workflow 的檔案覆寫路徑）。
     """
     return {
         "name": DYNAMIC_FIRST_NAME,
@@ -379,10 +386,97 @@ def dynamic_first_workflow() -> dict:
     }
 
 
+def fast_track_workflow() -> dict:
+    """fast-track 內建流程：討論完直接交工程師實作，任務級只留 QA 單審。
+
+    與「動態優先」的差異：review gate 從 qa/senior/security 三審縮成 qa 單審（QA 有 Bash
+    能實際跑測試，輸出 `驗證: PASS/FAIL`）；task_pipeline 不放 gate/dynamic → 任務級 critic
+    與 PM 追加把關整關跳過；research/integrate 也不佔固定 stage（需要時 PM 可在 dynamic
+    階段招募 researcher/devops）。「有問題問 PM」由 session 級 dynamic（PM 逐 hop 溝通/
+    分派）覆蓋，任務級另有引擎級中途求助（工程師輸出 `求助: <問題>` 即時問 PM，
+    `TI_TASK_HELP` 控制）；「PM 驗收」由 wrap_up 的 PM 最終驗收（引擎路徑）滿足。客觀閘門（交付前
+    自測 exit code 硬否決）、停滯守門、demo 實跑驗證為引擎不變式，照常生效。
+    客製者若要任務級改由 PM 驗收，可把 gate 換成 {role: pm, verdict: pm_done}（generic
+    審查 prompt 路徑已支援）。不存檔、保留名、不可被覆寫。
+    """
+    return {
+        "name": FAST_TRACK_NAME,
+        "description": (
+            "快速模式：PM 動態討論與分派後直接交工程師實作，單一驗收（QA 實測），收尾仍由 PM 驗收"
+        ),
+        "stages": [
+            {"type": "clarify"},
+            {"type": "decompose"},
+            {"type": "dynamic", "name": "快速討論與分派", "budget": 3, "fallback": "engineer"},
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                    {"type": "review", "gate": [{"role": "qa", "verdict": "qa_passed"}]},
+                ],
+            },
+            {"type": "demo"},
+            {"type": "wrap_up"},
+            {"type": "publish"},
+        ],
+    }
+
+
+def quick_answer_workflow() -> dict:
+    """快答內建流程(Kimi 化 PR13):單一資深專家一輪回應,不開多專家陣仗。
+
+    設計目標=消費級「問一句得一句」:適合問答/查詢/小結論,不適合改碼出貨(那走
+    預設流程或交辦)。單 stage discuss(mode=single、senior 一人、一輪)+wrap_up 收尾
+    (session 正常落 history/可重播);客觀閘門等引擎不變式照常。不存檔、保留名。
+    """
+    return {
+        "name": QUICK_ANSWER_NAME,
+        "description": "快答:單一資深專家直接回應(適合問答與小查詢;要出貨請用預設流程或交辦)",
+        "stages": [
+            {
+                "type": "discuss",
+                "name": "快答",
+                "mode": "single",
+                "roles": ["senior"],
+                "max_rounds": 1,
+            },
+            {"type": "wrap_up"},
+        ],
+    }
+
+
+def implement_fast_workflow() -> dict:
+    """原生快車道(軌 I3,改良場用):單 engineer 直做,零多專家儀式。
+
+    使用者裁示「執行大多用原生方式加速」:decompose(單 PM 一手拆題)→ engineer 原生
+    agent 迴圈實作 → demo 實跑驗證 → wrap_up(PM 驗收)→ publish(等 CI 綠才合併)。
+    review/gate/討論全省;客觀閘門與 publish 等引擎不變式照常。不存檔、保留名。
+    """
+    return {
+        "name": IMPLEMENT_FAST_NAME,
+        "description": "原生快車道:單 engineer 直做(demo/驗收/publish 照常;需多視角請用預設流程)",
+        "stages": [
+            {"type": "decompose"},
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                ],
+            },
+            {"type": "demo"},
+            {"type": "wrap_up"},
+            {"type": "publish"},
+        ],
+    }
+
+
 # 保留名 → 內建定義工廠（get_workflow／list_workflows 用）。
 _BUILTIN_WORKFLOWS = {
     DEFAULT_WORKFLOW_NAME: default_workflow,
     DYNAMIC_FIRST_NAME: dynamic_first_workflow,
+    FAST_TRACK_NAME: fast_track_workflow,
+    QUICK_ANSWER_NAME: quick_answer_workflow,
+    IMPLEMENT_FAST_NAME: implement_fast_workflow,
 }
 
 

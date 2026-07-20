@@ -47,6 +47,73 @@
 **遷移指引**：完整說明見 README 的「state 安全寫入（TI_REQUIRE_CHOWN）」小節，
 以及 `.env.example` 內的 `TI_REQUIRE_CHOWN` 範例。
 
+## 未發佈(2026-07-19 Kimi 化批次)
+
+### Added
+- 助手首頁(view=home,預設;`TI_DEFAULT_VIEW` 可改):hero composer(討論/交辦 Agent/快答)、
+  常駐側欄(新對話 Ctrl+K/對話歷史/插件/排程任務/帳號)、工作室脈搏與靈感區、手機 RWD。
+- 排程任務:`studio/schedules.py` + `/api/schedules*`(到期入列 autopilot backlog,occurrence 去重)。
+- `GET /api/skills` 技能唯讀清單;內建「快答」workflow(單專家一輪)。
+- 專家訊息 markdown 渲染(`web/js/markdown.js` sanitizing 子集,零 innerHTML)。
+
+### Fixed
+- kill-first 自殺防護:SDK 子程序與主行程同 process group 時禁 killpg(#465,crashloop 事故)。
+- #stream 單向陷阱與 attach 殘留 sawDone(#466,覆審修正)。
+
+## [Unreleased]
+
+### Added
+
+- Claude 帳號「手動/自動模式」單一控制點：設定面板訂閱帳號區塊新增模式列——按
+  「帳號 A/B」＝手動模式（切換並釘選，自動輪替凍結、不再被政策切回），按「🔄 自動
+  輪替」＝恢復 v4 自動分配。閒置時立即切換；忙碌（有討論/任務）時彈二選一：
+  **排空後切換**（等討論空檔由 autopilot 自動切、零損失，即使 autopilot 暫停也會
+  完成）或**強制切換**（立即中斷討論並重啟，被中斷任務由優雅停機退回待辦自動重跑）。
+  機制＝pin 檔哨兵（`~/.claude/.credentials.pin`，純文字 label，不觸碰憑證 JSON）：
+  `POST /api/claude-account/switch` 新增 `queue`（排空後切換，回 202 `queued`）與
+  `force`（強制切換，回應標 `forced`）欄位、新端點 `DELETE /api/claude-account/pin`、
+  provider 額度快照 claude 條目新增 `rotate {enabled, mode, pinned}` 與各帳號 `pinned`
+  欄位。手動模式下釘選帳號額度將滿（≥90%）時模式列顯示警語（耗盡＝quota_sleep 等
+  重置，切回自動可借用另一帳號）。
+
+- 監控儀表板成為預設首頁（監控視圖）：Autopilot 狀態英雄列（狀態球/心跳/派工/PR 預算
+  ＋暫停恢復/分診/開新討論）、任務統計磁貼（完成率與五態計數）、近 30 天結果堆疊長條、
+  provider 額度 meter、績效榜、最新動態；30 秒自動更新（背景分頁暫停輪詢）。
+  header 新增「監控／工作室」視圖切換（手機由底部分頁的「監控」分頁接手），開始討論
+  或重播歷史時自動切回工作室視圖。資料全部復用既有唯讀端點，零後端變更
+  （`web/js/panels/dashboard.js`、`web/css/dashboard.css`）。
+
+- 前端「👥 團隊」面板：角色管理（內建/覆蓋/自建，含反空殼 persona 前端先驗）與
+  討論小組管理 UI，首次接上後端既有 `/api/roles`、`/api/groups`；啟動列新增「小組」
+  下拉，開場 WS payload 帶 `group`。
+- 深／淺／跟隨系統三態主題切換（token 雙主題化、localStorage 持久化、防 FOUC）。
+- 動態流程「結構化 stage 卡片編輯器」（增刪/排序/角色多選/閘門/巢狀 task_pipeline），
+  保留「{} JSON」進階原文模式；textarea 維持單一真相，儲存管線不變。
+- 通用表單 modal（原生 `<dialog>`）取代建立專案／目標 repo 的原生 `prompt()`；
+  確認對話框 `openConfirmModal`（alertdialog、取消為預設焦點、danger 紅鈕）取代
+  全部 8 處原生 `confirm()`（刪 session/專案/流程/角色/小組、清歷史、重新部署、切換帳號），
+  訊息文字逐字保留。
+- 無障礙：skip-link、drawer dialog 語意＋Esc/焦點管理、tablist 方向鍵導航、
+  動態列表真按鈕化、看板/專家卡 aria；新增平板（901–1180px）響應式斷點。
+
+### Changed
+
+- 前端圖示系統：header 工具列/抽屜標題/手機分頁的 emoji 圖示全面換為內嵌 SVG 線性
+  icon sprite（`index.html` `<symbol>`＋`<use>`，免建置）；主題鈕改由 `data-mode` 切換
+  三顆 SVG（theme.js 不再覆寫 textContent）。drawer 殼底色改高不透明 `--card-bg`，
+  修掉玻璃 backdrop-filter 把底層漸層按鈕暈進面板的色斑；洞察趨勢圖語意色改走
+  `--good/--bad` token（原 `--ok/--err` 未定義、淺色主題不跟隨）；styles.css 恢復純
+  @import 聚合檔，散落規則歸位 drawers/settings。
+
+- `web/app.js`（2107 行單檔）機械拆分為原生 ES modules（`web/js/`：dom/state/ws/
+  events-render/theme/panels/*/components/*），`styles.css` 拆為 `web/css/*` 九檔
+  ＋@import 聚合；免建置、URL 面不變（`/static/app.js`、`/static/styles.css`）。
+- header 工具列分組（主操作/觀測/系統）、command-deck 兩層化、看板欄計數 badge、
+  drawer 加寬至 `min(480px, 100vw)`、補品牌 SVG favicon；討論串階段切換改 hairline
+  分隔線樣式；平板工具列溢出時可橫向捲動。
+- 前端測試載入機制由 `vm.runInContext` 改「掛 globalThis stub → import ES module」；
+  新增 import-graph／主題 token 完整性靜態守護（`tests/test_frontend_modules.py`）。
+
 ## [0.2.0] - 2026-06-15
 
 ### ⚠️ Breaking Changes

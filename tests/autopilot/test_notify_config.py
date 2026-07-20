@@ -149,9 +149,11 @@ def test_send_bg_posts_json_in_background(monkeypatch, caplog):
             "url": webhook,
             "timeout": 3.5,
             "body": {
-                "event": "daily_pr_budget_pause",
-                "message": "reached",
-                "payload": {"task_id": 7, "budget": 2},
+                "source": "ti",
+                "kind": "daily_pr_budget_pause",
+                "title": "reached",
+                "task_id": 7,
+                "budget": 2,
             },
         }
     ]

@@ -73,7 +73,7 @@ def _iter_callers() -> list[Caller]:
         funcs = [
             (n.name, n.lineno, n.end_lineno or n.lineno)
             for n in ast.walk(tree)
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
         ]
         lines = src.splitlines()
         for node in ast.walk(tree):
@@ -246,7 +246,8 @@ def test_classification_matches_code_reality():
     ), "autopilot pytest gate 應為固定 pytest 指令 (a 類，shell 或 exec 皆可)"
 
     # --- c 類：傳入的是變數（cmd / args.get(...)），必須仍走 shell run_command ---
-    # _self_test 走 lane context（ctx.cwd）、_final_demo 走整體 workspace（self.cwd），皆傳動態 cmd。
+    # _self_test 走 lane context（ctx.cwd）、_final_demo 走整體 workspace（self.cwd），皆傳動態
+    # cmd；_final_demo 另有 usage-error 消毒重試呼叫端（傳 sanitized，同為動態 c 類）。
     for anchor in ("_self_test", "_final_demo"):
         hits = [
             c
@@ -255,7 +256,7 @@ def test_classification_matches_code_reality():
         ]
         assert hits, f"orchestrator.py::{anchor} 預期為 shell run_command (c 類)，未找到"
         for c in hits:
-            assert re.search(r"run_command\((?:ctx|self)\.cwd, cmd\)", c.src), (
+            assert re.search(r"run_command\((?:ctx|self)\.cwd, (?:cmd|sanitized)\)", c.src), (
                 f"orchestrator.py::{anchor} (L{c.lineno}) 預期傳動態 cmd 變數、保留 shell (c 類)：{c.src!r}"
             )
     # tools.py run_bash：傳使用者輸入（args.get("command", ...)），必須仍走 shell run_command。

@@ -1,0 +1,118 @@
+/* 助手首頁常駐側欄(Kimi 式):新對話/對話清單/底部入口。桌面常駐;窄幅收合見 responsive。 */
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+.sn-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 10px 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.sn-new:hover { background: var(--surface-3); border-color: var(--accent); }
+.sn-new kbd {
+  margin-left: auto;
+  font: 10.5px/1 var(--font-mono);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+.sn-history { flex: 1; min-height: 0; overflow-y: auto; }
+.sn-label {
+  font-size: var(--fs-0);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 var(--sp-1) 4px;
+}
+.sn-history ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sn-empty { color: var(--muted); font-size: var(--fs-1); padding: 6px 4px; }
+.sn-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--r-sm);
+  padding: 7px 8px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: var(--fs-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sn-item:hover { background: var(--surface-2); color: var(--text); }
+.sn-item.active { background: var(--surface-3); color: var(--text); }
+.sn-item .sn-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); }
+.sn-item .sn-dot.running { background: var(--good); animation: pulse 1.6s infinite; }
+.sn-item .sn-dot.error { background: var(--bad); }
+
+.sn-bottom { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: var(--sp-2); }
+.sn-bottom button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--r-sm);
+  padding: 8px;
+  cursor: pointer;
+  font-size: var(--fs-1);
+}
+.sn-bottom button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.sn-bottom button:disabled { opacity: 0.45; cursor: default; }
+.sn-bottom .icon, .sn-new .icon { width: 16px; height: 16px; }
+
+/* 帳號選單(PR12):側欄底部向上彈出 */
+.sn-account-wrap { position: relative; }
+.sn-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--surface-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 30;
+}
+.sn-menu button {
+  border: 0; background: transparent; color: var(--text-2);
+  border-radius: var(--r-sm); padding: 8px 10px; text-align: left; cursor: pointer; font-size: var(--fs-1);
+}
+.sn-menu button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.sn-menu button:disabled { opacity: 0.45; cursor: default; }
+.sn-menu button.danger { color: var(--bad); }
+
+/* 「需要你」badge(軌 F1):待答澄清數 */
+.sn-badge {
+  margin-left: auto;
+  min-width: 1.4em;
+  padding: 0 0.35em;
+  border-radius: var(--r-full);
+  background: var(--bad);
+  color: #fff;
+  font-size: var(--fs-0);
+  line-height: 1.5;
+  text-align: center;
+}

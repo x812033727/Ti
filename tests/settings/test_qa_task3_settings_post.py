@@ -39,7 +39,7 @@ def _get(path: str, timeout: float = 3.0):
 
 
 def _post(path: str, body, timeout: float = 3.0):
-    data = body if isinstance(body, (bytes, bytearray)) else json.dumps(body).encode()
+    data = body if isinstance(body, bytes | bytearray) else json.dumps(body).encode()
     req = urllib.request.Request(
         BASE + path,
         data=data,
@@ -55,11 +55,14 @@ def _post(path: str, body, timeout: float = 3.0):
 
 @pytest.fixture(scope="module")
 def server():
-    backup = ENV.read_bytes() if ENV.exists() else None
+    backup = ENV.read_bytes() if ENV.exists() else None  # POST 會寫 .env，收尾還原
     env = dict(os.environ)
-    env.pop("TI_ACCESS_PASSWORD", None)  # 門禁停用 → 首次設定路徑直接放行
+    # 空字串遮罩而非 pop：load_dotenv 不覆蓋已存在變數，"" 可擋 .env 補值
+    # （pop 掉的鍵會被 .env 讀回→門禁重啟→永遠 401 假性「服務未就緒」），
+    # 語意等同未設定（auth_enabled()/set 皆以 bool 判斷）。
+    env["TI_ACCESS_PASSWORD"] = ""  # 門禁停用 → 首次設定路徑直接放行
     for k in SECRET_ENVS:
-        env.pop(k, None)
+        env[k] = ""
     env["TI_HOST"] = HOST
     env["TI_PORT"] = str(PORT)
     proc = subprocess.Popen(

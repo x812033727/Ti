@@ -21,6 +21,8 @@ def _configured(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "supersecrettoken")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"o"}))
 
     async def _noop(*a, **k):
         return True
@@ -31,7 +33,7 @@ def _configured(monkeypatch):
 
 @pytest.fixture
 def _ok_push_pr(monkeypatch):
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
@@ -49,7 +51,7 @@ async def test_merge_only_after_push_success(monkeypatch, _configured):
     """push 失敗時不應嘗試 merge（即使 merge=True）。"""
     called = {"merge": 0}
 
-    async def fail_push(cwd, branch, url):
+    async def fail_push(cwd, branch, url, **kwargs):
         return runner.RunOutput("git push", 1, "denied supersecrettoken", False)
 
     async def spy_flow(number, payload, **kw):

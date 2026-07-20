@@ -125,7 +125,7 @@ async def test_git_clone_real_masking_contract_matches_helper(tmp_path, monkeypa
     token = "ghp_CONTRACT_SECRET_001"
     leaked = f"line1 {token}\nline2 https://x-access-token:{token}@h/r\n{token}"
 
-    async def spy(cwd, argv, timeout=None, sandbox=None, label=None):
+    async def spy(cwd, argv, timeout=None, sandbox=None, label=None, env=None):
         return runner.RunOutput(
             command=label or argv[0], exit_code=0, output=leaked, timed_out=False
         )

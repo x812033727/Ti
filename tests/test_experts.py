@@ -8,6 +8,7 @@ experts._build_client。沿用 test_orchestrator.py 的 collect() 慣例。
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 
@@ -31,6 +32,12 @@ def collect():
 
 async def _agen(items):
     for it in items:
+        yield it
+
+
+async def _delayed_agen(items, delay_s: float = 0.01):
+    for it in items:
+        await asyncio.sleep(delay_s)
         yield it
 
 
@@ -66,6 +73,8 @@ def test_summarize_tool_bash_truncates_long_command():
 
 
 def test_model_for_lead_vs_fast(monkeypatch):
+    # 解除 PM 模型釘選（預設釘 claude-fable-5，另測 tests/core/test_pm_pin.py），驗證 LEAD 二分法。
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "")
     monkeypatch.setattr(config, "LEAD_ROLES", {"pm"})
     monkeypatch.setattr(config, "MODEL_LEAD", "lead-model")
     monkeypatch.setattr(config, "MODEL_FAST", "fast-model")
@@ -90,7 +99,13 @@ def fake_sdk(monkeypatch):
             self.content = content
 
     class ResultMessage:
-        pass
+        def __init__(self, usage=None, total_cost_usd=None, duration_api_ms=None):
+            if usage is not None:
+                self.usage = usage
+            if total_cost_usd is not None:
+                self.total_cost_usd = total_cost_usd
+            if duration_api_ms is not None:
+                self.duration_api_ms = duration_api_ms
 
     class TextBlock:
         def __init__(self, text):
@@ -143,6 +158,69 @@ async def test_stream_to_events_emits_message_and_tool_events(fake_sdk):
     assert bucket[2].payload["tool"] == "Write"
     assert bucket[2].payload["summary"] == "寫入 main.py"
     assert bucket[3].payload["text"] == "完成"
+
+
+async def test_stream_to_events_records_ttft_s_on_first_text_content(fake_sdk):
+    role = BY_KEY["engineer"]
+    msgs = [
+        fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("  首段內容  ")]),
+        fake_sdk.ResultMessage(
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_input_tokens": 3,
+                "cache_creation_input_tokens": 0,
+            },
+            total_cost_usd=0.01,
+            duration_api_ms=123,
+        ),
+    ]
+    bucket, broadcast = collect()
+
+    await experts.stream_to_events(_delayed_agen(msgs), "sess-ttft", role, broadcast)
+
+    usage_events = [ev for ev in bucket if ev.type == EventType.TOKEN_USAGE]
+    assert len(usage_events) == 1
+    ttft_s = usage_events[0].payload["ttft_s"]
+    assert isinstance(ttft_s, float)
+    assert 0 < ttft_s < 1
+    assert usage_events[0].payload["duration_ms"] == 123
+    assert usage_events[0].payload["cache_read"] == 3
+
+
+async def test_stream_to_events_records_ttft_s_on_first_tool_use(fake_sdk):
+    role = BY_KEY["engineer"]
+    msgs = [
+        fake_sdk.AssistantMessage(
+            content=[fake_sdk.ToolUseBlock("Read", {"file_path": "/w/main.py"})]
+        ),
+        fake_sdk.ResultMessage(usage={"input_tokens": 10, "output_tokens": 2}),
+    ]
+    bucket, broadcast = collect()
+
+    await experts.stream_to_events(_delayed_agen(msgs), "sess-tool-ttft", role, broadcast)
+
+    usage_events = [ev for ev in bucket if ev.type == EventType.TOKEN_USAGE]
+    assert len(usage_events) == 1
+    assert isinstance(usage_events[0].payload["ttft_s"], float)
+    assert usage_events[0].payload["ttft_s"] > 0
+
+
+async def test_stream_to_events_omits_ttft_s_when_no_content_arrives(fake_sdk):
+    role = BY_KEY["engineer"]
+    msgs = [
+        fake_sdk.ResultMessage(
+            usage={"input_tokens": 10, "output_tokens": 1},
+            total_cost_usd=0.001,
+        ),
+    ]
+    bucket, broadcast = collect()
+
+    await experts.stream_to_events(_delayed_agen(msgs), "sess-no-ttft", role, broadcast)
+
+    usage_events = [ev for ev in bucket if ev.type == EventType.TOKEN_USAGE]
+    assert len(usage_events) == 1
+    assert "ttft_s" not in usage_events[0].payload
 
 
 async def test_stream_to_events_stops_at_result_message(fake_sdk):
@@ -255,4 +333,83 @@ async def test_build_client_wires_pretooluse_fs_guard_bound_to_cwd(tmp_path, mon
     )
     assert not _deny(
         await guard({"tool_name": "Write", "tool_input": {"file_path": "ok.py"}}, "id", None)
+    )
+
+
+# --- effective_model：任務結果的模型可見性 --------------------------------------
+
+
+def test_expert_effective_model(monkeypatch):
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd, model="": object())
+    monkeypatch.setattr(config, "MODEL_FAST", "claude-sonnet-4-6")
+    monkeypatch.setattr(config, "ROLE_MODELS", {})
+    # 無覆寫 → 角色模型槽（engineer 非 LEAD → FAST）；有覆寫 → 覆寫優先。
+    assert (
+        experts.Expert(BY_KEY["engineer"], "s", "/tmp/x").effective_model() == "claude-sonnet-4-6"
+    )
+    assert (
+        experts.Expert(
+            BY_KEY["engineer"], "s", "/tmp/x", model="claude-haiku-4-5"
+        ).effective_model()
+        == "claude-haiku-4-5"
+    )
+    # PM 釘選最優先。
+    monkeypatch.setattr(config, "PM_PIN_MODEL", "claude-fable-5")
+    assert experts.Expert(BY_KEY["pm"], "s", "/tmp/x").effective_model() == "claude-fable-5"
+
+
+# --- _emit_claude_token_usage：duration_api_ms 接點覆蓋（任務 #2）----------
+# 守門意圖：若 SDK 改欄位名（例如 duration_api_ms → api_duration_ms），getattr 會靜默回
+# None，整條 latency 功能無聲失效。以下兩測驗在「正路徑帶值」與「缺屬性→不落地」兩端各釘
+# 一根，確保任何此類迴歸都能立即被 CI 抓住，不需靠運氣。
+
+
+async def test_emit_claude_token_usage_with_duration_api_ms():
+    """msg 帶 duration_api_ms=1234 → payload["duration_ms"] == 1234（正路徑自證對應）。"""
+    usage = types.SimpleNamespace(
+        input_tokens=100,
+        output_tokens=20,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    msg = types.SimpleNamespace(
+        usage=usage,
+        duration_api_ms=1234,
+        total_cost_usd=0.01,
+    )
+    bucket, broadcast = collect()
+    await experts._emit_claude_token_usage(msg, "sid", BY_KEY["engineer"], broadcast)
+
+    assert len(bucket) == 1, f"應發出 1 個事件，got {len(bucket)}"
+    payload = bucket[0].to_dict()["payload"]
+    assert payload["duration_ms"] == 1234, (
+        f"duration_api_ms=1234 應映射為 duration_ms=1234，got {payload.get('duration_ms')!r}"
+    )
+    # 附帶確認 provider/model/speaker 等基本欄位在場
+    assert payload["provider"] == "claude"
+    assert payload["speaker"] == "engineer"
+    assert payload["prompt_tokens"] == 100
+    assert payload["completion_tokens"] == 20
+
+
+async def test_emit_claude_token_usage_without_duration_api_ms():
+    """msg 無 duration_api_ms 屬性 → payload 不含 duration_ms 鍵（None 不落地）。"""
+    usage = types.SimpleNamespace(
+        input_tokens=50,
+        output_tokens=10,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    # 故意不設 duration_api_ms 屬性，模擬舊版 SDK 或回傳不含時延的 ResultMessage
+    msg = types.SimpleNamespace(
+        usage=usage,
+        total_cost_usd=0.005,
+    )
+    bucket, broadcast = collect()
+    await experts._emit_claude_token_usage(msg, "sid", BY_KEY["engineer"], broadcast)
+
+    assert len(bucket) == 1, f"應發出 1 個事件，got {len(bucket)}"
+    payload = bucket[0].to_dict()["payload"]
+    assert "duration_ms" not in payload, (
+        f"無 duration_api_ms 時 payload 不應含 duration_ms 鍵，got payload={payload!r}"
     )

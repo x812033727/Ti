@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from . import config, memory, secure_write, workspace
@@ -83,6 +85,8 @@ def finish_session(session_id: str) -> dict | None:
         meta["parallel"] = parallel  # 供 /api/metrics 聚合並行可觀測性
     meta["scorecard"] = _derive_scorecard(events, meta)  # 供 /api/metrics 聚合成果記分卡
     meta["token_usage"] = _derive_token_usage(events)  # 供 /api/usage 聚合 provider/model 成本
+    # 供 /api/metrics 聚合 wall-clock 時延（與 token_usage 平行）
+    meta["latency"] = _derive_latency(events)
     _write_meta(session_id, meta)
     # 收尾時順手回收超量/過舊的舊 session（本場剛寫完 meta、已非 running 且為最新，不會被
     # 自己回收掉）；回收失敗絕不影響本次收尾。
@@ -271,6 +275,70 @@ def _derive_token_usage(events: list[dict]) -> dict:
     }
 
 
+def _blank_latency() -> dict:
+    return {"count": 0, "sum_ms": 0, "max_ms": 0, "avg_ms": 0}
+
+
+def _int_ms(value) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _add_latency(dst: dict, duration_ms: int) -> None:
+    dst["count"] += 1
+    dst["sum_ms"] += duration_ms
+    dst["max_ms"] = max(dst["max_ms"], duration_ms)
+
+
+def _finalize_latency_bucket(bucket: dict) -> dict:
+    # avg_ms 為衍生值：收尾一次算（sum // count），count=0 維持 0。
+    if bucket["count"]:
+        bucket["avg_ms"] = bucket["sum_ms"] // bucket["count"]
+    return bucket
+
+
+def _derive_latency(events: list[dict]) -> dict:
+    """從 token_usage 事件的 duration_ms 彙總 provider/model/role 維度的 wall-clock 時延。
+
+    只計 payload 帶 `duration_ms` 的事件（缺欄位＝舊事件，直接跳過），故 count 與
+    token_usage 的 calls 是獨立欄位、混入無 duration 的舊事件不失真。負值/非數值由
+    _int_ms 防禦（截為 0），不讓單一壞事件炸掉 finish_session。每桶存
+    {count, sum_ms, max_ms, avg_ms}：sum_ms/count 為權威、avg_ms 衍生，故 /api/metrics
+    跨場合併時可安全相加 sum 與 count 再重導 avg（不會有「平均 p99」式失真）。
+    """
+    total = _blank_latency()
+    by_provider: dict[str, dict] = {}
+    by_model: dict[str, dict] = {}
+    by_role: dict[str, dict] = {}
+    for ev in events:
+        if ev.get("type") != "token_usage":
+            continue
+        p = ev.get("payload") or {}
+        if "duration_ms" not in p:
+            continue
+        duration_ms = _int_ms(p.get("duration_ms"))
+        provider = str(p.get("provider") or "unknown")
+        model = str(p.get("model") or "unknown")
+        role = str(p.get("speaker") or "unknown")
+        for bucket in (
+            total,
+            by_provider.setdefault(provider, _blank_latency()),
+            by_model.setdefault(model, _blank_latency()),
+            by_role.setdefault(role, _blank_latency()),
+        ):
+            _add_latency(bucket, duration_ms)
+    for bucket in (total, *by_provider.values(), *by_model.values(), *by_role.values()):
+        _finalize_latency_bucket(bucket)
+    return {
+        "total": total,
+        "by_provider": by_provider,
+        "by_model": by_model,
+        "by_role": by_role,
+    }
+
+
 def _derive_parallel(events: list[dict]) -> dict:
     """從 done 事件取出並行可觀測性摘要（無則回空 dict）。"""
     for ev in reversed(events):
@@ -280,19 +348,133 @@ def _derive_parallel(events: list[dict]) -> dict:
     return {}
 
 
+# meta 檔快取：絕對路徑 -> (mtime_ns, size, meta)。所有 meta 寫入都走 _write_meta →
+# secure_write_root（tmp+rename 必刷 mtime），故 (mtime_ns, size) 雙鍵足以判定失效；
+# 以絕對路徑為 key，測試切換 HISTORY_ROOT（tmp_path）天然隔離、互不污染。
+_meta_cache: dict[str, tuple[int, int, dict]] = {}
+
+
+def _reset_meta_cache() -> None:
+    """清空 meta 快取（測試兜底用）。"""
+    _meta_cache.clear()
+
+
+def _read_meta_file(path: Path) -> dict | None:
+    """讀單一 meta 檔；壞檔回 None（獨立成函式供快取測試 spy）。"""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def list_sessions() -> list[dict]:
-    """回傳所有 session 的 meta，依開始時間新到舊。"""
+    """回傳所有 session 的 meta，依開始時間新到舊。
+
+    每檔以 (mtime_ns, size) 快取，未變動不重讀 JSON；回傳的 meta dict 為快取共享物件，
+    呼叫端不得就地修改（需要改動請自行 copy）。
+    """
     root = config.HISTORY_ROOT
     if not root.exists():
         return []
     metas: list[dict] = []
+    seen: set[str] = set()
     for p in root.glob("*.meta.json"):
+        key = str(p)
         try:
-            metas.append(json.loads(p.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
+            st = p.stat()
+        except OSError:  # glob 到 stat 前被刪：跳過
             continue
+        stamp = (st.st_mtime_ns, st.st_size)
+        cached = _meta_cache.get(key)
+        if cached is not None and (cached[0], cached[1]) == stamp:
+            meta = cached[2]
+        else:
+            meta = _read_meta_file(p)
+            if meta is None:
+                # 壞檔不入快取（避免快取成殭屍），下次仍會重試
+                _meta_cache.pop(key, None)
+                continue
+            _meta_cache[key] = (stamp[0], stamp[1], meta)
+        seen.add(key)
+        metas.append(meta)
+    # 修剪：本輪沒見到的檔（已刪除或壞檔）逐出，防快取無限增長；prefix 帶分隔符
+    # 避免誤傷同前綴的兄弟目錄（如 .../history 與 .../history2）
+    prefix = str(root) + os.sep
+    for stale in [k for k in _meta_cache if k.startswith(prefix) and k not in seen]:
+        _meta_cache.pop(stale, None)
     metas.sort(key=lambda m: m.get("started_at", 0), reverse=True)
     return metas
+
+
+def aggregate_scorecard(sessions: list[dict]) -> dict:
+    """跨 session 聚合成果記分卡：成功率、平均輪數、一次過率、退回原因，與近期趨勢。
+
+    趨勢取「最近 10 場 vs 再前 10 場」（sessions 已新→舊排序）——這是『工作室有沒有
+    越做越進步』的直接量測：成功率升、平均輪數降＝在進步。
+    （自 routes.py 平移至此：history 是 scorecard 推導 SSOT，改良迴圈也要複用聚合。）
+    """
+    rows = [
+        (m, m["scorecard"])
+        for m in sessions
+        if m.get("status") != "running" and isinstance(m.get("scorecard"), dict)
+    ]
+    if not rows:
+        return {
+            "n": 0,
+            "qa_pass_rate": None,
+            "critic_pass_rate": None,
+            "demo_pass_rate": None,
+        }
+
+    def _slice_stats(part: list[tuple[dict, dict]]) -> dict:
+        if not part:
+            return {"n": 0}
+        done = sum(1 for m, _ in part if m.get("status") == "completed")
+        rounds = [s["avg_rounds"] for _, s in part if s.get("avg_rounds")]
+        return {
+            "n": len(part),
+            "completed_rate": round(done / len(part), 2),
+            "avg_rounds": round(sum(rounds) / len(rounds), 2) if rounds else None,
+        }
+
+    rejects = {"qa_fail": 0, "smoke_fail": 0, "gate_veto": 0, "critic": 0, "stall": 0}
+    tasks_total = tasks_done = first_try = 0
+    qa_total = qa_pass = 0
+    critic_total = critic_pass = 0
+    demo_total = demo_pass = 0
+    for _, s in rows:
+        for k in rejects:
+            rejects[k] += (s.get("rejects") or {}).get(k, 0)
+        tasks_total += s.get("tasks_total", 0)
+        tasks_done += s.get("tasks_done", 0)
+        first_try += s.get("first_try_done", 0)
+        qa_total += s.get("qa_total", 0)
+        qa_pass += s.get("qa_pass", 0)
+        critic_total += s.get("critic_total", 0)
+        critic_pass += s.get("critic_pass", 0)
+        demo = s.get("demo_passed")
+        if demo is not None:
+            demo_total += 1
+            if demo is True:
+                demo_pass += 1
+
+    def _rate(passed: int, total: int) -> float | None:
+        return round(passed / total, 2) if total else None
+
+    return {
+        **_slice_stats(rows),
+        "qa_pass_rate": _rate(qa_pass, qa_total),
+        "critic_pass_rate": _rate(critic_pass, critic_total),
+        "demo_pass_rate": _rate(demo_pass, demo_total),
+        "tasks": {
+            "total": tasks_total,
+            "done": tasks_done,
+            "first_try_done": first_try,
+            "first_try_rate": round(first_try / tasks_done, 2) if tasks_done else None,
+        },
+        "rejects": rejects,
+        "trend": {"recent": _slice_stats(rows[:10]), "previous": _slice_stats(rows[10:20])},
+    }
 
 
 def _last_activity_ts(meta: dict) -> float:
@@ -320,6 +502,54 @@ def busy_sessions(stale_after_s: float) -> list[dict]:
     ]
 
 
+def events_mtime(session_id: str) -> float | None:
+    """events 檔 mtime（無檔或讀不到回 None）——代表 session 的最後活動時間。
+
+    供 autopilot 任務中心跳把 last_activity_at 寫進 status.json（外部監控據此
+    分辨「長任務仍在動」與「真的卡死」）。
+    """
+    try:
+        return _events_path(session_id).stat().st_mtime
+    except OSError:
+        return None
+
+
+def sweep_stale_running(
+    active_sids: frozenset[str] | set[str] = frozenset(), stale_after_s: float | None = None
+) -> list[str]:
+    """掃除卡在 running 的幽靈 meta：非活躍且久無活動者標 error（mark_interrupted），回傳掃到的 sid。
+
+    autopilot／服務被 restart 殺掉時 finish_session 沒跑到，meta 永遠停在 running——
+    網站無限顯示 ⏳ 執行中、enforce_retention 也永不回收。此函式挑出「sid 不在
+    active_sids（呼叫端提供的活躍集合，如 busy_sessions）且最後活動（events 檔 mtime，
+    取不到退回 meta 時間戳）超過 stale_after_s 秒」的 running meta 逐一標中斷。
+
+    stale_after_s 預設（None）＝max(3600, 2 × config.TURN_HARD_TIMEOUT)，每次呼叫即時
+    計算：安全不變量是「單一專家 turn 依 TURN_HARD_TIMEOUT 可合法靜默」的**兩倍**——
+    TI_TURN_TIMEOUT 是執行期可調（config.reload）的設定，門檻寫死 3600 會在 turn
+    timeout 調大後誤殺「討論很長但活著」的場次；3600 為下限地板（預設 1800×2）。
+    mark_interrupted 冪等（只動 running），重複掃無副作用。
+    """
+    if stale_after_s is None:
+        stale_after_s = max(3600.0, 2 * float(config.TURN_HARD_TIMEOUT or 0))
+    now = time.time()
+    swept: list[str] = []
+    for meta in list_sessions():
+        if meta.get("status") != "running":
+            continue
+        sid = meta.get("session_id") or ""
+        if not sid or sid in active_sids:
+            continue
+        if now - _last_activity_ts(meta) <= stale_after_s:
+            continue
+        note = f"stale-running 掃除：無活躍程序且超過 {int(stale_after_s)}s 無活動，標記中斷"
+        if mark_interrupted(sid, note):
+            swept.append(sid)
+    if swept:
+        log.info("stale-running 掃除 %d 個幽靈 session：%s", len(swept), "、".join(swept))
+    return swept
+
+
 def get_meta(session_id: str) -> dict | None:
     path = _meta_path(session_id)
     if not path.is_file():
@@ -344,25 +574,34 @@ def mark_interrupted(session_id: str, note: str = "") -> bool:
     meta["finished_at"] = time.time()
     if note:
         meta["note"] = note
-    meta["n_events"] = len(load_events(session_id))
+    # 只需計數：走 iter_events 逐筆數，不物化整個 list（長 session O(1) 記憶體）。
+    meta["n_events"] = sum(1 for _ in iter_events(session_id))
     _write_meta(session_id, meta)
     return True
 
 
-def load_events(session_id: str) -> list[dict]:
+def iter_events(session_id: str) -> Iterator[dict]:
+    """逐筆疊代 session 事件（惰性讀檔，不一次載入全檔）。
+
+    語義與 load_events 完全一致：檔案不存在→空、空行/壞 JSON 行跳過。
+    只需計數或串流掃描時用本函式（O(1) 記憶體）；需要整個 list 用 load_events。
+    """
     path = _events_path(session_id)
     if not path.is_file():
-        return []
-    events: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
+        return
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def load_events(session_id: str) -> list[dict]:
+    return list(iter_events(session_id))
 
 
 def delete_session(session_id: str) -> bool:

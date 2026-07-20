@@ -1,0 +1,158 @@
+/* 基底：reset、body 背景、捲軸、標題、玻璃面板、按鈕/輸入框 primitives、通用隱藏。 */
+
+/* ---------- 基底 ---------- */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background:
+    radial-gradient(1100px 520px at 75% -120px, var(--glow-c1), transparent 60%),
+    radial-gradient(900px 480px at -100px 105%, var(--glow-c2), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  display: flex;
+  flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--selection); }
+
+/* 細捲軸 */
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: var(--r-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+
+h2 { font-size: var(--fs-0); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+h3 { font-size: var(--fs-1); color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+.muted { color: var(--muted); font-size: var(--fs-2); }
+
+/* 玻璃面板（只用在 header / drawer / settings / mobiletabs，避免高頻元素掉幀） */
+.glass {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .glass { background: var(--surface-solid); }
+}
+
+/* ---------- 按鈕 / 輸入框 primitives ---------- */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--r-md);
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease),
+              transform var(--t-fast) var(--ease), filter var(--t-fast) var(--ease),
+              opacity var(--t-fast) var(--ease);
+}
+button:active:not(:disabled) { transform: scale(.98); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 主要動作鈕（實色，非漸層）：各面板的送出/啟動類按鈕共用同一配方 */
+.btn-primary {
+  background: var(--accent-strong);
+  color: #fff;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, .08);
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent); }
+
+.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.ghost:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-strong); color: var(--text); }
+.ghost.danger { color: var(--bad); border-color: rgba(255, 107, 107, .35); }
+.ghost.danger:hover:not(:disabled) { background: var(--bad-bg); }
+
+input[type="text"], input[type="password"], input[type="search"], select {
+  font-family: inherit;
+  padding: 8px 12px;
+  min-height: 36px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 14px;
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease),
+              background var(--t-fast) var(--ease);
+}
+input::placeholder { color: var(--muted); }
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+input:disabled { opacity: .5; }
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5l3.5 3.5 3.5-3.5' fill='none' stroke='%23868c9c' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+select option { background: var(--surface-solid); color: var(--text); }
+
+:focus-visible { outline: none; box-shadow: var(--ring); }
+input:focus-visible, select:focus-visible { outline: none; }
+
+/* ---------- 通用隱藏 ---------- */
+.hidden { display: none !important; }
+
+/* ---------- 動態偏好：減少動態 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* 鍵盤跳轉連結：平時藏在畫面外，Tab 聚焦時滑入 */
+.skip-link {
+  position: fixed;
+  left: 10px; top: -52px;
+  z-index: 200;
+  padding: 9px 16px;
+  background: var(--surface-solid);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  font-size: 13px;
+  text-decoration: none;
+  transition: top var(--t-fast) var(--ease);
+}
+.skip-link:focus { top: 10px; }
+
+/* ---------- 線性圖示（index.html 內嵌 sprite，<use href="#i-*"> 引用） ---------- */
+.icon {
+  width: 16px; height: 16px; flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -3px;
+}
+button .icon { pointer-events: none; }
+/* 帶文字的按鈕：圖示與字並排 */
+.ghost, .toolbar button, .drawer-actions button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+/* 純圖示按鈕（無文字）：緊湊方形 */
+.icon-btn { gap: 0; }
+
+/* 主題鈕三態：由 data-mode 決定顯示哪顆圖示（theme.js 只切 data-mode，不動子節點） */
+#themeBtn .icon { display: none; }
+#themeBtn[data-mode="system"] .th-system { display: block; }
+#themeBtn[data-mode="light"] .th-light { display: block; }
+#themeBtn[data-mode="dark"] .th-dark { display: block; }

@@ -102,10 +102,14 @@ def test_audit_has_no_phantom_routes(app):
 # 與 /api/roles 同級保護（groups.yaml 為組隊/mode 注入面），一併納管。
 # Claude 多帳號：/api/claude-account/switch 走 WRITE_DEPS(require_admin)，換憑證檔並重啟
 # 服務（高危狀態變更），依架構決策納管。
+# 帳號釘選：DELETE /api/claude-account/pin 走 WRITE_DEPS(require_admin)，刪 pin 哨兵檔
+# 恢復自動輪替（影響後續帳號分配決策），與 switch 同級納管。
 # #196 起 /api/publish/{session_id} 由 auth 升級為 WRITE_DEPS(require_admin)：對外發佈
 # （push＋開 PR＋合併）屬對外狀態變更，與其他寫入端點同級納管。
 # 動態流程：/api/workflows 寫入端點（POST/PUT/DELETE）走 WRITE_DEPS(require_admin)，
 # 與 /api/groups 同級保護（workflows.yaml 為 stage 序列/角色/閘門注入面），一併納管。
+# 派工模式：/api/autopilot/dispatch-mode 走 WRITE_DEPS(require_admin)，切哨兵檔改變後續
+# session 的 provider/模型分配（auto＝PM 全權），與 pause/resume 同級納管。
 def test_audit_managed_set_matches_decision():
     http_docs, _ = parse_audit()
     managed = {p for (m, p), mark in http_docs.items() if mark}
@@ -115,7 +119,23 @@ def test_audit_managed_set_matches_decision():
         "/api/settings",
         "/api/autopilot/pause",
         "/api/autopilot/resume",
+        "/api/autopilot/dispatch-mode",
         "/api/autopilot/task",
+        "/api/autopilot/triage",
+        # 測試推播(第 3 階 A1):觸發對外網路呼叫且間接證實已設 Telegram/webhook 憑證。
+        "/api/notify/test",
+        "/api/notify/red-drills",
+        "/api/autonomy/preflight/snapshot",
+        "/api/autonomy/rollback-drills",
+        "/api/autonomy/policies/{project_id}",
+        "/api/autonomy/platform-mode",
+        "/api/autonomy/promote",
+        "/api/autonomy/brakes/{scope}/clear",
+        # 排程任務(Kimi PR10):週期性注入 autopilot 任務,與 /api/autopilot/task 同級納管。
+        "/api/schedules",
+        "/api/schedules/{sched_id}",
+        # 看板手動操作(C1):改寫 backlog 狀態(retry/park/unpark/priority),與 triage 同級納管。
+        "/api/autopilot/task/{task_id}/action",
         "/api/roles",
         "/api/roles/{key}",
         "/api/groups",
@@ -123,6 +143,7 @@ def test_audit_managed_set_matches_decision():
         "/api/workflows",
         "/api/workflows/{name}",
         "/api/claude-account/switch",
+        "/api/claude-account/pin",
         "/api/publish/{session_id}",
     }
     assert managed == expected, f"納管清單與架構決策不符：{managed ^ expected}"

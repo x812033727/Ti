@@ -16,7 +16,7 @@ import json
 import sys
 
 import httpx
-import websockets
+from _loopback_clients import loopback_websocket_connect
 
 REQUIREMENT = "做一個四則運算 CLI"
 # fake PM 循序腳本宣告的議程子題（studio/fake_experts.py _pm_decompose_script）。
@@ -34,7 +34,7 @@ def check(cond: bool, label: str) -> None:
 async def main(port: int) -> int:
     base = f"http://127.0.0.1:{port}"
     evs: list[dict] = []
-    async with websockets.connect(f"ws://127.0.0.1:{port}/ws", max_size=2**22) as ws:
+    async with loopback_websocket_connect(f"ws://127.0.0.1:{port}/ws", max_size=2**22) as ws:
         await ws.send(json.dumps({"requirement": REQUIREMENT}))
         for _ in range(800):
             ev = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))

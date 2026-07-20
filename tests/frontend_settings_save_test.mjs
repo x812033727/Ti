@@ -1,11 +1,10 @@
 // 任務 #3 前端驗證：模擬真實「填入 token → 按儲存」流程。
-// 載入真實 web/app.js，renderSettings() 產生欄位 → 模擬使用者在秘密欄位輸入測試 token
-// → 呼叫真實 saveSettings() → 攔截 fetch 取得 POST /api/settings 的 payload 與
-// 回應 {ok:true} 後的 UI 狀態（hint 文字 + 成功 toast）。
+// 先掛全域 stub 再 import 真實 web/js/panels/settings.js，renderSettings() 產生欄位
+// → 模擬使用者在秘密欄位輸入測試 token → 呼叫真實 saveSettings() → 攔截 fetch 取得
+// POST /api/settings 的 payload 與回應 {ok:true} 後的 UI 狀態（hint 文字 + 成功 toast）。
 //
 // 用法：node frontend_settings_save_test.mjs <fields.json>
 import fs from 'node:fs';
-import vm from 'node:vm';
 
 const fields = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const TEST_TOKEN = 'ghp_TEST_frontend_0001';
@@ -48,6 +47,7 @@ const document = {
   querySelector: (s) => $(s),
   querySelectorAll: () => [],
   createElement: (t) => new RecEl(t),
+  createElementNS: (_ns, t) => new RecEl(t),
   createTextNode: () => new RecEl('text'),
   getElementById: () => new RecEl('div'),
   body: new RecEl('body'),
@@ -75,13 +75,13 @@ function fetchStub(url, opts) {
   return Promise.resolve({ json: () => Promise.resolve(res) });
 }
 
-const ctx = vm.createContext({
+Object.assign(globalThis, {
   document, window: { addEventListener: noop, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { protocol: 'http:', host: 'x', href: '' } },
   location: { protocol: 'http:', host: 'x', href: '' }, WebSocket: function () { return new RecEl('ws'); },
-  fetch: fetchStub, console, setTimeout: (f) => 0, setInterval: () => 0,
+  fetch: fetchStub, setTimeout: (f) => 0, setInterval: () => 0,
   clearTimeout: noop, clearInterval: noop,
 });
-vm.runInContext(fs.readFileSync(new URL('../web/app.js', import.meta.url), 'utf8'), ctx, { filename: 'app.js' });
+const ctx = await import('../web/js/panels/settings.js');
 
 // --- 走查：渲染 → 使用者在 GITHUB_TOKEN 填值 → 按儲存 ---
 ctx.renderSettings(fields);

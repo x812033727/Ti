@@ -37,6 +37,7 @@ from tests.autopilot._release_check import (
     missing_elements,
     outlet_carries_block,
     render_or_none,
+    version_matches_effective,
 )
 
 CHANGELOG_PATH = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
@@ -67,12 +68,15 @@ def test_pretag_outlet_carries_block(outlet_name, renderer, changelog, version):
     assert not missing, f"AC#3：{outlet_name} 缺四要素 {missing}"
 
 
-def test_pretag_version_from_pyproject_in_both_outlets(changelog, version):
-    """AC#2：版本來自 pyproject（非硬寫），且在兩出口 body 內可見。"""
+def test_pretag_effective_version_matches_pyproject_in_both_outlets(changelog, version):
+    """AC#2：④ 生效版本須逐字對應 pyproject 版本，而非只在 body 任處出現。"""
     assert re.fullmatch(r"\d+\.\d+\.\d+", version), f"pyproject 版本格式異常：{version!r}"
     for name, renderer in OUTLETS:
         body = renderer(changelog, version)
         assert version in body, f"AC#2：{name} 出口未帶 pyproject 版本字串 {version!r}"
+        assert version_matches_effective(body, version), (
+            f"AC#2：{name} 的 ④ 生效版本未對應 pyproject 版本 {version!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -123,4 +127,29 @@ def test_black_sample_missing_each_element_pairs_red(
     body = render_or_none(renderer, polluted, version)
     assert body is None or name in missing_elements(body), (
         f"黑樣本失效：{outlet_name} 移除要素「{name}」後仍被判為帶到（假綠）"
+    )
+
+
+@pytest.mark.parametrize("outlet_name,renderer", OUTLETS)
+def test_black_sample_stale_effective_version_pairs_red(outlet_name, renderer, changelog, version):
+    """只把 ④ 生效版本改成舊版 → 兩出口版本對應斷言必翻紅。"""
+    old_version = "0.1.9" if version != "0.1.9" else "0.1.8"
+
+    baseline = renderer(changelog, version)
+    assert version_matches_effective(baseline, version), (
+        f"基線失效：{outlet_name} 原始 body 的 ④ 生效版本本應對應 {version!r}"
+    )
+
+    polluted = re.sub(
+        r"(?m)(^.*④\s*生效版本[^\n]*自\s*`?)" + re.escape(version) + r"(`?\s*起[^\n]*$)",
+        rf"\g<1>{old_version}\2",
+        changelog,
+        count=1,
+    )
+    assert polluted != changelog, "mutation 為空操作：④ 生效版本行未被改動，黑樣本無效"
+
+    body = renderer(polluted, version)
+    assert version in body, "黑樣本前提失效：外層 heading/footer 應仍帶 pyproject 版本"
+    assert not version_matches_effective(body, version), (
+        f"黑樣本失效：{outlet_name} 的 ④ 生效版本改成 {old_version!r} 仍被判為對應"
     )

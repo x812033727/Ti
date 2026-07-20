@@ -20,6 +20,18 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 （`routes` 與 `ws`）、提供 `/` 與 `/login` 頁面入口，以及 `main()` 啟動 uvicorn。
 入口 `studio.server:app` 與 `python3 -m studio.server` 維持不變。
 
+## 助手首頁(Kimi 式門面,2026-07-19)
+
+`body[data-view]` 三視圖:`home`(預設,`TI_DEFAULT_VIEW` 可改)/`dash`(監控)/`studio`(工作室)。
+home=消費級門面:hero composer 三模式(討論=/ws 多專家、交辦=POST /api/autopilot/task+任務卡片
+輪詢 activity、快答=內建「快答」workflow 單專家一輪);常駐側欄(Ctrl+K 新對話/對話歷史
+attach·重播/插件=roles·groups·workflows 導流+skills 唯讀/排程任務=schedules CRUD/帳號選單);
+工作室脈搏與靈感區吃既有唯讀 API。核心手法=**#stream 重掛(reparent)不複製**——串流/重連/
+重播管線零改動,`dashboard.onViewChange` 回呼負責離開 home 時搬回(勿刪:單向陷阱回歸測試
+`frontend_home_chat_test`)。模型輸出經 `web/js/markdown.js` sanitizing 渲染(零 innerHTML/
+協定白名單);排程執行引擎仍是 autopilot backlog(`studio/schedules.py` 只做到期入列)。
+回滾:`TI_DEFAULT_VIEW=dash` 即回舊門面,功能不受影響。
+
 ## 模組職責
 
 | 模組 | 職責 |
@@ -58,7 +70,7 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 2. `ws.py` 建立 workspace、開始錄製歷史，啟動 `StudioSession.run()`。
 3. orchestrator 依階段推進，透過 `broadcast()` 送出 `StudioEvent`（見 `events.py`）：
    `session_started` / `phase_change` / `expert_message` / `tool_use` /
-   `board_update` / `run_result` / `git_commit` / `demo_result` / `done` …
+   `board_update` / `run_result` / `git_commit` / `demo_result` / `task_result` / `done` …
 4. 每個事件即時送往前端渲染，同時寫入 `history/<id>.jsonl`。
 5. 執行中前端可送 `{"type":"interject", text}` 或 `{"type":"stop"}`，由
    `_pump_interventions` 注入 session。
@@ -71,6 +83,17 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 〔title/description/criteria/assignee，assignee 已過硬驗證〕、`tasks` 任務清單、
 `edges` 依賴邊、`assignments` 分派表〔index 1-based〕、`corrections` 分派修正紀錄
 〔index 0-based〕），隨事件流入 `history/<id>.jsonl`，供事後重看與重播。
+
+任務結束時會發送 `task_result` 事件（payload：`task_id`、`role`、`provider`、`model`、
+`duration_s`、`qa_rounds`、`input_tokens`、`output_tokens`、`total_tokens`、`cost_usd`、
+`cost_source`），可用於與 `dispatch_decision` 事件進行 `task_id` 的 join。
+（註：若任務因重試等原因重複執行，同一個 `task_id` 可能廣播多次 `task_result`，指標為該次執行之累計值。消費端 join 時應以最後一筆為準。）
+
+`token_usage` 事件為每筆 LLM 呼叫的用量／費用事件；本波新增選填欄位 `task_id`
+（由 lane context 注入，循序主 lane 也同樣標記），供 per-task token／成本聚合、
+與 `dispatch_decision`／`task_result` 以 `task_id` join 用。`task_id` 缺席時代表
+該次呼叫不歸因到任何任務（例如討論／架構階段、未帶 lane context 的發言），消費端
+必須容忍鍵不存在——舊 history JSONL 沒有此欄位，重放行為與重構前一致。
 
 ## 需求澄清（選配，`TI_CLARIFY`）
 
@@ -97,6 +120,25 @@ Ti Studio 是一個 **FastAPI 後端 + 免建置前端（HTML/CSS/JS）** 的多
 
 關閉（預設）時退化成「每任務一波、單一主 lane」，與循序逐任務迭代逐字等價。
 全域 `TI_LLM_MAX_CONCURRENCY` 節流同時進行的 LLM 發言數。
+
+### baseline 注入契約
+
+此 baseline 指 **lane 啟動設定基準**（env + manifest），與 `write_baseline_gitignore`（`runner.py`，發佈前 .gitignore 淨化）同名不同源，切勿混淆。**狀態：前瞻契約，lane 注入層尚未落地**——目前 `LaneContext` 只隔離 git worktree 分支與獨立專家團隊，尚無統一的 env/manifest 注入層，本子段規範的是該層落地時應遵循的契約，而非既有實作。現況逐項稽核見 `studio/docs/lane_baseline_injection_inventory.md`。
+
+**優先序（單一有序清單）**：`顯式注入 > env(TI_*) > lane manifest > 模組 DEFAULT`。此序與 `config.py`/`settings.py` 既有語意同源（設定走 `TI_*` 環境變數、UI 改設定寫 `.env` → `config.reload()`），即 **env 覆蓋檔案**——manifest 承載大宗分層預設，env 作為 per-lane 即時覆蓋，顯式注入（呼叫端明給）優先級最高，模組級 `DEFAULT` 常數墊底。
+
+**fail 策略決策表**（分流準則：安全/正確性關鍵項缺失 → fail-closed 中止該 lane；非關鍵增益項缺失 → fail-open 退回 `DEFAULT` + `log.warning`）：
+
+| 注入項類別 | 缺失/非法時行為 | 依據 |
+|------------|-----------------|------|
+| 安全/正確性關鍵（密鑰、repo 路由、sandbox 開關） | fail-closed：中止該 lane，不以預設矇混放行 | `autopilot._commit_push_merge` 見 `AUTOPILOT_REPO` 為空即回 `(False, reason)` 擋下（fail-closed 類比佐證） |
+| 非關鍵增益（可選旋鈕、可由 DEFAULT 推導） | fail-open：退回模組 `DEFAULT` 並 `log.warning` | `TI_DISCUSS_MODE` 非法值 fallback legacy 模式續跑（fail-open 類比佐證） |
+
+> 表註：上列 `AUTOPILOT_REPO`/`TI_DISCUSS_MODE` 為 fail 策略之**準則類比佐證**，非 lane 注入層現有行為（該層尚未落地）。
+
+**移交待辦**：本子段所述 fail-open/closed 行為尚無守門測試覆蓋，`lane 注入層落地後補守門測試對齊決策表`。
+
+決策脈絡見 DECISIONS.md『lane baseline 注入契約：env/manifest 優先序與 fail-open/closed 分流策略』。
 
 ## 專案與持續改良迴圈
 
@@ -152,6 +194,12 @@ Ti 主核心 repo（雙軌路由）」），或再加 `mode: "improve"` 啟動**
 - **互相回應／反諂媚**：prompt 硬指令要求 `回應 @角色名: 同意|反對 ＋理由` 結構化引用、
   每輪至少指出一個可挑戰點；`parse_mentions()` 以 participants 白名單交替 regex 防禦式
   解析（格式不符整段視為無引用，不錯位）。
+- **討論脈絡的壓縮注入**：`DiscussionEngine._build_prompt()` 注入上一輪全員發言與自身歷史時，
+  會透過 `studio/discussion.py::DiscussionEngine._clip` 壓縮片段；未超 cap 時只 `strip()` 後保留
+  原文，超過 cap 時丟棄前段、保留尾段並加上 `…（前段截斷）`。上一輪片段 cap 為
+  `PREV_SEGMENT_MAX_CHARS=2000`，自身歷史片段 cap 為 `SELF_SEGMENT_MAX_CHARS=1200`。契約是尾段
+  marker 行不可被壓掉，包含 `驗證:`、`決議:`、`核心改動:`、`回應 @…` 等下游 parser 依賴的訊號；
+  守護測試見 [`tests/test_clip_marker_equivalence.py`](tests/test_clip_marker_equivalence.py)。
 - **收斂**：`TI_DISCUSS_MAX_ROUNDS` 硬上限（未設＝`TI_DEBATE_ROUNDS`）＋ `flow.is_stalled`
   相似度提前停止；`stop_reason ∈ {max_rounds, stalled, cancelled}` 落入 `DiscussionResult`。
 - **小結**：規則式零 LLM——共識/分歧由 mentions 統計推導、`final_positions` 取各角色末輪
@@ -420,10 +468,23 @@ autopilot 在 drain 的那份佇列。autopilot 在
 
 ## 前端（web/）
 
-免建置、無框架：
+免建置、無框架，原生 ES modules（`<script type="module">`，無 npm/build 流程）：
 
-- `index.html` / `app.js` / `styles.css`：工作室主頁（討論串、看板、檔案、歷史、重播、設定面板、
-  GitHub repo 網址輸入）。`app.js` 載入時先打 `/api/auth/status`，門禁啟用且未登入則導向 `/login`。
+- `index.html`：工作室主頁骨架（三欄 grid＋六個 drawer＋手機分頁列）；`<head>` 內含
+  防 FOUC 的主題 inline script。`styles.css` 為 `@import` 聚合檔，實際規則拆在
+  `web/css/*.css`（tokens 雙主題／base／layout／stream／board／drawers／settings／
+  components／responsive——responsive 收全部斷點且必須最後載入）。
+- `app.js`：唯一入口 module——import 各模組、集中事件綁定、init()（先打
+  `/api/auth/status`，門禁啟用且未登入則導向 `/login`）。
+- `web/js/`：**非入口模組頂層不查 DOM、不留副作用**（Node 測試「先掛 globalThis stub
+  → import 模組」依賴此鐵則）；跨模組可變狀態集中 `state.js`。
+  - `dom.js`（$/toast）、`state.js`、`ws.js`（start/stop/插話）、
+    `events-render.js`（**handleEvent 事件中樞**＋討論串/看板/檔案渲染）、
+    `theme.js`（深/淺/跟隨系統）、`health.js`（health＋門禁檢查）。
+  - `panels/`：deck（啟動列）、history、autopilot、project、metrics、workflow
+    （含結構化 stage 卡片編輯器，textarea JSON 為單一真相）、roles、groups、team、
+    settings。
+  - `components/`：modal（`<dialog>` 表單）、drawer（統一開關/Esc/焦點管理）、tabs。
 - `login.html` / `login.js`：登入頁，送 `/api/login` 後導回 `/`。
 
 ## 資料夾

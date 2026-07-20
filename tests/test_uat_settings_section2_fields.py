@@ -4,8 +4,8 @@
 - 每欄至少涵蓋 正常值／空值／邊界值／非法值（高風險欄全展開）。
 - select 欄須有「非法選項」案例。
 - 須含「超長輸入不撐破版面」案例。
-- 案例對齊實際欄位（38 個 select：4 基本＋2 Claude 模型＋8 角色模型＋2 Codex 控制＋2 Antigravity 控制＋8 每角色 provider＋12 進階組、
-  8 combo、6 文字、4 秘密）。
+- 案例對齊實際欄位（40 個 select：4 基本＋3 Claude 模型（含 PM 釘選）＋8 角色模型＋2 Codex 控制＋2 Antigravity 控制＋8 每角色 provider＋13 進階組、
+  8 combo、7 文字、4 秘密）。
 - 文件宣稱的「後端擋下非法 select」「秘密留空不變更」須為**真實行為**——
   以實際呼叫 settings.update() 佐證。
 """
@@ -109,6 +109,7 @@ def test_每個select欄都有非法選項案例(sec):
     # 進階組（0/1 或固定選項）由一條彙整的「非法值一律忽略」案例涵蓋（列名所有 env）。
     checks = {
         "TI_PROVIDER": ["TI_PROVIDER", "Provider"],
+        "TI_DEFAULT_VIEW": ["TI_DEFAULT_VIEW", "預設視圖"],
         "TI_MODEL_LEAD": ["TI_MODEL_LEAD", "主力模型"],
         "TI_MODEL_FAST": ["TI_MODEL_FAST", "快速模型"],
         # 角色模型（8 欄）：彙整於 2.25 一條案例，逐 env 列名
@@ -117,6 +118,7 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_MODEL_QA": ["TI_MODEL_QA"],
         "TI_MODEL_SENIOR": ["TI_MODEL_SENIOR"],
         "TI_MODEL_RESEARCHER": ["TI_MODEL_RESEARCHER"],
+        "TI_PM_PIN_MODEL": ["TI_PM_PIN_MODEL", "PM 釘選模型"],
         "TI_MODEL_ARCHITECT": ["TI_MODEL_ARCHITECT"],
         "TI_MODEL_SECURITY": ["TI_MODEL_SECURITY"],
         "TI_MODEL_DEVOPS": ["TI_MODEL_DEVOPS"],
@@ -141,6 +143,7 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_PUBLISH_MERGE": ["TI_PUBLISH_MERGE", "自動合併"],
         "TI_CLARIFY": ["TI_CLARIFY"],
         "TI_HUDDLE": ["TI_HUDDLE"],
+        "TI_TASK_HELP": ["TI_TASK_HELP", "中途求助"],
         "TI_CRITIC": ["TI_CRITIC"],
         "TI_NOTES": ["TI_NOTES"],
         "TI_LESSONS": ["TI_LESSONS"],
@@ -153,6 +156,17 @@ def test_每個select欄都有非法選項案例(sec):
         "TI_ADR": ["TI_ADR", "架構決策記錄"],
         "TI_RESEARCH_TOOLS": ["TI_RESEARCH_TOOLS", "即時研究"],
         "TI_DISCUSS_MODE": ["TI_DISCUSS_MODE", "討論模式"],
+        # 效能/功能四包強化(2026-07-10)新增的 0/1 select:非法值由 update() 的 options
+        # 白名單一律忽略,與其他布林 select 同一條防線。
+        "TI_LINT_AUTOFORMAT": ["TI_LINT_AUTOFORMAT"],
+        "TI_EXPERT_LINT_HOOK": ["TI_EXPERT_LINT_HOOK"],
+        "TI_CONVENTIONS_CARD": ["TI_CONVENTIONS_CARD"],
+        "TI_EXPERT_SKILLS": ["TI_EXPERT_SKILLS"],
+        "TI_AUTOPILOT_AUTO_MERGE": ["TI_AUTOPILOT_AUTO_MERGE"],
+        "TI_AUTOPILOT_WORKFLOW_TRIAGE": ["TI_AUTOPILOT_WORKFLOW_TRIAGE"],
+        "TI_AUTOPILOT_INVESTIGATION_LANE": ["TI_AUTOPILOT_INVESTIGATION_LANE"],
+        "TI_AUTOPILOT_INVESTIGATION_REFUTE": ["TI_AUTOPILOT_INVESTIGATION_REFUTE"],
+        "TI_AUTOPILOT_INVESTIGATION_PARALLEL": ["TI_AUTOPILOT_INVESTIGATION_PARALLEL"],
     }
     assert {f.env for f in selects} == set(checks), "select 欄與預期不符，請更新測試"
     # 非法案例段落：含『非法』字樣的列

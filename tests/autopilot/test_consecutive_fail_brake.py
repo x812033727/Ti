@@ -2,9 +2,38 @@
 
 from __future__ import annotations
 
+import asyncio as real_asyncio
+import types
+
 import pytest
 
 from studio import autopilot, config
+
+
+class StopLoop(BaseException):
+    """跳出 main() 無限迴圈用；繼承 BaseException 以免被 except Exception 吃掉。"""
+
+
+def _stub_main_loop(monkeypatch, tmp_path, sleep_fn):
+    """主迴圈測試共用 stub（對齊 tests/autopilot/test_quota_gate.py 慣例）：
+
+    - autopilot.asyncio 換成 SimpleNamespace——main() 起不了背景監督 task（缺
+      create_task 即靜默跳過），sleep 由測試控制跳出時機，不污染全域 asyncio。
+    - STATE_DIR/PAUSE_FILE 指到 tmp、關額度閘門，迴圈前置的 _maybe_* 步驟全部
+      因狀態檔不存在而自然 no-op，不打外網。
+    """
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
+    monkeypatch.setattr(config, "AUTOPILOT_COOLDOWN", 0)
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_GATE", False)
+    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
+    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: None)
+    monkeypatch.setattr(
+        autopilot,
+        "asyncio",
+        types.SimpleNamespace(sleep=sleep_fn, to_thread=real_asyncio.to_thread),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -39,9 +68,6 @@ def _capture_failed_pause(pauses):
 
 @pytest.mark.asyncio
 async def test_main_pauses_and_notifies_once_after_consecutive_failures(monkeypatch, tmp_path):
-    class StopLoop(Exception):
-        pass
-
     processed: list[int] = []
     sent: list[tuple[str, str, dict]] = []
     statuses: dict[int, str] = {}
@@ -55,16 +81,11 @@ async def test_main_pauses_and_notifies_once_after_consecutive_failures(monkeypa
         if len(processed) >= 2:
             raise StopLoop
 
+    _stub_main_loop(monkeypatch, tmp_path, stop_after_second_sleep)
     monkeypatch.setattr(config, "AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 2)
-    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
-    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
-    monkeypatch.setattr(config, "AUTOPILOT_COOLDOWN", 0)
-    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
-    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: None)
     monkeypatch.setattr(autopilot.backlog, "next_pending", lambda: next(tasks))
     monkeypatch.setattr(autopilot.backlog, "get", lambda task_id: {"status": statuses[task_id]})
     monkeypatch.setattr(autopilot, "run_one_task", fail_task)
-    monkeypatch.setattr(autopilot.asyncio, "sleep", stop_after_second_sleep)
     monkeypatch.setattr(autopilot.notify, "send_bg", lambda *a, **k: sent.append((a[0], a[1], k)))
 
     with pytest.raises(StopLoop):
@@ -78,9 +99,6 @@ async def test_main_pauses_and_notifies_once_after_consecutive_failures(monkeypa
 
 @pytest.mark.asyncio
 async def test_main_pending_after_task_does_not_count_or_reset(monkeypatch, tmp_path):
-    class StopLoop(Exception):
-        pass
-
     processed: list[int] = []
     statuses: dict[int, str] = {}
     tasks = iter([{"id": 1, "title": "provider unavailable"}])
@@ -93,17 +111,12 @@ async def test_main_pending_after_task_does_not_count_or_reset(monkeypatch, tmp_
         if processed:
             raise StopLoop
 
+    _stub_main_loop(monkeypatch, tmp_path, stop_after_first_sleep)
     monkeypatch.setattr(autopilot, "_consecutive_fail_count", 1)
     monkeypatch.setattr(config, "AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 2)
-    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
-    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
-    monkeypatch.setattr(config, "AUTOPILOT_COOLDOWN", 0)
-    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
-    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: None)
     monkeypatch.setattr(autopilot.backlog, "next_pending", lambda: next(tasks))
     monkeypatch.setattr(autopilot.backlog, "get", lambda task_id: {"status": statuses[task_id]})
     monkeypatch.setattr(autopilot, "run_one_task", pending_task)
-    monkeypatch.setattr(autopilot.asyncio, "sleep", stop_after_first_sleep)
     monkeypatch.setattr(autopilot, "_pause", lambda _reason: pytest.fail("pending must not pause"))
     monkeypatch.setattr(
         autopilot.notify,
@@ -120,9 +133,6 @@ async def test_main_pending_after_task_does_not_count_or_reset(monkeypatch, tmp_
 
 @pytest.mark.asyncio
 async def test_manual_pause_recovery_starts_new_notification_period(monkeypatch, tmp_path):
-    class StopLoop(Exception):
-        pass
-
     processed: list[int] = []
     sent: list[tuple[str, str, dict]] = []
     statuses: dict[int, str] = {}
@@ -145,16 +155,11 @@ async def test_manual_pause_recovery_starts_new_notification_period(monkeypatch,
         if len(sent) >= 2:
             raise StopLoop
 
+    _stub_main_loop(monkeypatch, tmp_path, remove_pause_then_stop)
     monkeypatch.setattr(config, "AUTOPILOT_CONSECUTIVE_FAIL_PAUSE", 2)
-    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
-    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
-    monkeypatch.setattr(config, "AUTOPILOT_COOLDOWN", 0)
-    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
-    monkeypatch.setattr(autopilot, "_recover_stale_in_progress", lambda: None)
     monkeypatch.setattr(autopilot.backlog, "next_pending", lambda: next(tasks))
     monkeypatch.setattr(autopilot.backlog, "get", lambda task_id: {"status": statuses[task_id]})
     monkeypatch.setattr(autopilot, "run_one_task", fail_task)
-    monkeypatch.setattr(autopilot.asyncio, "sleep", remove_pause_then_stop)
     monkeypatch.setattr(autopilot.notify, "send_bg", lambda *a, **k: sent.append((a[0], a[1], k)))
 
     with pytest.raises(StopLoop):
@@ -168,20 +173,18 @@ async def test_manual_pause_recovery_starts_new_notification_period(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_non_slo_pause_recovery_does_not_reset_failures(monkeypatch, tmp_path):
-    class StopLoop(Exception):
-        pass
-
     async def clear_pause(_delay):
-        config.AUTOPILOT_PAUSE_FILE.unlink()
+        if config.AUTOPILOT_PAUSE_FILE.exists():
+            config.AUTOPILOT_PAUSE_FILE.unlink()
 
     def stop_after_unpause():
-        raise StopLoop
+        # 暫停期間（_pause_tick 首輪也會呼叫本函式且包在 suppress 裡）不停；
+        # pause 檔被移除、迴圈真正恢復取任務後才跳出。
+        if not config.AUTOPILOT_PAUSE_FILE.exists():
+            raise StopLoop
 
+    _stub_main_loop(monkeypatch, tmp_path, clear_pause)
     monkeypatch.setattr(autopilot, "_consecutive_fail_count", 1)
-    monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
-    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", True)
-    monkeypatch.setattr(autopilot, "_self_sig", lambda: 1.0)
-    monkeypatch.setattr(autopilot.asyncio, "sleep", clear_pause)
     monkeypatch.setattr(autopilot, "_recover_stale_in_progress", stop_after_unpause)
     config.AUTOPILOT_PAUSE_FILE.write_text("provider unavailable\n", encoding="utf-8")
 

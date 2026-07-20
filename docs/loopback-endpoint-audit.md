@@ -21,13 +21,28 @@
 | 方法 | 路徑 | 現況 deps | 納管 | 理由 |
 |------|------|-----------|:----:|------|
 | POST | `/api/redeploy` | admin（auth｜fail-safe loopback） | ✅ | 拉 main 並自我重啟，高危機器狀態變更 |
-| POST | `/api/claude-account/switch` | admin（auth｜fail-safe loopback） | ✅ | 切換 Claude 在線訂閱帳號（換憑證檔 + 重啟 ti.service/ti-autopilot），高危服務狀態變更；有討論/任務進行中時回 409 擋下 |
+| POST | `/api/claude-account/switch` | admin（auth｜fail-safe loopback） | ✅ | 切換 Claude 在線訂閱帳號（換憑證檔 + 重啟 ti.service/ti-autopilot）＝進入手動模式（釘選），高危服務狀態變更；有討論/任務進行中時預設回 409 擋下，UI 提供二選一：`queue=true`＝排空後切換（寫 pin 檔、由 autopilot 於討論空檔代切，回 202，零損失）;`force=true`＝強制切換（立即中斷討論、優雅停機退回任務） |
+| DELETE | `/api/claude-account/pin` | admin（auth｜fail-safe loopback） | ✅ | 解除帳號釘選＝恢復自動輪替（刪 pin 哨兵檔），影響後續帳號分配決策的服務狀態變更 |
 | POST | `/api/publish/{session_id}` | admin（auth｜fail-safe loopback） | ✅ | 觸發對外發佈（push＋開 PR＋等 CI 合併）的對外狀態變更；#196 起由 `auth` 升級為 `WRITE_DEPS`，與其他寫入端點同級 |
 | POST | `/api/auth/password` | admin（auth｜fail-safe loopback） | ✅ | 寫 .env 改存取密碼，秘密寫入面；門禁停用時限本機，公網裸部署不致被搶先設密碼接管 |
 | POST | `/api/settings` | admin（auth｜fail-safe loopback） | ✅ | 改 .env 設定（含 `OPENAI_BASE_URL` 等），可致金鑰外洩/RCE 風險 |
 | POST | `/api/autopilot/pause` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈，遠端可癱瘓（DoS） |
 | POST | `/api/autopilot/resume` | admin（auth｜fail-safe loopback） | ✅ | 控制自動迴圈狀態 |
+| POST | `/api/autopilot/dispatch-mode` | admin（auth｜fail-safe loopback） | ✅ | 切換派工模式哨兵檔（auto＝PM 全權派工/manual），影響後續 session 的 provider/模型分配 |
 | POST | `/api/autopilot/task` | admin（auth｜fail-safe loopback） | ✅ | 向會自主執行 bash 的 autopilot 注入任務 |
+| POST | `/api/autopilot/task/{task_id}/action` | admin（auth｜fail-safe loopback） | ✅ | 看板手動操作單一任務（retry/park/unpark/priority），改寫 backlog 狀態 |
+| POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
+| POST | `/api/notify/test` | admin（auth｜fail-safe loopback） | ✅ | 發送測試推播（webhook/Telegram）＝觸發對外網路呼叫且間接證實已設憑證，管理面操作 |
+| POST | `/api/notify/red-drills` | admin（auth｜fail-safe loopback） | ✅ | 安全送出全部紅色合成告警並記錄 delivery evidence；不執行真實部署或 rollback |
+| POST | `/api/autonomy/preflight/snapshot` | admin（auth｜fail-safe loopback） | ✅ | 保存帶內容 hash 的觀察窗 preflight 證據並寫 audit；紅燈快照也保留 |
+| POST | `/api/autonomy/rollback-drills` | admin（auth｜fail-safe loopback） | ✅ | 所有任務收斂後，在隔離 worktree 演練逐專案 exact-tree rollback；無 push、PR 或部署 |
+| PUT | `/api/autonomy/policies/{project_id}` | admin（auth｜fail-safe loopback） | ✅ | 原子更新版本化自治政策、風險與成本限制，並寫入 audit |
+| PUT | `/api/autonomy/platform-mode` | admin（auth｜fail-safe loopback） | ✅ | 以 preparing→committed manifest 同步切換所有現有專案的 shadow/canary/full 閘門 |
+| POST | `/api/autonomy/promote` | admin（auth｜fail-safe loopback） | ✅ | 成熟度全綠後保存內容定址快照並正式同步升階；禁止跳階或重疊觀察窗 |
+| POST | `/api/autonomy/brakes/{scope}/clear` | admin（auth｜fail-safe loopback） | ✅ | 顯式解除全域或單專案煞車，屬高敏感控制面操作且記錄營運救援介入 |
+| POST | `/api/schedules` | admin（auth｜fail-safe loopback） | ✅ | 建立排程＝向會自主執行 bash 的 autopilot 週期性注入任務，與 /api/autopilot/task 同級 |
+| PUT | `/api/schedules/{sched_id}` | admin（auth｜fail-safe loopback） | ✅ | 改排程內容/啟停（同 POST 寫入面） |
+| DELETE | `/api/schedules/{sched_id}` | admin（auth｜fail-safe loopback） | ✅ | 刪除排程條目 |
 | POST | `/api/roles` | admin（auth｜fail-safe loopback） | ✅ | 寫入角色檔 `roles/<key>.md` 並 reload 角色表（system_prompt 注入面） |
 | PUT | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 改寫角色檔並 reload（同 POST 寫入面） |
 | DELETE | `/api/roles/{key}` | admin（auth｜fail-safe loopback） | ✅ | 刪角色檔（file＝移除、override＝還原內建），機器狀態變更 |
@@ -42,6 +57,22 @@
 | GET  | `/api/provider-quota` | auth | ➖ | 讀取 provider ready/auth 狀態、可列模型與 Ti 本機用量彙總；不回傳 API key/OAuth token |
 | GET  | `/api/autopilot` | auth | ➖ | 讀取狀態 |
 | GET  | `/api/autopilot/backlog` | auth | ➖ | 讀取待辦清單 |
+| GET  | `/api/autopilot/activity` | auth | ➖ | 讀取任務動態視圖（backlog × history 記分卡/token 用量聚合） |
+| GET  | `/api/autopilot/audit-trend` | auth | ➖ | 唯讀：audit.jsonl 每日 outcome 分佈與完成率趨勢 |
+| GET  | `/api/autonomy/status` | auth | ➖ | 唯讀：各專案 stage/mode、煞車、預算與升降級 readiness；秘密只回 configured 狀態 |
+| GET  | `/api/autonomy/preflight` | auth | ➖ | 唯讀：來源、政策、shadow rollout、演練與觀察窗啟動條件；不回秘密或絕對 workspace 路徑 |
+| GET  | `/api/autonomy/events` | auth | ➖ | 唯讀：版本化自治事件與舊事件 unknown 投影 |
+| GET  | `/api/autonomy/policies/{project_id}` | auth | ➖ | 唯讀：版本化自治政策；schema 不接受秘密欄位 |
+| GET  | `/api/autopilot/trust` | auth | ➖ | 唯讀：信任指標（零人工介入合併率/介入分類/系統事件計數，第 3 階 A0） |
+| GET  | `/api/autopilot/stage` | auth | ➖ | 唯讀：升階儀表（八 canary 現值+第 3 階條件快照+階段判定） |
+| GET  | `/api/autopilot/attention` | auth | ➖ | 唯讀：例外收件匣（澄清待答/停放+原因/page 級事件，軌 F1） |
+| GET  | `/api/autopilot/investigations` | auth | ➖ | 唯讀：調查任務結論清單（backlog note＋audit join） |
+| GET  | `/api/lessons` | auth | ➖ | 唯讀：教訓庫瀏覽（子字串搜尋） |
+| GET  | `/api/skills` | auth | ➖ | 唯讀：內部專家技能清單（白名單+SKILL.md 描述），無秘密 |
+| GET  | `/api/schedules` | auth | ➖ | 唯讀：排程任務清單 |
+| GET  | `/api/autopilot/digest` | auth | ➖ | 唯讀：週報 digest（audit/backlog/lessons 純模板彙整） |
+| GET  | `/api/autopilot/digests` | auth | ➖ | 唯讀：已落盤 digest 歷史清單（每日排程寫檔） |
+| GET  | `/api/autopilot/digests/{name}` | auth | ➖ | 唯讀：單一落盤 digest 內容（檔名白名單擋穿越） |
 | GET  | `/api/history` | auth | ➖ | 讀取歷史列表 |
 | GET  | `/api/history/{session_id}/events` | auth | ➖ | 讀取單場事件 |
 | GET  | `/api/workspace/{session_id}/files` | auth | ➖ | 讀取工作區檔案清單 |
@@ -53,6 +84,7 @@
 | GET  | `/api/projects` | auth | ➖ | 讀取專案列表與 backlog 統計 |
 | GET  | `/api/projects/{project_id}` | auth | ➖ | 讀取單一專案 meta 與 backlog |
 | GET  | `/api/metrics` | auth | ➖ | 讀取運維指標（活躍場次/並發上限/history 計數/保留策略/workspace 數），無秘密 |
+| GET  | `/api/appraisals` | auth | ➖ | 讀取 AI 成員考核聚合（per provider 平均分/樣本數/通過率）與最近紀錄，無秘密 |
 | POST | `/api/login` | — | ➖ | 認證握手，必須對外可達才能登入 |
 | POST | `/api/logout` | — | ➖ | 認證握手 |
 | GET  | `/api/auth/status` | — | ➖ | 公開狀態查詢（前端判斷是否需登入） |
@@ -72,6 +104,7 @@
 | DELETE | `/api/projects/{project_id}` | auth | 刪除專案（meta/backlog/藍圖/固定 workspace），作用於資料面而非機器控制面，與 DELETE history 同級；進行中回 409 防止對著被抽掉的目錄繼續寫檔；history 紀錄保留 |
 | POST | `/api/sessions/{target_id}/stop` | auth | 對進行中討論／改良迴圈送停止指令（與 /ws 的 stop 同一條 request_stop 管線，僅作用於使用者自己啟動的場次）；讓斷線後背景續跑的討論也停得掉，與 /ws 同安全模型 |
 | POST | `/api/projects/{project_id}/publish-repo` | auth | 設定專案自己的發佈 repo（owner/repo，留空清除）：純 meta 寫入（格式白名單驗證），實際對外推送仍由 session 結束的既有發佈流程執行，token 不經此端點 |
+| POST | `/api/projects/{project_id}/intent` | auth | 設定/覆寫專案常駐意圖（meta 純資料面；意圖迴路差距分析的輸入），與 publish-repo 同級 |
 
 > 註：上列皆屬「資料面寫入」，架構決策的納管邊界限定在「會改機器狀態的控制面/秘密寫入」。
 > 若後續威脅模型升級，可比照 `WRITE_DEPS` 一行掛上，已有守門測試結構可直接擴充。

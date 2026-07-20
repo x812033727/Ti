@@ -3,10 +3,65 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
   <title>Ti Studio — AI 專家討論工作室</title>
+  <!-- 防 FOUC：在樣式載入前套用主題初值（localStorage 優先，否則跟隨系統） -->
+  <script>try{var t=localStorage.getItem("ti-theme");if(t==="light"||((!t||t==="system")&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.theme="light";}catch(e){}</script>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236e79ff'/%3E%3Cstop offset='.55' stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%23c084fc'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='24' height='24' rx='7' fill='url(%23g)'/%3E%3Cpath d='M7.5 9.2h11M13 9.2v8.4' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body>
+<body data-view="home">
+  <!-- 線性圖示 sprite（stroke 1.7 / round cap；以 <use href="#i-*"> 引用，取代 emoji 圖示） -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 16.5a9 9 0 1 1 16 0"/><path d="M12 16.5l4.2-5.4"/><circle cx="12" cy="16.5" r="1.3"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4.5 6.5A2.5 2.5 0 0 1 7 4h10a2.5 2.5 0 0 1 2.5 2.5v7A2.5 2.5 0 0 1 17 16H9.5L5.8 19.4c-.6.55-1.3.1-1.3-.7z"/><path d="M8.5 9h7M8.5 12h4.5"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19.5c.6-3.3 2.9-5.1 5.5-5.1s4.9 1.8 5.5 5.1"/><path d="M15 5.6a2.9 2.9 0 1 1 1.5 5.5"/><path d="M16.4 14.5c2.2.4 3.7 1.9 4.1 4.4"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="5.5" r="2"/><circle cx="18" cy="18.5" r="2"/><path d="M8 5.5h6.5a3.5 3.5 0 0 1 0 7h-9a3.5 3.5 0 0 0 0 7H16"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3l8 4.4v9.2L12 21l-8-4.4V7.4z"/><path d="M4.2 7.5L12 12l7.8-4.5M12 12v8.8"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3.2 2"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20v-7M12 20V5M19 20v-10"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.8"/><circle cx="12" cy="3.8" r="1"/><circle cx="9.3" cy="13" r="1.1"/><circle cx="14.7" cy="13" r="1.1"/><path d="M9.5 16.3h5"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 1 3.6 10.8c-.8.6-1.1 1.3-1.1 2.2h-5c0-.9-.3-1.6-1.1-2.2A6 6 0 0 1 12 3z"/><path d="M9.8 19h4.4M10.6 21.5h2.8"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h8M18.6 7H20"/><circle cx="15.6" cy="7" r="2.1"/><path d="M4 12h1.4M10 12h10"/><circle cx="7" cy="12" r="2.1"/><path d="M4 17h8M18.6 17H20"/><circle cx="15.6" cy="17" r="2.1"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 13.6A8 8 0 1 1 10.4 4 6.6 6.6 0 0 0 20 13.6z"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9.5 4H6.5A2 2 0 0 0 4.5 6v12a2 2 0 0 0 2 2h3"/><path d="M15.5 8l4 4-4 4M19.5 12H10"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5.5 12h13"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.8 3.6v4h-4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M7 7l.9 13h8.2L17 7"/><path d="M10.3 10.8v5.4M13.7 10.8v5.4"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 11.5L12 16l4.5-4.5"/><path d="M5 20h14"/></symbol>
+    <symbol id="i-board" viewBox="0 0 24 24"><rect x="3.5" y="4" width="4.6" height="16" rx="1.4"/><rect x="9.7" y="4" width="4.6" height="11" rx="1.4"/><rect x="15.9" y="4" width="4.6" height="7" rx="1.4"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.4h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.5 5.5l10 6.5-10 6.5z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8.5 5.5v13M15.5 5.5v13"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h11V9.5"/></symbol>
+    <symbol id="i-news" viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="2"/><path d="M8 9h8M8 12.5h8M8 16h4.5"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12.5h3.6L9 6.8l4.4 11 2.4-5.3H21"/></symbol>
+    <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M12 3.5l2 4.2 4.6.6-3.4 3.2.9 4.6-4.1-2.3-4.1 2.3.9-4.6L5.4 8.3l4.6-.6z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.2L21 19H3z"/><path d="M12 9.8v4"/><circle cx="12" cy="16.4" r=".4" fill="currentColor"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".4" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.6"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M20.5 3.5L3.5 10.2l6.8 2.6 2.6 6.8z"/><path d="M20.5 3.5L10.3 12.8"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20.5H6z"/><path d="M14 3.5v4h4M9 12h6M9 15.5h6"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M6 21V4"/><path d="M6 4.5c2.5-1.4 5-1.4 7.5 0s5 1.4 6 .8V13c-1 .6-3.5.6-6-.8s-5-1.4-7.5 0"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></symbol>
+    <symbol id="i-merge" viewBox="0 0 24 24"><circle cx="6" cy="5.5" r="2"/><circle cx="6" cy="18.5" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7.5v9M6 9c0 3 4 3 10 3"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.8 3.6-5.8 7-5.8s6.2 2 7 5.8"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.5 3.8a5 5 0 0 0-5.6 6.9L4 15.6a2.2 2.2 0 0 0 3.1 3.1l4.9-4.9a5 5 0 0 0 6.9-5.6l-3 3-3-.9-.9-3z"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1 1-1.1 1.8v.3"/><circle cx="12" cy="16.8" r=".4" fill="currentColor"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3.5V8M15 3.5V8"/><path d="M6.5 8h11v3a5.5 5.5 0 0 1-11 0z"/><path d="M12 16.5v4"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M5.5 12.5L12 19l6.5-6.5"/></symbol>
+    <symbol id="i-vote" viewBox="0 0 24 24"><path d="M4.5 12.5h15V20h-15z"/><path d="M8 12.5l1.2-3h5.6l1.2 3"/><path d="M9.5 6.5L11.4 8.4 15 4.8"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  </svg>
+
+  <a class="skip-link" href="#stream">跳到討論串</a>
   <header class="app-header glass">
     <div class="brand">
       <svg class="logo" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
@@ -24,23 +79,58 @@
       <span id="offlineBadge" class="badge-offline hidden">離線示範</span>
     </div>
     <nav class="toolbar">
-      <button id="settingsBtn" class="ghost" title="設定">⚙️ 設定</button>
-      <button id="projectBtn" class="ghost" title="專案藍圖與改良待辦（先在啟動列選擇專案）">📦 專案</button>
-      <button id="historyBtn" class="ghost" title="歷史 session">📜 歷史</button>
-      <button id="autopilotBtn" class="ghost" title="Autopilot 自主迴圈">🤖 Autopilot</button>
-      <button id="workflowBtn" class="ghost" title="動態流程編排">🧭 流程</button>
-      <button id="metricsBtn" class="ghost" title="運維指標">📊 指標</button>
-      <button id="logoutBtn" class="ghost hidden" title="登出">登出</button>
+      <!-- 系統操作留在右上角（設定按鈕位置為 UAT 文件所釘）；面板導覽移往左側 icon rail -->
+      <button id="settingsBtn" class="ghost icon-btn" title="設定" aria-label="設定">
+        <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg></button>
+      <button id="themeBtn" class="ghost icon-btn" data-mode="system" title="主題：跟隨系統" aria-label="主題：跟隨系統">
+        <svg class="icon th-system" aria-hidden="true"><use href="#i-auto"/></svg>
+        <svg class="icon th-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="icon th-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+      <button id="logoutBtn" class="ghost icon-btn hidden" title="登出" aria-label="登出">
+        <svg class="icon" aria-hidden="true"><use href="#i-logout"/></svg></button>
     </nav>
-    <div id="phase" class="phase">待命中</div>
+    <div id="phase" class="phase" aria-live="polite">待命中</div>
   </header>
 
+  <!-- 左側 icon rail：主視圖切換 + 面板導覽（桌面固定左欄；手機收進「更多」bottom sheet）。
+       按鈕連 id 自 header 工具列原封搬入，app.js 綁定與各面板測試零改動。 -->
+  <nav class="app-rail" aria-label="主導覽">
+    <div class="rail-views" role="tablist" aria-label="主視圖" aria-orientation="vertical">
+      <button id="homeBtn" role="tab" aria-selected="false" title="助手首頁">
+        <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span>首頁</span></button>
+      <button id="viewDashBtn" class="active" role="tab" aria-selected="true" title="監控儀表板">
+        <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg><span>監控</span></button>
+      <button id="viewStudioBtn" role="tab" aria-selected="false" title="工作室三欄">
+        <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span>工作室</span></button>
+    </div>
+    <span class="rail-sep" aria-hidden="true"></span>
+    <div class="rail-group-label" aria-hidden="true">編排</div>
+    <button id="teamBtn" title="團隊：管理角色與討論小組">
+      <svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><span>團隊</span></button>
+    <button id="workflowBtn" title="動態流程編排">
+      <svg class="icon" aria-hidden="true"><use href="#i-route"/></svg><span>流程</span></button>
+    <button id="projectBtn" title="專案藍圖與改良待辦（先在啟動列選擇專案）">
+      <svg class="icon" aria-hidden="true"><use href="#i-box"/></svg><span>專案</span></button>
+    <span class="rail-sep" aria-hidden="true"></span>
+    <div class="rail-group-label" aria-hidden="true">觀測</div>
+    <button id="historyBtn" title="歷史 session">
+      <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>歷史</span></button>
+    <button id="metricsBtn" title="運維指標">
+      <svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg><span>指標</span></button>
+    <button id="autopilotBtn" title="Autopilot 自主迴圈">
+      <svg class="icon" aria-hidden="true"><use href="#i-bot"/></svg><span>Autopilot</span></button>
+    <button id="insightsBtn" title="洞察：趨勢/教訓庫/調查結論">
+      <svg class="icon" aria-hidden="true"><use href="#i-bulb"/></svg><span>洞察</span></button>
+  </nav>
+
   <!-- 設定（API key / provider / 模型 / GitHub token） -->
-  <div id="settingsPanel" class="settings-panel hidden">
+  <div id="settingsPanel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-label="設定">
     <div class="settings-card glass">
       <div class="settings-head">
         <h2>設定</h2>
-        <button id="settingsClose" class="ghost">✕</button>
+        <button id="settingsClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
       <div class="settings-main">
         <aside id="settingsNav" class="settings-nav" aria-label="設定分類"></aside>
@@ -94,79 +184,126 @@
       <div class="settings-foot">
         <span id="settingsHint" class="muted">設定會寫入伺服器的 .env，下次討論即生效。</span>
         <button id="settingsRecommend" class="ghost"
-                title="把所有帶推薦值的欄位（各角色模型）一鍵填入推薦配置，再按儲存生效">✨ 套用推薦模型</button>
+                title="把所有帶推薦值的欄位（各角色模型）一鍵填入推薦配置，再按儲存生效">
+          <svg class="icon" aria-hidden="true"><use href="#i-stamp"/></svg>套用推薦模型</button>
         <button id="settingsSave">儲存</button>
       </div>
     </div>
   </div>
 
   <!-- 歷史存檔 / 重播 -->
-  <div id="historyPanel" class="drawer glass hidden">
+  <div id="historyPanel" class="drawer glass hidden" role="dialog" aria-label="歷史 session">
     <div class="drawer-head">
-      <h2>📜 歷史 session</h2>
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>歷史 session</h2>
       <div class="drawer-actions">
-        <button id="historyCleanup" class="ghost danger" title="刪除所有已完成的 session（含產出檔案）">🗑️ 清除已完成</button>
-        <button id="historyClose" class="ghost">✕</button>
+        <button id="historyCleanup" class="ghost danger" title="刪除所有已完成的 session（含產出檔案）">
+          <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>清除已完成</button>
+        <button id="historyClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </div>
     <ul id="historyList" class="history-list"></ul>
   </div>
 
   <!-- Autopilot 自主自我改善迴圈 -->
-  <div id="autopilotPanel" class="drawer glass hidden">
+  <div id="autopilotPanel" class="drawer glass hidden" role="dialog" aria-label="Autopilot 自主迴圈">
     <div class="drawer-head" id="autopilotHead">
-      <h2>🤖 Autopilot <span id="apMini" class="ap-mini muted hidden"></span></h2>
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-bot"/></svg>Autopilot <span id="apMini" class="ap-mini muted hidden"></span></h2>
       <div class="drawer-actions">
-        <button id="autopilotMin" class="ghost" title="縮成迷你狀態列">▁</button>
-        <button id="autopilotClose" class="ghost">✕</button>
+        <button id="autopilotMin" class="ghost icon-btn" title="縮成迷你狀態列" aria-label="縮成迷你狀態列">
+          <svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button>
+        <button id="autopilotClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </div>
-    <div class="ap-status">
-      <span id="apState" class="muted">載入中…</span>
-      <button id="apToggle" class="ghost">暫停 / 恢復</button>
+    <div class="ap-body">
+      <div class="ap-status">
+        <span id="apState" class="muted">載入中…</span>
+        <div class="ap-status-actions">
+          <button id="apToggle" class="ghost">暫停 / 恢復</button>
+          <button id="apDispatchMode" class="ghost" title="auto＝PM 全權派工（限 claude/codex、模型自由）；手動＝系統規則裁決">派工：手動</button>
+          <button id="apTriage" class="ghost" title="立即分診 failed：基礎設施型退回重試、討論未收斂冷卻復活、陳年失敗歸檔">分診</button>
+        </div>
+      </div>
+      <div id="apDrift" class="ap-drift hidden"></div>
+      <section class="ap-section">
+        <div class="ap-section-head">provider 額度</div>
+        <div id="apQuota" class="ap-quota"></div>
+      </section>
+      <section class="ap-section">
+        <div class="ap-section-head">績效榜</div>
+        <div id="apAppraisal" class="ap-appraisal"></div>
+      </section>
+      <div class="ap-add">
+        <input id="apTaskTitle" type="text" placeholder="新增一個自我改善任務（標題）" />
+        <textarea id="apTaskDetail" rows="2" placeholder="細節/驗收條件（選填）"></textarea>
+        <div class="ap-add-row">
+          <select id="apTaskPriority" title="優先級">
+            <option value="1" selected>P1 一般</option>
+            <option value="0">P0 必須</option>
+            <option value="2">P2 加分</option>
+          </select>
+          <select id="apTaskType" title="類型">
+            <option value="improvement" selected>改良</option>
+            <option value="feature">功能</option>
+            <option value="bug">缺陷</option>
+          </select>
+          <button id="apAddBtn">加任務</button>
+        </div>
+      </div>
+      <section class="ap-section">
+        <div class="ap-section-head">工作室動態</div>
+        <ul id="apActivity" class="ap-timeline"></ul>
+        <ul id="apBacklog" class="history-list"></ul>
+      </section>
     </div>
-    <div class="ap-add">
-      <input id="apTaskTitle" type="text" placeholder="新增一個自我改善任務（標題）" />
-      <button id="apAddBtn">加任務</button>
-    </div>
-    <ul id="apBacklog" class="history-list"></ul>
   </div>
 
   <!-- 專案藍圖與改良待辦 -->
-  <div id="projectPanel" class="drawer glass hidden">
+  <div id="projectPanel" class="drawer drawer--lg glass hidden" role="dialog" aria-label="專案藍圖與改良待辦">
     <div class="drawer-head">
-      <h2>📦 專案</h2>
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-box"/></svg>專案</h2>
       <div class="drawer-actions">
-        <button id="projectRefresh" class="ghost" title="重新整理">🔄</button>
-        <button id="projectClose" class="ghost">✕</button>
+        <button id="projectRefresh" class="ghost icon-btn" title="重新整理" aria-label="重新整理">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+        <button id="projectClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </div>
     <div id="projectBody" class="metrics-body"><span class="muted">載入中…</span></div>
   </div>
 
   <!-- 動態流程編排 -->
-  <div id="workflowPanel" class="drawer glass hidden">
+  <div id="workflowPanel" class="drawer drawer--lg glass hidden" role="dialog" aria-label="動態流程編排">
     <div class="drawer-head">
-      <h2>🧭 動態流程</h2>
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg>動態流程</h2>
       <div class="drawer-actions">
-        <button id="workflowRefresh" class="ghost" title="重新整理">🔄</button>
-        <button id="workflowClose" class="ghost">✕</button>
+        <button id="workflowRefresh" class="ghost icon-btn" title="重新整理" aria-label="重新整理">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+        <button id="workflowClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </div>
     <div class="metrics-body wf-body">
       <div class="wf-row">
         <select id="workflowList" class="project-select" title="選擇要檢視/編輯的流程"></select>
         <button id="workflowNew" class="ghost" type="button">＋ 新流程</button>
-        <button id="workflowDelete" class="ghost danger" type="button" title="刪除選取的流程">🗑️</button>
+        <button id="workflowDelete" class="ghost danger icon-btn" type="button" title="刪除選取的流程" aria-label="刪除選取的流程">
+          <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg></button>
       </div>
       <label class="set-row"><span class="set-label">名稱</span>
         <input id="workflowName" type="text" placeholder="流程名稱（≤64 字）" autocomplete="off" /></label>
       <label class="set-row"><span class="set-label">描述</span>
         <input id="workflowDesc" type="text" placeholder="（選填）一句說明" autocomplete="off" /></label>
       <div class="wf-stages-head">
-        <span class="set-label">stages（JSON 陣列）</span>
-        <button id="workflowTemplate" class="ghost" type="button" title="以內建預設流程當起點">載入預設範本</button>
+        <span class="set-label">stages（階段序列）</span>
+        <div class="wf-stages-tools">
+          <button id="workflowTemplate" class="ghost" type="button" title="以內建預設流程當起點">載入預設範本</button>
+          <button id="wfModeToggle" class="ghost" type="button"
+                  title="在結構化卡片與 JSON 原文之間切換（進階：JSON 可直接編輯）">{} JSON</button>
+        </div>
       </div>
+      <div id="wfStageCards" class="wf-cards" aria-label="階段卡片編輯器"></div>
       <textarea id="workflowStages" class="wf-textarea" spellcheck="false"
                 placeholder='[{"type":"decompose"},{"type":"build","task_pipeline":[{"type":"implement","assignee":"engineer"}]},{"type":"demo"}]'></textarea>
       <div class="wf-actions">
@@ -177,19 +314,209 @@
     </div>
   </div>
 
-  <!-- 運維指標 -->
-  <div id="metricsPanel" class="drawer glass hidden">
+  <!-- 洞察（趨勢/教訓庫/調查結論） -->
+  <div id="insightsPanel" class="drawer glass hidden" role="dialog" aria-label="洞察">
     <div class="drawer-head">
-      <h2>📊 運維指標</h2>
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-bulb"/></svg>洞察</h2>
       <div class="drawer-actions">
-        <button id="metricsRefresh" class="ghost" title="重新整理">🔄</button>
-        <button id="metricsClose" class="ghost">✕</button>
+        <button id="insDigestBtn" class="ghost" title="產生近 7 天成果週報">
+          <svg class="icon" aria-hidden="true"><use href="#i-news"/></svg>週報</button>
+        <button id="insightsClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+    <div class="insights-tabs team-tabs" role="tablist" aria-label="洞察分頁">
+      <button class="active" data-it="trend" role="tab" aria-selected="true">趨勢</button>
+      <button data-it="lessons" role="tab" aria-selected="false">教訓庫</button>
+      <button data-it="inv" role="tab" aria-selected="false">調查結論</button>
+    </div>
+    <div class="metrics-body team-body">
+      <div id="insTrend"><div id="insTrendBody"></div></div>
+      <div id="insLessons" class="hidden">
+        <input id="insLessonsSearch" type="text" placeholder="搜尋教訓(內文/需求)…" />
+        <ul id="insLessonsList" class="team-list"></ul>
+      </div>
+      <div id="insInvestigations" class="hidden">
+        <ul id="insInvList" class="team-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 團隊（角色與討論小組管理） -->
+  <div id="teamPanel" class="drawer glass hidden" role="dialog" aria-label="團隊管理">
+    <div class="drawer-head">
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg>團隊</h2>
+      <div class="drawer-actions">
+        <button id="teamRefresh" class="ghost icon-btn" title="重新整理" aria-label="重新整理">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+        <button id="teamClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+    <div class="team-tabs" role="tablist" aria-label="團隊管理分頁">
+      <button id="teamTabRoles" class="active" data-tt="roles" role="tab" aria-selected="true">角色</button>
+      <button id="teamTabGroups" data-tt="groups" role="tab" aria-selected="false">小組</button>
+    </div>
+    <div class="metrics-body team-body">
+      <div id="teamRoles">
+        <div class="team-list-head">
+          <span class="muted">全部角色（內建＋自建；自建與覆蓋會落檔 roles/&lt;key&gt;.md）</span>
+          <button id="roleNew" class="ghost" type="button">＋ 新角色</button>
+        </div>
+        <ul id="roleList" class="team-list"><li class="muted">載入中…</li></ul>
+      </div>
+      <div id="teamGroups" class="hidden">
+        <div class="team-list-head">
+          <span class="muted">討論小組（開場時可在啟動列指定，限定本場參與角色）</span>
+          <button id="groupNew" class="ghost" type="button">＋ 新小組</button>
+        </div>
+        <ul id="groupList" class="team-list"><li class="muted">載入中…</li></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 運維指標 -->
+  <div id="metricsPanel" class="drawer glass hidden" role="dialog" aria-label="運維指標">
+    <div class="drawer-head">
+      <h2><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>運維指標</h2>
+      <div class="drawer-actions">
+        <button id="metricsRefresh" class="ghost icon-btn" title="重新整理" aria-label="重新整理">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+        <button id="metricsClose" class="ghost icon-btn" aria-label="關閉">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </div>
     <div id="metricsBody" class="metrics-body"><span class="muted">載入中…</span></div>
   </div>
 
+    <!-- Kimi 式助手首頁(view=home):常駐側欄+hero composer。非破壞性新增——
+       dash/studio 兩視圖與所有面板原封保留;#stream 於對話時 reparent 進 #homeChat(PR4)。 -->
+  <section id="homeShell" class="home-shell" aria-label="助手首頁">
+    <aside id="sideNav" class="side-nav glass" aria-label="助手導覽">
+      <button id="homeNewChat" class="sn-new">
+        <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+        <span>新對話</span><kbd>Ctrl K</kbd></button>
+      <nav class="sn-history" aria-label="對話">
+        <div class="sn-label">對話</div>
+        <ul id="snHistoryList"><li class="sn-empty">還沒有對話——從上面開始第一個。</li></ul>
+      </nav>
+      <div class="sn-bottom">
+        <button id="snAttention" title="需要你的事——澄清待答/停放任務/紅色事件">
+          <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span>需要你</span>
+          <span id="snAttentionBadge" class="sn-badge hidden"></span></button>
+        <button id="snPlugins" title="角色/群組/流程/技能總覽">
+          <svg class="icon" aria-hidden="true"><use href="#i-plug"/></svg><span>插件</span></button>
+        <button id="snSchedules" title="定期交辦給 agent 的例行工作">
+          <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>排程任務</span></button>
+        <button id="snStage" title="你的工作室正在升級——自治程度與開關進度">
+          <svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg><span>升階</span></button>
+        <button id="snStudio" title="進入工作室(完整三欄)">
+          <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span>工作室</span></button>
+        <div class="sn-account-wrap">
+          <div id="snAccountMenu" class="sn-menu hidden" role="menu" aria-label="帳號選單">
+            <button id="accTheme" role="menuitem">切換主題</button>
+            <button id="accPassword" role="menuitem">變更密碼</button>
+            <button id="accLang" role="menuitem" disabled title="即將推出">語言:繁體中文</button>
+            <button id="accLogout" role="menuitem" class="danger">登出</button>
+          </div>
+          <button id="snAccount" title="帳號與偏好">
+            <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span>帳號</span></button>
+        </div>
+      </div>
+    </aside>
+    <div id="homeMain" class="home-main" data-subview="hero">
+      <div id="homeHero" class="home-hero">
+        <h1 class="hero-title">想做什麼?</h1>
+        <p class="hero-sub">直接說,讓工作室的專家們討論並動手;或交辦給 agent 在背景完成。</p>
+        <div class="hero-composer">
+          <textarea id="heroInput" rows="2" placeholder="說說你要什麼,或交辦一個 agent…" aria-label="輸入需求"></textarea>
+          <div class="hero-actions">
+            <div class="hero-modes" role="tablist" aria-label="模式">
+              <button id="heroModeChat" class="active" role="tab" aria-selected="true"
+                title="開一場多專家討論,即時看直播">討論</button>
+              <button id="heroModeTask" role="tab" aria-selected="false"
+                title="交辦給 agent 在背景執行(autopilot 佇列),完成自動合併部署">交辦 Agent</button>
+              <button id="heroModeQuick" role="tab" aria-selected="false"
+                title="快答:單一資深專家直接回應(適合問答與小查詢)">快答</button>
+            </div>
+            <button id="heroSend" class="hero-send" title="開始">
+              <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg><span>開始</span></button>
+          </div>
+        </div>
+        <div id="heroPulse" class="hero-pulse" aria-live="polite"></div>
+        <div id="heroInspire" class="hero-inspire"></div>
+      </div>
+      <div id="homeChat" class="home-chat hidden">
+        <div class="home-chat-stream" id="homeChatStream"></div>
+        <div class="home-chat-bar">
+          <input id="heroInterject" type="text" placeholder="隨時插話,專家們會看到…" aria-label="插話" disabled />
+          <button id="heroInterjectBtn" class="ghost icon-btn" title="送出插話" aria-label="送出插話" disabled>
+            <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg></button>
+          <button id="heroStopBtn" class="ghost icon-btn danger" title="停止討論" aria-label="停止討論" disabled>
+            <svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg></button>
+        </div>
+      </div>
+      <div id="homePlugins" class="home-sub hidden"></div>
+      <div id="homeSchedules" class="home-sub hidden"></div>
+      <div id="homeStage" class="home-sub hidden"></div>
+      <div id="homeAttention" class="home-sub hidden"></div>
+    </div>
+  </section>
+
   <main class="layout">
+    <!-- 監控視圖：Autopilot 儀表板（預設首頁；開始討論/重播自動切到工作室視圖） -->
+    <section class="dashboard" id="dashboard" aria-label="Autopilot 監控儀表板">
+      <div class="dash-hero">
+        <div class="dash-hero-main">
+          <span id="dashOrb" class="dash-orb" data-state="loading" aria-hidden="true"></span>
+          <div class="dash-hero-text">
+            <div id="dashState" class="dash-state">載入中…</div>
+            <div id="dashSub" class="dash-sub muted"></div>
+          </div>
+        </div>
+        <div class="dash-hero-actions">
+          <button id="dashToggle" class="ghost" disabled>…</button>
+          <button id="dashTriage" class="ghost" title="立即分診 failed：基礎設施型退回重試、討論未收斂冷卻復活、陳年失敗歸檔">分診</button>
+          <button id="dashNewTalk" title="切到工作室視圖，開一場新討論">
+            <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg>開新討論</button>
+        </div>
+      </div>
+      <div id="dashDrift" class="ap-drift hidden"></div>
+      <div class="dash-tiles" id="dashTiles" aria-label="任務統計"></div>
+      <div class="dash-grid">
+        <section class="dash-card dash-span2" aria-label="近 30 天結果趨勢">
+          <div class="dash-card-head">
+            <h3>近 30 天結果</h3>
+            <div class="dash-legend" aria-hidden="true">
+              <span class="dash-legend-item"><i class="dash-swatch ok"></i>完成</span>
+              <span class="dash-legend-item"><i class="dash-swatch fail"></i>失敗</span>
+            </div>
+          </div>
+          <div id="dashTrend" class="dash-trend"><span class="muted">載入中…</span></div>
+        </section>
+        <section class="dash-card" aria-label="provider 額度">
+          <div class="dash-card-head"><h3>Provider 額度</h3></div>
+          <div id="dashQuota" class="dash-quota"><span class="muted">載入中…</span></div>
+        </section>
+        <section class="dash-card dash-span2" aria-label="最新動態">
+          <div class="dash-card-head">
+            <h3>最新動態</h3>
+            <button id="dashMore" class="ghost" title="開啟 Autopilot 完整面板（加任務/手動操作）">完整面板</button>
+          </div>
+          <ul id="dashActivity" class="dash-activity"><li class="muted">載入中…</li></ul>
+        </section>
+        <section class="dash-card" aria-label="績效榜">
+          <div class="dash-card-head"><h3>績效榜</h3></div>
+          <div id="dashAppraisal" class="dash-appraisal"><span class="muted">載入中…</span></div>
+        </section>
+      </div>
+      <div class="dash-foot muted">
+        <span id="dashUpdated"></span>
+        <button id="dashRefresh" class="ghost icon-btn" title="立即更新" aria-label="立即更新">
+          <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
+      </div>
+    </section>
+
     <!-- 左：專家名單（可收合） -->
     <aside class="experts" id="experts">
       <div class="panel-head">
@@ -203,13 +530,20 @@
     <section class="discussion">
       <div class="command-deck glass">
         <!-- 收合後的精簡列：點擊展開；執行中保留停止鈕 -->
-        <button id="deckBar" class="deck-bar" type="button">
-          <span class="deck-caret">▾</span>
-          <span id="deckSummary" class="deck-summary muted"></span>
-          <span id="deckStop" class="deck-stop hidden" role="button">⏹ 停止</span>
-        </button>
-        <input id="requirement" type="text" class="req-input"
-               placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
+        <div class="deck-bar-wrap">
+          <button id="deckBar" class="deck-bar" type="button" title="展開啟動列">
+            <span class="deck-caret" aria-hidden="true">▾</span>
+            <span id="deckSummary" class="deck-summary muted"></span>
+          </button>
+          <button id="deckStop" class="deck-stop hidden" type="button">⏹ 停止</button>
+        </div>
+        <!-- 第一層：需求 + 主鍵；第二層：情境（專案/repo/流程/小組/持續改良） -->
+        <div class="deck-main">
+          <input id="requirement" type="text" class="req-input"
+                 placeholder="輸入產品需求，例如：做一個能計算 BMI 並分類的 Python CLI" />
+          <button id="startBtn">開始討論</button>
+          <button id="stopBtn" class="ghost" disabled>停止</button>
+        </div>
         <div class="deck-row">
           <select id="projectSelect" class="project-select"
                   title="長期專案：程式碼與改良任務跨場次累積；選「一次性討論」則每次從零開始">
@@ -221,19 +555,22 @@
                   title="動態流程：選擇本場要走的流程骨架（階段順序／參與者／閘門）；預設為內建完整流程">
             <option value="">（預設：動態優先）</option>
           </select>
+          <select id="groupSelect" class="project-select"
+                  title="討論小組：限定本場參與討論的角色組合（在「團隊」面板管理）；預設用完整編制">
+            <option value="">（預設編制）</option>
+          </select>
           <button id="projectRepo" type="button" class="project-repo hidden"
                   title="此專案的目標 repo（工作基底＋發佈目標）。點擊設定。"></button>
           <label class="improve-toggle" title="選定專案後勾選：團隊自動消化改良任務、找問題、一直改良，直到你按停止">
             <input id="improveChk" type="checkbox" /> ♻️ 持續改良
           </label>
-          <button id="startBtn">開始討論</button>
-          <button id="stopBtn" class="ghost" disabled>停止</button>
           <button id="deckDeleteProject" class="ghost danger hidden"
-                  title="刪除目前選取的專案（meta／改良待辦／藍圖／workspace 程式碼，歷史保留）">🗑 刪除專案</button>
+                  title="刪除目前選取的專案（meta／改良待辦／藍圖／workspace 程式碼，歷史保留）">
+            <svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg>刪除專案</button>
         </div>
       </div>
       <h2>即時討論</h2>
-      <div id="stream" class="stream">
+      <div id="stream" class="stream" role="log" aria-live="polite" aria-label="即時討論">
         <div class="placeholder">輸入需求並按「開始討論」，專家們就會開工。</div>
       </div>
       <div class="interject">
@@ -246,18 +583,19 @@
     <!-- 右：看板 / 檔案（桌面用分頁切換） -->
     <aside class="side">
       <div class="side-head">
-        <div class="rail-tabs">
-          <button class="active" data-rt="board">📋 看板</button>
-          <button data-rt="files">📁 檔案</button>
+        <div class="rail-tabs" role="tablist" aria-label="右欄分頁">
+          <button class="active" data-rt="board" role="tab" aria-selected="true">看板</button>
+          <button data-rt="files" role="tab" aria-selected="false">檔案</button>
         </div>
-        <button id="downloadBtn" class="download-btn hidden" title="把目前 session 的產出打包下載">⬇️ 下載成果</button>
+        <button id="downloadBtn" class="download-btn hidden" title="把目前 session 的產出打包下載">
+          <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>下載成果</button>
       </div>
       <div class="board">
         <div class="columns">
-          <div class="col" data-col="todo"><h3>待辦</h3><div class="cards"></div></div>
-          <div class="col" data-col="doing"><h3>進行中</h3><div class="cards"></div></div>
-          <div class="col" data-col="review"><h3>審查</h3><div class="cards"></div></div>
-          <div class="col" data-col="done"><h3>完成</h3><div class="cards"></div></div>
+          <div class="col" data-col="todo"><h3 id="col-todo">待辦 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-todo"></div></div>
+          <div class="col" data-col="doing"><h3 id="col-doing">進行中 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-doing"></div></div>
+          <div class="col" data-col="review"><h3 id="col-review">審查 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-review"></div></div>
+          <div class="col" data-col="done"><h3 id="col-done">完成 <small class="col-count"></small></h3><div class="cards" role="list" aria-labelledby="col-done"></div></div>
         </div>
       </div>
       <div class="files">
@@ -270,16 +608,26 @@
   </main>
 
   <!-- 手機底部分頁導覽（桌機隱藏） -->
-  <nav class="mobiletabs glass">
-    <button data-mv="discussion">💬<span>討論</span></button>
-    <button data-mv="experts">👥<span>成員</span></button>
-    <button data-mv="board">📋<span>看板</span></button>
-    <button data-mv="files">📁<span>檔案</span></button>
-    <button data-mv="settings">⚙️<span>設定</span></button>
+  <nav class="mobiletabs glass" role="tablist" aria-label="主要分頁">
+    <button data-mv="home" title="助手首頁"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span>首頁</span></button>
+    <button data-mv="dash" role="tab" aria-selected="true">
+      <svg class="icon" aria-hidden="true"><use href="#i-gauge"/></svg><span>監控</span></button>
+    <button data-mv="discussion" role="tab" aria-selected="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg><span>討論</span></button>
+    <button data-mv="experts" role="tab" aria-selected="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-users"/></svg><span>成員</span></button>
+    <button data-mv="board" role="tab" aria-selected="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-board"/></svg><span>看板</span></button>
+    <button data-mv="files" role="tab" aria-selected="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg><span>檔案</span></button>
+    <button data-mv="settings" role="tab" aria-selected="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg><span>設定</span></button>
+    <button id="mobileMoreBtn" aria-haspopup="true" aria-expanded="false" title="更多面板">
+      <svg class="icon" aria-hidden="true"><use href="#i-more"/></svg><span>更多</span></button>
   </nav>
 
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/app.js"></script>
 </body>
 </html>

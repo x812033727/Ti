@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from studio import config, lessons
@@ -50,12 +52,39 @@ def test_add_and_recent(store):
     assert [r["text"] for r in rows] == ["B 經驗", "A 經驗"]  # 由新到舊
     assert rows[0]["session_id"] == "s1"
     assert rows[0]["requirement"] == "做個 X"
+    assert rows[0]["source"] == "retro"
+
+
+def test_add_many_persists_source(store):
+    assert lessons.add_many(["表決先例: 技術選型 → SQLite"], source="vote") == 1
+    assert lessons.all_lessons()[0]["source"] == "vote"
 
 
 def test_dedup_exact_text(store):
     lessons.add_many(["重複教訓"])
     assert lessons.add_many(["重複教訓", "新教訓"]) == 1  # 只加新的
     assert len(lessons.all_lessons()) == 2
+
+
+def test_dedup_fuzzy_near_duplicate(store):
+    lessons.add_many(["浮點比較要用 math.isclose，別用 == 避免精度誤差"])
+    assert lessons.add_many(["浮點數比較要用 math.isclose，不要用 ==，避免精度誤差"]) == 0
+    assert len(lessons.all_lessons()) == 1
+
+
+def test_dedup_fuzzy_keeps_different_lesson(store):
+    lessons.add_many(["用 pathlib 比字串拼路徑更穩"])
+    assert lessons.add_many(["httpx 逾時要設 timeout，否則會卡死"]) == 1
+    assert len(lessons.all_lessons()) == 2
+
+
+def test_exact_only_keeps_vote_template_with_different_winner(store):
+    lessons.add_many(["表決先例: UI 技術 → A"], source="vote", exact_only=True)
+    assert lessons.add_many(["表決先例: UI 技術 → B"], source="vote", exact_only=True) == 1
+    assert [r["text"] for r in lessons.all_lessons()] == [
+        "表決先例: UI 技術 → A",
+        "表決先例: UI 技術 → B",
+    ]
 
 
 def test_empty_and_blank_skipped(store):
@@ -104,3 +133,11 @@ def test_context_respects_max(store, monkeypatch):
     ctx = lessons.context()
     assert "教訓 4" in ctx and "教訓 3" in ctx
     assert "教訓 0" not in ctx and "教訓 2" not in ctx
+
+
+def test_old_format_without_source_is_readable(store):
+    config.LESSONS_FILE.write_text(
+        json.dumps({"lessons": [{"text": "舊教訓", "created_at": 1.0}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    assert "舊教訓" in lessons.context()

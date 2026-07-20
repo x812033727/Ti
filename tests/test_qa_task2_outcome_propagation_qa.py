@@ -66,6 +66,8 @@ def _ready(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "tok")
     monkeypatch.setattr(config, "PUBLISH_REPO", "o/r")
     monkeypatch.setattr(config, "PUBLISH_BASE", "main")
+    # owner allowlist 護欄：放行本檔測試用的 owner
+    monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"o"}))
 
     async def _noop(*a, **k):
         return True
@@ -73,7 +75,7 @@ def _ready(monkeypatch):
     monkeypatch.setattr(runner, "git_init", _noop)
     monkeypatch.setattr(runner, "git_commit", _noop)
 
-    async def fake_push(cwd, branch, url):
+    async def fake_push(cwd, branch, url, **kwargs):
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
     async def fake_pr(payload):
@@ -148,10 +150,10 @@ async def test_maybe_publish_broadcasts_outcome_in_event(monkeypatch, outcome):
 
 
 def _frontend_badge_keys() -> set[str]:
-    app_js = REPO_ROOT / "web" / "app.js"
+    app_js = REPO_ROOT / "web" / "js" / "events-render.js"
     text = app_js.read_text(encoding="utf-8")
     m = re.search(r"OUTCOME_BADGE\s*=\s*\{(.*?)\}", text, re.S)
-    assert m, "web/app.js 找不到 OUTCOME_BADGE"
+    assert m, "web/js/events-render.js 找不到 OUTCOME_BADGE"
     return set(re.findall(r"(\w+)\s*:", m.group(1)))
 
 

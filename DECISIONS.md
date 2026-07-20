@@ -2447,4 +2447,1289 @@
 
 ## 跟進待辦（明列、不混入本輪）：email sink（SMTP）、Telegram sink、severity 分級、`send_bg` early-return 未來擴 sink 需同步更新判斷條件、`/opt/ti` 主版本 settings.py 接線
 - 時間：2026-07-20 07:19
+## 本輪零改動原則——只做執行驗證，不寫新碼、不改介面、不補文件。
+- 時間：2026-07-04 01:32
+- 理由：基線已確認問題不存在；任何新改動都會讓「已完成」重新變成「待 CI 驗證」，成本高於收益。
+- 否決方案：趁機補測試覆蓋或 `secure_write.py` 文件——另開任務，不混本輪。
+
+## pytest 執行一律加 `--cache-dir=$TMPDIR/pytest-cache-closure`，防止 `.pytest_cache` 落在工作樹污染 `git status`。
+- 時間：2026-07-04 01:32
+- 理由：工程師指出 pytest 可能產生 cache/coverage 暫存檔；若不重導，零改動閉環無法自證乾淨。
+- 否決方案：事後 `git clean` 清 cache——破壞性操作，且可能掃掉非 cache 殘留，不可預測。
+
+## `git status --short` 驗收定義為「pytest 執行後輸出仍為空」，而非「目錄絕對無任何殘留檔」。
+- 時間：2026-07-04 01:32
+- 理由：高工已確認當前 `git status --short` 乾淨；根目錄的 `.cmd_hits*.txt`、`CLOSURE_task*.md` 現已不影響 git 狀態（已追蹤或已 ignore）。工程師的衝突假設在此情境不成立。
+- 否決方案：改成「除既知殘留物外無新增差異」——條件模糊，需人工判讀，不適合作為可重現的自動驗收門檻。
+
+## 三任務可並行執行，但最後設單一彙整判定點——三者結果全部可見後，才輸出一份明確的「已完成 / 未完成」結論。
+- 時間：2026-07-04 01:32
+- 理由：高工與工程師皆指出「不設匯總 gate」容易漏看結果；並行省時，但閉環需要單一責任點。
+- 否決方案：三任務各自結案、無彙整——容易出現「兩通一漏」卻誤判全綠的場景。
+
+## `--collect-only` 判定以 pytest exit code（= 0）加 summary 行為主，尾部 `errors` 區段存在與否為輔助確認。
+- 時間：2026-07-04 01:32
+- 理由：exit code 是結構化機器判斷，不受 warning 噪音干擾；高工建議避免只靠肉眼 tail。
+- 否決方案：只 grep `errors` 關鍵字——行內字樣誤判率高（過去教訓）。
+
+## `collected ≥ 3386` 標記為本輪 baseline 魔術數字，結案文件須明注「僅為本輪基準，不作長期架構契約」。
+- 時間：2026-07-04 01:32
+- 理由：高工指出此數字會隨測試增減漂移；若不標注，下輪接手者可能誤用為硬性門檻。
+- 否決方案：直接硬寫 3386 進 CI 驗收腳本——鎖死後每次新增測試都要人工更新，維護成本不對稱。
+
+## 根目錄殘留物（`.cmd_hits*.txt`、`CLOSURE_task*.md`）列為移交待辦、獨立開票，本輪不觸碰。
+- 時間：2026-07-04 01:32
+- 理由：高工確認這些檔案當前不影響 git 狀態；若本輪清理反而引入 diff，破壞零改動自證。
+
+## 技術選型——零新依賴；不引 OTel SDK、不綁 experimental semconv schema，僅在新增面（`task_result` payload、`_task_perf`、考核 objective）採 OTel 命名 `input_tokens`/`output_tokens`/`total_tokens`/`cost_usd`
+- 時間：2026-07-04 09:01
+
+## 既有 `token_usage` 事件的 `prompt_tokens`/`completion_tokens` 欄位名零改動，OTel 命名只用於新面
+- 時間：2026-07-04 09:01
+- 理由：硬改舊欄位會牽動 history 回放、report、既有測試三個相容面，收益只有命名一致；join 層做一次 mapping 成本極低
+- 否決方案：本輪將 token_usage 事件欄位改名或加別名雙寫（雙寫會讓兩個鍵名並存成為永久債）
+
+## task_id 注入沿用既有 `_tagged_broadcast`/`_speak` 鏈路，禁止新建平行包裝器；本輪新增僅三件：`events.token_usage` 選填 `task_id` 參數、`_counting_broadcast` 聚合分支、`task_result` 事件
+- 時間：2026-07-04 09:01
+- 理由：機制去重——兩個做同一件事的包裝器，半年後接手者分不清權威；既有 tagged（外）→ counting（內）層次天然正確
+- 否決方案：原設計的「任務迴圈內新建 closure 包裝器」（與 `_tagged_broadcast` 功能重複）
+
+## `_tagged_broadcast` 的 task_id 一律取自任務工作迴圈的 `task["id"]`，與 lane 身分脫鉤——循序模式（main lane）必須同樣標記，補「循序單 lane 也正確歸因」的黑白測試
+- 時間：2026-07-04 09:01
+- 理由：工程師查核發現 `_lane_tag()` 主 lane 回 None，若歸因綁 lane 身分，循序模式全漏算
+- 否決方案：只有並行 lane 才標 task_id 的現狀語意
+
+## 契約測試鎖 `setdefault` 語意（不覆蓋既有 task_id），並同時覆蓋「factory 傳入」與「wrapper setdefault 補入」兩條路徑產出相同鍵名
+- 時間：2026-07-04 09:01
+- 理由：巢狀包裝時外層不得改寫內層歸因；events.py 仍是鍵名 SSOT，但實務寫入多走 wrapper
+
+## per-task 聚合放 `_counting_broadcast` 新增分支——讀 `p.get("task_id")` 累進 `_task_perf[task_id]`（input/output/total_tokens、cost_usd、cost_source），沿用既有「異常忽略、永不阻斷事件流」容錯；huddle 重試沿用 duration_s 的累加模式
+- 時間：2026-07-04 09:01
+
+## cost_source 契約定義三值枚舉 `reported`/`estimated`/`mixed`，但本輪只產出 `reported`（provider 實報 cost_usd 存在時）；cost 缺時 `cost_usd=None`、`cost_source=None`——估算器列移交待辦、獨立開票
+- 時間：2026-07-04 09:01
+- 理由：工程師指出 OpenAI-compatible 多半無 cost，「估算在哪裡補」未定義前，estimated 只是空承諾；先鎖契約形狀、不塞半成品邏輯，可逆
+- 否決方案：本輪同步實作估算器（擴散到 providers 計價表，範圍爆炸）
+
+## 新增事件型別 `task_result`（payload: task_id、role、provider、model、duration_s、qa_rounds、input/output/total_tokens、cost_usd、cost_source），於 `_collect_task_perf` 後廣播；`dispatch_decision` payload 與語意零改動，消費端以 task_id join
+- 時間：2026-07-04 09:01
+- 理由：決策快照與結果的時序語意乾淨（決策當下結果不存在）、舊 history 回放零風險
+- 否決方案：把結果欄位塞回 dispatch_decision（污染既有契約、回放風險）
+
+## 討論階段（澄清/架構/檢討）token 不歸因、task_id 維持 None，不發明偽任務 id；實作前必須確認任務範圍內所有 LLM 呼叫（含 huddle 走 `discussion.py` 自有 `_broadcast` 的路徑）是否都經 `_speak`——有例外即列為已知缺口，寫進測試註解與移交待辦，不默默漏
+- 時間：2026-07-04 09:01
+- 理由：高工指出 discussion.py 用自己的 broadcast，可能繞過 tagged 鏈路；缺口要顯式化
+
+## 考核 objective 匯出（orchestrator.py:3230 附近）每任務併入 `total_tokens`/`cost_usd`/`cost_source`（缺資料＝None 不拋錯，沿用考核旁路永不 raise）；PM 考核提示中 qa_rounds 與 token 分開呈現、不重複懲罰
+- 時間：2026-07-04 09:01
+
+## 向後相容雙向守護——舊 jsonl（無 task_id）經 `_derive_token_usage`/`usage_report` 輸出 bit-for-bit 不變；另補「新格式事件（含 task_id 鍵）餵舊聚合」樣本證明無感
+- 時間：2026-07-04 09:01
+- 理由：相容是雙向的：舊資料進新碼、新資料進舊消費端，只測一向會漏
+
+## 實作分三小步依序落地：①`events.token_usage(task_id=None)` + `_counting_broadcast` 聚合分支 → ②`task_result` 事件 + objective 併入 → ③前端 smoke 與文件；每步獨立可驗收
+- 時間：2026-07-04 09:01
+- 理由：工程師建議避免一次改爆相容面；與 PM 任務依賴序（#1→#2→#3）一致
+
+## `flow.py` 本輪零改動（無新解析需求）；前端 `handleEvent()` 對 `task_result` 僅做「未知事件不崩潰」最小處理，UI 呈現不在本輪範圍
+- 時間：2026-07-04 09:01
+
+## 不新建模組，全部擴充 `studio/lessons.py`＋`orchestrator.py` 兩處接線；`flow.py`、`events.py` 零改動
+- 時間：2026-07-04 16:35
+- 理由：vote_result 事件與注入管線既存，這是接線題不是造輪題；零新依賴。
+- 否決方案：引入外部記憶框架（Mem0 等）或新建 memory 模組——500 筆純文字規模無收益，違反不隨意加依賴。
+
+## `add_many` 加 keyword 參數 `source: str = "retro"`（枚舉 `vote`/`appraisal`/`retro`），只落檔不參與挑選；`distill()` 手動重建 item 處同步補 `source`；舊資料無 source 鍵以 `.get()` 容錯，零遷移
+- 時間：2026-07-04 16:35
+- 理由：預設值使既有 3284 呼叫端零改動；工程師抓到 distill 重建 item 會漏欄位，一併補。
+
+## 去重升級為雙模式——`add_many` 加 keyword 參數（如 `exact_only: bool = False`）：預設走「全文精確快速路徑＋`difflib.SequenceMatcher` 模糊比對」；vote 接線端傳精確模式，`表決先例:` 條目**只做全文精確比對、跳過模糊去重**
+- 時間：2026-07-04 16:35
+- 理由：高工指出的正確性漏洞——固定模板下同 topic 不同 winner 只差幾字，模糊比對會把新裁決默默擋掉、舊先例永遠勝出。用參數讓政策留在接線端，儲存層只提供機制，不做前綴嗅探。
+- 否決方案：只靠閾值校準讓黑樣本通過——閾值是連續值賭注，模板前綴墊高相似度使安全區間過窄，機制性跳過才可靠。
+
+## 模糊閾值由工程師以現有 lessons 資料實測校準，校準依據寫進註解；測試必含「同 topic 不同 winner 不得判重」黑樣本、「幾乎同文應判重」白樣本，以及 retro 路徑模糊判重的明確覆蓋（行為變更不得只是副作用）
+- 時間：2026-07-04 16:35
+- 理由：高工附帶約束 1、2 直接納入驗收。
+
+## 品質閘門全放 orchestrator 接線端——vote：`tie` 或 `degraded` 不入庫；appraisal：僅 `score ≤ 2` 且 `comment.strip()` 非空入庫；lessons.py 不含任何來源特定判斷
+- 時間：2026-07-04 16:35
+- 理由：政策/儲存分離，閘門規則未來可改而不動儲存層。
+
+## appraisal 接線復用 `_record_appraisals()` 已 parse 的 rows，不重 parse
+- 時間：2026-07-04 16:35
+- 理由：工程師建議，避免雙 parse 漂移。
+
+## 模板固定為 `表決先例: <topic> → <winner>` 與 `考核教訓(<score>分): <comment>`，格式字串以測試斷言鎖住，比照 marker 字串慣例
+- 時間：2026-07-04 16:35
+
+## 本輪所有新條目 scope 維持 `global`；vote 先例可遷移性風險以品質閘門＋source 可追溯承擔
+- 時間：2026-07-04 16:35
+- 理由：注入點 1262 的 `context()` 不帶 scope，project scope 會斷閉環（驗收 #5）。
+- 否決方案：vote 先例鎖 project scope——需同步改造注入點，超出本輪範圍。
+
+## 兩處接線失敗僅 `logger.warning`，不 raise、不阻斷 broadcast 與收尾；入庫走同步呼叫，沿用既有 3284 retro 模式（檔小鎖短）
+- 時間：2026-07-04 16:35
+
+## 移交待辦四項另開票——①use_count 結合後續低分的降權淘汰；②500 筆稀釋時高價值教訓保留策略；③同 topic 矛盾先例的仲裁/覆蓋機制；④`distill` 蒸餾會抹除 `source` 且可能改寫/合併表決先例，「可追溯」非長期保證
+- 時間：2026-07-04 16:35
+- 理由：高工附帶約束 3——別讓後人把可追溯當成蒸餾後仍成立的承諾。
+
+## autopilot 心跳新增 `workers` 子行程活性欄（issue #285）：以掃 `/proc/[0-9]*/stat` 建 ppid→children map 展開 os.getpid() 後裔子樹、取 utime+stime，跨兩次心跳 tick 比 delta 得 `cpu_active`
+- 時間：2026-07-04
+- 理由：長輪多專家討論的 inter-message 間隔（單一長工具呼叫/長 thinking/單則超長串流）期間無事件產出，`last_activity_at`(=events mtime) 凍結 30-90 分鐘被外部監控誤判死鎖並 restart（同日兩次、丟失數小時進度）。把人工診斷用的「對 claude 子行程做兩次 /proc utime/stime 取樣」自動化寫進 status.json，讓監控能肯定判定「有 worker 燒 CPU＝非死鎖」。
+- 選型：掃 ppid map 而非 `/proc/<pid>/task/<tid>/children`——後者依賴內核 `CONFIG_PROC_CHILDREN` 且並發下不保證完整；ppid 是任何 /proc 恆有的欄位，可攜性最高，且同趟就地取 utime/stime 免二次讀檔。
+- 不引 psutil：守「不隨意新增依賴」鐵則，純標準庫 `os` 讀 /proc 文字檔即可；delta 只比大小不換算秒，故不需 `SC_CLK_TCK`。
+- None 三態語義：`_proc_descendant_cpu` 回 `dict`（`{}`＝明確零 worker）／`None`（/proc 不可用或解析失敗，絕不拋例外）；`workers.cpu_active` 另有首 tick=None（尚無前次快照可比）。監控見 `cpu_active == null` 時須退回 `last_activity_at` 判斷，不得單憑 null restart。
+- 否決方案：改用 event-driven 細粒度心跳（每 broadcast 事件即刷）——無法解「專家單則訊息之間根本不產事件」的盲區，子行程 CPU 取樣才是與事件粒度解耦的存活證據。
+- 移交待辦（本輪不含）：minimax.io CLOSE-WAIT / httpx 連線池洩漏（issue 建議 #3）——`studio/providers.py::_openai_chat` 每次新建 `AsyncOpenAI` 不 aclose，屬本檔既列的範圍外技術債，且非本次告警主因。
+
+## 本輪零生產程式碼改動；唯一新增產出為一個「autoformat 寫回經 `_commit_push_merge` 不掉檔」守護測試
+- 時間：2026-07-05 03:41
+- 理由：需求四項行為已由 PR #282 覆蓋且測試綠；唯一真缺口是 `git add -A` 兜底帶檔的隱式契約，用測試顯式化
+- 否決方案：重新實作或重構 lint 閘門——重造輪子且引入回歸風險
+
+## 新測試開獨立檔（如 `tests/autopilot/test_qa_autoformat_writeback_committed.py`），不放進 `test_qa_no_publish_pollution.py`
+- 時間：2026-07-05 03:41
+- 理由：高工核實該檔有 autouse `_forbid_real_subprocess` 全面封殺真 subprocess，新測試需跑真 git 必被炸；只複用其 `_base_config` 設定範式
+- 否決方案：沿用同檔＋monkeypatch 範式（我原案）——與 autouse fixture 直接衝突
+
+## 測試走全真 git 路線——本地 bare repo 當 origin → clone → 模擬 autoformat 寫回 → 設 `AUTOPILOT_DRYRUN=True` → 走真 `_commit_push_merge` → `git show HEAD` 斷言寫回檔在 commit 內
+- 時間：2026-07-05 03:41
+- 理由：dryrun 在 push 前 return，天然避開 GitHub 段；全真 git 零 stub，比 monkeypatch push/PR 段更不脆（工程師與高工獨立得出同一路線）
+- 否決方案：monkeypatch push/PR/merge 段（我原案）——多餘的 stub 面積，更脆
+
+## fixture 必須滿足入口 guard 與中段查詢——設 `AUTOPILOT_REPO`、owner allowlist，且 clone 需有 `origin/main` ref（否則 `rev-list origin/<branch>..HEAD` 先掛）
+- 時間：2026-07-05 03:41
+- 理由：否則測試在 guard 或 rev-list 短路，測不到 staging/commit 段
+
+## 斷言目標維持「寫回檔改動出現在 commit 內容」（行為契約），不斷言 `git add -A` 被呼叫
+- 時間：2026-07-05 03:41
+
+## 同步修正既有衝突——`test_gate_lint_autoformat.py` 中直接 assert `"add", "-A"` 的 AST 斷言段，改為（或由新測試取代後移除）commit 內容行為斷言
+- 時間：2026-07-05 03:41
+- 理由：工程師指出該 AST 斷言鎖實作，會卡死未來改選擇性 add；留著它，新行為測試形同虛設
+- 否決方案：只加新測試、保留舊 AST 斷言——兩者並存自相矛盾
+
+## 紅樣本自證為必要步驟，且結果同時記入 commit 訊息與測試 docstring
+- 時間：2026-07-05 03:41
+- 理由：高工建議——半年後讀測試檔即知驗過判別力，不用翻 git log
+
+## 範圍裁決維持——gate/CI ruff 版本 pin 對齊本輪不做列移交待辦；不引入 `ruff check --fix` 進閘門（明文防翻案）；orchestrator 不加 lint 檢查點
+- 時間：2026-07-05 03:41
+
+## #1/#2 為純核對輸出（對照表＋覆蓋確認）；收尾 #4 以 `git status` 乾淨為準，除新測試檔與上述 AST 斷言修正外零 diff
+- 時間：2026-07-05 03:41
+
+## 題目附帶的 lessons/vote 去重既有決策與本需求無關，本輪不觸碰
+- 時間：2026-07-05 03:41
+
+## 注入語義改為方案 A——wrapper 對本角色（speaker key 相符）的**每一則** EXPERT_MESSAGE 過境時注入 `duration_s = monotonic() - t0`（自本次 speak 開始的累計耗時）＋ provider/model/role；同 turn 最後一筆 ≈ 整輪耗時
+- 時間：2026-07-05 11:54
+- 理由：全 codebase 無呼叫點設 `final=True`，且 Claude 串流路徑逐 block 廣播、事件過境當下無法預知是否最後一則——「只攔 final」在現況永不觸發，屬靜默失效
+- 否決方案：方案 B（各後端終端訊息補 `final=True`）——fake/providers 可行但 experts.py 串流迴圈不知哪塊是最後一塊，需重構；且會造成 Claude 路徑永無 final 的分裂語義
+
+## `final` 旗標本輪不動、不修其語義；一次 speak 多則訊息（串流 block／system note）皆帶累計耗時，此語義明載於 wrapper docstring
+- 時間：2026-07-05 11:54
+- 理由：final 旗標的語義修復是獨立議題，混進本輪會擴大範圍；累計耗時語義對多訊息天然自洽
+
+## 注入點維持 wrapper 攔截傳入 speak 的 broadcast callable，就地 mutate `StudioEvent.payload`（mutable dict）；事件型別比對用 `events.EventType.EXPERT_MESSAGE` enum，不用字串
+- 時間：2026-07-05 11:54
+- 理由：零呼叫點侵入、可逆（拆 wrapper 即還原）；history 寫檔在 broadcast 之後，注入值會完整落檔
+- 否決方案：改 speak() 回傳值帶 duration——動 ExpertLike Protocol 與全部呼叫點簽名
+
+## expert_wrap.py 內加註解明講「依賴 broadcast → history 寫檔的順序」這條隱含耦合，防未來改 ws.py 的人踩坑
+- 時間：2026-07-05 11:54
+
+## provider 不用 getattr 猜——由建構點明傳：`make_expert()` 用已知的 `prov`、fake_experts 傳 `"fake"`；model 於注入當下解析：有 `effective_model()` 就呼叫（支援 per-task 覆寫的動態值），否則空字串
+- 時間：2026-07-05 11:54
+- 理由：各後端 model 屬性名分歧（`_model`/`_model_override`/`effective_model()`），純 getattr 屬性名會踩坑；effective_model 是既有的對外慣例（task_result 已用）
+- 否決方案：純 `getattr(expert, "provider"/"model")` fallback 鏈
+
+## wrapper 落在新中立模組 `studio/expert_wrap.py`（只依賴 events＋stdlib）；`providers.make_expert()` 回傳處與 `fake_experts.py` 全部建構點套同一函式；禁止 fake_experts import providers
+- 時間：2026-07-05 11:54
+- 理由：保護依賴方向——fake_experts 反向 import providers 會拖進全部 SDK 依賴
+
+## 計時基準 `time.monotonic()`；duration_s 語義＝含 retry 退避的 wall-clock，明載 docstring；speak 拋例外→無事件可附掛→無 duration，接受並文件化，不加旁路事件；每次 speak 各自 t0，並行 lane 互不干擾
+- 時間：2026-07-05 11:54
+
+## 欄位單一寫入路徑＝只有 wrapper 注入；`events.expert_message()` 增 keyword-only optional 參數（None 即省略）僅供 schema 文件與測試建構；欄位一律 optional，舊 history 重播與 events-render.js 容忍缺省，本輪不加 UI 顯示
+- 時間：2026-07-05 11:54
+
+## 驗收測試必含**正樣本**——FakeExpert 包 wrapper 跑離線 e2e，斷言事件確實出現 `duration_s > 0` 且 `provider="fake"`；另補 Claude 串流路徑單元測試斷言多則訊息皆帶累計耗時且單調遞增；缺省容忍（白樣本）另測
+- 時間：2026-07-05 11:54
+- 理由：高工指出本次「條件永不觸發」正是只測白樣本抓不到的靜默失效——正樣本是判別力所在
+
+## proxy 用 `__getattr__` 全轉發（name/avatar/role/stop/fake 的 calls 自然透傳），暴露 `.wrapped` 作 isinstance 逃生門
+- 時間：2026-07-05 11:54
+
+## 明文不做——不引入 wrapt/OTel SDK、不動 retry 內部、不做 per-attempt 粒度、不改 marker 字串、不修 final 旗標語義、不做 perf_counter 翻案；未來細粒度需求以新 optional 欄位擴充，不改 duration_s 既定語義
+- 時間：2026-07-05 11:54
+
+## 分散式去同步統計測試直接 import `studio.llm_caller.backoff_delay` 純函式驗證，不經 experts/config/orchestrator，測試依賴方向單向 `tests → llm_caller`
+- 時間：2026-07-05 22:28
+- 理由：backoff_delay 為純函式且已有 rand 注入縫（llm_caller.py:436），最低層驗證分佈最穩、零 mock，退避未來重構時測試是獨立事實來源
+- 否決方案：端到端經 experts/config 驗證統計——experts 僅平鋪傳 config 值，該線用盤點證明即可，跑統計不值得
+
+## N 客戶端模擬採「同一 (attempt, retry_after) 呼叫 N≥50 次 + 注入序列化 rand（預生成確定序列，如 i/N）」，禁用真 random
+- 時間：2026-07-05 22:28
+- 理由：統計斷言配真 random 必 flaky；序列化 rand 確保 CI 可重現
+- 否決方案：真 random.random 抽樣
+
+## 429 路徑測試選 retry_after 明顯低於 cap（如 10/60），529 路徑避免 attempt 已打到 cap
+- 時間：2026-07-05 22:28
+- 理由：上界被 cap 夾住會壓縮分散度使 jitter 區間失真，選值避開 cap 夾擠才驗得出去同步
+
+## 429 斷言落點 ∈ [nominal, nominal·(1+j)] 且下界嚴格 = nominal；529 斷言落點 ∈ [nominal·(1-j), nominal]；兩路徑各補「非全等 + stdev>0」
+- 時間：2026-07-05 22:28
+- 理由：下界嚴格 = nominal 守驗收#6（jitter 不早於伺服器 retry-after）；非全等 + stdev>0 證去同步
+
+## 除 N≥50 統計案例外，各路徑另補確定性邊界案例——429 用 rand→1.0（含 cap 夾擠 llm_caller.py:443）與 rand→0.0 驗上下端點，529 用 rand→接近1 驗最深退避不穿透
+- 時間：2026-07-05 22:28
+- 理由：統計案例證分佈、邊界案例證公式端點，兩者互補鎖死上下界，比純抽樣更硬
+- 否決方案：只靠 N=50 抽樣驗端點
+
+## 黑樣本斷言 jitter=0 時同 attempt 延遲全等，與白樣本同檔對照
+- 時間：2026-07-05 22:28
+- 理由：llm_caller.py:441/446 兩路徑 j==0 皆 early-return 確定值，黑樣本嚴格全等，證白樣本非假綠
+
+## 測試檔頂註明 N 值與統計門檻（stdev>0、len(set)>1）的選定理由
+- 時間：2026-07-05 22:28
+- 理由：防日後有人調小 N 破壞判別力而不自知
+
+## 新增前先去重既有 jitter/backoff 守門測試與文件，新增範圍控制在「小型統計測試 + 文件盤點修正」
+- 時間：2026-07-05 22:28
+- 理由：現況已有不少相關守門測試與文件，避免測試重複堆疊
+
+## 任務#1 呼叫端盤點為文件產物（檔名:行號 + 狀態），證明唯一退避入口 make_retry_config→backoff_delay、jitter 實際值 = config.EXPERT_RATE_LIMIT_BACKOFF_JITTER，不引入程式依賴；行號須更新為實際值（如 _build_client 註解在 experts.py:373-378）
+- 時間：2026-07-05 22:28
+
+## 單層退避盤點對兩條 provider 路徑一律採「證據式」措辭而非「風險」——`providers.py:1167 max_retries=0（已解除疊乘）` 與 `experts.py:373-378（Claude 路徑無旋鈕、天然單層）` 並列
+- 時間：2026-07-05 22:28
+- 理由：OpenAI 疊乘已落實解除，寫成「風險」會誤導接手者去「修」一個已修好的東西
+- 否決方案：將 OpenAI SDK max_retries 疊乘寫成未處理隱患
+
+## SDK 疊乘（#4）以文件+盤點建構點行號佐證，不強制加守門測試
+- 時間：2026-07-05 22:28
+- 理由：這是常數性事實（max_retries=0、Claude 無旋鈕）非條件邏輯，守門測試保護不到會退化的東西
+- 否決方案：一律為 SDK 不疊乘加守門測試
+
+## 禁止為方便測試而修改 backoff_delay 簽章、marker 字串或 config 預設；所有產出 additive（新測試檔 + DECISIONS/註解），保持可逆與退避 SSOT 唯一
+- 時間：2026-07-05 22:28
+
+## 不引入 tenacity/backoff 等第三方套件，沿用自研退避骨幹為唯一 SSOT
+- 時間：2026-07-05 22:28
+
+## 【任務#4 查核結論】Claude Agent SDK retry 查核：已知邊界與現有防護
+- 時間：2026-07-05
+- 可控層已確認（Python SDK 原始碼）：`ClaudeAgentOptions.__init__`（參數列含 max_turns/model 等，無 max_retries）與 `ClaudeSDKClient.__init__`（只有 options/transport）均不含 retry 旋鈕；`query.py` / `subprocess_cli.py` 原始碼全文 grep 確認無 429/529 retry 邏輯。**Python SDK 可控層為單層退避。**
+  - 建構點①（Claude 路徑）：`experts.py:373-381` — `_build_client` docstring 明文可控層邊界，保留「ClaudeSDKClient 本身不做額外退避，避免雙層疊乘」
+  - 建構點②（OpenAI 路徑）：`providers.py:1167` — `openai.AsyncOpenAI(max_retries=0)` 顯式設 0；MiniMax/Gemini 共用同路徑，一次到位
+- 已知邊界（CLI subprocess 層）：`claude_agent_sdk` 是 Claude Code CLI（Node.js）的 subprocess wrapper。CLI 最終確實透傳 API 429/529（`types.py:api_error_status`），但 CLI 在透傳前是否做內部 retry 不可從 Python SDK 原始碼驗證。若 CLI 有內部 retry，Ti 的 `run_with_retries` 加上去仍是疊乘——差別是 CLI 層有個未知上界，且最終錯誤必然浮出。此為已知邊界，非已知確認安全。
+- 回歸守門：`tests/core/test_claude_no_double_backoff_task3_qa.py`（AST 確認 Python 層無 retry 旋鈕；三測試：書面結論、無 retry kwarg、speak 路徑唯一退避權威）
+- 不加額外守門測試的理由：CLI 內部行為不在 Python SDK 可測範圍，AST 守門已封住「在 Python client 層再加旋鈕」這條退化路徑；CLI 層風險屬架構邊界，非可用測試守護的條件邏輯
+
+
+## 【任務#5 收尾記錄】jitter 消費端 default-on＝0.5 與去同步黑白樣本測法
+- 時間：2026-07-05
+- **jitter 消費端 default-on＝0.5（非未接線）**：`config.EXPERT_RATE_LIMIT_BACKOFF_JITTER = _env_float("TI_RATELIMIT_BACKOFF_JITTER", 0.5)`（`studio/config.py:443`，`reload()` 於 `config.py:1203` 同鍵複寫）。`llm_caller.DEFAULT_BACKOFF_JITTER=0.0` 僅為**函式庫層預設關閉**，消費端 `experts.make_retry_config()` 已覆寫為 0.5（`experts.py:132`）並 lazy-read（`experts.py:96`）。→ 本需求**九成已落地**，本場重心為「補分散式去同步統計驗證＋封口串流無旁路退避」，非從零開啟 jitter。
+- **無旁路盤點（任務#1）**：`studio/docs/jitter_backoff_inventory.md` 逐一標出 orchestrator/experts 串流路徑所有退避呼叫點（C1/C2/O1/O2/Orc1–Orc4，含 `complete_once` wrapper），證明唯一退避入口＝`make_retry_config`→`backoff_delay`，無第二條繞過 jitter 的退避。
+- **去同步驗證黑白樣本測法（任務#2/#3）**：`tests/core/test_backoff_desync_task2_qa.py`，N=64 客戶端同 attempt、注入序列化 rand（`i/(N-1)`，禁真 random 保 CI 可重現）。
+  - 白樣本（jitter=0.5）：429（有 retry-after）向上散、529（無 retry-after）向下散，各斷言 (a) 非全等 `len(set)>1`、(b) `pstdev>0`、(c) 全落理論帶內（429∈`[nominal, nominal·(1+j)]` 且下界嚴格＝nominal 守驗收#6；529∈`[nominal·(1-j), nominal]`）。
+  - 黑樣本（jitter=0，同檔對照）：同 attempt 延遲**退化全等** `len(set)==1`、`pstdev==0`、值＝nominal，證白樣本「非全等」非假綠。
+  - RetryConfig 層另有 jitter=0 確定值黑樣本於 `tests/core/test_retry_config_task4_qa.py`。
+- **SDK 不疊乘（任務#4）**：Python SDK 可控層無 retry 旋鈕（`experts.py:373-381`、`providers.py:1167 max_retries=0`），守門 `tests/core/test_claude_no_double_backoff_task3_qa.py`；CLI subprocess 層是否內部 retry 屬已知邊界（見上方任務#4 查核結論）。
+- **收尾驗證**：`.venv/bin/python -m pytest -q` 全綠、`.venv/bin/python -m ruff check .` 無錯（新測試在其中）。
+## 本場定性為驗證封口，範圍限 additive 產出（測試斷言／文件／移交待辦），禁止修改 CHANGELOG 內容、`BREAKING_HEADING` 常數、`render_release_body` 簽章及任何 marker 字串
+- 時間：2026-07-06 00:11
+- 理由：內容改一字可能動到四要素順序契約，換來零回歸與可逆性
+- 否決方案：順手潤飾 CHANGELOG 或改常數遷就內容
+
+## 資料流沿用現況不變——CHANGELOG（內容 SSOT）→ `release_note.extract_breaking_block`（錨＝`BREAKING_HEADING`）→ `publish_release.render_release_body` → `body.md`，本場只沿此鏈實跑取證
+- 時間：2026-07-06 00:11
+
+## `release_note.BREAKING_HEADING` 為抽取錨點單一事實來源，依賴方向固定為「CHANGELOG heading 對齊常數」；若查出漂移一律改 `CHANGELOG.md`，不得反向改常數
+- 時間：2026-07-06 00:11
+
+## #2 交付為文件級逐字比對證據，不新增與 `four_elements_in_order`／`breaking_is_at_top` 重疊的測試
+- 時間：2026-07-06 00:11
+- 理由：現況守門測試已覆蓋，避免測試堆疊
+- 否決方案：為求安全感新增比對測試
+
+## #2 逐字比對證據須指名到出處路徑——貼出 `release_note.BREAKING_HEADING` 常數與 `CHANGELOG.md` 實際 heading 兩邊來源的檔名行號，供接手者重驗漂移
+- 時間：2026-07-06 00:11
+- 理由：高工提醒「已比對」一句話不可勾稽，具名出處才能重驗
+
+## #2 須實跑 mutation 證明改 heading 會翻紅，且判準寫死為「必失敗於 `four_elements_in_order` 或 `breaking_is_at_top`」，而非任意 collection/import error
+- 時間：2026-07-06 00:11
+- 理由：靜態看兩處相等是假綠重災區；typo 讓 import 爆掉不算驗到契約
+- 否決方案：只靜態比對兩處相等即結案
+
+## warn/off 維持「使用者側逃生艙、即刻生效」語氣，禁止引入 deprecation 過渡期或未來版本才 enforce 措辭，否則 `has_future_enforce_timeline` 翻紅且違反 ADR
+- 時間：2026-07-06 00:11
+- 否決方案：採業界「先 deprecated 數版警告再 breaking」過渡策略（須先翻 `DECISIONS.md:791,1000`）
+
+## #3 明確標註「真實 v* tag-push 生產 E2E」為未閉環移交待辦，不以單元/守門測試假裝已閉環
+- 時間：2026-07-06 00:11
+- 理由：記憶明載半閉環，驗證報告不得過度宣稱
+
+## #3 人工確認清單須可勾稽，明列具名步驟「發 release 後開 `body.md` 確認 breaking 區塊在頂部」，不得只寫「人工確認」
+- 時間：2026-07-06 00:11
+- 理由：高工提醒無具名步驟等於沒交
+
+## 全部產出 additive、零 production code 變更、可逆（新測試斷言＋文件盤點＋移交待辦），退避／marker SSOT 保持唯一
+- 時間：2026-07-06 00:11
+
+## #2 假綠封口採「新增獨立斷言」而非改動 `FOUR_ELEMENTS` 生效版本 regex
+- 時間：2026-07-06 00:51
+- 理由：`FOUR_ELEMENTS`／`missing_elements()` 簽名與語意保持不變，維持零 production 變更與可逆；職責分離（既有尺規管結構、新斷言管版本值）
+- 否決方案：把 `FOUR_ELEMENTS[3]` 語意 regex 插值 `pyproject_version()`——會迫使 `missing_elements()` 吃 version 參數、擴散到 task-3/task-4 兩檔並改到共用 production 尺規語意
+
+## 新增版本對應 helper（如 `version_matches_effective(body, version)`）落在 `tests/autopilot/_release_check.py`，作為兩出口尺規的同一單一事實來源，不新增第二份版本判定邏輯
+- 時間：2026-07-06 00:51
+- 理由：task-3／task-4 已共同 import `_release_check`，放這裡一次餵到兩檔，避免尺規散落漂移
+
+## helper 必須錨定「④ 生效版本」那句，用 `④\s*生效版本[^\n]*自\s*`?{re.escape(version)}`?\s*起`，禁止 `version in body` 子串比對
+- 時間：2026-07-06 00:51
+- 理由：body 的 heading／footer／③ before-after 已出現 `0.2.0`，子串比對下把 ④ 行改舊版仍含 `0.2.0`→不翻紅，假綠復活；`polluted != changelog` 只擋空操作、擋不住這個
+
+## helper 比對前對 `version` 做 `re.escape()`
+- 時間：2026-07-06 00:51
+- 理由：版本含 `.`，未跳脫時 `0.2.0` 會誤配 `0x2y0` 之類，稀釋鑑別力
+
+## 新版本對應斷言須套在 tag_notes／email_banner 兩個出口 body，與 `missing_elements()` 同待遇
+- 時間：2026-07-06 00:51
+- 理由：只驗單一出口＝尺規半殘，另一出口仍可版本漂移
+
+## helper docstring 明寫「本函式補 `FOUR_ELEMENTS[3]` 對版本值不敏感的缺口」，交代兩把尺分工
+- 時間：2026-07-06 00:51
+- 理由：既有 ④ 語意 regex 有 `|生效版本` 分支（有四字無版本號也算過），讓接手者一眼懂分工、不誤刪其一
+
+## 版本權威唯一來源固定為 `release_note.pyproject_version()`，renderer 傳入版本與 body 內 ④ 句同源勾稽，任一失配翻紅
+- 時間：2026-07-06 00:51
+
+## 依賴方向不變——CHANGELOG heading 對齊 `BREAKING_HEADING`、版本對齊 pyproject；查出漂移一律改 CHANGELOG，禁止反向改常數或硬寫版本字面值
+- 時間：2026-07-06 00:51
+
+## #2 黑樣本只 mutate CHANGELOG 副本「④ 生效版本」行的版本字串（0.2.0→舊版如 0.1.9），renderer 傳入版本維持權威 0.2.0，成對自證 baseline 綠→mutation 紅，並斷言 `polluted != changelog` 排除空操作
+- 時間：2026-07-06 00:51
+
+## #2 黑樣本判準寫死為「新版本對應斷言失敗」，非任意 collection/import error，避免 typo 假綠
+- 時間：2026-07-06 00:51
+
+## #3 離線核對 body.md 時，因 `scripts/publish_release.py` CLI 固定寫 repo root，改用其底層 `render_release_body()` 寫 `$TMPDIR`；若堅持走 CLI，則跑完立即刪除 repo root `body.md` 並以 `git status` 驗無殘留
+- 時間：2026-07-06 00:51
+- 理由：工程師指出 CLI 不支援 `$TMPDIR`，硬要臨時檔不落 repo 會與 CLI 行為衝突，須二擇一明確落地
+- 否決方案：直接讓 body.md 落在 repo root 不清理——會造成 pre-commit 綠／CI 紅分歧、違反臨時檔不落被掃描目錄的硬規則
+
+## #4 明文標註「真實 v* tag-push 生產 E2E 為半閉環未閉環」並列具名人工核對步驟（發 release 後開 body.md 確認 Breaking 區塊置頂、含四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙），不以單元/守門測試假裝已閉環
+- 時間：2026-07-06 00:51
+
+## 全部產出 additive、可逆、零 production code 變更（新測試斷言＋文件盤點＋移交待辦）；warn/off 維持即刻生效逃生艙語氣，不引入 deprecation 過渡措辭
+- 時間：2026-07-06 00:51
+
+## 線上核對定位為「一次性人工/腳本動作、其輸出為產物」，禁止把打 live GitHub 的網路測試加入測試套件
+- 時間：2026-07-06 01:42
+- 理由：CI 測試慣例是離線假專家、不綁外部 API；live 網路測試會 flaky 並把生產可用性綁進 CI，鎖死未來
+- 否決方案：新增一個實際打 GitHub API 的自動化核對測試放進 CI
+
+## 分兩把尺——live 事實用 `gh`+REST 交叉驗證於本次執行完成；守門測試 `test_qa_task4_e2e_handoff.py` 只離線驗「文件契約」，不驗主張為真
+- 時間：2026-07-06 01:42
+- 理由：文件契約可離線確定性驗證；主張真偽屬 live 事實，混為一談會讓測試依賴網路
+
+## body 核對主用「結構斷言」（頂部第一個 `## ` 逐字為 `## ⚠️ Breaking Changes`＋四要素＋`TI_REQUIRE_CHOWN=warn/off`），正規化後逐字比對僅為本次核對腳本的輔助，不進測試套件
+- 時間：2026-07-06 01:42
+- 理由：逐字比對受 GitHub 換行正規化影響易假性不符；且逐字比對責任若進 CI 會長期脆弱
+- 否決方案：把「正規化後逐字比對」做成常駐守門測試
+
+## 雙來源交叉驗證——`gh release view --json body` 為主、REST `GET /repos/.../releases/tags/v0.2.0` 的 `body` 為第二來源，各自 `sed 's/\r$//'`＋去尾空行正規化後須相等
+- 時間：2026-07-06 01:42
+
+## 證據回填進 `docs/release-e2e-handoff.md`，不新開證據檔；「證據檔」即更新後的 handoff doc
+- 時間：2026-07-06 01:42
+- 理由：單一權威、防文件漂移，與既有「doc 是移交明文」決策一致
+- 否決方案：另建獨立證據 artifact 檔
+
+## 翻 ✅ 的同時，必須同步收斂檔案頂部「半閉環聲明」使其與 B 段一致——聲明改為「v0.2.0 此鏈已生產閉環，後續版本仍須逐項複核」，消除文件自我矛盾
+- 時間：2026-07-06 01:42
+- 理由：只翻 B 段 ❌→✅ 而不動頂部「仍為半閉環」聲明，交付即是內部打架的文件，構成漂移
+- 否決方案：只改 B 段兩列、保留頂部原半閉環聲明
+
+## 證據須標明 failure run `27905351284` 的觸發事件為 `release`（同 tag 較早 release 實例、後被取代重建），並據此論證兩筆 run 皆 `release` 事件 → 雙重確認觸發可靠，非反證閉環
+- 時間：2026-07-06 01:42
+- 理由：只並列不分類，讀者無法判斷 failure 是否反證「release 事件可靠觸發」；查清來源才是把僥倖說清楚
+- 否決方案：只「誠實並列」failure run 而不交代其觸發來源
+
+## smoke 閉環證據引用對應現行 release（id `342528036`／createdAt 13:15:15）的 success run `27905531397`，並註明擷取時點與 run-id 為一次性 artifact
+- 時間：2026-07-06 01:42
+
+## 守門測試須補成對黑樣本自證判別力——竄改 run-id／`✅` 翻回 `❌`／抽掉 failure run 記載任一情形，測試須轉紅
+- 時間：2026-07-06 01:42
+- 理由：「run-id 字串在、✅ 在」過於寬鬆，字串存在不等於判別力，違反本 repo 自證對應＋排除假綠硬規則
+- 否決方案：守門測試僅正向斷言關鍵字存在、無黑樣本
+
+## 守門測試錨定 B 段或新證據節、不整份逐字比對，措辭須明確表達「文件記錄了此主張」而非「主張為真」
+- 時間：2026-07-06 01:42
+- 理由：整份逐字比對過脆易誤紅；措辭無歧義才不會被誤讀為 CI 已驗生產真偽
+
+## 全部產出 additive／可逆／零 production code 變更，`BREAKING_HEADING` 常數與版本字面值不動，查出漂移一律改 `CHANGELOG.md`，不加 `--verify-tag`（沿用既有決策）
+- 時間：2026-07-06 01:42
+
+## 新增 `docs/evidence/release-smoke-v0.2.0-trigger.json` 為 smoke 觸發證據唯一 SSOT，比照既有 `docs/evidence/release-v0.2.0-online-body.json` 的欄位風格（雙路命令＋關鍵欄位快照）
+- 時間：2026-07-06 02:23
+
+## evidence 採最小固定 schema——`verification_status`、`success_run`、`superseded_failure_run`、`gh_run_view`、`rest_run`、`cross_checks`，不抽泛用 validator
+- 時間：2026-07-06 02:23
+- 理由：一次性封口證據，泛用框架的複雜度自證不了，YAGNI
+- 否決方案：先做泛用 evidence schema validator
+
+## evidence `verification_status: verified|pending` 為狀態 gate；handoff 翻 ✅ 條件蘊含其為 `verified` 且 `event=release`／`conclusion=success`，由守門測試強制此關係
+- 時間：2026-07-06 02:23
+- 理由：把誠實性編成測試約束，不靠人自律，假綠在測試層擋死
+- 否決方案：靠 codex 自律「別手抄」
+
+## run-id `27905531397`/`27905351284` 不得預先寫死為既成事實；evidence 的 run-id 欄僅在本 session 真實 `gh` 擷取後填入，並附 provenance（擷取命令＋時點）
+- 時間：2026-07-06 02:23
+- 理由：高工退回點——「跑不了就 pending」與「把 success run-id 當事實」不能並存，未實證的 success 數字正是本任務要擋的假綠
+- 否決方案：把兩個 run-id 當調研既成事實直接寫入設計/證據
+
+## 未完成 `gh` 實跑擷取時，evidence 一律 `verification_status: pending`、不得出現任何 success run-id、handoff 維持 ❌、標「待有權限者核對」
+- 時間：2026-07-06 02:23
+- 理由：沙箱網路白名單無 GH auth，實跑很可能受限；此為誠實性 fallback
+
+## 證據雙來源＝`gh run view <id> --json databaseId,event,status,conclusion,headBranch,url,createdAt` 與 REST `gh api repos/x812033727/Ti/actions/runs/<id>`，兩路關鍵欄位須相等並記入 `cross_checks`
+- 時間：2026-07-06 02:23
+
+## smoke 證據綁定對象為 `release-smoke.yml` 的 workflow run 本身（其 `databaseId`／`createdAt`／`conclusion`），不得沿用 release 物件的 `id=342528036`／`created_at=13:15:15`
+- 時間：2026-07-06 02:23
+- 理由：高工退回點——release 物件與 workflow run 是不同 artifact，貼 release 物件 id 到 smoke 證據即資料錯誤
+
+## evidence 同時記 success run 與被取代的 failure run（`superseded_failure_run`），兩者標 `event=release` 並註明 failure 為同 tag 早期 release 被取代重建，論證觸發可靠雙重確認而非反證
+- 時間：2026-07-06 02:23
+- 理由：把僥倖說清楚（跨場次硬規則），只報 success 藏 failure 是不誠實
+
+## 頂部半閉環聲明改版本限定收斂——「v0.2.0 此鏈已生產閉環；後續版本仍為半閉環、尚待逐版生產驗證」，措辭須完整保留 `真實/tag-push/端到端/生產驗證/半閉環/尚待` 關鍵詞
+- 時間：2026-07-06 02:23
+- 理由：既有 `check_half_closed` 與 `test_mutation_soften...` 為全域字串 replace，保留關鍵詞即零改動繼續綠，保護既有護欄依賴方向
+- 否決方案：一刀切改「已完整驗證」——會打爆既有守門測試
+
+## 範圍擴至「body 置頂」那條一併翻 ✅，依據引用既有 `release-v0.2.0-online-body.json`（不新增證據），使頂部聲明宣稱 v0.2.0 全鏈閉環時文件自洽；PM 未定前措辭浮動，fallback 為逐環標註不宣稱全閉環，收斂時實跑 `check_half_closed` 相關測試確認關鍵詞未軟化
+- 時間：2026-07-06 02:23
+- 理由：只翻 smoke 留 body 置頂 ❌ 會與「全鏈閉環」聲明自相矛盾；既有 online-body evidence 已足
+- 否決方案：PM「範圍極簡只封 smoke 一條」（暫留為 fallback，待 @pm 拍板）
+
+## 守門測試新建獨立檔 `tests/autopilot/test_qa_smoke_trigger_evidence.py`，只驗 JSON snapshot 內兩路欄位一致與 handoff run-id／✅／❌ 對 JSON gate 一致，不重跑 `gh`、不打網路，錨定新證據節不整份逐字比對
+- 時間：2026-07-06 02:23
+
+## 守門測試成對黑樣本任一須翻紅——竄改 run-id／✅ 改回 ❌／抽掉 `event` 欄／抽掉 failure run 記載／`verification_status` 退回 pending 但 ✅ 未退
+- 時間：2026-07-06 02:23
+
+## 改 handoff L26 時保留 `test_task4_commit_does_not_alter_release_smoke_trigger` symbol 引用，避免既有 `test_handoff_symbol_references_are_live` 翻紅
+- 時間：2026-07-06 02:23
+
+## 全部產出 additive／可逆／零 production code 變更，`BREAKING_HEADING` 常數與版本字面值不動、不加 `--verify-tag`
+- 時間：2026-07-06 02:23
+
+## body 置頂列只改單列（狀態 ⏳→✅＋依據欄補證據路徑），smoke 列維持不動、僅核對
+- 時間：2026-07-06 03:14
+
+## 落地一律用內容錨點定位（列首粗體字串／`BREAKING_HEADING` 常數／符號名），禁寫死行號
+- 時間：2026-07-06 03:14
+- 理由：本 repo 既有教訓「行號會漂」，設計指位的 L9/L29/L30 實際已漂移為 L7-18；錨點才穩定
+- 否決方案：靠 L29/L30 行號 diff——文件前段增減行即誤改鄰列
+
+## evidence 三份 JSON 唯讀引用、零新增證據檔，文件宣稱單向依賴證據事實
+- 時間：2026-07-06 03:14
+
+## 保護依賴方向——禁止為文件自洽反向改 `BREAKING_HEADING`／版本字面／evidence 欄位
+- 時間：2026-07-06 03:14
+
+## 翻 body 列 ✅「前」必須先補一支對稱 pytest 守護，使 body 列 ✅ 與 smoke 列 ✅ 同級護欄
+- 時間：2026-07-06 03:14
+- 理由：smoke 列 ✅ 背後有 CI 跑的守護測試、竄改即紅；`check_release_body_structure.py`+`online-body.json` 目前無任何 tests/ 引用、CI 一次不跑，翻 ✅ 等於無護欄真理宣稱，evidence 被動或 CHANGELOG 結構漂移都不會翻紅
+- 否決方案：直接引 script+靜態 json 當依據就翻 ✅——比 smoke 列弱一級證據，撐不起同一顆 ✅（高工退回點）
+
+## 新守護獨立建檔 `tests/autopilot/test_qa_body_pinning_evidence.py`，對稱 smoke 的 `test_qa_smoke_trigger_evidence.py`
+- 時間：2026-07-06 03:14
+- 理由：沿用「每個生產級宣稱配一支對稱獨立守護」既有模式，依賴方向一致、後人易懂；多一檔成本低於把 body 斷言塞進 `test_qa_task4_e2e_handoff.py` 造成職責混雜
+- 否決方案：斷言併入既有 handoff 測試——範圍雖更小，但該檔職責（守半閉環聲明）會被稀釋
+
+## 新守護斷言 `online-body.json` 的 `body_match=true`、頂部第一個頂層區塊＝`BREAKING_HEADING` 常數、四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙齊，並配成對黑樣本（頂部非 Breaking／抽掉要素即翻紅），可直接把 verdict 的 `black_sample_selfcheck` 包成 collect
+- 時間：2026-07-06 03:14
+
+## body 列依據欄除三路徑外，加引這支新守護 test，才與 smoke 列 ✅ 依據同級
+- 時間：2026-07-06 03:14
+
+## 頂部聲明擴寫為並列 smoke＋body 兩環為「v0.2.0 已具生產證據之閉環」，`尚待／半閉環` 只保留給「後續版本／其餘未具證據環節」
+- 時間：2026-07-06 03:14
+
+## 頂部聲明完整保留 `真實／tag-push／端到端／生產驗證／半閉環／尚待` 六關鍵詞（實際 `check_half_closed` 為四必要詞＋修飾詞，保六為安全冗餘）
+- 時間：2026-07-06 03:14
+- 理由：`test_mutation_soften` 是全域 replace 所有 `尚待/半閉環` 才驗紅，版本限定收斂可 baseline 綠、mutation 仍紅
+
+## 執行順序調整為 先補守護測試 → #3 聲明收斂 → #1 翻列 → #4 驗證，避免「表閉環／頭待封」矛盾中間態且翻列前護欄已就位
+- 時間：2026-07-06 03:14
+
+## 範圍鎖定——不加 `--verify-tag`、不鎖 actions SHA、不碰 smoke 列與「gh+REST 雙路」既有字串，供應鏈硬化留待辦
+- 時間：2026-07-06 03:14
+
+## 全產出 additive／可逆／零 production code 變更（新增守護測試屬 additive 護欄、不算 production 變更）
+- 時間：2026-07-06 03:14
+
+## 驗收指令補入新檔 `test_qa_body_pinning_evidence.py`，與既有三支守護測試一併為收斂閘
+- 時間：2026-07-06 03:14
+
+## 不引入任何外部模糊比對庫（RapidFuzz／thefuzz），複用 repo 內既有 `_token_set_similarity`（詞集 Jaccard）
+- 時間：2026-07-06 04:25
+- 理由：GPL 授權污染、Levenshtein 對 CJK 逐字不適配、額外分詞依賴三點皆不划算；輪子已在 autopilot.py
+- 否決方案：引入 RapidFuzz（MIT）或 stdlib difflib.SequenceMatcher——前者仍需配 jieba 分詞，後者字元序列比對不如既有 token-Jaccard 適合中英混排標題
+
+## 從 `_filter_pending_duplicates` 第一道相似度層外提共用 helper `_first_similar_title(title, corpus) -> str | None`，回傳命中標題供 debug log，pending 與 done 兩處共用
+- 時間：2026-07-06 04:25
+- 理由：零行為變更的直接外提（autopilot.py:1002-1009），杜絕第二套實作漂移
+- 否決方案：抽成 `_is_semantically_dup(...) -> bool`——回傳 bool 會丟失「近似哪一筆」的 log 資訊
+
+## 共用 helper 只抽「相似度層」，不含「子系統廣度」第二道防線——done-list 去重僅套相似度，廣度防線維持 pending 專屬
+- 時間：2026-07-06 04:25
+- 理由：子系統廣度是針對 pending 過載語意，套到 done 會語意污染
+
+## `_first_similar_title` 簽章收 `Iterable[str]`（不限死 list），維持 corpus 迭代順序、「第一個命中即短路」不變，且 helper 內不對 corpus 排序
+- 時間：2026-07-06 04:25
+- 理由：pending 逐位不變是 #1 硬線；done 的 `done_titles` 為 set 無序，多重命中回傳哪一筆不確定，但只影響 log 不影響 `is None` 過濾判定，可接受；排序是無收益擾動
+
+## 共用 helper 及 dedup 家族一律留在 `studio/autopilot.py`，不搬遷至 `flow.py`
+- 時間：2026-07-06 04:25
+- 理由：`_normalize/_tokenize/_token_set_similarity/_filter_pending_duplicates` 家族已定居 autopilot.py，`improver` 沿用既有 `autopilot._xxx` 呼叫慣例；搬遷可逆但無收益、且碎裂內聚
+
+## done 相似層門檻沿用既有 `config.AUTOPILOT_DEDUP_RATIO`，不新增 done 專屬門檻或開關，遵守 config SSOT
+- 時間：2026-07-06 04:25
+- 理由：兩防線真正同構；附帶提醒該常數在 config.py:879 為硬寫非 env，本輪範圍外不動
+
+## done 相似層開關沿用既有 `config.AUTOPILOT_EVAL_MEMORY`——`=0` 時 `recent_done_titles` 回空 corpus 使 helper 全回 None，與舊精確比對 `=0` 逐位等價，向後相容不加分支
+- 時間：2026-07-06 04:25
+
+## `improver._discover` line 414 **只**替換後半段 `not in done_titles` 為 `autopilot._first_similar_title(...) is None`，前半段 `t["title"].strip()` 真值守衛必須保留
+- 時間：2026-07-06 04:25
+- 理由：空標題應由真值檢查擋掉，不讓空字串流進 helper 靠 `_token_set_similarity` 回 0.0 兜底——語意上空標題本就該丟
+
+## done 過濾維持就地縮減 `items`，`dropped = raw_n - len(items)` 自動涵蓋 done-相似層新擋下項，不加額外計數（驗收 #6）
+- 時間：2026-07-06 04:25
+
+## 測試補三組即足——pending 回歸（逐位不變，以既有 dedup 測試為閘）、done `EVAL_MEMORY=0` 改寫版放行、done `EVAL_MEMORY>0` 改寫版被擋
+- 時間：2026-07-06 04:25
+- 理由：`=0`／`>0` 成對黑白樣本同時證「開關有效」與「相似度非精確」，是關鍵驗收閘；走離線假專家、不打外部 API
+
+## 本輪只做觀測層——量測 `ttft_s` + 真 API A/B 驗證命中 + 記錄 prefix 失效清單；不換 SDK、不加手動 cache_control
+- 時間：2026-07-06 05:17
+- 理由：需求字面「加 caching」的前提已被研究員與程式碼證偽——此路徑快取已自動運作，可做的是量測與驗證
+- 否決方案：改走原生 anthropic SDK 手動注入 cache_control（需重寫整個工具迴圈、鎖死未來、不可逆，列另案）
+
+## 技術選型維持 `claude_agent_sdk`（ClaudeSDKClient/ClaudeAgentOptions），不引入原生 anthropic SDK、不新增依賴，prompt caching 依賴 Agent SDK 自動 breakpoint
+- 時間：2026-07-06 05:17
+
+## `ttft_s` 埋點放 `experts.stream_to_events` 串流迴圈，分母 = 進迴圈首個 `__anext__` 前的 `loop.time()`（共用既有單調鐘），分子 = 首個含內容訊息到達時刻
+- 時間：2026-07-06 05:17
+- 理由：單點內聚、零跨層改動；共用 :424 既有 `loop` 零成本
+- 否決方案：追到 speak 層 `client.query()` 精確送出時戳（需跨層傳時間戳、汙染簽章）
+
+## ttft 落點必須在 `collected.append(text)`（:469）之後，而非 `text` 一非空即記；ToolUseBlock 當首內容則直接算
+- 時間：2026-07-06 05:17
+- 理由：首個 TextBlock 會先過 `_classify_api_text`，命中即 raise（限流/overload）——埋在 append 後才不會把「其實是錯誤文字」誤記為首 token，語意乾淨
+
+## 判斷「首個含內容訊息」用保守 helper，不硬依賴 SDK class 名稱——TextBlock 需非空文字、ToolUseBlock 直接算內容
+- 時間：2026-07-06 05:17
+
+## `ttft_s` 型別為 `float`（秒），與既有 `duration_api_ms`/`duration_ms`（int 毫秒）並存不取代，語意正交（整段 API 時延 vs 首 token 延遲）；PR 描述須一句點明型別/單位刻意不同，防後人誤「統一」
+- 時間：2026-07-06 05:17
+
+## 介面沿用既有縫——`_emit_claude_token_usage` 新增 `ttft_s: float | None` 參數，`events.token_usage` 新增 `ttft_s: float | None = None` 關鍵字參數，比照 `duration_ms`/`task_id` 僅「非 None 時寫入 payload」，不動既有欄位名；同步更新所有呼叫點與測試
+- 時間：2026-07-06 05:17
+
+## 向後相容——history 重播、`/api/metrics` 聚合、前端 `events-render.js` 一律以 `.get("ttft_s")` null-safe 讀取；聚合層本輪不對 ttft 做平均/統計（屬另案），只保證舊 JSONL 不報錯
+- 時間：2026-07-06 05:17
+
+## 模組邊界為純觀測——不碰 `flow.py`（無新 marker 解析）、不碰 config SSOT；A/B 用既有 `DISABLE_PROMPT_CACHING` 環境變數做 before/after，不新增 `TI_*` 旋鈕
+- 時間：2026-07-06 05:17
+- 否決方案：為 A/B 新增專屬 config 開關（既有 env 已足，新增即違反 config SSOT 且增維護面）
+
+## A/B 實驗以 `DISABLE_PROMPT_CACHING=1`（before）vs 預設（after）為唯一乾淨對照，量測期固定 model/effort/system_prompt/CLI 版本鎖住 prefix；命中證據為 after 的 `cache_read_input_tokens > 0`，且報告須確認該 env 確被 Agent SDK 吃到
+- 時間：2026-07-06 05:17
+
+## 報告誠實標示——`ttft_s` 絕對值含「query→進迴圈」固定 offset，不可宣稱為真 TTFT，僅 before/after delta 有效（offset 相減抵消）；真 API 端到端屬半閉環，須標示離線 vs 真 API
+- 時間：2026-07-06 05:17
+- 理由：分母設在 stream_to_events 進入點、早於 speak 層 query 送出，若 query 非惰性則絕對值系統性少算固定量，但 A/B delta 不受影響
+
+## 三個測試為核可前提（非另案），走離線假專家沿用既有注入縫——① 有內容訊息 → `ttft_s` 為正 float 且進 payload；② 只有 ResultMessage 全程無內容 → `ttft_s` 留 None → payload 不含該鍵；③ 舊 JSONL（無 ttft_s）重播 + `/api/metrics` 聚合 null-safe 斷言
+- 時間：2026-07-06 05:17
+
+## Claude provider 走 `claude_agent_sdk` 路徑無法手動加 `cache_control`；prompt caching 已由 Agent SDK 自動生效，本輪不引入手動控制（列另案）
+- 時間：2026-07-06 05:17
+- 背景：本專案 Claude 專家經 `studio/experts.py` 的 `ClaudeSDKClient`/`ClaudeAgentOptions`（包 Claude Code CLI subprocess），非原生 `anthropic` SDK。`ClaudeAgentOptions` 未暴露 cache_control/cachePoint 注入旋鈕（官方 open 功能請求 anthropics/claude-agent-sdk-python#626，無 workaround），故需求字面「為 system_prompt/tool 定義加 caching」對此路徑是錯誤前提。
+- 事實：快取「已自動在跑」——Claude Code/Agent SDK 預設對 `tools → system → project context` 這段 prefix 自動放 ephemeral cache breakpoint（訂閱預設 1h、API key 預設 5m TTL）。`experts.py` 已擷取 `cache_read_input_tokens`/`cache_creation_input_tokens`，第一次請求為 creation（寫入、慢），後續同 prefix 為 read（~0.1x 成本、快），效果本就可驗證。
+- 決策：本輪只做觀測層（量 `ttft_s` + 真 API A/B 驗證命中 + 記錄 prefix 失效清單），不手動注入 cache_control。
+- 否決方案：改走原生 `anthropic` SDK 手動注入 cache_control（放大工具定義快取、指定 1h TTL 斷點）——需重寫整個工具迴圈、脫離 Agent SDK 的工具迴圈、成本高且不可逆，列為獨立評估的另案，不混進本任務。
+
+## prefix 失效清單——會使 Agent SDK 自動快取全失效（進而拉高 TTFT）的變因，量測期須全部鎖死
+- 時間：2026-07-06 05:17
+- 失效變因（改動即讓後續請求 prefix 不同、快取重建）：
+  1. 切換模型（model）。
+  2. 切換 reasoning effort。
+  3. 修改 system_prompt 或工具集（allowed_tools 增刪）。
+  4. 升級 Claude Code CLI 版本（量測期間勿升級）。
+  5. system_prompt 內動態段：cwd、git status、memory/檔案路徑——跨工作目錄/跨機器每個 prefix 不同、互不命中。
+  6. 子代理（subagent）快取預設 5m TTL，且曾被官方 hardcode 關閉（claude-code#29966），子代理路徑命中率須獨立看待、不可假設與主代理一致。
+- 相關環境變數旋鈕（皆為 Agent SDK/CLI 既有，非本專案 `TI_*`）：`DISABLE_PROMPT_CACHING`（本輪 A/B 的 before 開關）、`ENABLE_PROMPT_CACHING_1H`、`FORCE_PROMPT_CACHING_5M`。
+- 跨 session/跨機器共用快取抑制建議：抑制 system_prompt 的動態段（cwd/git status/memory 路徑），使各工作目錄 prefix 一致才可能互相命中（官方 fleet 建議 exclude_dynamic_sections / modifying-system-prompts）；此屬另案優化，本輪僅記錄清單。
+- 量測含意：A/B 期間若切模型/effort、或在升級 CLI 前後對比，TTFT 前後差可能來自 prefix 失效而非快取本身，結論即被污染——故命中證據以 after 的 `cache_read_input_tokens > 0` 為準，且固定 model/effort/system_prompt/CLI 版本。
+- 來源：anthropics/claude-agent-sdk-python#626、anthropics/claude-code#29966、Claude Code prompt caching 文件、API prompt caching 文件。
+
+## 心跳維持 `_write_status` → `status.json` 單一真相源，新增 `current_expert`(str|null)/`turn_started_at`(float|null) 併入既有扁平 payload；不新增檔案、機制或 `TI_*` 旋鈕
+- 時間：2026-07-06 09:29
+- 理由：基礎設施已存在，真正缺口只有專家粒度與事件驅動刷新，補欄位比重造風險小且可逆
+- 否決方案：另開新狀態檔或引入 OTEL/Langfuse——與 repo「不隨意新增依賴」相悖，且輕量 JSON 心跳已足夠
+
+## `/api/autopilot` 不改邏輯，沿用「原樣吐 status.json 當 heartbeat」，新欄位隨 payload 自動曝露；前端 timeline 以 null-safe `.get()` 讀 heartbeat，顯示 `current_expert` 與 `now - turn_started_at` 已跑時長
+- 時間：2026-07-06 09:29
+
+## turn 邊界資訊的接縫定在 autopilot `run_one_task` 的 `broadcast` callback（tap 層），禁止改 `orchestrator.py`/`experts.py`/`events.py`
+- 時間：2026-07-06 09:29
+- 理由：事件本就全數流經此 callback，是既有的縫；orchestrator 同時跑在 ws.py 一般 session，對 autopilot 一無所知，此依賴方向必須守住
+- 否決方案：在 orchestrator 新增顯式 `turn_started` 事件型別——會讓 orchestrator 耦合 autopilot 觀測需求，破壞依賴方向
+
+## turn 起點由「事件帶入新 speaker」推斷，取 `tool_use.speaker_key` 或 `expert_message.speaker` 中先出現的新 speaker 為 `turn_started_at`，不新增 turn 事件型別
+- 時間：2026-07-06 09:29
+- 理由：用先到的工具或發言事件定起點，抵消「先靜默跑工具才發言」的延遲
+
+## `speaker_key` 與 `expert_message.speaker` 進 tap 前先正規化成同一種 key，避免同一專家被判成兩個 turn
+- 時間：2026-07-06 09:29
+
+## turn state 用 `run_one_task` closure 內共享的 mutable holder，同時供 broadcast tap 更新與 `_task_heartbeat` 讀取，不落 journal、不用 module global、不加鎖
+- 時間：2026-07-06 09:29
+- 理由：holder 讀寫都在同一 event loop、await 邊界間無搶佔，無真並行，加鎖是多餘複雜度
+- 否決方案：加 lock 保護 holder——asyncio 單執行緒模型下不需要，屬過度設計
+
+## 事件驅動刷新只在 turn 邊界（新 speaker）、`tool_use`、`final=True` 的 `expert_message` 觸發 `_write_status`，跳過 streaming 逐塊事件
+- 時間：2026-07-06 09:29
+
+## 事件驅動寫入必須比照 `_task_heartbeat` 以 `_read_status` 帶回 `quota`/`sleep_until`/turn 欄位等既有欄位（對稱 preserve）
+- 時間：2026-07-06 09:29
+- 理由：高工核出的對稱漏洞——tap 觸發的 `_write_status("running",…)` 若不 preserve，會在任務中把主迴圈寫的 quota/sleep_until 閃成空，`/api/autopilot` 用量歸零
+
+## `_write_status` 提供明確 preserve 參數或 helper，把「帶回既有欄位」收成單一入口，避免未來改 payload 時漏帶欄位
+- 時間：2026-07-06 09:29
+
+## 事件驅動寫入加最小寫入間隔節流（同 speaker 距上次事件驅動寫 <1–2s 即跳過，交由下個事件或下次 tick 補寫）
+- 時間：2026-07-06 09:29
+- 理由：高工核出 `tool_use` 非有界事件源，重工具迴圈一秒可噴多則，每則一次 atomic tmp+rename 會打爆原子寫；節流才守得住「寫入率有界」
+
+## 事件驅動以 `time.time()` 蓋 `last_activity_at`；60s 背景 tick 完整保留（含 `events_mtime` 與 `workers.cpu_active` 盲區補償），兩軌並存不取代
+- 時間：2026-07-06 09:29
+
+## 60s 保底 tick 沿用 preserve 範式，從共享 state 帶回 `current_expert`/`turn_started_at`，避免每輪 tick 把 turn 欄位清 null
+- 時間：2026-07-06 09:29
+
+## turn 欄位在任務收尾清為 null，且清理需涵蓋 `_select_workflow`/clone 失敗提早 return 的路徑，防上一任務 `current_expert` 殘留；舊 status.json/舊 JSONL 無此欄位一律 null-safe 不回歸
+- 時間：2026-07-06 09:29
+
+## 監控判定維持「僅 `updated_at` 停滯（主迴圈死）**或**（`cpu_active==false` **且** `last_activity_at` 長不動）才殺」，AND 子句不放寬；`last_activity_at` 取代 journal 掃描僅作新鮮度來源，門檻 ≥3× 刷新間隔
+- 時間：2026-07-06 09:29
+- 理由：對應 2026-07-04 誤殺教訓——長工具靜默時 cpu_active 仍為 True 即不判死，兩訊號 AND 才殺
+
+## 本任務與 `ttft_s`/prompt-caching 決策正交互不牽動；Claude path retry 去重缺口沿用共識只記 `核心改動: Claude provider 路徑缺乏 per-speak 去重保護` 進 backlog，本場不動 `experts.py`
+- 時間：2026-07-06 09:29
+
+## 零新工具零新腳本，重驗全用報告內既有指令（gh CLI + REST + `env PYTHONPATH=. python3 scripts/check_release_body_structure.py`），不自建勾稽自動化
+- 時間：2026-07-06 19:14
+- 理由：一次性重驗自證不了新抽象的複雜度；自動勾稽腳本會成為半年後沒人敢刪的死碼
+- 否決方案：寫一支自動勾稽腳本供未來每版重驗——若真有此需求，另立專門任務
+
+## `docs/evidence/*.json` 三檔凍結為不可變原始憑證，不覆寫、不新增 07-06 副本；今日結果只落報告「本次重驗」欄
+- 時間：2026-07-06 19:14
+- 理由：07-05 的 `captured_at_utc` 是擷取時刻的事實；雙份 evidence 會製造雙份真相，勾稽鏈反而斷裂
+- 否決方案：新增 2026-07-06 evidence 檔並列存放
+
+## `docs/release-e2e-closure-report.md` 為唯一可變產物，改動範圍限三列表重驗欄、第二章轉錄（逐字貼 2026-07-06 輸出並標註日期）、缺口章
+- 時間：2026-07-06 19:14
+- 否決方案：沿用 07-05 舊輸出僅加註——驗收標準 2 明文要求本次實際輸出
+
+## 雜湊規則章與正規化規則凍結，報告端零衍生雜湊，只引 evidence 既有值
+- 時間：2026-07-06 19:14
+
+## 逐欄比對一律指令化：以 `jq` 從 $TMPDIR 原始輸出抽欄位、與 evidence 值 `diff`，報告重驗欄附上抽取指令；不接受「用眼比對」作為 match 依據
+- 時間：2026-07-06 19:14
+- 理由：眼比出的 match 無法自證，違反「實跑行為，不靠看起來對」的既有教訓（採高工意見）
+- 否決方案：人工目視逐欄核對
+
+## #1/#2 動工前先落定欄位分類——身分欄位（tagName、body 雜湊來源值、run_id、event、status、conclusion、workflow_path）不符即缺口；易變欄位（`updatedAt`、下載計數等合法漂移欄位）只記錄不比對
+- 時間：2026-07-06 19:14
+- 理由：不先定分類，執行者現場自由裁量會讓缺口章公信力打折（採高工意見）
+- 否決方案：執行時遇到再判斷
+
+## 重驗原始輸出一律存 `$TMPDIR` 且檔名帶 task 編號等唯一識別，禁落 docs/，#1/#2 並行互不踩檔（採工程師意見）
+- 時間：2026-07-06 19:14
+
+## mismatch 路徑＝如實寫缺口章＋結論降級，不現場修復、不動 evidence、不動線上資源；全 match＝結論明文限定「閉環（僅及 v0.2.0）」
+- 時間：2026-07-06 19:14
+- 理由：修復是新任務，本場只負責如實記錄，先定失敗路徑擋範圍爆炸
+
+## `path` 欄位維持 N/A＋REST 補驗雙落字，判定值取 REST 的 `workflow_path`
+- 時間：2026-07-06 19:14
+
+## 收尾驗收精準化：`git diff docs/` 只允許 `docs/release-e2e-closure-report.md` 有預期改動，`docs/` 無任何 untracked；非「整個 docs/ 乾淨」（採工程師意見）
+- 時間：2026-07-06 19:14
+
+## 第二章轉錄更新時不得動到 marker 行與守護測試 grep 的報告字串；#4 驗收含 `.venv/bin/python -m pytest tests/docs -q` 全綠，報告內指令全維持 `python3`/`.venv/bin/python`
+- 時間：2026-07-06 19:14
+
+## `gh` 認證、網路可達、線上 v0.2.0 release/run 27905531397 仍可讀列為重驗前置條件，#1/#2 起手先驗；前置不成立即回報阻塞，不以舊值充當重驗結果
+- 時間：2026-07-06 19:14
+
+## 唯一權威決議檔落 `docs/task3-authoritative-decision-2026-07-08.md`，沿用既有 `release-e2e-authoritative-declaration` 的 additive 宣告範式，不覆寫既有 evidence/closure/handoff
+- 時間：2026-07-08 06:57
+- 理由：既有範式已被 `tests/docs/` 守門驗證過，讀者心智模型與測試比照方式一致
+- 否決方案：另立新格式——會讓守門測試無從比照且範圍爆炸
+
+## 作廢標記採 ADR「Superseded by」語義，五份原檔 immutability——存在則不刪除、不改寫歷史
+- 時間：2026-07-08 06:57
+
+## 因五份採固定五列占位契約，僅 `778ced`/`rerun-765f1b` 為 QA 訊息流已明列 task3 短碼；未明列欄位固定填 `<訊息流未明列>`，路徑欄固定填 `訊息流明列值／查無 repo 實體檔`
+- 時間：2026-07-08 06:57
+- 理由：硬追形式雙向會逼我們憑空造五個檔或改歷史，兩者都違反 immutability；且不講白會讓終判卡在「作廢對象查無此檔」
+- 否決方案：憑空造五個原檔以湊齊雙向連結
+
+## 固定五列中已明列的識別碼與省略 hash 逐字照抄 QA 訊息流，省略號（U+2026）原樣保留，落盤與測試斷言一律用 bytes 比對，防編輯器/格式化把 `…` 正規化成 `...`
+- 時間：2026-07-08 06:57
+
+## 帶省略號的 `99f330…9d3b` 類值只當「訊息流逐字值」，不得測成真實 64 碼 sha256
+- 時間：2026-07-08 06:57
+- 理由：它是自證用短碼、非外部整檔校驗值，用 64-hex 正則會誤紅或漏抓
+
+## 落盤用標準庫原子寫入（temp→flush→`os.fsync`→`os.replace`），不新增第三方依賴
+- 時間：2026-07-08 06:57
+- 否決方案：引入 `atomicwrites` 第三方套件——標準庫已足夠且違反不加依賴慣例
+
+## 落盤腳本一次性、走 `$TMPDIR`，不留在 repo 被掃描目錄，收尾以 `git status docs/ tests/` 確認無 untracked 殘留
+- 時間：2026-07-08 06:57
+- 理由：被掃描目錄的 untracked 臨時檔會造成 pre-commit 綠／CI 紅分歧
+
+## 權威檔內硬分「整檔 sha256（外部權威）」與「檔內嵌 hash（僅自證）」兩節，附 `python3` 自驗指令
+- 時間：2026-07-08 06:57
+- 理由：前一輪 `c2f4bb→725cf1` 重跑的踩坑根因即語義未分，不可省
+
+## `tests/docs/` 新守門測試不繼承 task2 的 `SHA256_RE`（64-hex）＋evidence 檔比對邏輯，改抓「必要標題＋五個識別碼逐字存在＋省略號原樣＋`Superseded by` 語義＋非實體檔標註＋回報路徑字串可讀＋報告內無裸 python」
+- 時間：2026-07-08 06:57
+- 理由：本任務值為短碼/帶省略號且 evidence 實體檔不存在，沿用 64-hex 掃描會漏抓或誤紅
+- 否決方案：照抄 `test_release_e2e_closure_report_task2.py`
+
+## 本任務邊界限定 `docs/` 一份新檔 + `tests/docs/` 一支守門測試，零 `studio/` 主套件改動
+- 時間：2026-07-08 06:57
+
+## 回報值＝權威檔相對路徑字串 `docs/task3-authoritative-decision-2026-07-08.md`，由守門測試斷言可程式讀出
+- 時間：2026-07-08 06:57
+## 認證改用 git config env 注入（`GIT_CONFIG_COUNT=1`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`）帶 base64 extraHeader
+- 時間：2026-07-08 16:21
+- 理由：「token 不進 argv/ps」是本任務安全本質，唯一能真正成立的做法；label 只遮 RunOutput.command，遮不掉 ps 短窗
+- 否決方案：inline `-c http.extraHeader=`——其值本身即 argv 元素，一樣進 argv/ps 不合格
+
+## `run_command_exec` 新增 `env: dict|None=None` 參數，僅 `env is not None` 時合併 `{**os.environ, **env}` 後傳入
+- 時間：2026-07-08 16:21
+- 理由：create_subprocess_exec 的 env 會取代整包環境，必須 merge os.environ；預設 None 維持繼承、向後相容，且是可複用的通用能力
+- 否決方案：用 `os.environ` 全域改寫——多 session 併發下互相污染，是不可逆隱性 bug；亦否決預設 `env={}` 清掉繼承
+
+## `remote_url(repo)` 移除 token 參數、回乾淨裸 URL `https://github.com/<repo>.git`，保留嚴格 repo 格式校驗與 `assert_repo_allowed` chokepoint
+- 時間：2026-07-08 16:21
+- 理由：乾淨 URL 不含 token；allowlist + 格式校驗防 repo 字串被拿去組惡意 URL；blast radius 僅 publisher 兩處 + 3 測試呼叫
+
+## 簽名破壞 `remote_url(repo, token)→remote_url(repo)` 連帶改 `test_publisher.py:48`、`test_owner_allowlist.py:113/119`，owner-allowlist 反向黑樣本（otherowner）必須保留
+- 時間：2026-07-08 16:21
+- 理由：反向黑樣本證明 chokepoint 沒隨簽名變動被弱化，防假綠
+
+## 新增純函式 `extra_header(token)` 與 `git_auth_env(token)`，base64 一律 `b64encode(f"x-access-token:{token}".encode()).decode()`（無尾換行），per-host key `http.https://github.com/.extraheader` 收斂作用域
+- 時間：2026-07-08 16:21
+- 理由：per-host key 對齊 actions/checkout，避免 header 隨重導向送到其他 host；純函式可單測釘死尾換行坑
+
+## `redact` 擴充遮 base64 形式，且必須用與 `git_auth_env` 完全相同的編碼（相同前綴、無尾換行）算出同一字串再 replace
+- 時間：2026-07-08 16:21
+- 理由：編碼不一致＝遮了對不上的值＝假遮罩；需補測試斷言 redact 真的把該 b64 換掉
+
+## `_push`/`_push_base` 新增 `env` 透傳；fake_push／fake_push_base 替身統一用 `**kwargs` 收尾
+- 時間：2026-07-08 16:21
+- 理由：`**kwargs` 讓 6+ 檔測試替身對簽名擴充免疫，避免逐檔漏改造成 CI 綠/紅分歧
+
+## 守門測試釘兩件事——argv/command 不含 token 明文與 base64；`GIT_CONFIG_VALUE_0` 含正確無換行 base64 header，並斷言 env 確實到達子行程
+- 時間：2026-07-08 16:21
+- 理由：拆兩點才能同時證明「URL/argv 不洩密」與「認證有效」
+
+## runner.py 與 publisher.py 均屬 Ti 核心，走 `x812033727/Ti` 核心 repo 獨立 PR，不混進專案 repo
+- 時間：2026-07-08 16:21
+
+## 移交待辦（不在本輪）——`GIT_CONFIG_COUNT` 需 git 2.31+，於註解寫一行最低版本假設；runner env 參數於未來 `sandbox=True` 場景時，bwrap 是否 `--clearenv` 吞掉 env 須另案確認
+- 時間：2026-07-08 16:21
+- 理由：本任務兩處 push 均 `sandbox=False`，不觸發 bwrap env 轉發問題，列為註記/待辦不阻擋本輪
+
+## lane baseline 注入契約：env/manifest 優先序與 fail-open/closed 分流策略
+- 時間：2026-07-09 01:40
+- 決策：並行 lane（`LaneContext` + git worktree）啟動設定基準（env + manifest）的注入層落地時，優先序固定為 `顯式注入 > env(TI_*) > lane manifest > 模組 DEFAULT`（env 覆蓋檔案，與 `config.py`/`settings.py` 同源）；缺失/非法時按注入項性質分流——安全/正確性關鍵項 fail-closed 中止該 lane，非關鍵增益項 fail-open 退回 `DEFAULT` + `log.warning`。契約細節與決策表見 ARCHITECTURE.md『任務並行』節「baseline 注入契約」子段。此 baseline 與 `runner.write_baseline_gitignore`（發佈前 .gitignore 淨化）同名不同源。
+- 狀態：前瞻契約，lane 注入層尚未落地；決策表所列 `AUTOPILOT_REPO`（fail-closed）、`TI_DISCUSS_MODE`（fail-open）為準則類比佐證，非現有 lane 注入行為。
+- 移交待辦：`lane 注入層落地後補守門測試對齊決策表`。
+- 理由：對齊 repo 既有 SSOT（env 覆蓋檔案、顯式注入優先），避免另立 lane 專屬表述造成文件漂移；fail 策略依失效後果分流而非一刀切。
+- 否決方案：env/manifest 一刀切同一 fail 策略；為 lane 另立獨立優先序；於 ARCHITECTURE 另開獨立章節而非內嵌子段。
+## 技術選型採純 bash 腳本、零新依賴（gitleaks 僅 `--no-git` 可選、grep fallback 為主軸）
+- 時間：2026-07-10 16:31
+- 理由：驗證/掃描本質是 gh/curl/grep 的 shell 動作，bash 最貼合；此腳本不進 orchestrator 資料流、不 import studio，是獨立運維工具
+- 否決方案：Python wrapper（雖與 repo 主語言一致，但只多一層 subprocess 表面，一致性收益低於直接性）
+
+## 腳本切為 `--verify`/`--scan`/`--report` 三個互不耦合子命令，各自可獨立執行、無共享狀態
+- 時間：2026-07-10 16:31
+- 理由：三段執行前提不同——`--verify` 需人在場有 `$GH_PAT`，`--scan`/`--report` 無 token 也能跑；解耦讓 #4 在無 token 時仍能完成
+- 否決方案：一鍵全跑組合模式（會逼無 token 的 #4 卡在 `--verify`）
+
+## 掃描目錄參數化（預設 `history/`、workspace-dir 由參數傳入），不寫死絕對路徑
+- 時間：2026-07-10 16:31
+
+## 依賴方向固定為單向「腳本 → runbook」——腳本不內嵌四項 PAT 規格文字，僅在 `--report` 輸出「請人工核對 runbook 四項規格」指引
+- 時間：2026-07-10 16:31
+- 理由：內嵌規格會製造第二份 SSOT，runbook 改動後腳本漏改即漂移
+- 否決方案：腳本自帶完整規格說明（看似方便，實則雙來源）
+
+## token 明文資料流為單向流入、永不流出——腳本內零明文輸出路徑，禁用 `set -x`、`curl -H` 不得被 log 印出，可 grep 自證，守門測試鎖此不變式
+- 時間：2026-07-10 16:31
+
+## 守門測試置於 `tests/docs/test_qa_token_rotation_script.py`，以字串錨鎖定（`GH_TOKEN=` 綁定、curl fallback、全前綴 regex、無裸跑 `gh auth status`）
+- 時間：2026-07-10 16:31
+
+## 字串錨須精準鎖「可執行行」，排除註解/heredoc/`--report` 指引文字中的 `gh auth status` 說明範例，避免自傷誤觸
+- 時間：2026-07-10 16:31
+- 理由：高工指出 `--report` 說明文字含 `gh auth status` 字樣會誤觸「須帶 GH_TOKEN 前綴」錨
+- 否決方案：全文粗鎖 `gh auth status`（會把說明範例當違規）
+
+## 不使用 AST 鎖，沿用字串錨——這是 shell 非 Python，同源於既有「示例順序不上 AST」的可逆性理由
+- 時間：2026-07-10 16:31
+
+## 守門測試絕不對 repo `history/` 實跑；黑/白樣本一律在 `$TMPDIR` 自建掃描目標傳入 `--scan`，只驗判別力、不依賴 repo 狀態
+- 時間：2026-07-10 16:31
+- 理由：repo `history/` 已有大量真實 `pjd*.jsonl`，對它實跑會讓測試隨 log 內容脆化、變慢（教訓庫「臨時檔不落被掃目錄」翻版）
+
+## 「對真實 repo `history/` 實跑一次殘留掃描」列為 #4 的證據項，結果併入 `--report` 唯讀摘要呈現，不靠守門測試順帶掃
+- 時間：2026-07-10 16:31
+- 理由：session 事件存檔殘留 token 屬真陽性安全發現，非誤報；與守門測試的「只驗判別力」須徹底分開
+
+## exit code 契約——`--report` 恆 0、`--scan` 命中殘留回非 0、`--verify` 依驗證結果；`--scan` 命中須併入 `--report` 摘要，不得靜默
+- 時間：2026-07-10 16:31
+- 理由：本輪不接 CI，`history/` 若有既存命中須靠 `--report` 被看見（無 silent 截斷）
+
+## 本輪不新增 CI gate、不動 `ci.yml`——守門測試落 `tests/docs`，既有 test job 自動涵蓋
+- 時間：2026-07-10 16:31
+
+## 本輪 #4 僅執行 `--scan`/`--report` 並回填證據，`--verify` 與步驟 1（發新）、步驟 3（撤舊）明確標示待人工於 GitHub UI 完成
+- 時間：2026-07-10 16:31
+
+## **修法選 `+` force refspec**：三處 fetch argv 均改為 `["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"]`
+- 時間：2026-07-10 23:00
+- 理由：`+` 前綴精確跳過目標 ref 的 CAS，不影響其他 ref；deploy_dir 為 origin 單向鏡像，force 覆蓋 remote-tracking ref 是預期行為
+- 否決方案：`--force` flag（語意過寬，未來新增 refspec 行為不確定）；重試保險層（根修後多餘，隱藏同類 bug）；架構重構（消除鎖外 fetch，改動面大、非此輪範圍）
+
+## **修改範圍鎖定三處**：`studio/autodeploy.py:60`、`studio/deploy.py:159`、`studio/autopilot.py:2324`
+- 時間：2026-07-10 23:00
+- 理由：三者均以 deploy_dir 為 cwd，fetch 後即讀/reset `origin/<branch>`，存在多寫者 CAS 競爭，修法統一不設例外
+
+## **明確排除 `repo_base.py:143`**
+- 時間：2026-07-10 23:00
+- 理由：該行 fetch 只寫 FETCH_HEAD，不寫 `refs/remotes/origin/*`，CAS 不適用
+
+## **明確排除 `autopilot.py:120`**
+- 時間：2026-07-10 23:00
+- 理由：autopilot work clone 為單寫者，不存在並發競爭；加 force refspec 無害但掩蓋「此處走不同路徑」的資訊
+
+## **守門測試採 argv 捕捉（monkeypatch `_run`），不實跑 git**
+- 時間：2026-07-10 23:00
+- 理由：驗收閉環禁止對 `/opt/ti` 打真實 fetch（會重現 bug 現場）；字串錨 `+refs/heads/` 鎖定 argv 形式
+
+## **測試必須逐一覆蓋三個 call site，不得以單處代表全部**
+- 時間：2026-07-10 23:00
+- 理由：高工指出「黑樣本 FAIL 只證錨字串有效，不證三處都改到」——漏改一處、單一測試仍可能綠；三處需各自捕捉 argv 驗 `+refs/heads/`
+
+## **force 語意須在 commit message 或行內加註**：`deploy_dir 單向鏡像，force 更新 remote-tracking ref 為預期行為`
+- 時間：2026-07-10 23:00
+- 理由：`+` 前綴半年後接手者會疑惑「是否吞本地 commit」，隱含前提須文字化，防止後人「安全起見拿掉」引發 regression
+
+## **測試檔位置：`tests/deploy/test_fetch_force_refspec.py`**，三處 call site 同一檔驗收
+- 時間：2026-07-10 23:00
+- 理由：與既有 deploy 守門測試同目錄，CI `tests/deploy` job 自動涵蓋；三處同一 argv 契約，集中管理
+
+## **diff 邊界鐵則：五個檔**——`studio/autodeploy.py`、`studio/deploy.py`、`studio/autopilot.py`、`tests/deploy/test_fetch_force_refspec.py`、`tests/test_task1_retry_doc.py`；超出須另立任務
+- 時間：2026-07-10 23:00（2026-07-11 修正：四檔 → 五檔）
+- 修正理由：原宣稱「僅四個檔」，但實際 diff 含第五檔 `tests/test_task1_retry_doc.py`——這是**必要的伴隨護欄修正**，非鍍金污染。`SCOPE_GUARD_MAINTENANCE_GLOBS` 白名單只含 `tests/_scope_guard.py|conftest.py|test_task1_retry_doc.py`，**不含 `studio/*.py`**；舊版 `test_no_py_changed` 護欄會對本 lane 三個 studio `.py` 改動判 FAIL、CI 紅。修正將護欄從「看 lane 編號」改為「看是否實際改動 `ARCHITECTURE.md`」（`if "ARCHITECTURE.md" not in changed_files: skip`），並把 API 由 `find_repo_scope_violations` 換成 `collect_changed_files`+`find_scope_violations`。實測保留版該護欄為 SKIPPED，不再誤觸發擋死 #1 合法改動。
+- 移交：護欄以 lane 編號當任務身分屬 Ti 核心測試基建設計缺陷，另立 `核心改動:` 任務根治（見後續任務）。
+
+## 所有 prefilter 邏輯集中於 `studio/autopilot.py`，不新增模組
+- 時間：2026-07-10 21:15
+- 理由：prefilter 是 pick 前同步判定，與 investigation lane、`_token_set_similarity`、`_tokenize_for_dedup` 同倉庫，跨模組界面為零
+- 否決方案：放 `flow.py`——flow.py 契約為無狀態純函式，async 取 merged 標題無法放入
+
+## 新增 `async def _fetch_merged_titles(clone: str, repo: str, since_days: int) -> list[str]`
+- 時間：2026-07-10 21:15
+- 理由：非同步才不阻塞 event loop，且 git fallback 需要 clone 路徑
+- 否決方案：同步版本（阻塞）；透過 `publisher` 模組（會造成循環 import）
+
+## 主路徑用 lazy `import httpx`，呼叫 `GET /repos/{owner}/{repo}/pulls?state=closed&per_page=100`，過濾 `merged_at != null` 且在 lookback 窗內
+- 時間：2026-07-10 21:15
+- 理由：httpx 已為現有依賴（`publisher.py` 慣例），lazy import 避免常駐記憶體
+- 否決方案：引入 PyGithub（新依賴，不值）
+
+## git fallback 用 `git log --format=%B%x00 --since=<n>.days.ago`，以 `\x00` 切割各 commit body，取每則 body 第一個非 merge-subject 的有效行作標題
+- 時間：2026-07-10 21:15
+- 理由：`--oneline` 下 GitHub merge commit subject 常是 `Merge pull request #…`，PR title 在 body 第一行；用 `%B%x00` 才能取到有效語意
+- 否決方案：`--merges --oneline`（常返回 merge subject 而非 PR title，語料雜訊大）
+
+## git fallback 在 shallow clone 或無歷史時回傳空 list，靜默放行（任務不降級）；在函式 docstring 明確標 known-limitation
+- 時間：2026-07-10 21:15
+- 理由：偏誤方向安全（漏判優於誤殺）；補測試「shallow clone 下 fallback 回空、任務不降級」
+
+## 模組級快取 `_MERGED_TITLE_CACHE: dict[tuple[str, int], tuple[float, list[str]]]`，key 為 `(repo, since_days)`，TTL 3600 秒
+- 時間：2026-07-10 21:15
+- 理由：型別具體、IDE 可靜態檢查；一 loop 內多任務共用同批 merged 標題，不重複打 API
+- 否決方案：`dict[str, ...]`（key 型別過鬆，工程師指正）
+
+## cache key 不含 token 狀態；同一 loop 內 token 穩定，影響可忽略；加一行注釋說明此假設
+- 時間：2026-07-10 21:15
+
+## httpx 僅取第一頁 `per_page=100`；活躍 repo 60 天 merged PR 可能 >100，漏舊 PR 導致漏判（放行，方向安全）；在函式 docstring 標 known-limitation，不分頁
+- 時間：2026-07-10 21:15
+- 否決方案：分頁全取（複雜度高，漏判代價低，不值）
+
+## 新增 3 個 config 旋鈕，於 `config.py` 頂層與 `reload()` 區塊兩處同步定義
+- 時間：2026-07-10 21:15
+
+## `AUTOPILOT_PREFILTER_RATIO` 獨立於 `AUTOPILOT_DEDUP_RATIO`（0.75），預設 0.80
+- 時間：2026-07-10 21:15
+- 理由：prefilter 誤殺代價（合法任務多一場 investigation + 一輪 pick 延遲）高於漏判代價；門檻拉高壓窄命中面
+- 否決方案：共用 DEDUP_RATIO（語意不同，後續分別調整才有意義）
+
+## 插入點為 `run_one_task` 中 `await _prepare_clone()` 之後、`_is_investigation_task()` 之前
+- 時間：2026-07-10 21:15
+- 理由：clone 路徑是 git fallback 必需；先於 investigation 路由才能接管降級決定
+
+## `backlog.annotate` 具名新增 `lane: str | None = None` 參數，僅 `lane is not None` 時寫入；函式內部 **不得** 接受 `**extra_fields`
+- 時間：2026-07-10 21:15
+- 理由：`annotate` 契約是「只補 note，不動 status/attempts」；裸 `t.update(**extra_fields)` 是後門，任何呼叫端傳 `status`/`attempts`/`id` 可靜默覆蓋關鍵欄位，擊穿保護語意
+- 否決方案：`**extra_fields` 無白名單擴展（高級工程師退回，最便宜時機是設計階段修）
+
+## 命中時呼叫 `backlog.annotate(task_id, note="[prefilter-implemented] 疑似已實作，匹配 merged: {title}", lane="prefilter-implemented")`，再路由 `_run_investigation_task`；命中不得靜默
+- 時間：2026-07-10 21:15
+
+## anti-ping-pong 沿用既有機制：`lane="full"` 時跳過 prefilter；investigation 判「需改碼:」→ 退回 `pending + lane="full"` → 下輪走全管線不再降級
+- 時間：2026-07-10 21:15
+- 否決方案：新增獨立 `lane="prefilter-skip"` 旗標（重複語意）
+
+## 低資訊保護：`len(_tokenize_for_dedup(title)) < 3` 時跳過比對，不降級
+- 時間：2026-07-10 21:15
+- 否決方案：`len(title.split()) < 3`（CJK 不靠空格分詞，分詞已有現成函式）
+
+## `VALID_TYPES` 維持不變，不新增 `"verification"` 型別；降級走既有 investigation lane
+- 時間：2026-07-10 21:15
+- 否決方案：新增型別（需動 backlog 驗證 + 所有消費端，複雜度不值可讀性收益）
+
+## 零新依賴，禁 `rapidfuzz`；相似度一律複用 `_token_set_similarity`（詞集 Jaccard，CJK 已處理）
+- 時間：2026-07-10 21:15
+- 否決方案：rapidfuzz（現有輪子在短標題場景等效，加依賴增部署與審查成本）
+
+## #3 測試必含以下五個黑白樣本：① 命中 → 降級為 investigation；② 未命中 → 任務不動；③ token < 3 → 不誤殺；④ 總開關關閉 → 整段旁路；⑤ 無 GH token / shallow clone → fallback 回空、不炸不誤殺
+- 時間：2026-07-10 21:15
+## `make_env(token: str | None, url: str | None = None) -> dict[str, str]`；url 提供且 host 非 `github.com` 時回空 dict；url 為 None 時仍產生 github.com per-host env（key 已釘死 host，不跨域）
+- 時間：2026-07-11 03:03
+- 理由：集中 host 判斷於 SSOT，caller 不重複；url=None 安全，因 key 本身限定 `http.https://github.com/`
+- 否決方案：caller 自行判斷再決定是否呼叫 make_env（責任分散，易漏）
+
+## autopilot `_GIT_CRED` 替換必須附 `realgit` marker 的 clone/fetch 閉環測試，驗證 `config.GITHUB_TOKEN` 對 CORE_REPO 可通；push env dict 透傳由單元測試 assert（mock push）；`config.py` 文件明載「`GITHUB_TOKEN` 須持有 `AUTOPILOT_REPO` write 權限」
+- 時間：2026-07-11 03:03
+- 理由：gh CLI helper 走 gh 憑證、env token 走 PAT，兩者 scope 不等價，不能只靠 assert dict 內容
+- 否決方案：只靠單元測試斷言 env dict 結構（無法驗證 CORE_REPO 真實認證可用）
+
+## `scrub_remote(repo_path)` 呼叫點固定為兩處 — ①`runner.git_clone` 成功後（legacy=False）；②`repo_base.sync_workspace` fetch 成功後（legacy=False）；不做一次性 migration 工具，不在 import 或 config reload 時觸發
+- 時間：2026-07-11 03:03
+- 理由：接點對應「token 可能寫入 .git/config 的操作」，精確貼緊污染來源
+- 否決方案：caller 自行決定觸發時機（分散易漏）；一次性 migration（legacy 情境可能持續出現）
+
+## git 版本偵測採 module 層級 `_GIT_ENV_SUPPORTED: bool | None = None` 快取；首次呼叫 `make_env` 時 lazy 偵測，不在 import 時做 subprocess
+- 時間：2026-07-11 03:03
+- 理由：import 時做 subprocess 是隱藏副作用；無 git 環境（CI collect-only）會炸；lazy 讓測試可 monkeypatch
+- 否決方案：module import 時立即偵測（副作用難控、import 期異常難追）
+
+## `build_clone_url(url, token, *, legacy: bool) -> str`，legacy 為顯式必填關鍵字參數；caller（`runner.git_clone`）自行讀 `config.TI_GIT_CRED_LEGACY` 後傳入
+- 時間：2026-07-11 03:03
+- 理由：純函式不讀 config，可在任何 config 狀態下直接單元測試
+- 否決方案：函式內部讀 `config.TI_GIT_CRED_LEGACY`（破壞可測性，引入隱式 config 依賴）
+
+## `make_env` 固定使用索引 0；文件明載「假設父環境無 `GIT_CONFIG_*`」；caller 以 `{**os.environ, **make_env(token)}` merge；#2 測試補一條「父環境已帶 `GIT_CONFIG_COUNT=1` 時 make_env 覆蓋 KEY_0/VALUE_0」的行為樣本
+- 時間：2026-07-11 03:03
+- 理由：動態累加父環境 COUNT 引入 os.environ 讀取副作用，複雜且難測；Ti 執行環境父 env 無 GIT_CONFIG_* 可接受此假設
+- 否決方案：動態讀父環境 COUNT 再累加（stateful、測試難、副作用）
+
+## `git_cred_argv` 回傳的 `-c http.extraHeader=...` 所有呼叫點的 label 必須是固定短字串；#2/#3 測試 assert `RunOutput.command` 不含 base64 encoded token
+- 時間：2026-07-11 03:03
+- 理由：RunOutput.command 進 history/broadcast，base64 token 等同明文洩漏
+
+## `git_cred.py` 包含 `_auth_b64`（私有）與 `make_env`、`clean_url`、`git_cred_argv`（公開）；`publisher.git_auth_env` 改委派 `git_cred.make_env`；`publisher.redact` 改 import `git_cred._auth_b64` 以維持 base64 遮蔽邏輯一致
+- 時間：2026-07-11 03:03
+- 理由：編碼邏輯集中於 SSOT 不重複；publisher 只負責 redact 語義，不重算 base64
+- 否決方案：publisher 保留自己的 `_auth_b64` 副本（兩份邏輯若日後修改會分叉）；git_cred import publisher（循環依賴風險）
+
+## `config.py` 的 `TI_GIT_CRED_LEGACY` 定義旁加 comment `# 下線判準：連續兩個 minor release 無 legacy=True 生產回報 → 刪閥`；不設固定日期
+- 時間：2026-07-11 03:03
+- 理由：以版本為單位比日期更貼近實際 review 時機；comment 記錄判準避免死碼化
+- 否決方案：不設任何判準（legacy 永久殘留）；固定日期（到期無人看等於沒設）
+
+## `repo_base._redact` 與 `publisher.redact` 均保留，各自防守自身輸出路徑，不合併
+- 時間：2026-07-11 03:03
+
+## `publisher._push`/`_push_base`/`repush` 移除 `*git_cred.git_cred_argv(...)` splice，認證收斂為 `env=git_auth_env(...)` 單一注入層
+- 時間：2026-07-11 07:55
+- 理由：token 不進 argv/ps/audit log；注入點可審計收斂為一
+- 否決方案：保留 argv 雙保險——雙路徑審計點翻倍，安全審查成本高於可靠性收益
+
+## fail-closed 語意——`make_env` 回 `{}` 時 push 以乾淨 403 失敗，不補任何 fallback
+- 時間：2026-07-11 07:55
+- 理由：`env={}` 仍是完整 os.environ（runner 做 `{**os.environ, **{}}`），git 只缺認證 header 被 GitHub 拒，不是空環境崩潰；語意乾淨
+- 否決方案：補 legacy fallback 降級——等同重開雙路徑，前功盡棄
+
+## 不對稱文件落點為 `git_cred.git_cred_argv` docstring，標明「唯一剩餘消費端：autopilot legacy 路徑；publisher 已收斂 env-only」
+- 時間：2026-07-11 07:55
+- 理由：高工指出：半年後接手者看到同 repo 兩套認證會困惑；`git_auth_env` docstring 只蓋 publisher 視角，不蓋「為何 `git_cred_argv` 還存在」這個困惑點
+- 否決方案：只改 `git_auth_env` docstring——蓋不到 `git_cred_argv` 仍存在的不對稱，問題留給後人
+
+## `config.py` TI_GIT_CRED_LEGACY 旁加 comment 標明「publisher push 路徑需 git ≥ 2.31；legacy/舊 git 時 push 403 屬 fail-closed 預期」
+- 時間：2026-07-11 07:55
+
+## 移除 `test_publisher.py` 的 `_git_env_supported` autouse fixture；移除後正向測試（斷言 env 帶 header）須**顯式 patch `git_cred._GIT_ENV_SUPPORTED=True`**，避免退化成依賴 CI runner 實際 git 版本
+- 時間：2026-07-11 07:55
+- 理由：高工指出：不顯式 patch 則正向測試在 git < 2.31 的環境下為假綠，環境漂移不可接受
+- 否決方案：保留 fixture 只加 comment——fixture 語意已是繞路補丁，留著會誤導後繼者以為仍有功能意義
+
+## Task #3 負向測試 patch `git_cred._GIT_ENV_SUPPORTED=False`，斷言 argv 無 `-c`/token/base64；黑樣本須證「若 splice 仍在，本斷言在 `=False` 下失敗」，而非只證「env 有 header」
+- 時間：2026-07-11 07:55
+- 理由：高工補充判準：後者測不到本次改動，黑樣本要與本次 diff 的因果關係直接對應
+
+## `autopilot.py`、`repo_base.py`、`git_cred.py` 本體本輪零 diff
+- 時間：2026-07-11 07:55
+- 否決方案：一次清全 repo `git_cred_argv` 呼叫——超出本輪驗收範圍，`autopilot.py` 有自己的 legacy 路徑考量，混入增加迴歸風險
+
+## 測試落點 `tests/server/test_qa_httpx_trust_env_guard.py`，沿用 `test_qa_*` 命名慣例，與既有字串守門 `test_qa_real_server_client_helper.py` 並存、不替換
+- 時間：2026-07-11 09:50
+
+## 範圍以 `subprocess(['git','ls-files','tests/server/'])` 取 `.py` 檔，不用 `Path.rglob`
+- 時間：2026-07-11 09:50
+- 否決方案：rglob——會掃 untracked 臨時檔，導致 pre-commit 綠、CI 紅的分歧
+
+## 抽出純函式 `_collect_violations(source: str) -> list[str]`，回傳 `"<call_type>@L<line>"` 字串列表；正向測試與黑樣本共用同一函式，不重複 AST walk 邏輯
+- 時間：2026-07-11 09:50
+
+## AST walk 同時比對兩種 call.func 形態——`ast.Attribute`（`httpx.AsyncClient(...)` / `websockets.connect(...)`）與 `ast.Name`（`from httpx import AsyncClient` 後裸呼叫的 `AsyncClient(...)`），缺任一形態守門即失效
+- 時間：2026-07-11 09:50
+- 理由：高工指出 attribute-only 可被 import alias 繞過；兩種形態共用同一 keyword 檢查邏輯，不增加維護點
+- 否決方案：只抓 `ast.Attribute`——import alias 直接穿透守門形同虛設
+
+## 違規判定規則——**「缺席即違規」優先**：找不到目標 keyword（`trust_env` / `proxy`）算違規；找到但值不符合規值（`trust_env` ≠ `False` 或 `proxy` ≠ `None`）也算違規；兩條件 OR
+- 時間：2026-07-11 09:50
+- 理由：最常見形態是根本沒寫 keyword；只擋錯值會讓裸用漏網
+
+## 黑樣本三條，各自因果對應一種違規形態
+- 時間：2026-07-11 09:50
+- 否決方案：只有 A+B 兩條——alias 形態無黑樣本等於宣稱能守但未自證
+
+## 正向測試斷言訊息帶 `"\n".join(violations)`，失敗時直接顯示違規檔名+行號，不只印 `assert not violations`
+- 時間：2026-07-11 09:50
+
+## `httpx.Client`（同步）本輪不納管；掃一遍確認 `tests/server/` 無同步 call site 後，在測試 docstring 標明「目前僅守 AsyncClient；若日後引入 Client 同步呼叫，需補規則」
+- 時間：2026-07-11 09:50
+
+## `publisher.py`（×6）、`tools.py:311`、`autopilot.py:1336` 每個裸 `AsyncClient(` 前加固定單行注解：`# trust_env 刻意維持預設：外網 client 允許企業 proxy / 自訂 CA，關閉會破壞企業環境路由`
+- 時間：2026-07-11 09:50
+
+## `studio/` 零行為 diff 驗收——收尾以 `git diff studio/ -- '*.py'` 人眼掃一遍確認只有 `#` 開頭行異動，不跑自動 grep 過濾（高工指出尾隨空白/換行編輯會讓 grep 誤判）
+- 時間：2026-07-11 09:50
+
+## DECISIONS.md 新增 ADR，格式與現有條目一致（`## 標題 \n- 時間\n- 理由\n- 否決方案`），內容記「loopback client 關 `trust_env` / 外網 client 維持預設」邊界，否決「全局關閉」與「全局開放」兩種方案並附理由
+- 時間：2026-07-11 09:50
+
+## httpx 代理邊界：loopback client 關 `trust_env`，外網 client 維持預設
+- 時間：2026-07-11
+- 理由：`tests/server/` 的 loopback smoke client（`httpx.AsyncClient` 直連 `127.0.0.1`）若繼承環境變數 `HTTPS_PROXY`，會被系統 proxy 誤導、導致測試假紅；故 loopback 端**必須**設 `trust_env=False`。外網 client（`studio/publisher.py`、`studio/tools.py`、`studio/autopilot.py` 呼叫 GitHub API 或研究 URL）則**刻意維持預設 `trust_env=True`**：httpx 的 `trust_env` 同時控制 proxy env 與 `SSL_CERT_FILE`/`SSL_CERT_DIR`，關閉後企業環境的自訂 CA 和合法 proxy 路由一併失效，會讓外網呼叫直接斷線。外網 client 裸用是刻意選擇，非遺漏，每個 call site 已加固定單行注解說明。
+- 否決方案 A：全局關閉（所有 client 均 `trust_env=False`）——破壞企業 proxy / 自訂 CA 路由，外網呼叫在受管環境斷線，代價高於防禦效益。
+- 否決方案 B：全局開放（所有 client 均維持預設）——loopback smoke client 在 CI 有 proxy env 時假紅，干擾測試可信度，屬可預防的誤報。
+
+## 隔離方式改為 `monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)`，三檔各自 autouse fixture 加一行，不引入 fake contextmanager
+- 時間：2026-07-11 11:36
+- 理由：`tmp_path` 在 xdist 下 per-worker 唯一，lock 檔天然隔離；與 `test_deploy_lock.py` 現有模式一致，維護者只需理解一種隔離手法；保留真實 lock 行為，負向路徑（鎖被佔用→「另一個部署進行中」）未來仍可測
+- 否決方案：`@contextlib.contextmanager` fake lock yield True——三檔各塞一份 contextmanager 造成重複，且永遠 yield True 靜默遮蔽負向路徑，降低測試覆蓋的誠實性
+
+## setattr 目標用 `config.AUTOPILOT_STATE_DIR`，不用 `redeploy.deploy.config.AUTOPILOT_STATE_DIR`
+- 時間：2026-07-11 11:36
+- 理由：三檔已有 `from studio import config`，直接 setattr `config` 模組屬性，程式碼最短；`deploy.config`、`redeploy.config`、`config` 三者為同一物件，效果等價
+- 否決方案：`redeploy.deploy.config`——鏈式路徑較長，且在 `config` 已被 import 的情況下多此一舉
+
+## `_no_real_restart(monkeypatch)` 的簽名改為 `_no_real_restart(monkeypatch, tmp_path)`，新增 `tmp_path` 參數，pytest 內建 fixture 不須另行 import
+- 時間：2026-07-11 11:36
+- 理由：pytest 原生支援 autouse fixture 宣告多個 fixture 參數，無需額外設定
+
+## 三檔各自不新增任何 import（不加 `contextlib`、不加 `import deploy`），現有 import 已足夠
+- 時間：2026-07-11 11:36
+
+## 驗收指令採 `timeout 300 bash -c 'for i in 1 2 3; do .venv/bin/python -m pytest -q tests/deploy/ || exit 1; done'`，timeout 包住整個 shell loop
+- 時間：2026-07-11 11:36
+- 理由：xdist 鎖競爭是機率性的，三輪全綠才足以排除偶然通過；`exit 1` 確保任一輪紅立即中止
+
+## 產品碼零 diff——本輪 diff 僅限 `tests/deploy/` 三個測試檔，驗收以 `git diff HEAD -- studio/` 空為必要條件
+- 時間：2026-07-11 11:36
+
+## 範圍外兩項以 `後續任務:` marker 在 #4 輸出中登記，不在本輪實作
+- 時間：2026-07-11 11:36
+
+## Rule 1 「值得重試」語意定義 — N（note 內 `task timeout after Ns` 的秒數，等於 park 當時的 `AUTOPILOT_TASK_TIMEOUT`）< `config.AUTOPILOT_TASK_TIMEOUT`（當前值）時，表示操作者事後調高了上限，原任務值得原樣重試；N ≥ 當前值（含相等）則重試也白搭，交 Rule 2 拆分
+- 時間：2026-07-11 14:22
+- 理由：note 內秒數即 park 時的上限值（autopilot.py:2031 寫死），若兩值相等則 Rule 1 恆 false 形成死碼；唯有「當前 > park 當時」才有重試意義
+- 否決方案：「N 與任意固定常數比較」——脫離操作者調高上限的實際語意，形同任意閾值，可維護性差
+
+## Rule 1 實作位置 — 擴充 `backlog.triage_failed()` 同一 `_locked()` 區塊掃 `status=="parked"` 任務；在 `_locked()` 頂端加單行 marker 函式說明「此字串由 autopilot.py 產生，解析耦合，勿獨立修改」
+- 時間：2026-07-11 14:22
+- 理由：確定性、無 LLM、與 failed 掃描共鎖，可隨 `/api/autopilot/triage` 手動觸發；注意 autopilot.py 深度上限變體（`逾時且已達自動拆分深度上限…`）不含 `task timeout after` marker，天然不匹配、自動跳過
+- 否決方案：在 autopilot async 主迴圈另開函式處理 Rule 1——不需 LLM 卻佔 async slot，且無法隨手動 triage 觸發
+
+## Rule 1 退回欄位組 — 同時設 `status="pending"`、`timeout_retried=True`、`attempts=0`、`updated_at=now`；`attempts` 重置避免任務被 attempt 上限立即再卡死
+- 時間：2026-07-11 14:22
+- 理由：工程師實查確認 `set_status()` 支援額外欄位；`attempts` 若不重置，剛退回即觸發上限判斷等於無效 unpark
+- 否決方案：只設 `timeout_retried=True` 不重置 attempts——退回即死，Rule 1 形同空操作
+
+## Rule 2 split_depth 繼承 — Rule 2 直接將原 parked task 原封傳入 `_autosplit_task()`，不自行 +1；函式內部（autopilot.py:1999/2014）已讀 `task["split_depth"]` 並對 children 設 `depth+1`，封頂自動生效
+- 時間：2026-07-11 14:22
+- 理由：自行 +1 再傳入會 double increment，提早撞 `AUTOPILOT_SPLIT_MAX_DEPTH`
+- 否決方案：傳 `split_depth=父+1`——與現有函式契約衝突，造成 double increment
+
+## Rule 2 child 建立邏輯 — 完整重用 `_autosplit_task()`（含 child dict 建立＋`backlog.add_items`），不在 `_maybe_triage_timeout_parked()` 複製一份；原任務維持 `parked`，另呼叫 `backlog.set_status` 加 `split_done=True`、note 改為「已自動拆為 #X…」
+- 時間：2026-07-11 14:22
+- 理由：避免與 `_handle_task_timeout()` 產生雙份 autosplit child 建立邏輯，維護成本翻倍
+- 否決方案：在新函式內手刻 child dict 建立——邏輯重複，日後 `_autosplit_task` 格式變動只改一處另一處靜默落差
+
+## Rule 2 實作位置 — 新增 async `_maybe_triage_timeout_parked()`，掛在 autopilot 主迴圈頂端（`_maybe_triage_failed` 同位置），每輪最多 1 筆（模組常數）；揀選條件：`parked` + note 含 `task timeout after` + 無 `split_done` + Rule 1 不適用
+- 時間：2026-07-11 14:22
+- 否決方案：統一放 backlog.triage_failed() 處理 Rule 2——triage 是同步 file-lock，不能含 LLM 呼叫
+
+## 互斥欄位 — `timeout_retried`（bool）與 `split_done`（bool）存 task dict 欄位；Rule 1 進入條件檢查 `無 timeout_retried 且無 split_done`，Rule 2 進入條件檢查 `無 split_done`；同一筆任務不可能被兩規則同輪處理
+- 時間：2026-07-11 14:22
+- 否決方案：用 note 前綴標記狀態——`set_status()` 每次覆寫 note，欄位才能跨輪持久
+
+## marker 字串共用常數 — 在 `studio/autopilot.py` 頂端定義 `_TIMEOUT_NOTE_PREFIX = "task timeout after"`，note 產生（2031 行）與 backlog 解析 regex 均引用此常數；autopilot.py 產生處加反向備註「此字串被 backlog.triage 解析，勿自行修改」
+- 時間：2026-07-11 14:22
+- 理由：防跨模組隱性耦合靜默斷裂；高工建議，成本極低
+- 否決方案：兩端各自硬寫字串靠人工守護——字串變動時只改一處、另一處靜默失效
+
+## 護欄常數 — `TRIAGE_UNPARK_MAX = 5`（Rule 1 單輪上限）與每輪拆 1 筆（Rule 2）均為模組常數，不進 `config.py`
+- 時間：2026-07-11 14:22
+- 理由：省兩處同步成本（config.py 頂端 + reload() 區塊），這兩值是防爆閥非營運旋鈕
+- 否決方案：加入 config 旋鈕——兩處同步踩坑機率高，且操作者幾乎不需動態調整
+
+## API 透傳 — `triage_failed()` 回傳 dict 加 `unparked` 計數；routes.py 已直接展開 stats，只補 assert 測試斷言，不改簽名；既有精準比對 `triage_failed()` dict 的測試一併更新
+- 時間：2026-07-11 14:22
+
+## 測試必要黑樣本 — 深度上限變體 note（`逾時且已達自動拆分深度上限…`）需補黑樣本，確認天然不匹配 `task timeout after` 而被跳過；`timeout_retried=True` 不退、N ≥ 現行上限不退、`split_done=True` 兩規則均跳過各補對應黑樣本
+- 時間：2026-07-11 14:22
+
+## `stop()` 改為 kill-first——執行順序：先 `connected_before = self._connected; self._connected = False`（縮短競態窗口，非互斥鎖），再 `_best_effort_kill_subprocess()`，最後 `asyncio.wait_for(self._client.disconnect(), _CTRL_TIMEOUT)`；snapshot `client = self._client` 後再操作，避免重建 client 時操作到新物件。
+- 時間：2026-07-19 17:44
+- 理由：subprocess 已死時 `process.wait()` 預期立即返回，disconnect 快速收斂；anyio 的 CancelledError 吞取消問題被繞過。
+- 否決方案：disconnect-first（現狀）——`asyncio.wait_for` 在 anyio context 被吞取消，30s 兜底形同虛設，實例 #261 76 分鐘卡死的直接根因。
+
+## `_CTRL_TIMEOUT = 30.0` 維持現值不縮短——kill 送 SIGKILL 不等 reap，「disconnect 立即返回」是預期而非保證；30s buffer 應對 kill 為 no-op 時的退化路徑（SDK 私有屬性 `_transport._process` 取不到→kill 靜默失敗→仍靠 timeout 收斂）。
+- 時間：2026-07-19 17:44
+- 否決方案：縮短至 5s——kill-first 失效時退化路徑會提前誤判超時，成本不對稱。
+
+## `asyncio.timeout(_TEARDOWN_LANE_TIMEOUT)` 包在 `_teardown_lane` 函式**內部**，`TimeoutError` 在函式內自己 catch 並 log，不往外拋。
+- 時間：2026-07-19 17:44
+- 理由：兩處呼叫端（orchestrator.py:2632、2643）是裸 await，無外層 except；若 TimeoutError 逸出，後續 lane 合併、deferred+crashed 重跑、`_flush_lane_notes` 全部跳過，best-effort 語義破防。
+- 否決方案：依賴外層吞掉——外層根本不存在，設計文字原本描述有誤。
+
+## `_TEARDOWN_LANE_TIMEOUT = 120.0` 定為模組常數，不進 `config.py`。
+- 時間：2026-07-19 17:44
+- 理由：防爆閥不是營運旋鈕，進 config 需兩處同步（頂端宣告＋`reload()` 區塊），省此成本；120s 已遠大於 gather 後的實際最壞值（≈`_CTRL_TIMEOUT` = 30s）。
+- 否決方案：進 `config.py` 做旋鈕——防爆閥收緊/放寬無運維價值，反而引入漂移風險。
+
+## `_teardown_lane` 內 expert stop 改 `asyncio.gather(*[ex.stop() for ex in all_experts], return_exceptions=True)`，同時移除原 for 迴圈的逐一 try/except（gather + return_exceptions 已接管，留著是死碼）。
+- 時間：2026-07-19 17:44
+- 理由：最壞時間從 N×30s 壓到 max(30s)，lane×expert 數多時效益顯著。
+
+## 進入 `_teardown_lane` 前 broadcast `phase_change("清理", f"收掉 lane {ctx.lane_id}")`，提供 history/watchdog 可見錨點。
+- 時間：2026-07-19 17:44
+- 否決方案：不加錨點——重現 #261 類問題時無法區分「卡在 teardown」vs「卡在 task」，診斷盲區維持。
+
+## 稽核結論（`_integrate_wave` 中 git 合併/flush/snapshot 各 await 的 timeout 來源）以行內註解隨 commit 入庫，不另立文件；`git_worktree_remove` 和 `_lane_git_snapshot` 底層各有 `timeout=20` 的 `run_command_exec`，且被 `_TEARDOWN_LANE_TIMEOUT` 外層兜住，不補額外 timeout。
+- 時間：2026-07-19 17:44
+
+## 測試必須覆蓋兩條路徑——①`disconnect` 永不返回（正常 kill-first 路徑）；②kill 為 no-op（SDK 私有屬性取不到）＋`disconnect` 永不返回，驗證兩者均在 `_TEARDOWN_LANE_TIMEOUT` 內收斂。測試以 monkeypatch 縮小 `_CTRL_TIMEOUT` 與 `_TEARDOWN_LANE_TIMEOUT`（0.1s 量級），禁真 sleep，用 `asyncio.Event().wait()` 模擬永不返回。
+- 時間：2026-07-19 17:44
+- 理由：高工指出 kill-first 核心假設（kill 成功→disconnect 快速）若無 no-op 路徑測試，timeout 兜底的有效性未被驗證。
+- 否決方案：只測 kill 成功路徑——kill 靠 SDK 私有屬性，形狀一變即退化，沒測等於宣稱未覆蓋的保證。
+
+## 不升級 claude-agent-sdk，不改事件契約欄位，不動 `flow.py` marker 解析；sdk 升版列 followup 另案。
+- 時間：2026-07-19 17:44
+
+## `scrub_proxy_env(env: dict) -> None` 函式落在 `tests/server/_real_server_client.py`，就地 `.pop(key, None)` 六個變數：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`http_proxy`、`https_proxy`、`all_proxy`
+- 時間：2026-07-19 23:50
+- 理由：`_real_server_client.py` 已是兩支 real_server 測試的共用 helper 模組；helper 單一 SSOT 確保清單只維護一處
+- 否決方案：在兩支測試檔各自貼清單——複製貼上清單日後難同步，六個 key 有一個遺漏就半殘
+
+## 函式簽名為 mutate-in-place（`-> None`），不回傳新 dict
+- 時間：2026-07-19 23:50
+- 理由：兩支測試檔現行都是 `env.update({...})`（就地風格）；保持語義一致、呼叫端無需接回傳值、無隱式 copy
+
+## 呼叫順序鎖死為 `os.environ.copy()` → `env.update({TI_*})` → `scrub_proxy_env(env)` → `subprocess.Popen(env=env, ...)`
+- 時間：2026-07-19 23:50
+- 理由：`scrub` 排在 `update` 之後：若 `update` 意外帶入 proxy key，也會被清掉（防禦縱深）；排在 `Popen` 之前：server subprocess 拿到的是已清 proxy 的 env
+
+## `test_ws_attach_real_server.py` 與 `test_smoke_agenda_real_server.py` 的 client subprocess（`subprocess.run`）補傳 `env=env`，使用與 server 子行程同一份已清 proxy 的 dict
+- 時間：2026-07-19 23:50
+- 理由：client 端目前裸繼承 `os.environ`，即便 smoke client 內 httpx 已 `trust_env=False`，裸繼承仍是潛在洩漏路徑；補傳是 defense-in-depth
+- 否決方案：client 另建獨立乾淨 env——兩端用同一份 env 意圖最明確；且 TI_* 變數本就需要帶進 client，不宜另維護一份
+
+## 守護測試 `tests/server/test_qa_proxy_scrub_guard.py`，以 AST 掃描所有符合 `tests/server/test_*real_server*.py` glob 的檔案，確認：① `scrub_proxy_env` 從 `_real_server_client` import；② 函式體內至少存在一次對 `scrub_proxy_env` 的 `ast.Call`
+- 時間：2026-07-19 23:50
+- 否決方案：偵測「subprocess.Popen 前緊鄰 scrub call」的資料流分析——代價高、易因格式差異誤判，且漏掉的「import 但未呼叫」情況屬死碼，ruff/reviewer 可補
+
+## 守護測試黑樣本用 **in-memory 字串** 喂進 `ast.parse()`，不落真實檔案
+- 時間：2026-07-19 23:50
+- 理由：避免在 `tests/server/` 留 untracked 殘檔（呼應掃描範圍一致性教訓）；也避免黑樣本被 guard 本身誤掃成違規
+
+## 新 `test_qa_proxy_scrub_guard.py` 職責邊界與既有 guard 切清楚：只掃「是否呼叫 scrub_proxy_env」；httpx `trust_env` 與 websockets 裸連線管制仍由 `test_qa_httpx_trust_env_guard.py` 負責
+- 時間：2026-07-19 23:50
+
+## 不加 `httpx[socks]`（`socksio`）依賴；不改 `studio/` 任何 `trust_env` 設定；不加 proxy 字串專屬 skip
+- 時間：2026-07-19 23:50
+- 理由：TI_OFFLINE loopback 根本不需要代理，加依賴只是「走了但不炸」，治標不治本；`trust_env=True` 是刻意設計（允許企業 proxy），邊界在測試層
+
+## 閒置逾時（`TURN_IDLE_TIMEOUT`）語意鎖死為「距上次收到 chunk 的時間差」，不是累積發言總長度
+- 時間：2026-07-20 07:18
+- 理由：長但持續輸出的正常發言不應被誤殺；`TURN_HARD_TIMEOUT` 仍作獨立的發言總長上限旋鈕，兩者並存但語意完全分離
+- 否決方案：total-duration 複用作閒置逾時語意——兩種計時混用是線上最常見誤判來源
+
+## 截斷發言在事件 payload 攜帶 `aborted=True` 旗標；orchestrator 收到此旗標後不將 `partial_text` 送進 `flow.py` 任何 marker parser
+- 時間：2026-07-20 07:18
+- 理由：parser 端加旗標判斷會讓 flow 依賴傳輸狀態、污染純函式邊界；在 orchestrator 層攔截符合現有「副作用留 orchestrator」架構鐵則
+- 否決方案：靜默丟棄 partial_text——失去除錯可見性；否決
+
+## 中止時強制透過 `events.py` 發出帶 `aborted` 狀態的明確事件，前端 `events-render.js` 渲染「因無進展被中止」提示，不得靜默吞掉
+- 時間：2026-07-20 07:18
+- 理由：靜默中止讓使用者誤以為自然收斂，違反 silent-failure 教訓
+
+## 閒置逾時中止不進入 `llm_caller` 退避重試迴圈；`make_retry_config` 的可重試例外清單不包含 idle-timeout 類型
+- 時間：2026-07-20 07:18
+- 理由：「無回應專家」自動重試只延長等待、浪費 token，且造成雙重計時；是否重試任務由 orchestrator 上層決定
+- 否決方案：idle timeout 也進退避——雙重計時 + 無限迴圈風險，否決
+
+## `TURN_IDLE_TIMEOUT` 與 `TURN_HARD_TIMEOUT` 在 `config.py` 頂層與 `reload()` 兩處同步定義（沿用 TI_* SSOT 慣例）；`stream_to_events()` 的計時器以參數注入（預設 `asyncio.wait_for`），不硬綁 wall-clock
+- 時間：2026-07-20 07:18
+- 理由：計時器可注入讓單元測試穩定重現逾時分支而無需 sleep
+
+## 插入點維持現有 `stream_to_events()` 逐 chunk `wait_for` 模式，不另加 watchdog class 抽象層；orchestrator 不感知逾時細節，逾時視同「speak() 回傳 partial_text + aborted=True」由既有 `_abort_turn()` 收斂
+- 時間：2026-07-20 07:18
+- 理由：工程師確認架構已接近完整，最小修改風險最低；額外抽象增加複雜度但不帶新能力
+- 否決方案：獨立 watchdog class 包住 speak()——層次過多，否決
 

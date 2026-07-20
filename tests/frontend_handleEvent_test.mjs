@@ -1,11 +1,6 @@
-// 前端 handleEvent 向後相容測試：用 node 載入真實 web/app.js，
-// 驗證所有已知事件（含新增 huddle / critic_review）不拋錯，且未知事件不崩潰。
-import fs from 'node:fs';
-import path from 'node:path';
-import vm from 'node:vm';
-
-const root = process.cwd();
-const src = fs.readFileSync(path.join(root, 'web/app.js'), 'utf8');
+// 前端 handleEvent 向後相容測試：先掛全域 DOM stub，再 import 真實
+// web/js/events-render.js（ES module），驗證所有已知事件（含新增 huddle /
+// critic_review）不拋錯，且未知事件不崩潰。
 
 // --- 最小 DOM stub：任何元素都是可鏈式呼叫、吸收任意操作的 Proxy ---
 function makeEl() {
@@ -32,6 +27,7 @@ const document = {
   querySelector: () => makeEl(),
   querySelectorAll: () => [],
   createElement: () => makeEl(),
+  createElementNS: () => makeEl(),
   createTextNode: () => makeEl(),
   getElementById: () => makeEl(),
   body: makeEl(),
@@ -44,17 +40,16 @@ const fetchStub = () => Promise.resolve({
   ok: true,
 });
 
-const sandbox = {
+// 先掛全域 stub 再 import：模組頂層不查 DOM（repo 鐵則），import 期不會踩 stub 缺口。
+Object.assign(globalThis, {
   document, location, WebSocket,
   fetch: fetchStub,
-  window: { addEventListener: () => {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) }, console,
+  window: { addEventListener: () => {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) },
   setTimeout: () => 0, clearTimeout: () => {},
-  Date, JSON, Object, Array, Math, Promise, Symbol, encodeURIComponent,
-};
-vm.createContext(sandbox);
-vm.runInContext(src, sandbox, { filename: 'app.js' });
+});
+const mod = await import('../web/js/events-render.js');
 
-const handleEvent = sandbox.handleEvent;
+const handleEvent = mod.handleEvent;
 if (typeof handleEvent !== 'function') {
   console.error('FAIL: handleEvent 未定義');
   process.exit(1);
@@ -69,10 +64,12 @@ const known = [
   ev('phase_change', { phase: '實作', detail: 'x' }),
   ev('expert_status', { speaker: 'pm', status: 'thinking' }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi' }),
+  ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi', duration_s: 1.23, provider: 'fake', model: 'gpt-4', role: 'engineer' }),
   ev('tool_use', { speaker: 'pm', tool: 'Write', summary: 'x' }),
   ev('board_update', { columns: { todo: [{ title: 'a' }], doing: [], review: [], done: [] } }),
   ev('run_result', { passed: true, detail: 'ok', log: 'log' }),
   ev('demo_result', { label: 'Demo', command: 'py', exit_code: 0, passed: true, output: 'out' }),
+  ev('demo_result', { label: 'Demo', command: 'py --bad', exit_code: 0, passed: true, output: 'out', retried_cmd: 'py', first_exit: 4 }),
   ev('git_commit', { message: 'm', hash: 'abc' }),
   ev('human_message', { text: 'hi' }),
   ev('clarify_request', { questions: [{ q: '目標平台？', assumption: '網頁版' }, { q: '要支援多人嗎？', assumption: '' }], timeout_s: 180 }),
@@ -86,6 +83,8 @@ const known = [
   ev('publish_result', { ok: true, detail: 'done', branch: 'b', pr_url: 'http://x' }),
   ev('done', { completed: true, stopped: false, files: [] }),
   ev('error', { message: '壞了' }),
+  ev('appraisal', { provider: 'claude', model: 'claude-opus-4-8', role: 'engineer', score: 4, comment: '穩定高質量' }),
+  ev('appraisal', { provider: '', model: '', role: 'qa', score: 5, comment: '' }),
 ];
 
 let pass = 0, fail = 0;

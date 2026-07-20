@@ -4,11 +4,18 @@
 以顯式 re-export 保住既有 import 路徑——tests、autopilot、improver 皆 `from studio.orchestrator
 import ...`，且對 `studio.orchestrator.<fn>` 的 monkeypatch 仍有效（orchestrator 內部沿用裸名
 查找本模組屬性）。對 `studio.flow.<fn>` 的 monkeypatch 不影響 orchestrator 內部呼叫。
+
+額度感知 per-task 派工的新 marker（與既有 `任務:`／`依賴:`／`下一步:` 同為穩定字串，改動前
+先確認對應 parser）：
+- ``派工: #<id> <provider> [<model>]`` —— PM 拆解時對單一任務的派工建議（parse_dispatch），
+  合法性與額度受限由 choose_dispatch 對照 digest／allowed_models 兜底。
+- ``模型: <model>`` —— 動態 step 招募時指定綁定 provider 的模型（parse_next_step 的 model 鍵）。
 """
 
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import logging
 import re
 
@@ -19,8 +26,8 @@ log = logging.getLogger("ti.flow")
 # --- 決議解析 -----------------------------------------------------------
 
 
-def _last_match(text: str, pattern: str) -> str | None:
-    matches = re.findall(pattern, text)
+def _last_match(text: str, pattern: str, flags: int = 0) -> str | None:
+    matches = re.findall(pattern, text, flags)
     return matches[-1].strip() if matches else None
 
 
@@ -273,6 +280,95 @@ def parse_vision(text: str) -> str:
     return _last_match(text, r"願景\s*[:：]\s*(.+)") or ""
 
 
+def parse_help_request(text: str) -> str:
+    """從工程師發言抽出 `求助: <一句問題>`（實作中途卡關即時求助 PM 用）；無標記回空字串。"""
+    return _last_match(text, r"求助\s*[:：]\s*(.+)") or ""
+
+
+def parse_workflow_choice(text: str) -> str:
+    """從 PM 分診輸出抽出 `流程: <名稱>`（autopilot 開場 workflow 分診用）；無標記回空字串。
+
+    只負責抽字串，不驗名稱合法性——白名單（限內建流程）是呼叫端 autopilot
+    `_select_workflow` 的職責，解析層不做政策判斷。
+    """
+    return _last_match(text, r"^\s*流程\s*[:：]\s*(.+)", re.M) or ""
+
+
+def parse_triage_reason(text: str) -> str:
+    """從 PM 分診輸出抽出 `理由: <一句話>`（workflow 分診的稽核註記用）；無標記回空字串。"""
+    return _last_match(text, r"^\s*理由\s*[:：]\s*(.+)", re.M) or ""
+
+
+def parse_refutation(text: str) -> str:
+    """解析調查結論 refuter 輸出：`反駁: 成立 <一句破綻>` 回破綻字串（非空＝反駁成立）。
+
+    `反駁: 不成立`、無標記、空輸出一律回空字串——**寧放勿殺**：refuter 是加值防線不是
+    依賴，它壞掉/離線/忘了格式都不得擋住合法結論（與價值閘同哲學）。只抽字串不做語意判斷。
+    """
+    m = _last_match(text, r"反駁\s*[:：]\s*(.+)")
+    if not m:
+        return ""
+    if m.startswith("不成立"):
+        return ""
+    if m.startswith("成立"):
+        reason = m[len("成立") :].strip(" ,，、:：-—")
+        return reason or "反駁成立（refuter 未附破綻說明）"
+    return ""
+
+
+def parse_incomplete_reason(text: str) -> str:
+    """從 PM 驗收輸出抽出 `原因: <一句根因>`（判「未完成」時的裁決原因）；無標記回空字串。
+
+    讓 autopilot 的「討論未達完成」失敗 note 帶上結構化根因（供 triage 分診與人工回看），
+    而非只有一句無資訊量的「未收斂」。只抽字串，不做語意判斷。
+    """
+    return _last_match(text, r"原因\s*[:：]\s*(.+)") or ""
+
+
+# 調查輸出的區塊終止標記：`結論:` 之後遇到任一這些行前綴即視為結論段結束。
+_INVESTIGATION_STOP_RE = re.compile(r"^\s*(證據|後續任務|需人工|需改碼|教訓|任務)\s*[:：]")
+
+
+def parse_investigation(text: str) -> dict:
+    """解析單專家「調查/驗證」任務的結構化輸出（autopilot 調查分流輕量管線用）。
+
+    回傳 dict：
+      - conclusion：`結論:` 起、至下一個已知行前綴（證據/後續任務/需人工/需改碼/教訓/任務）
+        或文末的多行結論全文（strip 後）；無標記＝空字串（代表調查失敗，呼叫端走重試）。
+      - evidence：所有 `證據:` 行內容（list，保序）。
+      - needs_human：`需人工: <原因>`（AI 做不到、須人工處理）；無＝空字串。
+      - needs_code：`需改碼: <原因>`（判定須實際改碼才算完成，應升級回完整管線）；無＝空字串。
+      - followups：`後續任務:` 行（沿用 parse_followups_meta，含 priority/type 標籤）。
+
+    純字串解析、stdlib-only；政策（done/parked/升級）由呼叫端 autopilot 判斷。
+    """
+    lines = text.splitlines()
+    conclusion_parts: list[str] = []
+    collecting = False
+    for line in lines:
+        m = re.match(r"^\s*結論\s*[:：]\s*(.*)$", line)
+        if m:
+            # 以最後一個 `結論:` 為準（與 _last_match 的「取最後」慣例一致）
+            conclusion_parts = [m.group(1).strip()]
+            collecting = True
+            continue
+        if collecting:
+            if _INVESTIGATION_STOP_RE.match(line):
+                collecting = False
+                continue
+            conclusion_parts.append(line.rstrip())
+    conclusion = "\n".join(conclusion_parts).strip()
+    return {
+        "conclusion": conclusion,
+        "evidence": [
+            m.strip() for m in re.findall(r"^\s*證據\s*[:：]\s*(.+)$", text, re.M) if m.strip()
+        ],
+        "needs_human": _last_match(text, r"需人工\s*[:：]\s*(.+)") or "",
+        "needs_code": _last_match(text, r"需改碼\s*[:：]\s*(.+)") or "",
+        "followups": parse_followups_meta(text),
+    }
+
+
 # --- 結論彙整解析（共識／分歧／未決／行動） -------------------------------
 
 # 四前綴 → 結構化鍵；順序即輸出 dict 鍵順序。
@@ -424,26 +520,32 @@ _NEXT_STEP_END = {"結束", "結束。", "完成", "停止", "end", "done", "sto
 
 
 def parse_next_step(text: str) -> dict:
-    """從 PM 的動態決策輸出解析下一步，回傳 ``{role, instruction, end, recruit, provider}``。
+    """從 PM 的動態決策輸出解析下一步，回傳 ``{role, instruction, end, recruit, provider, model}``。
 
     格式（沿用本檔行前綴 parser 範式，全形冒號容錯）：
     - ``下一步: <role_key>`` —— 下一個發言角色（取最後一個 `下一步:` 行為準）。
     - ``下一步: 結束``（或 完成／停止／end／done／stop／finish，大小寫不敏感）→ end=True、role 清空。
     - ``指示: <要該角色做什麼>`` —— 選填，附給被選角色的指示（取最後一行）。
+    - ``指示: <<TI_INSTRUCTION`` ... ``TI_INSTRUCTION`` —— 多行指示欄位；內容原樣送給被選角色。
     - ``招募: <key> | <名稱> | <一句專長>`` —— 選填，PM 現場液生一個新 persona（取最後一行）；
       呼叫端可據此建臨時角色加入（key 不合法/缺專長則忽略）。
     - ``provider: <claude|codex|minimax|antigravity>`` —— 選填，招募時指定綁哪個 provider（取最後一行）。
+    - ``模型: <model>`` —— 選填，招募時指定該 provider 的模型（取最後一行；可含空白）。
 
-    role/recruit/provider 皆為原始字串、**未驗證**：合法性與 fallback 交由呼叫端
-    （validate_assignees／KEY_RE／provider 白名單）兜底。找不到任何 `下一步:` 行 → role 空、
-    end False（呼叫端據此走 fallback 或結束）。
+    role/recruit/provider/model 皆為原始字串、**未驗證**：合法性與 fallback 交由呼叫端
+    （validate_assignees／KEY_RE／provider 白名單／模型白名單）兜底。找不到任何 `下一步:` 行
+    → role 空、end False（呼叫端據此走 fallback 或結束）。
 
     新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
     """
     role, instruction, end = "", "", False
     recruit: dict | None = None
     provider = ""
-    for line in (text or "").splitlines():
+    model = ""
+    lines = (text or "").splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         m = re.match(r"^\s*下一步\s*[:：]\s*(.+?)\s*$", line)
         if m:
             val = m.group(1).strip()
@@ -452,14 +554,34 @@ def parse_next_step(text: str) -> dict:
             else:
                 tokens = val.split()
                 role, end = (tokens[0] if tokens else ""), False
+            i += 1
+            continue
+        m = re.match(r"^\s*指示\s*[:：]\s*<<([A-Za-z0-9_-]+)\s*$", line)
+        if m:
+            marker = m.group(1)
+            body: list[str] = []
+            i += 1
+            while i < len(lines) and lines[i].strip() != marker:
+                body.append(lines[i])
+                i += 1
+            instruction = "\n".join(body)
+            if i < len(lines):
+                i += 1
             continue
         m = re.match(r"^\s*指示\s*[:：]\s*(.+?)\s*$", line)
         if m:
             instruction = m.group(1).strip()
+            i += 1
             continue
         m = re.match(r"^\s*provider\s*[:：]\s*(.+?)\s*$", line, re.I)
         if m:
             provider = m.group(1).strip().split()[0].lower() if m.group(1).strip() else ""
+            i += 1
+            continue
+        m = re.match(r"^\s*模型\s*[:：]\s*(.+?)\s*$", line)
+        if m:
+            model = m.group(1).strip()
+            i += 1
             continue
         m = re.match(r"^\s*招募\s*[:：]\s*(.+)$", line)
         if m:
@@ -467,13 +589,133 @@ def parse_next_step(text: str) -> dict:
             parts += [""] * (3 - len(parts))
             if parts[0]:
                 recruit = {"key": parts[0], "name": parts[1], "expertise": parts[2]}
+        i += 1
     return {
         "role": role,
         "instruction": instruction,
         "end": end,
         "recruit": recruit,
         "provider": provider,
+        "model": model,
     }
+
+
+# --- 額度感知 per-task 派工（純函式決策；快照查詢與換綁副作用在 orchestrator）--------
+
+
+def parse_dispatch(text: str) -> dict[int, dict]:
+    """解析 PM 拆解輸出的派工行，回傳 ``{task_id: {"provider": ..., "model": ...}}``。
+
+    行格式：``派工: #<id> <provider> [<model>]``（沿用本檔 marker 範式：行前綴、全形冒號
+    容錯、逐行收集；同一 id 出現多行取最後一行）。model 可含空白（如 Antigravity 的顯示
+    名稱），省略＝空字串。provider 正規化為小寫；兩者皆**未驗證**——合法性由
+    choose_dispatch 對照 digest 與 allowed_models 兜底。無任何派工行回空 dict。
+
+    新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
+    """
+    out: dict[int, dict] = {}
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*派工\s*[:：]\s*#(\d+)\s+(\S+)(?:\s+(.+?))?\s*$", line)
+        if m:
+            out[int(m.group(1))] = {
+                "provider": m.group(2).strip().lower(),
+                "model": (m.group(3) or "").strip(),
+            }
+    return out
+
+
+def choose_dispatch(
+    digest: dict,
+    task: dict,
+    hint: dict,
+    allowed_models: dict,
+    recent: list[str],
+    performance: dict | None = None,
+    threshold: float = 90.0,
+    model_free: bool = False,
+) -> dict:
+    """依即時額度為單一任務挑 provider／model，回傳 ``{provider, model, reason}``。
+
+    純函式：額度快照的查詢（provider_quota.digest）、換綁專家與事件廣播等副作用都在
+    orchestrator；本函式只做決策，可單元測試、可 monkeypatch。
+
+    參數：
+    - digest: ``{provider: {ready, error, max_used, soonest_reset}}``。
+    - task: 任務 dict（``{id, title, ...}``，供 reason 描述）。
+    - hint: parse_dispatch 對該任務的派工建議（``{provider, model}``）或 ``{}``。
+    - allowed_models: ``{provider: tuple[str, ...]}`` 模型白名單；hint.model 不在名單即棄用。
+    - recent: 已派 provider 序列（尾端＝最近），同分時避開剛用過的、把任務分攤到各家。
+    - performance: 可選 ``{provider: avg_score}``——同用量時偏好歷史表現高者（缺省視為 0）。
+      目前僅作次序鍵；詳細考核資料流由後續 PR 接上。
+    - threshold: 受限門檻（任一額度窗用量 % 達此值即視為受限）。
+    - model_free: auto 派工模式——hint.model 不查白名單、原樣直通；但僅限「選定 provider
+      ＝hint 的 provider」時（被兜底改派到另一家時模型丟空，改用該家預設槽，避免 A 家的
+      模型 ID 直通 B 家必炸）。False＝現行白名單行為，一字不變。
+
+    規則：hint.provider 合法（在 digest 內）且未受限（就緒、無 error、用量<門檻）→ 採用；
+    否則在「就緒未受限」集合取用量最低者（同分先比 performance 高者、再避開 recent 尾端剛
+    用過的、最後以 digest 次序決勝確保可重現）；全受限時取「就緒」中用量最低者；全掛回
+    ``{"provider": "", "model": "", "reason": ...}``（呼叫端沿用原綁定）。
+
+    model：hint.model 在 allowed_models[選定 provider] 內才採用，否則空字串（沿用該
+    provider 的預設模型槽）。reason 為繁中一句話（供 dispatch_decision 事件顯示）。
+    """
+    perf = performance or {}
+    hint = hint or {}
+
+    def _usage(key: str) -> dict:
+        return digest.get(key) or {}
+
+    def _used(key: str) -> float:
+        used = _usage(key).get("max_used")
+        return float(used) if used is not None else 0.0
+
+    def _ready(key: str) -> bool:
+        u = _usage(key)
+        return bool(u.get("ready")) and not u.get("error")
+
+    def _unconstrained(key: str) -> bool:
+        return _ready(key) and _used(key) < threshold
+
+    def _model_for(provider: str) -> str:
+        model = (hint.get("model") or "").strip()
+        if model_free:
+            hinted_prov = (hint.get("provider") or "").strip().lower()
+            return model if model and provider == hinted_prov else ""
+        return model if model and model in (allowed_models.get(provider) or ()) else ""
+
+    tid = task.get("id", "?")
+    hinted = ((hint.get("provider") or "").strip().lower()) if hint else ""
+    if hinted and hinted in digest and _unconstrained(hinted):
+        return {
+            "provider": hinted,
+            "model": _model_for(hinted),
+            "reason": f"任務 #{tid}：PM 指定 {hinted}，額度未受限，照派",
+        }
+
+    order = {key: i for i, key in enumerate(digest)}  # digest 保序：最終同分以此決勝（可重現）
+    last = recent[-1] if recent else ""
+    candidates = [k for k in digest if _unconstrained(k)]
+    if candidates:
+        best = min(
+            candidates,
+            key=lambda k: (_used(k), -float(perf.get(k) or 0.0), 1 if k == last else 0, order[k]),
+        )
+        prefix = f"PM 指定的 {hinted} 受限或不可用，" if hinted else ""
+        return {
+            "provider": best,
+            "model": _model_for(best),
+            "reason": f"任務 #{tid}：{prefix}改派就緒中用量最低的 {best}（{_used(best):.0f}%）",
+        }
+    ready = [k for k in digest if _ready(k)]
+    if ready:
+        best = min(ready, key=lambda k: (_used(k), order[k]))
+        return {
+            "provider": best,
+            "model": _model_for(best),
+            "reason": f"任務 #{tid}：各 provider 額度皆受限，取用量最低的 {best}（{_used(best):.0f}%）",
+        }
+    return {"provider": "", "model": "", "reason": f"任務 #{tid}：無任何就緒 provider，沿用原綁定"}
 
 
 def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int]]]:
@@ -481,6 +723,9 @@ def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int
 
     任務行：`任務: [#<id>] <title>`（`#id` 可選，缺則依出現序自動編號，1-based）。
     依賴行：`依賴: #<after> -> #<before>`（after 須在 before 完成後才做）。
+    禁改行：`禁改: #<id> <pattern>[, <pattern>...]`（該任務不得改動的路徑；逗號分隔）。
+        寫入對應任務 dict 的 `forbidden_paths`（list[str]）；無禁改行則為空清單（向後相容）。
+        指向不存在任務 id 的禁改行一律丟棄（防懸空），比對語意見 `check_forbidden_paths`。
     無顯式 `任務:` 行時退回 `parse_tasks` 的條列解析（自動編號、無依賴），與循序行為一致。
     指向不存在任務 id 的依賴邊一律丟棄（防懸空）。任務數沿用 `MAX_TASKS` 上限。
     """
@@ -494,18 +739,62 @@ def parse_tasks_with_deps(pm_text: str) -> tuple[list[dict], list[tuple[int, int
             while tid in used:  # 顯式 id 與自動序衝突時往後讓位，保證 id 唯一。
                 tid = max(used) + 1
             used.add(tid)
-            tasks.append({"id": tid, "title": title.strip(), "status": "todo"})
+            tasks.append(
+                {"id": tid, "title": title.strip(), "status": "todo", "forbidden_paths": []}
+            )
     else:
         for pos, title in enumerate(parse_tasks(pm_text)[:cap], start=1):
-            tasks.append({"id": pos, "title": title, "status": "todo"})
+            tasks.append({"id": pos, "title": title, "status": "todo", "forbidden_paths": []})
 
-    valid_ids = {t["id"] for t in tasks}
+    by_id = {t["id"]: t for t in tasks}
+    valid_ids = set(by_id)
     edges: list[tuple[int, int]] = []
     for after, before in re.findall(r"^\s*依賴\s*[:：]\s*#(\d+)\s*->\s*#(\d+)\s*$", pm_text, re.M):
         a, b = int(after), int(before)
         if a in valid_ids and b in valid_ids and a != b:
             edges.append((a, b))
+
+    for rid, raw in re.findall(r"^\s*禁改\s*[:：]\s*#(\d+)\s+(.+?)\s*$", pm_text, re.M):
+        tid = int(rid)
+        task = by_id.get(tid)
+        if task is None:  # 懸空 task id 的禁改行安全丟棄。
+            continue
+        for pat in raw.split(","):
+            pat = pat.strip()
+            if pat and pat not in task["forbidden_paths"]:  # 去重保序。
+                task["forbidden_paths"].append(pat)
     return tasks, edges
+
+
+def check_forbidden_paths(staged: list[str], patterns: list[str]) -> list[str]:
+    """回傳 `staged` 檔案中命中任一 `patterns` 的違規清單（純函式、零副作用）。
+
+    比對語意（stdlib，不引入新依賴）：
+    - pattern 以 `/` 結尾 → 視為目錄前綴：`docs/` 命中 `docs/a.md`、`docs/x/y.md`。
+    - 其餘 → `fnmatch` glob：`studio/config.py` 精確命中；`*.py`／`src/*.js` 的 `*` **會跨 `/`**
+      （`fnmatch` 語意，非單層 glob），故 `*.py` 亦命中 `src/a.py`——對「禁改」防護是偏嚴、
+      不漏擋的安全方向。若接線端需嚴格單層再議。
+    路徑一律以 `/` 正規化（相容 Windows 反斜線 staged 名）。命中保序去重；無命中回空清單。
+    """
+
+    def _norm(p: str) -> str:
+        return p.replace("\\", "/").strip()
+
+    pats = [_norm(p) for p in patterns if _norm(p)]
+    if not pats:
+        return []
+    violations: list[str] = []
+    for raw in staged:
+        path = _norm(raw)
+        if not path:
+            continue
+        for pat in pats:
+            hit = path.startswith(pat) if pat.endswith("/") else fnmatch.fnmatch(path, pat)
+            if hit:
+                if path not in violations:
+                    violations.append(path)
+                break
+    return violations
 
 
 def build_waves(tasks: list[dict], edges: list[tuple[int, int]]) -> list[list[dict]]:
@@ -538,3 +827,145 @@ def build_waves(tasks: list[dict], edges: list[tuple[int, int]]) -> list[list[di
             for nxt in adj[tid]:
                 indeg[nxt] -= 1
     return waves
+
+
+# --- 3-AI 表決（PM 無法決定時跨 provider 多數決；副作用在 orchestrator._hold_vote）--------
+
+
+def parse_vote_request(text: str) -> dict | None:
+    """解析 PM 的表決請求行 ``表決: <議題> | <選項A> | <選項B>[ | <選項C>]``。
+
+    沿用本檔 marker 範式：行前綴＋全形冒號容錯、全形管線 ``｜`` 先正規化為半形再切、
+    取最後一個命中行為準（與 ``_last_match`` 一致）。選項剔除空段落、去重保序。
+    無命中行、議題為空、或有效選項不足 2 個 → 回 None（不是合法表決請求）。
+    合法時回 ``{"topic": <議題>, "options": [<選項>...]}``。
+
+    新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
+    """
+    matches = re.findall(r"^\s*表決\s*[:：]\s*(.+?)\s*$", text or "", re.M)
+    if not matches:
+        return None
+    parts = [p.strip() for p in matches[-1].replace("｜", "|").split("|")]
+    topic = parts[0]
+    options = list(dict.fromkeys(p for p in parts[1:] if p))  # 去空段、去重、保序
+    if not topic or len(options) < 2:
+        return None
+    return {"topic": topic, "options": options}
+
+
+def parse_ballot(text: str, options: list[str]) -> str:
+    """解析投票員輸出的 ``投票: <選項>`` 行，正規化回 options 中的選項原文。
+
+    取最後一個命中行（全形冒號容錯）。精確比對優先；否則以 difflib 相似度對每個
+    選項打分、≥0.6 取最佳者（LLM 常少字/多字/改標點，不因此丟票）。無命中行、
+    options 為空、或與所有選項都不像 → 回 ""（棄權）。
+    """
+    matches = re.findall(r"^\s*投票\s*[:：]\s*(.+?)\s*$", text or "", re.M)
+    if not matches or not options:
+        return ""
+    val = matches[-1]
+    if val in options:
+        return val
+    best, best_ratio = "", 0.0
+    for opt in options:
+        ratio = difflib.SequenceMatcher(None, val, opt).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = opt, ratio
+    return best if best_ratio >= 0.6 else ""
+
+
+def tally_votes(ballots: list[dict]) -> dict:
+    """多數決計票。ballots＝``[{voter, provider, choice}]``；choice 空字串＝棄權（不計票）。
+
+    回 ``{"winner": <選項>, "counts": {選項: 票數}, "tie": bool}``：
+    - 唯一最高票 → 該選項為 winner、tie=False。
+    - 最高票平手 → tie=True；PM（voter=="pm"）有投且其票在平手集合 → 以 PM 票為
+      winner（僵局時 PM 票定案），否則 winner=""（交呼叫端降級兜底）。
+    - 全棄權／空 ballots → ``{"winner": "", "counts": {}, "tie": False}``。
+    """
+    counts: dict[str, int] = {}
+    for b in ballots or []:
+        choice = (b or {}).get("choice") or ""
+        if choice:
+            counts[choice] = counts.get(choice, 0) + 1
+    if not counts:
+        return {"winner": "", "counts": {}, "tie": False}
+    top = max(counts.values())
+    leaders = [c for c, n in counts.items() if n == top]
+    if len(leaders) == 1:
+        return {"winner": leaders[0], "counts": counts, "tie": False}
+    pm_choice = next(
+        (b.get("choice") for b in ballots if (b or {}).get("voter") == "pm" and b.get("choice")),
+        "",
+    )
+    winner = pm_choice if pm_choice in leaders else ""
+    return {"winner": winner, "counts": counts, "tie": True}
+
+
+def pick_vote_providers(
+    digest: dict, exclude: str, n: int = 2, threshold: float = 90.0
+) -> list[str]:
+    """從額度 digest 挑至多 n 個可當投票員的 provider，回 provider key 列表。
+
+    digest＝``provider_quota.digest`` 的 plain dict（``{provider: {ready, error,
+    max_used, soonest_reset}}``）——flow 不 import provider_quota，由 orchestrator
+    查快照後把 digest 當參數傳入（與 choose_dispatch 同一邊界）。
+
+    入選條件：就緒（ready）、無 error、``max_used`` 未達 threshold（缺用量資訊視為
+    0＝最寬鬆）、且 ≠ exclude（PM 自己的 provider，表決須跨 provider）。按 max_used
+    升冪取前 n（同分按 digest 次序決勝、可重現）；彼此天然相異（digest 鍵唯一）。
+    合格者不足 n 個時回實際數（呼叫端據此降級）。
+    """
+    exclude = (exclude or "").strip().lower()
+    candidates: list[tuple[float, int, str]] = []
+    for i, (key, usage) in enumerate((digest or {}).items()):
+        u = usage or {}
+        if key == exclude or not u.get("ready") or u.get("error"):
+            continue
+        used = float(u["max_used"]) if u.get("max_used") is not None else 0.0
+        if used >= threshold:
+            continue
+        candidates.append((used, i, key))
+    candidates.sort()
+    return [key for _, _, key in candidates[: max(n, 0)]]
+
+
+# --- 考核（Appraisal）解析（純函式；持久化在 studio/appraisal.py、事件廣播在 orchestrator）---
+
+# 全形數字容錯：LLM 偶爾輸出「４分」這類全形分數，translate 正規化後再驗證範圍。
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def parse_appraisals(text: str) -> list[dict]:
+    """解析 PM 收尾檢討的考核行，回傳 ``[{"target", "score", "comment"}, ...]``。
+
+    行格式：``考核: <角色或provider> <1-5> <一句評語>``（沿用本檔 marker 範式：行前綴、
+    全形冒號容錯、逐行收集）。分數容錯「分」字尾與全形數字；非 1–5 **整數**（0、6、4.5、
+    非數字…）一律丟棄該行——絕不讓 LLM 亂給的分數直通長期庫。target 正規化為小寫
+    （provider 名／role key 皆小寫慣例）；評語可空。無任何考核行回空 list。
+
+    新 API、不入 orchestrator re-export：消費端一律 ``from studio.flow import``。
+    """
+    out: list[dict] = []
+    for line in (text or "").splitlines():
+        m = re.match(
+            r"^\s*考核\s*[:：]\s*(\S+)\s+([0-9０-９]+(?:[.．][0-9０-９]+)?)\s*分?\s*(.*?)\s*$",
+            line,
+        )
+        if not m:
+            continue
+        raw = m.group(2).translate(_FULLWIDTH_DIGITS).replace("．", ".")
+        try:
+            score = float(raw)
+        except ValueError:  # 防禦性：正則已限數字形，理論上不會進來
+            continue
+        if not score.is_integer() or not 1 <= score <= 5:
+            continue
+        out.append(
+            {
+                "target": m.group(1).strip().lower(),
+                "score": int(score),
+                "comment": m.group(3).strip(),
+            }
+        )
+    return out
