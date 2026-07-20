@@ -6,6 +6,8 @@ import ast
 import subprocess
 from pathlib import Path
 
+from _real_server_client import scrub_proxy_env
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -142,6 +144,33 @@ def test_real_server_subprocesses_scrub_proxy_env() -> None:
         violations.extend(_collect_violations(path.read_text(encoding="utf-8"), relative_path))
 
     assert not violations, "\n".join(violations)
+
+
+def test_scrub_proxy_env_removes_loopback_proxy_variables() -> None:
+    env = {
+        key: "socks5://127.0.0.1:9999"
+        for key in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "WS_PROXY",
+            "WSS_PROXY",
+            "SOCKS_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "ws_proxy",
+            "wss_proxy",
+            "socks_proxy",
+            "no_proxy",
+        )
+    }
+    env["TI_OFFLINE"] = "1"
+
+    scrub_proxy_env(env)
+
+    assert env == {"TI_OFFLINE": "1"}
 
 
 def test_proxy_scrub_guard_rejects_missing_scrub_call() -> None:
