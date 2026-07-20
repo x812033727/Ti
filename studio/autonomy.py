@@ -1314,6 +1314,122 @@ def verify_baseline(baseline: dict, policy: dict, *, strict: bool = True) -> lis
     return sorted(set(reasons))
 
 
+def revalidate_run_baseline(
+    project_id: str,
+    pinned: dict,
+    observed: dict,
+    *,
+    phase: str,
+    run_id: str = _UNKNOWN,
+    task_id: int | str = _UNKNOWN,
+    strict: bool = True,
+    state_dir: Path | None = None,
+) -> dict:
+    """在外部寫入前重驗開工時釘住的來源與部署基線。
+
+    任務工作樹在 change 階段本來就會是 dirty，不能重用 :func:`verify_baseline`
+    的「開工前乾淨」規則。這裡只比較不應在同一 run 內改變的真相：遠端 base、
+    已部署 revision、repo/workspace/base/lane/publish 契約，以及部署身分／工作樹證據。
+    shadow 仍產生同一批 warning，但不觸發煞車。
+    """
+    pid = _safe_id(project_id)
+    policy = load_policy(pid, state_dir=state_dir)
+    reasons: list[str] = []
+
+    pinned_source = str(pinned.get("source_sha") or "").strip().lower()
+    pinned_deployed = str(pinned.get("deployed_sha") or "").strip().lower()
+    observed_source = str(observed.get("source_sha") or "").strip().lower()
+    observed_deployed = str(observed.get("deployed_sha") or "").strip().lower()
+    sha_re = re.compile(r"[0-9a-f]{40,64}")
+    if not sha_re.fullmatch(observed_source):
+        reasons.append("source_sha_unavailable")
+    elif observed_source != pinned_source:
+        reasons.append("source_sha_drift")
+    if not sha_re.fullmatch(observed_deployed):
+        reasons.append("deployed_sha_unavailable")
+    elif observed_deployed != pinned_deployed:
+        reasons.append("deployed_sha_drift")
+    if observed_source and observed_deployed and observed_source != observed_deployed:
+        reasons.append("source_deployed_sha_mismatch")
+
+    for key in ("workspace", "base_branch", "lane"):
+        if str(observed.get(key) or "") != str(pinned.get(key) or ""):
+            reasons.append(f"{key}_drift")
+    for key in ("source_repo", "publish_repo"):
+        pinned_repo = repo_key(str(pinned.get(key) or ""))
+        observed_repo = repo_key(str(observed.get(key) or ""))
+        if not observed_repo:
+            reasons.append(f"{key}_unavailable")
+        elif observed_repo != pinned_repo:
+            reasons.append(f"{key}_drift")
+    if observed.get("deployed_identity_verified") is not True:
+        reasons.append("deployed_identity_unverified")
+    if observed.get("deployed_worktree_clean") is False:
+        reasons.append("deployed_worktree_dirty")
+    elif (
+        "deployed_worktree_clean" in observed
+        and observed.get("deployed_worktree_clean") is not True
+    ):
+        reasons.append("deployed_worktree_clean_unproven")
+
+    expected = policy.get("source") or {}
+    if expected.get("workspace") and str(observed.get("workspace") or "") != str(
+        expected.get("workspace") or ""
+    ):
+        reasons.append("workspace_contract_mismatch")
+    if expected.get("repo") and repo_key(str(observed.get("source_repo") or "")) != repo_key(
+        str(expected.get("repo") or "")
+    ):
+        reasons.append("source_repo_contract_mismatch")
+    if expected.get("publish_repo") and repo_key(
+        str(observed.get("publish_repo") or "")
+    ) != repo_key(str(expected.get("publish_repo") or "")):
+        reasons.append("publish_repo_contract_mismatch")
+    if expected.get("lane") and str(observed.get("lane") or "") != str(expected.get("lane") or ""):
+        reasons.append("lane_contract_mismatch")
+    if str(observed.get("base_branch") or "") != str(policy.get("base_branch") or ""):
+        reasons.append("base_branch_contract_mismatch")
+
+    observed_reasons = sorted(set(reasons))
+    blocking = observed_reasons if strict else []
+    emit_event(
+        "autonomy_decision",
+        run_id=run_id,
+        project_id=pid,
+        task_id=task_id,
+        source_sha=observed_source or _UNKNOWN,
+        risk=str(pinned.get("risk") or _UNKNOWN),
+        eligible=pinned.get("eligible", _UNKNOWN),
+        exclusion_reason=str(pinned.get("exclusion_reason") or ""),
+        outcome="baseline_revalidation_blocked" if blocking else "baseline_revalidated",
+        severity="critical" if blocking else "info",
+        payload={
+            "phase": str(phase or "pre_external_write")[:100],
+            "reasons": blocking,
+            "shadow_warnings": observed_reasons if not strict else [],
+            "pinned_source_sha": pinned_source or _UNKNOWN,
+            "pinned_deployed_sha": pinned_deployed or _UNKNOWN,
+            "observed_source_sha": observed_source or _UNKNOWN,
+            "observed_deployed_sha": observed_deployed or _UNKNOWN,
+        },
+        state_dir=state_dir,
+    )
+    if blocking:
+        scope = "global" if pid == CORE_PROJECT_ID else "project"
+        trip_brake(
+            scope,
+            "baseline_revalidation:" + ",".join(blocking),
+            project_id=pid,
+            run_id=run_id,
+            state_dir=state_dir,
+        )
+    return {
+        "allowed": not blocking,
+        "reasons": blocking,
+        "shadow_warnings": observed_reasons if not strict else [],
+    }
+
+
 def verified_rollback_drill(event: dict) -> bool:
     """Return whether a rollback event proves an isolated exact-tree rehearsal."""
     payload = event.get("payload") or {}

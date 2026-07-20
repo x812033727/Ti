@@ -43,6 +43,22 @@ def _baseline(**overrides):
     return row
 
 
+def _observed_baseline(**overrides):
+    row = {
+        "deployed_sha": "a" * 40,
+        "source_sha": "a" * 40,
+        "source_repo": "owner/repo",
+        "workspace": "/work/project",
+        "base_branch": "main",
+        "lane": "main",
+        "publish_repo": "owner/repo",
+        "deployed_identity_verified": True,
+        "deployed_worktree_clean": True,
+    }
+    row.update(overrides)
+    return row
+
+
 def _verified_drill_payload():
     return {
         "drill": True,
@@ -223,6 +239,94 @@ def test_canary_rejects_task_when_eligibility_was_not_decided_before_start():
     )
     assert blocked["allowed"] is False
     assert "eligibility_undecided" in blocked["reasons"]
+
+
+def test_external_write_revalidation_allows_only_the_pinned_live_baseline():
+    autonomy.ensure_policy(autonomy.CORE_PROJECT_ID)
+    autonomy.save_policy(
+        autonomy.CORE_PROJECT_ID,
+        {
+            "mode": "canary",
+            "source": {
+                "repo": "owner/repo",
+                "workspace": "/work/project",
+                "publish_repo": "owner/repo",
+                "lane": "main",
+            },
+        },
+    )
+    result = autonomy.revalidate_run_baseline(
+        autonomy.CORE_PROJECT_ID,
+        _baseline(),
+        _observed_baseline(),
+        phase="pre_merge",
+        run_id="live-exact",
+        task_id=7,
+    )
+    assert result == {"allowed": True, "reasons": [], "shadow_warnings": []}
+    event = autonomy.read_events(1)[-1]
+    assert event["outcome"] == "baseline_revalidated"
+    assert event["payload"]["observed_source_sha"] == "a" * 40
+    assert autonomy.brake_status()["global"] is None
+
+
+def test_external_write_source_drift_fails_closed_and_trips_core_global_brake():
+    autonomy.ensure_policy(autonomy.CORE_PROJECT_ID)
+    autonomy.save_policy(
+        autonomy.CORE_PROJECT_ID,
+        {
+            "mode": "canary",
+            "source": {
+                "repo": "owner/repo",
+                "workspace": "/work/project",
+                "publish_repo": "owner/repo",
+                "lane": "main",
+            },
+        },
+    )
+    result = autonomy.revalidate_run_baseline(
+        autonomy.CORE_PROJECT_ID,
+        _baseline(),
+        _observed_baseline(source_sha="b" * 40),
+        phase="pre_merge",
+        run_id="live-drift",
+        task_id=8,
+    )
+    assert result["allowed"] is False
+    assert {"source_sha_drift", "source_deployed_sha_mismatch"} <= set(result["reasons"])
+    assert autonomy.brake_status()["global"]["active"] is True
+    events = autonomy.read_events(1)
+    blocked = next(e for e in events if e.get("outcome") == "baseline_revalidation_blocked")
+    assert blocked["payload"]["pinned_source_sha"] == "a" * 40
+    assert blocked["payload"]["observed_source_sha"] == "b" * 40
+
+
+def test_external_project_drift_only_trips_that_project_brake():
+    autonomy.ensure_policy("p1")
+    autonomy.save_policy(
+        "p1",
+        {
+            "mode": "canary",
+            "source": {
+                "repo": "owner/repo",
+                "workspace": "/work/project",
+                "publish_repo": "owner/repo",
+                "lane": "main",
+            },
+        },
+    )
+    result = autonomy.revalidate_run_baseline(
+        "p1",
+        _baseline(),
+        _observed_baseline(deployed_sha=""),
+        phase="pre_deploy",
+        run_id="project-drift",
+        task_id=9,
+    )
+    assert result["allowed"] is False
+    brakes = autonomy.brake_status()
+    assert brakes["global"] is None
+    assert brakes["projects"]["p1"]["active"] is True
 
 
 def test_ai_batch_task_cannot_self_sign_irreversible_approval():

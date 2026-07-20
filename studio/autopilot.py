@@ -42,7 +42,7 @@ import uuid
 # sleep/to_thread），except 子句經 stub 取屬性會 AttributeError；直接 import 名稱免疫。
 from asyncio import CancelledError
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -534,6 +534,8 @@ class MergeResult(tuple):
         branch: str = "",
         no_changes: bool = False,
         auto_merge_pending: bool = False,
+        policy_blocked: bool = False,
+        merge_sha: str = "",
     ):
         self = super().__new__(cls, (ok, msg))
         return self
@@ -547,6 +549,8 @@ class MergeResult(tuple):
         branch: str = "",
         no_changes: bool = False,
         auto_merge_pending: bool = False,
+        policy_blocked: bool = False,
+        merge_sha: str = "",
     ):
         self.pr_number = pr_number
         self.branch = branch
@@ -558,6 +562,10 @@ class MergeResult(tuple):
         # 「沒有可出貨的變更」——呼叫端據此把任務收斂為 parked no-op（不燒重試、不進失敗桶），
         # 而非走 _handle_gate_failure 白燒 3 次 session（見完成率診斷：PR 階段 16/22 為此類）。
         self.no_changes = no_changes
+        # policy_blocked=True：任務成果本身未失敗，而是外部寫入前的即時基線／政策重驗
+        # fail-closed。呼叫端退回 pending 且不消耗 task retry；terminal audit 仍誠實記 blocked。
+        self.policy_blocked = policy_blocked
+        self.merge_sha = str(merge_sha or "").strip().lower()
 
 
 # 網路層「暫時性」失敗特徵（DNS/連線/5xx/逾時）：merge 階段（ls-remote/push/開 PR）遇這類
@@ -637,7 +645,12 @@ async def _fast_wait_auto_merge(pr_number: int) -> bool:
     return False
 
 
-async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
+async def _commit_push_merge(
+    clone: str,
+    task: dict,
+    *,
+    pre_write_guard: Callable[[], Awaitable[tuple[bool, str]]] | None = None,
+) -> tuple[bool, str]:
     """把成果開分支、push、squash-merge 進 main。dryrun 只回報。
 
     成功（已合併）與「PR 已開但 CI 未過/合併失敗」時回傳 MergeResult——解包仍是
@@ -745,6 +758,21 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
                     f"TI_AUTOPILOT_PROTECTION_CHECK=0 跳過此檢查"
                 )
 
+        # 納管自治任務在第一個外部寫入（push）前重驗「開工時釘住的 remote base +
+        # deployed revision」。guard 不可用也必須 fail-closed；不能先留下遠端分支再說。
+        if pre_write_guard is not None:
+            try:
+                allowed, detail = await pre_write_guard()
+            except Exception as exc:  # noqa: BLE001 — 治理 hook 失效不得 push
+                allowed, detail = False, f"guard_unavailable:{type(exc).__name__}"
+                log.exception("autopilot pre-write governance guard 失效，已 fail-closed")
+            if not allowed:
+                return MergeResult(
+                    False,
+                    "自治基線重驗拒絕外部寫入：" + str(detail)[:500],
+                    policy_blocked=True,
+                )
+
         # 預設非強制推送（全新分支即可成功）；僅 FORCE_PUSH 開啟才用 --force-with-lease
         # 搭配 --force-if-includes（杜絕背景 fetch 讓 lease 退化成裸 force）。絕不用裸 -f。
         push_flags = (
@@ -810,7 +838,7 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         # 零改動；窗滿仍 pending＝不關 PR、回 auto_merge_pending，任務標 merging 續跑下一場，
         # 由 reconciler 收尾（strict:true 的 BEHIND 也在那裡 update-branch 解鎖）。
         # 掛失敗（PR 已 clean 可直合、API 錯、repo 未開 allow_auto_merge）→ 回退同步路徑，行為不變。
-        if config.AUTOPILOT_AUTO_MERGE:
+        if config.AUTOPILOT_AUTO_MERGE and pre_write_guard is None:
             rc, out = await _run(
                 [*_GH, "pr", "merge", str(pr_number), "-R", repo, "--auto", "--squash"],
                 cwd=clone,
@@ -838,12 +866,17 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         # 等 CI 綠後才合併：複用 publisher 已測過的合併協調器（每輪「查狀態→等 CI→合併」，
         # behind/stale 會 _update_branch 後重試）。入口已把目標 repo 覆寫成 AUTOPILOT_REPO，
         # 避免 publisher REST 函式 fallback 到 config.PUBLISH_REPO（兩者未必相同）。
+        merge_kwargs = {
+            "ci_timeout": config.PUBLISH_CI_TIMEOUT,
+            "ci_interval": config.PUBLISH_CI_INTERVAL,
+            "retries": config.PUBLISH_MERGE_RETRIES,
+        }
+        if pre_write_guard is not None:
+            merge_kwargs["pre_merge_guard"] = pre_write_guard
         outcome, detail = await publisher._merge_flow(
             pr_number,
             publisher.merge_payload(branch, "squash"),
-            ci_timeout=config.PUBLISH_CI_TIMEOUT,
-            ci_interval=config.PUBLISH_CI_INTERVAL,
-            retries=config.PUBLISH_MERGE_RETRIES,
+            **merge_kwargs,
         )
         if outcome == publisher.MergeOutcome.MERGED:
             return MergeResult(
@@ -851,6 +884,7 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
                 f"已 squash-merge {branch} 進 {config.AUTOPILOT_BRANCH}（CI 綠後合併）：{detail}",
                 pr_number=pr_number,
                 branch=branch,
+                merge_sha=publisher.merge_sha_from_detail(detail) or "",
             )
         # 非綠/未合併：關閉 PR 並刪分支，避免留下孤兒 PR。
         # 注意：機械性 BEHIND（落後 base）已在 _merge_flow 內自動 update-branch→等 CI→
@@ -870,7 +904,14 @@ async def _commit_push_merge(clone: str, task: dict) -> tuple[bool, str]:
         # CI 紅（ci_failed）／真衝突／被保護擋下是實質失敗，刻意不附（附了會無限重排）。
         if outcome in (publisher.MergeOutcome.TIMEOUT, publisher.MergeOutcome.ERROR):
             fail_msg += "｜unreachable（網路暫時性，可分診重試）"
-        return MergeResult(False, fail_msg, pr_number=pr_number, branch=branch)
+        return MergeResult(
+            False,
+            fail_msg,
+            pr_number=pr_number,
+            branch=branch,
+            policy_blocked="governance_guard_blocked:" in detail
+            or "governed_base_moved_retry_required" in detail,
+        )
     finally:
         publisher.reset_repo_override(token)
 
@@ -2688,6 +2729,9 @@ async def run_one_task(task: dict) -> None:
             return
 
     managed_run: dict | None = None
+    managed_baseline: dict | None = None
+    managed_pre_write_guard: Callable[[], Awaitable[tuple[bool, str]]] | None = None
+    managed_terminal_override: str | None = None
     managed_source_sha = "unknown"
     deploy_governance: dict | None = None
     if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
@@ -2711,26 +2755,27 @@ async def run_one_task(task: dict) -> None:
         source_worktree_clean = await _git_clean(clone)
         deployed_worktree_clean = await _git_clean(config.AUTOPILOT_DEPLOY_DIR)
         policy = autonomy.load_policy(autonomy.CORE_PROJECT_ID)
+        managed_baseline = {
+            "deployed_sha": deployed_sha,
+            "source_sha": managed_source_sha,
+            "source_repo": source_repo,
+            "workspace": str(clone),
+            "base_branch": base_branch,
+            # source.lane 描述固定 working clone，不是 fast/full 工作流路由；
+            # 後者另記於既有 audit lane，不能被誤判成來源漂移。
+            "lane": autonomy.SOURCE_WORKSPACE_LANE,
+            "publish_repo": config.AUTOPILOT_REPO,
+            "source_worktree_clean": source_worktree_clean,
+            "deployed_identity_verified": bool(deployed_sha),
+            "deployed_worktree_clean": deployed_worktree_clean,
+            "eligible": task.get("eligible", "unknown"),
+            "exclusion_reason": task.get("exclusion_reason", ""),
+            "risk": task.get("risk", "unknown"),
+        }
         managed_run = autonomy.begin_run(
             autonomy.CORE_PROJECT_ID,
             task["id"],
-            {
-                "deployed_sha": deployed_sha,
-                "source_sha": managed_source_sha,
-                "source_repo": source_repo,
-                "workspace": str(clone),
-                "base_branch": base_branch,
-                # source.lane 描述固定 working clone，不是 fast/full 工作流路由；
-                # 後者另記於既有 audit lane，不能被誤判成來源漂移。
-                "lane": autonomy.SOURCE_WORKSPACE_LANE,
-                "publish_repo": config.AUTOPILOT_REPO,
-                "source_worktree_clean": source_worktree_clean,
-                "deployed_identity_verified": bool(deployed_sha),
-                "deployed_worktree_clean": deployed_worktree_clean,
-                "eligible": task.get("eligible", "unknown"),
-                "exclusion_reason": task.get("exclusion_reason", ""),
-                "risk": task.get("risk", "unknown"),
-            },
+            managed_baseline,
             run_id=sid,
             strict=policy["mode"] != "shadow",
         )
@@ -2796,6 +2841,55 @@ async def run_one_task(task: dict) -> None:
                     cost_usd=0.0,
                 )
                 return
+
+        async def _managed_pre_write_guard() -> tuple[bool, str]:
+            assert managed_baseline is not None
+            observed_deployed_sha = await _git_value(
+                ["git", "rev-parse", "HEAD"], config.AUTOPILOT_DEPLOY_DIR
+            )
+            observed_deployed_clean = await _git_clean(config.AUTOPILOT_DEPLOY_DIR)
+            observed_source_repo = await _git_value(["git", "remote", "get-url", "origin"], clone)
+            observed_source_sha = await publisher.base_head_sha(
+                config.AUTOPILOT_REPO, config.AUTOPILOT_BRANCH
+            )
+            revalidation = autonomy.revalidate_run_baseline(
+                autonomy.CORE_PROJECT_ID,
+                managed_baseline,
+                {
+                    "deployed_sha": observed_deployed_sha,
+                    "source_sha": observed_source_sha,
+                    "source_repo": observed_source_repo,
+                    "workspace": str(clone),
+                    "base_branch": config.AUTOPILOT_BRANCH,
+                    "lane": autonomy.SOURCE_WORKSPACE_LANE,
+                    "publish_repo": config.AUTOPILOT_REPO,
+                    "deployed_identity_verified": bool(observed_deployed_sha),
+                    "deployed_worktree_clean": observed_deployed_clean,
+                },
+                phase="pre_external_write",
+                run_id=sid,
+                task_id=task["id"],
+                strict=policy["mode"] != "shadow",
+            )
+            if not revalidation["allowed"]:
+                return False, "baseline_revalidation:" + ",".join(revalidation["reasons"])
+            admission = autonomy.admission_decision(autonomy.CORE_PROJECT_ID)
+            if not admission["allowed"]:
+                autonomy.emit_event(
+                    "policy_violation",
+                    run_id=sid,
+                    project_id=autonomy.CORE_PROJECT_ID,
+                    task_id=task["id"],
+                    source_sha=observed_source_sha or "unknown",
+                    risk=str(task.get("risk") or "unknown"),
+                    outcome="prewrite_admission_blocked",
+                    severity="critical",
+                    payload={"reasons": admission["reasons"]},
+                )
+                return False, "admission:" + ",".join(admission["reasons"])
+            return True, "live baseline and admission revalidated"
+
+        managed_pre_write_guard = _managed_pre_write_guard
 
     history.start_session(sid, f"[autopilot] {task['title']}")
     turn_state: dict[str, object] = {
@@ -3112,10 +3206,18 @@ async def run_one_task(task: dict) -> None:
             }
 
         # commit / push / squash-merge 進 main
-        merge_res = await _commit_push_merge(clone, task)
+        if managed_pre_write_guard is None:
+            merge_res = await _commit_push_merge(clone, task)
+        else:
+            merge_res = await _commit_push_merge(
+                clone,
+                task,
+                pre_write_guard=managed_pre_write_guard,
+            )
         merged, msg = merge_res
         no_changes = getattr(merge_res, "no_changes", False)
         auto_pending = getattr(merge_res, "auto_merge_pending", False)
+        policy_blocked = getattr(merge_res, "policy_blocked", False)
         # 結構化審計：成功與失敗都記（失敗也燒了成本、審計要能回溯）；dryrun 不落檔。
         # pr 非空＝實際開出 PR（計入每日預算）；push 前就被擋（無 PR）→ pr=None，記錄不計數。
         # no_changes 走獨立 outcome，不污染 merge_failed 桶（診斷分類與看板據此分流）。
@@ -3135,7 +3237,11 @@ async def run_one_task(task: dict) -> None:
                     else (
                         "merged"
                         if merged
-                        else ("merge_pending" if auto_pending else "merge_failed")
+                        else (
+                            "merge_pending"
+                            if auto_pending
+                            else ("policy_blocked" if policy_blocked else "merge_failed")
+                        )
                     ),
                     "detail": msg[-400:],
                     "duration_s": round(time.time() - t0, 1),
@@ -3147,6 +3253,16 @@ async def run_one_task(task: dict) -> None:
             # parked no-op——不燒重試（省下重跑整場 session）、不落失敗桶（非任務缺陷）。
             backlog.set_status(task["id"], "parked", note="無變更可出貨（no-op，非失敗）")
             log.info("任務 #%s 零 diff，收斂為 parked no-op（不重試）", task["id"])
+            return
+        if policy_blocked:
+            managed_terminal_override = "blocked"
+            backlog.set_status(
+                task["id"],
+                "pending",
+                attempts=int(task.get("attempts") or 0),
+                note=msg[-500:],
+            )
+            log.warning("任務 #%s 外部寫入前被自治政策擋下，退回 pending：%s", task["id"], msg)
             return
         if auto_pending:
             # auto-merge 已掛上、PR 留在遠端由 GitHub 背景合併：任務標 merging（非終局，
@@ -3179,6 +3295,8 @@ async def run_one_task(task: dict) -> None:
             "pr": getattr(merge_res, "pr_number", None),
             "merged_branch": getattr(merge_res, "branch", ""),
         }
+        if deploy_governance is not None:
+            deploy_governance["expected_source_sha"] = getattr(merge_res, "merge_sha", "")
         # 自此成果已進 main：之後（重佈/收尾）被停機打斷要收斂 done，不得退回重跑。
         merge_done, merge_fields = True, done_fields
 
@@ -3235,6 +3353,8 @@ async def run_one_task(task: dict) -> None:
             meta = history.get_meta(sid) or {}
             cost = ((meta.get("token_usage") or {}).get("total") or {}).get("cost_usd", "unknown")
             final_outcome = str(latest.get("status") or "unknown")
+            if managed_terminal_override:
+                final_outcome = managed_terminal_override
             if final_outcome == "done" and latest.get("deploy_msg"):
                 final_outcome = "healthy_deployed"
             autonomy.record_run_outcome(
@@ -3745,6 +3865,31 @@ async def _reconcile_merging_tasks(repo: str) -> None:
             backlog.set_status(tid, "pending", note="merging 無 PR 紀錄（異常），退回重排")
             log.warning("任務 #%s merging 但無 PR 紀錄，退回 pending", tid)
             continue
+        if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+            # 納管任務的新路徑會同步等 CI，並在真正 merge 前重驗 live baseline；因此任何
+            # `merging` 都是舊版／中斷殘留，沒有可在 reconciler 重建的同 diff 即時核可。
+            # 關 PR 退回重跑，絕不可沿用舊 auto-merge 或 update-branch。
+            await _run([*_GH, "pr", "close", str(pr), "-R", repo, "--delete-branch"], timeout=120)
+            backlog.set_status(
+                tid,
+                "pending",
+                attempts=max(0, int(task.get("attempts") or 0) - 1),
+                behind_rounds=0,
+                note=f"PR #{pr} 缺少即時基線重驗，已關閉並退回重新核可",
+            )
+            autonomy.emit_event(
+                "policy_violation",
+                run_id=str(task.get("session_id") or "unknown"),
+                project_id=autonomy.CORE_PROJECT_ID,
+                task_id=tid,
+                source_sha=str(task.get("head_sha") or "unknown"),
+                risk=str(task.get("risk") or "unknown"),
+                outcome="legacy_merge_revalidation_required",
+                severity="warning",
+                payload={"pr": pr},
+            )
+            log.info("納管任務 #%s 的舊 merging PR #%s 已關閉，退回重新核可", tid, pr)
+            continue
         rc, out = await _run(
             [
                 *_GH,
@@ -3869,6 +4014,30 @@ async def _reconcile_orphan_prs(repo: str) -> None:
             log.info("孤兒 PR #%s（%s）無對應在途任務，已關閉清理", number, branch)
             continue
         if task.get("status") in ("pending", "failed"):
+            if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+                await _run(
+                    [*_GH, "pr", "close", str(number), "-R", repo, "--delete-branch"],
+                    timeout=120,
+                )
+                backlog.set_status(
+                    task["id"],
+                    "pending",
+                    attempts=max(0, int(task.get("attempts") or 0) - 1),
+                    note=f"孤兒 PR #{number} 缺少即時基線重驗，已關閉並退回重新核可",
+                )
+                autonomy.emit_event(
+                    "policy_violation",
+                    run_id=str(task.get("session_id") or "unknown"),
+                    project_id=autonomy.CORE_PROJECT_ID,
+                    task_id=task["id"],
+                    source_sha=str(task.get("head_sha") or "unknown"),
+                    risk=str(task.get("risk") or "unknown"),
+                    outcome="orphan_merge_revalidation_required",
+                    severity="warning",
+                    payload={"pr": number},
+                )
+                log.info("納管孤兒 PR #%s 已關閉，任務 #%s 退回重新核可", number, task["id"])
+                continue
             # 崩潰殘留但成品還在：掛 auto-merge 認領、任務改 merging——不重做整場 session。
             rc, out = await _run(
                 [*_GH, "pr", "merge", str(number), "-R", repo, "--auto", "--squash"],
