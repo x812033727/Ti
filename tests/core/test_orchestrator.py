@@ -179,6 +179,8 @@ def test_parse_structured_tasks_tags():
     fallback = parse_structured_tasks("- 做 A\n- 做 B")
     assert [t["title"] for t in fallback] == ["做 A", "做 B"]
     assert all(t["priority"] == 1 for t in fallback)
+    assert parse_structured_tasks("核心改動: 修核心", fallback=False) == []
+    assert parse_structured_tasks("沒有符合格式的任務", fallback=False) == []
 
 
 def test_parse_followups_meta_and_strip():

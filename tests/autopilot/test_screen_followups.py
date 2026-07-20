@@ -67,3 +67,47 @@ def test_blank_titles_dropped(state, monkeypatch):
     monkeypatch.setattr(autopilot, "_recent_done_titles", lambda: set())
     out = autopilot._screen_followups([{"title": "   "}, {"title": "有效任務"}], [])
     assert [i["title"] for i in out] == ["有效任務"]
+
+
+def test_pending_filter_dedups_semantic_subset_with_long_evidence(state):
+    """證據/理由不同不應稀釋主旨：部署預設與 confirm time 的實際重提要被攔。"""
+    existing = ["讓部署黑盒驗證在生產預設生效並補實證（config.py:801 TI_DEPLOY_VERIFY 預設 0）"]
+    proposals = [
+        "讓部署黑盒驗證在生產預設路徑生效（deploy.py:278 依賴 config.py:801），"
+        "使 health 綠但 auth 壞的部署能被攔截",
+        "新增部署結果的使用者可見時間軸",
+    ]
+    assert autopilot._filter_pending_duplicates(proposals, existing) == [
+        "新增部署結果的使用者可見時間軸"
+    ]
+
+
+def test_pending_filter_dedups_within_same_batch_even_without_existing(state):
+    proposals = [
+        "修復引導式預約流程遺漏人數選擇",
+        "修正引導式預約主流程缺少人數選擇",
+        "在可用時段查詢過濾已經過去的時間",
+    ]
+    assert autopilot._filter_pending_duplicates(proposals, []) == [
+        "修復引導式預約流程遺漏人數選擇",
+        "在可用時段查詢過濾已經過去的時間",
+    ]
+
+
+def test_subject_overlap_does_not_merge_distinct_fields(state):
+    existing = ["修正預約日期確認訊息"]
+    assert autopilot._filter_pending_duplicates(["修正預約人數確認訊息"], existing) == [
+        "修正預約人數確認訊息"
+    ]
+
+
+def test_subject_overlap_preserves_distinct_ascii_identifiers(state):
+    proposals = [
+        "實作模組 A 並補測",
+        "實作模組 B 並補測",
+        "新增付款方式：Apple Pay，目前只支援現金",
+        "新增付款方式：Google Pay，目前只支援現金",
+        "支援通知（iOS）",
+        "支援通知（macOS）",
+    ]
+    assert autopilot._filter_pending_duplicates(proposals, []) == proposals

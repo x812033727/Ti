@@ -188,11 +188,14 @@ def _parse_item_tag(tag: str) -> dict:
     return {"priority": priority, "type": item_type}
 
 
-def parse_structured_tasks(text: str) -> list[dict]:
+def parse_structured_tasks(text: str, *, fallback: bool = True) -> list[dict]:
     """從專家輸出抽出結構化任務（`任務: [P0/bug] <title>`，標籤可省）。
 
     供「找問題」等回填 backlog 的消費端使用（與 PM 拆解的 parse_tasks 並列、互不影響）。
-    完全無 `任務:` 行時退回 parse_tasks 的條列解析（預設 P1/improvement），行為與現狀一致。
+    完全無 `任務:` 行時預設退回 parse_tasks 的條列解析（預設 P1/improvement），行為與現狀一致。
+    自主意圖迴路等「格式即契約」的寫入端應傳 ``fallback=False``：如此模型只輸出
+    ``核心改動:``、說明文字或空回覆時會回空清單，不會把 parse_tasks 的歷史保底
+    ``實作需求`` 誤寫成一張不可執行的自治任務。
     """
     items = [
         {"title": title.strip(), **_parse_item_tag(tag)}
@@ -201,6 +204,8 @@ def parse_structured_tasks(text: str) -> list[dict]:
     ]
     if items:
         return items[: config.MAX_TASKS]
+    if not fallback:
+        return []
     return [{"title": t, "priority": 1, "type": "improvement"} for t in parse_tasks(text)]
 
 

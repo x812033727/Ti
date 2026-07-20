@@ -151,11 +151,11 @@ def test_unmatched_proposals_never_blocked_by_k(monkeypatch):
     assert autopilot._filter_pending_duplicates(proposals, existing) == proposals
 
 
-def test_empty_existing_returns_all(monkeypatch):
+def test_empty_existing_still_caps_same_batch_subsystem(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_SUBSYSTEM_MAX_PENDING", 1)
     proposals = ["backlog X", "backlog Y"]
-    # existing 空 → 無「已過多」子系統，原樣返回（與第一道一致的早退語意）。
-    assert autopilot._filter_pending_duplicates(proposals, []) == proposals
+    # accepted 提案會立即進 running coverage；同批也不得一次灌爆同一子系統。
+    assert autopilot._filter_pending_duplicates(proposals, []) == ["backlog X"]
 
 
 # ---------------------------------------------------------------------------
