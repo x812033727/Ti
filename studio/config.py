@@ -1311,18 +1311,19 @@ def antigravity_cli_available() -> bool:
     return shutil.which(ANTIGRAVITY_BIN) is not None
 
 
-def provider_ready() -> bool:
-    """目前選定的 provider 是否具備可執行的憑證/設定。"""
-    if PROVIDER == "codex":
+def provider_ready(provider: str | None = None) -> bool:
+    """指定（預設目前選定）provider 是否具備可執行憑證／設定。"""
+    selected = provider or PROVIDER
+    if selected == "codex":
         return codex_cli_available() and codex_cli_logged_in()
-    if PROVIDER == "antigravity":
+    if selected == "antigravity":
         return antigravity_cli_available()
-    if PROVIDER == "minimax":
+    if selected == "minimax":
         # MiniMax base_url 有預設端點，故只認 API key 是否填妥。
         return bool(MINIMAX_API_KEY)
-    if PROVIDER == "gemini":
+    if selected == "gemini":
         return bool(GEMINI_API_KEY)
-    if PROVIDER == "openai":
+    if selected == "openai":
         return bool(OPENAI_API_KEY or OPENAI_BASE_URL)
     # claude provider：環境變數金鑰，或已登入的 claude CLI 訂閱皆可。
     return has_api_key() or claude_cli_logged_in()

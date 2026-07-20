@@ -16,17 +16,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 import uuid
 
 from . import (
+    autonomy,
+    autonomy_review,
     autopilot,
     backlog,
     blueprint,
     config,
     events,
     history,
+    notify,
+    project_health,
     projects,
+    publisher,
     repo_base,
     runner,
     workflow,
@@ -158,6 +165,18 @@ class ProjectImprover:
         summary = {"cycles": 0, "done": 0, "failed": 0, "stopped": False}
         consecutive_fails = 0
 
+        admission = autonomy.admission_decision(pid)
+        if not admission["allowed"]:
+            await self.broadcast(
+                events.phase_change(
+                    self.session_id,
+                    "自治煞車",
+                    "本專案停止接新任務：" + "、".join(admission["reasons"]),
+                )
+            )
+            summary["stopped"] = True
+            return summary
+
         # 開跑前先把工作基底同步到目標 repo（若有設定）——必須趕在藍圖 commit 之前，
         # 否則 pristine workspace 會先長出獨立 root commit，與目標 repo 永遠分歧。
         base_sync = await repo_base.ensure_base(
@@ -262,6 +281,308 @@ class ProjectImprover:
             history.finish_session(sid)
             self._record_sid = None
             return False
+        head_result = await runner.run_command_exec(
+            cwd, ["git", "rev-parse", "HEAD"], timeout=30, label="git head", sandbox=False
+        )
+        source_sha = head_result.output.strip() if head_result.ok else ""
+        status_result = await runner.run_command_exec(
+            cwd,
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            timeout=30,
+            label="git status",
+            sandbox=False,
+        )
+        source_worktree_clean = status_result.ok and not status_result.output.strip()
+        base_branch = (await runner.git_current_branch(cwd)) or config.PUBLISH_BASE
+        managed = autonomy.policy_exists(pid)
+        policy = autonomy.load_policy(pid)
+        deployed_sha = ""
+        deployment_contract = autonomy.deployment_contract_status(pid)
+        if managed and policy["mode"] != "shadow" and deployment_contract["ready"] and source_sha:
+            baseline_healthy, _baseline_detail = await project_health.verify(
+                policy["deployment"], source_sha
+            )
+            if baseline_healthy:
+                deployed_sha = source_sha
+        baseline = {
+            # 外部專案的 deployed SHA 只信任健檢回傳的 revision；不得用
+            # local HEAD 自填兩欄製造假的基線一致。shadow 缺契約會留 warning，
+            # canary/full/degraded 則由 begin_run 的 missing_deployed_sha fail-closed。
+            "deployed_sha": deployed_sha,
+            "source_sha": source_sha,
+            "source_repo": base_repo,
+            "workspace": str(cwd),
+            "base_branch": base_branch,
+            # 專案 task 的 fast/full 是工作流路由；來源契約的 lane 是固定 root workspace。
+            "lane": autonomy.SOURCE_WORKSPACE_LANE,
+            "publish_repo": base_repo,
+            "source_worktree_clean": source_worktree_clean,
+            "deployed_identity_verified": bool(deployed_sha),
+            "eligible": task.get("eligible", "unknown"),
+            "exclusion_reason": task.get("exclusion_reason", ""),
+            "risk": task.get("risk", "unknown"),
+        }
+        operation = {
+            "title": task.get("title"),
+            "detail": task.get("detail"),
+            "risk": task.get("risk", "unknown"),
+            "diff_sha": task.get("diff_sha") or "",
+            "evidence_sha": task.get("evidence_sha") or "",
+            "rollback": task.get("rollback") or {},
+        }
+        decision = {
+            "external_write_allowed": True,
+            "risk": autonomy.classify_risk(operation)["risk"],
+        }
+        if managed:
+            run = autonomy.begin_run(
+                pid,
+                task["id"],
+                baseline,
+                run_id=sid,
+                strict=policy["mode"] != "shadow",
+            )
+            if not run["allowed"]:
+                backlog.set_status(
+                    task["id"],
+                    "parked",
+                    state_dir=sdir,
+                    note="自治基線不一致：" + ",".join(run["reasons"]),
+                )
+                history.finish_session(sid)
+                self._record_sid = None
+                return False
+            for phase in ("planning", "change"):
+                decision = autonomy.evaluate_operation(
+                    pid,
+                    phase,
+                    operation,
+                    approvals=task.get("approval_verdicts") or [],
+                    human_approved=bool(task.get("human_approved")),
+                    run_id=sid,
+                    task_id=task["id"],
+                    source_sha=source_sha or "unknown",
+                )
+                if not decision["allowed"]:
+                    backlog.set_status(
+                        task["id"],
+                        "parked",
+                        state_dir=sdir,
+                        note=f"自治政策在 {phase} 前拒絕：" + ",".join(decision["reasons"]),
+                    )
+                    history.finish_session(sid)
+                    self._record_sid = None
+                    autonomy.record_run_outcome(
+                        sid,
+                        pid,
+                        task["id"],
+                        "blocked",
+                        source_sha=source_sha or "unknown",
+                        risk=decision["risk"],
+                        eligible=task.get("eligible", "unknown"),
+                        exclusion_reason=task.get("exclusion_reason", ""),
+                        cost_usd=0.0,
+                    )
+                    return False
+
+        publish_state: dict = {"evaluated": False, "allowed": not managed, "decision": decision}
+
+        async def _publish_guard(attempt: str, evidence: dict) -> tuple[bool, str]:
+            contract = autonomy.deployment_contract_status(pid)
+            if policy["stage"] >= 4 and not contract["ready"]:
+                publish_state.update({"evaluated": True, "allowed": False})
+                autonomy.emit_event(
+                    "policy_violation",
+                    run_id=sid,
+                    project_id=pid,
+                    task_id=task["id"],
+                    source_sha=source_sha or "unknown",
+                    risk=decision["risk"],
+                    outcome="deployment_contract_blocked",
+                    severity="critical",
+                    payload={"reasons": contract["blocking_reasons"]},
+                )
+                return False, "Stage 4 部署健康契約不完整，fail-closed"
+            diff_result = await runner.run_command_exec(
+                cwd,
+                ["git", "diff", "--binary", source_sha],
+                timeout=60,
+                label="autonomy publish diff",
+                sandbox=False,
+            )
+            if not source_sha or not diff_result.ok:
+                publish_state.update({"evaluated": True, "allowed": False})
+                notify.send_bg(
+                    "policy_violation",
+                    f"專案 {pid} 無法取得最終 diff，已拒絕 publish",
+                    project_id=pid,
+                    task_id=task["id"],
+                )
+                return False, "無法取得最終 diff，fail-closed"
+            diff_text = diff_result.output
+            task_risk = autonomy.classify_risk(operation)["risk"]
+            deploy_risk = autonomy.phase_risk(task_risk, "deploy", policy["stage"])
+            rollback = (
+                task.get("rollback") or {}
+                if task_risk == "high-reversible"
+                else autonomy.deployment_rollback_evidence(pid, source_sha)
+                if deploy_risk == "high-reversible"
+                else task.get("rollback") or {}
+            )
+            evidence_text = json.dumps(
+                {
+                    "execution": evidence,
+                    "rollback": rollback,
+                    "previous_healthy_revision": source_sha,
+                    "mechanism": "github_revert_pr_exact_previous_tree",
+                    "scope_enforcement": "remote_base_must_equal_bad_merge_sha",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            diff_sha = hashlib.sha256(diff_text.encode()).hexdigest()
+            evidence_sha = hashlib.sha256(evidence_text.encode()).hexdigest()
+            high_required = task_risk == "high-reversible" or deploy_risk == "high-reversible"
+            approvals = task.get("approval_verdicts") or []
+            if high_required and all(
+                rollback.get(key) for key in ("dry_run", "backup", "verified", "scope_limit")
+            ):
+                approvals = await autonomy_review.review(
+                    cwd=cwd,
+                    diff_text=diff_text,
+                    evidence_text=evidence_text,
+                    diff_sha=diff_sha,
+                    evidence_sha=evidence_sha,
+                    session_id=f"{sid}:{attempt}",
+                )
+                unavailable = [
+                    row["provider"]
+                    for row in approvals
+                    if row.get("rationale") == "provider_unavailable"
+                ]
+                if unavailable:
+                    notify.send_bg(
+                        "provider_unavailable",
+                        "專案高風險雙 AI 審查 provider 不可用，已拒絕 publish",
+                        project_id=pid,
+                        task_id=task["id"],
+                        providers=unavailable,
+                    )
+            final_decision = None
+            for phase in ("merge", "deploy"):
+                phase_risk = autonomy.phase_risk(task_risk, phase, policy["stage"])
+                final_decision = autonomy.evaluate_operation(
+                    pid,
+                    phase,
+                    {
+                        **operation,
+                        "risk": phase_risk,
+                        "diff_sha": diff_sha,
+                        "evidence_sha": evidence_sha,
+                        "rollback": rollback,
+                    },
+                    approvals=approvals if phase_risk == "high-reversible" else [],
+                    human_approved=bool(task.get("human_approved")),
+                    run_id=sid,
+                    task_id=task["id"],
+                    source_sha=source_sha or "unknown",
+                )
+                if not final_decision["external_write_allowed"]:
+                    break
+            assert final_decision is not None
+            publish_state.update(
+                {
+                    "evaluated": True,
+                    "allowed": final_decision["external_write_allowed"],
+                    "decision": final_decision,
+                    "diff_sha": diff_sha,
+                    "evidence_sha": evidence_sha,
+                }
+            )
+            if final_decision["external_write_allowed"]:
+                return True, "autonomy publish governance passed"
+            if final_decision["allowed"]:
+                return False, "shadow 模式：最終 diff/證據已裁決，禁止外部寫入"
+            return False, "自治政策拒絕 publish：" + ",".join(final_decision["reasons"])
+
+        async def _post_publish_verify(result: dict) -> tuple[bool, str]:
+            merge_sha = str(result.get("merge_sha") or "").strip().lower()
+            ok, detail = await project_health.verify(policy["deployment"], merge_sha)
+            autonomy.emit_event(
+                "autonomy_decision",
+                run_id=sid,
+                project_id=pid,
+                task_id=task["id"],
+                source_sha=source_sha or "unknown",
+                risk=(publish_state.get("decision") or decision)["risk"],
+                outcome="deployment_health_passed" if ok else "deployment_health_failed",
+                severity="info" if ok else "critical",
+                payload={
+                    "phase": "post_deploy_health",
+                    "merge_sha": merge_sha or "unknown",
+                    "detail": detail,
+                },
+            )
+            if not ok:
+                rollback_result = await publisher.rollback_merge(
+                    cwd,
+                    sid,
+                    bad_merge_sha=merge_sha,
+                    previous_sha=source_sha,
+                    repo=base_repo,
+                )
+                rollback_health_ok = False
+                rollback_detail = rollback_result.detail
+                if rollback_result.merged and rollback_result.merge_sha:
+                    rollback_health_ok, rollback_detail = await project_health.verify(
+                        policy["deployment"], rollback_result.merge_sha
+                    )
+                rollback_ok = bool(
+                    rollback_result.ok
+                    and rollback_result.merged
+                    and rollback_result.merge_sha
+                    and rollback_health_ok
+                )
+                autonomy.emit_event(
+                    "rollback_result",
+                    run_id=sid,
+                    project_id=pid,
+                    task_id=task["id"],
+                    source_sha=source_sha or "unknown",
+                    risk=(publish_state.get("decision") or decision)["risk"],
+                    outcome="success" if rollback_ok else "failed",
+                    severity="warning" if rollback_ok else "critical",
+                    payload={
+                        "bad_merge_sha": merge_sha or "unknown",
+                        "previous_sha": source_sha or "unknown",
+                        "rollback_merge_sha": rollback_result.merge_sha or "unknown",
+                        "pr": rollback_result.pr_number,
+                        "health_verified": rollback_health_ok,
+                        "detail": rollback_detail,
+                    },
+                )
+                autonomy.trip_brake(
+                    "project",
+                    "deployment_health_failed",
+                    project_id=pid,
+                    run_id=sid,
+                )
+                notify.send_bg(
+                    "deploy_verify_failed",
+                    f"專案 {pid} 合併後無法證明健康部署，已自動暫停接任務",
+                    project_id=pid,
+                    task_id=task["id"],
+                )
+                notify.send_bg(
+                    "rollback_result",
+                    f"專案 {pid} 自動 rollback {'成功' if rollback_ok else '失敗'}",
+                    project_id=pid,
+                    task_id=task["id"],
+                    rollback_ok=rollback_ok,
+                )
+                detail = f"{detail};rollback={'success' if rollback_ok else 'failed'}"
+            return ok, detail
+
         requirement = self._compose_requirement(task)
         experts = critics = None
         if config.OFFLINE_MODE:
@@ -281,6 +602,12 @@ class ProjectImprover:
             clarify=False,  # 自主迴圈不反問：任務來自 backlog／找問題，沒有人在等著回答
             publish_repo=self.project.get("publish_repo") or None,
             base_repo=base_repo if base_sync.based else None,
+            # 納管專案在 publish/每次 repush 前用當下實際 diff 重新裁決；未納管舊專案維持原流程。
+            auto_publish=True,
+            publish_guard=_publish_guard if managed else None,
+            post_publish_verifier=_post_publish_verify
+            if managed and policy["stage"] >= 3 and deployment_contract["ready"]
+            else None,
         )
         if config.OFFLINE_MODE:
             from .fake_experts import build_fake_lane_expert
@@ -310,14 +637,84 @@ class ProjectImprover:
                     f"已將 {routed} 項核心改動排入核心 repo（{config.CORE_REPO}）的改良佇列",
                 )
             )
+        publish_result = result.get("publish_result") or {}
+        governance_blocked = bool(
+            managed
+            and result.get("shippable")
+            and publish_state["evaluated"]
+            and not publish_state["allowed"]
+        )
+        publish_failed = bool(
+            publish_result
+            and publish_state["allowed"]
+            and config.PUBLISH_AUTO
+            and (
+                not publish_result.get("ok")
+                or (config.PUBLISH_MERGE and not publish_result.get("merged"))
+            )
+        )
+        if (
+            managed
+            and policy["mode"] != "shadow"
+            and result.get("shippable")
+            and publish_state["allowed"]
+        ):
+            publish_failed = bool(
+                not publish_result
+                or not publish_result.get("ok")
+                or not publish_result.get("merged")
+            )
+        if governance_blocked:
+            final_status = "parked"
+            final_note = str(publish_result.get("detail") or "自治政策拒絕 publish")[:500]
+        elif publish_failed:
+            final_status = "failed"
+            final_note = str(publish_result.get("detail") or "publish 未完成")[:500]
+            completed = False
+        else:
+            final_status = "done" if completed else "failed"
+            final_note = "" if completed else "討論未達完成"
         backlog.set_status(
             task["id"],
-            "done" if completed else "failed",
+            final_status,
             state_dir=sdir,
-            note="" if completed else "討論未達完成",
+            note=final_note,
+            diff_sha=publish_state.get("diff_sha", ""),
+            evidence_sha=publish_state.get("evidence_sha", ""),
         )
         projects.record_session(pid, sid, task["title"], completed)
-        return completed
+        meta = history.get_meta(sid) or {}
+        cost = ((meta.get("token_usage") or {}).get("total") or {}).get("cost_usd", "unknown")
+        if managed:
+            outcome = (
+                "blocked"
+                if governance_blocked
+                else "deploy_failed"
+                if publish_failed and publish_result.get("merged")
+                else "merge_failed"
+                if publish_failed
+                else "healthy_deployed"
+                if publish_result.get("merged") and publish_result.get("health_verified") is True
+                else "merged"
+                if publish_result.get("merged")
+                else "done"
+                if completed
+                else "failed"
+            )
+            autonomy.record_run_outcome(
+                sid,
+                pid,
+                task["id"],
+                outcome,
+                source_sha=source_sha or "unknown",
+                risk=(publish_state.get("decision") or decision)["risk"],
+                eligible=task.get("eligible", "unknown"),
+                exclusion_reason=task.get("exclusion_reason", ""),
+                cost_usd=cost,
+                payload={"pr": publish_result.get("pr_number")},
+            )
+        # shadow 的 parked 是成功產出決策證據，不計入連續執行失敗；其他政策拒絕照失敗收斂。
+        return completed and (not governance_blocked or policy["mode"] == "shadow")
 
     def _compose_requirement(self, task: dict) -> str:
         name = self.project.get("name", "")
@@ -420,6 +817,17 @@ class ProjectImprover:
         產出再以「近期已完成標題」去重，防止剛做完又被重新提出。
         """
         pid = self.project["id"]
+        planner_status = autonomy.stage4_planner_status(pid)
+        if planner_status["managed"] and not planner_status["ready"]:
+            autonomy.emit_event(
+                "autonomy_decision",
+                project_id=pid,
+                outcome="planner_blocked",
+                severity="warning",
+                payload={"reasons": planner_status["blocking_reasons"]},
+            )
+            log.warning("Stage 4 專案規畫器因 intent 宣告不完整而 fail-closed：%s", pid)
+            return 0
         name = self.project.get("name", pid)
         sid = "pjd" + uuid.uuid4().hex[:9]
         history.start_session(sid, f"[專案 {name}] 找問題：審視產品提出改良點")
@@ -545,9 +953,13 @@ class ProjectImprover:
         每次現讀 meta(不用 self.project 快照)——intent 是「可隨時更新的指令」,
         使用者改了下一輪就要生效。旗標關/無 intent 回空字串=零行為變更。
         """
+        pid = self.project.get("id", "")
+        planner_status = autonomy.stage4_planner_status(pid)
+        if planner_status["managed"]:
+            return autonomy.planner_context(pid)
         if not config.INTENT_LOOP:
             return ""
-        meta = projects.get(self.project.get("id", "")) or self.project
+        meta = projects.get(pid) or self.project
         intent = str(meta.get("intent") or "").strip()
         if not intent:
             return ""

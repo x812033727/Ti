@@ -21,6 +21,20 @@ from . import config, jsonl_log
 
 CATEGORIES = ("output_review", "context_feeding", "ops")
 
+# v1 自治契約使用更精確的四分類；舊 category 欄保留，避免既有看板/報告破壞。
+INTERVENTION_TYPES = ("background", "product_decision", "bug_design_fix", "ops_rescue")
+_LEGACY_TO_V1 = {
+    "context_feeding": "background",
+    "output_review": "bug_design_fix",
+    "ops": "ops_rescue",
+}
+_V1_TO_LEGACY = {
+    "background": "context_feeding",
+    "product_decision": "output_review",
+    "bug_design_fix": "output_review",
+    "ops_rescue": "ops",
+}
+
 
 def _path(state_dir: Path | None = None) -> Path:
     return (state_dir or config.AUTOPILOT_STATE_DIR) / "interventions.jsonl"
@@ -32,17 +46,47 @@ def record(
     *,
     task_id: int | None = None,
     detail: str = "",
+    intervention_type: str = "",
+    project_id: str = "unknown",
+    run_id: str = "unknown",
     state_dir: Path | None = None,
 ) -> None:
     """記一筆人工介入;永不拋錯(jsonl_log 吞掉一切)。detail 夾長度防灌爆。"""
-    if category not in CATEGORIES:
+    requested_v1 = intervention_type or (category if category in INTERVENTION_TYPES else "")
+    if requested_v1 not in INTERVENTION_TYPES:
+        requested_v1 = _LEGACY_TO_V1.get(category, "bug_design_fix")
+    if category in INTERVENTION_TYPES:
+        category = _V1_TO_LEGACY[category]
+    elif category not in CATEGORIES:
         category = "output_review"
-    rec: dict = {"kind": kind, "category": category}
+    rec: dict = {
+        "kind": kind,
+        "category": category,
+        "intervention_type": requested_v1,
+        "project_id": project_id or "unknown",
+        "run_id": run_id or "unknown",
+    }
     if task_id is not None:
         rec["task_id"] = task_id
     if detail:
         rec["detail"] = str(detail)[:200]
     jsonl_log.append(_path(state_dir), rec)
+    try:
+        from . import autonomy
+
+        autonomy.emit_event(
+            "human_intervention",
+            run_id=run_id,
+            project_id=project_id,
+            task_id=task_id if task_id is not None else "unknown",
+            intervention_type=requested_v1,
+            outcome="recorded",
+            payload={"kind": kind, "detail": str(detail)[:200]},
+            state_dir=state_dir,
+        )
+    except Exception:
+        # 介入留痕本身不得因新版投影失敗而中斷既有寫入路徑。
+        pass
 
 
 def read_window(days: int, *, state_dir: Path | None = None) -> list[dict]:

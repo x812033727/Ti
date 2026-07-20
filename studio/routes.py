@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import re
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from . import (
     appraisal,
     auth,
+    autonomy,
+    autonomy_preflight,
     backlog,
     blueprint,
     claude_accounts,
@@ -53,9 +56,15 @@ WRITE_DEPS = [Depends(auth.require_admin)]
 # --- 健康檢查 -----------------------------------------------------------
 @router.get("/api/health")
 async def health() -> JSONResponse:
+    git_sha = (await deploy.current_head(str(config.AUTOPILOT_DEPLOY_DIR))).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", git_sha):
+        git_sha = "unknown"
     return JSONResponse(
         {
             "ok": True,
+            # 公開部署身分契約：只回不可逆推出憑證的 commit SHA，供自治部署
+            # 在健康檢查同時證明「正在服務的版本就是剛合併的版本」。
+            "git_sha": git_sha,
             "has_api_key": config.has_api_key(),
             "offline": config.OFFLINE_MODE,
             "provider": config.PROVIDER,
@@ -74,6 +83,7 @@ async def metrics() -> JSONResponse:
     for m in sessions:
         s = m.get("status", "unknown")
         by_status[s] = by_status.get(s, 0) + 1
+    project_ids = [autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())]
     return JSONResponse(
         {
             "sessions": {
@@ -91,6 +101,10 @@ async def metrics() -> JSONResponse:
             "workspaces": {"count": workspace.count_workspaces()},
             "parallel": _aggregate_parallel(sessions),
             "scorecard": _aggregate_scorecard(sessions),
+            # 新契約為 additive；既有 sessions/history/parallel/scorecard 欄位完全保留。
+            "autonomy": await asyncio.to_thread(
+                autonomy.maturity_metrics, 28, project_ids=project_ids
+            ),
         }
     )
 
@@ -510,6 +524,14 @@ class ProjectTaskBody(BaseModel):
     detail: str = ""
     priority: int = 1  # P0 必須 ~ P2 加分（越小越優先；越界由 backlog 夾值）
     type: str = "improvement"  # feature | bug | improvement
+    risk: str = "medium"
+    eligible: bool = True
+    exclusion_reason: str = ""
+    rollback: dict = Field(default_factory=dict)
+    approval_verdicts: list[dict] = Field(default_factory=list)
+    diff_sha: str = ""
+    evidence_sha: str = ""
+    human_approved: bool = False
 
 
 @router.get("/api/projects", dependencies=[Depends(auth.require_auth)])
@@ -560,10 +582,15 @@ async def projects_detail(project_id: str) -> JSONResponse:
 
 
 @router.post("/api/projects/{project_id}/backlog", dependencies=[Depends(auth.require_auth)])
-async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONResponse:
+async def projects_add_task(
+    project_id: str, body: ProjectTaskBody, request: Request
+) -> JSONResponse:
     """手動往專案 backlog 排一個改良任務（持續改良迴圈會撿走）。"""
     if projects.get(project_id) is None:
         return JSONResponse({"error": "not found"}, status_code=404)
+    # 不可逆操作的人工批准本身是治理寫入；一般登入者只能建立待批准任務，不能自簽。
+    if body.human_approved:
+        auth.require_admin(request)
     # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
     task = backlog.add(
         body.title,
@@ -572,9 +599,24 @@ async def projects_add_task(project_id: str, body: ProjectTaskBody) -> JSONRespo
         state_dir=projects.state_dir(project_id),
         priority=body.priority,
         item_type=body.type,
+        risk=body.risk,
+        eligible=body.eligible,
+        exclusion_reason=body.exclusion_reason,
+        rollback=body.rollback,
+        approval_verdicts=body.approval_verdicts,
+        diff_sha=body.diff_sha,
+        evidence_sha=body.evidence_sha,
+        human_approved=body.human_approved,
     )
     if task is None:
         return JSONResponse({"error": "標題不可為空或與待辦重複"}, status_code=400)
+    interventions.record(
+        "project_manual_task",
+        "product_decision" if body.human_approved else "context_feeding",
+        project_id=project_id,
+        task_id=task["id"],
+        intervention_type="product_decision" if body.human_approved else "background",
+    )
     return JSONResponse({"task": task})
 
 
@@ -614,6 +656,12 @@ async def projects_set_publish_repo(project_id: str, body: PublishRepoBody) -> J
     meta = projects.set_publish_repo(project_id, body.repo)
     if meta is None:
         return JSONResponse({"error": "格式須為 owner/repo（或留空清除）"}, status_code=400)
+    interventions.record(
+        "project_publish_repo",
+        "background",
+        project_id=project_id,
+        intervention_type="background",
+    )
     state = await repo_base.workspace_state(projects.workspace_dir(project_id))
     warning = None
     if (body.repo or "").strip() and state in ("has_history", "local_files"):
@@ -637,6 +685,19 @@ async def projects_delete(project_id: str) -> JSONResponse:
         return JSONResponse({"error": "not found"}, status_code=404)
     if project_id in ws._active_projects:
         return JSONResponse({"error": "專案有進行中的討論，請先停止執行再刪除"}, status_code=409)
+    autonomy.emit_event(
+        "autonomy_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        outcome="project_deletion_approved",
+        payload={"target_project_id": project_id, "actor": "admin_api"},
+    )
+    interventions.record(
+        "project_delete",
+        "product_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision",
+        detail=project_id,
+    )
     ok = projects.delete(project_id)
     return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 
@@ -708,10 +769,23 @@ async def publish_now(session_id: str) -> JSONResponse:
 
 
 # --- 重新佈署重啟（受保護）--------------------------------------------
+class RedeployBody(BaseModel):
+    risk: str = "high-reversible"
+    diff_sha: str = ""
+    evidence_sha: str = ""
+    rollback: dict = Field(default_factory=dict)
+    approval_verdicts: list[dict] = Field(default_factory=list)
+    human_approved: bool = False
+    source_sha: str = "unknown"
+
+
 @router.post("/api/redeploy", dependencies=WRITE_DEPS)
-async def redeploy_now() -> JSONResponse:
+async def redeploy_now(body: RedeployBody | None = None) -> JSONResponse:
     """拉取主 repo 最新 main 並自我重啟，讓合併後的新程式碼生效。"""
-    result = await redeploy.redeploy()
+    if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+        result = await redeploy.redeploy(governance=body.model_dump() if body else None)
+    else:
+        result = await redeploy.redeploy()
     return JSONResponse(result)
 
 
@@ -858,6 +932,14 @@ class TaskBody(BaseModel):
     # _clamp_priority/_norm_type,routes 不重複驗證;舊 client 只送 title 行為不變。
     priority: int = 1
     type: str = "improvement"
+    risk: str = "medium"
+    eligible: bool = True
+    exclusion_reason: str = ""
+    rollback: dict = Field(default_factory=dict)
+    approval_verdicts: list[dict] = Field(default_factory=list)
+    diff_sha: str = ""
+    evidence_sha: str = ""
+    human_approved: bool = False
 
 
 def _todays_pr_used() -> int:
@@ -925,6 +1007,7 @@ async def autopilot_backlog() -> JSONResponse:
 async def autopilot_pause() -> JSONResponse:
     config.AUTOPILOT_PAUSE_FILE.write_text("paused via UI\n", encoding="utf-8")
     interventions.record("pause", "ops")
+    notify.send_bg("manual_paused", "Autopilot 已由管理者暫停")
     return JSONResponse({"ok": True, "paused": True})
 
 
@@ -964,10 +1047,24 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
         source="manual",
         priority=body.priority,
         item_type=body.type,
+        risk=body.risk,
+        eligible=body.eligible,
+        exclusion_reason=body.exclusion_reason,
+        rollback=body.rollback,
+        approval_verdicts=body.approval_verdicts,
+        diff_sha=body.diff_sha,
+        evidence_sha=body.evidence_sha,
+        human_approved=body.human_approved,
     )
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
-    interventions.record("manual_task", "context_feeding", task_id=task["id"])
+    interventions.record(
+        "manual_task",
+        "product_decision" if body.human_approved else "context_feeding",
+        task_id=task["id"],
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision" if body.human_approved else "background",
+    )
     return JSONResponse({"ok": True, "task": task})
 
 
@@ -1052,13 +1149,206 @@ async def autopilot_digest_read(name: str) -> JSONResponse:
 @router.get("/api/autopilot/audit-trend", dependencies=[Depends(auth.require_auth)])
 async def autopilot_audit_trend(days: int = 30) -> JSONResponse:
     """audit.jsonl 每日 outcome 分佈與完成率趨勢(近 N 天,UTC 日;口徑=insights.OK/FAIL)。"""
-    return JSONResponse(await asyncio.to_thread(insights.audit_trend, days))
+    trend = await asyncio.to_thread(insights.audit_trend, days)
+    # additive v1：eligible 分母/zero-touch/介入/rollback/告警/成本/四週升階判定。
+    trend["autonomy"] = await asyncio.to_thread(
+        autonomy.maturity_metrics,
+        days,
+        project_ids=[autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())],
+    )
+    return JSONResponse(trend)
+
+
+# --- 版本化自治政策與平台狀態 -----------------------------------------------
+@router.get("/api/autonomy/status", dependencies=[Depends(auth.require_auth)])
+async def autonomy_status() -> JSONResponse:
+    return JSONResponse(await asyncio.to_thread(autonomy.status_snapshot, projects.list_projects()))
+
+
+@router.get("/api/autonomy/preflight", dependencies=[Depends(auth.require_auth)])
+async def autonomy_preflight_status() -> JSONResponse:
+    """唯讀檢查 Stage 3/4 觀察窗啟動條件；不執行演練或外部寫入。"""
+    return JSONResponse(
+        await asyncio.to_thread(autonomy_preflight.collect, project_rows=projects.list_projects())
+    )
+
+
+@router.post("/api/autonomy/preflight/snapshot", dependencies=WRITE_DEPS)
+async def autonomy_preflight_snapshot() -> JSONResponse:
+    """保存帶內容 hash 的 preflight 證據；結果紅燈也保存，禁止用挑選綠報告掩蓋。"""
+    report = await asyncio.to_thread(
+        autonomy_preflight.write_report, project_rows=projects.list_projects()
+    )
+    return JSONResponse({"ok": True, "report": report})
+
+
+@router.post("/api/autonomy/rollback-drills", dependencies=WRITE_DEPS)
+async def autonomy_rollback_drills() -> JSONResponse:
+    """Rehearse exact-tree rollback locally for every managed current project."""
+    project_rows = projects.list_projects()
+    project_ids = [autonomy.CORE_PROJECT_ID, *(row["id"] for row in project_rows)]
+    preview = await asyncio.to_thread(autonomy_preflight.collect, project_rows=project_rows)
+    active_check = preview["stage3_observation"]["checks"]["all_tasks_quiescent"]
+    if not active_check["ok"]:
+        return JSONResponse(
+            {
+                "detail": "rollback drill 需要所有任務先安全收斂",
+                "active_by_project": active_check["evidence"]["active_by_project"],
+            },
+            status_code=409,
+        )
+    missing = [pid for pid in project_ids if not autonomy.policy_exists(pid)]
+    if missing:
+        return JSONResponse(
+            {"detail": "rollback drill 需要先建立所有自治政策", "project_ids": missing},
+            status_code=409,
+        )
+    workspace_by_project = {
+        autonomy.CORE_PROJECT_ID: config.AUTOPILOT_WORK_DIR,
+        **{row["id"]: projects.workspace_dir(row["id"]) for row in project_rows},
+    }
+    results = await asyncio.gather(
+        *(
+            asyncio.to_thread(autonomy.run_rollback_drill, pid, workspace_by_project[pid])
+            for pid in project_ids
+        )
+    )
+    return JSONResponse({"ok": all(row["ok"] for row in results), "results": results})
+
+
+class PlatformModeBody(BaseModel):
+    mode: str
+
+
+class StagePromotionBody(BaseModel):
+    stage: int
+
+
+@router.put("/api/autonomy/platform-mode", dependencies=WRITE_DEPS)
+async def autonomy_platform_mode(body: PlatformModeBody) -> JSONResponse:
+    project_ids = [autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())]
+    if body.mode == "canary":
+        preflight = await asyncio.to_thread(
+            autonomy_preflight.collect, project_rows=projects.list_projects()
+        )
+        if not preflight["stage3_observation"]["ready"]:
+            return JSONResponse(
+                {
+                    "detail": "Stage 3 preflight 尚未全綠",
+                    "blocking_reasons": preflight["stage3_observation"]["blocking_reasons"],
+                    "report_hash": preflight["report_hash"],
+                },
+                status_code=409,
+            )
+    try:
+        rollout = await asyncio.to_thread(
+            autonomy.set_platform_mode,
+            project_ids,
+            body.mode,
+            actor="admin_api",
+        )
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    interventions.record(
+        "autonomy_platform_mode",
+        "product_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision",
+        detail=body.mode,
+    )
+    return JSONResponse({"ok": True, "rollout": rollout})
+
+
+@router.post("/api/autonomy/promote", dependencies=WRITE_DEPS)
+async def autonomy_promote(body: StagePromotionBody) -> JSONResponse:
+    """以不可變成熟度快照正式升階；Stage 3/4 觀察窗不可重疊。"""
+    project_ids = [autonomy.CORE_PROJECT_ID, *(p["id"] for p in projects.list_projects())]
+    try:
+        result = await asyncio.to_thread(
+            autonomy.promote_stage,
+            project_ids,
+            body.stage,
+            actor="admin_api",
+        )
+    except autonomy.PolicyError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+    interventions.record(
+        "autonomy_stage_promotion",
+        "product_decision",
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision",
+        detail=f"stage={body.stage};report_hash={result.get('report_hash', 'unchanged')}",
+    )
+    return JSONResponse(result)
+
+
+@router.get("/api/autonomy/policies/{project_id}", dependencies=[Depends(auth.require_auth)])
+async def autonomy_policy_get(project_id: str) -> JSONResponse:
+    if project_id != autonomy.CORE_PROJECT_ID and projects.get(project_id) is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    try:
+        policy = await asyncio.to_thread(autonomy.load_policy, project_id)
+    except autonomy.PolicyError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=500)
+    return JSONResponse({"policy": policy})
+
+
+@router.put("/api/autonomy/policies/{project_id}", dependencies=WRITE_DEPS)
+async def autonomy_policy_update(project_id: str, request: Request) -> JSONResponse:
+    if project_id != autonomy.CORE_PROJECT_ID and projects.get(project_id) is None:
+        return JSONResponse({"detail": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+        policy = await asyncio.to_thread(autonomy.save_policy, project_id, body, actor="admin_api")
+    except (ValueError, json.JSONDecodeError) as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    return JSONResponse({"ok": True, "policy": policy})
+
+
+class BrakeClearBody(BaseModel):
+    project_id: str = "unknown"
+
+
+@router.post("/api/autonomy/brakes/{scope}/clear", dependencies=WRITE_DEPS)
+async def autonomy_brake_clear(scope: str, body: BrakeClearBody) -> JSONResponse:
+    if scope not in ("global", "project"):
+        return JSONResponse({"detail": "scope 須為 global 或 project"}, status_code=400)
+    if scope == "project" and body.project_id == "unknown":
+        return JSONResponse({"detail": "project scope 需要 project_id"}, status_code=400)
+    changed = await asyncio.to_thread(
+        autonomy.clear_brake, scope, project_id=body.project_id, actor="admin_api"
+    )
+    interventions.record(
+        "autonomy_brake_clear",
+        "ops_rescue",
+        project_id=body.project_id,
+        intervention_type="ops_rescue",
+    )
+    return JSONResponse({"ok": True, "changed": changed})
+
+
+@router.get("/api/autonomy/events", dependencies=[Depends(auth.require_auth)])
+async def autonomy_events(days: int = 30, include_legacy: bool = True) -> JSONResponse:
+    """版本化事件契約；legacy 投影不回寫原檔，缺欄顯式為 unknown。"""
+    rows = await asyncio.to_thread(autonomy.read_events, days)
+    if include_legacy:
+        rows += await asyncio.to_thread(autonomy.legacy_events, days)
+    rows.sort(key=lambda row: row.get("ts", 0), reverse=True)
+    return JSONResponse(
+        {"schema_version": autonomy.SCHEMA_VERSION, "events": rows[:5000], "total": len(rows)}
+    )
 
 
 @router.post("/api/notify/test", dependencies=WRITE_DEPS)
 async def notify_test() -> JSONResponse:
     """端到端驗證推播管道:同步發一則 test 事件,回報各 sink(webhook/telegram)送達狀況。"""
     return JSONResponse(await asyncio.to_thread(notify.send_test))
+
+
+@router.post("/api/notify/red-drills", dependencies=WRITE_DEPS)
+async def notify_red_drills() -> JSONResponse:
+    """安全演練全部紅色通知類型；只送合成告警，不觸發部署/rollback/煞車。"""
+    return JSONResponse(await asyncio.to_thread(notify.send_red_drills))
 
 
 @router.get("/api/autopilot/stage", dependencies=[Depends(auth.require_auth)])

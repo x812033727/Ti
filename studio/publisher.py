@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import logging
@@ -30,6 +31,7 @@ from .repo_ident import repo_key, repo_owner
 log = logging.getLogger("ti.publisher")
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
+_SHA_RE = re.compile(r"(?:merge sha=)?\b([0-9a-fA-F]{7,64})\b")
 
 # 發佈目標 repo 的 per-session 覆寫（長期專案可設定自己的 publish_repo）。
 # 用 contextvar 而非函式參數逐層傳遞：publish 之後的 CI 驗證／自我修復迴圈
@@ -116,6 +118,7 @@ class PublishResult:
     pr_number: int | None = None
     merged: bool = False
     outcome: MergeOutcome | None = None  # 合併結局（未嘗試合併時為 None）
+    merge_sha: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -129,7 +132,14 @@ class PublishResult:
             "merged": self.merged,
             # 以字串輸出（MergeOutcome 繼承 str），未嘗試合併為 None，不破壞既有鍵。
             "outcome": self.outcome.value if self.outcome else None,
+            "merge_sha": self.merge_sha,
         }
+
+
+def merge_sha_from_detail(detail: str) -> str | None:
+    """從 GitHub merge 成功回傳取 revision；infra bypass 訊息也可回收。"""
+    matches = _SHA_RE.findall(str(detail or ""))
+    return matches[-1].lower() if matches else None
 
 
 # --- 純邏輯（可單測，無 IO）-------------------------------------------
@@ -797,6 +807,179 @@ async def publish(
             reset_repo_override(token)
 
 
+async def rollback_merge(
+    cwd,
+    session_id: str,
+    *,
+    bad_merge_sha: str,
+    previous_sha: str,
+    repo: str | None = None,
+) -> PublishResult:
+    """以受 CI 保護的 revert PR 回復一次已合併但部署不健康的變更。
+
+    自動 rollback 只在遠端 base 仍精確等於 ``bad_merge_sha`` 時執行，避免覆蓋其他人
+    後續提交；revert 後的 tree 也必須逐位等於先前已由 health revision 證明健康的
+    ``previous_sha``。任一證據缺失都在 push 前 fail-closed。
+    """
+    try:
+        token = set_repo_override(repo) if repo else None
+    except ValueError as exc:
+        return PublishResult(False, str(exc), repo=repo)
+    try:
+        return await _rollback_merge_inner(
+            cwd,
+            session_id,
+            bad_merge_sha=bad_merge_sha,
+            previous_sha=previous_sha,
+        )
+    except ValueError as exc:
+        return PublishResult(False, str(exc), repo=current_repo())
+    finally:
+        if token is not None:
+            reset_repo_override(token)
+
+
+async def _rollback_merge_inner(
+    cwd,
+    session_id: str,
+    *,
+    bad_merge_sha: str,
+    previous_sha: str,
+) -> PublishResult:
+    repo = current_repo()
+    bad = str(bad_merge_sha or "").strip().lower()
+    previous = str(previous_sha or "").strip().lower()
+    sha_re = re.compile(r"[0-9a-f]{40,64}")
+    if not is_configured():
+        return PublishResult(False, "rollback publish 設定未完整", repo=repo)
+    if not sha_re.fullmatch(bad) or not sha_re.fullmatch(previous):
+        return PublishResult(False, "rollback revision 證據不完整", repo=repo)
+
+    base = config.PUBLISH_BASE
+    rollback_remote = "ti_rollback"
+    url = remote_url(repo)
+    auth_env = git_auth_env(config.GITHUB_TOKEN)
+
+    async def git(argv: list[str], label: str, *, env: dict[str, str] | None = None):
+        return await runner.run_command_exec(
+            cwd,
+            ["git", *argv],
+            timeout=120,
+            sandbox=False,
+            label=label,
+            env=env,
+        )
+
+    with contextlib.suppress(Exception):
+        await git(["remote", "remove", rollback_remote], "git rollback remote remove")
+    added = await git(
+        ["remote", "add", rollback_remote, url],
+        "git rollback remote add",
+    )
+    if not added.ok:
+        return PublishResult(False, "rollback 無法建立安全 remote", repo=repo)
+    fetched = await git(
+        ["fetch", "--no-tags", rollback_remote, base],
+        "git rollback fetch base",
+        env=auth_env,
+    )
+    if not fetched.ok:
+        return PublishResult(False, "rollback 無法讀取遠端 base", repo=repo)
+    remote_ref = f"refs/remotes/{rollback_remote}/{base}"
+    remote_head = await git(["rev-parse", remote_ref], "git rollback remote head")
+    if not remote_head.ok or remote_head.output.strip().lower() != bad:
+        return PublishResult(
+            False,
+            "rollback 已拒絕：遠端 base 已移動或無法證明仍是本次 merge",
+            repo=repo,
+        )
+    ancestor = await git(
+        ["merge-base", "--is-ancestor", previous, bad],
+        "git rollback ancestor proof",
+    )
+    if not ancestor.ok:
+        return PublishResult(
+            False, "rollback 已拒絕：先前健康 revision 不是本次 merge 祖先", repo=repo
+        )
+
+    branch = branch_name(f"{session_id}-rollback")
+    checked_out = await git(
+        ["checkout", "-B", branch, remote_ref],
+        "git rollback checkout",
+    )
+    if not checked_out.ok:
+        return PublishResult(False, "rollback 無法建立隔離分支", branch=branch, repo=repo)
+    parents = await git(["rev-list", "--parents", "-n", "1", bad], "git rollback parents")
+    if not parents.ok:
+        return PublishResult(False, "rollback 無法判定 merge parents", branch=branch, repo=repo)
+    parent_count = max(0, len(parents.output.split()) - 1)
+    if parent_count < 1:
+        return PublishResult(False, "rollback merge 沒有可回復的 parent", branch=branch, repo=repo)
+    revert_argv = ["revert", "--no-edit"]
+    if parent_count > 1:
+        revert_argv.extend(["-m", "1"])
+    revert_argv.append(bad)
+    reverted = await git(revert_argv, "git rollback revert")
+    if not reverted.ok:
+        return PublishResult(False, "rollback revert 產生衝突或失敗", branch=branch, repo=repo)
+    exact_tree = await git(["diff", "--quiet", previous, "HEAD"], "git rollback tree proof")
+    if not exact_tree.ok:
+        return PublishResult(
+            False,
+            "rollback 已拒絕：revert 後內容不等於先前健康 revision",
+            branch=branch,
+            repo=repo,
+        )
+
+    pushed = await _push(cwd, branch, url, env=auth_env)
+    if not pushed.ok:
+        return PublishResult(False, "rollback push 失敗", branch=branch, repo=repo)
+    payload = pr_payload(f"Rollback unhealthy merge {bad[:12]}", branch, base)
+    payload["title"] = f"Rollback unhealthy merge {bad[:12]}"
+    opened, info = await _open_pr(payload)
+    if not opened:
+        return PublishResult(
+            False,
+            "rollback PR 建立失敗：" + redact(info)[:200],
+            branch=branch,
+            repo=repo,
+            pushed=True,
+        )
+    result = PublishResult(
+        True,
+        "rollback PR 已建立",
+        branch=branch,
+        repo=repo,
+        pushed=True,
+        pr_url=info,
+        pr_number=parse_pr_number(info),
+    )
+    if result.pr_number is None:
+        result.ok = False
+        result.outcome = MergeOutcome.ERROR
+        result.detail = "rollback PR 編號無法解析"
+        return result
+    outcome, detail = await _merge_flow(
+        result.pr_number,
+        merge_payload(branch),
+        ci_timeout=config.PUBLISH_CI_TIMEOUT,
+        ci_interval=config.PUBLISH_CI_INTERVAL,
+        retries=config.PUBLISH_MERGE_RETRIES,
+        await_registration=True,
+        registration_grace=config.PUBLISH_CI_GRACE,
+    )
+    result.outcome = outcome
+    result.merged = outcome == MergeOutcome.MERGED
+    result.merge_sha = merge_sha_from_detail(detail) if result.merged else None
+    result.ok = result.merged and bool(result.merge_sha)
+    result.detail = (
+        "rollback PR 已通過 CI 並合併"
+        if result.ok
+        else "rollback PR 未能完成健康可驗證的合併：" + redact(detail)[:200]
+    )
+    return result
+
+
 async def _publish_inner(
     cwd, session_id: str, requirement: str, *, make_pr: bool, merge: bool
 ) -> PublishResult:
@@ -833,6 +1016,13 @@ async def _publish_inner(
             )
             if not init.ok:
                 return PublishResult(False, "首次發佈初始化失敗：" + redact(init.output), repo=repo)
+            head = await runner.run_command_exec(
+                cwd,
+                ["git", "rev-parse", "HEAD"],
+                timeout=30,
+                sandbox=False,
+                label="git head",
+            )
             return PublishResult(
                 True,
                 f"首次發佈：已初始化 {repo} 的 {config.PUBLISH_BASE}（成果已在主分支，無需 PR）",
@@ -840,6 +1030,7 @@ async def _publish_inner(
                 repo=repo,
                 pushed=True,
                 merged=True,
+                merge_sha=head.output.strip().lower() if head.ok else None,
             )
 
     push = await _push(cwd, branch, remote_url(repo), env=git_auth_env(config.GITHUB_TOKEN))
@@ -884,6 +1075,7 @@ async def _publish_inner(
     res.outcome = outcome
     if outcome == MergeOutcome.MERGED:
         res.merged = True
+        res.merge_sha = merge_sha_from_detail(minfo)
         res.detail = "已 push、建立 PR 並合併"
     else:
         label = _OUTCOME_LABEL.get(outcome, "未合併")

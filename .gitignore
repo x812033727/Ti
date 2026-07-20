@@ -70,6 +70,8 @@
 .zshrc
 *_hits*.txt
 /autopilot/
+/AUTOPILOT_PAUSED
+/DISPATCH_AUTO
 /body.md
 /pytest_full.log
 BASELINE_task*.md

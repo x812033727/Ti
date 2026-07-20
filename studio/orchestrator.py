@@ -68,6 +68,8 @@ from .flow import (
 from .roles import BY_KEY, ROSTER, Role
 
 Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
+PublishGuard = Callable[[str, dict], Awaitable[tuple[bool, str]]]
+PostPublishVerifier = Callable[[dict], Awaitable[tuple[bool, str]]]
 
 # 拆解 prompt 的議程格式與粒度守則（micro-rules，字面可 grep 驗證）。{keys}＝本場實際
 # 出席角色的 role_key 清單；prompt 的「2–5 個」只是建議不是防線——解析端有
@@ -194,6 +196,8 @@ class StudioSession:
         group: dict | None = None,
         time_budget_s: float | None = None,
         auto_publish: bool = True,
+        publish_guard: PublishGuard | None = None,
+        post_publish_verifier: PostPublishVerifier | None = None,
         workflow: dict | None = None,
     ):
         self.session_id = session_id
@@ -220,6 +224,11 @@ class StudioSession:
         # 是否由本 session 自行發佈：autopilot 顯式傳 False，改由其 wrapper 作為唯一發佈者
         # （等 CI→合併），避免同一份成果被 session 與 autopilot 各開一個 PR（重複 PR）。
         self._auto_publish = auto_publish
+        # 可選的最終外寫治理 hook：在初次 publish 與每次 CI 修正 repush 前，以當下實際
+        # diff/證據重新裁決。None 完全保留舊流程；shadow 可傳 hook 產生決策證據後拒絕外寫。
+        self._publish_guard = publish_guard
+        self._post_publish_verifier = post_publish_verifier
+        self._publish_result: dict | None = None
         # 目標 repo＝工作基底（owner/repo，可選）：呼叫端僅在 workspace 確實同步自
         # 該 repo（repo_base.ensure_base 的 based）時帶值——prompt 據此告知專家
         # 「既有程式碼就在工作目錄裡」，絕不對專家宣告不存在的基底。
@@ -1264,6 +1273,7 @@ class StudioSession:
             "core_changes": self._core_changes,
             "commit": self._last_commit,
             "vision": self._vision,
+            "publish_result": self._publish_result,
         }
 
     # --- 動態流程直譯器 ------------------------------------------------
@@ -3997,16 +4007,29 @@ class StudioSession:
     ) -> None:
         if not self.cwd or self._stop or not shippable:
             return
+        if not await self._publish_allowed("initial"):
+            return
         # 顯式關閉自動發佈時（如 autopilot：由其 wrapper 作為唯一發佈者，等 CI→合併），不自行發佈。
         if not self._auto_publish:
             return
         if not (config.PUBLISH_AUTO and publisher.is_configured()):
+            # 納管流程已呼叫 guard 代表 publish 是這次任務的必要閉環；
+            # 不可在設定缺失時靜默回傳、讓外層把本機完成當成已發佈。
+            if self._publish_guard is not None:
+                unavailable = publisher.PublishResult(
+                    False, "publish 設定未完整，納管任務 fail-closed"
+                ).to_dict()
+                self._publish_result = unavailable
+                await self.broadcast(events.publish_result(self.session_id, unavailable))
             return
         await self.broadcast(events.phase_change(self.session_id, "發佈", "推送成果到 GitHub"))
         result = await publisher.publish(
             self.cwd, self.session_id, self._requirement, merge=config.PUBLISH_MERGE
         )
-        await self.broadcast(events.publish_result(self.session_id, result.to_dict()))
+        self._publish_result = result.to_dict()
+        if result.merged:
+            await self._verify_published()
+        await self.broadcast(events.publish_result(self.session_id, self._publish_result))
         # 只有「有開 PR、開啟自動合併、且能追蹤 PR 編號」才進入 CI 驗證／自我修復迴圈。
         if not (result.pushed and config.PUBLISH_MERGE and result.pr_number is not None):
             return
@@ -4063,6 +4086,8 @@ class StudioSession:
                 self.broadcast,
             )
             await self._commit(self._main_ctx, f"修正 CI 失敗（第 {attempt} 輪）")
+            if not await self._publish_allowed(f"ci_repush_{attempt}"):
+                return
             rp = await publisher.repush(self.cwd, result.branch)
             if not rp.ok:
                 await self.broadcast(
@@ -4079,3 +4104,71 @@ class StudioSession:
                 events.phase_change(self.session_id, "CI 驗證", f"第 {attempt + 1}/{rounds} 輪")
             )
             outcome, detail = await publisher.verify_and_merge(result.pr_number, result.branch)
+            if self._publish_result is not None:
+                self._publish_result.update(
+                    {
+                        "outcome": outcome.value,
+                        "detail": detail,
+                        "merged": outcome == publisher.MergeOutcome.MERGED,
+                        "merge_sha": publisher.merge_sha_from_detail(detail)
+                        if outcome == publisher.MergeOutcome.MERGED
+                        else None,
+                    }
+                )
+                if outcome == publisher.MergeOutcome.MERGED:
+                    await self._verify_published()
+                    await self.broadcast(
+                        events.publish_result(self.session_id, self._publish_result)
+                    )
+
+    async def _verify_published(self) -> bool:
+        """合併後才可驗證部署；驗證器失效或紅燈均 fail-closed。"""
+        if self._post_publish_verifier is None:
+            return True
+        result = dict(self._publish_result or {})
+        try:
+            ok, detail = await self._post_publish_verifier(result)
+        except Exception as exc:  # noqa: BLE001 — 驗證器失效不得冒充健康部署
+            ok, detail = False, f"post-publish verifier unavailable:{type(exc).__name__}"
+            log.exception("部署後驗證器失敗，已 fail-closed")
+        if self._publish_result is None:
+            self._publish_result = result
+        self._publish_result["health_verified"] = bool(ok)
+        self._publish_result["health_detail"] = str(detail)[:500]
+        if not ok:
+            self._publish_result["ok"] = False
+            self._publish_result["detail"] = str(detail)[:500]
+        return bool(ok)
+
+    async def _publish_allowed(self, attempt: str) -> bool:
+        """以不含 log/秘密的客觀摘要呼叫治理 hook；hook 例外一律 fail-closed。"""
+        if self._publish_guard is None:
+            return True
+        demo = self._demo
+        evidence = {
+            "attempt": attempt,
+            "shippable": self._shippable,
+            "all_tasks_passed": self._all_ok,
+            "demo": {
+                "exit_code": demo.exit_code,
+                "timed_out": demo.timed_out,
+            }
+            if demo is not None
+            else None,
+            "tasks": [
+                {"title": str(task.get("title") or "")[:300], "status": task.get("status")}
+                for task in self._tasks
+            ][:100],
+            "commit": self._last_commit or "unknown",
+        }
+        try:
+            allowed, detail = await self._publish_guard(attempt, evidence)
+        except Exception as exc:  # noqa: BLE001 — 治理層失效不可放行外部寫入
+            allowed, detail = False, f"publish governance unavailable:{type(exc).__name__}"
+            log.exception("publish governance hook 失敗，已 fail-closed")
+        if allowed:
+            return True
+        blocked = publisher.PublishResult(False, str(detail)[:500]).to_dict()
+        self._publish_result = blocked
+        await self.broadcast(events.publish_result(self.session_id, blocked))
+        return False

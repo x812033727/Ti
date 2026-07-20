@@ -33,6 +33,13 @@
 | POST | `/api/autopilot/task/{task_id}/action` | admin（auth｜fail-safe loopback） | ✅ | 看板手動操作單一任務（retry/park/unpark/priority），改寫 backlog 狀態 |
 | POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
 | POST | `/api/notify/test` | admin（auth｜fail-safe loopback） | ✅ | 發送測試推播（webhook/Telegram）＝觸發對外網路呼叫且間接證實已設憑證，管理面操作 |
+| POST | `/api/notify/red-drills` | admin（auth｜fail-safe loopback） | ✅ | 安全送出全部紅色合成告警並記錄 delivery evidence；不執行真實部署或 rollback |
+| POST | `/api/autonomy/preflight/snapshot` | admin（auth｜fail-safe loopback） | ✅ | 保存帶內容 hash 的觀察窗 preflight 證據並寫 audit；紅燈快照也保留 |
+| POST | `/api/autonomy/rollback-drills` | admin（auth｜fail-safe loopback） | ✅ | 所有任務收斂後，在隔離 worktree 演練逐專案 exact-tree rollback；無 push、PR 或部署 |
+| PUT | `/api/autonomy/policies/{project_id}` | admin（auth｜fail-safe loopback） | ✅ | 原子更新版本化自治政策、風險與成本限制，並寫入 audit |
+| PUT | `/api/autonomy/platform-mode` | admin（auth｜fail-safe loopback） | ✅ | 以 preparing→committed manifest 同步切換所有現有專案的 shadow/canary/full 閘門 |
+| POST | `/api/autonomy/promote` | admin（auth｜fail-safe loopback） | ✅ | 成熟度全綠後保存內容定址快照並正式同步升階；禁止跳階或重疊觀察窗 |
+| POST | `/api/autonomy/brakes/{scope}/clear` | admin（auth｜fail-safe loopback） | ✅ | 顯式解除全域或單專案煞車，屬高敏感控制面操作且記錄營運救援介入 |
 | POST | `/api/schedules` | admin（auth｜fail-safe loopback） | ✅ | 建立排程＝向會自主執行 bash 的 autopilot 週期性注入任務，與 /api/autopilot/task 同級 |
 | PUT | `/api/schedules/{sched_id}` | admin（auth｜fail-safe loopback） | ✅ | 改排程內容/啟停（同 POST 寫入面） |
 | DELETE | `/api/schedules/{sched_id}` | admin（auth｜fail-safe loopback） | ✅ | 刪除排程條目 |
@@ -52,6 +59,10 @@
 | GET  | `/api/autopilot/backlog` | auth | ➖ | 讀取待辦清單 |
 | GET  | `/api/autopilot/activity` | auth | ➖ | 讀取任務動態視圖（backlog × history 記分卡/token 用量聚合） |
 | GET  | `/api/autopilot/audit-trend` | auth | ➖ | 唯讀：audit.jsonl 每日 outcome 分佈與完成率趨勢 |
+| GET  | `/api/autonomy/status` | auth | ➖ | 唯讀：各專案 stage/mode、煞車、預算與升降級 readiness；秘密只回 configured 狀態 |
+| GET  | `/api/autonomy/preflight` | auth | ➖ | 唯讀：來源、政策、shadow rollout、演練與觀察窗啟動條件；不回秘密或絕對 workspace 路徑 |
+| GET  | `/api/autonomy/events` | auth | ➖ | 唯讀：版本化自治事件與舊事件 unknown 投影 |
+| GET  | `/api/autonomy/policies/{project_id}` | auth | ➖ | 唯讀：版本化自治政策；schema 不接受秘密欄位 |
 | GET  | `/api/autopilot/trust` | auth | ➖ | 唯讀：信任指標（零人工介入合併率/介入分類/系統事件計數，第 3 階 A0） |
 | GET  | `/api/autopilot/stage` | auth | ➖ | 唯讀：升階儀表（八 canary 現值+第 3 階條件快照+階段判定） |
 | GET  | `/api/autopilot/attention` | auth | ➖ | 唯讀：例外收件匣（澄清待答/停放+原因/page 級事件，軌 F1） |

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import autopilot
+from studio import autonomy, autopilot, config
 
 _RESULT_OK = {
     "completed": True,
@@ -128,3 +128,44 @@ async def test_redeploy_failure_still_records_traceability(monkeypatch, tmp_path
     tid, status, kw = statuses[-1]
     assert (tid, status) == (3, "failed")
     assert kw["pr"] == 77 and "重佈失敗" in kw["deploy_msg"]
+
+
+@pytest.mark.asyncio
+async def test_managed_shadow_generates_local_evidence_without_merge_or_deploy(
+    monkeypatch, tmp_path
+):
+    """完整 core 路徑到客觀閘門後必在 merge 前停下，不只單測 policy evaluator。"""
+    statuses: list = []
+    _common_mocks(
+        monkeypatch,
+        tmp_path,
+        statuses,
+        merge_result=autopilot.MergeResult(True, "不應被呼叫"),
+    )
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir()
+    monkeypatch.setattr(config, "AUTOPILOT_DEPLOY_DIR", deploy_dir)
+    monkeypatch.setattr(config, "FAST_LANE", False)
+    autonomy.ensure_policy(autonomy.CORE_PROJECT_ID)
+
+    async def forbidden_merge(*args, **kwargs):
+        raise AssertionError("shadow 不得進入 commit/push/merge")
+
+    async def forbidden_deploy(*args, **kwargs):
+        raise AssertionError("shadow 不得部署")
+
+    monkeypatch.setattr(autopilot, "_commit_push_merge", forbidden_merge)
+    monkeypatch.setattr(autopilot.deploy, "redeploy", forbidden_deploy)
+    await autopilot.run_one_task(
+        {"id": 31, "title": "shadow 證據任務", "risk": "medium", "eligible": True}
+    )
+
+    parked = [row for row in statuses if row[1] == "parked"]
+    assert parked and "shadow 模式" in parked[-1][2]["note"]
+    phases = {
+        (event.get("payload") or {}).get("phase")
+        for event in autonomy.read_events(1)
+        if event.get("outcome") == "shadow_only"
+    }
+    assert {"planning", "change", "merge"} <= phases

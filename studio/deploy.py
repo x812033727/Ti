@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import time
 
-from . import config, notify, runner
+from . import autonomy, config, notify, runner
 
 
 def _lock_path():
@@ -161,7 +161,7 @@ async def blackbox_verify(base: str | None = None) -> tuple[bool, str]:
     return True, f"黑盒探針通過({len(_BLACKBOX_PROBES)} 條契約)"
 
 
-async def redeploy() -> tuple[bool, str]:
+async def redeploy(*, governance: dict | None = None) -> tuple[bool, str]:
     """把部署目錄拉到 origin/<branch>、重裝、重啟、健康檢查；失敗自動回滾。
 
     回傳 (ok, 訊息)。dryrun 模式只回報不實作。
@@ -172,6 +172,29 @@ async def redeploy() -> tuple[bool, str]:
 
     if config.AUTOPILOT_DRYRUN:
         return True, f"[dryrun] 會把 {deploy_dir} 重佈到 origin/{branch} 並重啟 {service}"
+
+    if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+        policy = autonomy.load_policy(autonomy.CORE_PROJECT_ID)
+        evidence = dict(governance or {})
+        evidence.setdefault("risk", "high-reversible" if policy["stage"] >= 3 else "medium")
+        decision = autonomy.evaluate_operation(
+            autonomy.CORE_PROJECT_ID,
+            "deploy",
+            evidence,
+            approvals=evidence.get("approval_verdicts") or [],
+            human_approved=bool(evidence.get("human_approved")),
+            run_id=str(evidence.get("run_id") or "unknown"),
+            task_id=evidence.get("task_id", "unknown"),
+            source_sha=str(evidence.get("source_sha") or "unknown"),
+        )
+        if not decision["external_write_allowed"]:
+            detail = (
+                "shadow 模式禁止實際部署"
+                if decision["allowed"]
+                else "部署前自治政策拒絕：" + ",".join(decision["reasons"])
+            )
+            notify.send_bg("policy_violation", detail, project_id=autonomy.CORE_PROJECT_ID)
+            return False, detail
 
     # 跨程序互斥：避免 autopilot / autodeploy timer / /api/redeploy 同時 reset+pip+restart 互撞。
     with _deploy_lock() as acquired:
@@ -204,9 +227,22 @@ async def redeploy() -> tuple[bool, str]:
         if not ok:
             rb_ok, rb_msg = await rollback(last_good)
             detail = f"重佈失敗（{msg}）→ 回滾{'成功' if rb_ok else '也失敗'}：{rb_msg}"
+            autonomy.emit_event(
+                "rollback_result",
+                project_id=autonomy.CORE_PROJECT_ID,
+                source_sha=last_good or "unknown",
+                outcome="success" if rb_ok else "failed",
+                severity="info" if rb_ok else "critical",
+                payload={"trigger": "deploy_verify_failed", "detail": rb_msg[-300:]},
+            )
             # page 級推播(B1):部署失敗+回滾必須到人——過去這條路徑是靜默的,人要開面板
             # 才會發現服務被回滾。推播失敗不影響回滾結果(send_bg 吞掉一切)。
             notify.send_bg("deploy_verify_failed", detail[:300], rollback_ok=rb_ok)
+            notify.send_bg(
+                "rollback_result",
+                f"部署 rollback {'成功' if rb_ok else '失敗'}",
+                rollback_ok=rb_ok,
+            )
             return False, detail
 
         return True, f"重佈成功：{last_good[:8]} → {new_head[:8]}"

@@ -28,12 +28,13 @@ class ExecSpy:
     def __init__(self):
         self.calls: list[dict] = []
         self.outputs: dict[str, tuple[int, str]] = {}  # argv[1] -> (exit_code, output)
+        self.label_outputs: dict[str, tuple[int, str]] = {}
 
     async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None, env=None):
         self.calls.append(
             {"cwd": cwd, "argv": list(argv), "sandbox": sandbox, "label": label, "env": env}
         )
-        code, out = self.outputs.get(argv[1], (0, ""))
+        code, out = self.label_outputs.get(label, self.outputs.get(argv[1], (0, "")))
         return runner.RunOutput(
             command=label or argv[0], exit_code=code, output=out, timed_out=False
         )
@@ -188,6 +189,69 @@ async def test_fetch_failure_is_nonfatal(spy, tmp_path):
     assert r.status == "remote_unavailable" and not r.fatal
 
 
+async def test_existing_workspace_scrubs_origin_userinfo_before_fetch(spy, tmp_path):
+    """歷史 workspace 的 origin 若殘留 userinfo，fetch 前必須改回乾淨 URL。"""
+    ws = tmp_path / "ws"
+    (ws / ".git").mkdir(parents=True)
+    (ws / "a.txt").write_text("x", encoding="utf-8")
+    spy.outputs["config"] = (
+        0,
+        f"remote.origin.url\nhttps://x-access-token:{TOKEN}@github.com/me/product\0",
+    )
+
+    r = await repo_base.ensure_base(ws, "me/product")
+
+    assert r.status == "up_to_date"
+    sanitizers = [c for c in spy.by_sub("config") if c["label"] == "git sanitize remote"]
+    assert len(sanitizers) == 1
+    assert sanitizers[0]["argv"] == [
+        "git",
+        "config",
+        "--replace-all",
+        "remote.origin.url",
+        "https://github.com/me/product",
+    ]
+    assert sanitizers[0]["label"] == "git sanitize remote"
+    assert TOKEN not in "".join(sanitizers[0]["argv"])
+    assert len(spy.by_sub("fetch")) == 1
+
+
+async def test_existing_workspace_remote_scrub_failure_is_fatal_and_redacted(spy, tmp_path):
+    ws = tmp_path / "ws"
+    (ws / ".git").mkdir(parents=True)
+    (ws / "a.txt").write_text("x", encoding="utf-8")
+    spy.outputs["config"] = (
+        0,
+        f"remote.origin.url\nhttps://x-access-token:{TOKEN}@github.com/me/product\0",
+    )
+    spy.label_outputs["git sanitize remote"] = (1, f"fatal: {TOKEN}")
+
+    r = await repo_base.ensure_base(ws, "me/product")
+
+    assert r.status == "error" and r.fatal
+    assert TOKEN not in r.detail
+    assert spy.by_sub("fetch") == []
+
+
+async def test_existing_workspace_conflicting_remote_urls_fail_closed(spy, tmp_path):
+    ws = tmp_path / "ws"
+    (ws / ".git").mkdir(parents=True)
+    (ws / "a.txt").write_text("x", encoding="utf-8")
+    spy.outputs["config"] = (
+        0,
+        "remote.origin.url\nhttps://github.com/me/product\0"
+        "remote.origin.url\n"
+        f"https://x-access-token:{TOKEN}@github.com/me/other\0",
+    )
+
+    r = await repo_base.ensure_base(ws, "me/product")
+
+    assert r.status == "error" and r.fatal
+    assert TOKEN not in r.detail
+    assert [c for c in spy.by_sub("config") if c["label"] == "git sanitize remote"] == []
+    assert spy.by_sub("fetch") == []
+
+
 # --- 真 git 整合（file:// 零網路）---------------------------------------
 
 
@@ -245,6 +309,21 @@ async def test_real_pristine_clone_then_up_to_date(remote, tmp_path):
 
     r2 = await repo_base.sync_workspace(ws, remote["url"], "main")
     assert r2.status == "up_to_date"
+
+
+@pytest.mark.realgit
+async def test_real_existing_origin_userinfo_is_scrubbed(remote, tmp_path):
+    ws = tmp_path / "ws"
+    await repo_base.sync_workspace(ws, remote["url"], "main")
+    dirty = remote["url"].replace("file://", "file://legacy:secret@", 1)
+    _git(ws, "remote", "set-url", "origin", dirty)
+    _git(ws, "remote", "add", "ti_publish", dirty)
+
+    r = await repo_base.sync_workspace(ws, remote["url"], "main")
+
+    assert r.status == "up_to_date"
+    assert _git(ws, "config", "--get", "remote.origin.url") == remote["url"]
+    assert _git(ws, "config", "--get", "remote.ti_publish.url") == remote["url"]
 
 
 @pytest.mark.realgit

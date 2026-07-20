@@ -93,7 +93,7 @@ def test_gate_failure_exhaustion_notifies(monkeypatch):
     autopilot._handle_gate_failure({**t, "attempts": 0}, "test", "第一次失敗")
     assert not sent, "中間重試（退回 pending）不通知"
     autopilot._handle_gate_failure({**t, "attempts": 1}, "test", "第二次失敗")
-    assert [s[0] for s in sent] == ["task_failed"]
+    assert [s[0] for s in sent] == ["task_failed", "ci_failed"]
     assert sent[0][2]["task_id"] == t["id"]
 
 

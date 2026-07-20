@@ -452,6 +452,8 @@ TI_ANTIGRAVITY_SANDBOX=0
 
 開發流程、分支與提交慣例見 [CONTRIBUTING.md](CONTRIBUTING.md)；
 模組與資料流的完整說明見 [ARCHITECTURE.md](ARCHITECTURE.md)。
+第 3／4 階的政策、煞車、演練與升階門檻見
+[自治治理操作指南](docs/guides/autonomy-governance.md)。
 
 ## 架構
 
@@ -471,6 +473,8 @@ studio/
   history.py       session 事件存檔/讀取（供歷史列表與重播）
   projects.py      專案（長期產品）：固定 workspace、專屬 backlog、session 足跡
   improver.py      專案持續改良迴圈：消化 backlog → 跑討論 → 回填 → 找問題
+  autonomy.py      版本化自治政策/事件、風險裁決、煞車與成熟度報告
+  project_health.py Stage 4 外部專案部署健康＋merge revision 黑盒驗證
   publisher.py     把 workspace 成果推成 GitHub 分支並開 PR（預設關閉）
   fake_experts.py  離線示範用的假專家（真的寫檔，供無金鑰試用/端到端驗證）
   routes.py        REST API 路由（health / 登入 / workspace / history / publish）

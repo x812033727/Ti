@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from studio import autopilot, config, digest
+from studio import autonomy, autopilot, config, digest
 
 
 @pytest.fixture(autouse=True)
@@ -89,3 +89,26 @@ async def test_scheduler_skips_when_exists(monkeypatch, tmp_path):
 async def test_scheduler_survives_failure(monkeypatch):
     monkeypatch.setattr(digest, "list_digests", lambda: (_ for _ in ()).throw(RuntimeError("x")))
     await _run_scheduler_once(monkeypatch)  # 不拋（CancelledError 除外）即通過
+
+
+@pytest.mark.asyncio
+async def test_scheduler_retries_weekly_improvements_even_when_digest_exists(monkeypatch):
+    digest.save_digest()
+    autonomy.ensure_policy(autonomy.CORE_PROJECT_ID)
+    calls = []
+    monkeypatch.setattr(autonomy, "write_weekly_improvements", lambda: calls.append(True) or {})
+    await _run_scheduler_once(monkeypatch)
+    assert calls, "週改善排程不得綁死在當日 digest 首次建立的分支"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_retries_maturity_report_even_when_digest_exists(monkeypatch):
+    digest.save_digest()
+    calls = []
+    monkeypatch.setattr(
+        autonomy,
+        "write_maturity_report",
+        lambda **kwargs: calls.append(kwargs["project_ids"]) or {},
+    )
+    await _run_scheduler_once(monkeypatch)
+    assert calls and autonomy.CORE_PROJECT_ID in calls[0]

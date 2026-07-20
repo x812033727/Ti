@@ -55,6 +55,13 @@ def test_branch_name_empty_fallback():
     assert publisher.branch_name("@#%/. ") == "ti-studio/session"
 
 
+def test_merge_sha_extraction_handles_plain_and_infra_bypass_details():
+    sha = "a" * 40
+    assert publisher.merge_sha_from_detail(sha) == sha
+    assert publisher.merge_sha_from_detail(f"CI bypass; merge sha={sha}") == sha
+    assert publisher.merge_sha_from_detail("merged without revision") is None
+
+
 def test_remote_url_and_redact(monkeypatch):
     token = "secrettoken"
     monkeypatch.setattr(config, "GITHUB_TOKEN", token)
@@ -271,6 +278,77 @@ def test_merge_payload():
     p = publisher.merge_payload("ti-studio/x")
     assert p["merge_method"] == "merge"
     assert "ti-studio/x" in p["commit_title"]
+
+
+@pytest.mark.asyncio
+async def test_rollback_merge_requires_unchanged_remote_and_exact_previous_tree(
+    monkeypatch, tmp_path, _configured
+):
+    previous, bad, restored = "a" * 40, "b" * 40, "c" * 40
+    calls = []
+
+    async def command(_cwd, argv, **kwargs):
+        calls.append(list(argv))
+        if argv[1:3] == ["rev-parse", "refs/remotes/ti_rollback/main"]:
+            output = bad + "\n"
+        elif argv[1:4] == ["rev-list", "--parents", "-n"]:
+            output = f"{bad} {previous} {'d' * 40}\n"
+        else:
+            output = "ok"
+        return runner.RunOutput(kwargs.get("label", "git"), 0, output, False)
+
+    async def push(*args, **kwargs):
+        return runner.RunOutput("push", 0, "ok", False)
+
+    async def open_pr(_payload):
+        return True, "https://github.com/o/r/pull/77"
+
+    async def merge_flow(*args, **kwargs):
+        return publisher.MergeOutcome.MERGED, f"merge sha={restored}"
+
+    monkeypatch.setattr(runner, "run_command_exec", command)
+    monkeypatch.setattr(publisher, "_push", push)
+    monkeypatch.setattr(publisher, "_open_pr", open_pr)
+    monkeypatch.setattr(publisher, "_merge_flow", merge_flow)
+
+    result = await publisher.rollback_merge(
+        tmp_path,
+        "session1",
+        bad_merge_sha=bad,
+        previous_sha=previous,
+    )
+
+    assert result.ok is True and result.merged is True
+    assert result.pr_number == 77 and result.merge_sha == restored
+    assert ["git", "revert", "--no-edit", "-m", "1", bad] in calls
+    assert ["git", "diff", "--quiet", previous, "HEAD"] in calls
+
+
+@pytest.mark.asyncio
+async def test_rollback_merge_refuses_when_remote_base_has_moved(
+    monkeypatch, tmp_path, _configured
+):
+    pushed = False
+
+    async def command(_cwd, argv, **kwargs):
+        output = "c" * 40 if argv[1] == "rev-parse" else "ok"
+        return runner.RunOutput(kwargs.get("label", "git"), 0, output, False)
+
+    async def push(*args, **kwargs):
+        nonlocal pushed
+        pushed = True
+        return runner.RunOutput("push", 0, "ok", False)
+
+    monkeypatch.setattr(runner, "run_command_exec", command)
+    monkeypatch.setattr(publisher, "_push", push)
+    result = await publisher.rollback_merge(
+        tmp_path,
+        "session1",
+        bad_merge_sha="b" * 40,
+        previous_sha="a" * 40,
+    )
+    assert result.ok is False and "遠端 base 已移動" in result.detail
+    assert pushed is False
 
 
 # --- publish 流程（mock IO）-------------------------------------------
