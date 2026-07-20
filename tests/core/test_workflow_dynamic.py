@@ -112,6 +112,15 @@ def test_parse_next_step_recruit_and_provider():
     assert flow.parse_next_step("招募:  | 名 | 專長")["recruit"] is None
 
 
+def test_parse_next_step_multiline_instruction_heredoc():
+    instruction = "1. 保留第一步\n2. 保留第二步\n```bash\necho ok\n```"
+    out = flow.parse_next_step(
+        f"下一步: engineer\n指示: <<TI_INSTRUCTION\n{instruction}\nTI_INSTRUCTION\nprovider: Codex"
+    )
+    assert out["instruction"] == instruction
+    assert out["provider"] == "codex"
+
+
 # --- _stage_dynamic 防呆 ------------------------------------------------------
 
 
@@ -145,6 +154,19 @@ async def test_dynamic_invalid_role_falls_back():
     await s._stage_dynamic({"type": "dynamic", "budget": 5, "fallback": "engineer"})
     # 非法角色 → fallback engineer 實際發言。
     assert experts["engineer"].calls == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_multiline_instruction_reaches_executor_verbatim():
+    instruction = "1. 先改解析器\n2. 再補測試\n```python\nprint('ok')\n```"
+    s, experts, _ = _session(
+        [
+            f"下一步: engineer\n指示: <<TI_INSTRUCTION\n{instruction}\nTI_INSTRUCTION",
+            "下一步: 結束",
+        ]
+    )
+    await s._stage_dynamic({"type": "dynamic", "budget": 5})
+    assert experts["engineer"].prompts[0] == instruction
 
 
 @pytest.mark.asyncio

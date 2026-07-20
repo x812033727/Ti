@@ -53,6 +53,18 @@ def test_prompt_assembly(monkeypatch):
         assert marker in p, marker
 
 
+def test_fast_lane_prompt_carries_multiline_requirement_as_json_payload(monkeypatch):
+    from studio import adr, lessons
+
+    monkeypatch.setattr(autopilot, "north_star_context", lambda: "")
+    monkeypatch.setattr(lessons, "context", lambda requirement="", **k: "")
+    monkeypatch.setattr(adr, "context", lambda cwd, limit=None: "")
+    requirement = "修派工截斷\n1. 保留清單\n```bash\necho ok\n```"
+    p = autopilot._fast_lane_prompt(requirement, "/tmp/clone")
+    payload = p.split("```json\n", 1)[1].split("\n```", 1)[0]
+    assert json.loads(payload) == {"requirement": requirement}
+
+
 # --- 快車道執行 ----------------------------------------------------------------
 
 
