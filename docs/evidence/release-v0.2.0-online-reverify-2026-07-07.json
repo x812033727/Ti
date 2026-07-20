@@ -28,7 +28,15 @@
     }
   },
   "actual_evidence_summary": {
-    "body_sha256": "d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4",
+    "body_sha256": "fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4",
+    "body_sha256_rule": {
+      "algorithm": "sha256",
+      "source": "gh_release_view.body",
+      "bytes": "UTF-8 encoding of the parsed JSON string exactly",
+      "newline": "no added newline",
+      "normalization": "none",
+      "format": "lowercase 64-character hexadecimal"
+    },
     "body_match": true,
     "tag_match": true,
     "url_match": true
@@ -47,8 +55,27 @@
   },
   "comparisons": {
     "body_sha256": {
-      "actual": "d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4",
-      "expected_from_evidence": "d1779cbbd4cf2a5b8ef403d466a2883b3d4fc1324257abb4d10455a52d0991f4",
+      "actual": "fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4",
+      "expected_from_evidence": "fd9b16d23eccafbd38d0d641585a025e2f77d98c8bce155b6d5a40648bf80dd4",
+      "matches_evidence": true
+    },
+    "body_sha256_rule": {
+      "actual": {
+        "algorithm": "sha256",
+        "source": "gh_release_view.body",
+        "bytes": "UTF-8 encoding of the parsed JSON string exactly",
+        "newline": "no added newline",
+        "normalization": "none",
+        "format": "lowercase 64-character hexadecimal"
+      },
+      "expected_from_evidence": {
+        "algorithm": "sha256",
+        "source": "gh_release_view.body",
+        "bytes": "UTF-8 encoding of the parsed JSON string exactly",
+        "newline": "no added newline",
+        "normalization": "none",
+        "format": "lowercase 64-character hexadecimal"
+      },
       "matches_evidence": true
     },
     "body_match": {
