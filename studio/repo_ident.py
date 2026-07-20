@@ -47,3 +47,14 @@ def repo_owner(value: str) -> str:
     """
     key = repo_key(value)
     return key.split("/")[1] if key else ""
+
+
+def repo_slug(value: str) -> str:
+    """回傳 GitHub REST 使用的 ``owner/repo``；無法驗證 identity 則回空字串。
+
+    ``repo_key`` 刻意保留 ``github.com/`` 來區分 host identity，不能直接插進
+    ``/repos/{owner}/{repo}`` API path；所有 REST caller 應使用本 helper。
+    """
+    key = repo_key(value)
+    prefix = "github.com/"
+    return key[len(prefix) :] if key.startswith(prefix) else ""
