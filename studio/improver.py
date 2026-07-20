@@ -29,6 +29,7 @@ from . import (
     projects,
     repo_base,
     runner,
+    workflow,
     workspace,
 )
 from .events import StudioEvent
@@ -223,6 +224,14 @@ class ProjectImprover:
         return summary
 
     # --- 單輪：跑一場討論 -------------------------------------------------
+    @staticmethod
+    def _task_workflow(task: dict) -> dict | None:
+        """改良場流程選擇(軌 I3):快車道旗標開=原生快車道(單 engineer 直做,
+        demo/驗收/publish 照常);lane=full 或旗標關=None=完整多專家流程。"""
+        if not config.FAST_LANE or (task.get("lane") or "") == "full":
+            return None
+        return workflow.implement_fast_workflow()
+
     async def _run_task(self, task: dict, sdir) -> bool:
         pid = self.project["id"]
         sid = "pj" + uuid.uuid4().hex[:10]
@@ -268,6 +277,7 @@ class ProjectImprover:
             intervention_queue=self.queue,
             critics=critics,
             workspace_id=projects.workspace_id(pid),
+            workflow=self._task_workflow(task),
             clarify=False,  # 自主迴圈不反問：任務來自 backlog／找問題，沒有人在等著回答
             publish_repo=self.project.get("publish_repo") or None,
             base_repo=base_repo if base_sync.based else None,

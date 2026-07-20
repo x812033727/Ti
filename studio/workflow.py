@@ -100,6 +100,9 @@ DEFAULT_WORKFLOW_NAME = "預設流程"  # 等價現有寫死骨架
 DYNAMIC_FIRST_NAME = "動態優先"  # dynamic-first：PM 運行時溝通/分派/招募為主（互動預設）
 FAST_TRACK_NAME = "快速模式"  # fast-track：動態討論分派→實作→QA 單審，砍三審與任務級 critic 求速度
 QUICK_ANSWER_NAME = "快答"  # 單一資深專家直接回答/完成小事(Kimi 化 PR13,home 快答模式)
+IMPLEMENT_FAST_NAME = (
+    "原生快車道"  # 軌 I3:單 engineer 直做(decompose+implement+demo+publish),零多專家儀式
+)
 # 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
 RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME, QUICK_ANSWER_NAME)
 
@@ -442,12 +445,38 @@ def quick_answer_workflow() -> dict:
     }
 
 
+def implement_fast_workflow() -> dict:
+    """原生快車道(軌 I3,改良場用):單 engineer 直做,零多專家儀式。
+
+    使用者裁示「執行大多用原生方式加速」:decompose(單 PM 一手拆題)→ engineer 原生
+    agent 迴圈實作 → demo 實跑驗證 → wrap_up(PM 驗收)→ publish(等 CI 綠才合併)。
+    review/gate/討論全省;客觀閘門與 publish 等引擎不變式照常。不存檔、保留名。
+    """
+    return {
+        "name": IMPLEMENT_FAST_NAME,
+        "description": "原生快車道:單 engineer 直做(demo/驗收/publish 照常;需多視角請用預設流程)",
+        "stages": [
+            {"type": "decompose"},
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                ],
+            },
+            {"type": "demo"},
+            {"type": "wrap_up"},
+            {"type": "publish"},
+        ],
+    }
+
+
 # 保留名 → 內建定義工廠（get_workflow／list_workflows 用）。
 _BUILTIN_WORKFLOWS = {
     DEFAULT_WORKFLOW_NAME: default_workflow,
     DYNAMIC_FIRST_NAME: dynamic_first_workflow,
     FAST_TRACK_NAME: fast_track_workflow,
     QUICK_ANSWER_NAME: quick_answer_workflow,
+    IMPLEMENT_FAST_NAME: implement_fast_workflow,
 }
 
 
