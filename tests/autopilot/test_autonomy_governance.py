@@ -793,6 +793,51 @@ def test_cost_brake_and_report_hash_chain():
         autonomy.write_maturity_report(project_ids=["p1"])
 
 
+def test_project_brake_clear_starts_a_new_consecutive_failure_period():
+    """根因修復後 clear 必須可恢復；但新期間再連敗三次仍要重新煞車。"""
+    autonomy.ensure_policy("p1")
+    autonomy.save_policy("p1", {"mode": "canary", "limits": {"consecutive_failures": 3}})
+
+    for idx in range(3):
+        autonomy.record_run_outcome(
+            f"old-failure-{idx}",
+            "p1",
+            idx,
+            "failed",
+            eligible=True,
+            cost_usd=0.0,
+        )
+
+    first = autonomy.admission_decision("p1")
+    assert first["allowed"] is False
+    assert first["reasons"] == ["project_brake:consecutive_failures:3"]
+    assert autonomy.clear_brake("project", project_id="p1", actor="root_cause_remediated")
+    assert autonomy.admission_decision("p1")["allowed"] is True
+
+    for idx in range(2):
+        autonomy.record_run_outcome(
+            f"new-failure-{idx}",
+            "p1",
+            idx + 10,
+            "failed",
+            eligible=True,
+            cost_usd=0.0,
+        )
+        assert autonomy.admission_decision("p1")["allowed"] is True
+
+    autonomy.record_run_outcome(
+        "new-failure-2",
+        "p1",
+        12,
+        "failed",
+        eligible=True,
+        cost_usd=0.0,
+    )
+    retripped = autonomy.admission_decision("p1")
+    assert retripped["allowed"] is False
+    assert retripped["reasons"] == ["project_brake:consecutive_failures:3"]
+
+
 def test_maturity_report_seals_previous_complete_utc_day_only():
     now = time.time()
     current = time.gmtime(now)
