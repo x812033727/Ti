@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -10,6 +11,29 @@ from scripts import reverify_release_body
 ROOT = Path(__file__).resolve().parents[2]
 ONLINE = ROOT / "docs" / "evidence" / "release-v0.2.0-online-body.json"
 STRUCTURE = ROOT / "docs" / "evidence" / "release-v0.2.0-body-structure-verdict.json"
+
+
+def test_body_sha256_is_exact_body_bytes_without_added_newline():
+    online = json.loads(ONLINE.read_text(encoding="utf-8"))
+    body = online["gh_release_view"]["body"]
+
+    assert online["body_sha256"] == hashlib.sha256(body.encode("utf-8")).hexdigest()
+    assert online["body_sha256"] != hashlib.sha256(f"{body}\n".encode()).hexdigest()
+    assert online["body_sha256_rule"] == reverify_release_body.BODY_SHA256_RULE
+    assert body.endswith("\n") is False
+
+
+def test_body_sha256_helper_does_not_add_cli_print_newline():
+    body = "release body"
+
+    assert (
+        reverify_release_body.body_sha256_for_release_body(body)
+        == hashlib.sha256(body.encode("utf-8")).hexdigest()
+    )
+    assert (
+        reverify_release_body.body_sha256_for_release_body(body)
+        != hashlib.sha256(f"{body}\n".encode()).hexdigest()
+    )
 
 
 def test_body_structure_checker_can_run_without_pythonpath():
@@ -73,6 +97,7 @@ def test_reverify_payload_preserves_raw_outputs_and_matches_evidence():
     assert payload["raw_commands"]["rest_release_by_tag"]["stdout"] == rest_stdout
     assert payload["raw_commands"]["body_structure_checker"]["stdout"] == checker_stdout
     assert payload["comparisons"]["body_sha256"]["matches_evidence"] is True
+    assert payload["comparisons"]["body_sha256_rule"]["matches_evidence"] is True
     assert payload["comparisons"]["structure"]["checks_match_evidence"] is True
 
 

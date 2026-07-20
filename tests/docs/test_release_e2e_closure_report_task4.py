@@ -94,7 +94,7 @@ def test_task4_all_match_keeps_closure_and_empty_gap():
     assert "結論降級" not in conclusion
 
 
-def test_task4_does_not_touch_evidence_or_marker_lines():
+def test_task4_keeps_marker_lines_and_allows_only_named_evidence_changes():
     report = _read_report()
 
     expected_markers = [
@@ -108,13 +108,24 @@ def test_task4_does_not_touch_evidence_or_marker_lines():
     for marker in expected_markers:
         assert marker in report
 
-    token_rotation_evidence = "docs/evidence/token-rotation-2026-07-10.md"
+    allowed_evidence_changes = {
+        "docs/evidence/token-rotation-2026-07-10.md",
+        "docs/evidence/release-v0.2.0-online-body.json",
+        "docs/evidence/release-v0.2.0-online-reverify-2026-07-07.json",
+    }
     diff = subprocess.run(
-        ["git", "diff", "--quiet", "--", "docs/evidence", f":!{token_rotation_evidence}"],
+        [
+            "git",
+            "diff",
+            "--quiet",
+            "--",
+            "docs/evidence",
+            *[f":!{path}" for path in sorted(allowed_evidence_changes)],
+        ],
         cwd=ROOT,
         check=False,
     )
-    assert diff.returncode == 0, "docs/evidence 不得有非 token 輪替 evidence 的 git diff"
+    assert diff.returncode == 0, "docs/evidence 不得有非具名允許 evidence 的 git diff"
 
     status = subprocess.run(
         ["git", "status", "--porcelain", "--", "docs/evidence"],
@@ -123,14 +134,13 @@ def test_task4_does_not_touch_evidence_or_marker_lines():
         capture_output=True,
         check=True,
     )
-    allowed_new_evidence = {
-        f"?? {token_rotation_evidence}",
-        f"A  {token_rotation_evidence}",
-        f"AA {token_rotation_evidence}",
-        f"M  {token_rotation_evidence}",
+    allowed_statuses = {
+        f"{status_code} {path}"
+        for path in allowed_evidence_changes
+        for status_code in ("??", "A ", "AA", "M ", " M", "MM")
     }
-    unexpected = [line for line in status.stdout.splitlines() if line not in allowed_new_evidence]
-    assert unexpected == [], "docs/evidence 不得有非 token 輪替 evidence 變更：\n" + "\n".join(
+    unexpected = [line for line in status.stdout.splitlines() if line not in allowed_statuses]
+    assert unexpected == [], "docs/evidence 不得有非具名允許 evidence 變更：\n" + "\n".join(
         unexpected
     )
 
