@@ -135,3 +135,34 @@ $ timeout 60 bash scripts/verify_token_rotation.sh --report
 > **本輪明確界線**：步驟 1（發新）與步驟 3（撤舊）待**人工**於 GitHub UI 完成；
 > 步驟 2b 需 `$GH_PAT` 在場才能實跑，AI 不代持明文。AI 本輪只代勞 `--scan`／`--report`
 > 唯讀掃描與報表，並回填上方貼證欄位。
+
+## 2026-07-20 生產洩漏面掃描補記
+
+本輪依 `docs/token-rotation-runbook.md` 的「殘留 token 掃描」實跑生產工作目錄
+`/opt/ti-autopilot-work`。
+
+掃描範圍：
+
+- `history/`：200 個 `*.jsonl`、200 個 `*.json`；以整個 `history/` 目錄掃描。
+- `workspaces/`：159 個既有 session workspace；以整個 `workspaces/` 目錄掃描。
+- 已下載 zip：0 個；repo 內未找到 `*.zip`。
+
+實跑輸出：
+
+```bash
+$ timeout 60 bash scripts/verify_token_rotation.sh --scan history workspaces
+[scan] gitleaks not found; using grep fallback
+[scan] grep fallback 未發現殘留 token（掃描: history）
+[scan] grep fallback 未發現殘留 token（掃描: workspaces）
+```
+
+```bash
+$ timeout 60 find . -path './.git' -prune -o -path './.venv' -prune -o -path './node_modules' -prune -o -type f -name '*.zip' -print | wc -l
+0
+```
+
+結論：
+
+- 未發現 `ghp_` / `github_pat_` / `gho_` / `ghs_` / `ghr_` 形態的 GitHub token 殘留。
+- 無命中，無需清理檔案。
+- 本機未安裝 `gitleaks`，本輪依 runbook 使用 grep fallback；掃描輸出不含 token 明文。

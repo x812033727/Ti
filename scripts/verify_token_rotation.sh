@@ -11,12 +11,23 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOKEN_RE='gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}'
+TMP_DIRS=()
+SCAN_TMP_DIR=""
+ZIP_SCAN_SOURCE=""
+
+cleanup_tmp_dirs() {
+  local dir
+  for dir in "${TMP_DIRS[@]}"; do
+    [ -n "$dir" ] && [ -d "$dir" ] && rm -rf -- "$dir"
+  done
+}
+trap cleanup_tmp_dirs EXIT
 
 usage() {
   cat <<'EOF'
 用法: bash scripts/verify_token_rotation.sh <--verify | --scan [目錄...] | --report>
   --verify   驗證新 GH_PAT 是否生效；首選 GH_TOKEN="$GH_PAT" gh auth status
-  --scan     殘留 token 掃描；gitleaks --no-git 優先，無法安全遮蔽時退 grep fallback
+  --scan     殘留 token 掃描；涵蓋 history/workspaces/zip，gitleaks --no-git 優先
   --report   輸出人工/AI 分界狀態表（恆 exit 0）
 EOF
 }
@@ -98,7 +109,14 @@ default_scan_targets() {
   if [ -d "${ROOT_DIR}/history" ]; then
     printf '%s\n' "${ROOT_DIR}/history"
   fi
-  printf '%s\n' "$ROOT_DIR"
+  if [ -d "${ROOT_DIR}/workspaces" ]; then
+    printf '%s\n' "${ROOT_DIR}/workspaces"
+  fi
+  find "$ROOT_DIR" \
+    -path "${ROOT_DIR}/.git" -prune -o \
+    -path "${ROOT_DIR}/.venv" -prune -o \
+    -path "${ROOT_DIR}/node_modules" -prune -o \
+    -type f -name '*.zip' -print 2>/dev/null
 }
 
 gitleaks_can_redact() {
@@ -143,10 +161,49 @@ scan_with_grep() {
   return 2
 }
 
+is_zip_file() {
+  local target="$1"
+  [ -f "$target" ] && [[ "$target" == *.zip ]]
+}
+
+make_scan_tmp_dir() {
+  mkdir -p "${ROOT_DIR}/.tmp"
+  SCAN_TMP_DIR="$(mktemp -d "${ROOT_DIR}/.tmp/token-scan.XXXXXX")" || return 1
+  TMP_DIRS+=("$SCAN_TMP_DIR")
+}
+
+prepare_zip_source() {
+  local zip_path="$1"
+  local tmp
+
+  if ! command -v unzip >/dev/null 2>&1; then
+    echo "[scan] zip 掃描需要 unzip，無法掃描: $zip_path" >&2
+    return 3
+  fi
+
+  if unzip -Z1 "$zip_path" 2>/dev/null | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    echo "[scan] zip 內含不安全路徑，拒絕解壓掃描: $zip_path" >&2
+    return 3
+  fi
+
+  if ! make_scan_tmp_dir; then
+    echo "[scan] 無法建立 zip 掃描暫存目錄: $zip_path" >&2
+    return 3
+  fi
+  tmp="$SCAN_TMP_DIR"
+
+  if ! unzip -qq "$zip_path" -d "$tmp" >/dev/null 2>&1; then
+    echo "[scan] zip 解壓失敗，無法掃描: $zip_path" >&2
+    return 3
+  fi
+
+  ZIP_SCAN_SOURCE="$tmp"
+}
+
 cmd_scan() {
   local input_targets=("$@")
   local targets=()
-  local target result failures=0 scanned=0
+  local target source label result failures=0 scanned=0 use_gitleaks=0
 
   if [ "${#input_targets[@]}" -eq 0 ]; then
     mapfile -t input_targets < <(default_scan_targets)
@@ -166,33 +223,47 @@ cmd_scan() {
   fi
 
   if gitleaks_can_redact; then
-    for target in "${targets[@]}"; do
-      scanned=1
-      if scan_with_gitleaks "$target"; then
-        echo "[scan] gitleaks 未發現殘留 token（掃描: $target）"
-      else
-        echo "[scan] gitleaks 命中疑似殘留 token: $target（輸出已遮蔽）" >&2
-        failures=1
-      fi
-    done
+    use_gitleaks=1
   else
     if command -v gitleaks >/dev/null 2>&1; then
       echo "[scan] gitleaks 無可確認的 --redact 支援，改用 grep fallback 避免明文輸出"
     else
       echo "[scan] gitleaks not found; using grep fallback"
     fi
-    for target in "${targets[@]}"; do
-      scanned=1
-      result=0
-      scan_with_grep "$target" || result=$?
-      if [ "$result" -eq 0 ]; then
-        echo "[scan] grep fallback 未發現殘留 token（掃描: $target）"
+  fi
+
+  for target in "${targets[@]}"; do
+    source="$target"
+    label="$target"
+    if is_zip_file "$target"; then
+      label="$target（zip 內容）"
+      if ! prepare_zip_source "$target"; then
+        failures=1
+        continue
+      fi
+      source="$ZIP_SCAN_SOURCE"
+    fi
+
+    scanned=1
+    if [ "$use_gitleaks" -eq 1 ]; then
+      if scan_with_gitleaks "$source"; then
+        echo "[scan] gitleaks 未發現殘留 token（掃描: $label）"
       else
-        echo "[scan] grep fallback 命中疑似殘留 token: $target" >&2
+        echo "[scan] gitleaks 命中疑似殘留 token: $label（輸出已遮蔽）" >&2
         failures=1
       fi
-    done
-  fi
+      continue
+    fi
+
+    result=0
+    scan_with_grep "$source" || result=$?
+    if [ "$result" -eq 0 ]; then
+      echo "[scan] grep fallback 未發現殘留 token（掃描: $label）"
+    else
+      echo "[scan] grep fallback 命中疑似殘留 token: $label" >&2
+      failures=1
+    fi
+  done
 
   if [ "$scanned" -eq 0 ]; then
     echo "[scan] 無可掃描目標"

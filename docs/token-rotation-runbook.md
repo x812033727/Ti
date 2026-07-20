@@ -74,25 +74,28 @@ Generate new token`，**沿用 `CLAUDE.md` 既定的 `GH_PAT` 四項規格，一
 
 ## 殘留 token 掃描
 
-撤舊完成後（或懷疑外洩時），掃兩處殘留明文——**`history/*.jsonl`**（session 事件逐行存檔，
-token 可能混在工具輸出／commit log 等任意欄位，要全欄掃）與 **session workspace**（每個 session
-的沙箱工作目錄，可能有 untracked 殘留檔）。
+撤舊完成後（或懷疑外洩時），掃三類殘留明文——**`history/*.jsonl`**（session 事件逐行存檔，
+token 可能混在工具輸出／commit log 等任意欄位，要全欄掃）、**session workspace**（每個 session
+的沙箱工作目錄，可能有 untracked 殘留檔），以及**已下載 workspace zip**（zip 內檔案也要解開後掃）。
 
 **主指令（成熟工具，掃檔案系統含 untracked）**：
 
 ```bash
 gitleaks detect --no-git --source history/
 gitleaks detect --no-git --source <session-workspace-dir>
+bash scripts/verify_token_rotation.sh --scan history/ workspaces/ <downloaded-workspace.zip>
 ```
 
 `--no-git` 掃檔案系統而非 git 物件，涵蓋未追蹤（untracked）檔——正是 workspace／history 殘留場景；
-`gitleaks` 內建 GitHub token 規則，可直接命中。
+`gitleaks` 內建 GitHub token 規則，可直接命中。zip 請走 `scripts/verify_token_rotation.sh --scan`，
+腳本會先檢查 zip 內路徑、解到 repo 內 `.tmp/token-scan.*` 暫存目錄掃描，結束自動清掉。
 
 **零依賴 fallback（無 `gitleaks` 時，純 `grep`）**，涵蓋所有 GitHub token 前綴
 `ghp_`（classic）、`github_pat_`（fine-grained）、`gho_`／`ghs_`／`ghr_`（OAuth／server／refresh）：
 
 ```bash
 grep -rnE 'gh[posur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}' history/ <session-workspace-dir>
+bash scripts/verify_token_rotation.sh --scan <downloaded-workspace.zip>
 ```
 
 > ⚠️ pre-commit／`--all-files` 只掃 **git 追蹤檔**，會漏掉 workspace／history 的 untracked 殘留；
