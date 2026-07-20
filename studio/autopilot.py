@@ -2431,6 +2431,81 @@ def _clarify_requirement_section(task: dict) -> str:
     return out
 
 
+# --- 原生快車道(軌 I):執行面回歸 Claude/Codex 原生 agent 迴圈 -----------------
+# 完整多專家管線 30-60 LLM 回合只有 ~1/4 在寫碼(merged 中位數 50.7 分);快車道=
+# 單 engineer 一場原生 agent 迴圈(Read/Write/Bash/acceptEdits,codex 依額度自動混用)
+# 直落既有客觀閘門尾巴(lint/collect/test/merge)。Ti 的價值收斂為 prompt 組裝+派發決策。
+_FAST_ESCALATE_RE = re.compile(r"需完整管線[::]\s*(.+)")
+
+
+def _fast_lane_route(task: dict) -> bool:
+    """派發決策:預設快車道;例外走完整管線。
+
+    full 的三個入口:①TI_FAST_LANE 關 ②task.lane=="full"(人工指定/降級護欄/
+    快車道自我升級)③attempts≥2=快車道已敗兩次,交多專家管線收拾。最後一層分類
+    是 engineer 的自我判斷(prompt 內建 sentinel「需完整管線:」)——比事前分類器
+    更原生:讀過碼的人最知道要不要多視角。
+    """
+    if not config.FAST_LANE:
+        return False
+    if (task.get("lane") or "") == "full":
+        return False
+    if int(task.get("attempts") or 0) >= 2:
+        return False
+    return True
+
+
+def _fast_lane_prompt(requirement: str, clone: str) -> str:
+    """快車道 prompt 組裝(Ti 的核心價值):北極星/教訓/ADR 脈絡+客觀自查指令。"""
+    from . import adr, lessons
+
+    head = "".join(
+        p
+        for p in (
+            north_star_context(),
+            lessons.context(requirement=requirement),
+            adr.context(Path(clone)),
+        )
+        if p
+    )
+    return (
+        head
+        + "你是資深工程師,請獨立完成以下任務(工作目錄即 repo 根,直接改檔):\n"
+        + requirement
+        + "\n\n要求:\n"
+        "- 小步實作;完成後自行執行 `ruff check .`、`ruff format .` 與相關 pytest,修到綠再收尾。\n"
+        "- 不要 git push/開 PR(系統會接手 lint/測試閘門與合併)。\n"
+        "- 若你判斷此任務需要跨子系統大改、高風險遷移或多視角評審,不要動手,"
+        "只輸出一行 `需完整管線: <一句原因>`。"
+    )
+
+
+async def _run_fast_lane(task: dict, clone: str, sid: str, requirement: str, broadcast) -> dict:
+    """快車道執行:單 engineer 原生 agent 迴圈一場到底,回 session-result 形狀 dict。
+
+    completed=True 只是「工程師收工」——真正把關交後續客觀閘門(lint/collect/test/
+    merge,與完整管線同一套)。sentinel「需完整管線:」→ fast_escalate(呼叫端標
+    lane=full 退回重排,不燒 attempts)。逾時走 wait_for → 外層既有 TimeoutError
+    處置;例外冒泡走外層既有 failed 處置。
+    """
+    from .providers import make_expert
+    from .roles import BY_KEY
+
+    ex = make_expert(BY_KEY["engineer"], sid, Path(clone))
+    try:
+        text = await asyncio.wait_for(
+            ex.speak(_fast_lane_prompt(requirement, clone), broadcast),
+            timeout=config.AUTOPILOT_TASK_TIMEOUT or None,
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            await ex.stop()
+    m = _FAST_ESCALATE_RE.search(text or "")
+    if m:
+        return {"completed": False, "fast_escalate": m.group(1).strip()[:200]}
+    return {"completed": True}
+
+
 async def run_one_task(task: dict) -> None:
     t0 = time.time()  # 供 audit.jsonl 的 duration_s（整個任務含討論/閘門/合併）
     sid = f"ap{uuid.uuid4().hex[:10]}"
@@ -2557,19 +2632,26 @@ async def run_one_task(task: dict) -> None:
         with contextlib.suppress(Exception):
             backlog.annotate(task["id"], f"[workflow] {wf['name']}：{wf_reason}")
 
-    session = StudioSession(
-        sid,
-        broadcast,
-        cwd=Path(clone),
-        repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
-        workflow=wf,
-        # 軟性時間預算＝硬 timeout：session 會在其 SESSION_SOFT_DEADLINE_FRAC 比例處主動收斂、
-        # 優雅出貨已完成成果，避免撞 wait_for 硬砍把整場(含已完成任務)全丟成 timeout failed。
-        time_budget_s=config.AUTOPILOT_TASK_TIMEOUT or None,
-        # session 不自行發佈：autopilot 作為唯一發佈者（_commit_push_merge 等 CI→合併），
-        # 否則同一份成果會被 session（ti-studio/<sid>）與 autopilot（autopilot/task-N）各開一個 PR。
-        auto_publish=False,
-    )
+    use_fast = _fast_lane_route(task)
+    session = None
+    if use_fast:
+        log.info("任務 #%s 走原生快車道(單 engineer 原生 agent 迴圈)", task["id"])
+        with contextlib.suppress(Exception):
+            backlog.annotate(task["id"], "[lane] fast:原生快車道")
+    else:
+        session = StudioSession(
+            sid,
+            broadcast,
+            cwd=Path(clone),
+            repo_url=f"https://github.com/{config.AUTOPILOT_REPO}",
+            workflow=wf,
+            # 軟性時間預算＝硬 timeout：session 會在其 SESSION_SOFT_DEADLINE_FRAC 比例處主動收斂、
+            # 優雅出貨已完成成果，避免撞 wait_for 硬砍把整場(含已完成任務)全丟成 timeout failed。
+            time_budget_s=config.AUTOPILOT_TASK_TIMEOUT or None,
+            # session 不自行發佈：autopilot 作為唯一發佈者（_commit_push_merge 等 CI→合併），
+            # 否則同一份成果會被 session（ti-studio/<sid>）與 autopilot（autopilot/task-N）各開一個 PR。
+            auto_publish=False,
+        )
     # 任務中心跳：討論可長達數小時，status.json 若只在揀起時寫一次，外部監控會把
     # 長任務誤判成死鎖。背景任務每分鐘刷新 updated_at＋last_activity_at，涵蓋整個
     # 任務生命週期（討論、閘門、合併、重佈），於本函式收尾時取消。
@@ -2594,13 +2676,29 @@ async def run_one_task(task: dict) -> None:
             # supervisor 疊「硬牆時鐘（→ TimeoutError → parked）」與「活動停滯（→
             # AutopilotTaskStalled → failed 重試）」兩道兜底，讓執行中死鎖就地自癒，
             # 不再依賴外部監控/人工重啟（issue #286）。硬牆逾時訊息沿用既有格式。
-            result = await _run_session_supervised(session, requirement, sid)
+            if use_fast:
+                result = await _run_fast_lane(task, clone, sid, requirement, broadcast)
+            else:
+                result = await _run_session_supervised(session, requirement, sid)
         finally:
             # 優雅停機路徑不 finish_session：收尾由停機收斂的 mark_interrupted 處理
             # （error＋停機註記）；這裡照跑會把 meta 先推成 incomplete，蓋掉中斷標記。
             if not _shutdown_requested:
                 history.finish_session(sid)
                 clear_turn_status()
+
+        # 快車道自我升級:engineer 判定需多視角 → 標 lane=full 退回重排(升級不是
+        # 任務的錯,不燒 attempts——鏡射每日預算退回的寫法)。
+        if result.get("fast_escalate"):
+            backlog.set_status(
+                task["id"],
+                "pending",
+                lane="full",
+                attempts=int(task.get("attempts") or 0),
+                note=f"[快車道升級] {result['fast_escalate']}",
+            )
+            log.info("任務 #%s 快車道自我升級完整管線:%s", task["id"], result["fast_escalate"])
+            return
 
         # 回饋：討論發現的後續任務寫回 backlog（優先含 priority/type 的結構化版本）。
         # 進場前套與 _evaluate_self 相同的品質防線（近期完成去重 + 相似度/子系統廣度
@@ -2692,6 +2790,7 @@ async def run_one_task(task: dict) -> None:
                     "ts": time.time(),
                     "task_id": task.get("id"),
                     "source": str(task.get("source") or ""),
+                    "lane": "fast" if use_fast else "full",  # 快車道效能對比用(軌 I)
                     "pr": getattr(merge_res, "pr_number", None),
                     "branch": getattr(merge_res, "branch", ""),
                     "head_sha": head_sha.strip() if rc_sha == 0 else "",

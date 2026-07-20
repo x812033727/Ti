@@ -54,6 +54,7 @@
 .pc-cache-qa/
 .profile
 .pytest_cache/
+.qa_artifacts/
 .qa-tmp/
 .qa-tmp-nopath/
 .tmp/
