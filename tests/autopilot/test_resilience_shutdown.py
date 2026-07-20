@@ -552,6 +552,35 @@ def test_write_status_workers_defaults_none_for_non_task_states(state_dir):
     assert status["workers"] is None
 
 
+@pytest.mark.asyncio
+async def test_main_replaces_stale_status_with_starting_before_long_startup_work(
+    state_dir, monkeypatch
+):
+    (state_dir / "status.json").parent.mkdir(parents=True, exist_ok=True)
+    (state_dir / "status.json").write_text(
+        json.dumps({"state": "stopped", "updated_at": 1}), encoding="utf-8"
+    )
+
+    async def current_head(_repo_dir):
+        status = _read_status(state_dir)
+        assert status["state"] == "starting"
+        assert status["updated_at"] > 1
+        return "a" * 40
+
+    async def assert_starting(_startup_sig):
+        status = _read_status(state_dir)
+        assert status["state"] == "starting"
+        assert status["running_commit"] == "a" * 12
+        assert status["updated_at"] > 1
+
+    monkeypatch.setattr(autopilot.deploy, "current_head", current_head)
+    monkeypatch.setattr(autopilot, "_main_loop", assert_starting)
+    monkeypatch.setattr(autopilot, "_install_signal_handlers", lambda: None)
+    monkeypatch.setattr(autopilot, "_sd_notify", lambda _message: None)
+
+    await autopilot.main()
+
+
 def test_status_helpers_roundtrip(state_dir):
     """_read_status 讀回 _write_status 寫入的欄位；檔案缺失/壞 JSON 回空 dict。"""
     assert autopilot._read_status() == {}

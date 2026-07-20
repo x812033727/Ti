@@ -233,6 +233,9 @@ async def test_stage4_records_healthy_deployed_only_after_revision_probe(
         health_calls.append((contract, expected))
         return True, "health_and_revision_verified"
 
+    async def base_head(_repo, _base):
+        return source_sha
+
     class MergedSession:
         def __init__(self, sid, broadcast, **kwargs):
             self.guard = kwargs["publish_guard"]
@@ -271,13 +274,18 @@ async def test_stage4_records_healthy_deployed_only_after_revision_probe(
     monkeypatch.setattr(runner, "run_command_exec", command)
     monkeypatch.setattr(improver.autonomy_review, "review", review)
     monkeypatch.setattr(improver.project_health, "verify", health)
+    monkeypatch.setattr(improver.publisher, "base_head_sha", base_head)
     monkeypatch.setattr(improver, "StudioSession", MergedSession)
 
     completed = await improver.ProjectImprover(project, _noop)._run_task(task, sdir)
 
     assert completed is True
     assert backlog.list_tasks(state_dir=sdir)[0]["status"] == "done"
-    assert [expected for _contract, expected in health_calls] == [source_sha, merge_sha]
+    assert [expected for _contract, expected in health_calls] == [
+        source_sha,
+        source_sha,
+        merge_sha,
+    ]
     terminal = [
         event
         for event in autonomy.read_events(1)
@@ -350,6 +358,9 @@ async def test_unhealthy_external_deploy_executes_and_verifies_exact_rollback(
             return False, "deployment_health_timeout:unhealthy_response"
         return True, "health_and_revision_verified"
 
+    async def base_head(_repo, _base):
+        return source_sha
+
     rollback_calls = []
 
     async def rollback(_cwd, session_id, **kwargs):
@@ -400,13 +411,14 @@ async def test_unhealthy_external_deploy_executes_and_verifies_exact_rollback(
     monkeypatch.setattr(runner, "run_command_exec", command)
     monkeypatch.setattr(improver.autonomy_review, "review", review)
     monkeypatch.setattr(improver.project_health, "verify", health)
+    monkeypatch.setattr(improver.publisher, "base_head_sha", base_head)
     monkeypatch.setattr(improver.publisher, "rollback_merge", rollback)
     monkeypatch.setattr(improver, "StudioSession", UnhealthySession)
 
     completed = await improver.ProjectImprover(project, _noop)._run_task(task, sdir)
 
     assert completed is False
-    assert health_revisions == [source_sha, bad_sha, rollback_sha]
+    assert health_revisions == [source_sha, source_sha, bad_sha, rollback_sha]
     assert rollback_calls[0][1]["bad_merge_sha"] == bad_sha
     assert rollback_calls[0][1]["previous_sha"] == source_sha
     rollback_events = [

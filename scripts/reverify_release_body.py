@@ -28,6 +28,14 @@ DEFAULT_REPO = "x812033727/Ti"
 DEFAULT_TAG = "v0.2.0"
 ONLINE_EVIDENCE = ROOT / "docs" / "evidence" / "release-v0.2.0-online-body.json"
 STRUCTURE_EVIDENCE = ROOT / "docs" / "evidence" / "release-v0.2.0-body-structure-verdict.json"
+BODY_SHA256_RULE = {
+    "algorithm": "sha256",
+    "source": "gh_release_view.body",
+    "bytes": "UTF-8 encoding of the parsed JSON string exactly",
+    "newline": "no added newline",
+    "normalization": "none",
+    "format": "lowercase 64-character hexadecimal",
+}
 
 
 def command_text(argv: list[str]) -> str:
@@ -60,8 +68,8 @@ def parse_stdout_json(result: dict[str, Any], label: str) -> dict[str, Any]:
     return json.loads(result["stdout"])
 
 
-def body_sha256_for_gh_cli_body(body: str) -> str:
-    return hashlib.sha256(f"{body}\n".encode()).hexdigest()
+def body_sha256_for_release_body(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def build_checks(evidence: dict[str, Any], version: str) -> dict[str, Any]:
@@ -109,7 +117,8 @@ def build_payload(
         == body_check.normalize(rest_payload["body"]),
         "tag_match": gh_payload["tagName"] == rest_payload["tag_name"] == tag,
         "url_match": gh_payload["url"] == rest_payload["html_url"],
-        "body_sha256": body_sha256_for_gh_cli_body(gh_payload["body"]),
+        "body_sha256": body_sha256_for_release_body(gh_payload["body"]),
+        "body_sha256_rule": BODY_SHA256_RULE,
         "gh_release_view": gh_payload,
         "rest_release_by_tag_subset": rest_payload,
     }
@@ -128,6 +137,12 @@ def build_payload(
             "actual": actual_evidence["body_sha256"],
             "expected_from_evidence": online_evidence["body_sha256"],
             "matches_evidence": actual_evidence["body_sha256"] == online_evidence["body_sha256"],
+        },
+        "body_sha256_rule": {
+            "actual": actual_evidence["body_sha256_rule"],
+            "expected_from_evidence": online_evidence.get("body_sha256_rule"),
+            "matches_evidence": actual_evidence["body_sha256_rule"]
+            == online_evidence.get("body_sha256_rule"),
         },
         "body_match": {
             "actual": actual_evidence["body_match"],
@@ -182,6 +197,7 @@ def build_payload(
         },
         "actual_evidence_summary": {
             "body_sha256": actual_evidence["body_sha256"],
+            "body_sha256_rule": actual_evidence["body_sha256_rule"],
             "body_match": actual_evidence["body_match"],
             "tag_match": actual_evidence["tag_match"],
             "url_match": actual_evidence["url_match"],

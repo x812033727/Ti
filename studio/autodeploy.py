@@ -19,30 +19,40 @@ import json
 import sys
 import time
 
-from . import config, deploy, history
+from . import autonomy, config, deploy, history, notify
 
 
 def _deferred_path():
     return config.AUTOPILOT_STATE_DIR / "autodeploy-deferred.json"
 
 
-def _note_deferred(remote: str) -> None:
-    """累計「有討論延後」觀測檔（換了目標 commit 重計；壞檔視同不存在；寫失敗不擋部署輪）。"""
+def _note_deferred(remote: str, *, reason: str = "busy_sessions") -> bool:
+    """累計同一 remote+延後原因，回傳是否為這組身分的第一次。"""
     path = _deferred_path()
-    data = {"first_deferred_at": time.time(), "deferrals": 0, "remote": remote}
+    data = {
+        "first_deferred_at": time.time(),
+        "deferrals": 0,
+        "remote": remote,
+        "reason": reason,
+    }
     try:
         prev = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(prev, dict) and prev.get("remote") == remote:
+        previous_reason = (
+            str(prev.get("reason") or "busy_sessions") if isinstance(prev, dict) else ""
+        )
+        if isinstance(prev, dict) and prev.get("remote") == remote and previous_reason == reason:
             data = prev
     except (OSError, ValueError):
         pass
     data["deferrals"] = int(data.get("deferrals", 0)) + 1
     data["remote"] = remote
+    data["reason"] = reason
     try:
         config.AUTOPILOT_STATE_DIR.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
+    return data["deferrals"] == 1
 
 
 def _clear_deferred() -> None:
@@ -83,6 +93,38 @@ async def run_once() -> int:
     if running:
         _note_deferred(remote)
         print(f"[autodeploy] 有 {len(running)} 場進行中討論，延後到下一輪")
+        return 0
+
+    # 納管後的 deploy 是 high-reversible：必須綁定 run、exact merge SHA、dry-run/
+    # backup/rollback 證據與雙 provider verdict。timer 天生沒有這些證據，不得
+    # 每兩分鐘呼叫 deploy.redeploy() 製造一筆假的高風險「操作」。對同一 SHA
+    # 只在首次留 audit+外部通知，之後保留 deferred 計數供看板觀測。
+    if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+        reason = "governance_evidence_required"
+        first = _note_deferred(remote, reason=reason)
+        if first:
+            try:
+                autonomy.emit_event(
+                    "policy_violation",
+                    project_id=autonomy.CORE_PROJECT_ID,
+                    source_sha=local or "unknown",
+                    outcome="autodeploy_governance_deferred",
+                    severity="warning",
+                    payload={"remote_source_sha": remote, "reason": reason},
+                )
+            except Exception as exc:  # fail-closed：audit 無法落檔不能當成正常延後
+                print(f"[autodeploy] 治理延後 audit 寫入失敗：{type(exc).__name__}")
+                return 1
+            notify.send_bg(
+                "policy_violation",
+                "autodeploy 偵測到未綁定治理證據的 main drift，已 fail-closed 延後",
+                project_id=autonomy.CORE_PROJECT_ID,
+                remote_sha=remote[:12],
+            )
+        print(
+            f"[autodeploy] 偵測到 {local[:8]} → {remote[:8]}，"
+            "但納管 deploy 需 exact SHA 與審查證據，已延後"
+        )
         return 0
 
     print(f"[autodeploy] 偵測到新 commit {local[:8]} → {remote[:8]}，開始重佈…")

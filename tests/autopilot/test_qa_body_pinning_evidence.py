@@ -5,7 +5,8 @@
   - `docs/evidence/release-v0.2.0-body-structure-verdict.json`
 
 核心不變式：
-  1. 線上 body 證據須為 `body_match=true`，且 `body_sha256` 具固定長度。
+  1. 線上 body 證據須為 `body_match=true`，且 `body_sha256` 是 `gh_release_view.body`
+     的 exact UTF-8 SHA-256（不補 CLI/JQ 輸出換行）。
   2. verdict 須明示 `PASS`，並回指同一份 source_evidence / checker_script。
   3. handoff 的 body 列必須已翻 ✅，且同列同時帶到 evidence / verdict / script / 守護測試路徑。
 
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -97,6 +99,24 @@ def check_body_evidence(obj: dict, verdict_obj: dict) -> list[str]:
         problems.append("gh/rest body 缺失")
     elif _normalize(gh_body) != _normalize(rest_body):
         problems.append("gh/rest body 正規化後不相等")
+    else:
+        exact_sha256 = hashlib.sha256(gh_body.encode("utf-8")).hexdigest()
+        cli_newline_sha256 = hashlib.sha256(f"{gh_body}\n".encode()).hexdigest()
+        if body_sha256 != exact_sha256:
+            problems.append("body_sha256 非 gh_release_view.body exact UTF-8 SHA-256")
+        if body_sha256 == cli_newline_sha256:
+            problems.append("body_sha256 仍使用 CLI 輸出換行算法")
+
+    expected_rule = {
+        "algorithm": "sha256",
+        "source": "gh_release_view.body",
+        "bytes": "UTF-8 encoding of the parsed JSON string exactly",
+        "newline": "no added newline",
+        "normalization": "none",
+        "format": "lowercase 64-character hexadecimal",
+    }
+    if obj.get("body_sha256_rule") != expected_rule:
+        problems.append("body_sha256_rule 未落字 exact hash 規則")
 
     first_h2 = _first_top_h2(_normalize(gh_body))
     if first_h2 != "## ⚠️ Breaking Changes":

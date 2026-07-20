@@ -21,14 +21,17 @@ import contextvars
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
 from . import config, git_cred, runner
-from .repo_ident import repo_key, repo_owner
+from .repo_ident import repo_key, repo_owner, repo_slug
 
 log = logging.getLogger("ti.publisher")
+
+PreWriteGuard = Callable[[], Awaitable[tuple[bool, str]]]
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
 _SHA_RE = re.compile(r"(?:merge sha=)?\b([0-9a-fA-F]{7,64})\b")
@@ -545,6 +548,38 @@ async def _get_pr_status(
     return data
 
 
+async def base_head_sha(repo: str | None = None, base: str | None = None) -> str:
+    """Read the exact remote base revision without mutating a local tracking ref.
+
+    An empty string means the identity could not be proven; autonomous callers must
+    treat it as fail-closed rather than substituting a local SHA.
+    """
+    import httpx
+
+    target = repo_slug(repo or current_repo())
+    branch = str(base or config.PUBLISH_BASE).strip()
+    if not target or not branch:
+        return ""
+    try:
+        assert_repo_allowed(target)
+    except ValueError:
+        return ""
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
+            response = await client.get(
+                f"https://api.github.com/repos/{target}/branches/{branch}", headers=_headers()
+            )
+    except httpx.HTTPError:
+        return ""
+    if response.status_code != 200:
+        return ""
+    try:
+        sha = str(((response.json() or {}).get("commit") or {}).get("sha") or "").lower()
+    except (TypeError, ValueError):
+        return ""
+    return sha if re.fullmatch(r"[0-9a-f]{40,64}", sha) else ""
+
+
 async def _fetch_ci(head_sha: str) -> tuple[list, dict] | None:
     """抓 head sha 的 check-runs（翻頁）與 legacy combined status。失敗回 None。"""
     import httpx
@@ -685,6 +720,7 @@ async def _merge_flow(
     retries: int,
     await_registration: bool = False,
     registration_grace: int | None = None,
+    pre_merge_guard: PreWriteGuard | None = None,
     sleep=asyncio.sleep,
 ) -> tuple[MergeOutcome, str]:
     """合併協調器：每輪「查狀態 → 等 CI → 合併」，可重試錯誤則 update-branch 後重試。
@@ -727,6 +763,18 @@ async def _merge_flow(
         if ci_state == "error":
             return MergeOutcome.ERROR, ci_detail
 
+        # 納管自治流程必須在真正 merge 的最後一刻重驗 remote base 與 deployed revision。
+        # guard 失效、拒絕或丟例外一律 fail-closed；且不得落入 behind 自動 update-branch，
+        # 因為 update 後的組合部署已不是先前雙 AI 核可的同一份來源基線。
+        if pre_merge_guard is not None:
+            try:
+                allowed, guard_detail = await pre_merge_guard()
+            except Exception as exc:  # noqa: BLE001 — 治理 hook 失效不得放行合併
+                allowed, guard_detail = False, f"guard_unavailable:{type(exc).__name__}"
+                log.exception("pre-merge governance guard 失效，已 fail-closed")
+            if not allowed:
+                return MergeOutcome.BLOCKED, "governance_guard_blocked:" + str(guard_detail)[:500]
+
         # CI pass / 無 CI / infra_fail（CI 秒掛＝基礎設施/帳務、非程式碼失敗）→ 嘗試合併。
         # infra_fail 不早退，照常走合併；若分支其實受保護，_merge_pr 會回 BLOCKED 自然 fall back。
         outcome, detail, retryable = await _merge_pr(number, payload)
@@ -741,6 +789,8 @@ async def _merge_flow(
             # base 可能才剛前進，此刻 PR 其實是 behind。確為 behind 且還有自動更新額度
             # → update-branch 把 base 併進來，回迴圈頂端重抓新 head、重等 CI 再試合併。
             # 額度用盡或 update 失敗 → fall through 走原終局分類退回（不無限追趕）。
+            if pre_merge_guard is not None and (status.get("mergeable_state") or "") == "behind":
+                return MergeOutcome.CONFLICT, "governed_base_moved_retry_required"
             if not retryable and behind_rounds < config.MERGE_BEHIND_RETRIES:
                 refreshed = await _get_pr_status(number, sleep=sleep)
                 if refreshed is not None:
@@ -773,6 +823,8 @@ async def _merge_flow(
             return outcome, detail
 
         # 可重試：只有 stale（behind）才 update-branch 真正修分支；其餘暫時性錯誤純退避重試。
+        if pre_merge_guard is not None and (status.get("mergeable_state") or "") == "behind":
+            return MergeOutcome.CONFLICT, "governed_base_moved_retry_required"
         if (status.get("mergeable_state") or "") == "behind":
             await _update_branch(number)
         await sleep(_backoff(attempt, ci_interval))
@@ -787,6 +839,7 @@ async def publish(
     make_pr: bool = True,
     merge: bool = False,
     repo: str | None = None,
+    pre_write_guard: PreWriteGuard | None = None,
 ) -> PublishResult:
     """發佈 workspace 成果。repo 給值＝per-project 覆寫（含自動建 repo／空 repo 初始化）。
 
@@ -799,7 +852,14 @@ async def publish(
     except ValueError as e:
         return PublishResult(False, str(e), repo=repo)
     try:
-        return await _publish_inner(cwd, session_id, requirement, make_pr=make_pr, merge=merge)
+        return await _publish_inner(
+            cwd,
+            session_id,
+            requirement,
+            make_pr=make_pr,
+            merge=merge,
+            pre_write_guard=pre_write_guard,
+        )
     except ValueError as e:
         return PublishResult(False, str(e), repo=current_repo())
     finally:
@@ -981,7 +1041,13 @@ async def _rollback_merge_inner(
 
 
 async def _publish_inner(
-    cwd, session_id: str, requirement: str, *, make_pr: bool, merge: bool
+    cwd,
+    session_id: str,
+    requirement: str,
+    *,
+    make_pr: bool,
+    merge: bool,
+    pre_write_guard: PreWriteGuard | None = None,
 ) -> PublishResult:
     if not is_configured():
         return PublishResult(False, "未設定 GITHUB_TOKEN 或發佈 repo，無法發佈")
@@ -1008,6 +1074,16 @@ async def _publish_inner(
                 False, "無法發佈：" + redact(state.partition(":")[2].strip() or state), repo=repo
             )
         if state == "empty":
+            if pre_write_guard is not None:
+                try:
+                    allowed, detail = await pre_write_guard()
+                except Exception as exc:  # noqa: BLE001 — 治理 hook 失效不得 push
+                    allowed, detail = False, f"guard_unavailable:{type(exc).__name__}"
+                    log.exception("pre-write governance guard 失效，已 fail-closed")
+                if not allowed:
+                    return PublishResult(
+                        False, "governance_guard_blocked:" + str(detail)[:500], repo=repo
+                    )
             init = await _push_base(
                 cwd,
                 config.PUBLISH_BASE,
@@ -1031,6 +1107,17 @@ async def _publish_inner(
                 pushed=True,
                 merged=True,
                 merge_sha=head.output.strip().lower() if head.ok else None,
+            )
+
+    if pre_write_guard is not None:
+        try:
+            allowed, detail = await pre_write_guard()
+        except Exception as exc:  # noqa: BLE001 — 治理 hook 失效不得 push
+            allowed, detail = False, f"guard_unavailable:{type(exc).__name__}"
+            log.exception("pre-write governance guard 失效，已 fail-closed")
+        if not allowed:
+            return PublishResult(
+                False, "governance_guard_blocked:" + str(detail)[:500], branch=branch, repo=repo
             )
 
     push = await _push(cwd, branch, remote_url(repo), env=git_auth_env(config.GITHUB_TOKEN))
@@ -1071,6 +1158,7 @@ async def _publish_inner(
         retries=config.PUBLISH_MERGE_RETRIES,
         await_registration=True,
         registration_grace=config.PUBLISH_CI_GRACE,
+        pre_merge_guard=pre_write_guard,
     )
     res.outcome = outcome
     if outcome == MergeOutcome.MERGED:
@@ -1114,7 +1202,11 @@ async def _await_checks_registered(
 
 
 async def verify_and_merge(
-    pr_number: int, branch: str, *, grace: int | None = None
+    pr_number: int,
+    branch: str,
+    *,
+    grace: int | None = None,
+    pre_merge_guard: PreWriteGuard | None = None,
 ) -> tuple[MergeOutcome, str]:
     """工程師修正並 repush 後，重新等 CI 並嘗試合併；回傳 (MergeOutcome, detail)。
 
@@ -1129,6 +1221,7 @@ async def verify_and_merge(
         ci_timeout=config.PUBLISH_CI_TIMEOUT,
         ci_interval=config.PUBLISH_CI_INTERVAL,
         retries=config.PUBLISH_MERGE_RETRIES,
+        pre_merge_guard=pre_merge_guard,
     )
 
 
