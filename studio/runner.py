@@ -793,6 +793,95 @@ def build_clone_url(url: str, token: str | None, *, legacy: bool) -> str:
     return clean
 
 
+async def git_sanitize_remote_urls(
+    cwd: Path | str, *, expected_origin_url: str | None = None
+) -> bool:
+    """移除 Ti 管理的 remote URL userinfo，且不把原值寫進任何對外輸出。
+
+    ``expected_origin_url`` 僅供剛完成的 clone 使用：clone 必然建立 origin，因此直接以呼叫端
+    已知的乾淨 URL 覆寫，完全不必讀回可能含憑證的設定。既有 workspace 則先以固定
+    label 讀取 ``origin`` 與 ``ti_publish`` 的 local config，只在 userinfo 確實存在時
+    改寫；兩者都不存在視為安全 no-op。
+
+    回傳 False 時呼叫端必須 fail-closed。所有錯誤細節刻意丟棄，避免 Git 將原始 URL
+    （以及其中的 token）原樣回顯到 audit、websocket 或 API。
+    """
+
+    root = Path(cwd)
+    if expected_origin_url is not None:
+        try:
+            clean = git_cred.clean_url(expected_origin_url.strip())
+        except ValueError:
+            return False
+        if not clean or any(ch in clean for ch in "\r\n"):
+            return False
+        updated = await run_command_exec(
+            root,
+            ["git", "remote", "set-url", "origin", clean],
+            timeout=20,
+            sandbox=False,
+            label="git sanitize origin",
+        )
+        return updated.ok
+
+    inspected = await run_command_exec(
+        root,
+        [
+            "git",
+            "config",
+            "--null",
+            "--get-regexp",
+            r"^remote\.(origin|ti_publish)\.url$",
+        ],
+        timeout=20,
+        sandbox=False,
+        label="git inspect remotes",
+    )
+    # git-config 用 exit 1 表示沒有相符 key；沒有 Ti 管理的 remote 即安全 no-op。
+    if inspected.exit_code == 1 and not inspected.timed_out:
+        return True
+    if not inspected.ok:
+        return False
+    allowed = {"remote.origin.url", "remote.ti_publish.url"}
+    targets: dict[str, str] = {}
+    replacements: dict[str, str] = {}
+    for entry in inspected.output.split("\0"):
+        if not entry:
+            continue
+        key, separator, current = entry.partition("\n")
+        if (
+            not separator
+            or key not in allowed
+            or not current
+            or any(ch in current for ch in "\r\n")
+        ):
+            return False
+        try:
+            clean = git_cred.clean_url(current)
+        except ValueError:
+            return False
+        if not clean or any(ch in clean for ch in "\r\n"):
+            return False
+        previous = targets.get(key)
+        if previous is not None and previous != clean:
+            # 同一 managed remote 指向多個不同目標時，不擅自壓成其中一個。
+            return False
+        targets[key] = clean
+        if clean != current:
+            replacements[key] = clean
+    for key, clean in replacements.items():
+        updated = await run_command_exec(
+            root,
+            ["git", "config", "--replace-all", key, clean],
+            timeout=20,
+            sandbox=False,
+            label="git sanitize remote",
+        )
+        if not updated.ok:
+            return False
+    return True
+
+
 async def git_clone(
     url: str,
     dest: Path | str,
@@ -824,7 +913,19 @@ async def git_clone(
     # 避免 token 出現在回報的指令 / 輸出裡（保持在遮蔽之後、return 之前）
     if token:
         result.output = result.output.replace(token, "***")
-    result.command = "git clone " + git_cred.clean_url((url or "").strip())
+    clean_url = git_cred.clean_url((url or "").strip())
+    result.command = "git clone " + clean_url
+    # legacy 回退會讓 Git 把 argv URL 持久化成 origin；clone 一成功就改回乾淨 URL。
+    # 清理失敗不得讓上層誤認 clone 可用，否則憑證會長期留在 .git/config。
+    if result.ok and clone_url != clean_url:
+        sanitized = await git_sanitize_remote_urls(dest, expected_origin_url=url)
+        if not sanitized:
+            return RunOutput(
+                result.command,
+                -1,
+                "（安全防護：clone 完成但無法移除 Git remote 內嵌憑證）",
+                False,
+            )
     return result
 
 

@@ -147,6 +147,11 @@ async def sync_workspace(
             f"無法取得目標 repo 作為工作基底（請確認 GITHUB_TOKEN 權限與網路）：{out[:300]}",
         )
 
+    # 舊版／legacy clone/publish 可能把 token-in-URL 留在 local managed remotes。fetch 前先移除；
+    # 讀取與改寫都使用固定 label，任何錯誤皆以不含原 URL 的訊息 fail-closed。
+    if not await runner.git_sanitize_remote_urls(root):
+        return SyncResult("error", "安全檢查失敗：無法確認 Git remote 已移除內嵌憑證")
+
     # unborn / has_history：fetch 遠端 base（fetch 直接用 URL，不持久化帶 token 的 remote）。
     fetch_url = runner.build_clone_url(url, token, legacy=config.TI_GIT_CRED_LEGACY)
     fetch_env = git_cred.make_env(token, url=fetch_url)

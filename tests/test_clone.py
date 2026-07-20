@@ -43,6 +43,7 @@ class CloneSpy:
     exit_code: int = 0
     command_label: str = "git clone (fake)"
     calls: list[dict] = field(default_factory=list)
+    label_exit_codes: dict[str, int] = field(default_factory=dict)
 
     async def __call__(self, cwd, argv, timeout=None, sandbox=None, label=None, env=None):
         self.calls.append(
@@ -58,7 +59,7 @@ class CloneSpy:
         # 回傳的 command 故意給「非還原值」，以證明 git_clone 會無條件重設它（L313）
         return runner.RunOutput(
             command=self.command_label,
-            exit_code=self.exit_code,
+            exit_code=self.label_exit_codes.get(label or "", self.exit_code),
             output=self.output,
             timed_out=False,
         )
@@ -173,17 +174,38 @@ async def test_git_clone_label_carries_no_token(clone_spy, tmp_path):
 
 @pytest.mark.asyncio
 async def test_git_clone_legacy_uses_token_url(clone_spy, tmp_path, monkeypatch):
-    """緊急回退閥開啟時，明確回到舊 token-in-URL，但 command/label 仍遮蔽。"""
+    """緊急回退閥可用 token-in-URL clone，但完成後立即清乾淨 origin。"""
     monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
     url = "https://github.com/owner/repo.git"
     token = "ghp_SECRETtoken1234567890"
 
     result = await runner.git_clone(url, tmp_path, token=token)
 
-    assert f"https://x-access-token:{token}@github.com/owner/repo.git" in clone_spy.last["argv"]
-    assert not clone_spy.last["env"]
+    clone, sanitize = clone_spy.calls
+    assert f"https://x-access-token:{token}@github.com/owner/repo.git" in clone["argv"]
+    assert not clone["env"]
+    assert sanitize["argv"] == ["git", "remote", "set-url", "origin", url]
+    assert sanitize["label"] == "git sanitize origin"
+    assert token not in "".join(sanitize["argv"])
     assert result.command == "git clone " + url
     assert token not in result.command
+
+
+@pytest.mark.asyncio
+async def test_git_clone_legacy_fails_closed_when_origin_cannot_be_sanitized(
+    clone_spy, monkeypatch, tmp_path
+):
+    token = "ghp_SECRETtoken1234567890"
+    monkeypatch.setattr(config, "TI_GIT_CRED_LEGACY", True)
+    clone_spy.output = f"leak {token}"
+    clone_spy.label_exit_codes["git sanitize origin"] = 1
+
+    result = await runner.git_clone("https://github.com/owner/repo.git", tmp_path, token=token)
+
+    assert not result.ok
+    assert "安全防護" in result.output
+    assert token not in result.output
+    assert len(clone_spy.calls) == 2
 
 
 @pytest.mark.asyncio
