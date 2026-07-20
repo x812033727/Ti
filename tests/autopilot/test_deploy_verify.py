@@ -94,7 +94,7 @@ async def test_redeploy_wiring_verify_fail_rolls_back_and_pages(monkeypatch, tmp
     ok, msg = await deploy.redeploy()
     assert not ok and "黑盒探針失敗" in msg
     assert rolled["to"] == "aaaa1111", "驗證紅必回滾"
-    assert [k for k, _ in sent] == ["deploy_verify_failed"], "回滾必推播"
+    assert [k for k, _ in sent] == ["deploy_verify_failed", "rollback_result"], "回滾必推播"
     assert sent[0][1]["rollback_ok"] is True
 
 

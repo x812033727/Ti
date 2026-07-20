@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import autopilot, backlog, config, experts, projects
+from studio import autonomy, autopilot, backlog, config, experts, projects
 
 
 @pytest.fixture(autouse=True)
@@ -92,3 +92,25 @@ async def test_expert_failure_swallowed(monkeypatch, fake_expert):
 
     monkeypatch.setattr(_FakeExpert, "speak", boom)
     await autopilot._maybe_intent_discovery()  # 不得冒泡
+
+
+@pytest.mark.asyncio
+async def test_stage4_policy_drives_discovery_when_legacy_flags_are_off(monkeypatch, fake_expert):
+    meta = _mkproject_with_intent("")
+    autonomy.save_policy(
+        meta["id"],
+        {
+            "stage": 4,
+            "intent": {
+                "north_star": "把付款成功率提高到 99%",
+                "success_metrics": ["payment_success>=0.99"],
+                "forbidden_actions": ["不得清除訂單"],
+            },
+        },
+    )
+    monkeypatch.setattr(config, "INTENT_DISCOVERY", False)
+    monkeypatch.setattr(config, "INTENT_LOOP", False)
+    await autopilot._maybe_intent_discovery()
+    assert len(fake_expert.calls) == 1
+    assert "Stage 4 版本化規畫證據" in fake_expert.calls[0]
+    assert "payment_success>=0.99" in fake_expert.calls[0]

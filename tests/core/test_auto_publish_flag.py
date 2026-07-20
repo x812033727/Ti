@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import config, orchestrator, publisher
+from studio import config, orchestrator, publisher, runner
 from studio.orchestrator import StudioSession
 
 
@@ -75,6 +75,141 @@ async def test_auto_publish_default_true_publishes(monkeypatch, tmp_path):
     await session._maybe_publish(True)
 
     assert len(calls) == 1, "預設 auto_publish=True 且條件成立時應呼叫一次 publisher.publish"
+
+
+@pytest.mark.asyncio
+async def test_publish_guard_blocks_before_any_external_publish(monkeypatch, tmp_path):
+    """guard 拒絕時要留下結構化結果，且 publisher 必須零呼叫。"""
+    monkeypatch.setattr(config, "PUBLISH_AUTO", True)
+    monkeypatch.setattr(publisher, "is_configured", lambda: True)
+    calls = _install_publish_spy(monkeypatch)
+    guarded = []
+
+    async def guard(attempt, evidence):
+        guarded.append((attempt, evidence))
+        return False, "shadow only"
+
+    session = StudioSession("t", _bc, experts={}, cwd=tmp_path, publish_guard=guard)
+    session._requirement = "做一個東西"
+    session._shippable = True
+    await session._maybe_publish(True)
+
+    assert calls == []
+    assert guarded[0][0] == "initial"
+    assert guarded[0][1]["shippable"] is True
+    assert session._publish_result["ok"] is False
+    assert session._publish_result["detail"] == "shadow only"
+
+
+@pytest.mark.asyncio
+async def test_ci_repush_rechecks_guard_and_blocks_stale_approval(monkeypatch, tmp_path):
+    """CI 修正會改變 diff，重推前必須再跑一次 guard，不得沿用首輪核可。"""
+    monkeypatch.setattr(config, "PUBLISH_AUTO", True)
+    monkeypatch.setattr(config, "PUBLISH_MERGE", True)
+    monkeypatch.setattr(config, "PUBLISH_CI_MAX_ROUNDS", 2)
+    monkeypatch.setattr(publisher, "is_configured", lambda: True)
+    attempts = []
+    repushes = []
+
+    async def guard(attempt, evidence):
+        attempts.append(attempt)
+        return (attempt == "initial"), "changed diff requires a fresh approval"
+
+    async def fake_publish(*args, **kwargs):
+        return publisher.PublishResult(
+            True,
+            "CI failed",
+            branch="ti-studio/t",
+            repo="owner/repo",
+            pushed=True,
+            pr_number=7,
+            outcome=publisher.MergeOutcome.CI_FAILED,
+        )
+
+    async def fake_logs(*args, **kwargs):
+        return "test failed"
+
+    async def fake_repush(*args, **kwargs):
+        repushes.append(1)
+        return runner.RunOutput("git push", 0, "", False)
+
+    class Engineer:
+        async def speak(self, prompt, broadcast):
+            return "fixed"
+
+    monkeypatch.setattr(publisher, "publish", fake_publish)
+    monkeypatch.setattr(publisher, "ci_failure_logs", fake_logs)
+    monkeypatch.setattr(publisher, "repush", fake_repush)
+
+    session = StudioSession("t", _bc, experts={}, cwd=tmp_path, publish_guard=guard)
+    session._requirement = "做一個東西"
+    session._shippable = True
+
+    async def no_commit(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(session, "_commit", no_commit)
+    await session._maybe_publish(True, Engineer())
+
+    assert attempts == ["initial", "ci_repush_1"]
+    assert repushes == []
+    assert session._publish_result["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_post_publish_health_failure_is_machine_readable(monkeypatch, tmp_path):
+    """合併成功但健康證據紅時，最終 result 不得仍是 ok。"""
+    monkeypatch.setattr(config, "PUBLISH_AUTO", True)
+    monkeypatch.setattr(config, "PUBLISH_MERGE", True)
+    monkeypatch.setattr(publisher, "is_configured", lambda: True)
+    sha = "a" * 40
+
+    async def fake_publish(*args, **kwargs):
+        return publisher.PublishResult(
+            True,
+            "merged",
+            branch="ti-studio/t",
+            repo="owner/repo",
+            pushed=True,
+            pr_number=7,
+            merged=True,
+            outcome=publisher.MergeOutcome.MERGED,
+            merge_sha=sha,
+        )
+
+    verified = []
+
+    async def verifier(result):
+        verified.append(result)
+        return False, "deployment_health_timeout:revision_mismatch"
+
+    monkeypatch.setattr(publisher, "publish", fake_publish)
+    session = StudioSession("t", _bc, experts={}, cwd=tmp_path, post_publish_verifier=verifier)
+    session._requirement = "做一個東西"
+    await session._maybe_publish(True)
+
+    assert verified[0]["merge_sha"] == sha
+    assert session._publish_result["merged"] is True
+    assert session._publish_result["health_verified"] is False
+    assert session._publish_result["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_managed_guard_fails_closed_when_publisher_is_unconfigured(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "PUBLISH_AUTO", False)
+    guarded = []
+
+    async def guard(attempt, evidence):
+        guarded.append(attempt)
+        return True, "policy passed"
+
+    session = StudioSession("t", _bc, experts={}, cwd=tmp_path, publish_guard=guard)
+    session._requirement = "做一個東西"
+    await session._maybe_publish(True)
+
+    assert guarded == ["initial"]
+    assert session._publish_result["ok"] is False
+    assert "fail-closed" in session._publish_result["detail"]
 
 
 @pytest.mark.asyncio

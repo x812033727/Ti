@@ -26,8 +26,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
+import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 from . import config, jsonl_log
@@ -35,6 +38,37 @@ from . import config, jsonl_log
 log = logging.getLogger("ti.notify")
 
 _TIMEOUT_S = 10.0
+_SENSITIVE_KEY_MARKS = ("token", "secret", "password", "authorization", "webhook")
+_SENSITIVE_PATH_RE = re.compile(r"(?<![\w:/])/(?:root|home|opt|etc|var|tmp|srv)/[^\s,;]*")
+
+
+def _redact_text(value: str) -> str:
+    text = str(value)
+    for secret in (
+        config.GITHUB_TOKEN,
+        config.TELEGRAM_BOT_TOKEN,
+        config.NOTIFY_WEBHOOK,
+    ):
+        if secret:
+            text = text.replace(secret, "***")
+    return _SENSITIVE_PATH_RE.sub("[redacted-path]", text)[:2000]
+
+
+def _safe_value(value, key: str = ""):
+    if any(mark in key.lower() for mark in _SENSITIVE_KEY_MARKS):
+        return {"configured": bool(value)}
+    if isinstance(value, dict):
+        return {str(k)[:80]: _safe_value(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_safe_value(v) for v in value[:50]]
+    if isinstance(value, str):
+        return _redact_text(value)
+    return value
+
+
+def _safe_payload(title: str, extra: dict) -> tuple[str, dict]:
+    return _redact_text(title), {str(k)[:80]: _safe_value(v, str(k)) for k, v in extra.items()}
+
 
 # --- 例外分級(第 3/4 階 B5) -------------------------------------------------
 # page   = 立即推播:需要人採取行動的異常(送所有已設定 sink)。
@@ -47,16 +81,37 @@ SEVERITY: dict[str, str] = {
     "task_failed": "page",
     "loop_stall": "page",
     "quota_exhausted": "page",
+    "provider_unavailable": "page",
     "watchdog_paused": "page",
     "slo_brake": "page",  # A4 SLO 自動煞車
     "deploy_verify_failed": "page",  # B1 部署黑盒驗證失敗
     "clarify_pending": "page",  # B4 澄清待答
     "daily_digest": "page",  # 每日摘要(TI_DIGEST_PUSH opt-in,呼叫端擋)
     "stage_changed": "page",  # 升階狀態變化/streak 里程碑(軌 G1)
+    "budget_trip": "page",  # 自治每日成本/PR 熔斷
+    "policy_violation": "page",  # 來源漂移、政策拒絕或全域/per-project 煞車
+    "rollback_result": "page",  # rollback 失敗必須立即通知；成功演練由呼叫端標 drill
+    "ci_failed": "page",  # 本機/遠端 CI 客觀閘門重試用罄
+    "manual_paused": "page",  # 人工暫停與政策 paused 都須離帶通知
     "test": "page",
     "gate_failure": "digest",
     "critic_reject": "digest",
 }
+
+# 安全的通知鏈演練：只送合成告警，不觸發對應的部署、rollback 或煞車動作。
+RED_DRILL_KINDS = (
+    "task_failed",
+    "budget_trip",
+    "quota_exhausted",
+    "provider_unavailable",
+    "ci_failed",
+    "deploy_verify_failed",
+    "rollback_result",
+    "watchdog_paused",
+    "manual_paused",
+    "policy_violation",
+    "slo_brake",
+)
 
 
 def severity(kind: str) -> str:
@@ -68,9 +123,47 @@ def _events_path(state_dir: Path | None = None) -> Path:
     return (state_dir or config.AUTOPILOT_STATE_DIR) / "events.jsonl"
 
 
-def _persist(kind: str, title: str, extra: dict) -> None:
+def _deliveries_path(state_dir: Path | None = None) -> Path:
+    return (state_dir or config.AUTOPILOT_STATE_DIR) / "notification-deliveries.jsonl"
+
+
+def _persist(kind: str, title: str, extra: dict) -> dict:
     """事件落檔（永不拋錯）；與 webhook 是否設定無關——信任指標需要無條件計數。"""
-    jsonl_log.append(_events_path(), {"kind": kind, "title": title, **extra})
+    title, extra = _safe_payload(title, extra)
+    rec = {
+        "event_id": uuid.uuid4().hex,
+        "ts": time.time(),
+        "kind": kind,
+        "title": title,
+        **extra,
+    }
+    jsonl_log.append(_events_path(), rec)
+    return rec
+
+
+def _persist_delivery(
+    alert: dict, sink: str, ok: bool, delivery_duration_s: float, error: str = ""
+) -> None:
+    """投遞證據獨立落檔；latency 是事件產生到投遞完成，不只是 HTTP 呼叫耗時。"""
+    try:
+        alert_ts = float(alert.get("ts"))
+    except (TypeError, ValueError):
+        alert_ts = time.time()
+    latency_s = max(0.0, time.time() - alert_ts)
+    jsonl_log.append(
+        _deliveries_path(),
+        {
+            "alert_event_id": alert.get("event_id"),
+            "alert_kind": alert.get("kind"),
+            "alert_ts": alert.get("ts"),
+            "sink": sink,
+            "ok": bool(ok),
+            "latency_s": round(latency_s, 4),
+            "delivery_duration_s": round(max(0.0, delivery_duration_s), 4),
+            "error": error[:80],
+            "drill": bool(alert.get("drill")),
+        },
+    )
 
 
 def record(kind: str, title: str = "", **extra) -> None:
@@ -81,6 +174,11 @@ def record(kind: str, title: str = "", **extra) -> None:
 def read_events(days: int, *, state_dir: Path | None = None) -> list[dict]:
     """讀近 days 天的事件紀錄（壞行容錯，檔案不存在=空）。"""
     return jsonl_log.read_window(_events_path(state_dir), days)
+
+
+def read_deliveries(days: int, *, state_dir: Path | None = None) -> list[dict]:
+    """讀近 days 天通知投遞證據；不含 URL/token/回應本文等秘密。"""
+    return jsonl_log.read_window(_deliveries_path(state_dir), days)
 
 
 def _post_json(url: str, payload: dict, kind: str, title: str, sink: str) -> bool:
@@ -113,16 +211,36 @@ def _post_telegram(token: str, chat_id: str, kind: str, title: str, extra: dict)
     )
 
 
-def _deliver(kind: str, title: str, extra: dict) -> dict:
+def _deliver(kind: str, title: str, extra: dict, alert: dict | None = None) -> dict:
     """把事件推到所有已設定的 sink；回 {sink: 成敗}（未設定的 sink 不出現）。"""
+    title, extra = _safe_payload(title, extra)
     out: dict[str, bool] = {}
+    alert = alert or {"event_id": "unknown", "kind": kind, "ts": time.time()}
     url = (config.NOTIFY_WEBHOOK or "").strip()
     if url:
+        started = time.monotonic()
         out["webhook"] = _post_webhook(url, kind, title, extra)
+        _persist_delivery(
+            alert,
+            "webhook",
+            out["webhook"],
+            time.monotonic() - started,
+            "" if out["webhook"] else "delivery_failed",
+        )
     token = (config.TELEGRAM_BOT_TOKEN or "").strip()
     chat_id = (config.TELEGRAM_CHAT_ID or "").strip()
     if token and chat_id:
+        started = time.monotonic()
         out["telegram"] = _post_telegram(token, chat_id, kind, title, extra)
+        _persist_delivery(
+            alert,
+            "telegram",
+            out["telegram"],
+            time.monotonic() - started,
+            "" if out["telegram"] else "delivery_failed",
+        )
+    if not out:
+        _persist_delivery(alert, "none", False, 0.0, "not_configured")
     return out
 
 
@@ -131,17 +249,30 @@ def send(kind: str, title: str, **extra) -> bool:
 
     digest 級 kind 只落檔不推播（與 record 同效）——分級口徑見 SEVERITY。
     """
-    _persist(kind, title, extra)
+    alert = _persist(kind, title, extra)
     if severity(kind) != "page":
         return False
-    return any(_deliver(kind, title, extra).values())
+    return any(_deliver(kind, title, extra, alert).values())
 
 
 def send_test() -> dict:
     """端到端驗證推播管道（同步）：發一則 test 事件，回報各 sink 送達狀況。"""
-    _persist("test", "推播管道測試", {})
-    results = _deliver("test", "推播管道測試", {})
+    alert = _persist("test", "推播管道測試", {"drill": True})
+    results = _deliver("test", "推播管道測試", {}, alert)
     return {"ok": any(results.values()), "sinks": results}
+
+
+def send_red_drills() -> dict:
+    """同步演練所有第 3 階紅色告警；不執行事件名稱所代表的真實動作。"""
+    results: dict[str, dict[str, bool]] = {}
+    for kind in RED_DRILL_KINDS:
+        title = f"[演練] {kind} 外部告警送達測試"
+        alert = _persist(kind, title, {"drill": True})
+        results[kind] = _deliver(kind, title, {"drill": True}, alert)
+    return {
+        "ok": bool(results) and all(any(sinks.values()) for sinks in results.values()),
+        "results": results,
+    }
 
 
 def send_bg(kind: str, title: str, **extra) -> None:
@@ -149,12 +280,13 @@ def send_bg(kind: str, title: str, **extra) -> None:
 
     digest 級 kind 只落檔不推播——分級口徑見 SEVERITY。
     """
-    _persist(kind, title, extra)
+    alert = _persist(kind, title, extra)
     if severity(kind) != "page":
         return
     if not (
         (config.NOTIFY_WEBHOOK or "").strip()
         or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
     ):
+        _persist_delivery(alert, "none", False, 0.0, "not_configured")
         return
-    threading.Thread(target=_deliver, args=(kind, title, extra), daemon=True).start()
+    threading.Thread(target=_deliver, args=(kind, title, extra, alert), daemon=True).start()

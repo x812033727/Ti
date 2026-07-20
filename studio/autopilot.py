@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -46,6 +47,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import (
+    autonomy,
+    autonomy_review,
     backlog,
     claude_accounts,
     config,
@@ -1012,6 +1015,7 @@ def _build_discovery_prompt(
     outcomes: str | None = None,
     pending: str | None = None,
     titles: list[str] | None = None,
+    governance_context: str | None = None,
 ) -> str:
     """組裝自我評估的 discovery prompt（純字串、無 LLM/網路，可單測）。
 
@@ -1036,7 +1040,7 @@ def _build_discovery_prompt(
         else "1. 目前尚無排隊／進行中任務，但各點之間仍不得實質重疊（同一主題換句話說也算）。\n"
     )
     return (
-        north_star_context()
+        (north_star_context() if governance_context is None else governance_context)
         + outcomes
         + pending
         + oversubscribed
@@ -1845,6 +1849,22 @@ def _slo_brake_factor() -> int:
     day = time.gmtime()[:3]
     if _slo_brake_notified_day != day:
         _slo_brake_notified_day = day
+        if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+            try:
+                autonomy.enforce_slo_violation(
+                    autonomy.CORE_PROJECT_ID,
+                    metric="zero_touch_rate_7d",
+                    observed=float(rate),
+                    threshold=float(threshold),
+                )
+            except Exception:  # noqa: BLE001 — 控制面失敗要留煞車，不能讓主迴圈崩潰
+                log.exception("SLO 違規自動降級失敗，改觸發核心專案煞車")
+                with contextlib.suppress(Exception):
+                    autonomy.trip_brake(
+                        "project",
+                        "slo_control_action_failed",
+                        project_id=autonomy.CORE_PROJECT_ID,
+                    )
         notify.send_bg(
             "slo_brake",
             f"零介入合併率 {rate:.0%} 低於門檻 {threshold:.0%}，自產日額自動砍半",
@@ -1944,16 +1964,29 @@ async def _evaluate_self(clone: str) -> int:
     from .experts import Expert
     from .roles import SENIOR
 
-    sid = f"ap-eval-{uuid.uuid4().hex[:8]}"
-    ex = Expert(SENIOR, sid, Path(clone))
-
     async def _noop(_ev):
         return None
 
     # 取一次 pending/in_progress 快照，prompt 注入與進場 pre-filter 共用同一份，
     # 杜絕 LLM 延遲期間 backlog 變動造成兩端快照分裂（prompt 引導與 filter 比對不一致）。
     titles = _pending_titles()
-    prompt = _build_discovery_prompt(titles=titles)
+    governance_context = None
+    planner_status = autonomy.stage4_planner_status(autonomy.CORE_PROJECT_ID)
+    if planner_status["managed"]:
+        governance_context = autonomy.planner_context(autonomy.CORE_PROJECT_ID)
+        if not governance_context:
+            autonomy.emit_event(
+                "autonomy_decision",
+                project_id=autonomy.CORE_PROJECT_ID,
+                outcome="planner_blocked",
+                severity="warning",
+                payload={"reasons": planner_status["blocking_reasons"]},
+            )
+            log.warning("Stage 4 規畫器因 intent 宣告不完整而 fail-closed")
+            return 0
+    prompt = _build_discovery_prompt(titles=titles, governance_context=governance_context)
+    sid = f"ap-eval-{uuid.uuid4().hex[:8]}"
+    ex = Expert(SENIOR, sid, Path(clone))
     try:
         text = await ex.speak(prompt, _noop)
     finally:
@@ -2210,6 +2243,17 @@ def _handle_gate_failure(task: dict, gate_label: str, detail: str) -> None:
             task_id=task["id"],
             detail=str(task.get("title") or "")[:120],
         )
+        detail_lower = detail.lower()
+        if (
+            gate_label in {"lint", "collect", "test"}
+            or "ci_failed" in detail_lower
+            or "ci 失敗" in detail
+        ):
+            notify.send_bg(
+                "ci_failed",
+                f"任務 #{task['id']} 的 {gate_label} 客觀閘門連續失敗",
+                task_id=task["id"],
+            )
 
 
 def _handle_discussion_incomplete(task: dict, reason: str = "") -> None:
@@ -2590,6 +2634,114 @@ async def run_one_task(task: dict) -> None:
             log.info("任務 #%s 有 %d 個待澄清問題,parked 等人答", task["id"], len(questions))
             return
 
+    managed_run: dict | None = None
+    managed_source_sha = "unknown"
+    deploy_governance: dict | None = None
+    if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+
+        async def _git_value(argv: list[str], cwd) -> str:
+            rc, out = await _run(argv, cwd=cwd, timeout=30)
+            return out.strip() if rc == 0 else ""
+
+        async def _git_clean(cwd) -> bool:
+            rc, out = await _run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=cwd,
+                timeout=30,
+            )
+            return rc == 0 and not out.strip()
+
+        managed_source_sha = await _git_value(["git", "rev-parse", "HEAD"], clone)
+        deployed_sha = await _git_value(["git", "rev-parse", "HEAD"], config.AUTOPILOT_DEPLOY_DIR)
+        source_repo = await _git_value(["git", "remote", "get-url", "origin"], clone)
+        base_branch = await _git_value(["git", "branch", "--show-current"], clone)
+        source_worktree_clean = await _git_clean(clone)
+        deployed_worktree_clean = await _git_clean(config.AUTOPILOT_DEPLOY_DIR)
+        policy = autonomy.load_policy(autonomy.CORE_PROJECT_ID)
+        managed_run = autonomy.begin_run(
+            autonomy.CORE_PROJECT_ID,
+            task["id"],
+            {
+                "deployed_sha": deployed_sha,
+                "source_sha": managed_source_sha,
+                "source_repo": source_repo,
+                "workspace": str(clone),
+                "base_branch": base_branch,
+                "lane": str(task.get("lane") or "main"),
+                "publish_repo": config.AUTOPILOT_REPO,
+                "source_worktree_clean": source_worktree_clean,
+                "deployed_identity_verified": bool(deployed_sha),
+                "deployed_worktree_clean": deployed_worktree_clean,
+                "eligible": task.get("eligible", "unknown"),
+                "exclusion_reason": task.get("exclusion_reason", ""),
+                "risk": task.get("risk", "unknown"),
+            },
+            run_id=sid,
+            strict=policy["mode"] != "shadow",
+        )
+        if not managed_run["allowed"]:
+            backlog.set_status(
+                task["id"],
+                "parked",
+                note="自治基線不一致：" + ",".join(managed_run["reasons"]),
+            )
+            notify.send_bg(
+                "policy_violation",
+                f"任務 #{task['id']} 自治基線不一致，已 fail-closed",
+                task_id=task["id"],
+            )
+            autonomy.record_run_outcome(
+                sid,
+                autonomy.CORE_PROJECT_ID,
+                task["id"],
+                "blocked",
+                source_sha=managed_source_sha,
+                risk=str(task.get("risk") or "unknown"),
+                eligible=task.get("eligible", "unknown"),
+                exclusion_reason=str(task.get("exclusion_reason") or ""),
+                cost_usd=0.0,
+            )
+            return
+        early_operation = {
+            "title": task.get("title"),
+            "detail": task.get("detail"),
+            "risk": task.get("risk", "unknown"),
+            "rollback": task.get("rollback") or {},
+        }
+        for phase in ("planning", "change"):
+            early_decision = autonomy.evaluate_operation(
+                autonomy.CORE_PROJECT_ID,
+                phase,
+                early_operation,
+                human_approved=bool(task.get("human_approved")),
+                run_id=sid,
+                task_id=task["id"],
+                source_sha=managed_source_sha,
+            )
+            if not early_decision["allowed"]:
+                backlog.set_status(
+                    task["id"],
+                    "parked",
+                    note=f"自治政策在 {phase} 前拒絕：" + ",".join(early_decision["reasons"]),
+                )
+                notify.send_bg(
+                    "policy_violation",
+                    f"任務 #{task['id']} 在 {phase} 前被自治政策擋下",
+                    task_id=task["id"],
+                )
+                autonomy.record_run_outcome(
+                    sid,
+                    autonomy.CORE_PROJECT_ID,
+                    task["id"],
+                    "blocked",
+                    source_sha=managed_source_sha,
+                    risk=early_decision["risk"],
+                    eligible=task.get("eligible", "unknown"),
+                    exclusion_reason=str(task.get("exclusion_reason") or ""),
+                    cost_usd=0.0,
+                )
+                return
+
     history.start_session(sid, f"[autopilot] {task['title']}")
     turn_state: dict[str, object] = {
         "current_expert": None,
@@ -2749,20 +2901,25 @@ async def run_one_task(task: dict) -> None:
             shipped_with_limits = True
             log.info("任務 #%s 帶已知限制出貨,續走客觀閘門", task["id"])
 
+        gate_evidence: list[str] = []
+
         # 閘門 1：lint（對齊 CI lint job）—— ruff check + format
         ok, out = await _gate_lint(clone)
+        gate_evidence.append(f"lint:{ok}:{out}")
         if not ok:
             _handle_gate_failure(task, "lint", out)
             return
 
         # 閘門 2：無 SDK collection（對齊 CI test job 環境）
         ok, out = await _gate_collect_without_sdk(clone)
+        gate_evidence.append(f"collect:{ok}:{out}")
         if not ok:
             _handle_gate_failure(task, "collect", out)
             return
 
         # 閘門 3：完整測試必須全綠
         ok, out = await _gate_tests(clone)
+        gate_evidence.append(f"test:{ok}:{out}")
         if not ok:
             _handle_gate_failure(task, "test", out)
             return
@@ -2779,6 +2936,125 @@ async def run_one_task(task: dict) -> None:
             )
             log.warning("任務 #%s 因每日 PR 預算已滿退回 pending，跨日後自動重跑", task["id"])
             return
+
+        # merge 前政策閘：shadow 只產生本機證據；canary/full 對未知/不可逆風險
+        # fail-closed，高風險可逆操作須同 diff/證據的不同 provider 雙核可。
+        if managed_run is not None:
+            # intent-to-add 讓尚未 stage 的新檔也進入 binary diff；只改本機 index，不外寫。
+            rc_intent, _ = await _run(["git", "add", "-N", "."], cwd=clone, timeout=60)
+            rc_diff, diff_content = (-1, "")
+            if rc_intent == 0:
+                rc_diff, diff_content = await _run(
+                    ["git", "diff", "--binary", f"origin/{config.AUTOPILOT_BRANCH}"],
+                    cwd=clone,
+                    timeout=60,
+                )
+            diff_sha = hashlib.sha256(diff_content.encode()).hexdigest() if rc_diff == 0 else ""
+            policy = autonomy.load_policy(autonomy.CORE_PROJECT_ID)
+            review_approvals = task.get("approval_verdicts") or []
+            task_risk = autonomy.classify_risk({"risk": task.get("risk", "unknown")})["risk"]
+            deploy_risk = autonomy.phase_risk(task_risk, "deploy", policy["stage"])
+            high_risk_required = task_risk == "high-reversible" or deploy_risk == "high-reversible"
+            rollback_evidence = (
+                task.get("rollback") or {}
+                if task_risk == "high-reversible"
+                else autonomy.deployment_rollback_evidence(
+                    autonomy.CORE_PROJECT_ID, managed_source_sha
+                )
+                if deploy_risk == "high-reversible"
+                else task.get("rollback") or {}
+            )
+            evidence_text = json.dumps(
+                {
+                    "execution": gate_evidence,
+                    "rollback": rollback_evidence,
+                    "previous_deployed_revision": deployed_sha,
+                    "mechanism": "builtin_redeploy_last_good_with_health_and_blackbox",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            evidence_sha = hashlib.sha256(evidence_text.encode()).hexdigest()
+            rollback_complete = all(
+                rollback_evidence.get(key)
+                for key in ("dry_run", "backup", "verified", "scope_limit")
+            )
+            if high_risk_required and rollback_complete and diff_sha and evidence_sha:
+                review_approvals = await autonomy_review.review(
+                    cwd=Path(clone),
+                    diff_text=diff_content,
+                    evidence_text=evidence_text,
+                    diff_sha=diff_sha,
+                    evidence_sha=evidence_sha,
+                    session_id=sid,
+                )
+                unavailable = [
+                    row["provider"]
+                    for row in review_approvals
+                    if row.get("rationale") == "provider_unavailable"
+                ]
+                if unavailable:
+                    notify.send_bg(
+                        "provider_unavailable",
+                        "高風險雙 AI 審查 provider 不可用，已拒絕外部寫入",
+                        providers=unavailable,
+                        task_id=task["id"],
+                    )
+            policy_decision = None
+            for phase in ("merge", "deploy"):
+                operation_risk = autonomy.phase_risk(task_risk, phase, policy["stage"])
+                policy_decision = autonomy.evaluate_operation(
+                    autonomy.CORE_PROJECT_ID,
+                    phase,
+                    {
+                        "title": task.get("title"),
+                        "detail": task.get("detail"),
+                        "risk": operation_risk,
+                        "diff_sha": diff_sha,
+                        "evidence_sha": evidence_sha,
+                        "rollback": rollback_evidence,
+                    },
+                    approvals=review_approvals if operation_risk == "high-reversible" else [],
+                    human_approved=bool(task.get("human_approved")),
+                    run_id=sid,
+                    task_id=task["id"],
+                    source_sha=managed_source_sha,
+                )
+                if not policy_decision["external_write_allowed"]:
+                    break
+            assert policy_decision is not None
+            if not policy_decision["external_write_allowed"]:
+                reason = (
+                    "shadow 模式：證據已產生，禁止外部寫入"
+                    if policy_decision["allowed"]
+                    else f"自治政策在 {policy_decision['phase']} 前拒絕："
+                    + ",".join(policy_decision["reasons"])
+                )
+                backlog.set_status(
+                    task["id"],
+                    "parked",
+                    note=reason,
+                    diff_sha=diff_sha,
+                    evidence_sha=evidence_sha,
+                )
+                if not policy_decision["allowed"]:
+                    notify.send_bg(
+                        "policy_violation",
+                        f"任務 #{task['id']} merge 前被自治政策擋下",
+                        task_id=task["id"],
+                    )
+                return
+            deploy_governance = {
+                "risk": deploy_risk,
+                "diff_sha": diff_sha,
+                "evidence_sha": evidence_sha,
+                "rollback": rollback_evidence,
+                "approval_verdicts": review_approvals,
+                "human_approved": bool(task.get("human_approved")),
+                "run_id": sid,
+                "task_id": task["id"],
+                "source_sha": managed_source_sha,
+            }
 
         # commit / push / squash-merge 進 main
         merge_res = await _commit_push_merge(clone, task)
@@ -2853,7 +3129,10 @@ async def run_one_task(task: dict) -> None:
 
         # 重佈（等手動討論結束才動,避免打斷使用者；deploy 會 fetch 最新 main,延後也會追上）
         if await _wait_until_idle():
-            ok, dmsg = await deploy.redeploy()
+            if deploy_governance is None:
+                ok, dmsg = await deploy.redeploy()
+            else:
+                ok, dmsg = await deploy.redeploy(governance=deploy_governance)
             log.info("重佈：%s", dmsg)
             done_fields["deploy_msg"] = dmsg  # 含 old→new commit（deploy.redeploy 成功訊息）
             if not ok:
@@ -2894,6 +3173,27 @@ async def run_one_task(task: dict) -> None:
         if _shutdown_requested and cur is not None and cur.cancelling():
             _finalize_shutdown()
             raise CancelledError()
+        if managed_run is not None:
+            latest = next(
+                (row for row in backlog.list_tasks() if row.get("id") == task.get("id")), task
+            )
+            meta = history.get_meta(sid) or {}
+            cost = ((meta.get("token_usage") or {}).get("total") or {}).get("cost_usd", "unknown")
+            final_outcome = str(latest.get("status") or "unknown")
+            if final_outcome == "done" and latest.get("deploy_msg"):
+                final_outcome = "healthy_deployed"
+            autonomy.record_run_outcome(
+                sid,
+                autonomy.CORE_PROJECT_ID,
+                task["id"],
+                final_outcome,
+                source_sha=managed_source_sha,
+                risk=str(latest.get("risk") or "unknown"),
+                eligible=latest.get("eligible", "unknown"),
+                exclusion_reason=str(latest.get("exclusion_reason") or ""),
+                cost_usd=cost,
+                payload={"pr": latest.get("pr")},
+            )
         clear_turn_status()
 
 
@@ -2989,33 +3289,57 @@ async def _maybe_intent_discovery() -> None:
     「意圖→零人工交付」通道。任何失敗只 log,不得影響主迴圈。
     """
     global _intent_discovery_day
-    if not (config.INTENT_DISCOVERY and config.INTENT_LOOP):
+    from . import projects
+
+    project_rows = projects.list_projects()
+    legacy_enabled = config.INTENT_DISCOVERY and config.INTENT_LOOP
+    managed_enabled = any(
+        autonomy.stage4_planner_status(str(meta.get("id") or ""))["managed"]
+        for meta in project_rows
+    )
+    if not legacy_enabled and not managed_enabled:
         return
     day = time.gmtime()[:3]
     if _intent_discovery_day == day:
         return
     _intent_discovery_day = day
     try:
-        from . import flow, improver, projects
+        from . import flow, improver
         from .experts import Expert
         from .roles import SENIOR
 
         async def _noop(_ev):
             return None
 
-        for meta in projects.list_projects():
-            intent = str(meta.get("intent") or "").strip()
-            if not intent:
-                continue
+        for meta in project_rows:
             pid = str(meta.get("id") or "")
+            planner_status = autonomy.stage4_planner_status(pid)
+            if planner_status["managed"]:
+                intent_context = autonomy.planner_context(pid)
+                if not intent_context:
+                    autonomy.emit_event(
+                        "autonomy_decision",
+                        project_id=pid,
+                        outcome="planner_blocked",
+                        severity="warning",
+                        payload={"reasons": planner_status["blocking_reasons"]},
+                    )
+                    continue
+            else:
+                if not legacy_enabled:
+                    continue
+                intent = str(meta.get("intent") or "").strip()
+                if not intent:
+                    continue
+                intent_context = f"【專案常駐意圖(北極星指令)】{intent}\n"
             cwd = projects.workspace_dir(pid)
             if not cwd.is_dir():
                 continue
             sid = f"intent-disc-{pid[:8]}-{day[0]:04d}{day[1]:02d}{day[2]:02d}"
             prompt = (
                 f"你正在審視長期產品專案「{meta.get('name', '')}」(程式碼就在你的工作目錄)。\n"
-                f"【專案常駐意圖(北極星指令)】{intent}\n"
-                "請用 Read/Grep 檢視現況並做差距分析:只提「離意圖最近的缺口」任務 1~5 點,"
+                + intent_context
+                + "請用 Read/Grep 檢視現況並做差距分析:只提「離意圖最近的缺口」任務 1~5 點,"
                 "每點獨立一行,格式固定 `任務: [P0/bug] <動詞開頭的具體任務>`(標籤可省視為 P1);"
                 "若是要改 Ti 核心框架本身(非本產品程式碼),改用 `核心改動: <描述>`。"
                 "只輸出任務行或核心改動行。" + improver._DISCOVERY_QUALITY_BAR
@@ -4411,6 +4735,9 @@ _paused_logged = False
 # 額度全受限通知旗標(行程記憶體):每個受限期只發一次 webhook(F2),恢復 usable 即重置。
 _quota_notified = False
 
+# 舊版每日 PR 預算（尚未啟用自治政策的安裝）也要 out-of-band 可見；同 UTC 日只推一次。
+_daily_budget_notified_day: tuple | None = None
+
 # 主迴圈心跳(穩定強化 β):每輪頂端/任務返回後更新。stall/hard 看門狗只包 session.run,
 # 「任務之間」(quota snapshot/reconciler/邊界部署/triage)是盲區——任一步無聲卡死即整台
 # 停擺且無 log(2026-07-10 盲區調查)。_loop_monitor 據此告警;自救交 systemd watchdog(γ)。
@@ -4616,6 +4943,31 @@ async def _digest_scheduler() -> None:
                         pending=bc.get("pending", 0),
                         merged=len(d.get("prs") or []),
                     )
+            # v1 成熟度報告不綁在 digest 首次成功的分支：audit/磁碟暫時失敗時每小時
+            # 重試；同日內容定址寫入仍冪等，避免一次旁路故障永久打斷 28 日 streak。
+            project_ids = [autonomy.CORE_PROJECT_ID]
+            try:
+                from . import projects as projects_mod
+
+                project_ids = [
+                    autonomy.CORE_PROJECT_ID,
+                    *(p["id"] for p in projects_mod.list_projects()),
+                ]
+                await asyncio.to_thread(autonomy.write_maturity_report, project_ids=project_ids)
+            except Exception:  # noqa: BLE001 — 旁路失敗不得拖垮主迴圈，但必須可觀測
+                log.warning("自治成熟度日報產生失敗（下輪重試）", exc_info=True)
+            try:
+                # SLO 控制不能被日報 IO／完整性故障連坐；兩條旁路獨立重試。
+                await asyncio.to_thread(autonomy.evaluate_slo_controls, project_ids)
+            except Exception:  # noqa: BLE001 — 控制失敗下輪重試，並保留可觀測 log
+                log.warning("自治逐專案 SLO 評估失敗（下輪重試）", exc_info=True)
+            # 納管後每 ISO 週把真實弱項轉成至多三個可驗收改善項。放在 daily digest
+            # 分支之外，讓 audit/檔案暫時故障時每小時可重試；週報 hash 使成功後冪等。
+            if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+                try:
+                    await asyncio.to_thread(autonomy.write_weekly_improvements)
+                except Exception:  # noqa: BLE001 — 旁路失敗不得拖垮主迴圈，但必須可觀測
+                    log.warning("自治每週改善項產生失敗（下輪重試）", exc_info=True)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — 排程器自身失敗不得影響主迴圈
@@ -4761,6 +5113,19 @@ async def _main_loop(startup_sig: float) -> None:
             continue
         _note_resumed()
 
+        if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
+            admission = autonomy.admission_decision(autonomy.CORE_PROJECT_ID)
+            if not admission["allowed"]:
+                now = time.time()
+                _write_status(
+                    "budget_sleep",
+                    sleep_until=now + 60,
+                    quota={"autonomy_brake": admission["reasons"]},
+                )
+                log.warning("自治煞車生效，停止接新任務：%s", admission["reasons"])
+                await asyncio.sleep(60)
+                continue
+
         # 額度閘門：取任務前先確認至少一個 provider 還有額度；全受限就睡到最早重置
         # （夾在 [60, AUTOPILOT_QUOTA_MAX_SLEEP]）後 continue 重查，避免額度耗盡時
         # 空轉把任務全燒成 failed。snapshot() 含阻塞 I/O，丟 to_thread 跑。
@@ -4821,6 +5186,16 @@ async def _main_loop(startup_sig: float) -> None:
                 config.AUTOPILOT_DAILY_PR_BUDGET,
                 sleep_s,
             )
+            global _daily_budget_notified_day
+            budget_day = time.gmtime(now)[:3]
+            if _daily_budget_notified_day != budget_day:
+                _daily_budget_notified_day = budget_day
+                notify.send_bg(
+                    "budget_trip",
+                    f"已達每日 PR 預算 {config.AUTOPILOT_DAILY_PR_BUDGET}，停止接新任務",
+                    used=_todays_pr_count(now),
+                    cap=config.AUTOPILOT_DAILY_PR_BUDGET,
+                )
             await asyncio.sleep(sleep_s)
             continue
 

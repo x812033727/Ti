@@ -34,6 +34,7 @@ VALID_STATUS = ("pending", "in_progress", "merging", "done", "failed", "parked")
 
 # 任務類型：功能缺口 / 缺陷 / 一般改良。來源外的值一律正規化成 improvement。
 VALID_TYPES = ("feature", "bug", "improvement")
+VALID_RISKS = ("low", "medium", "high-reversible", "irreversible", "unknown")
 
 # 優先級 P0（必須）~ P2（加分）。舊資料無此欄位時以 P1 解讀，排序行為與先前 FIFO 一致。
 DEFAULT_PRIORITY = 1
@@ -50,6 +51,41 @@ def _clamp_priority(priority) -> int:
 def _norm_type(item_type) -> str:
     t = str(item_type or "").strip().lower()
     return t if t in VALID_TYPES else "improvement"
+
+
+def _norm_risk(risk) -> str:
+    value = str(risk or "").strip().lower()
+    return value if value in VALID_RISKS else "unknown"
+
+
+def _norm_rollback(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "dry_run": bool(value.get("dry_run")),
+        "backup": bool(value.get("backup")),
+        "verified": bool(value.get("verified")),
+        "scope_limit": str(value.get("scope_limit") or "")[:300],
+    }
+
+
+def _norm_approvals(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict] = []
+    for item in value[:2]:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "provider": str(item.get("provider") or "")[:50],
+                "diff_sha": str(item.get("diff_sha") or "")[:128],
+                "evidence_sha": str(item.get("evidence_sha") or "")[:128],
+                "verdict": str(item.get("verdict") or "")[:20],
+                "rationale": str(item.get("rationale") or "")[:2000],
+            }
+        )
+    return rows
 
 
 def _dir(state_dir: Path | None) -> Path:
@@ -139,6 +175,14 @@ def add(
     item_type: str = "improvement",
     effort: str = "",
     gen: int = 0,
+    risk: str = "medium",
+    eligible: bool | None = True,
+    exclusion_reason: str = "",
+    rollback: dict | None = None,
+    approval_verdicts: list[dict] | None = None,
+    diff_sha: str = "",
+    evidence_sha: str = "",
+    human_approved: bool = False,
 ) -> dict | None:
     """新增一筆 pending 任務，回傳該任務；title 為空或重複則回 None。
 
@@ -151,6 +195,8 @@ def add(
     """
     title = (title or "").strip()
     if not title:
+        return None
+    if eligible is False and not (exclusion_reason or "").strip():
         return None
     with _locked(state_dir):
         data = _load(state_dir, mutable=True)
@@ -166,6 +212,10 @@ def add(
             "priority": _clamp_priority(priority),
             "type": _norm_type(item_type),
             "effort": (effort or "").strip(),
+            # eligible 在任務建立/開工前固定；舊資料缺欄由量測端視為 unknown，絕不灌分母。
+            "eligible": bool(eligible) if eligible is not None else "unknown",
+            "exclusion_reason": (exclusion_reason or "").strip()[:500],
+            "risk": _norm_risk(risk),
             "attempts": 0,
             "created_at": time.time(),
             "updated_at": time.time(),
@@ -173,6 +223,16 @@ def add(
         }
         if gen:
             task["gen"] = int(gen)
+        if rollback:
+            task["rollback"] = _norm_rollback(rollback)
+        if approval_verdicts:
+            task["approval_verdicts"] = _norm_approvals(approval_verdicts)
+        if diff_sha:
+            task["diff_sha"] = str(diff_sha)[:128]
+        if evidence_sha:
+            task["evidence_sha"] = str(evidence_sha)[:128]
+        if human_approved:
+            task["human_approved"] = True
         data["tasks"].append(task)
         _save(data, state_dir)
         return task
@@ -216,6 +276,17 @@ def add_items(
             item_type=it.get("type", "improvement"),
             effort=it.get("effort", ""),
             gen=gen,
+            risk=it.get("risk", "medium"),
+            eligible=it.get("eligible", True),
+            exclusion_reason=it.get("exclusion_reason", ""),
+            rollback=it.get("rollback"),
+            approval_verdicts=it.get("approval_verdicts"),
+            diff_sha=it.get("diff_sha", ""),
+            evidence_sha=it.get("evidence_sha", ""),
+            # add_items is the batch/discovery entry point used by AI planners.
+            # A generated payload must never be able to self-sign an irreversible
+            # operation; only the admin-protected single-task API may set this.
+            human_approved=False,
         ):
             n += 1
     return n

@@ -124,6 +124,13 @@ def test_audit_managed_set_matches_decision():
         "/api/autopilot/triage",
         # 測試推播(第 3 階 A1):觸發對外網路呼叫且間接證實已設 Telegram/webhook 憑證。
         "/api/notify/test",
+        "/api/notify/red-drills",
+        "/api/autonomy/preflight/snapshot",
+        "/api/autonomy/rollback-drills",
+        "/api/autonomy/policies/{project_id}",
+        "/api/autonomy/platform-mode",
+        "/api/autonomy/promote",
+        "/api/autonomy/brakes/{scope}/clear",
         # 排程任務(Kimi PR10):週期性注入 autopilot 任務,與 /api/autopilot/task 同級納管。
         "/api/schedules",
         "/api/schedules/{sched_id}",

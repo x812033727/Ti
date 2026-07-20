@@ -1227,6 +1227,7 @@ async def complete_once(
     session_id: str,
     cwd: Path | None,
     timeout: float = 120.0,
+    provider: str | None = None,
 ) -> str:
     """單輪「system + user → 純文字」呼叫，供反思等廉價用途；永不 raise。
 
@@ -1245,7 +1246,8 @@ async def complete_once(
     （`asyncio.wait_for` 的 `asyncio.TimeoutError`）與未預期錯誤（含上游骨幹原樣 re-raise
     的未知例外），維持「永不 raise」合約；並記 warning（含 traceback）供生產診斷，不靜默吞噬。
     """
-    if cwd is None or config.OFFLINE_MODE or not config.provider_ready():
+    ready = config.provider_ready() if provider is None else config.provider_ready(provider)
+    if cwd is None or config.OFFLINE_MODE or not ready:
         # provider 無憑證時直接走模板 fallback：避免每次失敗輪都白等 SDK 啟動失敗
         # （無金鑰環境下可達數十秒），拖慢主迴圈與測試。
         return ""
@@ -1265,7 +1267,10 @@ async def complete_once(
 
     expert = None
     try:
-        expert = make_expert(role, f"{session_id}:reflect", cwd)
+        if provider is None:
+            expert = make_expert(role, f"{session_id}:reflect", cwd)
+        else:
+            expert = make_expert(role, f"{session_id}:reflect", cwd, provider=provider)
         return await asyncio.wait_for(expert.speak(user, _noop), timeout=timeout)
     except Exception:
         # 最終兜底層：守住「永不 raise」合約。退避是 speak() 層職責，兩端皆已收斂於
