@@ -888,18 +888,23 @@ async def git_clone(
     token: str | None = None,
     branch: str | None = None,
     depth: int | None = 1,
+    auth_env: dict[str, str] | None = None,
+    legacy: bool | None = None,
 ) -> RunOutput:
     """把 GitHub 倉庫 clone 到（空的）dest 目錄。回傳 RunOutput（output 已遮蔽 token）。
 
     depth 預設 1（一次性 session 只需最新快照）；長期專案要拿該 repo 當工作基底時傳
     None 做完整 clone——跨場次的快轉判定（merge-base --is-ancestor）在 shallow
     邊界上會失真，且專家需要能讀完整 git log。
+
+    auth_env/legacy 僅供 repo_base 這類發佈鏈呼叫端覆寫：固定乾淨 URL、認證只走 env，
+    不吃全域 legacy token-in-URL fallback。
     """
     if not _git_available():
         return RunOutput("git clone", -1, "（環境沒有 git，無法 clone）", False)
-    legacy = config.TI_GIT_CRED_LEGACY
+    legacy = config.TI_GIT_CRED_LEGACY if legacy is None else legacy
     clone_url = build_clone_url(url, token, legacy=legacy)
-    auth_env = git_cred.make_env(token, url=clone_url)
+    auth_env = git_cred.make_env(token, url=clone_url) if auth_env is None else auth_env
     parts = ["git", "clone"] + (["--depth", str(depth)] if depth else [])
     if branch and _BRANCH_RE.match(branch):
         parts += ["--branch", branch]
@@ -913,6 +918,7 @@ async def git_clone(
     # 避免 token 出現在回報的指令 / 輸出裡（保持在遮蔽之後、return 之前）
     if token:
         result.output = result.output.replace(token, "***")
+        result.output = result.output.replace(git_cred.auth_b64(token), "***")
     clean_url = git_cred.clean_url((url or "").strip())
     result.command = "git clone " + clean_url
     # legacy 回退會讓 Git 把 argv URL 持久化成 origin；clone 一成功就改回乾淨 URL。

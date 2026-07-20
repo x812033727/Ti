@@ -76,13 +76,22 @@ def _github_url(url: str | None) -> bool:
     return parts.scheme == "https" and (parts.hostname or "").lower() == "github.com"
 
 
-def make_env(token: str | None, url: str | None = None) -> dict[str, str]:
+def make_env(
+    token: str | None, url: str | None = None, *, honor_legacy: bool = True
+) -> dict[str, str]:
     """Build GIT_CONFIG_* env for GitHub auth without putting the token in argv.
 
     The generated config starts at index 0 and intentionally overwrites any parent
     GIT_CONFIG_* values when callers merge via ``{**os.environ, **make_env(...)}``.
+    ``honor_legacy=False`` is for paths that must fail closed instead of falling
+    back to token-in-argv/token-in-URL credentials.
     """
-    if not token or config.TI_GIT_CRED_LEGACY or not _github_url(url) or not _git_env_supported():
+    if (
+        not token
+        or (honor_legacy and config.TI_GIT_CRED_LEGACY)
+        or not _github_url(url)
+        or not _git_env_supported()
+    ):
         return {}
     return {
         "GIT_CONFIG_COUNT": "2",
