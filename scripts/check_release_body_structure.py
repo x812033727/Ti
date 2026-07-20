@@ -15,7 +15,7 @@
      - 含逃生艙字串 `TI_REQUIRE_CHOWN=warn/off`。
 
 用法：
-    .venv/bin/python scripts/check_release_body_structure.py
+    python3 scripts/check_release_body_structure.py
 退出碼 0＝全部核對通過；非 0＝任一項不符（並印出具名問題）。
 """
 
@@ -25,6 +25,8 @@ import json
 import sys
 from pathlib import Path
 
+# 裸跑 `python3 scripts/check_release_body_structure.py` 時，sys.path 只有 scripts/；
+# 先補 repo root，避免呼叫端必須手動設 PYTHONPATH=.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))

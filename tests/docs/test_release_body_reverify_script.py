@@ -59,9 +59,7 @@ def test_reverify_payload_preserves_raw_outputs_and_matches_evidence():
             "stderr": "",
         },
         checker_result={
-            "command": (
-                "timeout 60 env PYTHONPATH=. python3 scripts/check_release_body_structure.py"
-            ),
+            "command": "timeout 60 python3 scripts/check_release_body_structure.py",
             "exit_code": 0,
             "stdout": checker_stdout,
             "stderr": "",
@@ -76,3 +74,37 @@ def test_reverify_payload_preserves_raw_outputs_and_matches_evidence():
     assert payload["raw_commands"]["body_structure_checker"]["stdout"] == checker_stdout
     assert payload["comparisons"]["body_sha256"]["matches_evidence"] is True
     assert payload["comparisons"]["structure"]["checks_match_evidence"] is True
+
+
+def test_reverify_main_invokes_body_checker_without_pythonpath(monkeypatch, tmp_path):
+    online = json.loads(ONLINE.read_text(encoding="utf-8"))
+    gh_stdout = json.dumps(online["gh_release_view"], ensure_ascii=False)
+    rest_stdout = json.dumps(online["rest_release_by_tag_subset"], ensure_ascii=False)
+    commands: list[list[str]] = []
+
+    def fake_run_capture(argv: list[str]) -> dict[str, object]:
+        commands.append(argv)
+        stdout = ""
+        if argv[:5] == ["timeout", "60", "gh", "release", "view"]:
+            stdout = gh_stdout
+        elif argv[:4] == ["timeout", "60", "gh", "api"]:
+            stdout = rest_stdout
+        return {
+            "command": reverify_release_body.command_text(argv),
+            "exit_code": 0,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(reverify_release_body, "run_capture", fake_run_capture)
+
+    output = tmp_path / "reverify.json"
+    assert reverify_release_body.main(["--output", str(output)]) == 0
+
+    assert ["timeout", "60", "python3", "scripts/check_release_body_structure.py"] in commands
+    assert not any("PYTHONPATH=." in part for command in commands for part in command)
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert (
+        payload["raw_commands"]["body_structure_checker"]["command"]
+        == "timeout 60 python3 scripts/check_release_body_structure.py"
+    )

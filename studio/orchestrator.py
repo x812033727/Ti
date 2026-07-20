@@ -87,6 +87,10 @@ AGENDA_PROMPT_RULES = (
     "對應實作任務的驗收標準，不要另立「補測試」「複核」尾任務串成流水線。\n"
     "  - 能並行就並行：優先拆成 ≥2 個互不依賴、檔案範圍不重疊、可同時動工的任務——"
     "彼此無依賴的任務會被排進同一波次並行執行。\n"
+    "  - 若某任務需保護特定檔案不被修改，在該任務行之後輸出 "
+    "`禁改: #<id> <pattern>[, <pattern>...]`（逗號分隔多個 pattern）。"
+    "pattern 語意：`/` 結尾＝目錄前綴比對、其餘為 PurePath.match 比對（`*` 不跨 `/`）。"
+    "範例：`禁改: #2 studio/config.py, docs/`\n"
 )
 
 # task_pipeline review stage 的 reviewer：已知核心角色的「專屬 prompt 全文」與「feedback 區段
@@ -756,11 +760,42 @@ class StudioSession:
 
     # --- git --------------------------------------------------------------
     async def _commit(
-        self, ctx: LaneContext, message: str, broadcast: Broadcast | None = None
-    ) -> None:
+        self,
+        ctx: LaneContext,
+        message: str,
+        broadcast: Broadcast | None = None,
+        *,
+        forbidden_paths: list[str] | None = None,
+    ) -> list[str]:
         if not ctx.cwd:
-            return
-        h = await runner.git_commit(ctx.cwd, message)
+            return []
+        if forbidden_paths:
+            result = await runner.git_commit(ctx.cwd, message, forbidden_paths=forbidden_paths)
+        else:
+            result = await runner.git_commit(ctx.cwd, message)
+        violations: list[str] = []
+        if isinstance(result, runner.GitCommitResult):
+            h = result.commit_hash
+            violations = result.forbidden_violations
+        else:
+            h = result
+        bc = broadcast or self.broadcast
+        if violations:
+            detail = f"commit 被禁改清單擋下：{', '.join(violations)}"
+            await bc(events.phase_change(self.session_id, "禁改路徑違規", detail))
+            await bc(
+                events.StudioEvent(
+                    events.EventType.RUN_RESULT,
+                    self.session_id,
+                    {
+                        "passed": False,
+                        "detail": detail,
+                        "log": "\n".join(violations),
+                        "forbidden_violations": violations,
+                    },
+                )
+            )
+            return violations
         if h:
             ctx.last_commit = h
             # 主分支（branch=None）的 commit 同步到 session 級欄位（發佈/回傳值仍用它）。
@@ -768,8 +803,18 @@ class StudioSession:
             if ctx.branch is None:
                 self._last_commit = h
             # 任務路徑傳入 tagged broadcast：主 lane 只標 token_usage，並行 lane 才標全部任務事件。
-            bc = broadcast or self.broadcast
             await bc(events.git_commit(self.session_id, message, h))
+        return []
+
+    @staticmethod
+    def _forbidden_paths_feedback(task: dict, violations: list[str]) -> str:
+        items = "\n".join(f"- {path}" for path in violations)
+        return (
+            "【禁改路徑違規】本輪修改了任務宣告不可改的路徑，commit 已被擋下。\n"
+            "請回復這些檔案的變更，改用允許範圍完成任務，修正後重新自測。\n"
+            f"任務 #{task['id']}：{task['title']}\n"
+            f"違規檔案：\n{items}"
+        )
 
     # --- 辯論 ----------------------------------------------------------
     async def _debate(self, a: ExpertLike, b: ExpertLike, topic: str, rounds: int) -> None:
@@ -3011,7 +3056,15 @@ class StudioSession:
                 tag=tag,
                 bc=bc,
             )
-            await self._commit(ctx, f"任務#{task['id']} 第{rnd}輪：{task['title']}", bc)
+            commit_violations = (
+                await self._commit(
+                    ctx,
+                    f"任務#{task['id']} 第{rnd}輪：{task['title']}",
+                    bc,
+                    forbidden_paths=task.get("forbidden_paths") or None,
+                )
+                or []
+            )
 
             # --- 停滯守門：連續多輪只重述且無檔案變動 → 提早收斂，不再燒後續 token ---
             impl_history.append(impl_text)
@@ -3031,6 +3084,11 @@ class StudioSession:
                     f"（連續 {config.STALL_ROUNDS} 輪只重述，提早收斂）",
                 )
                 return False
+
+            if commit_violations:
+                feedback = self._forbidden_paths_feedback(task, commit_violations)
+                await self._store_reflection(ctx, task, rnd, impl_text, feedback, bc)
+                continue
 
             # --- 過軟性時間預算：本輪實作已 commit，但時間已過軟 deadline → 不再開昂貴的
             # 三審 fan-out（QA/senior/security 各一次 LLM turn，是單輪最大且最易把整輪拖過硬

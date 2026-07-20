@@ -134,7 +134,7 @@ def test_merge_lane_comment_and_runner_git_timeouts_match():
     assert _run_command_exec_timeouts(runner.git_merge_abort) == [20]
     assert _run_command_exec_timeouts(runner.git_merge_ref_into) == [60]
     assert _run_command_exec_timeouts(runner.git_conflict_markers_present) == [20]
-    assert _run_command_exec_timeouts(runner.git_commit) == [30, 30, 20]
+    assert _run_command_exec_timeouts(runner.git_commit) == [30, 30, 20, 20, 20]
 
 
 def test_teardown_snapshot_and_flush_timeout_contracts_are_pinned():

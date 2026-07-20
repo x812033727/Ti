@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - 僅非 POSIX 平台
     resource = None  # type: ignore[assignment]
 
 from . import config, git_cred
+from .flow import check_forbidden_paths
 
 log = logging.getLogger("ti.runner")
 
@@ -60,6 +61,16 @@ class RunOutput:
     @property
     def ok(self) -> bool:
         return self.exit_code == 0 and not self.timed_out
+
+
+@dataclass(frozen=True)
+class GitCommitResult:
+    commit_hash: str | None
+    forbidden_violations: list[str]
+
+    @property
+    def ok(self) -> bool:
+        return self.commit_hash is not None
 
 
 def _truncate(text: str, limit: int | None = None) -> str:
@@ -817,19 +828,30 @@ async def git_clone(
     return result
 
 
-async def git_commit(cwd: Path | str, message: str) -> str | None:
+async def git_commit(
+    cwd: Path | str, message: str, forbidden_paths: list[str] | None = None
+) -> str | GitCommitResult | None:
     """把 workspace 全部變更 commit，回傳短 hash；無變更或失敗回 None。
 
-    三步全走參數式 exec（`run_command_exec`），commit 訊息以 argv 單一元素傳遞，
+    基礎三步全走參數式 exec（`run_command_exec`），commit 訊息以 argv 單一元素傳遞，
     shell 不參與解析——backtick / `$(...)` / `;` / 換行 等一律當純文字，免跳脫、
     多行原樣保留。沙箱沿用 `SANDBOX_ENABLED`；bwrap 缺失則 fail-closed 回 None。
+    傳入 `forbidden_paths` 時，`git add -A` 後先檢查 staged 檔名；命中禁改規則則不 commit，
+    並回 `GitCommitResult(commit_hash=None, forbidden_violations=[...])`。
     """
+    wants_result = forbidden_paths is not None
+
+    def done(commit_hash: str | None, violations: list[str] | None = None):
+        if wants_result:
+            return GitCommitResult(commit_hash, list(violations or []))
+        return commit_hash
+
     if not config.ENABLE_GIT or not _git_available():
-        return None
+        return done(None)
     root = Path(cwd)
     if not (root / ".git").exists():
         if not await git_init(root):
-            return None
+            return done(None)
 
     add = await run_command_exec(root, ["git", "add", "-A"], timeout=30, label="git add")
     if not add.ok:
@@ -837,7 +859,40 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
         log.warning(
             "git add 失敗（exit=%s, timed_out=%s）：%s", add.exit_code, add.timed_out, add.output
         )
-        return None
+        return done(None)
+
+    if forbidden_paths is not None:
+        staged = await run_command_exec(
+            root,
+            ["git", "diff", "--staged", "--diff-filter=ACMRT", "--name-only"],
+            timeout=20,
+            label="git diff --staged",
+        )
+        if not staged.ok:
+            log.warning(
+                "git diff --staged 失敗（exit=%s, timed_out=%s）：%s",
+                staged.exit_code,
+                staged.timed_out,
+                staged.output,
+            )
+            return done(None)
+        staged_paths = [line.strip() for line in staged.output.splitlines() if line.strip()]
+
+        # 補充：捕獲被刪除的檔案與 rename 舊名（--no-renames 把 rename 拆成 D+A，D 即舊路徑）。
+        # ACMRT 過濾器不含 D，且 R 只顯示新名，兩種情境需第二次 diff 補足。
+        deleted = await run_command_exec(
+            root,
+            ["git", "diff", "--staged", "--diff-filter=D", "--name-only", "--no-renames"],
+            timeout=20,
+            label="git diff --staged (deleted/renamed-source)",
+        )
+        if deleted.ok:
+            staged_paths += [line.strip() for line in deleted.output.splitlines() if line.strip()]
+
+        violations = check_forbidden_paths(staged_paths, forbidden_paths)
+        if violations:
+            log.warning("禁改路徑命中，略過 commit：%s", ", ".join(violations))
+            return done(None, violations)
 
     # commit 直接帶 git identity 兜底，消滅 clone 流程下 identity 缺失整類失敗。
     r = await run_command_exec(
@@ -859,12 +914,12 @@ async def git_commit(cwd: Path | str, message: str) -> str | None:
         label="git commit",
     )
     if not r.ok:
-        return None  # 通常是「無變更可提交」
+        return done(None)  # 通常是「無變更可提交」
 
     h = await run_command_exec(
         root, ["git", "rev-parse", "--short", "HEAD"], timeout=20, label="git rev-parse"
     )
-    return h.output.strip() if h.ok else None
+    return done(h.output.strip()) if h.ok else done(None)
 
 
 # --- git worktree（並行支線隔離）--------------------------------------
