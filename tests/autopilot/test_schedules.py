@@ -128,3 +128,18 @@ def test_autopilot_hook_throttle_and_safety(monkeypatch):
     monkeypatch.setattr(schedules, "enqueue_due", boom)
     monkeypatch.setattr(autopilot, "_schedules_checked_at", 0.0)
     assert autopilot._maybe_enqueue_schedules(now=5000.0) == 0, "失敗吞掉不影響主迴圈"
+
+
+def test_main_loop_enqueues_schedules_before_admission_and_quota_sleeps():
+    """排程入列是零預算純檔案操作,必須排在 admission/額度/預算 sleep-continue 之前;
+    放在後面會讓 budget_sleep 期間的 daily occurrence 跨日作廢(實證:每日健檢連兩天
+    沒觸發)。守門:_main_loop 原始碼中 _maybe_enqueue_schedules() 先於 admission_decision。"""
+    import inspect
+
+    from studio import autopilot
+
+    src = inspect.getsource(autopilot._main_loop)
+    enqueue_at = src.index("_maybe_enqueue_schedules()")
+    admission_at = src.index("admission_decision")
+    quota_gate_at = src.index("provider_quota.snapshot")
+    assert enqueue_at < admission_at < quota_gate_at, "排程入列必須在 admission/額度閘門之前"
