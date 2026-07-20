@@ -77,6 +77,7 @@ _SCHEMA_KEYS = {
     "ts",
     "task_id",
     "source",  # F2b:寫入端內嵌任務 source(自主度量測免疫 backlog 重建)
+    "lane",  # 軌 I:fast/full 快車道效能對比
     "pr",
     "branch",
     "head_sha",
