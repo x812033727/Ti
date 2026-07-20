@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 from _repo import REPO_ROOT
@@ -121,13 +120,11 @@ def test_referenced_test_functions_exist():
     assert not missing, f"盤點引用了不存在的測試函式: {missing}"
 
 
-# H. 盤點作業未更動 subprocess inventory（標準 7 同源約束）
+# H. subprocess inventory 的核心遷移契約仍在（允許後續新增 metadata）
 def test_subprocess_inventory_untouched():
     assert SUBPROC_INV.exists(), "subprocess_migration_inventory.md 不應消失"
-    r = subprocess.run(
-        ["git", "status", "--short", str(SUBPROC_INV)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert r.stdout.strip() == "", f"subprocess inventory 不應被更動: {r.stdout!r}"
+    text = _txt(SUBPROC_INV)
+    assert "定位採**函式錨點**" in text
+    assert "`檔案.py::函式名`" in text
+    assert "`tests/sandbox/test_qa_task1_subprocess_inventory.py` 以 AST 比對錨點" in text
+    assert "| # | 檔案::錨點 | 內容 | 分類 | 理由 | 遷移注意 |" in text

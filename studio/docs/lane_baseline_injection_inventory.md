@@ -1,5 +1,13 @@
 # Lane baseline 注入現況稽核
 
+## 行號守門
+
+- 類型：`marker-only`
+- 狀態：`not-required`
+- 守門測試：不適用
+- 模板：`studio/docs/inventory_line_guard_convention.md`
+- 原則：本檔以函式、類別與語意 marker 定位，不把行號當契約；若加入現碼行號，需改用 `line-number` 並補正式命名守門測試。
+
 目的：供 ARCHITECTURE.md「baseline 注入契約」決策表對齊。這份清單描述目前實作，不等同已落地的 lane baseline env/manifest 契約。
 
 ## 結論

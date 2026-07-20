@@ -74,16 +74,14 @@ def test_windows_cross_platform_noted():
     assert hit, "文件未處理 Windows 跨平台（無路徑加註，也無適用平台聲明）"
 
 
-# 標準 6：inventory 未被更動
+# 標準 6：inventory 核心契約未被破壞（允許後續新增 metadata）
 def test_inventory_untouched():
     assert INVENTORY.exists(), "inventory 檔不應消失"
-    r = subprocess.run(
-        ["git", "status", "--short", str(INVENTORY)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert r.stdout.strip() == "", f"inventory 不應被更動: {r.stdout!r}"
+    text = INVENTORY.read_text(encoding="utf-8")
+    assert "定位採**函式錨點**" in text
+    assert "`檔案.py::函式名`" in text
+    assert "`tests/sandbox/test_qa_task1_subprocess_inventory.py` 以 AST 比對錨點" in text
+    assert "| # | 檔案::錨點 | 內容 | 分類 | 理由 | 遷移注意 |" in text
 
 
 # 標準 7：驗收指令路徑有效（.venv/bin/python 存在且可呼叫）

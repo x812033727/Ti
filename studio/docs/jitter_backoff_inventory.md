@@ -1,5 +1,13 @@
 # 退避 jitter 收口盤點（任務 #1）
 
+## 行號守門
+
+- 類型：`line-number`
+- 狀態：`planned`
+- 守門測試：`tests/docs/test_inventory_line_guard_jitter_backoff.py`
+- 模板：`studio/docs/inventory_line_guard_convention.md`
+- 原則：文件只作被校驗方；測試須由實碼動態重算行號，不得為了過測試改產品碼或新增 wrapper。
+
 > 目的：逐一標出 **orchestrator 與 experts 串流路徑**上所有可能產生「退避延遲」的呼叫點，
 > 證明它們**皆匯流至唯一入口** `make_retry_config` → `backoff_delay`，且 jitter 實際值
 > ＝`config.EXPERT_RATE_LIMIT_BACKOFF_JITTER`（預設 **0.5**），**無第二條繞過 jitter 的退避**。

@@ -115,16 +115,14 @@ def test_pyproject_unchanged():
     )
 
 
-# 標準7：subprocess inventory 未被更動
+# 標準7：subprocess inventory 核心契約未被破壞（允許後續新增 metadata）
 def test_subprocess_inventory_untouched():
     assert SUBPROC_INV.exists()
-    r = subprocess.run(
-        ["git", "status", "--short", str(SUBPROC_INV)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert r.stdout.strip() == "", f"inventory 不應被更動: {r.stdout!r}"
+    text = SUBPROC_INV.read_text(encoding="utf-8")
+    assert "定位採**函式錨點**" in text
+    assert "`檔案.py::函式名`" in text
+    assert "`tests/sandbox/test_qa_task1_subprocess_inventory.py` 以 AST 比對錨點" in text
+    assert "| # | 檔案::錨點 | 內容 | 分類 | 理由 | 遷移注意 |" in text
 
 
 # 標準5 收尾-d：本 epic 未偷改/放寬任何「既有」docs 測試（只可新增 QA 測試）

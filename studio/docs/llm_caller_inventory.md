@@ -1,5 +1,13 @@
 # LLM 呼叫端收口盤點（2026-06-21）
 
+## 行號守門
+
+- 類型：`line-number`
+- 狀態：`planned`
+- 守門測試：`tests/docs/test_inventory_line_guard_llm_caller.py`
+- 模板：`studio/docs/inventory_line_guard_convention.md`
+- 原則：文件只作被校驗方；測試須由實碼動態重算行號，不得為了過測試改產品碼或新增 wrapper。
+
 範圍：`studio/` 內實際會發起 LLM 發言或轉接串流的路徑，重點檢查 429/529 退避、SSE/SDK 錯誤文字分類、provider 不可用文字防線是否委派 `studio.llm_caller`。
 
 ## 結論

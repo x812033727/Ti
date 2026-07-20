@@ -1,5 +1,13 @@
 # `run_command` shell 呼叫端遷移清冊
 
+## 行號守門
+
+- 類型：`marker-only`
+- 狀態：`not-required`
+- 守門測試：不適用
+- 模板：`studio/docs/inventory_line_guard_convention.md`
+- 原則：本檔以 `檔案.py::函式名` 錨點定位，不把行號當契約；若加入現碼行號，需改用 `line-number` 並補正式命名守門測試。
+
 基準範本：`publisher.py` 的 `_push`（已全面 argv 化）——固定指令拆成 `list[str]`、改呼叫
 `run_command_exec`、帶固定 `label`、顯式帶齊 `timeout`/`sandbox`。
 
