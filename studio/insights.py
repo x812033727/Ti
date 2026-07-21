@@ -265,15 +265,21 @@ def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
     days = max(1, min(30, int(days)))
     cutoff = time.time() - days * 86400
     clarify: list[dict] = []
+    policy_blocked: list[dict] = []
     parked: list[dict] = []
     for t in backlog.list_tasks("parked", state_dir=state_dir):
         row = {k: t.get(k) for k in _ATTENTION_TASK_FIELDS}
         if str(t.get("clarify") or "").strip():
             clarify.append(row)  # 澄清票不看時間:沒答就是欠著
+        elif str(t.get("note") or "").startswith("自治政策"):
+            # 政策攔下=等人裁決,與澄清票同語意不看時間——過去混在一般停放裡,
+            # 超過視窗即隱形(7-21 實錄:#424/441/467 全被「陳年歸檔」吃掉)。
+            policy_blocked.append(row)
         elif (t.get("updated_at") or 0) >= cutoff:
             # 陳年停放=歸檔語意,不進「需要你」——例外收件匣只裝視窗內的新停放。
             parked.append(row)
     clarify.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
+    policy_blocked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     parked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     events = [
         {k: e.get(k) for k in ("kind", "title", "task_id", "ts") if e.get(k) is not None}
@@ -284,6 +290,7 @@ def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
     events.sort(key=lambda e: e.get("ts") or 0, reverse=True)
     return {
         "clarify": clarify[:50],
+        "policy_blocked": policy_blocked[:50],
         "parked": parked[:50],
         "events": events[:50],
         "pending_clarify": len(clarify),
