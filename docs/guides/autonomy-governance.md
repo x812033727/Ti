@@ -134,3 +134,7 @@ rollback 與成本硬上限也必須全數通過。狀態 API 只回報 readines
 
 任何成本不明、audit 寫入失敗、來源漂移、同 provider 雙審、證據不一致或 rollback 缺失都不會
 被當作成功或零介入；控制面會拒絕外部動作，待管理者排除原因並顯式解除煞車。
+
+## 相關
+
+- 部署漂移 operator 手冊(外部合併後的納管部署與後備處置):`docs/guides/deploy-drift-runbook.md`
