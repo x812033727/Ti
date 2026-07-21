@@ -260,10 +260,33 @@ async def test_run_command_exec_env_reaches_child_without_entering_command(monke
 
 
 def test_pr_payload():
-    p = publisher.pr_payload("做一個 BMI CLI", "ti-studio/x", "main")
+    p = publisher.pr_payload(
+        "修正 BMI CLI 的空輸入邊界",
+        "ti-studio/x",
+        "main",
+        changed_files=["studio/publisher.py", "tests/publish/test_publisher.py"],
+    )
     assert p["head"] == "ti-studio/x"
     assert p["base"] == "main"
     assert "BMI" in p["title"]
+    assert "## 動機" in p["body"]
+    assert "類型：未處理邊界" in p["body"]
+    assert "修正 BMI CLI 的空輸入邊界" in p["body"]
+    assert "## 如何驗證" in p["body"]
+    assert "對應測試：`tests/publish/test_publisher.py`" in p["body"]
+
+
+def test_pr_payload_static_reasoning_when_no_tests_changed():
+    p = publisher.pr_payload(
+        "修正文檔過時說明",
+        "ti-studio/docs",
+        "main",
+        changed_files=["README.md", "docs/publish.md"],
+    )
+    assert "類型：過時文件" in p["body"]
+    assert "靜態推理依據" in p["body"]
+    assert "`README.md`" in p["body"]
+    assert "`docs/publish.md`" in p["body"]
 
 
 def test_parse_pr_number():
@@ -367,8 +390,12 @@ def _configured(monkeypatch):
     async def _noop(*a, **k):
         return True
 
+    async def _no_changed_files(*a, **k):
+        return []
+
     monkeypatch.setattr(runner, "git_init", _noop)
     monkeypatch.setattr(runner, "git_commit", _noop)
+    monkeypatch.setattr(publisher, "_pr_changed_files", _no_changed_files)
 
 
 @pytest.mark.asyncio
@@ -405,10 +432,17 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
         assert "tok" not in value
         return runner.RunOutput(command="git push", exit_code=0, output="ok", timed_out=False)
 
+    async def fake_changed_files(cwd, base):
+        assert cwd == "/tmp"
+        assert base == "main"
+        return ["studio/app.py", "tests/test_app.py"]
+
     async def fake_pr(payload):
+        seen["body"] = payload["body"]
         return True, "https://github.com/o/r/pull/9"
 
     monkeypatch.setattr(publisher, "_push", fake_push)
+    monkeypatch.setattr(publisher, "_pr_changed_files", fake_changed_files)
     monkeypatch.setattr(publisher, "_open_pr", fake_pr)
 
     res = await publisher.publish("/tmp", "s1", "需求")
@@ -417,6 +451,9 @@ async def test_publish_push_then_pr(monkeypatch, _configured):
     assert res.pr_url.endswith("/pull/9")
     assert seen["url"] == "https://github.com/o/r.git"
     assert seen["env"]["GIT_CONFIG_VALUE_1"].startswith("Authorization: Basic ")
+    assert "## 動機" in seen["body"]
+    assert "## 如何驗證" in seen["body"]
+    assert "對應測試：`tests/test_app.py`" in seen["body"]
 
 
 @pytest.mark.asyncio
