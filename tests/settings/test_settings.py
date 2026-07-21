@@ -187,6 +187,41 @@ def test_update_accepts_clarify_timeout_numeric_value(sandbox):
     assert "TI_CLARIFY_TIMEOUT" in env_text and "90" in env_text
 
 
+def test_update_accepts_clarify_timeout_float_value(sandbox):
+    settings.update({"TI_CLARIFY_TIMEOUT": "0.5"})
+    assert os.environ["TI_CLARIFY_TIMEOUT"] == "0.5"
+    assert config.CLARIFY_TIMEOUT == 0.5
+    env_text = (sandbox / ".env").read_text()
+    assert "TI_CLARIFY_TIMEOUT" in env_text and "0.5" in env_text
+
+
+def test_update_rejects_decimal_for_int_numeric_field(sandbox, monkeypatch):
+    key = "TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK"
+    monkeypatch.delenv(key, raising=False)
+    settings.update({key: "0.5"})
+    assert key not in os.environ
+    env_file = sandbox / ".env"
+    assert not env_file.exists() or key not in env_file.read_text()
+
+
+def test_update_rejects_nan_clarify_timeout_without_persisting(sandbox, monkeypatch):
+    monkeypatch.delenv("TI_CLARIFY_TIMEOUT", raising=False)
+    settings.update({"TI_CLARIFY_TIMEOUT": "nan"})
+    assert "TI_CLARIFY_TIMEOUT" not in os.environ
+    assert config.CLARIFY_TIMEOUT == 180.0
+    env_file = sandbox / ".env"
+    assert not env_file.exists() or "TI_CLARIFY_TIMEOUT" not in env_file.read_text()
+
+
+def test_update_rejects_infinite_clarify_timeout_without_persisting(sandbox, monkeypatch):
+    monkeypatch.delenv("TI_CLARIFY_TIMEOUT", raising=False)
+    settings.update({"TI_CLARIFY_TIMEOUT": "inf"})
+    assert "TI_CLARIFY_TIMEOUT" not in os.environ
+    assert config.CLARIFY_TIMEOUT == 180.0
+    env_file = sandbox / ".env"
+    assert not env_file.exists() or "TI_CLARIFY_TIMEOUT" not in env_file.read_text()
+
+
 def test_update_rejects_bad_clarify_timeout_without_persisting(sandbox, monkeypatch):
     monkeypatch.delenv("TI_CLARIFY_TIMEOUT", raising=False)
     settings.update({"TI_CLARIFY_TIMEOUT": "abc"})

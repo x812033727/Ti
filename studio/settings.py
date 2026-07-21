@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -21,7 +22,7 @@ class Field:
     env: str
     label: str
     kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）| textarea
-    numeric: bool = False  # True＝非空值必須可 int() 解析,否則拒收(防 config.reload 的 int() 炸)
+    numeric: str = ""  # "" | "int" | "float";非空值須可解析,否則拒收
     secret: bool = False
     options: tuple[str, ...] = ()
     placeholder: str = ""
@@ -338,7 +339,7 @@ FIELDS: tuple[Field, ...] = (
         "TI_CLARIFY_TIMEOUT",
         "澄清等待回覆秒數（逾時按 PM 預設假設續行）",
         placeholder="180",
-        numeric=True,
+        numeric="float",
         group="進階",
     ),
     Field(
@@ -608,21 +609,21 @@ FIELDS: tuple[Field, ...] = (
         "TI_AUTOPILOT_INVESTIGATION_TIMEOUT",
         "調查管線單次專家呼叫逾時（秒;空=1200）",
         placeholder="1200",
-        numeric=True,
+        numeric="int",
         group="Autopilot",
     ),
     Field(
         "TI_AUTOPILOT_FOLLOWUP_MAX_PER_TASK",
         "衍生任務扇出寬度上限（單任務一場最多回填幾個 followup;0=不限;空=3）",
         placeholder="3",
-        numeric=True,
+        numeric="int",
         group="Autopilot",
     ),
     Field(
         "TI_AUTOPILOT_FOLLOWUP_MAX_GEN",
         "衍生任務血緣代數上限（斷 followup 生 followup 深鏈;0=不限;空=3）",
         placeholder="3",
-        numeric=True,
+        numeric="int",
         group="Autopilot",
     ),
     # --- 通知組(第 3 階 A1):web 端(含「發送測試通知」)存檔即生效;autopilot 端的
@@ -703,9 +704,14 @@ def update(payload: dict) -> dict:
                 os.environ.pop(key, None)
                 continue
             try:
-                int(val)
+                if f.numeric == "float":
+                    parsed = float(val)
+                    if not math.isfinite(parsed):
+                        continue
+                else:
+                    int(val)
             except ValueError:
-                continue  # 非法數值不落檔:config.reload() 的 int(os.getenv(...)) 會炸
+                continue  # 非法數值不落檔:config.reload() 的數值解析會炸
         if f.kind == "textarea":
             # .env 單行格式:多行文字摺成空白(北極星語意上一段話即可)
             val = " ".join(val.split())
