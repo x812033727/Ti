@@ -100,6 +100,22 @@ function renderParkedSection(host, parked) {
   }
 }
 
+function renderPolicyBlockedSection(host, tasks) {
+  appendTextEl(host, "h3", "stage-sec", `政策攔下(${tasks.length})`);
+  if (!tasks.length) {
+    appendTextEl(host, "p", "muted", "沒有被自治政策攔下的任務。");
+    return;
+  }
+  appendTextEl(host, "p", "muted", "這些任務被治理閘擋在合併/部署前,取回重跑只會再被攔——需要政策層裁決(詳 deploy-drift-runbook)。");
+  for (const t of tasks) {
+    const card = document.createElement("div");
+    card.className = "att-card policy";
+    appendTextEl(card, "div", "att-title", `#${t.id} ${t.title || ""}`);
+    if (t.note) appendTextEl(card, "p", "muted att-note", t.note);
+    host.appendChild(card);
+  }
+}
+
 function renderDeploySection(host, deploy) {
   appendTextEl(host, "h3", "stage-sec", "部署漂移");
   if (!deploy) {
@@ -144,9 +160,9 @@ export function updateBadge(count) {
   badge.classList.toggle("hidden", !count);
 }
 
-// badge 數=待答澄清票+部署漂移卡(有卡=+1):兩者都是「需要你」的欠帳。
+// badge 數=待答澄清票+政策攔下任務+部署漂移卡(有卡=+1):都是「需要你」的欠帳。
 function badgeCount(d) {
-  return (d.pending_clarify || 0) + (d.deploy ? 1 : 0);
+  return (d.pending_clarify || 0) + ((d.policy_blocked || []).length) + (d.deploy ? 1 : 0);
 }
 
 // 側欄 badge 輕量刷新(home 載入時呼叫);失敗靜默——badge 是輔助不是真相。
@@ -171,6 +187,7 @@ export async function renderAttention() {
   }
   appendTextEl(host, "p", "muted", "只有這裡列出的事需要你——其餘一切 agent 自己處理。");
   renderClarifySection(host, d.clarify || []);
+  renderPolicyBlockedSection(host, d.policy_blocked || []);
   renderParkedSection(host, d.parked || []);
   renderDeploySection(host, d.deploy || null);
   renderEventsSection(host, d.events || []);

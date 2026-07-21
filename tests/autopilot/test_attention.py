@@ -19,11 +19,30 @@ def test_empty_state():
     out = insights.attention()
     assert out == {
         "clarify": [],
+        "policy_blocked": [],
         "parked": [],
         "events": [],
         "pending_clarify": 0,
         "deploy": None,
     }
+
+
+def test_policy_blocked_split_and_timeless():
+    """政策攔下=等人裁決,與澄清票同語意不看時間(7-21 實錄:陳年後從收件匣隱形)。"""
+    import time as _t
+
+    t1 = backlog.add("治理檢討", "", source="manual")
+    t2 = backlog.add("普通停放", "", source="eval")
+    backlog.set_status(
+        t1["id"], "parked", note="自治政策在 deploy 前拒絕：all_verdicts_must_approve"
+    )
+    backlog.set_status(t2["id"], "parked", note="等外部依賴")
+    stale = _t.time() - 40 * 86400
+    backlog.set_status(t1["id"], "parked", updated_at=stale)
+    out = insights.attention(days=7)
+    assert [r["id"] for r in out["policy_blocked"]] == [t1["id"]], "陳年政策攔下仍在"
+    assert [r["id"] for r in out["parked"]] == [t2["id"]], "一般停放不混入"
+    assert out["pending_clarify"] == 0, "政策攔下不冒充澄清票"
 
 
 def test_deploy_drift_card(tmp_path):
