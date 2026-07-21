@@ -17,7 +17,44 @@ def _state(tmp_path, monkeypatch):
 
 def test_empty_state():
     out = insights.attention()
-    assert out == {"clarify": [], "parked": [], "events": [], "pending_clarify": 0}
+    assert out == {
+        "clarify": [],
+        "parked": [],
+        "events": [],
+        "pending_clarify": 0,
+        "deploy": None,
+    }
+
+
+def test_deploy_drift_card(tmp_path):
+    """autodeploy 延後檔存在 → 收件匣帶部署漂移卡;壞檔/缺欄回 None 不炸。"""
+    import json as _json
+
+    path = config.AUTOPILOT_STATE_DIR / "autodeploy-deferred.json"
+    path.write_text(
+        _json.dumps(
+            {
+                "remote": "da1646d6138e729b8cb522d8486d584c186ff04c",
+                "reason": "governance_evidence_required",
+                "deferrals": 42,
+                "first_deferred_at": 1784000000.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = insights.attention()
+    assert out["deploy"] == {
+        "remote": "da1646d6138e",
+        "reason": "governance_evidence_required",
+        "deferrals": 42,
+        "first_deferred_at": 1784000000.0,
+    }
+
+    path.write_text("{broken", encoding="utf-8")
+    assert insights.attention()["deploy"] is None
+
+    path.write_text(_json.dumps({"deferrals": "many"}), encoding="utf-8")
+    assert insights.attention()["deploy"] is None, "缺 remote 視為無卡"
 
 
 def test_stale_parked_excluded_but_stale_clarify_kept():

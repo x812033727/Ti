@@ -7,6 +7,7 @@ let attention = {
   clarify: [{ id: 7, title: '歧義任務', clarify: '要部署到哪個環境?', updated_at: 100 }],
   parked: [{ id: 8, title: '等外部依賴', note: '上游 API 未就緒', updated_at: 90 }],
   events: [{ kind: 'task_failed', title: '任務失敗一則', ts: 1700000000 }],
+  deploy: { remote: 'da1646d6138e', reason: 'governance_evidence_required', deferrals: 42, first_deferred_at: 1784000000 },
 };
 const env = install((url, opts = {}) => {
   if (!apiOk) return Promise.reject(new Error('down'));
@@ -27,8 +28,11 @@ expect(all.includes('澄清待答(1)'), '澄清區標題含數');
 expect(all.includes('要部署到哪個環境?'), '澄清問題全文');
 expect(all.includes('上游 API 未就緒'), '停放原因');
 expect(all.includes('任務失敗') && !all.includes('daily_digest'), '事件標籤');
+expect(all.includes('main 已前進到 da1646d6138e'), '部署漂移卡標題');
+expect(all.includes('納管部署需審查證據'), '延後原因人話');
+expect(all.includes('已延後 42 輪'), '延後輪數');
 const badge = $('#snAttentionBadge');
-expect(badge.textContent === '1' && !badge.classList.contains('hidden'), 'badge 顯示待答數');
+expect(badge.textContent === '2' && !badge.classList.contains('hidden'), 'badge=澄清數+漂移卡');
 
 // 答覆流:填 textarea → 按鈕 → POST unpark+note
 const inputs = walk(host, (e) => e.tag === 'textarea');
@@ -45,6 +49,7 @@ expect($('#snAttentionBadge').classList.contains('hidden'), '清空後 badge 隱
 // 空答不送出
 await mod.renderAttention(); // 空狀態
 expect(textOf($('#homeAttention')).includes('沒有待答的問題'), '空狀態文案');
+expect(textOf($('#homeAttention')).includes('沒有等待中的部署'), '無漂移空狀態');
 
 // 失敗降級
 apiOk = false;

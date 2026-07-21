@@ -13,6 +13,14 @@ export const EVENT_LABEL = {
   clarify_pending: "澄清待答",
 };
 
+// autodeploy 延後原因 → 人話(未知原因原樣顯示)。
+export const DEFER_LABEL = {
+  busy_sessions: "有進行中討論,等空檔自動部署",
+  governance_evidence_required: "納管部署需審查證據,需要人工裁決",
+  governance_escalated: "雙 AI 審查未全數通過,需要人工裁決",
+  deploy_failed: "部署失敗已自動回滾,等新 commit 或人工處理",
+};
+
 async function answerClarify(taskId, note) {
   const r = await fetch(`/api/autopilot/task/${taskId}/action`, {
     method: "POST",
@@ -92,6 +100,23 @@ function renderParkedSection(host, parked) {
   }
 }
 
+function renderDeploySection(host, deploy) {
+  appendTextEl(host, "h3", "stage-sec", "部署漂移");
+  if (!deploy) {
+    appendTextEl(host, "p", "muted", "沒有等待中的部署。");
+    return;
+  }
+  const card = document.createElement("div");
+  card.className = "att-card deploy";
+  appendTextEl(card, "div", "att-title", `main 已前進到 ${deploy.remote || "?"},線上仍是舊碼`);
+  appendTextEl(card, "p", "att-question", DEFER_LABEL[deploy.reason] || deploy.reason || "原因不明");
+  const since = deploy.first_deferred_at
+    ? new Date(deploy.first_deferred_at * 1000).toLocaleString()
+    : "";
+  appendTextEl(card, "p", "muted att-note", `已延後 ${deploy.deferrals || 0} 輪${since ? `,自 ${since} 起` : ""}`);
+  host.appendChild(card);
+}
+
 function renderEventsSection(host, events) {
   appendTextEl(host, "h3", "stage-sec", "紅色事件(7 天)");
   if (!events.length) {
@@ -119,11 +144,16 @@ export function updateBadge(count) {
   badge.classList.toggle("hidden", !count);
 }
 
+// badge 數=待答澄清票+部署漂移卡(有卡=+1):兩者都是「需要你」的欠帳。
+function badgeCount(d) {
+  return (d.pending_clarify || 0) + (d.deploy ? 1 : 0);
+}
+
 // 側欄 badge 輕量刷新(home 載入時呼叫);失敗靜默——badge 是輔助不是真相。
 export async function refreshAttentionBadge() {
   try {
     const d = await (await fetch("/api/autopilot/attention")).json();
-    updateBadge(d.pending_clarify || 0);
+    updateBadge(badgeCount(d));
   } catch { /* 靜默 */ }
 }
 
@@ -142,8 +172,9 @@ export async function renderAttention() {
   appendTextEl(host, "p", "muted", "只有這裡列出的事需要你——其餘一切 agent 自己處理。");
   renderClarifySection(host, d.clarify || []);
   renderParkedSection(host, d.parked || []);
+  renderDeploySection(host, d.deploy || null);
   renderEventsSection(host, d.events || []);
-  updateBadge(d.pending_clarify || 0);
+  updateBadge(badgeCount(d));
 }
 
 export function openAttention() {

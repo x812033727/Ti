@@ -230,11 +230,37 @@ _ATTENTION_EVENT_EXCLUDE = frozenset({"test", "daily_digest", "stage_changed"}) 
 _ATTENTION_TASK_FIELDS = ("id", "title", "note", "clarify", "updated_at", "source", "attempts")
 
 
+def _deploy_attention() -> dict | None:
+    """autodeploy 延後觀測檔 → 收件匣「部署漂移」卡；無檔（無 drift）回 None。
+
+    7-21 事故教訓：#504 後 timer 對 drift 只能 fail-closed 延後，但延後狀態
+    只在 journal／drift_stats 深處可見——「按例外監控」漏了部署本身。此卡把
+    延後的 target、原因與累計輪數帶進「需要你」，operator 不必翻 log。
+    """
+    path = config.AUTOPILOT_STATE_DIR / "autodeploy-deferred.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not str(data.get("remote") or "").strip():
+        return None
+    try:
+        deferrals = int(data.get("deferrals") or 0)
+    except (TypeError, ValueError):
+        deferrals = 0
+    return {
+        "remote": str(data.get("remote") or "")[:12],
+        "reason": str(data.get("reason") or ""),
+        "deferrals": deferrals,
+        "first_deferred_at": data.get("first_deferred_at"),
+    }
+
+
 def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
-    """例外收件匣聚合:澄清待答票/停放任務+原因/近 days 天 page 級事件。
+    """例外收件匣聚合:澄清待答票/停放任務+原因/近 days 天 page 級事件/部署漂移。
 
     純檔案讀取零 LLM。澄清票=parked 且 clarify 非空(答覆走既有 task action
-    unpark+note);badge 數=待答澄清票數。days 夾 1..30。
+    unpark+note);badge 數=待答澄清票數(+部署漂移卡,由前端加總)。days 夾 1..30。
     """
     days = max(1, min(30, int(days)))
     cutoff = time.time() - days * 86400
@@ -261,6 +287,7 @@ def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
         "parked": parked[:50],
         "events": events[:50],
         "pending_clarify": len(clarify),
+        "deploy": _deploy_attention(),
     }
 
 
