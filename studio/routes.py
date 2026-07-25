@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import itertools
 import json
+import math
 import re
 
 from fastapi import APIRouter, Depends, Request
@@ -17,6 +18,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    admission_incidents,
     admission_mode,
     appraisal,
     auth,
@@ -56,15 +58,138 @@ router = APIRouter()
 WRITE_DEPS = [Depends(auth.require_admin)]
 
 
+def _autopilot_heartbeat() -> dict | None:
+    """讀 worker 心跳；缺檔、壞編碼或非 object 一律視為無快照。"""
+    try:
+        heartbeat = json.loads(
+            (config.AUTOPILOT_STATE_DIR / "status.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    return heartbeat if isinstance(heartbeat, dict) else None
+
+
+def _heartbeat_incident(heartbeat: dict | None) -> dict | None:
+    """白名單化 memory-only incident 心跳，避免 operator API 透傳任意檔案內容。"""
+    if not isinstance(heartbeat, dict) or heartbeat.get("state") not in {
+        "admission_mode_fault",
+        "mode_switch_wait",
+        "idle",
+    }:
+        return None
+    heartbeat_state = heartbeat["state"]
+    raw = heartbeat.get("admission_incident")
+    if not isinstance(raw, dict) or not isinstance(raw.get("active"), bool):
+        return None
+    active = raw["active"]
+    if (active and heartbeat_state == "idle") or (not active and heartbeat_state != "idle"):
+        return None
+    incident_id = raw.get("incident_id")
+    error_code = raw.get("error_code")
+    mode = raw.get("last_effective_mode")
+    generation = raw.get("last_effective_generation")
+    sequence = raw.get("sequence")
+    if not isinstance(incident_id, str) or not re.fullmatch(r"admission-[0-9a-f]{32}", incident_id):
+        return None
+    if active and (
+        not isinstance(error_code, str) or not re.fullmatch(r"[a-z0-9_]{1,64}", error_code)
+    ):
+        error_code = "unknown_fault"
+    if not active:
+        error_code = ""
+    if mode not in admission_mode.MODES:
+        mode = "shadow"
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or not 0 <= generation <= (1 << 63) - 1
+    ):
+        generation = 0
+    if (
+        isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or not 0 <= sequence <= (1 << 63) - 1
+    ):
+        sequence = 0
+
+    def safe_number(name: str, default):
+        value = raw.get(name)
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            return default
+        try:
+            return value if math.isfinite(float(value)) else default
+        except (OverflowError, ValueError):
+            return default
+
+    recovered_at = safe_number("recovered_at", None)
+    if not active and recovered_at is None:
+        return None
+    return {
+        "sequence": sequence,
+        "active": active,
+        "incident_id": incident_id,
+        "error_code": error_code,
+        "first_seen_at": safe_number("first_seen_at", None),
+        "last_seen_at": safe_number("last_seen_at", None),
+        "duration_s": max(0.0, safe_number("duration_s", 0.0)),
+        "last_effective_mode": mode,
+        "last_effective_generation": generation,
+        "recovered_at": None if active else recovered_at,
+        "durability": "memory_only",
+        "diagnostic": (
+            raw.get("diagnostic")
+            if isinstance(raw.get("diagnostic"), str)
+            and re.fullmatch(r"[a-z0-9_]{1,64}", raw["diagnostic"])
+            else "ledger_unavailable"
+        ),
+    }
+
+
+def _admission_incident_snapshot(heartbeat: dict | None = None) -> dict:
+    """Durable ledger 優先；ledger 無法承載較新的 memory incident 時採 worker 心跳。"""
+    durable = admission_incidents.snapshot()
+    heartbeat_view = _heartbeat_incident(heartbeat)
+    if heartbeat_view is None:
+        return durable
+    durable_sequence = durable.get("sequence")
+    heartbeat_sequence = heartbeat_view.get("sequence")
+    if (
+        isinstance(durable_sequence, int)
+        and not isinstance(durable_sequence, bool)
+        and isinstance(heartbeat_sequence, int)
+        and not isinstance(heartbeat_sequence, bool)
+        and durable_sequence != heartbeat_sequence
+    ):
+        return heartbeat_view if heartbeat_sequence > durable_sequence else durable
+    if durable.get("incident_id") == heartbeat_view["incident_id"]:
+        # 同 sequence 時 durable 是已 ack 的權威快照；舊 fault heartbeat 不得拉回 degraded。
+        return durable
+    durable_first = durable.get("first_seen_at")
+    heartbeat_first = heartbeat_view.get("first_seen_at")
+    if durable.get("active") is True and isinstance(durable_first, int | float):
+        if not isinstance(heartbeat_first, int | float) or durable_first >= heartbeat_first:
+            return durable
+    return heartbeat_view
+
+
 # --- 健康檢查 -----------------------------------------------------------
 @router.get("/api/health")
 async def health() -> JSONResponse:
     git_sha = (await deploy.current_head(str(config.AUTOPILOT_DEPLOY_DIR))).strip().lower()
     if not re.fullmatch(r"[0-9a-f]{40}", git_sha):
         git_sha = "unknown"
+    incident = _admission_incident_snapshot(_autopilot_heartbeat())
+    intake_available = incident.get("active") is not True
     return JSONResponse(
         {
             "ok": True,
+            # Admission fault 不代表 HTTP process 不健康；維持 200/ok=true，另以 degraded
+            # 告知 operator，避免 deploy probe 誤觸 rollback/restart。
+            "status": "ok" if intake_available else "degraded",
+            "intake_available": intake_available,
+            "error_code": ""
+            if intake_available
+            else str(incident.get("error_code") or "unknown_fault"),
             # 公開部署身分契約：只回不可逆推出憑證的 commit SHA，供自治部署
             # 在健康檢查同時證明「正在服務的版本就是剛合併的版本」。
             "git_sha": git_sha,
@@ -981,12 +1106,7 @@ async def autopilot_status() -> JSONResponse:
     # 心跳：autopilot 主迴圈每輪寫入的 status.json（state=idle/running/quota_sleep/
     # rotate_restart、task_id、sleep_until、各 provider 用量）。檔案不存在或壞損＝null
     # （尚未跑過/未寫入）。
-    try:
-        heartbeat = json.loads(
-            (config.AUTOPILOT_STATE_DIR / "status.json").read_text(encoding="utf-8")
-        )
-    except (OSError, ValueError):
-        heartbeat = None
+    heartbeat = _autopilot_heartbeat()
     mode_state = admission_mode.snapshot(fallback_mode="shadow")
     mode_public = mode_state.to_public()
     heartbeat_mode = heartbeat.get("admission_mode") if isinstance(heartbeat, dict) else None
@@ -1021,6 +1141,7 @@ async def autopilot_status() -> JSONResponse:
             # 另放 state，web 行程自己的 config 值不得提前冒充已生效。
             "task_admission_mode": effective_mode,
             "task_admission_mode_state": mode_public,
+            "task_admission_incident": _admission_incident_snapshot(heartbeat),
             "heartbeat": heartbeat,
             "dispatch_mode": "auto" if config.dispatch_auto() else "manual",
             # 每日 PR 預算（功能第五輪 F4）：預算透明化——budget_sleep 前看板先看得到逼近。

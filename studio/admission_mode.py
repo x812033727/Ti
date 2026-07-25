@@ -20,6 +20,7 @@ import contextlib
 import fcntl
 import json
 import logging
+import math
 import os
 import stat
 import time
@@ -143,9 +144,11 @@ def _mode(value: Any) -> str:
 def _integer(value: Any, *, code: str) -> int:
     if isinstance(value, bool):
         raise AdmissionModeError(code)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise AdmissionModeError(code)
     try:
         parsed = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise AdmissionModeError(code) from exc
     if parsed < 1:
         raise AdmissionModeError(code)
@@ -155,9 +158,9 @@ def _integer(value: Any, *, code: str) -> int:
 def _timestamp(value: Any, *, code: str) -> float:
     try:
         parsed = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise AdmissionModeError(code) from exc
-    if parsed < 0:
+    if not math.isfinite(parsed) or parsed < 0:
         raise AdmissionModeError(code)
     return parsed
 
@@ -179,9 +182,11 @@ def _decode(data: Any) -> ModeState:
     released_holds = data.get("released_holds", 0)
     if isinstance(released_holds, bool):
         raise AdmissionModeError("invalid_released_holds")
+    if isinstance(released_holds, float) and not math.isfinite(released_holds):
+        raise AdmissionModeError("invalid_released_holds")
     try:
         released_holds = int(released_holds)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise AdmissionModeError("invalid_released_holds") from exc
     if released_holds < 0:
         raise AdmissionModeError("invalid_released_holds")
@@ -276,7 +281,7 @@ def _release_hold_count(release_holds: Callable[[str], int], mode: str) -> int:
         raise AdmissionModeError("invalid_release_count")
     try:
         released_holds = int(released_holds)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise AdmissionModeError("invalid_release_count") from exc
     if released_holds < 0:
         raise AdmissionModeError("invalid_release_count")

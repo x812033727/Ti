@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from studio import admission_mode, autopilot, backlog as backlog_module, config
+from studio import admission_incidents, admission_mode, autopilot, backlog as backlog_module, config
 
 
 def _bootstrap(mode: str, **kwargs):
@@ -19,11 +19,44 @@ def _bootstrap(mode: str, **kwargs):
     )
 
 
+def test_admission_page_adapter_waits_for_configured_sink_acceptance(monkeypatch):
+    event = admission_incidents.IncidentEvent(
+        event_id="admission-" + "a" * 32 + ":fault:1",
+        kind="admission_mode_fault",
+        title="Task admission intake 已停止",
+        payload={
+            "event_id": "admission-" + "a" * 32 + ":fault:1",
+            "incident_id": "admission-" + "a" * 32,
+            "error_code": "invalid_json",
+            "effective_mode": "shadow",
+            "effective_generation": 1,
+        },
+    )
+    calls = []
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://notify.example/ti")
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(
+        autopilot.notify,
+        "send",
+        lambda kind, title, **payload: calls.append((kind, title, payload)) or False,
+    )
+    monkeypatch.setattr(
+        autopilot.notify,
+        "send_bg",
+        lambda *_args, **_kwargs: pytest.fail("已設定 sink 時不得先 ack daemon handoff"),
+    )
+
+    assert autopilot._notify_admission_incident(event) is False
+    assert calls == [(event.kind, event.title, dict(event.payload))]
+
+
 @pytest.fixture(autouse=True)
 def _runtime_state(tmp_path: Path, monkeypatch):
     state_dir = tmp_path / "state"
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", state_dir)
     monkeypatch.setattr(autopilot, "_admission_effective_mode_runtime", None)
+    monkeypatch.setattr(autopilot, "_admission_effective_generation_runtime", None)
     monkeypatch.setattr(autopilot, "_admission_mode_bootstrap_fault", "")
     monkeypatch.setattr(autopilot, "_task_running", False)
     monkeypatch.setattr(autopilot, "_sideline_task_info", None)
@@ -156,6 +189,130 @@ async def test_corrupt_control_state_fails_closed_with_fault_heartbeat(
     assert statuses[0][0] == "admission_mode_fault"
     assert statuses[0][1]["admission_mode_state"]["healthy"] is False
     assert sleeps == [60]
+
+
+@pytest.mark.asyncio
+async def test_fault_pages_once_and_recovery_waits_for_intake_boundary(
+    _runtime_state: Path,
+    monkeypatch,
+):
+    _bootstrap(
+        "enforce",
+        state_dir=_runtime_state,
+        initial_effective="enforce",
+    )
+    assert await autopilot._reconcile_admission_mode_boundary() is True
+    control_path = _runtime_state / "admission_mode.json"
+    healthy_control = control_path.read_text(encoding="utf-8")
+    control_path.write_text("{broken", encoding="utf-8")
+    statuses = []
+    notifications = []
+    monkeypatch.setattr(
+        autopilot,
+        "_write_status",
+        lambda state, **fields: statuses.append((state, fields)),
+    )
+    monkeypatch.setattr(
+        autopilot.notify,
+        "send_bg",
+        lambda kind, title, **extra: notifications.append((kind, title, extra)),
+    )
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(autopilot.asyncio, "sleep", no_sleep)
+
+    assert await autopilot._reconcile_admission_mode_boundary() is False
+    assert await autopilot._reconcile_admission_mode_boundary() is False
+    assert [kind for kind, _title, _extra in notifications] == ["admission_mode_fault"]
+    assert notifications[0][2]["effective_mode"] == "enforce"
+    assert notifications[0][2]["effective_generation"] == 1
+    assert statuses[-1][1]["admission_incident_state"]["active"] is True
+
+    # Control JSON 可讀只是先決條件；只有 boundary 更新 runtime pin 並將回 True 才能 recovery。
+    control_path.write_text(healthy_control, encoding="utf-8")
+    assert await autopilot._reconcile_admission_mode_boundary() is True
+
+    assert [kind for kind, _title, _extra in notifications] == [
+        "admission_mode_fault",
+        "admission_mode_recovered",
+    ]
+    assert notifications[1][2]["incident_id"] == notifications[0][2]["incident_id"]
+
+
+@pytest.mark.asyncio
+async def test_memory_only_recovery_is_published_to_heartbeat_before_intake_returns(
+    _runtime_state: Path,
+    monkeypatch,
+):
+    _bootstrap(
+        "enforce",
+        state_dir=_runtime_state,
+        initial_effective="enforce",
+    )
+    assert await autopilot._reconcile_admission_mode_boundary() is True
+    control_path = _runtime_state / "admission_mode.json"
+    healthy_control = control_path.read_text(encoding="utf-8")
+    control_path.write_text("{broken", encoding="utf-8")
+    monkeypatch.setattr(autopilot, "_notify_admission_incident", lambda event: True)
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(autopilot.asyncio, "sleep", no_sleep)
+    assert await autopilot._reconcile_admission_mode_boundary() is False
+    durable = admission_incidents.snapshot(state_dir=_runtime_state)
+    assert durable["active"] is True
+
+    real_write = admission_incidents.secure_write_root
+
+    def fail_incident_write(path, body):
+        if Path(path).name == "admission_incident.json":
+            raise OSError("disk full")
+        return real_write(path, body)
+
+    monkeypatch.setattr(admission_incidents, "secure_write_root", fail_incident_write)
+    control_path.write_text(healthy_control, encoding="utf-8")
+
+    assert await autopilot._reconcile_admission_mode_boundary() is True
+
+    heartbeat = autopilot._read_status()
+    incident = heartbeat["admission_incident"]
+    assert heartbeat["state"] == "idle"
+    assert incident["active"] is False
+    assert incident["incident_id"] == durable["incident_id"]
+    assert incident["durability"] == "memory_only"
+    assert incident["sequence"] > durable["sequence"]
+
+
+@pytest.mark.asyncio
+async def test_mode_switch_wait_never_opens_or_recovers_incident(
+    _runtime_state: Path,
+    monkeypatch,
+):
+    _bootstrap(
+        "shadow",
+        state_dir=_runtime_state,
+        initial_effective="shadow",
+    )
+    admission_mode.request("enforce", state_dir=_runtime_state)
+    monkeypatch.setattr(autopilot, "_task_running", True)
+    notifications = []
+    monkeypatch.setattr(
+        autopilot.notify,
+        "send_bg",
+        lambda kind, title, **extra: notifications.append((kind, title, extra)),
+    )
+    monkeypatch.setattr(autopilot, "_write_status", lambda *_args, **_kwargs: None)
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(autopilot.asyncio, "sleep", no_sleep)
+
+    assert await autopilot._reconcile_admission_mode_boundary() is False
+    assert notifications == []
 
 
 @pytest.mark.asyncio

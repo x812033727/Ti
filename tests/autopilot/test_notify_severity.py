@@ -75,6 +75,11 @@ def test_unknown_kind_defaults_to_page(monkeypatch):
     assert notify.severity("brand_new_alarm") == "page"
 
 
+def test_admission_incident_lifecycle_events_are_explicit_pages():
+    assert notify.SEVERITY["admission_mode_fault"] == "page"
+    assert notify.SEVERITY["admission_mode_recovered"] == "page"
+
+
 def test_watchdog_notify_hook_external_contract():
     code = (ROOT / "deploy" / "ti-watchdog.sh").read_text(encoding="utf-8")
     assert "TI_WATCHDOG_NOTIFY_URL" in code, "watchdog 應有可選推播鉤子"

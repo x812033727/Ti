@@ -16,7 +16,7 @@
 
 | 欄位 | 型別 | 意義 |
 |------|------|------|
-| `state` | str | `starting` / `idle` / `running` / `paused` / `quota_sleep` / `budget_sleep` / `rotate_restart` / `stopped` |
+| `state` | str | `starting` / `idle` / `running` / `paused` / `quota_sleep` / `budget_sleep` / `rotate_restart` / `mode_switch_wait` / `admission_mode_fault` / `stopped` |
 | `task_id` | int/str/null | 當前任務 id（`running` 時） |
 | `sleep_until` | float/null | 睡到何時（quota/budget/rotate sleep） |
 | `updated_at` | float | 每次寫入的 epoch 秒——**主迴圈存活訊號**，任務中每 ~60s 前進一次 |
@@ -25,6 +25,23 @@
 | `current_expert` | str/null | 目前輪到的專家 key（turn 進行中）；任務收尾或無 turn 時為 `null` |
 | `turn_started_at` | float/null | 目前專家 turn 的起始 epoch 秒；`now - turn_started_at` 即該專家已跑時長。無 turn 時為 `null` |
 | `workers` | dict/null | 子行程活性；`{"count": int\|null, "cpu_active": bool\|null}` |
+| `admission_mode` | dict/null | desired/effective generation 的去敏 control 快照 |
+| `admission_incident` | dict/null | intake incident 的去敏快照；ledger 無法寫入時仍可由 worker heartbeat 暴露 memory-only 狀態 |
+
+### Admission degraded 是獨立狀態
+
+- `mode_switch_wait` 是正常 transition：worker 等兩條 lane 都到安全邊界，不開啟或關閉 incident。
+- `admission_mode_fault` 代表 worker 已 fail-closed 停止新 intake，但 Web process 仍健康。
+- Python worker 是 admission fault/recovery 外部通知的唯一 sender；同 error code 會持久去重，
+  error code 改變才再通知，真正恢復 intake 時通知一次。
+- Layer 3 對 `admission_mode_fault` 只輸出 `degraded (task admission unavailable)`，不得重複
+  webhook、喚起 Claude 或 restart。這是下方一般 liveness restart 規則的明確 policy 例外，
+  用來避免 control-state 故障形成重啟風暴。
+- 公開 `/api/health` 維持 HTTP 200／`ok: true`，只增加 `status`、`intake_available` 與穩定
+  `error_code`；完整 incident 時間線只在 authenticated `/api/autopilot`。
+
+人工處置與原子 quarantine 步驟見
+[`task-admission-incident-runbook.md`](task-admission-incident-runbook.md)。
 
 ### `current_expert` / `turn_started_at`（專家 turn 粒度）
 
