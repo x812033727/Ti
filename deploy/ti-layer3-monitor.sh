@@ -135,6 +135,7 @@ notify_layer3() {
 
 FAIL=""
 LIVENESS_DEAD=""
+ADMISSION_DEGRADED=""
 
 # ── 檢查 1:兩個核心服務存活 ──────────────────────────────────────────────
 for s in ti.service "$SERVICE"; do
@@ -157,6 +158,11 @@ else
   HB_CHECK=$(sanitize_liveness_output "$HB_RAW")
 fi
 case "$HB_CHECK" in
+  *state=admission_mode_fault*)
+    # Worker 自己持有 admission incident/page 去重；Layer 3 只展示 degraded，
+    # 不重複通知、喚起 Claude 或 restart，避免 control-state 故障形成重啟風暴。
+    ADMISSION_DEGRADED="$HB_CHECK"
+    ;;
   verdict=alive*) : ;;
   verdict=probe_fail*)
     echo "layer3: liveness probe warning: $HB_CHECK"
@@ -195,6 +201,11 @@ if [ -n "$LIVENESS_DEAD" ]; then
   rc=$?
   echo "layer3: restart $SERVICE exit=$rc"
   exit 1
+fi
+
+if [ -z "$FAIL" ] && [ -n "$ADMISSION_DEGRADED" ]; then
+  echo "layer3: degraded (task admission unavailable): $ADMISSION_DEGRADED"
+  exit 0
 fi
 
 if [ -z "$FAIL" ]; then

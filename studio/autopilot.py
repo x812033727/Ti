@@ -48,6 +48,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import (
+    admission_incidents,
     admission_mode,
     autonomy,
     autonomy_review,
@@ -78,6 +79,7 @@ log = logging.getLogger("ti.autopilot")
 # main() 啟動／任務邊界 reconcile 後才更新。測試未啟動 main 時保持 None，
 # 讓既有 monkeypatch(config.TASK_ADMISSION_MODE) seam 仍可控制純函式行為。
 _admission_effective_mode_runtime: str | None = None
+_admission_effective_generation_runtime: int | None = None
 _admission_mode_bootstrap_fault = ""
 
 
@@ -90,6 +92,52 @@ def _effective_admission_mode() -> str:
     if state.error == "not_initialized":
         return config.TASK_ADMISSION_MODE
     return "shadow"
+
+
+def _notify_admission_incident(event: admission_incidents.IncidentEvent) -> bool:
+    """有外部 sink 時同步確認送達，否則完成本機事件留痕後回 acceptance。"""
+    has_external_sink = bool(
+        (config.NOTIFY_WEBHOOK or "").strip()
+        or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
+    )
+    if has_external_sink:
+        return notify.send(event.kind, event.title, **event.payload)
+    # 未設定 sink 是合法部署狀態：send_bg 此時同步落 events/delivery 留痕且不開 thread。
+    notify.send_bg(event.kind, event.title, **event.payload)
+    return True
+
+
+def _observe_admission_incident(
+    observation: admission_incidents.AdmissionObservation,
+) -> tuple[admission_incidents.IncidentReceipt, dict]:
+    """Incident observability 永不參與 intake 決策，只回心跳用安全投影。"""
+    receipt = admission_incidents.observe(
+        observation,
+        notify=_notify_admission_incident,
+    )
+    return receipt, admission_incidents.snapshot()
+
+
+def _admission_fault_observation(state: admission_mode.ModeState) -> admission_incidents.Faulted:
+    effective = (
+        _admission_effective_mode_runtime
+        if _admission_effective_mode_runtime in admission_mode.MODES
+        else state.effective
+    )
+    generation = (
+        _admission_effective_generation_runtime
+        if isinstance(_admission_effective_generation_runtime, int)
+        and not isinstance(_admission_effective_generation_runtime, bool)
+        and _admission_effective_generation_runtime >= 0
+        else state.effective_generation
+    )
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+        generation = 0
+    return admission_incidents.Faulted(
+        error_code=state.error or "unknown_fault",
+        effective_mode=effective if effective in admission_mode.MODES else "shadow",
+        effective_generation=generation,
+    )
 
 
 # 心跳檔寫入唯一 choke point：與 backlog/history 同範式走 secure_write.secure_write_root
@@ -5311,6 +5359,7 @@ def _write_status(
     current_expert: str | None = None,
     turn_started_at: float | None = None,
     admission_mode_state: dict | None = None,
+    admission_incident_state: dict | None = None,
 ) -> None:
     """心跳：把當前狀態原子寫入 ``<AUTOPILOT_STATE_DIR>/status.json``。
 
@@ -5340,6 +5389,7 @@ def _write_status(
         "current_expert": current_expert,
         "turn_started_at": turn_started_at,
         "admission_mode": admission_mode_state,
+        "admission_incident": admission_incident_state,
         "running_commit": _running_commit[:12] or None,
         # 調查旁路線(δ):目前旁路在跑的任務;None=旁路閒置/未啟用。看板據此顯示第二行。
         "sideline": _sideline_task_info,
@@ -5761,6 +5811,7 @@ async def _prepare_execv_reload() -> None:
 
 
 async def main() -> None:
+    global _admission_effective_generation_runtime
     global _admission_effective_mode_runtime, _admission_mode_bootstrap_fault, _running_commit
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -5781,11 +5832,13 @@ async def main() -> None:
             release_holds=lambda mode: backlog.release_admission_holds(mode=mode),
         )
         _admission_effective_mode_runtime = mode_state.effective
+        _admission_effective_generation_runtime = mode_state.effective_generation
         _admission_mode_bootstrap_fault = ""
     except admission_mode.AdmissionModeError as exc:
         # 壞檔／不可寫不得回退到 web 行程的新 config 猜 effective；主迴圈會以
         # admission_mode_fault 心跳持續重試，但在修復前不再接新工作。
         _admission_effective_mode_runtime = None
+        _admission_effective_generation_runtime = None
         _admission_mode_bootstrap_fault = exc.code
         log.exception("task admission mode state 初始化失敗，停止新任務 intake")
     startup_sig = _self_sig()
@@ -5844,6 +5897,7 @@ async def main() -> None:
         # pytest 會在同一 interpreter 多次呼叫 main()；正式服務離開 main 即結束行程。
         # 清掉 process-local pin，避免下一次嵌入式呼叫繼承已退出 worker 的 effective。
         _admission_effective_mode_runtime = None
+        _admission_effective_generation_runtime = None
         _admission_mode_bootstrap_fault = ""
 
 
@@ -6161,6 +6215,7 @@ async def _reconcile_admission_mode_boundary() -> bool:
     其他讀寫故障則 fail-closed，保留心跳並重試。降級 hold release 與 ack 的順序由
     admission_mode 模組在同一把跨程序鎖內保證。
     """
+    global _admission_effective_generation_runtime
     global _admission_effective_mode_runtime, _admission_mode_bootstrap_fault
 
     if _admission_mode_bootstrap_fault:
@@ -6182,10 +6237,25 @@ async def _reconcile_admission_mode_boundary() -> bool:
             fault = admission_mode.snapshot(fallback_mode="shadow").to_public()
             fault["healthy"] = False
             fault["error"] = exc.code
+            _, incident = _observe_admission_incident(
+                _admission_fault_observation(
+                    admission_mode.ModeState(
+                        desired=str(fault["desired"]),
+                        effective=str(fault["effective"]),
+                        generation=int(fault["generation"]),
+                        effective_generation=int(fault["effective_generation"]),
+                        requested_at=float(fault["requested_at"]),
+                        applied_at=float(fault["applied_at"]),
+                        healthy=False,
+                        error=exc.code,
+                    )
+                )
+            )
             _write_status(
                 "admission_mode_fault",
                 sleep_until=time.time() + sleep_s,
                 admission_mode_state=fault,
+                admission_incident_state=incident,
             )
             log.error(
                 "task admission desired bootstrap 仍失敗（%s），停止新任務 intake",
@@ -6210,10 +6280,12 @@ async def _reconcile_admission_mode_boundary() -> bool:
     if not state.healthy:
         sleep_s = 60
         public = state.to_public()
+        _, incident = _observe_admission_incident(_admission_fault_observation(state))
         _write_status(
             "admission_mode_fault",
             sleep_until=time.time() + sleep_s,
             admission_mode_state=public,
+            admission_incident_state=incident,
         )
         log.error("task admission mode state 異常（%s），停止新任務 intake", state.error)
         await asyncio.sleep(sleep_s)
@@ -6223,10 +6295,12 @@ async def _reconcile_admission_mode_boundary() -> bool:
         _task_running or _sideline_task_info is not None or _sideline_admission_claiming
     ):
         sleep_s = 5
+        _, incident = _observe_admission_incident(admission_incidents.Waiting())
         _write_status(
             "mode_switch_wait",
             sleep_until=time.time() + sleep_s,
             admission_mode_state=state.to_public(),
+            admission_incident_state=incident,
         )
         await asyncio.sleep(sleep_s)
         return False
@@ -6241,10 +6315,18 @@ async def _reconcile_admission_mode_boundary() -> bool:
             fault = admission_mode.snapshot(fallback_mode=state.effective).to_public()
             fault["healthy"] = False
             fault["error"] = exc.code
+            _, incident = _observe_admission_incident(
+                admission_incidents.Faulted(
+                    error_code=exc.code,
+                    effective_mode=state.effective,
+                    effective_generation=state.effective_generation,
+                )
+            )
             _write_status(
                 "admission_mode_fault",
                 sleep_until=time.time() + sleep_s,
                 admission_mode_state=fault,
+                admission_incident_state=incident,
             )
             log.exception("task admission mode generation ack 失敗，停止新任務 intake")
             await asyncio.sleep(sleep_s)
@@ -6257,6 +6339,23 @@ async def _reconcile_admission_mode_boundary() -> bool:
         )
 
     _admission_effective_mode_runtime = state.effective
+    _admission_effective_generation_runtime = state.effective_generation
+    receipt, incident = _observe_admission_incident(
+        admission_incidents.IntakeRestored(
+            effective_mode=state.effective,
+            effective_generation=state.effective_generation,
+        )
+    )
+    if receipt.phase == "recovered" and (
+        receipt.notification != "deduped" or _read_status().get("state") == "admission_mode_fault"
+    ):
+        # 尤其是 ledger write fault 下的 memory-only recovery，必須在允許 intake 前
+        # 發到 heartbeat，否則 web process 仍只看得到舊 durable open incident。
+        _write_status(
+            "idle",
+            admission_mode_state=state.to_public(),
+            admission_incident_state=incident,
+        )
     return True
 
 

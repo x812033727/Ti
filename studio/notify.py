@@ -100,6 +100,8 @@ SEVERITY: dict[str, str] = {
     "manual_paused": "page",  # 人工暫停與政策 paused 都須離帶通知
     "consecutive_fail_pause": "page",  # 主迴圈連續 failed SLO 煞車暫停
     "admission_circuit_paused": "page",  # 任務准入連續內部錯誤熔斷
+    "admission_mode_fault": "page",  # mode control fault：worker 停止 intake
+    "admission_mode_recovered": "page",  # worker 真正恢復 intake 的單次復原通知
     "test": "page",
     "gate_failure": "digest",
     "critic_reject": "digest",

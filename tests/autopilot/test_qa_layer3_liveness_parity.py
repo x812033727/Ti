@@ -273,6 +273,7 @@ def _run_monitor_with_stubbed_host_commands(
     tmp_path,
     *,
     status: dict | None,
+    notify_url: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     workdir = tmp_path / "work"
     state_dir = tmp_path / "state"
@@ -292,6 +293,7 @@ def _run_monitor_with_stubbed_host_commands(
             "TI_LAYER3_LIVENESS_SCRIPT": str(LIVENESS),
             "TI_LAYER3_PAUSE_FILE": str(tmp_path / "not-paused"),
             "TI_LAYER3_TEST_LOG": str(log_file),
+            "TI_LAYER3_NOTIFY_URL": notify_url,
         }
     )
     harness = f"""
@@ -355,6 +357,56 @@ def test_layer3_monitor_probe_fail_warns_without_restart(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "liveness probe warning: verdict=probe_fail reason=status_file_missing" in result.stdout
+    assert "systemctl restart" not in calls
+    assert "claude invoked" not in calls
+
+
+def test_layer3_displays_admission_fault_without_notify_claude_or_restart(tmp_path):
+    now = time.time()
+    result, calls = _run_monitor_with_stubbed_host_commands(
+        tmp_path,
+        status={
+            "state": "admission_mode_fault",
+            "updated_at": now - 5.0,
+            "sleep_until": now + 55.0,
+            "admission_incident": {
+                "active": True,
+                "error_code": "invalid_json",
+            },
+        },
+        notify_url="https://notify.example/admission",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "layer3: degraded (task admission unavailable)" in result.stdout
+    assert "state=admission_mode_fault" in result.stdout
+    assert "layer3: all green" not in result.stdout
+    assert "notify.example" not in calls
+    assert "systemctl restart" not in calls
+    assert "claude invoked" not in calls
+
+
+def test_layer3_keeps_stale_admission_fault_degraded_without_restart(tmp_path):
+    """產品政策：admission control fault 即使 stale 也由 worker/runbook 處置，不重啟掩因。"""
+    now = time.time()
+    result, calls = _run_monitor_with_stubbed_host_commands(
+        tmp_path,
+        status={
+            "state": "admission_mode_fault",
+            "updated_at": now - 3600.0,
+            "sleep_until": now - 3540.0,
+            "admission_incident": {
+                "active": True,
+                "error_code": "invalid_json",
+            },
+        },
+        notify_url="https://notify.example/admission",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "verdict=dead_main_loop state=admission_mode_fault" in result.stdout
+    assert "layer3: degraded (task admission unavailable)" in result.stdout
+    assert "notify.example" not in calls
     assert "systemctl restart" not in calls
     assert "claude invoked" not in calls
 

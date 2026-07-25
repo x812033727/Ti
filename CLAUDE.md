@@ -64,6 +64,7 @@ ASGI 入口為 `studio.server:app`，也可 `python3 -m studio.server` 直接啟
 | | `settings.py` | UI 可調設定（API key/provider/模型/GitHub token）：寫 `.env` → `config.reload()` |
 | | `task_admission.py` | 核心 backlog 任務契約閘門：純規則裁決、CAS claim、語意補全 cache、audit、override 與 circuit |
 | | `admission_mode.py` | task-admission 跨程序模式握手：worker-only bootstrap、desired/effective generation、token-gated commit、任務邊界 ack、降級 release-before-ack |
+| | `admission_incidents.py` | task-admission intake incident：worker 最終 observation、獨立原子 ledger/outbox、跨重啟通知去重、memory-only fail-loud fallback 與安全 API 投影 |
 | | `history.py` | session 事件存檔（JSONL + meta）、重播、成果記分卡、`/api/metrics` 跨場聚合 |
 | | `events.py` | `StudioEvent` 結構（前後端契約） |
 | | `fake_experts.py` | 離線示範用假專家（真寫檔/commit，供無金鑰試用與 E2E） |

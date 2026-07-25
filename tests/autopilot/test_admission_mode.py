@@ -43,6 +43,38 @@ def _bootstrap(mode: str, **kwargs):
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "error_code"),
+    [
+        ("generation", float("inf"), "invalid_generation"),
+        ("effective_generation", float("inf"), "invalid_effective_generation"),
+        ("released_holds", float("inf"), "invalid_released_holds"),
+        ("requested_at", float("nan"), "invalid_requested_at"),
+        ("applied_at", float("inf"), "invalid_applied_at"),
+    ],
+)
+def test_nonfinite_control_numbers_return_unhealthy_snapshot(
+    tmp_path: Path,
+    field: str,
+    value: float,
+    error_code: str,
+):
+    _bootstrap(
+        "shadow",
+        state_dir=tmp_path,
+        initial_effective="shadow",
+    )
+    path = _state_json_path(tmp_path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw[field] = value
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    state = admission_mode.snapshot(state_dir=tmp_path)
+
+    assert state.healthy is False
+    assert state.error == error_code
+
+
 def _request_process(state_dir: str, mode: str, gate, queue) -> None:
     """spawn worker：模擬另一個 web process 同時要求切換。"""
     from studio import admission_mode as process_admission_mode
@@ -266,6 +298,29 @@ def test_release_failure_leaves_downgrade_unacknowledged(tmp_path: Path):
     assert current.effective == "enforce"
     assert current.generation == 2
     assert current.effective_generation == 1
+    assert current.pending is True
+
+
+def test_nonfinite_release_count_is_normalized_without_acknowledging_downgrade(
+    tmp_path: Path,
+):
+    _bootstrap(
+        "enforce",
+        state_dir=tmp_path,
+        initial_effective="enforce",
+    )
+    admission_mode.request("off", state_dir=tmp_path)
+
+    with pytest.raises(admission_mode.AdmissionModeError) as raised:
+        admission_mode.reconcile_at_task_boundary(
+            release_holds=lambda _mode: float("inf"),  # type: ignore[arg-type]
+            state_dir=tmp_path,
+        )
+
+    assert raised.value.code == "invalid_release_count"
+    current = admission_mode.snapshot(state_dir=tmp_path)
+    assert current.effective == "enforce"
+    assert current.desired == "off"
     assert current.pending is True
 
 
