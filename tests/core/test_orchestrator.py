@@ -80,6 +80,8 @@ def test_qa_passed_parsing():
     assert not qa_passed("有錯\n驗證：FAIL")
     assert qa_passed("一切正常")  # 後備：無明顯失敗字
     assert not qa_passed("test failed")  # 後備：偵測到失敗
+    assert not qa_passed("系統出現錯誤，需修正")  # 後備：中文「錯誤」嵌句案例
+    assert not qa_passed("測試都失敗了")  # 後備：中文「失敗」嵌句案例
 
 
 def test_senior_parsing():
