@@ -14,7 +14,7 @@ import pytest
 from _routes import iter_routes
 from fastapi.testclient import TestClient
 
-from studio import backlog, config, settings
+from studio import admission_mode, backlog, config, settings
 
 # 任務 #2 一併納管的寫入端點
 TASK2_WRITES = [
@@ -41,6 +41,12 @@ def app():
 @pytest.fixture
 def stub_side_effects(tmp_path, monkeypatch):
     """把寫入端點的底層副作用導向暫存/stub，loopback 放行測試才不污染真實狀態。"""
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
     monkeypatch.setattr(settings, "update", lambda body: {})
     monkeypatch.setattr(backlog, "add", lambda *a, **k: {"id": "stub", "title": "t"})

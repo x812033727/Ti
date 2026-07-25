@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from studio import auth, backlog, config, netutil, redeploy, settings
+from studio import admission_mode, auth, backlog, config, netutil, redeploy, settings
 
 ADMIN_WRITES = [
     "/api/redeploy",
@@ -55,6 +55,12 @@ def pw_env(tmp_path, monkeypatch):
 @pytest.fixture
 def stub_side_effects(tmp_path, monkeypatch):
     """把各端點底層副作用導向暫存/stub，放行測試才不污染真實狀態（不真的 pull/重啟/寫 .env）。"""
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     monkeypatch.setattr(config, "AUTOPILOT_PAUSE_FILE", tmp_path / "pause.flag")
     monkeypatch.setattr(settings, "update", lambda body: {})
     monkeypatch.setattr(backlog, "add", lambda *a, **k: {"id": "stub", "title": "t"})
