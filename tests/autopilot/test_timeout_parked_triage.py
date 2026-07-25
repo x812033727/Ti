@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import autopilot, backlog, config
+from studio import admission_mode, autopilot, backlog, config
 
 
 class _Stop(BaseException):
@@ -28,6 +28,11 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_SPLIT_MAX_SUBTASKS", 4)
     monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", 7200)
     monkeypatch.setattr(autopilot, "_prepare_clone", _fake_clone)
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 

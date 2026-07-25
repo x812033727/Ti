@@ -1,8 +1,11 @@
 // Autopilot 自主迴圈面板：狀態列、backlog、額度迷你條、績效榜、動態 timeline。
 import { $, appendTextEl, icon, toast } from "../dom.js";
 import { admissionModel } from "../components/admission.js";
+import { admissionModeView } from "../components/admission-mode.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal } from "../components/modal.js";
+
+export { admissionModeView };
 
 // 迷你狀態：縮成一條狀態列（手機浮在分頁列上方、桌機右下小卡），輕量輪詢保持計數新鮮
 let apMiniTimer = null;
@@ -73,6 +76,10 @@ export async function refreshAutopilot() {
     // 每日 PR 預算透明化（F4）：舊後端無此欄時容錯不顯示。
     const pb = st.pr_budget || {};
     const pbStr = pb.cap ? `・今日 PR ${pb.used ?? 0}/${pb.cap}` : "";
+    const admission = admissionModeView(
+      st.task_admission_mode_state,
+      st.task_admission_mode,
+    );
     const stateEl = $("#apState");
     stateEl.innerHTML = "";
     stateEl.appendChild(icon(st.paused ? "pause" : "play", "icon sys-ic"));
@@ -82,7 +89,7 @@ export async function refreshAutopilot() {
       "",
       `${st.paused ? "已暫停" : "執行中"}　${rateStr}待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}・` +
         `完成 ${c.done || 0}・失敗 ${c.failed || 0}${c.parked ? `・停放 ${c.parked}` : ""}${pbStr}` +
-        `${st.dryrun ? "　(dryrun)" : ""}${hb}`,
+        `${st.dryrun ? "　(dryrun)" : ""}　${admission.text}${hb}`,
     );
     renderDriftBanner(st.deploy, hbObj);
     $("#apToggle").textContent = st.paused ? "恢復" : "暫停";
@@ -96,9 +103,6 @@ export async function refreshAutopilot() {
     miniEl.appendChild(icon(st.paused ? "pause" : "play", "icon sys-ic"));
     appendTextEl(miniEl, "span", "", `待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}`);
     const list = await (await fetch("/api/autopilot/backlog")).json();
-    const admissionMode = ["off", "shadow", "enforce"].includes(st.task_admission_mode)
-      ? st.task_admission_mode
-      : "enforce";
     const ul = $("#apBacklog");
     ul.innerHTML = "";
     (list.tasks || []).slice().reverse().forEach((t) => {
@@ -111,7 +115,7 @@ export async function refreshAutopilot() {
       tspan.textContent = ` #${t.id} ${t.title}　[${t.source}]`;
       text.appendChild(tspan);
       li.appendChild(text);
-      li.appendChild(buildTaskActions(t, admissionMode));
+      li.appendChild(buildTaskActions(t, admission.effective));
       ul.appendChild(li);
     });
   } catch (e) {

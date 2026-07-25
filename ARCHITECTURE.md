@@ -43,6 +43,7 @@ attach·重播/插件=roles·groups·workflows 導流+skills 唯讀/排程任務
 | `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止；握手可帶 `workflow`，**互動 session（非 improve／非離線）未指定時走 `TI_DEFAULT_WORKFLOW`（預設「動態優先」）**——autopilot／improver 不經此、維持安全骨架 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
 | `task_admission.py` | 核心 backlog 的 v1 任務契約與純 `evaluate(task, context, phase)` 決策；整合 lazy migration、CAS claim、單次語意補全的跨行程 durable cache、去敏 audit、scope-bound override、claim SHA 固定與 fail-closed circuit |
+| `admission_mode.py` | web 與獨立 autopilot worker 的 mode control plane：原子保存 desired/effective generation；以 `snapshot`／`request`／`bootstrap_at_task_boundary`／`reconcile_at_task_boundary` 封裝跨程序鎖、worker-only 初始化、任務邊界 ack 與降級 release-before-ack |
 | `orchestrator.py` | `StudioSession`：**由宣告式 workflow 驅動的 stage 直譯器**（`_run_workflow` 派發 `_stage_*` handler）。預設骨架＝澄清 → 拆解 → 架構討論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討；`workflow=None`＝`default_workflow()`（與重構前位元級等價）。含 **dynamic step**（PM 運行時額度感知分派／動態招募）、task_pipeline 資料驅動審查（見 `docs/workflows.md`） |
 | `workflow.py` | **動態流程定義**：宣告式 `Stage`/`Workflow` schema（`extra="forbid"`）＋ `validate_workflow`、內建 `default_workflow()`（等價骨架）與 `dynamic_first_workflow()`（互動預設）、`workflows.yaml` CRUD（鏡射 `role_store` 的 Group 區段）、`VERDICTS` 白名單只映射 `flow.py` 既有判定（不可注入程式碼） |
 | `provider_quota.py` | provider 即時額度快照（`snapshot()`，60s 快取，自 `routes` 抽出避免反向 import）＋ 給動態分派的 `summarize_for_pm`／`constrained`／`least_constrained_ready`（混合模式額度感知分派與招募自動重綁的資料源） |
@@ -364,6 +365,14 @@ token 以標準庫 `hmac`（SHA-256）簽章，不引入額外依賴；密鑰為
   與 umask 脫鉤、保證檔案 0600、收緊既存寬鬆權限）並更新 `os.environ`，
   最後呼叫 `config.reload()` 重新載入可調設定，**下次討論即生效，無需重啟**。
   存取密碼（`auth.set_password`）亦走同一安全寫入路徑。
+- `TI_TASK_ADMISSION` 是跨程序例外：web 儲存時透過 `admission_mode.request()` 增加 desired
+  generation，不能把自己的 `config.reload()` 當成 worker 已生效。autopilot 在主線與調查旁路
+  都空閒的任務邊界呼叫 `reconcile_at_task_boundary()`；降級會在同一把 mode lock 內先釋放
+  backlog holds，再原子 ack effective generation。每次 admission commit／claim 都帶 effective
+  generation token，mode request 與 ack 另以 backlog barrier 排空已驗證的舊世代 commit。
+  control state 只有 worker 能在安全邊界初始化；遺失、壞檔或不可寫時其他入口一律停止 intake。
+  `.env` 僅是冷啟動預設，worker 重啟不得覆寫既存 shared desired。API 與看板同時回傳
+  desired、effective、pending、generation 與健康狀態。
 - Claude 模型選擇靠 `experts._model_for(role)` 在每個 session 建立專家時即時讀取 `config`。
 
 ## LLM 韌性中介層（retry 子系統）

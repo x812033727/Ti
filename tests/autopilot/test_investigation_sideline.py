@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from studio import autopilot, backlog, config
+from studio import admission_mode, autopilot, backlog, config
 
 
 @pytest.fixture(autouse=True)
@@ -93,6 +93,26 @@ def sideline_on(monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_QUOTA_GATE", False)  # 測試不打額度快照
     monkeypatch.setattr(autopilot, "_shutdown_requested", False)
     monkeypatch.setattr(autopilot, "_sideline_task_info", None)
+    monkeypatch.setattr(autopilot, "_admission_mode_bootstrap_fault", "")
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
+
+
+def _set_effective_mode(mode: str) -> None:
+    current = admission_mode.snapshot(fallback_mode=mode)
+    if not current.healthy:
+        admission_mode.bootstrap_at_task_boundary(
+            mode,
+            initial_effective=mode,
+            release_holds=lambda _mode: 0,
+        )
+        return
+    if current.desired != mode:
+        admission_mode.request(mode)
+    admission_mode.reconcile_at_task_boundary(release_holds=lambda _mode: 0)
 
 
 @pytest.mark.asyncio
@@ -164,6 +184,7 @@ async def test_sideline_shadow_preserves_legacy_claim_attempt_value(
 ):
     task = backlog.add("調查 shadow attempts 相容性")
     monkeypatch.setattr(config, "TASK_ADMISSION_MODE", mode)
+    _set_effective_mode(mode)
     seen_attempts = []
 
     if mode == "shadow":
@@ -194,6 +215,7 @@ async def test_enforce_sideline_pins_clone_to_claim_admission_sha(
     tmp_path,
 ):
     monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    _set_effective_mode("enforce")
     expected_sha = "b" * 40
     selected = {
         "id": 901,
@@ -240,6 +262,7 @@ async def test_enforce_sideline_pin_failure_requeues_without_consuming_attempt(
     repo_sha,
 ):
     monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    _set_effective_mode("enforce")
     task = backlog.add(
         "調查固定版本失敗",
         source="discovered",

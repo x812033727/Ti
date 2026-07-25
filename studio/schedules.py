@@ -27,7 +27,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, task_admission
+from . import admission_mode, config, task_admission
 from .secure_write import secure_write_root
 
 log = logging.getLogger("ti.schedules")
@@ -222,6 +222,17 @@ def enqueue_due(now: float | None = None, *, state_dir: Path | None = None) -> i
     """
     t = now if now is not None else time.time()
     fired = 0
+    mode_state = admission_mode.snapshot(
+        fallback_mode=config.TASK_ADMISSION_MODE,
+    )
+    if not mode_state.healthy:
+        log.error(
+            "task admission mode state 異常（%s），本輪排程不入列",
+            mode_state.error,
+        )
+        return 0
+    effective_mode = mode_state.effective
+    mode_generation = mode_state.effective_generation
     with _locked(state_dir):
         data = _load(state_dir)
         dirty = False
@@ -237,7 +248,8 @@ def enqueue_due(now: float | None = None, *, state_dir: Path | None = None) -> i
                     f"[排程] {s['title']}",
                     s.get("detail", ""),
                     source="schedule",
-                    mode=config.TASK_ADMISSION_MODE,
+                    mode=effective_mode,
+                    mode_generation=mode_generation,
                     repo_context={
                         "root": root,
                         "repo_sha": task_admission.read_local_repo_sha(root),

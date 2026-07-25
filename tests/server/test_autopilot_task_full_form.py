@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import pytest
 
-from studio import backlog, config, routes
+from studio import admission_mode, backlog, config, routes
 
 
 @pytest.fixture(autouse=True)
 def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
     monkeypatch.setattr(backlog, "_read_cache", {}, raising=False)
+    admission_mode.bootstrap_at_task_boundary(
+        "shadow",
+        initial_effective="shadow",
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 
@@ -78,3 +83,28 @@ async def test_duplicate_title_400_and_detail_truncated():
     await routes.autopilot_add_task(routes.TaskBody(title="長細節", detail="x" * 5000))
     t = next(t for t in backlog.list_tasks("pending") if t["title"] == "長細節")
     assert len(t["detail"]) == 4000, "detail 夾 4000 防灌爆 backlog.json"
+
+
+@pytest.mark.asyncio
+async def test_corrupt_admission_mode_state_rejects_manual_intake():
+    (config.AUTOPILOT_STATE_DIR / "admission_mode.json").write_text(
+        "{broken",
+        encoding="utf-8",
+    )
+
+    response = await routes.autopilot_add_task(routes.TaskBody(title="不可入列"))
+
+    assert response.status_code == 503
+    assert b'"detail"' in response.body
+    assert backlog.list_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_missing_admission_mode_state_rejects_manual_intake():
+    (config.AUTOPILOT_STATE_DIR / "admission_mode.json").unlink()
+
+    response = await routes.autopilot_add_task(routes.TaskBody(title="不可偷渡初始化"))
+
+    assert response.status_code == 503
+    assert b'"detail"' in response.body
+    assert backlog.list_tasks() == []

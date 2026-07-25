@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from studio import autonomy, autopilot, backlog, config, experts, projects
+from studio import admission_mode, autonomy, autopilot, backlog, config, experts, projects
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +19,11 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(autopilot, "_intent_discovery_day", None)
     monkeypatch.setattr(config, "INTENT_LOOP", True)
     monkeypatch.setattr(config, "INTENT_DISCOVERY", True)
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 

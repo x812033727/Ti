@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import backlog, config, flow
+from studio import admission_mode, backlog, config, flow
 from studio.backlog import route_core_changes
 from studio.improver import drain_result_to_backlogs
 
@@ -23,6 +23,11 @@ def dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", core_dir)
     monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "shadow")
     monkeypatch.setattr(config, "AUTOPILOT_DEPLOY_DIR", tmp_path)
+    admission_mode.bootstrap_at_task_boundary(
+        "shadow",
+        initial_effective="shadow",
+        release_holds=lambda _mode: 0,
+    )
     return core_dir, project_dir
 
 

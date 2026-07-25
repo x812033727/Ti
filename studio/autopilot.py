@@ -48,6 +48,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import (
+    admission_mode,
     autonomy,
     autonomy_review,
     backlog,
@@ -73,6 +74,23 @@ from .orchestrator import StudioSession, parse_tasks
 from .repo_ident import repo_key as _repo_key
 
 log = logging.getLogger("ti.autopilot")
+
+# main() 啟動／任務邊界 reconcile 後才更新。測試未啟動 main 時保持 None，
+# 讓既有 monkeypatch(config.TASK_ADMISSION_MODE) seam 仍可控制純函式行為。
+_admission_effective_mode_runtime: str | None = None
+_admission_mode_bootstrap_fault = ""
+
+
+def _effective_admission_mode() -> str:
+    if _admission_effective_mode_runtime in admission_mode.MODES:
+        return _admission_effective_mode_runtime
+    state = admission_mode.snapshot(fallback_mode=config.TASK_ADMISSION_MODE)
+    if state.healthy:
+        return state.effective
+    if state.error == "not_initialized":
+        return config.TASK_ADMISSION_MODE
+    return "shadow"
+
 
 # 心跳檔寫入唯一 choke point：與 backlog/history 同範式走 secure_write.secure_write_root
 # （原子 tmp+rename + owner 驗證）。module-level alias 兼顧可被測試 monkeypatch。
@@ -1827,7 +1845,7 @@ def _is_investigation_task(task: dict) -> bool:
         return False
     if (task.get("lane") or "") == "full":
         return False
-    if config.TASK_ADMISSION_MODE == "enforce":
+    if _effective_admission_mode() == "enforce":
         contract = task.get("contract")
         admission = task.get("admission")
         if isinstance(contract, dict) and str(contract.get("kind") or "").strip():
@@ -2720,7 +2738,7 @@ def _should_run_clarify_probe(task: dict) -> bool:
     """enforce admission 已是唯一澄清層；off/shadow 才保留舊 FAST probe 行為。"""
     return bool(
         config.CLARIFY_ASYNC
-        and config.TASK_ADMISSION_MODE != "enforce"
+        and _effective_admission_mode() != "enforce"
         and not int(task.get("attempts") or 0)
         and not task.get("clarify")
     )
@@ -2734,7 +2752,7 @@ def _maybe_clarify_timeout(now: float | None = None) -> int:
     兩路都不增加 attempts，人工已改狀態者不在 parked 集合，人的裁決優先。
     """
     global _clarify_sweep_at
-    admission_enforced = config.TASK_ADMISSION_MODE == "enforce"
+    admission_enforced = _effective_admission_mode() == "enforce"
     if not config.CLARIFY_ASYNC and not admission_enforced:
         return 0
     t = now if now is not None else time.time()
@@ -2852,7 +2870,7 @@ def _clarify_requirement_section(task: dict) -> str:
 
 def _admission_requirement_section(task: dict) -> str:
     """enforce 時把 canonical contract 傳到執行層；不把 audit/model 原文帶進 prompt。"""
-    if config.TASK_ADMISSION_MODE != "enforce":
+    if _effective_admission_mode() != "enforce":
         return ""
     raw = task.get("contract")
     if not isinstance(raw, dict):
@@ -3048,7 +3066,7 @@ async def run_one_task(task: dict, *, already_claimed: bool = False) -> None:
     admission_sha = (
         _claimed_admission_repo_sha(
             task,
-            required=config.TASK_ADMISSION_MODE == "enforce",
+            required=_effective_admission_mode() == "enforce",
         )
         if already_claimed
         else None
@@ -5292,10 +5310,12 @@ def _write_status(
     workers: dict | None = None,
     current_expert: str | None = None,
     turn_started_at: float | None = None,
+    admission_mode_state: dict | None = None,
 ) -> None:
     """心跳：把當前狀態原子寫入 ``<AUTOPILOT_STATE_DIR>/status.json``。
 
-    state ∈ {"starting", "idle", "running", "paused", "quota_sleep", "budget_sleep", "rotate_restart", "stopped"}；
+    state ∈ {"starting", "idle", "running", "paused", "quota_sleep", "budget_sleep",
+    "rotate_restart", "mode_switch_wait", "admission_mode_fault", "stopped"}；
     starting＝systemd 已就緒、主迴圈正在做 quota／規範／intent 等取任務前工作；
     paused＝pause 檔存在、主迴圈刻意空轉(非卡死,每 10s 刷新 updated_at);
     /api/autopilot 讀此檔回報「迴圈還活著、正在做什麼、睡到何時、各 provider 用量」。
@@ -5319,6 +5339,7 @@ def _write_status(
         "workers": workers,
         "current_expert": current_expert,
         "turn_started_at": turn_started_at,
+        "admission_mode": admission_mode_state,
         "running_commit": _running_commit[:12] or None,
         # 調查旁路線(δ):目前旁路在跑的任務;None=旁路閒置/未啟用。看板據此顯示第二行。
         "sideline": _sideline_task_info,
@@ -5740,6 +5761,8 @@ async def _prepare_execv_reload() -> None:
 
 
 async def main() -> None:
+    global _admission_effective_mode_runtime, _admission_mode_bootstrap_fault, _running_commit
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     log.info("autopilot 啟動（dryrun=%s, repo=%s）", config.AUTOPILOT_DRYRUN, config.AUTOPILOT_REPO)
     # Type=notify 啟動握手:不發 READY systemd 會判啟動失敗,故放 main 最早期、任何可能
@@ -5749,9 +5772,22 @@ async def main() -> None:
     _write_status("starting")
     # 啟動時擷取一次「執行中程式碼」的 commit（磁碟 HEAD 可能已被 reset 但行程未重載，
     # 兩者語意不同）；隨 status.json 供 /api/autopilot 顯示部署漂移。失敗留空不擋啟動。
-    global _running_commit
     with contextlib.suppress(Exception):
         _running_commit = await deploy.current_head(str(config.AUTOPILOT_DEPLOY_DIR))
+    try:
+        mode_state = admission_mode.bootstrap_at_task_boundary(
+            config.TASK_ADMISSION_MODE,
+            initial_effective=config.TASK_ADMISSION_MODE,
+            release_holds=lambda mode: backlog.release_admission_holds(mode=mode),
+        )
+        _admission_effective_mode_runtime = mode_state.effective
+        _admission_mode_bootstrap_fault = ""
+    except admission_mode.AdmissionModeError as exc:
+        # 壞檔／不可寫不得回退到 web 行程的新 config 猜 effective；主迴圈會以
+        # admission_mode_fault 心跳持續重試，但在修復前不再接新工作。
+        _admission_effective_mode_runtime = None
+        _admission_mode_bootstrap_fault = exc.code
+        log.exception("task admission mode state 初始化失敗，停止新任務 intake")
     startup_sig = _self_sig()
     _install_signal_handlers()
     # READY=1 代表 systemd 可以開始監控，但舊 status.json 可能還是上一個行程留下的
@@ -5805,6 +5841,10 @@ async def main() -> None:
                 aux.cancel()
                 with contextlib.suppress(BaseException):
                     await aux
+        # pytest 會在同一 interpreter 多次呼叫 main()；正式服務離開 main 即結束行程。
+        # 清掉 process-local pin，避免下一次嵌入式呼叫繼承已退出 worker 的 effective。
+        _admission_effective_mode_runtime = None
+        _admission_mode_bootstrap_fault = ""
 
 
 # 暫停狀態轉換旗標(行程記憶體):只在「進入/離開暫停」時各記一次 log,避免每 10s 刷屏。
@@ -6080,6 +6120,9 @@ def _note_resumed() -> None:
 
 # 調查旁路線的狀態(行程記憶體):目前在跑的旁路任務(供 status.json sideline 子欄)。
 _sideline_task_info: dict | None = None
+# 旁路從「確認 mode 穩態」到「完成原子 claim」之間的短窗。主 worker 以此避免
+# 在旁路尚未填入 _sideline_task_info 前就 ack mode generation。
+_sideline_admission_claiming = False
 
 
 def _requeue_sideline_task(reason: str) -> None:
@@ -6111,6 +6154,112 @@ def _requeue_sideline_task(reason: str) -> None:
         log.exception("旁路任務 #%s 退回 pending 失敗(交 stale reaper 兜底)", tid)
 
 
+async def _reconcile_admission_mode_boundary() -> bool:
+    """同步 desired/effective，且只在兩條 worker lane 都沒有 task 時 ack。
+
+    回 False 代表本輪禁止 intake。missing state 可用目前 worker effective 安全重建；
+    其他讀寫故障則 fail-closed，保留心跳並重試。降級 hold release 與 ack 的順序由
+    admission_mode 模組在同一把跨程序鎖內保證。
+    """
+    global _admission_effective_mode_runtime, _admission_mode_bootstrap_fault
+
+    if _admission_mode_bootstrap_fault:
+        try:
+            initial = (
+                _admission_effective_mode_runtime
+                if _admission_effective_mode_runtime in admission_mode.MODES
+                else config.TASK_ADMISSION_MODE
+            )
+            state = admission_mode.bootstrap_at_task_boundary(
+                config.TASK_ADMISSION_MODE,
+                initial_effective=initial,
+                release_holds=lambda mode: backlog.release_admission_holds(mode=mode),
+            )
+            _admission_mode_bootstrap_fault = ""
+        except admission_mode.AdmissionModeError as exc:
+            _admission_mode_bootstrap_fault = exc.code
+            sleep_s = 60
+            fault = admission_mode.snapshot(fallback_mode="shadow").to_public()
+            fault["healthy"] = False
+            fault["error"] = exc.code
+            _write_status(
+                "admission_mode_fault",
+                sleep_until=time.time() + sleep_s,
+                admission_mode_state=fault,
+            )
+            log.error(
+                "task admission desired bootstrap 仍失敗（%s），停止新任務 intake",
+                exc.code,
+            )
+            await asyncio.sleep(sleep_s)
+            return False
+    else:
+        state = admission_mode.snapshot(fallback_mode=_effective_admission_mode())
+
+    if not state.healthy and state.error == "not_initialized":
+        try:
+            pinned_mode = _effective_admission_mode()
+            state = admission_mode.bootstrap_at_task_boundary(
+                pinned_mode,
+                initial_effective=pinned_mode,
+                release_holds=lambda mode: backlog.release_admission_holds(mode=mode),
+            )
+        except admission_mode.AdmissionModeError:
+            state = admission_mode.snapshot(fallback_mode="shadow")
+
+    if not state.healthy:
+        sleep_s = 60
+        public = state.to_public()
+        _write_status(
+            "admission_mode_fault",
+            sleep_until=time.time() + sleep_s,
+            admission_mode_state=public,
+        )
+        log.error("task admission mode state 異常（%s），停止新任務 intake", state.error)
+        await asyncio.sleep(sleep_s)
+        return False
+
+    if state.pending and (
+        _task_running or _sideline_task_info is not None or _sideline_admission_claiming
+    ):
+        sleep_s = 5
+        _write_status(
+            "mode_switch_wait",
+            sleep_until=time.time() + sleep_s,
+            admission_mode_state=state.to_public(),
+        )
+        await asyncio.sleep(sleep_s)
+        return False
+
+    if state.pending:
+        try:
+            state = admission_mode.reconcile_at_task_boundary(
+                release_holds=lambda mode: backlog.release_admission_holds(mode=mode),
+            )
+        except admission_mode.AdmissionModeError as exc:
+            sleep_s = 60
+            fault = admission_mode.snapshot(fallback_mode=state.effective).to_public()
+            fault["healthy"] = False
+            fault["error"] = exc.code
+            _write_status(
+                "admission_mode_fault",
+                sleep_until=time.time() + sleep_s,
+                admission_mode_state=fault,
+            )
+            log.exception("task admission mode generation ack 失敗，停止新任務 intake")
+            await asyncio.sleep(sleep_s)
+            return False
+        log.info(
+            "task admission mode 已在任務邊界生效：%s（generation %s，釋放 hold %s）",
+            state.effective,
+            state.effective_generation,
+            state.released_holds,
+        )
+
+    _admission_effective_mode_runtime = state.effective
+    return True
+
+
 def _core_admission_context() -> dict:
     root = config.AUTOPILOT_DEPLOY_DIR
     return {
@@ -6119,37 +6268,53 @@ def _core_admission_context() -> dict:
     }
 
 
+def _core_enqueue_mode() -> tuple[str, int | None]:
+    """取 shared effective token；web/improver 不得把本行程 desired config 當 effective。"""
+    if _admission_mode_bootstrap_fault:
+        raise admission_mode.AdmissionModeError(_admission_mode_bootstrap_fault)
+    state = admission_mode.snapshot(fallback_mode=config.TASK_ADMISSION_MODE)
+    if state.healthy:
+        return state.effective, state.effective_generation
+    raise admission_mode.AdmissionModeError(state.error)
+
+
 def _enqueue_core_task(title: str, detail: str = "", source: str = "seed", **fields):
     """核心 backlog 的單筆 ingest choke point。"""
+    mode, generation = _core_enqueue_mode()
     return task_admission.enqueue_task(
         title,
         detail,
         source=source,
-        mode=config.TASK_ADMISSION_MODE,
+        mode=mode,
+        mode_generation=generation,
         repo_context=_core_admission_context(),
         **fields,
     )
 
 
 def _enqueue_core_many(titles: list[str], source: str = "discovered", *, gen: int = 0) -> int:
-    if config.TASK_ADMISSION_MODE == "off" and source == "followup":
+    mode, generation = _core_enqueue_mode()
+    if mode == "off" and source == "followup":
         source = "discovered"
     return task_admission.enqueue_many(
         titles,
         source=source,
-        mode=config.TASK_ADMISSION_MODE,
+        mode=mode,
+        mode_generation=generation,
         repo_context=_core_admission_context(),
         gen=gen,
     )
 
 
 def _enqueue_core_items(items: list[dict], source: str = "discovered", *, gen: int = 0) -> int:
-    if config.TASK_ADMISSION_MODE == "off" and source == "followup":
+    mode, generation = _core_enqueue_mode()
+    if mode == "off" and source == "followup":
         source = "discovered"
     return task_admission.enqueue_items(
         items,
         source=source,
-        mode=config.TASK_ADMISSION_MODE,
+        mode=mode,
+        mode_generation=generation,
         repo_context=_core_admission_context(),
         gen=gen,
     )
@@ -6157,8 +6322,6 @@ def _enqueue_core_items(items: list[dict], source: str = "discovered", *, gen: i
 
 def _route_core_changes(items: list[dict], *, source: str = "core") -> int:
     """保留既有近期完成去重，再讓所有 core change 經同一 admission ingest。"""
-    if config.TASK_ADMISSION_MODE == "off":
-        return backlog.route_core_changes(items, source=source)
     done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
     pending = [item for item in (items or []) if item.get("title", "").strip() not in done]
     return _enqueue_core_items(pending, source=source) if pending else 0
@@ -6213,10 +6376,15 @@ async def _claim_next_with_admission(
     predicate: Callable[[dict], bool] | None = None,
 ) -> task_admission.AdmissionSelection | None:
     """用部署中的 repo 證據做 claim-time lazy admission；所有探測皆在 backlog 鎖外。"""
-    if config.TASK_ADMISSION_MODE == "shadow":
-        backlog.release_admission_holds(mode="shadow")
+    if _admission_mode_bootstrap_fault:
+        return None
+    state = admission_mode.snapshot(fallback_mode=_effective_admission_mode())
+    if not state.healthy or state.pending or state.effective not in {"shadow", "enforce"}:
+        return None
+    mode = state.effective
     return await task_admission.claim_next_task_with_semantic_fallback(
-        mode=config.TASK_ADMISSION_MODE,
+        mode=mode,
+        mode_generation=state.effective_generation,
         repo_context=_core_admission_context(),
         resolver=_resolve_admission_contract,
         cache_dir=config.AUTOPILOT_STATE_DIR / "admission_cache",
@@ -6240,7 +6408,7 @@ def _is_persisted_core_task(task: dict | None) -> bool:
 
 async def _maybe_pause_for_admission_circuit() -> bool:
     """三次連續內部錯誤後停止所有新工作，保留 heartbeat 供人判讀。"""
-    if config.TASK_ADMISSION_MODE != "enforce":
+    if _effective_admission_mode() != "enforce":
         return False
     circuit = task_admission.admission_circuit_state()
     if not circuit.get("paused"):
@@ -6273,6 +6441,47 @@ async def _maybe_pause_for_admission_circuit() -> bool:
     return True
 
 
+async def _claim_sideline_at_effective_mode() -> tuple[dict | None, str]:
+    """以單一 effective mode 原子認領旁路任務，封住 generation ack 競態窗。"""
+    global _sideline_admission_claiming, _sideline_task_info
+
+    _sideline_admission_claiming = True
+    try:
+        if _admission_mode_bootstrap_fault:
+            return None, _effective_admission_mode()
+        state = admission_mode.snapshot(fallback_mode=_effective_admission_mode())
+        if not state.healthy:
+            return None, _effective_admission_mode()
+        else:
+            if state.pending:
+                return None, state.effective
+            mode = state.effective
+            generation = state.effective_generation
+
+        if mode == "off":
+            task = backlog.claim_next(
+                _is_investigation_task,
+                expected_mode=mode,
+                expected_mode_generation=generation,
+            )
+        else:
+            selected = await _claim_next_with_admission(_is_investigation_task)
+            task = selected.task if selected is not None else None
+            # admission coordinator 為主 runner 保留認領前 attempts；shadow 旁路則
+            # 必須精確模擬舊 claim_next 回傳的認領後值，避免重試生命週期漂移。
+            if task is not None and mode == "shadow":
+                task = {**task, "attempts": int(task.get("attempts") or 0) + 1}
+        if task is not None:
+            _sideline_task_info = {
+                "task_id": task["id"],
+                "title": task["title"][:80],
+                "started_at": time.time(),
+            }
+        return task, mode
+    finally:
+        _sideline_admission_claiming = False
+
+
 async def _investigation_sideline() -> None:
     """調查任務旁路併行線(吞吐強化 δ,預設關):主 worker 跑完整管線(~51min/場)時,
     本線併行消化調查分流任務(~89s/筆;live 量測 pending 37% 符合)。
@@ -6284,6 +6493,7 @@ async def _investigation_sideline() -> None:
     in_progress 由既有 stale recovery 收斂。
     """
     global _sideline_task_info
+
     inv_dir = str(config.AUTOPILOT_WORK_DIR) + "-inv"
     while True:
         await asyncio.sleep(60)
@@ -6304,29 +6514,16 @@ async def _investigation_sideline() -> None:
                         continue
                 except Exception:  # noqa: BLE001 — 額度查詢失敗寧可保守跳過本輪
                     continue
-            if config.TASK_ADMISSION_MODE == "off":
-                task = backlog.claim_next(_is_investigation_task)
-            else:
-                selected = await _claim_next_with_admission(_is_investigation_task)
-                task = selected.task if selected is not None else None
-                # admission coordinator 為主 runner 保留認領前 attempts；shadow 旁路則
-                # 必須精確模擬舊 claim_next 回傳的認領後值，避免重試生命週期漂移。
-                if task is not None and config.TASK_ADMISSION_MODE == "shadow":
-                    task = {**task, "attempts": int(task.get("attempts") or 0) + 1}
+            task, mode = await _claim_sideline_at_effective_mode()
             if task is None:
                 continue
             log.info("旁路線認領調查任務 #%s:%s", task["id"], task["title"][:60])
-            t0 = time.time()
+            t0 = float((_sideline_task_info or {}).get("started_at") or time.time())
             sid = f"apinv{uuid.uuid4().hex[:8]}"
-            _sideline_task_info = {
-                "task_id": task["id"],
-                "title": task["title"][:80],
-                "started_at": t0,
-            }
             try:
                 admission_sha = _claimed_admission_repo_sha(
                     task,
-                    required=config.TASK_ADMISSION_MODE == "enforce",
+                    required=mode == "enforce",
                 )
                 if admission_sha == "":
                     task_admission.defer_claimed_execution_error(
@@ -6385,6 +6582,11 @@ async def _main_loop(startup_sig: float) -> None:
         if _consecutive_fail_pause_active:
             _reset_consecutive_fail_period()
 
+        # desired mode 只能在兩條 task lane 都空閒的邊界成為 effective；故障或仍有
+        # 旁路任務時本輪不取件。刻意放在人工 pause 前，讓暫停期間也能完成安全切換。
+        if not await _reconcile_admission_mode_boundary():
+            continue
+
         if config.autopilot_paused():
             await _pause_tick()
             continue
@@ -6395,9 +6597,6 @@ async def _main_loop(startup_sig: float) -> None:
         # 期間的 occurrence 整批蒸發(daily key 跨日即作廢,錯過=永久漏拍),實證:
         # 「每日健檢」23:30 UTC 連兩天沒觸發。60 秒節流照舊。
         _maybe_enqueue_schedules()
-        if config.TASK_ADMISSION_MODE in {"off", "shadow"}:
-            backlog.release_admission_holds(mode=config.TASK_ADMISSION_MODE)
-
         # admission 連續內部錯誤是整條 intake/dispatch 的 fail-closed 熔斷。排程仍先
         # 落地避免 occurrence 消失，但禁止後續 intent、reconcile、self-eval 與取件。
         if await _maybe_pause_for_admission_circuit():
@@ -6509,16 +6708,33 @@ async def _main_loop(startup_sig: float) -> None:
         # open PR reconciler：放在取任務之前——「PR 已合併但任務被退回 pending」的場景
         # 要先收斂成 done，堵住重複開工。
         await _maybe_reconcile_open_prs()
+        # 上方 quota／intent／部署檢查可能耗時數分鐘；claim 前再讀一次 generation，
+        # 確保期間由 web 提出的 mode request 不會被下一筆任務越過。
+        if not await _reconcile_admission_mode_boundary():
+            continue
         task = backlog.next_pending()
         # 保留 next_pending 作排序/既有測試 seam；真實 backlog task 才走 CAS admission。
         # 即使旁路在兩次讀取間已改狀態，存在過的真實 task 仍走 coordinator；只有測試或
         # 舊擴充注入、從未持久化的 dict 才維持原 runner 行為。
-        if config.TASK_ADMISSION_MODE != "off" and _is_persisted_core_task(task):
-            selected = await _claim_next_with_admission()
-            task = selected.task if selected is not None else None
+        if _is_persisted_core_task(task):
+            claim_state = admission_mode.snapshot(fallback_mode=_effective_admission_mode())
+            if not claim_state.healthy or claim_state.pending:
+                continue
+            if claim_state.effective == "off":
+                task = backlog.claim_next(
+                    lambda _task: True,
+                    expected_mode="off",
+                    expected_mode_generation=claim_state.effective_generation,
+                )
+            else:
+                selected = await _claim_next_with_admission()
+                task = selected.task if selected is not None else None
             if task is not None:
                 task = {**task, "_admission_claimed": True}
         if task is None:
+            claim_state = admission_mode.snapshot(fallback_mode=_effective_admission_mode())
+            if not claim_state.healthy or claim_state.pending:
+                continue
             # claim 本身可能正好記下第 3 次內部錯誤；同 tick 必須重查，不能把
             # selected=None 誤當 backlog 空而啟動 discovery LLM。
             if await _maybe_pause_for_admission_circuit():

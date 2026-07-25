@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from . import config
+from . import admission_mode, config
 from .secretfile import remove_secret_key, write_secret_file
 
 
@@ -688,12 +688,22 @@ def read() -> dict:
                 "set": bool(raw),
             }
         )
-    return {"fields": fields}
+    mode_state = admission_mode.snapshot(fallback_mode="shadow")
+    return {
+        "fields": fields,
+        "task_admission_mode_state": mode_state.to_public(),
+    }
 
 
 def update(payload: dict) -> dict:
     """套用設定變更：寫入 .env、更新行程環境變數，並 reload config。回傳新狀態。"""
     path = env_path()
+    admission_requested: str | None = None
+    requested_raw = str((payload or {}).get("TI_TASK_ADMISSION") or "").strip()
+    if requested_raw in admission_mode.MODES:
+        state = admission_mode.snapshot(fallback_mode="shadow")
+        if not state.healthy:
+            raise admission_mode.AdmissionModeError(state.error)
     for key, raw in (payload or {}).items():
         f = _BY_ENV.get(key)
         if f is None:  # 只接受白名單內的鍵
@@ -718,7 +728,11 @@ def update(payload: dict) -> dict:
         if f.kind == "textarea":
             # .env 單行格式:多行文字摺成空白(北極星語意上一段話即可)
             val = " ".join(val.split())
+        if key == "TI_TASK_ADMISSION":
+            admission_requested = val
         write_secret_file(path, key, val)
         os.environ[key] = val
     config.reload()
+    if admission_requested is not None:
+        admission_mode.request(config.TASK_ADMISSION_MODE)
     return read()

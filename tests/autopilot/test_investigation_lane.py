@@ -19,7 +19,7 @@ import json
 
 import pytest
 
-from studio import autopilot, backlog, config
+from studio import admission_mode, autopilot, backlog, config
 
 # 驗屍取得的真實失敗任務標題（黑樣本＝該分流）
 _REAL_INVESTIGATION_TITLES = [
@@ -44,6 +44,11 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_INVESTIGATION_LANE", True)
     monkeypatch.setattr(config, "AUTOPILOT_INVESTIGATION_TIMEOUT", 30)
     monkeypatch.setattr(config, "AUTOPILOT_DISCUSSION_MAX_ATTEMPTS", 2)
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 
@@ -74,6 +79,11 @@ def _mk_task(title="調查 X 的根因並回報", detail=""):
 
 def _load(task_id):
     return next(t for t in backlog.list_tasks() if t["id"] == task_id)
+
+
+def _set_effective_mode(mode: str) -> None:
+    admission_mode.request(mode)
+    admission_mode.reconcile_at_task_boundary(release_holds=lambda _mode: 0)
 
 
 def _audit_lines(tmp_path):
@@ -108,6 +118,7 @@ def test_classifier_respects_kill_switch_and_escalation_mark(state, monkeypatch)
 
 def test_enforced_contract_investigation_kind_is_authoritative(state, monkeypatch):
     monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    _set_effective_mode("enforce")
     task = {
         "title": "整理 worker 行為",
         "detail": "",
@@ -133,6 +144,7 @@ def test_prompt_forbids_file_drop_and_requires_markers(state):
 
 def test_investigation_prompt_keeps_enforced_contract(state, monkeypatch):
     monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    _set_effective_mode("enforce")
     prompt = autopilot._build_investigation_prompt(
         {
             "title": "整理 worker 行為",

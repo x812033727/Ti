@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from studio import autonomy, backlog, config, deploy, interventions, notify
+from studio import admission_mode, autonomy, backlog, config, deploy, interventions, notify
 
 
 @pytest.fixture(autouse=True)
@@ -1036,6 +1036,11 @@ def test_audit_write_failure_blocks_decision(monkeypatch):
 
 
 def test_weekly_improvements_enqueue_at_most_three_and_are_idempotent(tmp_path):
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     report = autonomy.write_weekly_improvements(now=0)
     assert 1 <= len(report["items"]) <= 3
     assert autonomy.verify_weekly_report(report)
@@ -1101,6 +1106,11 @@ def test_weekly_improvements_name_repeated_failure_and_intervention_paths():
 
 
 def test_weekly_improvements_reject_meta_and_duplicate_work(monkeypatch):
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     backlog.add("已存在的實作工作", source="manual")
     monkeypatch.setattr(
         autonomy,

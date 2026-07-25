@@ -1686,6 +1686,7 @@ def _defer_internal_error(
     phase: str,
     state_dir: Path | None,
     started: float,
+    mode_generation: int | None = None,
 ) -> tuple[bool, bool]:
     """內部例外不放行、不增 attempts；回傳 (已持久化, circuit paused)。"""
     from . import backlog
@@ -1706,7 +1707,11 @@ def _defer_internal_error(
             transition="record",
             retry_after=time.time() + 60.0,
             state_dir=state_dir,
+            expected_mode=mode,
+            expected_mode_generation=mode_generation,
         )
+        if _error == "mode_changed":
+            return False, False
         persisted = committed is not None
         if persisted:
             _append_decision_audit(
@@ -1810,6 +1815,7 @@ def _shadow_claim_after_internal_error(
     *,
     state_dir: Path | None,
     started: float,
+    mode_generation: int | None = None,
 ) -> AdmissionSelection | None:
     """shadow 的觀測器壞掉仍原子沿用舊派工，只把安全錯誤標籤留痕。"""
     from . import backlog
@@ -1828,6 +1834,8 @@ def _shadow_claim_after_internal_error(
             admission=record,
             transition="claim",
             state_dir=state_dir,
+            expected_mode="shadow",
+            expected_mode_generation=mode_generation,
         )
         if committed is None:
             return None
@@ -1852,6 +1860,7 @@ def _shadow_claim_after_internal_error(
                 expected_fingerprint,
                 decision,
                 state_dir=state_dir,
+                mode_generation=mode_generation,
             )
         except Exception:  # noqa: BLE001 — storage 本身不可用時只能等下輪
             return None
@@ -1863,6 +1872,7 @@ def _shadow_legacy_claim(
     decision: AdmissionDecision,
     *,
     state_dir: Path | None,
+    mode_generation: int | None = None,
 ) -> AdmissionSelection | None:
     """shadow 觀測落檔故障時只做舊語意 CAS claim，仍避免主／旁路重複執行。"""
     from . import backlog
@@ -1871,6 +1881,8 @@ def _shadow_legacy_claim(
         int(task["id"]),
         expected_fingerprint,
         state_dir=state_dir,
+        expected_mode="shadow",
+        expected_mode_generation=mode_generation,
     )
     if committed is None:
         return None
@@ -1978,6 +1990,7 @@ def enqueue_task(
     mode: str,
     repo_context: Mapping[str, Any],
     state_dir: Path | None = None,
+    mode_generation: int | None = None,
     **fields: Any,
 ) -> dict[str, Any] | None:
     """建立 task 後立即做 ingest admission；off 完整保留舊 add 行為。"""
@@ -2014,6 +2027,7 @@ def enqueue_task(
             phase="enqueue",
             state_dir=state_dir,
             started=started,
+            mode_generation=mode_generation,
         )
         return backlog.get(task["id"], state_dir=state_dir) or task
     try:
@@ -2035,6 +2049,7 @@ def enqueue_task(
                     phase="enqueue",
                     state_dir=state_dir,
                     started=started,
+                    mode_generation=mode_generation,
                 )
                 return backlog.get(task["id"], state_dir=state_dir) or task
         automated_clarification = (
@@ -2058,6 +2073,8 @@ def enqueue_task(
             admission=record,
             transition=transition,
             state_dir=state_dir,
+            expected_mode=mode,
+            expected_mode_generation=mode_generation,
         )
     except Exception:  # noqa: BLE001 — ingest observer/gate 例外不得讓 caller 誤以為 add 失敗
         if mode == "enforce":
@@ -2069,6 +2086,7 @@ def enqueue_task(
                 phase="enqueue",
                 state_dir=state_dir,
                 started=started,
+                mode_generation=mode_generation,
             )
         else:
             try:
@@ -2085,6 +2103,8 @@ def enqueue_task(
                     admission=record,
                     transition="record",
                     state_dir=state_dir,
+                    expected_mode=mode,
+                    expected_mode_generation=mode_generation,
                 )
                 if committed is not None:
                     _append_decision_audit(
@@ -2115,6 +2135,7 @@ def enqueue_many(
     repo_context: Mapping[str, Any],
     state_dir: Path | None = None,
     gen: int = 0,
+    mode_generation: int | None = None,
 ) -> int:
     """批次 ingest 純標題，回傳實際建立數（含 enforce 後 parked/done 的可稽核項目）。"""
     return sum(
@@ -2125,6 +2146,7 @@ def enqueue_many(
             repo_context=repo_context,
             state_dir=state_dir,
             gen=gen,
+            mode_generation=mode_generation,
         )
         is not None
         for title in titles
@@ -2139,6 +2161,7 @@ def enqueue_items(
     repo_context: Mapping[str, Any],
     state_dir: Path | None = None,
     gen: int = 0,
+    mode_generation: int | None = None,
 ) -> int:
     """批次 ingest 結構化任務；生成內容永遠不能自設 human_approved。"""
     from . import backlog
@@ -2152,6 +2175,7 @@ def enqueue_items(
             mode=mode,
             repo_context=repo_context,
             state_dir=state_dir,
+            mode_generation=mode_generation,
             priority=item.get("priority", backlog.DEFAULT_PRIORITY),
             item_type=item.get("type", "improvement"),
             effort=item.get("effort", ""),
@@ -2218,6 +2242,7 @@ def claim_next_task(
     repo_context: Mapping[str, Any],
     state_dir: Path | None = None,
     predicate: Callable[[dict], bool] | None = None,
+    mode_generation: int | None = None,
 ) -> AdmissionSelection | None:
     """鎖外評估排序後的 pending snapshot，再用 fingerprint CAS 原子提交與認領。
 
@@ -2267,6 +2292,7 @@ def claim_next_task(
                         phase="claim",
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     made_progress = made_progress or persisted
                     if paused:
@@ -2284,6 +2310,7 @@ def claim_next_task(
                         repo_context,
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     if selected is not None:
                         return selected
@@ -2299,6 +2326,7 @@ def claim_next_task(
                         phase="claim",
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     made_progress = made_progress or persisted
                     if paused:
@@ -2315,6 +2343,7 @@ def claim_next_task(
                         phase="claim",
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     return None
             if (
@@ -2335,6 +2364,8 @@ def claim_next_task(
                     admission=record,
                     transition=transition,
                     state_dir=state_dir,
+                    expected_mode=mode,
+                    expected_mode_generation=mode_generation,
                 )
             except Exception:  # noqa: BLE001 — commit adapter 失敗不可放行
                 if mode == "enforce":
@@ -2346,6 +2377,7 @@ def claim_next_task(
                         phase="claim",
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     return None
                 return _shadow_legacy_claim(
@@ -2353,6 +2385,7 @@ def claim_next_task(
                     fingerprint,
                     decision,
                     state_dir=state_dir,
+                    mode_generation=mode_generation,
                 )
             if committed is None:
                 if error in {"conflict", "not_pending"}:
@@ -2673,6 +2706,7 @@ async def claim_next_task_with_semantic_fallback(
     state_dir: Path | None = None,
     predicate: Callable[[dict], bool] | None = None,
     timeout_s: float = 30.0,
+    mode_generation: int | None = None,
 ) -> AdmissionSelection | None:
     """claim coordinator 的 async 版本；語意缺口至多用一次 fast resolver。"""
     if mode not in {"shadow", "enforce"}:
@@ -2718,6 +2752,7 @@ async def claim_next_task_with_semantic_fallback(
                     phase="claim",
                     state_dir=state_dir,
                     started=started,
+                    mode_generation=mode_generation,
                 )
                 made_progress = made_progress or persisted
                 if paused:
@@ -2735,6 +2770,7 @@ async def claim_next_task_with_semantic_fallback(
                     phase="claim",
                     state_dir=state_dir,
                     started=started,
+                    mode_generation=mode_generation,
                 )
                 made_progress = made_progress or persisted
                 if paused:
@@ -2783,6 +2819,7 @@ async def claim_next_task_with_semantic_fallback(
                         repo_context,
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     if selected is not None:
                         return selected
@@ -2795,6 +2832,7 @@ async def claim_next_task_with_semantic_fallback(
                     phase="claim",
                     state_dir=state_dir,
                     started=started,
+                    mode_generation=mode_generation,
                 )
                 made_progress = made_progress or persisted
                 if paused:
@@ -2821,6 +2859,7 @@ async def claim_next_task_with_semantic_fallback(
                         phase="claim",
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     made_progress = made_progress or persisted
                     if paused:
@@ -2866,6 +2905,8 @@ async def claim_next_task_with_semantic_fallback(
                             admission=record,
                             transition="claim",
                             state_dir=state_dir,
+                            expected_mode=mode,
+                            expected_mode_generation=mode_generation,
                         )
                     except Exception:  # noqa: BLE001 — observer 寫入壞掉仍沿用舊 claim
                         return _shadow_legacy_claim(
@@ -2873,6 +2914,7 @@ async def claim_next_task_with_semantic_fallback(
                             fingerprint,
                             decision,
                             state_dir=state_dir,
+                            mode_generation=mode_generation,
                         )
                     if committed is None:
                         if error in {"conflict", "not_pending"}:
@@ -2896,6 +2938,8 @@ async def claim_next_task_with_semantic_fallback(
                         transition="record",
                         retry_after=time.time() + 60.0,
                         state_dir=state_dir,
+                        expected_mode=mode,
+                        expected_mode_generation=mode_generation,
                     )
                 except Exception:  # noqa: BLE001 — 寫入 adapter 例外同樣不可放行
                     persisted, paused = _defer_internal_error(
@@ -2906,6 +2950,7 @@ async def claim_next_task_with_semantic_fallback(
                         phase="claim",
                         state_dir=state_dir,
                         started=started,
+                        mode_generation=mode_generation,
                     )
                     made_progress = made_progress or persisted
                     if paused:
@@ -2943,6 +2988,7 @@ async def claim_next_task_with_semantic_fallback(
                     phase="claim",
                     state_dir=state_dir,
                     started=started,
+                    mode_generation=mode_generation,
                 )
                 made_progress = made_progress or persisted
                 return None
@@ -2964,6 +3010,8 @@ async def claim_next_task_with_semantic_fallback(
                     admission=record,
                     transition=transition,
                     state_dir=state_dir,
+                    expected_mode=mode,
+                    expected_mode_generation=mode_generation,
                 )
             except Exception:  # noqa: BLE001 — 寫入 adapter 例外同樣不可放行
                 if mode == "shadow":
@@ -2972,6 +3020,7 @@ async def claim_next_task_with_semantic_fallback(
                         fingerprint,
                         decision,
                         state_dir=state_dir,
+                        mode_generation=mode_generation,
                     )
                 persisted, paused = _defer_internal_error(
                     snapshot,
@@ -2981,6 +3030,7 @@ async def claim_next_task_with_semantic_fallback(
                     phase="claim",
                     state_dir=state_dir,
                     started=started,
+                    mode_generation=mode_generation,
                 )
                 made_progress = made_progress or persisted
                 if paused:

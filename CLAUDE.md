@@ -63,6 +63,7 @@ ASGI 入口為 `studio.server:app`，也可 `python3 -m studio.server` 直接啟
 | 設定/狀態 | `config.py` | 集中設定（~140+ 個 `TI_*` 環境變數）+ `reload()` 執行期套用 |
 | | `settings.py` | UI 可調設定（API key/provider/模型/GitHub token）：寫 `.env` → `config.reload()` |
 | | `task_admission.py` | 核心 backlog 任務契約閘門：純規則裁決、CAS claim、語意補全 cache、audit、override 與 circuit |
+| | `admission_mode.py` | task-admission 跨程序模式握手：worker-only bootstrap、desired/effective generation、token-gated commit、任務邊界 ack、降級 release-before-ack |
 | | `history.py` | session 事件存檔（JSONL + meta）、重播、成果記分卡、`/api/metrics` 跨場聚合 |
 | | `events.py` | `StudioEvent` 結構（前後端契約） |
 | | `fake_experts.py` | 離線示範用假專家（真寫檔/commit，供無金鑰試用與 E2E） |
@@ -92,7 +93,9 @@ monkeypatch `orchestrator.<fn>` 仍生效——新增解析函式時沿用此模
   互動單場 V1 可維持 legacy ingest，但 claim-time 仍會 lazy admission。autopilot 在核心 repo 實作開 PR。
   詳見下方「架構鐵則」與 `ARCHITECTURE.md`。
 - **設定走 `config.py` 為 SSOT**：所有行為由 `TI_*` 環境變數定義；UI 改設定 → 寫 `.env` →
-  `config.reload()`，下一個 session 生效。不要在各檔散落硬寫預設。
+  `config.reload()`，下一個 session 生效。`TI_TASK_ADMISSION` 是獨立 worker 的例外：config
+  只作冷啟動 bootstrap 預設；既存 shared desired 由設定端 `request()` 更新，runtime effective
+  必須走 `admission_mode` generation 握手並在安全任務邊界 ack。不要在各檔散落硬寫預設。
 - **解析靠穩定 marker 字串**：如 `驗證: PASS/FAIL`、`決議: 核可/退回`、`任務: #<n>`、
   `依賴: #後 -> #前`、`後續任務: [P0/bug] <title>`、`核心改動: <描述>`——**改動這些字串會破壞解析**，
   動到前先確認 `flow.py` 對應 parser。

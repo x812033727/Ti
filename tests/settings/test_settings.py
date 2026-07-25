@@ -8,14 +8,14 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config, settings
+from studio import admission_mode, config, settings
 
 
 @pytest.fixture
 def sandbox(tmp_path, monkeypatch):
     """把 .env 導向暫存目錄，並在測試後還原被動到的環境變數與 config。"""
     monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
-    keys = [f.env for f in settings.FIELDS]
+    keys = [f.env for f in settings.FIELDS] + ["TI_AUTOPILOT_STATE_DIR"]
     saved = {k: os.environ.get(k) for k in keys}
     yield tmp_path
     for k, v in saved.items():
@@ -43,6 +43,63 @@ def test_update_writes_and_reloads(sandbox):
     assert config.MODEL_LEAD == "claude-haiku-4-5"
     env_text = (sandbox / ".env").read_text()
     assert "TI_PROVIDER" in env_text and "minimax" in env_text
+
+
+def test_retry_same_admission_value_reissues_failed_shared_request(
+    sandbox,
+    monkeypatch,
+):
+    state_dir = sandbox / "state"
+    monkeypatch.setenv("TI_AUTOPILOT_STATE_DIR", str(state_dir))
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", state_dir)
+    monkeypatch.setenv("TI_TASK_ADMISSION", "shadow")
+    config.reload()
+    admission_mode.bootstrap_at_task_boundary(
+        "shadow",
+        initial_effective="shadow",
+        release_holds=lambda _mode: 0,
+    )
+    real_request = admission_mode.request
+    failed = False
+
+    def fail_first_enforce(mode, **kwargs):
+        nonlocal failed
+        if mode == "enforce" and not failed:
+            failed = True
+            raise admission_mode.AdmissionModeError("state_write_failed")
+        return real_request(mode, **kwargs)
+
+    monkeypatch.setattr(admission_mode, "request", fail_first_enforce)
+    with pytest.raises(admission_mode.AdmissionModeError):
+        settings.update({"TI_TASK_ADMISSION": "enforce"})
+
+    assert config.TASK_ADMISSION_MODE == "enforce"
+    assert admission_mode.snapshot().desired == "shadow"
+
+    monkeypatch.setattr(admission_mode, "request", real_request)
+    result = settings.update({"TI_TASK_ADMISSION": "enforce"})
+
+    assert result["task_admission_mode_state"]["desired"] == "enforce"
+    assert result["task_admission_mode_state"]["effective"] == "shadow"
+    assert result["task_admission_mode_state"]["pending"] is True
+
+
+def test_admission_setting_cannot_bootstrap_missing_worker_state(
+    sandbox,
+    monkeypatch,
+):
+    state_dir = sandbox / "state"
+    monkeypatch.setenv("TI_AUTOPILOT_STATE_DIR", str(state_dir))
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", state_dir)
+    monkeypatch.setenv("TI_TASK_ADMISSION", "shadow")
+    config.reload()
+
+    with pytest.raises(admission_mode.AdmissionModeError) as raised:
+        settings.update({"TI_TASK_ADMISSION": "enforce"})
+
+    assert raised.value.code == "not_initialized"
+    assert config.TASK_ADMISSION_MODE == "shadow"
+    assert admission_mode.snapshot().error == "not_initialized"
 
 
 def test_update_accepts_codex_provider(sandbox):

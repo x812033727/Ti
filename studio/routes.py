@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    admission_mode,
     appraisal,
     auth,
     autonomy,
@@ -235,7 +236,16 @@ async def post_settings(request: Request) -> JSONResponse:
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"ok": False, "detail": "格式錯誤"}, status_code=400)
-    updated = settings.update(body)  # 可能拋錯(非法值 config.reload 會炸):成功才記介入
+    try:
+        updated = settings.update(body)
+    except admission_mode.AdmissionModeError:
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": "設定未完整套用：准入模式跨程序狀態無法安全同步，worker 未切換；請修復狀態後重試",
+            },
+            status_code=503,
+        )
     interventions.record("settings", "context_feeding")
     return JSONResponse({"ok": True, **updated})
 
@@ -977,6 +987,23 @@ async def autopilot_status() -> JSONResponse:
         )
     except (OSError, ValueError):
         heartbeat = None
+    mode_state = admission_mode.snapshot(fallback_mode="shadow")
+    mode_public = mode_state.to_public()
+    heartbeat_mode = heartbeat.get("admission_mode") if isinstance(heartbeat, dict) else None
+    if (
+        isinstance(heartbeat, dict)
+        and heartbeat.get("state") == "admission_mode_fault"
+        and isinstance(heartbeat_mode, dict)
+        and heartbeat_mode.get("healthy") is False
+    ):
+        # release/barrier/ack runtime fault 可能發生在 control JSON 仍可讀時；worker
+        # heartbeat 才是「目前是否停止 intake」的權威補充，不可只看檔案 parser health。
+        mode_public = heartbeat_mode
+    effective_mode = (
+        mode_public.get("effective")
+        if mode_public.get("effective") in admission_mode.MODES
+        else "shadow"
+    )
     return JSONResponse(
         {
             "paused": config.autopilot_paused(),
@@ -990,7 +1017,10 @@ async def autopilot_status() -> JSONResponse:
             "deploy": await deploy.drift_stats(),
             "dryrun": config.AUTOPILOT_DRYRUN,
             "repo": config.AUTOPILOT_REPO,
-            "task_admission_mode": config.TASK_ADMISSION_MODE,
+            # 相容欄位永遠代表 worker effective；完整 desired/effective handshake
+            # 另放 state，web 行程自己的 config 值不得提前冒充已生效。
+            "task_admission_mode": effective_mode,
+            "task_admission_mode_state": mode_public,
             "heartbeat": heartbeat,
             "dispatch_mode": "auto" if config.dispatch_auto() else "manual",
             # 每日 PR 預算（功能第五輪 F4）：預算透明化——budget_sleep 前看板先看得到逼近。
@@ -1054,11 +1084,21 @@ async def autopilot_dispatch_mode(body: DispatchModeBody) -> JSONResponse:
 async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
     root = config.AUTOPILOT_DEPLOY_DIR
+    mode_state = admission_mode.snapshot(fallback_mode="shadow")
+    if not mode_state.healthy:
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": "准入模式狀態異常，worker 已停止取件；請先修復控制狀態",
+            },
+            status_code=503,
+        )
     task = task_admission.enqueue_task(
         body.title,
         body.detail[:4000],
         source="manual",
-        mode=config.TASK_ADMISSION_MODE,
+        mode=mode_state.effective,
+        mode_generation=mode_state.effective_generation,
         repo_context={
             "root": root,
             "repo_sha": task_admission.read_local_repo_sha(root),

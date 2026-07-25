@@ -2,6 +2,7 @@
 // 重新部署重啟與登入門禁密碼。
 import { $, toast, appendTextEl } from "../dom.js";
 import { loadHealth, checkAuth } from "../health.js";
+import { admissionModeView } from "../components/admission-mode.js";
 import { setMobileView } from "../components/tabs.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal, openFormModal } from "../components/modal.js";
@@ -39,6 +40,11 @@ export async function redeployNow() {
 // 點「✕」關面板視為主動放棄變更（不提醒），重新開啟面板會從伺服器重新載入現值。
 let settingsDirty = false;
 
+export function settingsAdmissionText(state) {
+  if (!state || typeof state !== "object") return "";
+  return admissionModeView(state).text;
+}
+
 // 設定面板的事件接線（dirty 追蹤／beforeunload 提醒／點遮罩關閉），由入口 init 呼叫一次。
 export function bindSettings() {
   const settingsForm = $("#settingsForm");
@@ -65,6 +71,8 @@ export async function openSettings() {
   try {
     const data = await (await fetch("/api/settings")).json();
     renderSettings(data.fields || []);
+    const admissionText = settingsAdmissionText(data.task_admission_mode_state);
+    if (admissionText) $("#settingsHint").textContent = admissionText;
     refreshProviderQuota();
   } catch (e) {
     settingsForm.innerHTML = "<div class='muted'>無法載入設定</div>";
@@ -143,10 +151,10 @@ function groupId(name) {
   return "settings-group-" + String(name || "general").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
-// 組級提示:Autopilot 組的旋鈕由 ti-autopilot 行程消費,寫入 .env 後 web 行程 reload 但
-// autopilot 行程不會——需 restart 該服務才生效(挑任務空檔;暫停/恢復與派工模式不受影響)。
+// 組級提示:多數 Autopilot 旋鈕由獨立行程消費，需重啟；task admission mode 例外，
+// 透過跨程序 generation 握手在安全任務邊界套用，不要求人工重啟。
 const GROUP_NOTES = {
-  Autopilot: "此組寫入 .env 後需重啟 ti-autopilot 服務才對 autopilot 生效(請挑任務空檔);網頁互動討論不受影響。",
+  Autopilot: "多數欄位需重啟 ti-autopilot 才生效；「任務准入模式」會在 worker 的安全任務邊界自動切換，等待期間可在 Autopilot 看板看到目前／要求模式。",
   通知: "存檔後「發送測試通知」立即可用;autopilot 的異常事件推播(任務失敗/迴圈停滯/額度耗盡)需重啟 ti-autopilot 服務才生效(請挑任務空檔)。",
 };
 
@@ -812,7 +820,8 @@ export async function saveSettings() {
     })).json();
     if (res.ok) {
       renderSettings(res.fields || []);
-      hint.textContent = "已儲存，下次討論即生效。";
+      const modeText = settingsAdmissionText(res.task_admission_mode_state);
+      hint.textContent = modeText ? `已儲存；${modeText}` : "已儲存，下次討論即生效。";
       toast("設定已儲存", "ok");
       loadHealth();
     } else {

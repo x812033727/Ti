@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from studio import autopilot, backlog, config
+from studio import admission_mode, autopilot, backlog, config
 from studio.task_admission import (
     claim_next_task,
     claim_next_task_with_semantic_fallback,
@@ -377,6 +377,11 @@ def test_enforce_deterministic_claim_requires_known_repo_sha(state):
 @pytest.mark.asyncio
 async def test_production_shadow_claim_uses_semantic_coordinator(state, monkeypatch):
     monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "shadow")
+    admission_mode.bootstrap_at_task_boundary(
+        "shadow",
+        initial_effective="shadow",
+        release_holds=lambda _mode: 0,
+    )
     captured = {}
 
     async def fake_semantic_claim(**kwargs):
