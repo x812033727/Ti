@@ -47,6 +47,43 @@ def test_unpark_resets_attempts():
     assert "值得再試" in task["note"]
 
 
+@pytest.mark.parametrize("action", ["retry", "unpark"])
+def test_enforce_admission_hold_cannot_bypass_override_with_generic_action(action):
+    t = backlog.add(
+        "治理阻擋",
+        admission={
+            "mode": "enforce",
+            "outcome": "blocked",
+            "needs_human": True,
+            "overridable": False,
+        },
+    )
+    backlog.set_status(t["id"], "parked")
+
+    task, err = backlog.apply_action(t["id"], action)
+
+    assert task is None
+    assert err.startswith("不可")
+    assert backlog.get(t["id"])["status"] == "parked"
+
+
+def test_kill_switch_released_admission_hold_keeps_generic_unpark_escape():
+    t = backlog.add(
+        "已關閉准入閘門",
+        admission={
+            "mode": "off",
+            "outcome": "blocked",
+            "released_by_mode": "off",
+        },
+    )
+    backlog.set_status(t["id"], "parked")
+
+    task, err = backlog.apply_action(t["id"], "unpark")
+
+    assert err == ""
+    assert task["status"] == "pending"
+
+
 @pytest.mark.parametrize("status", ["in_progress", "merging"])
 def test_park_blocked_for_active_states(status):
     t = _mk(status)

@@ -2689,7 +2689,7 @@ def write_weekly_improvements(
             raise AuditWriteError(f"weekly improvement report 完整性失敗:{path.name}")
         return existing
 
-    from . import backlog
+    from . import backlog, task_admission
 
     existing_titles = {str(task.get("title") or "") for task in backlog.list_tasks()}
     for project_dir in config.PROJECTS_ROOT.iterdir() if config.PROJECTS_ROOT.is_dir() else []:
@@ -2735,10 +2735,16 @@ def write_weekly_improvements(
     enqueued: list[int] = []
     if enqueue:
         for item in selected:
-            task = backlog.add(
+            root = config.AUTOPILOT_DEPLOY_DIR
+            task = task_admission.enqueue_task(
                 item["title"],
                 f"驗收標準：{item['acceptance']}",
                 source="autonomy_weekly",
+                mode=config.TASK_ADMISSION_MODE,
+                repo_context={
+                    "root": root,
+                    "repo_sha": task_admission.read_local_repo_sha(root),
+                },
                 priority=item["priority"],
                 item_type="improvement",
                 risk=item["risk"],

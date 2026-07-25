@@ -168,6 +168,10 @@
 .ap-chip.ap-pr { color: var(--info); border-color: rgba(89, 183, 255, .35); text-decoration: none; }
 .ap-chip.ap-pr:hover { background: var(--surface-3); }
 .ap-chip.cost { color: var(--warn); border-color: rgba(255, 193, 94, .35); }
+.ap-chip.admission.ok { color: var(--good); border-color: rgba(45, 212, 167, .35); }
+.ap-chip.admission.run { color: var(--info); border-color: rgba(89, 183, 255, .35); }
+.ap-chip.admission.wait { color: var(--warn); border-color: rgba(255, 193, 94, .35); }
+.ap-chip.admission.bad { color: var(--bad); border-color: rgba(255, 107, 122, .35); }
 /* 部署漂移橫幅（F1）：已合併 ≠ 已上線的警示，隱藏時零占位 */
 .ap-drift {
   padding: 8px 14px; font-size: var(--fs-1); line-height: 1.5;

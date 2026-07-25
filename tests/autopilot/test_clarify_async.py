@@ -11,11 +11,12 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
 
-from studio import autopilot, backlog, config
+from studio import autopilot, backlog, config, task_admission
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +146,112 @@ def test_timeout_sweep_throttled_and_flag_off(monkeypatch):
     monkeypatch.setattr(config, "CLARIFY_ASYNC", False)
     monkeypatch.setattr(autopilot, "_clarify_sweep_at", 0.0)
     assert autopilot._maybe_clarify_timeout(now=99999.0) == 0
+
+
+def test_enforce_low_risk_admission_timeout_defaults_to_investigation(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    monkeypatch.setattr(config, "CLARIFY_ASYNC", False)
+    low = task_admission.enqueue_task(
+        "低風險但需要釐清",
+        source="manual",
+        risk="low",
+        mode="enforce",
+        repo_context={"root": tmp_path, "repo_sha": "a" * 40},
+    )
+    medium = task_admission.enqueue_task(
+        "中風險需要釐清",
+        source="manual",
+        risk="medium",
+        mode="enforce",
+        repo_context={"root": tmp_path, "repo_sha": "a" * 40},
+    )
+    old = time.time() - 25 * 3600
+    data = backlog._load(None, mutable=True)
+    for task in data["tasks"]:
+        task["updated_at"] = old
+    backlog._path(None).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    backlog._read_cache.clear()
+
+    assert autopilot._maybe_clarify_timeout(now=time.time()) == 1
+    low_current = backlog.get(low["id"])
+    medium_current = backlog.get(medium["id"])
+    assert low_current["status"] == "pending"
+    assert low_current["contract"]["kind"] == "investigation"
+    assert low_current["admission"]["outcome"] == "investigation"
+    assert low_current["attempts"] == 0
+    assert medium_current["status"] == "parked"
+    assert medium_current["admission"]["timeout_default"] == "park"
+
+
+def test_enforce_timeout_tolerates_malformed_optional_contract_fields(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    monkeypatch.setattr(config, "CLARIFY_ASYNC", False)
+    task = task_admission.enqueue_task(
+        "低風險但需要釐清",
+        source="manual",
+        risk="low",
+        mode="enforce",
+        repo_context={"root": tmp_path, "repo_sha": "a" * 40},
+    )
+    old = time.time() - 25 * 3600
+    data = backlog._load(None, mutable=True)
+    data["tasks"][0]["updated_at"] = old
+    data["tasks"][0]["contract"]["constraints"] = {"unexpected": "mapping"}
+    data["tasks"][0]["admission"]["audit"] = "malformed"
+    backlog._path(None).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    backlog._read_cache.clear()
+
+    assert autopilot._maybe_clarify_timeout(now=time.time()) == 1
+    current = backlog.get(task["id"])
+    assert current["status"] == "pending"
+    assert current["contract"]["constraints"] == [
+        "clarification timeout default: investigation only; no external writes"
+    ]
+    assert current["admission"]["audit"]["rule_ids"] == ["clarification_timeout_default"]
+
+
+def test_enforce_timeout_cas_preserves_concurrent_human_override(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    monkeypatch.setattr(config, "CLARIFY_ASYNC", False)
+    task = task_admission.enqueue_task(
+        "低風險人工裁決競爭",
+        source="manual",
+        risk="low",
+        mode="enforce",
+        repo_context={"root": tmp_path, "repo_sha": "a" * 40},
+    )
+    old = time.time() - 25 * 3600
+    data = backlog._load(None, mutable=True)
+    data["tasks"][0]["updated_at"] = old
+    backlog._path(None).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    backlog._read_cache.clear()
+    real_commit = backlog.commit_parked_admission
+    raced = False
+
+    def race_then_commit(*args, **kwargs):
+        nonlocal raced
+        if not raced:
+            raced = True
+            current = backlog.get(task["id"])
+            updated, error = task_admission.apply_override(
+                task["id"],
+                current["admission"]["scope_hash"],
+                "人工先採用低風險預設",
+                repo_context={"root": tmp_path, "repo_sha": "a" * 40},
+            )
+            assert updated is not None and error == ""
+        return real_commit(*args, **kwargs)
+
+    monkeypatch.setattr(backlog, "commit_parked_admission", race_then_commit)
+
+    assert autopilot._maybe_clarify_timeout(now=time.time()) == 0
+    current = backlog.get(task["id"])
+    assert current["status"] == "pending"
+    assert current["admission"]["outcome"] == "ready"
+    assert current["admission"]["override"]["reason"] == "人工先採用低風險預設"
 
 
 def test_requirement_section_with_answer():

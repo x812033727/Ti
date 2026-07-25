@@ -57,6 +57,44 @@ def test_next_pending_priority_order(state):
     assert backlog.next_pending()["id"] == p0["id"]  # P0 先於更早建立的 P1
 
 
+def test_next_pending_source_rank_within_same_priority(state, monkeypatch):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    backlog.add("自動發現", source="discovered", priority=1)
+    backlog.add("排程意圖", source="schedule", priority=1)
+    backlog.add("自主意圖", source="intent", priority=1)
+    backlog.add("藍圖", source="blueprint", priority=1)
+    backlog.add("衍生任務", source="followup", priority=1)
+    human = backlog.add("人工任務", source="manual", priority=1)
+
+    assert backlog.next_pending()["id"] == human["id"]
+
+
+def test_enforce_source_rank_does_not_change_project_backlog_fifo(state, monkeypatch):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    project_state = state / "project"
+    first = backlog.add(
+        "專案先入列的自動任務",
+        source="discovered",
+        priority=1,
+        state_dir=project_state,
+    )
+    backlog.add(
+        "專案後入列的人工任務",
+        source="user",
+        priority=1,
+        state_dir=project_state,
+    )
+
+    assert backlog.next_pending(state_dir=project_state)["id"] == first["id"]
+
+
+def test_source_rank_never_beats_higher_priority(state):
+    urgent_auto = backlog.add("自動緊急任務", source="eval", priority=0)
+    backlog.add("人工普通任務", source="manual", priority=1)
+
+    assert backlog.next_pending()["id"] == urgent_auto["id"]
+
+
 def test_next_pending_legacy_items_without_priority(state):
     # 舊格式 JSON（無 priority 欄位）讀回時視為 P1，順序與 FIFO 相同。
     a = backlog.add("舊任務A")

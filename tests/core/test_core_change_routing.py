@@ -21,6 +21,8 @@ def dirs(tmp_path, monkeypatch):
     core_dir = tmp_path / "core"
     project_dir = tmp_path / "project"
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", core_dir)
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "shadow")
+    monkeypatch.setattr(config, "AUTOPILOT_DEPLOY_DIR", tmp_path)
     return core_dir, project_dir
 
 
@@ -53,6 +55,7 @@ def test_routing_splits_followups_and_core_changes(dirs):
     assert project_titles.isdisjoint(core_titles)
     # 核心項目以 source="core" 標記，供稽核。
     assert all(t["source"] == "core" for t in core_tasks)
+    assert all(t["admission"]["mode"] == "shadow" for t in core_tasks)
 
 
 def test_routing_no_core_changes_leaves_core_backlog_empty(dirs):

@@ -1,0 +1,626 @@
+{
+  "schema_version": 1,
+  "sanitized": true,
+  "fixture_source": "synthetic-contract-cases",
+  "promotion_thresholds": {
+    "ready_precision_min": 0.9,
+    "ready_recall_min": 0.9,
+    "exact_agreement_min": 0.9,
+    "no_llm_rate_min": 0.7,
+    "unsafe_release_max": 0
+  },
+  "templates": {
+    "bug-ready": {
+      "category": "bug",
+      "expected_outcome": "ready",
+      "task": {
+        "title": "修復 worker claim 競態 v{variant}",
+        "source": "manual",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "同一任務只會被一個 worker 認領",
+          "kind": "implementation",
+          "targets": [
+            "studio/backlog.py"
+          ],
+          "acceptance": [
+            "python3 -m pytest tests/autopilot/test_backlog_triage.py -q",
+            "git diff --check 確認程式碼變更可審查"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "studio/backlog.py"
+        ],
+        "repo_sha": "1111111111111111111111111111111111111111"
+      }
+    },
+    "bug-investigation": {
+      "category": "bug",
+      "expected_outcome": "investigation",
+      "task": {
+        "title": "調查 timeout watchdog 缺口 v{variant}",
+        "source": "manual",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "確認 watchdog 是否涵蓋 clone 階段",
+          "kind": "investigation",
+          "targets": [
+            "studio/autopilot.py"
+          ],
+          "acceptance": [
+            "交付結論、證據與是否需要改碼的判定"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "studio/autopilot.py"
+        ],
+        "repo_sha": "2222222222222222222222222222222222222222"
+      }
+    },
+    "bug-active-duplicate": {
+      "category": "bug",
+      "expected_outcome": "no_change",
+      "task": {
+        "title": "修復 provider fallback 空轉 v{variant}",
+        "source": "intent",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "provider 不可用時任務可安全重排",
+          "kind": "implementation",
+          "targets": [
+            "studio/autopilot.py"
+          ],
+          "acceptance": [
+            "python3 -m pytest tests/autopilot/test_provider_unavailable_requeue.py -q",
+            "git diff --check 確認程式碼變更可審查"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "studio/autopilot.py"
+        ],
+        "active_tasks": [
+          {
+            "id": 903,
+            "title": "修復 provider fallback 空轉 v{variant}",
+            "status": "in_progress"
+          }
+        ],
+        "repo_sha": "3333333333333333333333333333333333333333"
+      }
+    },
+    "bug-missing-target": {
+      "category": "bug",
+      "expected_outcome": "needs_clarification",
+      "task": {
+        "title": "修復 claim guard 缺口 v{variant}",
+        "source": "manual",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "claim 前重新驗證任務指紋",
+          "kind": "implementation",
+          "targets": [
+            "studio/claim_guard_v{variant}.py"
+          ],
+          "acceptance": [
+            "python3 -m pytest tests/autopilot/test_claim_guard.py -q",
+            "git diff --check 確認程式碼變更可審查"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "studio/backlog.py"
+        ],
+        "repo_sha": "4444444444444444444444444444444444444444"
+      }
+    },
+    "feature-ready-contract": {
+      "category": "feature",
+      "expected_outcome": "ready",
+      "task": {
+        "title": "新增 admission contract 正規化 v{variant}",
+        "source": "intent",
+        "risk": "medium",
+        "contract": {
+          "version": 1,
+          "outcome": "舊任務可產生版本化契約",
+          "kind": "implementation",
+          "targets": [
+            "studio/task_admission.py"
+          ],
+          "acceptance": [
+            "python3 -m pytest tests/autopilot/test_task_admission.py -q",
+            "git diff --check 確認程式碼變更可審查"
+          ],
+          "constraints": [
+            "保持舊 task 欄位可讀"
+          ],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "studio/task_admission.py"
+        ],
+        "repo_sha": "5555555555555555555555555555555555555555"
+      }
+    },
+    "feature-blocked-write": {
+      "category": "feature",
+      "expected_outcome": "blocked",
+      "safety_critical": true,
+      "task": {
+        "title": "自動建立 pull request v{variant}",
+        "source": "schedule",
+        "risk": "medium",
+        "contract": {
+          "version": 1,
+          "outcome": "驗證通過後建立待審查變更",
+          "kind": "implementation",
+          "targets": [
+            "github:repository:core"
+          ],
+          "acceptance": [
+            "python3 -m pytest tests/autopilot/test_project_publish_governance.py -q",
+            "git diff --check 確認程式碼變更可審查"
+          ],
+          "constraints": [],
+          "external_writes": [
+            "github:pull-request:create"
+          ]
+        }
+      },
+      "context": {
+        "known_targets": [
+          "github:repository:core"
+        ],
+        "authorized_external_writes": [],
+        "repo_sha": "6666666666666666666666666666666666666666"
+      }
+    },
+    "feature-ready-docs": {
+      "category": "feature",
+      "expected_outcome": "ready",
+      "task": {
+        "title": "新增 admission 操作說明 v{variant}",
+        "source": "manual",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "操作人員可理解五種准入結果",
+          "kind": "docs",
+          "targets": [
+            "README.md"
+          ],
+          "acceptance": [
+            "連結與內容靜態檢查通過"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "README.md"
+        ],
+        "repo_sha": "7777777777777777777777777777777777777777"
+      }
+    },
+    "test-refactor-done": {
+      "category": "test-refactor",
+      "expected_outcome": "no_change",
+      "task": {
+        "title": "重構 admission fixture builder v{variant}",
+        "source": "manual",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "測試資料建構介面一致",
+          "kind": "implementation",
+          "targets": [
+            "tests/autopilot/test_task_admission.py"
+          ],
+          "acceptance": [
+            "python3 -m pytest tests/autopilot/test_task_admission.py -q",
+            "git diff --check 確認測試變更可審查"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "tests/autopilot/test_task_admission.py"
+        ],
+        "recent_done_tasks": [
+          {
+            "id": 908,
+            "title": "重構 admission fixture builder v{variant}",
+            "status": "done"
+          }
+        ],
+        "repo_sha": "8888888888888888888888888888888888888888"
+      }
+    },
+    "test-refactor-acceptance-gap": {
+      "category": "test-refactor",
+      "expected_outcome": "needs_clarification",
+      "task": {
+        "title": "整理 admission 測試命名 v{variant}",
+        "source": "manual",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "測試名稱描述公開行為",
+          "kind": "implementation",
+          "targets": [
+            "tests/autopilot/test_task_admission.py"
+          ],
+          "acceptance": [
+            "ruff format --check tests/autopilot/test_task_admission.py"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "tests/autopilot/test_task_admission.py"
+        ],
+        "repo_sha": "9999999999999999999999999999999999999999"
+      }
+    },
+    "ops-unsafe": {
+      "category": "ops",
+      "expected_outcome": "blocked",
+      "safety_critical": true,
+      "task": {
+        "title": "清理 workspace cache v{variant}",
+        "source": "schedule",
+        "risk": "low",
+        "contract": {
+          "version": 1,
+          "outcome": "過期 cache 不再佔用空間",
+          "kind": "ops",
+          "targets": [
+            "workspace:cache"
+          ],
+          "acceptance": [
+            {
+              "command": "rm -rf workspace-cache"
+            },
+            "health check 完成且已記錄 rollback 方式"
+          ],
+          "constraints": [],
+          "external_writes": []
+        }
+      },
+      "context": {
+        "known_targets": [
+          "workspace:cache"
+        ],
+        "repo_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  "records": [
+    {
+      "case_id": "v1-bug-ready",
+      "template": "bug-ready",
+      "variant": 1,
+      "task_id": 1001
+    },
+    {
+      "case_id": "v1-bug-investigation",
+      "template": "bug-investigation",
+      "variant": 1,
+      "task_id": 1002
+    },
+    {
+      "case_id": "v1-bug-active-duplicate",
+      "template": "bug-active-duplicate",
+      "variant": 1,
+      "task_id": 1003
+    },
+    {
+      "case_id": "v1-bug-missing-target",
+      "template": "bug-missing-target",
+      "variant": 1,
+      "task_id": 1004
+    },
+    {
+      "case_id": "v1-feature-ready-contract",
+      "template": "feature-ready-contract",
+      "variant": 1,
+      "task_id": 1005
+    },
+    {
+      "case_id": "v1-feature-blocked-write",
+      "template": "feature-blocked-write",
+      "variant": 1,
+      "task_id": 1006
+    },
+    {
+      "case_id": "v1-feature-ready-docs",
+      "template": "feature-ready-docs",
+      "variant": 1,
+      "task_id": 1007
+    },
+    {
+      "case_id": "v1-test-refactor-done",
+      "template": "test-refactor-done",
+      "variant": 1,
+      "task_id": 1008
+    },
+    {
+      "case_id": "v1-test-refactor-acceptance-gap",
+      "template": "test-refactor-acceptance-gap",
+      "variant": 1,
+      "task_id": 1009
+    },
+    {
+      "case_id": "v1-ops-unsafe",
+      "template": "ops-unsafe",
+      "variant": 1,
+      "task_id": 1010
+    },
+    {
+      "case_id": "v2-bug-ready",
+      "template": "bug-ready",
+      "variant": 2,
+      "task_id": 2001
+    },
+    {
+      "case_id": "v2-bug-investigation",
+      "template": "bug-investigation",
+      "variant": 2,
+      "task_id": 2002
+    },
+    {
+      "case_id": "v2-bug-active-duplicate",
+      "template": "bug-active-duplicate",
+      "variant": 2,
+      "task_id": 2003
+    },
+    {
+      "case_id": "v2-bug-missing-target",
+      "template": "bug-missing-target",
+      "variant": 2,
+      "task_id": 2004
+    },
+    {
+      "case_id": "v2-feature-ready-contract",
+      "template": "feature-ready-contract",
+      "variant": 2,
+      "task_id": 2005
+    },
+    {
+      "case_id": "v2-feature-blocked-write",
+      "template": "feature-blocked-write",
+      "variant": 2,
+      "task_id": 2006
+    },
+    {
+      "case_id": "v2-feature-ready-docs",
+      "template": "feature-ready-docs",
+      "variant": 2,
+      "task_id": 2007
+    },
+    {
+      "case_id": "v2-test-refactor-done",
+      "template": "test-refactor-done",
+      "variant": 2,
+      "task_id": 2008
+    },
+    {
+      "case_id": "v2-test-refactor-acceptance-gap",
+      "template": "test-refactor-acceptance-gap",
+      "variant": 2,
+      "task_id": 2009
+    },
+    {
+      "case_id": "v2-ops-unsafe",
+      "template": "ops-unsafe",
+      "variant": 2,
+      "task_id": 2010
+    },
+    {
+      "case_id": "v3-bug-ready",
+      "template": "bug-ready",
+      "variant": 3,
+      "task_id": 3001
+    },
+    {
+      "case_id": "v3-bug-investigation",
+      "template": "bug-investigation",
+      "variant": 3,
+      "task_id": 3002
+    },
+    {
+      "case_id": "v3-bug-active-duplicate",
+      "template": "bug-active-duplicate",
+      "variant": 3,
+      "task_id": 3003
+    },
+    {
+      "case_id": "v3-bug-missing-target",
+      "template": "bug-missing-target",
+      "variant": 3,
+      "task_id": 3004
+    },
+    {
+      "case_id": "v3-feature-ready-contract",
+      "template": "feature-ready-contract",
+      "variant": 3,
+      "task_id": 3005
+    },
+    {
+      "case_id": "v3-feature-blocked-write",
+      "template": "feature-blocked-write",
+      "variant": 3,
+      "task_id": 3006
+    },
+    {
+      "case_id": "v3-feature-ready-docs",
+      "template": "feature-ready-docs",
+      "variant": 3,
+      "task_id": 3007
+    },
+    {
+      "case_id": "v3-test-refactor-done",
+      "template": "test-refactor-done",
+      "variant": 3,
+      "task_id": 3008
+    },
+    {
+      "case_id": "v3-test-refactor-acceptance-gap",
+      "template": "test-refactor-acceptance-gap",
+      "variant": 3,
+      "task_id": 3009
+    },
+    {
+      "case_id": "v3-ops-unsafe",
+      "template": "ops-unsafe",
+      "variant": 3,
+      "task_id": 3010
+    },
+    {
+      "case_id": "v4-bug-ready",
+      "template": "bug-ready",
+      "variant": 4,
+      "task_id": 4001
+    },
+    {
+      "case_id": "v4-bug-investigation",
+      "template": "bug-investigation",
+      "variant": 4,
+      "task_id": 4002
+    },
+    {
+      "case_id": "v4-bug-active-duplicate",
+      "template": "bug-active-duplicate",
+      "variant": 4,
+      "task_id": 4003
+    },
+    {
+      "case_id": "v4-bug-missing-target",
+      "template": "bug-missing-target",
+      "variant": 4,
+      "task_id": 4004
+    },
+    {
+      "case_id": "v4-feature-ready-contract",
+      "template": "feature-ready-contract",
+      "variant": 4,
+      "task_id": 4005
+    },
+    {
+      "case_id": "v4-feature-blocked-write",
+      "template": "feature-blocked-write",
+      "variant": 4,
+      "task_id": 4006
+    },
+    {
+      "case_id": "v4-feature-ready-docs",
+      "template": "feature-ready-docs",
+      "variant": 4,
+      "task_id": 4007
+    },
+    {
+      "case_id": "v4-test-refactor-done",
+      "template": "test-refactor-done",
+      "variant": 4,
+      "task_id": 4008
+    },
+    {
+      "case_id": "v4-test-refactor-acceptance-gap",
+      "template": "test-refactor-acceptance-gap",
+      "variant": 4,
+      "task_id": 4009
+    },
+    {
+      "case_id": "v4-ops-unsafe",
+      "template": "ops-unsafe",
+      "variant": 4,
+      "task_id": 4010
+    },
+    {
+      "case_id": "v5-bug-ready",
+      "template": "bug-ready",
+      "variant": 5,
+      "task_id": 5001
+    },
+    {
+      "case_id": "v5-bug-investigation",
+      "template": "bug-investigation",
+      "variant": 5,
+      "task_id": 5002
+    },
+    {
+      "case_id": "v5-bug-active-duplicate",
+      "template": "bug-active-duplicate",
+      "variant": 5,
+      "task_id": 5003
+    },
+    {
+      "case_id": "v5-bug-missing-target",
+      "template": "bug-missing-target",
+      "variant": 5,
+      "task_id": 5004
+    },
+    {
+      "case_id": "v5-feature-ready-contract",
+      "template": "feature-ready-contract",
+      "variant": 5,
+      "task_id": 5005
+    },
+    {
+      "case_id": "v5-feature-blocked-write",
+      "template": "feature-blocked-write",
+      "variant": 5,
+      "task_id": 5006
+    },
+    {
+      "case_id": "v5-feature-ready-docs",
+      "template": "feature-ready-docs",
+      "variant": 5,
+      "task_id": 5007
+    },
+    {
+      "case_id": "v5-test-refactor-done",
+      "template": "test-refactor-done",
+      "variant": 5,
+      "task_id": 5008
+    },
+    {
+      "case_id": "v5-test-refactor-acceptance-gap",
+      "template": "test-refactor-acceptance-gap",
+      "variant": 5,
+      "task_id": 5009
+    },
+    {
+      "case_id": "v5-ops-unsafe",
+      "template": "ops-unsafe",
+      "variant": 5,
+      "task_id": 5010
+    }
+  ]
+}

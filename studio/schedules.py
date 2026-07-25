@@ -27,7 +27,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import backlog, config
+from . import config, task_admission
 from .secure_write import secure_write_root
 
 log = logging.getLogger("ti.schedules")
@@ -232,10 +232,16 @@ def enqueue_due(now: float | None = None, *, state_dir: Path | None = None) -> i
                 key = occurrence_key(s, t)
                 if not key or key == s.get("last_fired_key"):
                     continue
-                task = backlog.add(
+                root = config.AUTOPILOT_DEPLOY_DIR
+                task = task_admission.enqueue_task(
                     f"[排程] {s['title']}",
                     s.get("detail", ""),
                     source="schedule",
+                    mode=config.TASK_ADMISSION_MODE,
+                    repo_context={
+                        "root": root,
+                        "repo_sha": task_admission.read_local_repo_sha(root),
+                    },
                     priority=int(s.get("priority", 1)),
                     item_type=s.get("type", "improvement"),
                 )

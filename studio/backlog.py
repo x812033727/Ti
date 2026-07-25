@@ -15,10 +15,13 @@ keyword-only 的 `state_dir`，傳入即操作該目錄下的 backlog（專案�
 from __future__ import annotations
 
 import contextlib
+import copy
 import fcntl
+import hashlib
 import json
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import config, secure_write
@@ -39,6 +42,23 @@ VALID_RISKS = ("low", "medium", "high-reversible", "irreversible", "unknown")
 # 優先級 P0（必須）~ P2（加分）。舊資料無此欄位時以 P1 解讀，排序行為與先前 FIFO 一致。
 DEFAULT_PRIORITY = 1
 
+# 同一優先級內，先處理人類直接交付的工作，再處理其衍生工作、規劃種子，最後才是
+# 自動探索。未知/舊來源採中性 rank，避免把未分類來源誤當人工指令抬高權重。
+_HUMAN_SOURCES = frozenset({"human", "manual", "user"})
+_DERIVED_SOURCES = frozenset({"followup", "split", "core"})
+_PLAN_SOURCES = frozenset({"blueprint", "seed"})
+_AUTOMATED_SOURCES = frozenset({"discovered", "eval", "autonomy_weekly", "intent", "schedule"})
+_ADMISSION_TRANSITIONS = frozenset({"record", "claim", "park", "complete"})
+_ADMISSION_VALUE_MAX_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class AdmissionCommit:
+    """原子 admission 寫入結果；attempts_before 保留 runner 既有重試語意。"""
+
+    task: dict
+    attempts_before: int
+
 
 def _clamp_priority(priority) -> int:
     """夾到 0..2；不可解析時回預設 P1（解析失敗不該擋任務入列）。"""
@@ -56,6 +76,52 @@ def _norm_type(item_type) -> str:
 def _norm_risk(risk) -> str:
     value = str(risk or "").strip().lower()
     return value if value in VALID_RISKS else "unknown"
+
+
+def _source_rank(task: dict) -> int:
+    """回傳同優先級內的來源順位；discovered 的既有衍生任務以 gen>0 相容辨識。"""
+    source = str(task.get("source") or "").strip().lower()
+    try:
+        is_descendant = int(task.get("gen") or 0) > 0
+    except (TypeError, ValueError):
+        is_descendant = False
+    if source in _HUMAN_SOURCES:
+        return 0
+    if source in _DERIVED_SOURCES or (source == "discovered" and is_descendant):
+        return 1
+    if source in _PLAN_SOURCES or not source:
+        return 2
+    if source in _AUTOMATED_SOURCES:
+        return 3
+    return 2
+
+
+def _pending_sort_key(task: dict) -> tuple[int, int, float]:
+    """所有 consumer 共用的 dispatch 順序：(priority, source rank, FIFO)。"""
+    return (
+        _clamp_priority(task.get("priority", DEFAULT_PRIORITY)),
+        _source_rank(task),
+        float(task.get("created_at") or 0),
+    )
+
+
+def _is_core_state_dir(state_dir: Path | None) -> bool:
+    if state_dir is None:
+        return True
+    try:
+        return Path(state_dir).resolve() == Path(config.AUTOPILOT_STATE_DIR).resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _dispatch_sort_key(task: dict, *, state_dir: Path | None = None) -> tuple:
+    """只有 enforce 的核心 queue 使用來源順位；專案 backlog 永遠維持既有 FIFO。"""
+    if config.TASK_ADMISSION_MODE != "enforce" or not _is_core_state_dir(state_dir):
+        return (
+            _clamp_priority(task.get("priority", DEFAULT_PRIORITY)),
+            float(task.get("created_at") or 0),
+        )
+    return _pending_sort_key(task)
 
 
 def _norm_rollback(value) -> dict:
@@ -165,6 +231,309 @@ def _save(data: dict, state_dir: Path | None) -> None:
         _read_cache[str(_path(state_dir))] = (sig, data)
 
 
+def task_fingerprint(task: dict) -> str:
+    """對完整 task snapshot 做 canonical hash，供鎖外評估後的 CAS 使用。"""
+    encoded = json.dumps(
+        task,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _json_object(value: dict, *, field_name: str) -> dict:
+    """複製並限制 admission 巢狀資料，避免呼叫端 alias 或無界 payload 污染 backlog。"""
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be JSON serializable") from exc
+    if len(encoded) > _ADMISSION_VALUE_MAX_BYTES:
+        raise ValueError(f"{field_name} exceeds {_ADMISSION_VALUE_MAX_BYTES} bytes")
+    copied = json.loads(encoded)
+    if not isinstance(copied, dict):  # pragma: no cover - 上方型別檢查的防禦性不變量
+        raise ValueError(f"{field_name} must be an object")
+    return copied
+
+
+def pending_snapshots(*, state_dir: Path | None = None) -> list[dict]:
+    """回傳已排序的 pending 深拷貝，供鎖外 admission adapter/evaluate 使用。"""
+    rows = [
+        task
+        for task in _load(state_dir)["tasks"]
+        if task.get("status") == "pending" and _retry_ready(task)
+    ]
+    rows.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir))
+    return copy.deepcopy(rows)
+
+
+def commit_admission(
+    task_id: int,
+    expected_fingerprint: str,
+    *,
+    contract: dict,
+    admission: dict,
+    transition: str = "record",
+    retry_after: float | None = None,
+    state_dir: Path | None = None,
+) -> tuple[AdmissionCommit | None, str]:
+    """CAS 寫入契約與裁決，並可在同一 flock 內 claim/park/complete。
+
+    評估與 repo/model adapter 必須在呼叫前、鎖外完成。只有 snapshot fingerprint 仍
+    相同且任務仍 pending 才提交；失敗不寫任何部分資料，也不消耗 attempts。
+    """
+    if transition not in _ADMISSION_TRANSITIONS:
+        raise ValueError(f"invalid admission transition: {transition}")
+    contract_copy = _json_object(contract, field_name="contract")
+    admission_copy = _json_object(admission, field_name="admission")
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for task in data["tasks"]:
+            if task.get("id") != task_id:
+                continue
+            if task.get("status") != "pending":
+                return None, "not_pending"
+            if task_fingerprint(task) != expected_fingerprint:
+                return None, "conflict"
+            attempts_before = int(task.get("attempts") or 0)
+            task["contract"] = contract_copy
+            task["admission"] = admission_copy
+            if transition == "claim":
+                task["status"] = "in_progress"
+                task["attempts"] = attempts_before + 1
+            elif transition == "park":
+                task["status"] = "parked"
+            elif transition == "complete":
+                task["status"] = "done"
+            if retry_after is not None:
+                task["retry_after"] = max(0.0, float(retry_after))
+            task["updated_at"] = time.time()
+            _save(data, state_dir)
+            return (
+                AdmissionCommit(task=copy.deepcopy(task), attempts_before=attempts_before),
+                "",
+            )
+        return None, "not_found"
+
+
+def claim_if_unchanged(
+    task_id: int,
+    expected_fingerprint: str,
+    *,
+    state_dir: Path | None = None,
+) -> tuple[AdmissionCommit | None, str]:
+    """shadow observer 寫入失敗時的 CAS-only 舊派工；不寫 contract/admission。"""
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for task in data["tasks"]:
+            if task.get("id") != task_id:
+                continue
+            if task.get("status") != "pending":
+                return None, "not_pending"
+            if task_fingerprint(task) != expected_fingerprint:
+                return None, "conflict"
+            attempts_before = int(task.get("attempts") or 0)
+            task["status"] = "in_progress"
+            task["attempts"] = attempts_before + 1
+            task["updated_at"] = time.time()
+            _save(data, state_dir)
+            return (
+                AdmissionCommit(task=copy.deepcopy(task), attempts_before=attempts_before),
+                "",
+            )
+        return None, "not_found"
+
+
+def requeue_admission_claim(
+    task_id: int,
+    expected_fingerprint: str,
+    *,
+    contract: dict,
+    admission: dict,
+    attempts_before: int,
+    retry_after: float,
+    state_dir: Path | None = None,
+) -> tuple[dict | None, str]:
+    """circuit 在 admission commit 後失效時，以 CAS 退還尚未交給 runner 的 claim。"""
+    contract_copy = _json_object(contract, field_name="contract")
+    admission_copy = _json_object(admission, field_name="admission")
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for task in data["tasks"]:
+            if task.get("id") != task_id:
+                continue
+            if task.get("status") != "in_progress":
+                return None, "not_in_progress"
+            if task_fingerprint(task) != expected_fingerprint:
+                return None, "conflict"
+            task["status"] = "pending"
+            task["attempts"] = max(0, int(attempts_before))
+            task["session_id"] = None
+            task["contract"] = contract_copy
+            task["admission"] = admission_copy
+            task["retry_after"] = max(0.0, float(retry_after))
+            task["updated_at"] = time.time()
+            _save(data, state_dir)
+            return copy.deepcopy(task), ""
+        return None, "not_found"
+
+
+def attach_claim_session(
+    task_id: int,
+    session_id: str,
+    *,
+    state_dir: Path | None = None,
+) -> tuple[dict | None, str]:
+    """替已原子 claim 的任務補 session id，不重複增加 attempts。"""
+    sid = str(session_id or "").strip()[:128]
+    if not sid:
+        return None, "invalid_session"
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for task in data["tasks"]:
+            if task.get("id") != task_id:
+                continue
+            if task.get("status") != "in_progress":
+                return None, "not_in_progress"
+            task["session_id"] = sid
+            task["updated_at"] = time.time()
+            _save(data, state_dir)
+            return copy.deepcopy(task), ""
+        return None, "not_found"
+
+
+def commit_parked_admission(
+    task_id: int,
+    expected_fingerprint: str,
+    *,
+    contract: dict,
+    admission: dict,
+    transition: str = "record",
+    attempts: int | None = None,
+    note: str | None = None,
+    state_dir: Path | None = None,
+) -> tuple[dict | None, str]:
+    """以 CAS 刷新 parked admission；timeout/re-evaluate 不得覆蓋並行人工裁決。"""
+    if transition not in {"record", "release", "complete"}:
+        raise ValueError(f"invalid parked admission transition: {transition}")
+    contract_copy = _json_object(contract, field_name="contract")
+    admission_copy = _json_object(admission, field_name="admission")
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for task in data["tasks"]:
+            if task.get("id") != task_id:
+                continue
+            if task.get("status") != "parked":
+                return None, "not_parked"
+            if task_fingerprint(task) != expected_fingerprint:
+                return None, "conflict"
+            task["contract"] = contract_copy
+            task["admission"] = admission_copy
+            if transition == "release":
+                task["status"] = "pending"
+                task["session_id"] = None
+                task.pop("retry_after", None)
+            elif transition == "complete":
+                task["status"] = "done"
+            if attempts is not None:
+                task["attempts"] = max(0, int(attempts))
+            if note is not None:
+                task["note"] = str(note).strip()[:800]
+            task["updated_at"] = time.time()
+            _save(data, state_dir)
+            return copy.deepcopy(task), ""
+        return None, "not_found"
+
+
+def release_admission_holds(
+    *,
+    mode: str,
+    state_dir: Path | None = None,
+) -> int:
+    """off/shadow kill switch：只釋放先前由 enforce admission 停放的任務。"""
+    if mode not in {"off", "shadow"}:
+        return 0
+    released = 0
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for task in data["tasks"]:
+            admission = task.get("admission")
+            if (
+                task.get("status") != "parked"
+                or not isinstance(admission, dict)
+                or admission.get("mode") != "enforce"
+                or admission.get("released_by_mode")
+                or admission.get("outcome") not in {"needs_clarification", "blocked"}
+            ):
+                continue
+            admission["original_mode"] = "enforce"
+            admission["original_outcome"] = admission.get("outcome")
+            admission["mode"] = mode
+            admission["released_by_mode"] = mode
+            admission["needs_human"] = False
+            admission["question"] = ""
+            task["status"] = "pending"
+            task["session_id"] = None
+            task.pop("retry_after", None)
+            task["note"] = f"[准入模式降級] {mode} 恢復 legacy 派工"
+            task["updated_at"] = time.time()
+            released += 1
+        if released:
+            _save(data, state_dir)
+    return released
+
+
+def apply_admission_override(
+    task_id: int,
+    expected_fingerprint: str,
+    expected_scope_hash: str,
+    reason: str,
+    *,
+    state_dir: Path | None = None,
+) -> tuple[dict | None, str]:
+    """原子套用一次性 quality override 並取回 pending；不碰 human_approved。"""
+    clean_reason = str(reason or "").strip()[:500]
+    if not clean_reason:
+        return None, "invalid_reason"
+    with _locked(state_dir):
+        data = _load(state_dir, mutable=True)
+        for task in data["tasks"]:
+            if task.get("id") != task_id:
+                continue
+            if task_fingerprint(task) != expected_fingerprint:
+                return None, "conflict"
+            if task.get("status") != "parked":
+                return None, "invalid_status"
+            admission = task.get("admission")
+            if not isinstance(admission, dict):
+                return None, "not_overridable"
+            if str(admission.get("scope_hash") or "") != expected_scope_hash:
+                return None, "stale_scope"
+            if admission.get("overridable") is not True:
+                return None, "not_overridable"
+            if isinstance(admission.get("override"), dict):
+                return None, "already_overridden"
+            admission["original_outcome"] = str(admission.get("outcome") or "")
+            admission["outcome"] = "ready"
+            admission["needs_human"] = False
+            admission["overridable"] = False
+            admission["question"] = ""
+            admission["override"] = {
+                "scope_hash": expected_scope_hash,
+                "reason": clean_reason,
+                "actor": "admin",
+                "applied_at": time.time(),
+            }
+            task["status"] = "pending"
+            task["updated_at"] = time.time()
+            _save(data, state_dir)
+            return copy.deepcopy(task), ""
+        return None, "not_found"
+
+
 def add(
     title: str,
     detail: str = "",
@@ -183,6 +552,9 @@ def add(
     diff_sha: str = "",
     evidence_sha: str = "",
     human_approved: bool = False,
+    contract: dict | None = None,
+    admission: dict | None = None,
+    split_depth: int | None = None,
 ) -> dict | None:
     """新增一筆 pending 任務，回傳該任務；title 為空或重複則回 None。
 
@@ -198,6 +570,10 @@ def add(
         return None
     if eligible is False and not (exclusion_reason or "").strip():
         return None
+    contract_copy = _json_object(contract, field_name="contract") if contract is not None else None
+    admission_copy = (
+        _json_object(admission, field_name="admission") if admission is not None else None
+    )
     with _locked(state_dir):
         data = _load(state_dir, mutable=True)
         if _is_duplicate(data["tasks"], title):
@@ -223,6 +599,8 @@ def add(
         }
         if gen:
             task["gen"] = int(gen)
+        if split_depth is not None:
+            task["split_depth"] = max(0, int(split_depth))
         if rollback:
             task["rollback"] = _norm_rollback(rollback)
         if approval_verdicts:
@@ -233,6 +611,10 @@ def add(
             task["evidence_sha"] = str(evidence_sha)[:128]
         if human_approved:
             task["human_approved"] = True
+        if contract_copy is not None:
+            task["contract"] = contract_copy
+        if admission_copy is not None:
+            task["admission"] = admission_copy
         data["tasks"].append(task)
         _save(data, state_dir)
         return task
@@ -283,6 +665,7 @@ def add_items(
             approval_verdicts=it.get("approval_verdicts"),
             diff_sha=it.get("diff_sha", ""),
             evidence_sha=it.get("evidence_sha", ""),
+            contract=it.get("contract") if isinstance(it.get("contract"), dict) else None,
             # add_items is the batch/discovery entry point used by AI planners.
             # A generated payload must never be able to self-sign an irreversible
             # operation; only the admin-protected single-task API may set this.
@@ -309,6 +692,18 @@ _MANUAL_ACTIONS: dict[str, tuple[str, ...]] = {
     "unpark": ("parked",),
     "priority": ("pending", "in_progress", "merging", "done", "failed", "parked"),
 }
+
+
+def is_enforce_admission_hold(task: dict) -> bool:
+    """是否仍由 enforce admission 持有；通用人工／自癒路徑不得解除。"""
+    admission = task.get("admission")
+    return bool(
+        task.get("status") == "parked"
+        and isinstance(admission, dict)
+        and admission.get("mode") == "enforce"
+        and not admission.get("released_by_mode")
+        and admission.get("outcome") in {"needs_clarification", "blocked"}
+    )
 
 
 def apply_action(
@@ -339,6 +734,8 @@ def apply_action(
                 continue
             if t["status"] not in _MANUAL_ACTIONS[action]:
                 return None, f"不可對 {t['status']} 任務執行 {action}"
+            if action in {"retry", "unpark"} and is_enforce_admission_hold(t):
+                return None, "不可用通用 action 解除 enforce admission hold"
             if action == "priority":
                 t["priority"] = _clamp_priority(priority)
                 if extra:
@@ -382,13 +779,13 @@ def claim_next(predicate, *, state_dir: Path | None = None) -> dict | None:
     為什麼需要:next_pending 只讀不改,認領靠呼叫端事後 set_status——單線無妨,但旁路
     併行線(調查 sideline)與主迴圈同時取任務會 TOCTOU 撿到同一筆。predicate 在鎖內
     執行,須為純函式(不得再進 backlog,否則 flock 重入死鎖)。
-    排序與 next_pending 一致(priority 先、同級 created_at 早者先);retry_after
+    排序與 next_pending 一致(priority、來源順位、同級 created_at);retry_after
     在未來者跳過(重試冷卻,見 _retry_ready)。
     """
     with _locked(state_dir):
         data = _load(state_dir, mutable=True)
         pend = [t for t in data["tasks"] if t["status"] == "pending" and _retry_ready(t)]
-        pend.sort(key=lambda t: (t.get("priority", DEFAULT_PRIORITY), t["created_at"]))
+        pend.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir))
         for t in pend:
             if not predicate(t):
                 continue
@@ -411,13 +808,13 @@ def _retry_ready(t: dict) -> bool:
 
 
 def next_pending(*, state_dir: Path | None = None) -> dict | None:
-    """取優先級最高（P0 先）、同級內最早建立、仍 pending 的任務（不改狀態）。
+    """取優先級最高、同級依來源順位後 FIFO 的 pending 任務（不改狀態）。
 
     舊資料無 priority 欄位時以 P1 解讀，故純舊資料下順序與先前 FIFO 完全一致;
     retry_after 在未來者跳過(重試冷卻,見 _retry_ready)。
     """
     pend = [t for t in _load(state_dir)["tasks"] if t["status"] == "pending" and _retry_ready(t)]
-    pend.sort(key=lambda t: (t.get("priority", DEFAULT_PRIORITY), t["created_at"]))
+    pend.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir))
     return pend[0] if pend else None
 
 
@@ -662,7 +1059,12 @@ def triage_failed(*, state_dir: Path | None = None) -> dict:
                 parked += 1
         timeout_parked: list[tuple[dict, int]] = []
         for t in data["tasks"]:
-            if t.get("status") != "parked" or t.get("timeout_retried") or t.get("split_done"):
+            if (
+                t.get("status") != "parked"
+                or is_enforce_admission_hold(t)
+                or t.get("timeout_retried")
+                or t.get("split_done")
+            ):
                 continue
             m = TIMEOUT_NOTE_RE.search(t.get("note") or "")
             if not m:

@@ -342,6 +342,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_ANTIGRAVITY_BIN` | Antigravity CLI provider：本機 `agy` 執行檔；沿用 Google OAuth / Google Cloud project 登入與 Antigravity quota，不需要 API key | agy |
 | `TI_ANTIGRAVITY_MODEL_LEAD` / `TI_ANTIGRAVITY_MODEL_FAST` | Antigravity CLI 模型覆寫；留空代表沿用 CLI settings/model，可用 `agy models` 查看帳號可用模型 | 空 |
 | `TI_ANTIGRAVITY_SANDBOX` / `TI_ANTIGRAVITY_SKIP_PERMISSIONS` | Antigravity CLI 旗標：分別控制 `--sandbox` 與 `--dangerously-skip-permissions`。伺服器自動跑任務時預設開 sandbox 並自動核准工具權限 | 1 / 1 |
+| `TI_TASK_ADMISSION` | 核心 autopilot 任務契約閘門：`off` 完整沿用舊流程；`shadow` 在正常流程只補契約、裁決與去敏 audit；`enforce` 才依五向結果分流。從 `enforce` 降級時，`off`／`shadow` 會釋放既有 admission hold | shadow |
 | `TI_AUTOPILOT_FORCE_PUSH` | Autopilot 推送策略：預設非強制（`git push`），遠端已存在同名分支時中止；設 `1` 才略過中止並改用 `--force-with-lease --force-if-includes` 覆寫殘留分支（絕不用裸 `-f`） | 0（安全側） |
 | `TI_AUTOPILOT_PROTECTION_CHECK` | 第二道防線：squash-merge 前主動查「合併目標分支（`TI_AUTOPILOT_BRANCH`，預設 `main`）」的保護狀態。優先打 Rulesets 端點（classic token 即可讀、**多半不需 `Administration:read`**），舊 branch protection 端點為輔。三態 fail-safe——受保護/無保護皆放行，唯「無法確認」（403 無權／網路／逾時）一律**中止**並回含「無法確認保護狀態」字樣的訊息，絕不誤判為無保護而放行。讀舊 protection 端點才需 `Administration:read`；無此權限而持續卡「無法確認」的環境，設 `0` 整段跳過（明確逃生口） | 1（啟用） |
 | `TI_AUTOPILOT_EVAL_MEMORY` | 自我評估（backlog 空時找改善點）回饋給專家的「近期成敗」筆數（done/failed 各取最新 N 筆，附失敗原因）。讓迴圈記取自身成績單——避免重提已完成、避開已知失敗做法；越跑越聚焦。0=停用（無狀態評估） | 20 |
@@ -366,6 +367,18 @@ state 檔案以「同目錄 tmp + `O_EXCL|O_NOFOLLOW` 原子建檔 + `fchown(0,0
 
 `FORCE_PUSH` 旗標預設為安全側（`0`），啟用前請先確認已設好分支保護與 CI gating。
 
+- **任務准入**：正常取件時只有 `enforce` 會依裁決改變狀態或派工。它要求 v1 contract 的
+  outcome／kind／targets／acceptance 完整且有本機證據；未宣告或未授權的外部寫入、
+  不可逆操作、network／shell 型驗收命令一律 fail-closed。一次性管理員 override
+  只適用純品質缺口，並綁 task 語意、contract 與 repo SHA，不能繞過風險、CI、合併或部署治理。
+  已認領的主線與調查旁路都固定到裁決時的 repo SHA；固定失敗會原子退回 pending 且不耗 attempt。
+  唯一例外是操作員把模式從 `enforce` 降到 `off`／`shadow`：既有 admission hold 會一次性
+  釋放回 legacy 派工，並留下不可重入的降級標記。
+  `GET /api/autopilot/admission-audit` 可查看去敏裁決、shadow 指標與 circuit 狀態。
+- **升級門檻**：內附的 50-case replay 是合成回歸資料，不等同正式上線證據。切到
+  `enforce` 前仍須以至少 50 筆獨立、去敏的歷史任務人工標註 replay，再觀察 10 筆真實
+  shadow 樣本；目標為 ready precision ≥90%、人工誤擋 ≤1/10、無 LLM 裁決 ≥70%，且不得有
+  未授權高風險放行。
 - **`FORCE_PUSH` 風險**：開啟後，遠端已存在同名分支時不再中止，改以
   `git push --force-with-lease --force-if-includes` 覆寫。若該分支上有他人 commit，**會被直接覆蓋**；
   且 `--force-with-lease` 在背景 `git fetch`（例如 cron）默默更新本地 ref 後可能失效，安全性退化為形同裸 force。

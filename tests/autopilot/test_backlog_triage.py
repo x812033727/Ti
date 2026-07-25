@@ -206,6 +206,24 @@ def test_timeout_parked_is_unparked_when_current_timeout_is_higher(state, monkey
     assert "timeout 上限已由 3600s 調高至 7200s" in cur["note"]
 
 
+def test_timeout_triage_cannot_release_enforce_admission_hold(state, monkeypatch):
+    monkeypatch.setattr(config, "AUTOPILOT_TASK_TIMEOUT", 7200)
+    t = _park_timeout(
+        "仍由准入治理持有",
+        3600,
+        admission={
+            "mode": "enforce",
+            "outcome": "blocked",
+            "needs_human": True,
+        },
+    )
+
+    stats = backlog.triage_failed()
+
+    assert stats["unparked"] == 0
+    assert _get(t["id"])["status"] == "parked"
+
+
 @pytest.mark.parametrize(
     ("title", "note", "fields"),
     [

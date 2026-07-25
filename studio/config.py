@@ -1076,6 +1076,25 @@ AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", 
     "",
 )
 
+# 任務入口契約閘門：off=完全沿用舊流程；shadow=只判定/留痕、不改派工；
+# enforce=依判定分流或阻擋。非法值退回 shadow，避免拼錯字跳過觀測期或直接阻斷。
+TASK_ADMISSION_MODES = ("off", "shadow", "enforce")
+
+
+def _task_admission_mode() -> str:
+    raw = (os.getenv("TI_TASK_ADMISSION") or "shadow").strip().lower()
+    if raw not in TASK_ADMISSION_MODES:
+        logger.warning(
+            "環境變數 TI_TASK_ADMISSION=%r 不在白名單 %s，改用 shadow",
+            raw,
+            TASK_ADMISSION_MODES,
+        )
+        return "shadow"
+    return raw
+
+
+TASK_ADMISSION_MODE = _task_admission_mode()
+
 # EXPERT_LINT_HOOK：寫時 lint——Claude 專家每次 Write/Edit .py 後（PostToolUse hook）與
 #   OpenAI 相容專家 write_file/edit_file 後，自動 `ruff check --fix`（safe-only）＋
 #   `ruff format`，殘餘違規以文字回饋讓專家當場修。治「lint 事後才紅」：#249/#496/#364/
@@ -1397,6 +1416,7 @@ def reload() -> None:
     global AUTOPILOT_INVESTIGATION_LANE, AUTOPILOT_INVESTIGATION_TIMEOUT
     global AUTOPILOT_INVESTIGATION_PARALLEL
     global AUTOPILOT_INVESTIGATION_REFUTE
+    global TASK_ADMISSION_MODE
     global EXPERT_LINT_HOOK, EXPERT_LINT_TIMEOUT
 
     global EXPERT_SKILLS, EXPERT_SKILLS_ROLES
@@ -1633,6 +1653,7 @@ def reload() -> None:
         "False",
         "",
     )
+    TASK_ADMISSION_MODE = _task_admission_mode()
     EXPERT_LINT_HOOK = os.getenv("TI_EXPERT_LINT_HOOK", "1") not in ("0", "false", "False", "")
     EXPERT_LINT_TIMEOUT = _env_float("TI_EXPERT_LINT_TIMEOUT", 15)
 

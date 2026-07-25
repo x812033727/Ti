@@ -106,11 +106,51 @@ def test_classifier_respects_kill_switch_and_escalation_mark(state, monkeypatch)
     assert not autopilot._is_investigation_task(task)
 
 
+def test_enforced_contract_investigation_kind_is_authoritative(state, monkeypatch):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    task = {
+        "title": "整理 worker 行為",
+        "detail": "",
+        "contract": {"kind": "investigation"},
+    }
+
+    assert autopilot._is_investigation_task(task)
+    assert not autopilot._is_investigation_task({**task, "lane": "full"})
+    implementation = {
+        **task,
+        "title": "調查 timeout 根因",
+        "contract": {"kind": "implementation"},
+    }
+    assert not autopilot._is_investigation_task(implementation)
+
+
 def test_prompt_forbids_file_drop_and_requires_markers(state):
     p = autopilot._build_investigation_prompt({"title": "調查 A", "detail": "細節 B"})
     assert "調查 A" in p and "細節 B" in p
     assert "$TMPDIR" in p, "須明令禁止 $TMPDIR 落檔（驗屍死因）"
     assert "結論:" in p and "證據:" in p and "需人工:" in p and "需改碼:" in p
+
+
+def test_investigation_prompt_keeps_enforced_contract(state, monkeypatch):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    prompt = autopilot._build_investigation_prompt(
+        {
+            "title": "整理 worker 行為",
+            "contract": {
+                "version": 1,
+                "outcome": "交付可重現的競態結論",
+                "kind": "investigation",
+                "targets": ["studio/backlog.py"],
+                "acceptance": ["結論、證據、是否需改碼"],
+                "constraints": ["唯讀"],
+                "external_writes": [],
+            },
+        }
+    )
+
+    assert "交付可重現的競態結論" in prompt
+    assert "studio/backlog.py" in prompt
+    assert "結論、證據、是否需改碼" in prompt
 
 
 # --- 四出口 ---------------------------------------------------------------
