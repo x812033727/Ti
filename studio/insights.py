@@ -228,6 +228,28 @@ def trust_metrics(days: int = 7, *, state_dir: Path | None = None) -> dict:
 # 未來新增的 page kind 自動進收件匣(fail-loud,與 notify 同哲學)。
 _ATTENTION_EVENT_EXCLUDE = frozenset({"test", "daily_digest", "stage_changed"})  # 好消息不是例外
 _ATTENTION_TASK_FIELDS = ("id", "title", "note", "clarify", "updated_at", "source", "attempts")
+_ATTENTION_ADMISSION_FIELDS = (
+    "outcome",
+    "reasons",
+    "missing_fields",
+    "needs_human",
+    "overridable",
+    "question",
+    "recommendation",
+    "scope_hash",
+    "timeout_default",
+    "model_error",
+)
+
+
+def _attention_task_row(task: dict) -> dict:
+    row = {key: task.get(key) for key in _ATTENTION_TASK_FIELDS}
+    admission = task.get("admission")
+    if isinstance(admission, dict):
+        row["admission"] = {
+            key: admission.get(key) for key in _ATTENTION_ADMISSION_FIELDS if key in admission
+        }
+    return row
 
 
 def _deploy_attention() -> dict | None:
@@ -265,20 +287,33 @@ def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
     days = max(1, min(30, int(days)))
     cutoff = time.time() - days * 86400
     clarify: list[dict] = []
+    admission_blocked: list[dict] = []
     policy_blocked: list[dict] = []
     parked: list[dict] = []
     for t in backlog.list_tasks("parked", state_dir=state_dir):
-        row = {k: t.get(k) for k in _ATTENTION_TASK_FIELDS}
+        row = _attention_task_row(t)
+        admission = t.get("admission") if isinstance(t.get("admission"), dict) else {}
+        admission_outcome = str(admission.get("outcome") or "")
         if str(t.get("clarify") or "").strip():
             clarify.append(row)  # 澄清票不看時間:沒答就是欠著
         elif str(t.get("note") or "").startswith("自治政策"):
             # 政策攔下=等人裁決,與澄清票同語意不看時間——過去混在一般停放裡,
             # 超過視窗即隱形(7-21 實錄:#424/441/467 全被「陳年歸檔」吃掉)。
             policy_blocked.append(row)
+        elif admission_outcome == "needs_clarification":
+            if admission.get("needs_human") is True:
+                row["clarify"] = str(admission.get("question") or "")
+                clarify.append(row)
+            # system-generated admission 不可 nag；也不降級混入一般 parked。
+        elif admission_outcome == "blocked":
+            if admission.get("needs_human") is True:
+                admission_blocked.append(row)
+            # 非人類來源的安全阻擋保留 backlog/audit，但不製造「需要你」噪音。
         elif (t.get("updated_at") or 0) >= cutoff:
             # 陳年停放=歸檔語意,不進「需要你」——例外收件匣只裝視窗內的新停放。
             parked.append(row)
     clarify.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
+    admission_blocked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     policy_blocked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     parked.sort(key=lambda r: r.get("updated_at") or 0, reverse=True)
     events = [
@@ -290,10 +325,12 @@ def attention(days: int = 7, *, state_dir: Path | None = None) -> dict:
     events.sort(key=lambda e: e.get("ts") or 0, reverse=True)
     return {
         "clarify": clarify[:50],
+        "admission_blocked": admission_blocked[:50],
         "policy_blocked": policy_blocked[:50],
         "parked": parked[:50],
         "events": events[:50],
         "pending_clarify": len(clarify),
+        "pending_admission_blocked": len(admission_blocked),
         "deploy": _deploy_attention(),
     }
 

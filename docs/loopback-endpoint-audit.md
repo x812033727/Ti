@@ -31,6 +31,7 @@
 | POST | `/api/autopilot/dispatch-mode` | admin（auth｜fail-safe loopback） | ✅ | 切換派工模式哨兵檔（auto＝PM 全權派工/manual），影響後續 session 的 provider/模型分配 |
 | POST | `/api/autopilot/task` | admin（auth｜fail-safe loopback） | ✅ | 向會自主執行 bash 的 autopilot 注入任務 |
 | POST | `/api/autopilot/task/{task_id}/action` | admin（auth｜fail-safe loopback） | ✅ | 看板手動操作單一任務（retry/park/unpark/priority），改寫 backlog 狀態 |
+| POST | `/api/autopilot/task/{task_id}/admission-override` | admin（auth｜fail-safe loopback） | ✅ | 一次性覆寫任務品質准入，scope 綁 task／contract hash／repo SHA；不繞過風險、CI、合併或部署治理 |
 | POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
 | POST | `/api/notify/test` | admin（auth｜fail-safe loopback） | ✅ | 發送測試推播（webhook/Telegram）＝觸發對外網路呼叫且間接證實已設憑證，管理面操作 |
 | POST | `/api/notify/red-drills` | admin（auth｜fail-safe loopback） | ✅ | 安全送出全部紅色合成告警並記錄 delivery evidence；不執行真實部署或 rollback |
@@ -57,6 +58,7 @@
 | GET  | `/api/provider-quota` | auth | ➖ | 讀取 provider ready/auth 狀態、可列模型與 Ti 本機用量彙總；不回傳 API key/OAuth token |
 | GET  | `/api/autopilot` | auth | ➖ | 讀取狀態 |
 | GET  | `/api/autopilot/backlog` | auth | ➖ | 讀取待辦清單 |
+| GET  | `/api/autopilot/admission-audit` | auth | ➖ | 唯讀：去敏 admission 裁決、shadow 指標與 circuit 狀態 |
 | GET  | `/api/autopilot/activity` | auth | ➖ | 讀取任務動態視圖（backlog × history 記分卡/token 用量聚合） |
 | GET  | `/api/autopilot/audit-trend` | auth | ➖ | 唯讀：audit.jsonl 每日 outcome 分佈與完成率趨勢 |
 | GET  | `/api/autonomy/status` | auth | ➖ | 唯讀：各專案 stage/mode、煞車、預算與升降級 readiness；秘密只回 configured 狀態 |

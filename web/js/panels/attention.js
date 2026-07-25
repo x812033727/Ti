@@ -21,18 +21,31 @@ export const DEFER_LABEL = {
   deploy_failed: "部署失敗已自動回滾,等新 commit 或人工處理",
 };
 
-async function answerClarify(taskId, note) {
-  const r = await fetch(`/api/autopilot/task/${taskId}/action`, {
+async function answerClarify(ticket, note) {
+  const admission = ticket.admission || null;
+  const useOverride = !!(admission && admission.overridable && admission.scope_hash);
+  const url = useOverride
+    ? `/api/autopilot/task/${ticket.id}/admission-override`
+    : `/api/autopilot/task/${ticket.id}/action`;
+  const body = useOverride
+    ? { scope_hash: admission.scope_hash, reason: note }
+    : { action: "unpark", note };
+  const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "unpark", note }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) {
     const d = await r.json().catch(() => ({}));
+    if (d.detail === "stale_scope_refreshed") {
+      toast("任務或版本已變更，已刷新准入範圍；請重新確認", "err");
+      await renderAttention();
+      return false;
+    }
     toast(d.detail || "答覆失敗", "err");
     return false;
   }
-  toast(`#${taskId} 已答覆並取回佇列`);
+  toast(`#${ticket.id} 已答覆並取回佇列`);
   return true;
 }
 
@@ -47,6 +60,15 @@ function renderClarifySection(host, tickets) {
     card.className = "att-card clarify";
     appendTextEl(card, "div", "att-title", `#${t.id} ${t.title || ""}`);
     appendTextEl(card, "p", "att-question", t.clarify || "");
+    if (t.admission?.recommendation) {
+      appendTextEl(card, "p", "muted att-note", t.admission.recommendation);
+    }
+    const canAnswer = !t.admission || !!t.admission.overridable;
+    if (!canAnswer) {
+      appendTextEl(card, "p", "muted", "此准入結果不能用取回繞過，請調整任務契約。");
+      host.appendChild(card);
+      continue;
+    }
     const row = document.createElement("div");
     row.className = "att-answer";
     const input = document.createElement("textarea");
@@ -60,7 +82,7 @@ function renderClarifySection(host, tickets) {
       const note = input.value.trim();
       if (!note) { input.focus(); return; }
       btn.disabled = true;
-      const ok = await answerClarify(t.id, note);
+      const ok = await answerClarify(t, note);
       if (ok) await renderAttention();
       else btn.disabled = false;
     };
@@ -89,7 +111,7 @@ function renderParkedSection(host, parked) {
     btn.title = "取回為 pending,讓 agent 續跑";
     btn.onclick = async () => {
       btn.disabled = true;
-      const ok = await answerClarify(t.id, "");
+      const ok = await answerClarify(t, "");
       if (ok) await renderAttention();
       else btn.disabled = false;
     };
@@ -112,6 +134,27 @@ function renderPolicyBlockedSection(host, tasks) {
     card.className = "att-card policy";
     appendTextEl(card, "div", "att-title", `#${t.id} ${t.title || ""}`);
     if (t.note) appendTextEl(card, "p", "muted att-note", t.note);
+    host.appendChild(card);
+  }
+}
+
+function renderAdmissionBlockedSection(host, tasks) {
+  appendTextEl(host, "h3", "stage-sec", `准入阻擋(${tasks.length})`);
+  if (!tasks.length) {
+    appendTextEl(host, "p", "muted", "沒有被任務准入安全規則阻擋的工作。");
+    return;
+  }
+  appendTextEl(host, "p", "muted", "這些是安全或授權阻擋，不能用 quality override 繞過。");
+  for (const t of tasks) {
+    const card = document.createElement("div");
+    card.className = "att-card policy";
+    appendTextEl(card, "div", "att-title", `#${t.id} ${t.title || ""}`);
+    const admission = t.admission || {};
+    const reasons = Array.isArray(admission.reasons) ? admission.reasons.join("、") : "";
+    if (reasons) appendTextEl(card, "p", "att-question", reasons);
+    if (admission.recommendation) {
+      appendTextEl(card, "p", "muted att-note", admission.recommendation);
+    }
     host.appendChild(card);
   }
 }
@@ -162,7 +205,10 @@ export function updateBadge(count) {
 
 // badge 數=待答澄清票+政策攔下任務+部署漂移卡(有卡=+1):都是「需要你」的欠帳。
 function badgeCount(d) {
-  return (d.pending_clarify || 0) + ((d.policy_blocked || []).length) + (d.deploy ? 1 : 0);
+  return (d.pending_clarify || 0)
+    + (d.pending_admission_blocked || 0)
+    + ((d.policy_blocked || []).length)
+    + (d.deploy ? 1 : 0);
 }
 
 // 側欄 badge 輕量刷新(home 載入時呼叫);失敗靜默——badge 是輔助不是真相。
@@ -187,6 +233,7 @@ export async function renderAttention() {
   }
   appendTextEl(host, "p", "muted", "只有這裡列出的事需要你——其餘一切 agent 自己處理。");
   renderClarifySection(host, d.clarify || []);
+  renderAdmissionBlockedSection(host, d.admission_blocked || []);
   renderPolicyBlockedSection(host, d.policy_blocked || []);
   renderParkedSection(host, d.parked || []);
   renderDeploySection(host, d.deploy || null);

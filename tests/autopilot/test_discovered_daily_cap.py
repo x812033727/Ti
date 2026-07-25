@@ -1,11 +1,11 @@
 """每日自產任務總量閘(第五輪 C2):TI_AUTOPILOT_DISCOVERED_DAILY_CAP。
 
-背景:pending 172 筆中 85% 是系統自產(source=discovered/eval),產生速度 > 消化速度
+背景:pending 172 筆中 85% 是系統自產(source=discovered/followup/eval),產生速度 > 消化速度
 (吞吐 ~8/天)。既有防線(價值閘/相似度去重/寬度/代數)擋「爛的與同源太多的」,
 此閘擋「好但總量太多的」——縱橫之外的總量閘。
 
 守護不變量:
-- _discovered_added_today 只計 UTC 當日、source∈{discovered,eval};
+- _discovered_added_today 只計 UTC 當日、source∈{discovered,followup,eval};
 - _discovered_budget_left:旋鈕 0=不限;配額內原數放行;超額截斷並記 log;
 - _add_discovered_followups 在品質/寬度閘之後套用總量閘。
 """
@@ -42,9 +42,10 @@ def _add_discovered(n, *, age_s=0.0, source="discovered"):
 def test_counts_only_today_and_self_sources():
     _add_discovered(2)
     _add_discovered(1, source="eval")
+    _add_discovered(1, source="followup")
     _add_discovered(3, age_s=2 * 86400)  # 前天:不計
     backlog.add("人工任務", source="manual")  # 非自產:不計
-    assert autopilot._discovered_added_today() == 3
+    assert autopilot._discovered_added_today() == 4
 
 
 def test_budget_left_and_knob_zero(caplog):

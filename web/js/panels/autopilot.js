@@ -1,5 +1,6 @@
 // Autopilot 自主迴圈面板：狀態列、backlog、額度迷你條、績效榜、動態 timeline。
 import { $, appendTextEl, icon, toast } from "../dom.js";
+import { admissionModel } from "../components/admission.js";
 import { openDrawer, closeDrawer } from "../components/drawer.js";
 import { openConfirmModal } from "../components/modal.js";
 
@@ -95,6 +96,9 @@ export async function refreshAutopilot() {
     miniEl.appendChild(icon(st.paused ? "pause" : "play", "icon sys-ic"));
     appendTextEl(miniEl, "span", "", `待辦 ${c.pending || 0}・進行中 ${c.in_progress || 0}`);
     const list = await (await fetch("/api/autopilot/backlog")).json();
+    const admissionMode = ["off", "shadow", "enforce"].includes(st.task_admission_mode)
+      ? st.task_admission_mode
+      : "enforce";
     const ul = $("#apBacklog");
     ul.innerHTML = "";
     (list.tasks || []).slice().reverse().forEach((t) => {
@@ -107,7 +111,7 @@ export async function refreshAutopilot() {
       tspan.textContent = ` #${t.id} ${t.title}　[${t.source}]`;
       text.appendChild(tspan);
       li.appendChild(text);
-      li.appendChild(buildTaskActions(t));
+      li.appendChild(buildTaskActions(t, admissionMode));
       ul.appendChild(li);
     });
   } catch (e) {
@@ -304,6 +308,8 @@ export async function refreshApActivity(heartbeat = apHeartbeat) {
       const tu = t.token_usage || {};
       Object.keys(tu.by_provider || {}).forEach((prov) => apChip(chips, prov, "prov"));
       Object.keys(tu.by_model || {}).forEach((model) => apChip(chips, model, ""));
+      const admission = admissionModel(t.admission);
+      if (admission) apChip(chips, `准入：${admission.label}`, `admission ${admission.cls}`);
       const ttftRaw = tu.ttft_s;
       if (ttftRaw != null) {
         const ttft = Number(ttftRaw);
@@ -373,7 +379,20 @@ export async function toggleDispatchMode() {
 
 // 看板手動操作(C1):依任務狀態渲染 retry/park/unpark 小按鈕 + P0/P1/P2 優先級 select。
 // in_progress/merging 由 runner/reconciler 持有狀態機,只給改優先級(park/retry 後端也會 409)。
-function buildTaskActions(t) {
+export function taskActionPolicy(t, admissionMode = "enforce") {
+  const admissionOutcome = t?.admission?.outcome || "";
+  const admissionHeld = admissionMode === "enforce"
+    && t?.status === "parked"
+    && !t?.admission?.released_by_mode
+    && (admissionOutcome === "needs_clarification" || admissionOutcome === "blocked");
+  return {
+    retry: !admissionHeld && (t?.status === "failed" || t?.status === "parked"),
+    park: t?.status === "pending" || t?.status === "failed",
+    unpark: !admissionHeld && t?.status === "parked",
+  };
+}
+
+function buildTaskActions(t, admissionMode = "enforce") {
   const box = document.createElement("span");
   box.className = "ap-bl-actions";
   const sel = document.createElement("select");
@@ -401,9 +420,10 @@ function buildTaskActions(t) {
     });
     box.appendChild(b);
   };
-  if (t.status === "failed" || t.status === "parked") mk("重試", "retry", { title: "退回 pending 並歸零重試次數" });
-  if (t.status === "pending" || t.status === "failed") mk("歸檔", "park", { confirm: "歸檔此任務?" });
-  if (t.status === "parked") {
+  const actions = taskActionPolicy(t, admissionMode);
+  if (actions.retry) mk("重試", "retry", { title: "退回 pending 並歸零重試次數" });
+  if (actions.park) mk("歸檔", "park", { confirm: "歸檔此任務?" });
+  if (actions.unpark) {
     // 取回可附一句指示(unpark+note 契約;規範迴路把筆記蒸餾成慣例)——取消=不動作。
     const b = document.createElement("button");
     b.className = "ghost ap-bl-btn";

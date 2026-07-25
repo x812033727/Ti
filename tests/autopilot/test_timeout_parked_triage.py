@@ -90,6 +90,19 @@ def test_candidate_skips_rule1_applicable(state):
     assert autopilot._timeout_parked_candidates() == []
 
 
+def test_candidate_skips_enforce_admission_hold(state):
+    _parked_timeout_task(
+        timeout_retried=True,
+        admission={
+            "mode": "enforce",
+            "outcome": "needs_clarification",
+            "needs_human": True,
+        },
+    )
+
+    assert autopilot._timeout_parked_candidates() == []
+
+
 def test_candidate_skips_split_done(state):
     """黑樣本：已被 Rule 2 處理過（split_done=True）不再重揀。"""
     _parked_timeout_task(note_secs=7200, split_done=True)

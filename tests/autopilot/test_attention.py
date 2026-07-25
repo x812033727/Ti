@@ -19,10 +19,12 @@ def test_empty_state():
     out = insights.attention()
     assert out == {
         "clarify": [],
+        "admission_blocked": [],
         "policy_blocked": [],
         "parked": [],
         "events": [],
         "pending_clarify": 0,
+        "pending_admission_blocked": 0,
         "deploy": None,
     }
 
@@ -105,6 +107,73 @@ def test_clarify_vs_plain_parked_split():
     assert out["clarify"][0]["clarify"] == "要哪個環境?"
     assert [r["id"] for r in out["parked"]] == [t2["id"]]
     assert out["parked"][0]["note"] == "等外部依賴"
+
+
+def test_admission_clarification_joins_existing_clarify_inbox():
+    admission = {
+        "outcome": "needs_clarification",
+        "needs_human": True,
+        "overridable": True,
+        "question": "要修改哪一個檔案？",
+        "recommendation": "建議先鎖定 studio/backlog.py。",
+        "scope_hash": "a" * 64,
+        "reasons": ["contract_fields_missing"],
+        "missing_fields": ["targets"],
+    }
+    task = backlog.add("人工模糊任務", source="manual", admission=admission)
+    backlog.set_status(task["id"], "parked")
+
+    out = insights.attention()
+
+    assert out["pending_clarify"] == 1
+    assert [row["id"] for row in out["clarify"]] == [task["id"]]
+    assert out["clarify"][0]["clarify"] == "要修改哪一個檔案？"
+    assert out["clarify"][0]["admission"]["recommendation"].startswith("建議")
+    assert out["parked"] == []
+
+
+def test_automated_admission_clarification_never_nags_user():
+    task = backlog.add(
+        "自動模糊任務",
+        source="discovered",
+        admission={
+            "outcome": "needs_clarification",
+            "needs_human": False,
+            "question": "",
+            "recommendation": "",
+        },
+    )
+    backlog.set_status(task["id"], "parked")
+
+    out = insights.attention()
+
+    assert out["clarify"] == []
+    assert out["admission_blocked"] == []
+    assert out["parked"] == []
+
+
+def test_admission_blocked_is_separate_from_policy_blocked():
+    task = backlog.add(
+        "安全阻擋",
+        source="manual",
+        admission={
+            "outcome": "blocked",
+            "needs_human": True,
+            "overridable": False,
+            "question": "請調整風險範圍",
+            "recommendation": "不要繞過治理閘",
+            "scope_hash": "b" * 64,
+            "reasons": ["risk_not_authorized"],
+            "missing_fields": [],
+        },
+    )
+    backlog.set_status(task["id"], "parked")
+
+    out = insights.attention()
+
+    assert [row["id"] for row in out["admission_blocked"]] == [task["id"]]
+    assert out["policy_blocked"] == []
+    assert out["pending_admission_blocked"] == 1
 
 
 def test_clarify_invariant_cleared_on_plain_park_kept_on_unpark():

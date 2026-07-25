@@ -64,6 +64,7 @@ from . import (
     publisher,
     runner,
     secure_write,
+    task_admission,
 )
 from .orchestrator import StudioSession, parse_tasks
 
@@ -148,16 +149,24 @@ def _self_sig() -> float:
 # --- working clone -------------------------------------------------------
 
 
-async def _prepare_clone(work_dir: str | None = None) -> str:
+async def _prepare_clone(
+    work_dir: str | None = None,
+    *,
+    repo_sha: str | None = None,
+) -> str:
     """確保 working clone 存在且重置到 origin/<branch> 的乾淨狀態。回傳路徑。
 
     work_dir 預設主 clone(AUTOPILOT_WORK_DIR);調查旁路線傳獨立目錄(-inv)——調查
     唯讀,但主 worker 每任務 reset --hard+clean 會抽換檔案,共用 clone 會讓旁路的
-    Expert 讀取不一致。
+    Expert 讀取不一致。enforce claim 傳入 repo_sha 時固定到該次准入的 commit，
+    不得在 admission 後悄悄切到更新的 origin HEAD。
     """
     work = str(work_dir or config.AUTOPILOT_WORK_DIR)
     url = f"https://github.com/{config.AUTOPILOT_REPO}.git"
     branch = config.AUTOPILOT_BRANCH
+    expected_sha = str(repo_sha or "").strip().lower()
+    if expected_sha and not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected_sha):
+        raise RuntimeError("admission repo SHA 格式錯誤，拒絕執行")
     if not (Path(work) / ".git").exists():
         Path(work).parent.mkdir(parents=True, exist_ok=True)
         rc, out = await _run(
@@ -165,19 +174,74 @@ async def _prepare_clone(work_dir: str | None = None) -> str:
         )
         if rc != 0:
             raise RuntimeError(f"clone 失敗：{out[-400:]}")
-    await _run(
+    fetch_rc, fetch_out = await _run(
         ["git", *_git_cred_argv(), "fetch", "origin", branch],
         cwd=work,
         timeout=120,
         env=_git_cred_env(),
     )
-    await _run(["git", "checkout", "-q", branch], cwd=work, timeout=60)
-    await _run(["git", "reset", "--hard", f"origin/{branch}"], cwd=work, timeout=60)
-    await _run(["git", "clean", "-fdq"], cwd=work, timeout=60)
+    if expected_sha:
+        object_rc, object_out = await _run(
+            ["git", "cat-file", "-e", f"{expected_sha}^{{commit}}"],
+            cwd=work,
+            timeout=60,
+        )
+        if object_rc != 0:
+            detail = object_out if fetch_rc == 0 else fetch_out
+            raise RuntimeError(f"admission SHA 不存在於工作 clone：{detail[-400:]}")
+    # 工作 clone 可能留有前一任務的 tracked/untracked 變更；先在專用 clone 內清乾淨，
+    # 再用不含 force token 的 checkout，避免與 push 安全護欄混淆。
+    pre_reset_rc, pre_reset_out = await _run(
+        ["git", "reset", "--hard", "HEAD"],
+        cwd=work,
+        timeout=60,
+    )
+    pre_clean_rc, pre_clean_out = await _run(["git", "clean", "-fdq"], cwd=work, timeout=60)
+    if expected_sha and (pre_reset_rc != 0 or pre_clean_rc != 0):
+        detail = pre_reset_out if pre_reset_rc != 0 else pre_clean_out
+        raise RuntimeError(f"工作 clone 無法清理：{detail[-400:]}")
+    checkout_rc, checkout_out = await _run(
+        ["git", "checkout", "-q", branch],
+        cwd=work,
+        timeout=60,
+    )
+    if expected_sha and checkout_rc != 0:
+        raise RuntimeError(f"工作 branch 無法切換：{checkout_out[-400:]}")
+    reset_target = expected_sha or f"origin/{branch}"
+    reset_rc, reset_out = await _run(
+        ["git", "reset", "--hard", reset_target],
+        cwd=work,
+        timeout=60,
+    )
+    clean_rc, clean_out = await _run(["git", "clean", "-fdq"], cwd=work, timeout=60)
+    if expected_sha and (reset_rc != 0 or clean_rc != 0):
+        detail = reset_out if reset_rc != 0 else clean_out
+        raise RuntimeError(f"工作 clone 無法固定到 admission SHA：{detail[-400:]}")
+    if expected_sha:
+        head_rc, head = await _run(["git", "rev-parse", "HEAD"], cwd=work, timeout=30)
+        if head_rc != 0 or head.strip().lower() != expected_sha:
+            raise RuntimeError("工作 clone HEAD 與 admission SHA 不一致，拒絕執行")
     # 本地 commit 身分（workspace commit 用）
     await _run(["git", "config", "user.email", "noreply@anthropic.com"], cwd=work)
     await _run(["git", "config", "user.name", "Ti Autopilot"], cwd=work)
     return work
+
+
+def _claimed_admission_repo_sha(
+    task: dict,
+    *,
+    required: bool = False,
+) -> str | None:
+    """回傳 claim 綁定 SHA；None=不需 pin，空字串=應 pin 但記錄無效。"""
+    admission = task.get("admission")
+    enforce_record = isinstance(admission, dict) and admission.get("mode") == "enforce"
+    if not required and not enforce_record:
+        return None
+    audit = admission.get("audit") if isinstance(admission, dict) else None
+    candidate = str(audit.get("repo_sha") or "") if isinstance(audit, dict) else ""
+    if re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", candidate):
+        return candidate.lower()
+    return ""
 
 
 # --- 測試閘門 + merge ----------------------------------------------------
@@ -1763,6 +1827,16 @@ def _is_investigation_task(task: dict) -> bool:
         return False
     if (task.get("lane") or "") == "full":
         return False
+    if config.TASK_ADMISSION_MODE == "enforce":
+        contract = task.get("contract")
+        admission = task.get("admission")
+        if isinstance(contract, dict) and str(contract.get("kind") or "").strip():
+            return str(contract.get("kind") or "").strip().lower() == "investigation"
+        if (
+            isinstance(admission, dict)
+            and str(admission.get("outcome") or "").strip().lower() == "investigation"
+        ):
+            return True
     text = f"{task.get('title') or ''}\n{task.get('detail') or ''}"
     if not (_INVESTIGATION_RE.search(text) or _FOLLOWUP_BUSYWORK_RE.search(text)):
         return False
@@ -1778,11 +1852,7 @@ def _build_investigation_prompt(task: dict) -> str:
     「QA 換 shell 讀不到 → 每輪 FAIL 同因」的結構性死因）；強制 `證據:` 行防單專家自說自話；
     `需人工:`/`需改碼:` 兩個結構化出口讓 AI 做不到/誤分類的任務走對的路，而非硬耗到 failed。
     """
-    title = (task.get("title") or "").strip()
-    detail = (task.get("detail") or "").strip()
-    base = f"任務標題：{title}\n"
-    if detail:
-        base += f"任務細節：{detail}\n"
+    base = f"任務需求：\n{_task_requirement(task)}\n"
     note = (task.get("note") or "").strip()
     if note:
         base += f"任務備註：{note}\n"
@@ -1990,7 +2060,7 @@ def _screen_followups(items: list, existing_titles: list[str]) -> list:
     良構性/價值閘（`_is_low_value_followup`）+ `_filter_pending_duplicates`（詞集相似度 + 子系統覆蓋廣度）。
 
     修 discovered 路徑的不對稱（見完成率診斷）：`source="eval"` 的自我發掘走完整 pre-filter，
-    但 `run_one_task` 尾端把討論 followup 直接 `add_items`/`add_many`（source="discovered"），
+    但 `run_one_task` 尾端曾把討論 followup 當一般 discovered 直接入列，
     完全繞過品質閘——「收尾驗收/QA pass/release-e2e-closure」這類 no-op 元任務、與排隊/近期
     已完成高度重疊的提案因此灌爆 backlog（191 pending 在長）。此處是三個 retro emitter 匯流的
     單一 choke point，一次補上即全數涵蓋。
@@ -2029,7 +2099,7 @@ def _screen_followups(items: list, existing_titles: list[str]) -> list:
 
 
 def _discovered_added_today(now: float | None = None) -> int:
-    """今天（UTC）已入列的自產任務數（source=discovered/eval，依 created_at 判日）。
+    """今天（UTC）已入列的自產任務數（discovered/followup/eval，依 created_at 判日）。
 
     供每日自產上限（AUTOPILOT_DISCOVERED_DAILY_CAP）計數：pending 172 筆中 85% 是
     系統自產、產生速度 > 消化速度（吞吐 ~8/天），品質閘擋「爛的」、此上限擋「好但
@@ -2039,7 +2109,7 @@ def _discovered_added_today(now: float | None = None) -> int:
     return sum(
         1
         for t in backlog.list_tasks()
-        if t.get("source") in ("discovered", "eval")
+        if t.get("source") in ("discovered", "followup", "eval")
         and time.gmtime(float(t.get("created_at") or 0))[:3] == day
     )
 
@@ -2157,9 +2227,9 @@ def _add_discovered_followups(
     capped = capped[: _discovered_budget_left("討論 followup", len(capped))]
     child_gen = parent_gen + 1
     if structured:
-        added = backlog.add_items(capped, source="discovered", gen=child_gen)
+        added = _enqueue_core_items(capped, source="followup", gen=child_gen)
     else:
-        added = backlog.add_many(capped, source="discovered", gen=child_gen)
+        added = _enqueue_core_many(capped, source="followup", gen=child_gen)
     log.info(
         "從討論新增 %d 個後續任務（提案 %d、品質過濾後 %d、寬度上限丟棄 %d、gen=%d）",
         added,
@@ -2225,7 +2295,7 @@ async def _evaluate_self(clone: str) -> int:
     tasks = _filter_pending_duplicates(tasks, titles)
     # 每日自產總量閘（第五輪 C2）：與討論 followup 共用同一配額。
     tasks = tasks[: _discovered_budget_left("自我評估", len(tasks))]
-    n = backlog.add_many(tasks, source="eval")
+    n = _enqueue_core_many(tasks, source="eval")
     # 留痕：兩道進場過濾（done 去重 + pending pre-filter）共丟棄多少提案——讓「源頭擋掉多少瑣碎/重複」
     # 可觀測，而非無聲 log.debug 消失（與 improver._discover 的丟棄留痕對齊）。
     log.info("自我評估產出 %d 個新任務（提案 %d、過濾丟棄 %d）", n, len(raw), len(raw) - len(tasks))
@@ -2311,15 +2381,14 @@ async def _autosplit_and_enqueue(clone: str, task: dict) -> list[int]:
     depth = int(task.get("split_depth", 0) or 0)
     children: list[int] = []
     for title in await _autosplit_task(clone, task):
-        child = backlog.add(
+        child = _enqueue_core_task(
             title,
             detail=f"（由逾時任務 #{tid} 自動拆分，範圍更小以在單場 session 內完成）",
             source="split",
             item_type=task.get("type", "improvement"),
+            split_depth=depth + 1,
         )
         if child:
-            # split_depth 逐代累計，封頂 infinite-split（backlog.add 無此欄位，經 set_status 補寫）。
-            backlog.set_status(child["id"], "pending", split_depth=depth + 1)
             children.append(child["id"])
     return children
 
@@ -2647,14 +2716,26 @@ async def _clarify_probe(task: dict, clone: str, sid: str) -> list[dict]:
     return flow.parse_clarify(text or "")[: config.CLARIFY_MAX_QUESTIONS]
 
 
-def _maybe_clarify_timeout(now: float | None = None) -> int:
-    """[待澄清] parked 逾時自動依假設前進(15 分鐘掃一次);回復活數。
+def _should_run_clarify_probe(task: dict) -> bool:
+    """enforce admission 已是唯一澄清層；off/shadow 才保留舊 FAST probe 行為。"""
+    return bool(
+        config.CLARIFY_ASYNC
+        and config.TASK_ADMISSION_MODE != "enforce"
+        and not int(task.get("attempts") or 0)
+        and not task.get("clarify")
+    )
 
-    只動「note 仍是 [待澄清] 開頭」的任務——人工 unpark/park 過的(note 已被 [手動]
-    覆寫)不碰,人的裁決優先。attempts 不動(澄清等待不是失敗)。
+
+def _maybe_clarify_timeout(now: float | None = None) -> int:
+    """澄清逾時掃描（15 分鐘一次）；回傳自動恢復／轉調查數。
+
+    舊 async clarify 只動 note 仍為 [待澄清] 的任務。enforce admission 則依已落盤
+    timeout_default：low-risk clarification 轉成唯讀 investigation；其餘維持 parked。
+    兩路都不增加 attempts，人工已改狀態者不在 parked 集合，人的裁決優先。
     """
     global _clarify_sweep_at
-    if not config.CLARIFY_ASYNC:
+    admission_enforced = config.TASK_ADMISSION_MODE == "enforce"
+    if not config.CLARIFY_ASYNC and not admission_enforced:
         return 0
     t = now if now is not None else time.time()
     if t - _clarify_sweep_at < 900:
@@ -2664,10 +2745,80 @@ def _maybe_clarify_timeout(now: float | None = None) -> int:
     try:
         horizon = config.CLARIFY_ASYNC_TIMEOUT_H * 3600
         for task in backlog.list_tasks("parked"):
+            if t - float(task.get("updated_at") or 0) < horizon:
+                continue
+            admission = task.get("admission")
+            if (
+                admission_enforced
+                and isinstance(admission, dict)
+                and admission.get("outcome") == "needs_clarification"
+                and admission.get("needs_human") is True
+            ):
+                if (
+                    admission.get("timeout_default") == "investigation"
+                    and str(task.get("risk") or "").strip().lower() == "low"
+                ):
+                    prior = task.get("contract")
+                    prior = prior if isinstance(prior, dict) else {}
+                    raw_constraints = prior.get("constraints")
+                    raw_constraints = (
+                        raw_constraints if isinstance(raw_constraints, (list, tuple)) else []
+                    )
+                    constraints = [
+                        str(item).strip()[:500] for item in raw_constraints if str(item).strip()
+                    ][:49]
+                    raw_audit = admission.get("audit")
+                    prior_audit = raw_audit if isinstance(raw_audit, dict) else {}
+                    contract = {
+                        "version": 1,
+                        "outcome": (
+                            f"釐清「{str(task.get('title') or '')[:200]}」並交付可覆核結論"
+                        ),
+                        "kind": "investigation",
+                        "targets": ["."],
+                        "acceptance": ["交付結論、證據與是否需改碼"],
+                        "constraints": [
+                            *constraints,
+                            "clarification timeout default: investigation only; no external writes",
+                        ],
+                        "external_writes": [],
+                    }
+                    timeout_admission = {
+                        **admission,
+                        "original_outcome": "needs_clarification",
+                        "outcome": "investigation",
+                        "reasons": ["clarification_timeout_default"],
+                        "missing_fields": [],
+                        "needs_human": False,
+                        "overridable": False,
+                        "question": "",
+                        "recommendation": "",
+                        "scope_hash": "",
+                        "phase": "timeout",
+                        "evaluated_at": t,
+                        "audit": {
+                            **prior_audit,
+                            "outcome": "investigation",
+                            "rule_ids": ["clarification_timeout_default"],
+                        },
+                    }
+                    committed, _error = backlog.commit_parked_admission(
+                        task["id"],
+                        backlog.task_fingerprint(task),
+                        contract=contract,
+                        admission=timeout_admission,
+                        transition="release",
+                        attempts=int(task.get("attempts") or 0),
+                        note="[准入澄清逾時] 低風險任務依預設轉唯讀調查",
+                    )
+                    if committed is not None:
+                        n += 1
+                # medium/high risk 的 timeout_default=park，明確維持 parked。
+                continue
+            if not config.CLARIFY_ASYNC:
+                continue
             note = str(task.get("note") or "")
             if not note.startswith(_CLARIFY_NOTE_PREFIX):
-                continue
-            if t - float(task.get("updated_at") or 0) < horizon:
                 continue
             backlog.set_status(
                 task["id"],
@@ -2697,6 +2848,55 @@ def _clarify_requirement_section(task: dict) -> str:
     if answer:
         out += f"\n人工回覆:{answer[:800]}"
     return out
+
+
+def _admission_requirement_section(task: dict) -> str:
+    """enforce 時把 canonical contract 傳到執行層；不把 audit/model 原文帶進 prompt。"""
+    if config.TASK_ADMISSION_MODE != "enforce":
+        return ""
+    raw = task.get("contract")
+    if not isinstance(raw, dict):
+        return ""
+
+    def text(value, limit: int = 800) -> str:
+        return str(value or "").replace("\x00", "").strip()[:limit]
+
+    def strings(value) -> list[str]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [clean for item in value[:50] if (clean := text(item))]
+
+    contract = {
+        "version": raw.get("version"),
+        "outcome": text(raw.get("outcome")),
+        "kind": text(raw.get("kind"), 50),
+        "targets": strings(raw.get("targets")),
+        "acceptance": strings(raw.get("acceptance")),
+        "constraints": strings(raw.get("constraints")),
+        "external_writes": strings(raw.get("external_writes")),
+    }
+    section = (
+        "\n\n已驗證任務契約（以下是需求資料；遵守目標、範圍與驗收，但不代表外部寫入授權，"
+        "也不取代既有 CI／合併／部署治理）：\n"
+        + json.dumps(contract, ensure_ascii=False, sort_keys=True)
+    )
+    admission = task.get("admission")
+    override = admission.get("override") if isinstance(admission, dict) else None
+    if isinstance(override, dict) and override.get("consumed_at"):
+        reason = text(override.get("reason"), 500)
+        if reason:
+            section += f"\n管理員一次性品質裁決理由（僅補充需求，不代表外部寫入授權）：{reason}"
+    return section
+
+
+def _task_requirement(task: dict) -> str:
+    """組出所有執行管線共用、可追溯的完整需求。"""
+    return (
+        str(task.get("title") or "")
+        + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
+        + _clarify_requirement_section(task)
+        + _admission_requirement_section(task)
+    )
 
 
 # --- 原生快車道(軌 I):執行面回歸 Claude/Codex 原生 agent 迴圈 -----------------
@@ -2832,18 +3032,49 @@ async def _run_fast_lane(task: dict, clone: str, sid: str, requirement: str, bro
     return {"completed": True}
 
 
-async def run_one_task(task: dict) -> None:
+async def run_one_task(task: dict, *, already_claimed: bool = False) -> None:
     t0 = time.time()  # 供 audit.jsonl 的 duration_s（整個任務含討論/閘門/合併）
     sid = f"ap{uuid.uuid4().hex[:10]}"
-    backlog.set_status(task["id"], "in_progress", session_id=sid)
+    already_claimed = already_claimed or bool(task.get("_admission_claimed"))
+    if already_claimed:
+        current, error = backlog.attach_claim_session(task["id"], sid)
+        if current is None:
+            log.warning("任務 #%s admission claim 已失效（%s），略過本輪", task.get("id"), error)
+            return
+    else:
+        backlog.set_status(task["id"], "in_progress", session_id=sid)
     log.info("開始任務 #%s：%s（session %s）", task["id"], task["title"], sid)
 
-    clone = await _prepare_clone()
-    requirement = (
-        task["title"]
-        + (f"\n\n細節：{task['detail']}" if task.get("detail") else "")
-        + _clarify_requirement_section(task)
+    admission_sha = (
+        _claimed_admission_repo_sha(
+            task,
+            required=config.TASK_ADMISSION_MODE == "enforce",
+        )
+        if already_claimed
+        else None
     )
+    if admission_sha == "":
+        task_admission.defer_claimed_execution_error(
+            task,
+            {"repo_sha": ""},
+        )
+        return
+    try:
+        clone = (
+            await _prepare_clone(repo_sha=admission_sha)
+            if admission_sha is not None
+            else await _prepare_clone()
+        )
+    except Exception:
+        if admission_sha is None:
+            raise
+        log.exception("任務 #%s 無法固定到 admission SHA，退回等待重試", task["id"])
+        task_admission.defer_claimed_execution_error(
+            task,
+            {"repo_sha": admission_sha},
+        )
+        return
+    requirement = _task_requirement(task)
 
     matched_implemented_title = await _prefilter_implemented_match(task, clone)
     if matched_implemented_title:
@@ -2873,7 +3104,7 @@ async def run_one_task(task: dict) -> None:
     # async clarify(B4,灰度):僅首攻(attempts==0)且未探測過(無 clarify 欄位)的完整
     # 管線任務探測;有關鍵歧義 → parked 等人答,主迴圈立刻去做下一個任務(不阻塞)。
     # attempts 回填揀起前的值:澄清等待不是失敗,不消耗重試額度(仿調查升級回填)。
-    if config.CLARIFY_ASYNC and not int(task.get("attempts") or 0) and not task.get("clarify"):
+    if _should_run_clarify_probe(task):
         questions = await _clarify_probe(task, clone, sid)
         if questions:
             q_text = " ｜ ".join(
@@ -3202,7 +3433,7 @@ async def run_one_task(task: dict) -> None:
             _add_discovered_followups(task, result["followups"], existing_titles, structured=False)
         # autopilot 的 working clone 本身就是核心 repo（config.CORE_REPO），判定的核心改動經同一個
         # 收斂點路由（與 improver/ws 共用，含近期完成去重，避免做完又重排），以 source="core" 標記。
-        core_added = backlog.route_core_changes(result.get("core_changes") or [])
+        core_added = _route_core_changes(result.get("core_changes") or [])
         if core_added:
             log.info("從討論新增 %d 個核心改動", core_added)
 
@@ -3528,7 +3759,11 @@ async def run_one_task(task: dict) -> None:
             done_fields["deploy_msg"] = dmsg  # 含 old→new commit（deploy.redeploy 成功訊息）
             if not ok:
                 backlog.set_status(task["id"], "failed", note=dmsg, **done_fields)
-                backlog.add("修復導致重佈失敗的 regression", detail=dmsg, source="discovered")
+                _enqueue_core_task(
+                    "修復導致重佈失敗的 regression",
+                    detail=dmsg,
+                    source="discovered",
+                )
                 _pause("重佈失敗已自動回滾,暫停待人工檢視")
                 return
         else:
@@ -4087,7 +4322,7 @@ async def _maybe_intent_discovery() -> None:
                     # in_progress，不改 failed，下一行程因上方守門而不重呼叫 LLM。
                     side_effects_started = True
                     n_proj = backlog.add_items(project_items, source="intent", state_dir=sdir)
-                    n_core = backlog.route_core_changes(core_items, source="intent")
+                    n_core = _route_core_changes(core_items, source="intent")
                     completed_days[pid] = {
                         "day": day_str,
                         "status": "complete",
@@ -4194,7 +4429,7 @@ def _timeout_parked_candidates() -> list[dict]:
     cur = int(config.AUTOPILOT_TASK_TIMEOUT)
     out: list[dict] = []
     for t in backlog.list_tasks(status="parked"):
-        if t.get("split_done"):
+        if t.get("split_done") or backlog.is_enforce_admission_hold(t):
             continue
         m = _TIMEOUT_NOTE_RE.search(t.get("note") or "")
         if not m:
@@ -4332,7 +4567,11 @@ async def _maybe_boundary_redeploy() -> None:
                 dmsg,
             )
             with contextlib.suppress(Exception):
-                backlog.add("修復導致重佈失敗的 regression", detail=dmsg, source="discovered")
+                _enqueue_core_task(
+                    "修復導致重佈失敗的 regression",
+                    detail=dmsg,
+                    source="discovered",
+                )
             return
         log.info("任務邊界重佈成功：%s", dmsg)
         # redeploy 已 reset 磁碟碼：自身 studio/*.py 有變即原地 execv（鏡射主迴圈既有重載
@@ -5872,6 +6111,168 @@ def _requeue_sideline_task(reason: str) -> None:
         log.exception("旁路任務 #%s 退回 pending 失敗(交 stale reaper 兜底)", tid)
 
 
+def _core_admission_context() -> dict:
+    root = config.AUTOPILOT_DEPLOY_DIR
+    return {
+        "root": root,
+        "repo_sha": task_admission.read_local_repo_sha(root),
+    }
+
+
+def _enqueue_core_task(title: str, detail: str = "", source: str = "seed", **fields):
+    """核心 backlog 的單筆 ingest choke point。"""
+    return task_admission.enqueue_task(
+        title,
+        detail,
+        source=source,
+        mode=config.TASK_ADMISSION_MODE,
+        repo_context=_core_admission_context(),
+        **fields,
+    )
+
+
+def _enqueue_core_many(titles: list[str], source: str = "discovered", *, gen: int = 0) -> int:
+    if config.TASK_ADMISSION_MODE == "off" and source == "followup":
+        source = "discovered"
+    return task_admission.enqueue_many(
+        titles,
+        source=source,
+        mode=config.TASK_ADMISSION_MODE,
+        repo_context=_core_admission_context(),
+        gen=gen,
+    )
+
+
+def _enqueue_core_items(items: list[dict], source: str = "discovered", *, gen: int = 0) -> int:
+    if config.TASK_ADMISSION_MODE == "off" and source == "followup":
+        source = "discovered"
+    return task_admission.enqueue_items(
+        items,
+        source=source,
+        mode=config.TASK_ADMISSION_MODE,
+        repo_context=_core_admission_context(),
+        gen=gen,
+    )
+
+
+def _route_core_changes(items: list[dict], *, source: str = "core") -> int:
+    """保留既有近期完成去重，再讓所有 core change 經同一 admission ingest。"""
+    if config.TASK_ADMISSION_MODE == "off":
+        return backlog.route_core_changes(items, source=source)
+    done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
+    pending = [item for item in (items or []) if item.get("title", "").strip() not in done]
+    return _enqueue_core_items(pending, source=source) if pending else 0
+
+
+_TASK_ADMISSION_RESOLVER_SYSTEM = """你是任務契約整理器。只把既有需求整理成 JSON contract：
+{"version":1,"outcome":"可觀察結果","kind":"implementation|investigation|docs|ops",
+"targets":["repo 內相對路徑"],"acceptance":["客觀檢查"],"constraints":[],"external_writes":[]}
+不得宣告檔案存在、不得宣告 ready、不得降低風險、不得授權外部寫入。只輸出 JSON。"""
+
+
+async def _resolve_admission_contract(payload: dict) -> dict:
+    """唯一 fast-model adapter；空回/壞 JSON 交 deterministic evaluator fail-closed。"""
+    from . import provider_usage
+
+    text = await provider_usage.complete_once(
+        _TASK_ADMISSION_RESOLVER_SYSTEM,
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        run_id=f"admission-{uuid.uuid4().hex[:10]}",
+        session_id=f"admission:{payload.get('task_id', 'unknown')}",
+        task_id=payload.get("task_id", "unknown"),
+        source_sha=str(payload.get("repo_sha") or "unknown"),
+        risk=str(payload.get("risk") or "unknown"),
+        purpose="task_admission_contract",
+        cwd=config.AUTOPILOT_DEPLOY_DIR,
+        timeout=30.0,
+    )
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S).strip()
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end <= start:
+            return {}
+        try:
+            value = json.loads(raw[start : end + 1])
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "contract": value.get("contract", value),
+        "model": config.MODEL_FAST,
+        # provider_usage 另有精確 token audit；此處不猜數字。
+        "token_usage": None,
+    }
+
+
+async def _claim_next_with_admission(
+    predicate: Callable[[dict], bool] | None = None,
+) -> task_admission.AdmissionSelection | None:
+    """用部署中的 repo 證據做 claim-time lazy admission；所有探測皆在 backlog 鎖外。"""
+    if config.TASK_ADMISSION_MODE == "shadow":
+        backlog.release_admission_holds(mode="shadow")
+    return await task_admission.claim_next_task_with_semantic_fallback(
+        mode=config.TASK_ADMISSION_MODE,
+        repo_context=_core_admission_context(),
+        resolver=_resolve_admission_contract,
+        cache_dir=config.AUTOPILOT_STATE_DIR / "admission_cache",
+        predicate=predicate,
+        timeout_s=30.0,
+    )
+
+
+def _is_persisted_core_task(task: dict | None) -> bool:
+    """辨識真實 backlog task；狀態改變後仍須走 admission，避免 stale snapshot 繞過 CAS。"""
+    if not isinstance(task, dict):
+        return False
+    task_id = task.get("id")
+    if not isinstance(task_id, int) or isinstance(task_id, bool):
+        return False
+    try:
+        return any(row.get("id") == task_id for row in backlog.list_tasks())
+    except Exception:  # noqa: BLE001 — 無法證實不存在時 fail-closed，交 coordinator 處理
+        return True
+
+
+async def _maybe_pause_for_admission_circuit() -> bool:
+    """三次連續內部錯誤後停止所有新工作，保留 heartbeat 供人判讀。"""
+    if config.TASK_ADMISSION_MODE != "enforce":
+        return False
+    circuit = task_admission.admission_circuit_state()
+    if not circuit.get("paused"):
+        return False
+    public_state = {
+        "paused": True,
+        "consecutive_errors": int(circuit.get("consecutive_errors") or 0),
+    }
+    if task_admission.mark_admission_circuit_notified():
+        try:
+            notify.send_bg(
+                "admission_circuit_paused",
+                "任務准入連續發生 3 次內部錯誤，已停止接新工作",
+                consecutive_errors=public_state["consecutive_errors"],
+            )
+        except Exception:  # noqa: BLE001 — 通知失敗不可讓安全暫停本身失效
+            log.exception("task admission circuit 暫停通知失敗")
+            task_admission.unmark_admission_circuit_notified()
+    sleep_s = 60
+    _write_status(
+        "paused",
+        sleep_until=time.time() + sleep_s,
+        quota={"admission_circuit": public_state},
+    )
+    log.error(
+        "task admission circuit 已暫停（連續內部錯誤=%s）",
+        public_state["consecutive_errors"],
+    )
+    await asyncio.sleep(sleep_s)
+    return True
+
+
 async def _investigation_sideline() -> None:
     """調查任務旁路併行線(吞吐強化 δ,預設關):主 worker 跑完整管線(~51min/場)時,
     本線併行消化調查分流任務(~89s/筆;live 量測 pending 37% 符合)。
@@ -5903,7 +6304,15 @@ async def _investigation_sideline() -> None:
                         continue
                 except Exception:  # noqa: BLE001 — 額度查詢失敗寧可保守跳過本輪
                     continue
-            task = backlog.claim_next(_is_investigation_task)
+            if config.TASK_ADMISSION_MODE == "off":
+                task = backlog.claim_next(_is_investigation_task)
+            else:
+                selected = await _claim_next_with_admission(_is_investigation_task)
+                task = selected.task if selected is not None else None
+                # admission coordinator 為主 runner 保留認領前 attempts；shadow 旁路則
+                # 必須精確模擬舊 claim_next 回傳的認領後值，避免重試生命週期漂移。
+                if task is not None and config.TASK_ADMISSION_MODE == "shadow":
+                    task = {**task, "attempts": int(task.get("attempts") or 0) + 1}
             if task is None:
                 continue
             log.info("旁路線認領調查任務 #%s:%s", task["id"], task["title"][:60])
@@ -5915,7 +6324,34 @@ async def _investigation_sideline() -> None:
                 "started_at": t0,
             }
             try:
-                clone = await _prepare_clone(inv_dir)
+                admission_sha = _claimed_admission_repo_sha(
+                    task,
+                    required=config.TASK_ADMISSION_MODE == "enforce",
+                )
+                if admission_sha == "":
+                    task_admission.defer_claimed_execution_error(
+                        task,
+                        {"repo_sha": ""},
+                    )
+                    continue
+                try:
+                    clone = (
+                        await _prepare_clone(inv_dir, repo_sha=admission_sha)
+                        if admission_sha is not None
+                        else await _prepare_clone(inv_dir)
+                    )
+                except Exception:
+                    if admission_sha is None:
+                        raise
+                    log.exception(
+                        "調查旁路任務 #%s 無法固定到 admission SHA，退回等待重試",
+                        task["id"],
+                    )
+                    task_admission.defer_claimed_execution_error(
+                        task,
+                        {"repo_sha": admission_sha},
+                    )
+                    continue
                 await _run_investigation_task(task, clone, sid, t0, sideline=True)
             finally:
                 _sideline_task_info = None
@@ -5959,6 +6395,13 @@ async def _main_loop(startup_sig: float) -> None:
         # 期間的 occurrence 整批蒸發(daily key 跨日即作廢,錯過=永久漏拍),實證:
         # 「每日健檢」23:30 UTC 連兩天沒觸發。60 秒節流照舊。
         _maybe_enqueue_schedules()
+        if config.TASK_ADMISSION_MODE in {"off", "shadow"}:
+            backlog.release_admission_holds(mode=config.TASK_ADMISSION_MODE)
+
+        # admission 連續內部錯誤是整條 intake/dispatch 的 fail-closed 熔斷。排程仍先
+        # 落地避免 occurrence 消失，但禁止後續 intent、reconcile、self-eval 與取件。
+        if await _maybe_pause_for_admission_circuit():
+            continue
 
         if autonomy.policy_exists(autonomy.CORE_PROJECT_ID):
             admission = autonomy.admission_decision(autonomy.CORE_PROJECT_ID)
@@ -6067,7 +6510,19 @@ async def _main_loop(startup_sig: float) -> None:
         # 要先收斂成 done，堵住重複開工。
         await _maybe_reconcile_open_prs()
         task = backlog.next_pending()
+        # 保留 next_pending 作排序/既有測試 seam；真實 backlog task 才走 CAS admission。
+        # 即使旁路在兩次讀取間已改狀態，存在過的真實 task 仍走 coordinator；只有測試或
+        # 舊擴充注入、從未持久化的 dict 才維持原 runner 行為。
+        if config.TASK_ADMISSION_MODE != "off" and _is_persisted_core_task(task):
+            selected = await _claim_next_with_admission()
+            task = selected.task if selected is not None else None
+            if task is not None:
+                task = {**task, "_admission_claimed": True}
         if task is None:
+            # claim 本身可能正好記下第 3 次內部錯誤；同 tick 必須重查，不能把
+            # selected=None 誤當 backlog 空而啟動 discovery LLM。
+            if await _maybe_pause_for_admission_circuit():
+                continue
             _write_status("idle", quota=quota)
             clone = await _prepare_clone()
             n = await _evaluate_self(clone)

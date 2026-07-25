@@ -81,7 +81,7 @@ def drain_result_to_backlogs(result: dict, project_state_dir) -> tuple[int, int]
     雙軌路由的單一決策點（見 ARCHITECTURE.md「專案 repo 與 Ti 主核心 repo」）：
       - 後續任務（`後續任務:`）→ 專案 backlog（`project_state_dir`），迴圈自我補給。
         優先用含 priority/type 的結構化版本；舊 result（無 followup_items）退回純標題。
-      - 核心改動（`核心改動:`）→ 核心 backlog（見 backlog.route_core_changes，含近期完成去重）。
+      - 核心改動（`核心改動:`）→ 核心 backlog（經 task admission ingest 與近期完成去重）。
     """
     items = result.get("followup_items") or []
     followups = result.get("followups") or []
@@ -89,7 +89,7 @@ def drain_result_to_backlogs(result: dict, project_state_dir) -> tuple[int, int]
         added = backlog.add_items(items, source="discovered", state_dir=project_state_dir)
     else:
         added = backlog.add_many(followups, source="discovered", state_dir=project_state_dir)
-    return added, backlog.route_core_changes(result.get("core_changes") or [])
+    return added, autopilot._route_core_changes(result.get("core_changes") or [])
 
 
 class ProjectImprover:
@@ -1075,7 +1075,7 @@ class ProjectImprover:
                     uniq.append(c)
             # 意圖驅動的核心改動蓋 source="intent":core 迴圈執行+audit 後,第 4 階
             # 「意圖→零人工交付」才量測得到(專案 backlog 的 intent 任務不進 core audit)。
-            routed = backlog.route_core_changes(
+            routed = autopilot._route_core_changes(
                 uniq, source="intent" if self._intent_context() else "core"
             )
             if routed:

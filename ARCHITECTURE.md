@@ -42,6 +42,7 @@ attach·重播/插件=roles·groups·workflows 導流+skills 唯讀/排程任務
 | `routes.py` | REST API（`APIRouter`）：health、登入/登出/狀態、workspace（列檔/讀檔/下載 zip）、history、publish、角色管理（`/api/roles`）、討論小組（`/api/groups`）、**動態流程（`/api/workflows`）**、**provider 額度（`/api/provider-quota`）** |
 | `ws.py` | WebSocket 端點：啟動 session、串流事件、`_pump_interventions` 收插話/停止；握手可帶 `workflow`，**互動 session（非 improve／非離線）未指定時走 `TI_DEFAULT_WORKFLOW`（預設「動態優先」）**——autopilot／improver 不經此、維持安全骨架 |
 | `server.py` | 應用組裝、頁面入口、啟動函式 |
+| `task_admission.py` | 核心 backlog 的 v1 任務契約與純 `evaluate(task, context, phase)` 決策；整合 lazy migration、CAS claim、單次語意補全的跨行程 durable cache、去敏 audit、scope-bound override、claim SHA 固定與 fail-closed circuit |
 | `orchestrator.py` | `StudioSession`：**由宣告式 workflow 驅動的 stage 直譯器**（`_run_workflow` 派發 `_stage_*` handler）。預設骨架＝澄清 → 拆解 → 架構討論 → 逐任務迭代（可並行分波）→ Demo → 驗收/檢討；`workflow=None`＝`default_workflow()`（與重構前位元級等價）。含 **dynamic step**（PM 運行時額度感知分派／動態招募）、task_pipeline 資料驅動審查（見 `docs/workflows.md`） |
 | `workflow.py` | **動態流程定義**：宣告式 `Stage`/`Workflow` schema（`extra="forbid"`）＋ `validate_workflow`、內建 `default_workflow()`（等價骨架）與 `dynamic_first_workflow()`（互動預設）、`workflows.yaml` CRUD（鏡射 `role_store` 的 Group 區段）、`VERDICTS` 白名單只映射 `flow.py` 既有判定（不可注入程式碼） |
 | `provider_quota.py` | provider 即時額度快照（`snapshot()`，60s 快取，自 `routes` 抽出避免反向 import）＋ 給動態分派的 `summarize_for_pm`／`constrained`／`least_constrained_ready`（混合模式額度感知分派與招募自動重綁的資料源） |
@@ -439,10 +440,11 @@ retry 會疊乘，退避延遲指數級爆炸並繞過統一旋鈕與可觀測�
 階段（`orchestrator._wrap_up` → `result["core_changes"]`），以及持續改良的**「找問題」**階段
 （`improver._discover_with_experts`）——兩者都把核心改動與專案任務分流。
 
-這些核心改動**不進專案 backlog、不混入專案 PR**：消費端（`improver`／`ws`／`autopilot`）
-一律經單一收斂點 `backlog.route_core_changes(items)` 路由（`source="core"`、省略 `state_dir`＝
-核心 backlog `config.AUTOPILOT_STATE_DIR`、並過濾近期已完成的同名項目避免重複/空轉 PR）到
-autopilot 在 drain 的那份佇列。autopilot 在
+這些核心改動**不進專案 backlog、不混入專案 PR**。自動來源（`improver`／`autopilot`）經
+`autopilot._route_core_changes` 收斂，保留近期完成去重後再交
+`task_admission.enqueue_items`；互動單場的 `ws` 在 V1 不做 ingest-time 阻擋，仍走
+`backlog.route_core_changes`，但首次 claim 會 lazy migration 並重算同一 admission。
+兩路最後都進核心 backlog `config.AUTOPILOT_STATE_DIR`，由 autopilot 在
 `CORE_REPO` 的 working clone 上實作該改動、過 pytest／lint／no-SDK 閘門與分支保護失效保險，
 綠燈才對核心 repo 開**獨立 PR**（分支 `autopilot/task-<id>`，見 `autopilot._commit_push_merge`）。
 

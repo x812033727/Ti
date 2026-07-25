@@ -136,6 +136,8 @@ def test_audit_managed_set_matches_decision():
         "/api/schedules/{sched_id}",
         # 看板手動操作(C1):改寫 backlog 狀態(retry/park/unpark/priority),與 triage 同級納管。
         "/api/autopilot/task/{task_id}/action",
+        # Admission quality override:一次性 scope-bound 取回，仍不得繞過治理/CI。
+        "/api/autopilot/task/{task_id}/admission-override",
         "/api/roles",
         "/api/roles/{key}",
         "/api/groups",

@@ -39,6 +39,29 @@ async def test_full_form_fields_land():
 
 
 @pytest.mark.asyncio
+async def test_versioned_contract_is_evaluated_and_returned():
+    body = routes.TaskBody(
+        title="完整契約任務",
+        risk="low",
+        contract={
+            "version": 1,
+            "outcome": "backlog 可安全排序",
+            "kind": "implementation",
+            "targets": ["studio/backlog.py"],
+            "acceptance": ["pytest tests/core/test_backlog.py -q", "reviewable diff"],
+        },
+    )
+
+    response = await routes.autopilot_add_task(body)
+    task = backlog.list_tasks("pending")[0]
+
+    assert response.status_code == 200
+    assert task["contract"]["version"] == 1
+    assert task["admission"]["outcome"] == "ready"
+    assert task["admission"]["phase"] == "enqueue"
+
+
+@pytest.mark.asyncio
 async def test_priority_clamped_and_type_normalized():
     await routes.autopilot_add_task(routes.TaskBody(title="怪值任務", priority=5, type="junk"))
     t = backlog.list_tasks("pending")[0]

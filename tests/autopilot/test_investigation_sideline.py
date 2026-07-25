@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,16 @@ def test_claim_next_order_and_attempts():
     assert got["status"] == "in_progress" and got["attempts"] == 1, (
         "認領即標 in_progress+attempts+1"
     )
+
+
+def test_claim_next_uses_source_rank_within_same_priority(monkeypatch):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    backlog.add("自動調查", source="discovered", priority=1)
+    human = backlog.add("人工調查", source="manual", priority=1)
+
+    got = backlog.claim_next(lambda _t: True)
+
+    assert got["id"] == human["id"]
 
 
 def test_claim_next_predicate_and_none():
@@ -141,3 +152,136 @@ async def test_sideline_exception_does_not_propagate(monkeypatch, sideline_on):
     monkeypatch.setattr(autopilot, "_prepare_clone", boom_clone)
     await _run_sideline_once(monkeypatch)  # 不拋(CancelledError 除外)即通過
     assert autopilot._sideline_task_info is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["off", "shadow"])
+async def test_sideline_shadow_preserves_legacy_claim_attempt_value(
+    monkeypatch,
+    sideline_on,
+    tmp_path,
+    mode,
+):
+    task = backlog.add("調查 shadow attempts 相容性")
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", mode)
+    seen_attempts = []
+
+    if mode == "shadow":
+
+        async def fake_claim(_predicate=None):
+            return SimpleNamespace(task={**task, "status": "in_progress", "attempts": 0})
+
+        monkeypatch.setattr(autopilot, "_claim_next_with_admission", fake_claim)
+
+    async def fake_clone(work_dir=None):
+        return str(tmp_path / "inv")
+
+    async def fake_run(selected, clone, sid, t0, *, sideline=False):
+        seen_attempts.append(selected["attempts"])
+
+    monkeypatch.setattr(autopilot, "_prepare_clone", fake_clone)
+    monkeypatch.setattr(autopilot, "_run_investigation_task", fake_run)
+
+    await _run_sideline_once(monkeypatch)
+
+    assert seen_attempts == [1]
+
+
+@pytest.mark.asyncio
+async def test_enforce_sideline_pins_clone_to_claim_admission_sha(
+    monkeypatch,
+    sideline_on,
+    tmp_path,
+):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    expected_sha = "b" * 40
+    selected = {
+        "id": 901,
+        "title": "調查版本固定",
+        "status": "in_progress",
+        "attempts": 0,
+        "risk": "low",
+        "admission": {
+            "mode": "enforce",
+            "audit": {"repo_sha": expected_sha},
+        },
+    }
+
+    async def fake_claim(_predicate=None):
+        return SimpleNamespace(task=selected)
+
+    captured = {}
+
+    async def fake_clone(work_dir=None, *, repo_sha=None):
+        captured.update(work_dir=work_dir, repo_sha=repo_sha)
+        return str(tmp_path / "inv")
+
+    ran = []
+
+    async def fake_run(*_args, **_kwargs):
+        ran.append(True)
+
+    monkeypatch.setattr(autopilot, "_claim_next_with_admission", fake_claim)
+    monkeypatch.setattr(autopilot, "_prepare_clone", fake_clone)
+    monkeypatch.setattr(autopilot, "_run_investigation_task", fake_run)
+
+    await _run_sideline_once(monkeypatch)
+
+    assert str(captured["work_dir"]).endswith("-inv")
+    assert captured["repo_sha"] == expected_sha
+    assert ran == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repo_sha", ["", "c" * 40])
+async def test_enforce_sideline_pin_failure_requeues_without_consuming_attempt(
+    monkeypatch,
+    sideline_on,
+    repo_sha,
+):
+    monkeypatch.setattr(config, "TASK_ADMISSION_MODE", "enforce")
+    task = backlog.add(
+        "調查固定版本失敗",
+        source="discovered",
+        risk="low",
+        contract={
+            "version": 1,
+            "outcome": "交付調查結論",
+            "kind": "investigation",
+            "targets": ["."],
+            "acceptance": ["交付結論、證據與是否需改碼"],
+            "constraints": [],
+            "external_writes": [],
+        },
+        admission={
+            "mode": "enforce",
+            "audit": {"repo_sha": repo_sha},
+        },
+    )
+    backlog.set_status(task["id"], "in_progress", attempts=1)
+    selected = {**backlog.get(task["id"]), "attempts": 0}
+
+    async def fake_claim(_predicate=None):
+        return SimpleNamespace(task=selected)
+
+    async def fail_clone(work_dir=None, *, repo_sha=None):
+        assert repo_sha == "c" * 40
+        raise RuntimeError("pin unavailable")
+
+    ran = []
+    monkeypatch.setattr(autopilot, "_claim_next_with_admission", fake_claim)
+    monkeypatch.setattr(autopilot, "_prepare_clone", fail_clone)
+    monkeypatch.setattr(
+        autopilot,
+        "_run_investigation_task",
+        lambda *_args, **_kwargs: ran.append(True),
+    )
+
+    await _run_sideline_once(monkeypatch)
+
+    current = backlog.get(task["id"])
+    assert current["status"] == "pending"
+    assert current["attempts"] == 0
+    assert current["retry_after"] > 0
+    assert current["admission"]["reasons"] == ["admission_internal_error"]
+    assert ran == []

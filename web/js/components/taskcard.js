@@ -2,6 +2,11 @@
 // 資料=既有 GET /api/autopilot/activity(backlog×history join);5 秒輪詢,終局即停。
 // 卡片一律 createElement/textContent(零 innerHTML 模型內容)。
 import { $, appendTextEl, icon } from "../dom.js";
+import {
+  admissionModel,
+  createAdmissionPresentation,
+  updateAdmissionPresentation,
+} from "./admission.js";
 
 export const TC_STATUS = {
   pending: { label: "排隊中", cls: "wait" },
@@ -26,6 +31,7 @@ export function taskCardModel(task) {
     sub: bits.join("・"),
     terminal: TERMINAL.has(task?.status),
     liveSid: task?.status === "in_progress" ? task?.session_id || null : null,
+    admission: admissionModel(task?.admission),
   };
 }
 
@@ -40,6 +46,7 @@ export function createTaskCard(taskId, title) {
   appendTextEl(head, "span", "tc-status wait", "排隊中");
   card.appendChild(head);
   appendTextEl(card, "div", "tc-sub muted", `任務 #${taskId}・agent 會在背景完成,期間你可以繼續交辦或討論`);
+  card.appendChild(createAdmissionPresentation());
   const live = document.createElement("button");
   live.className = "ghost tc-live hidden";
   live.textContent = "觀看直播";
@@ -53,6 +60,8 @@ export function updateTaskCard(card, task) {
   if (st) { st.textContent = m.label; st.className = "tc-status " + m.cls; }
   const sub = card.querySelector(".tc-sub");
   if (sub && m.sub) sub.textContent = m.sub;
+  const admission = card.querySelector(".tc-admission");
+  if (admission) updateAdmissionPresentation(admission, task?.admission);
   const live = card.querySelector(".tc-live");
   if (live) {
     live.classList.toggle("hidden", !m.liveSid);

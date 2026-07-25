@@ -130,6 +130,36 @@ def test_activity_empty_backlog(client, state):
     assert data == {"tasks": [], "total": 0}
 
 
+def test_activity_projects_only_public_admission_summary(client, state):
+    secret = "ghp_must_not_reach_activity"
+    task = backlog.add(
+        "待澄清任務",
+        admission={
+            "outcome": "needs_clarification",
+            "reasons": ["contract_fields_missing"],
+            "missing_fields": ["targets"],
+            "needs_human": True,
+            "recommendation": "補 targets",
+            "released_by_mode": "shadow",
+            "raw_evidence": secret,
+            "audit": {"raw_prompt": secret},
+        },
+    )
+
+    row = next(
+        item
+        for item in client.get("/api/autopilot/activity").json()["tasks"]
+        if item["id"] == task["id"]
+    )
+
+    assert row["admission"]["outcome"] == "needs_clarification"
+    assert row["admission"]["recommendation"] == "補 targets"
+    assert row["admission"]["released_by_mode"] == "shadow"
+    assert secret not in json.dumps(row, ensure_ascii=False)
+    assert "raw_evidence" not in row["admission"]
+    assert "audit" not in row["admission"]
+
+
 def test_activity_omits_legacy_ttft_s_when_missing(client, state):
     meta = history.start_session("s-legacy", "[autopilot] 舊任務")
     meta["status"] = "completed"

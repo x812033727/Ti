@@ -589,6 +589,15 @@ FIELDS: tuple[Field, ...] = (
         group="Autopilot",
     ),
     Field(
+        "TI_TASK_ADMISSION",
+        "任務契約閘門（off=舊流程／shadow=只記錄／enforce=分流阻擋）",
+        kind="select",
+        options=("off", "shadow", "enforce"),
+        default="shadow",
+        recommended="shadow",
+        group="Autopilot",
+    ),
+    Field(
         "TI_AUTOPILOT_INVESTIGATION_REFUTE",
         "調查結論對抗性驗證（done 前一次廉價呼叫試圖推翻;0=關）",
         kind="select",

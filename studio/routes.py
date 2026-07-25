@@ -7,6 +7,7 @@ WebSocket 與應用組裝分別在 ws.py / server.py。
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import itertools
 import json
 import re
@@ -40,6 +41,7 @@ from . import (
     roles,
     schedules,
     settings,
+    task_admission,
     workflow,
     workspace,
     ws,
@@ -940,6 +942,7 @@ class TaskBody(BaseModel):
     diff_sha: str = ""
     evidence_sha: str = ""
     human_approved: bool = False
+    contract: dict = Field(default_factory=dict)
 
 
 def _todays_pr_used() -> int:
@@ -987,6 +990,7 @@ async def autopilot_status() -> JSONResponse:
             "deploy": await deploy.drift_stats(),
             "dryrun": config.AUTOPILOT_DRYRUN,
             "repo": config.AUTOPILOT_REPO,
+            "task_admission_mode": config.TASK_ADMISSION_MODE,
             "heartbeat": heartbeat,
             "dispatch_mode": "auto" if config.dispatch_auto() else "manual",
             # 每日 PR 預算（功能第五輪 F4）：預算透明化——budget_sleep 前看板先看得到逼近。
@@ -1001,6 +1005,14 @@ async def autopilot_status() -> JSONResponse:
 @router.get("/api/autopilot/backlog", dependencies=[Depends(auth.require_auth)])
 async def autopilot_backlog() -> JSONResponse:
     return JSONResponse({"tasks": backlog.list_tasks()})
+
+
+@router.get("/api/autopilot/admission-audit", dependencies=[Depends(auth.require_auth)])
+async def autopilot_admission_audit(limit: int = 100) -> JSONResponse:
+    """去敏 admission 決策紀錄、shadow 指標與 circuit 狀態。"""
+    return JSONResponse(
+        await asyncio.to_thread(task_admission.admission_audit_snapshot, limit=limit)
+    )
 
 
 @router.post("/api/autopilot/pause", dependencies=WRITE_DEPS)
@@ -1041,10 +1053,16 @@ async def autopilot_dispatch_mode(body: DispatchModeBody) -> JSONResponse:
 @router.post("/api/autopilot/task", dependencies=WRITE_DEPS)
 async def autopilot_add_task(body: TaskBody) -> JSONResponse:
     # detail 夾長度:backlog.add 無長度防線,超長 detail 會灌爆 backlog.json(單一 JSON 檔)。
-    task = backlog.add(
+    root = config.AUTOPILOT_DEPLOY_DIR
+    task = task_admission.enqueue_task(
         body.title,
         body.detail[:4000],
         source="manual",
+        mode=config.TASK_ADMISSION_MODE,
+        repo_context={
+            "root": root,
+            "repo_sha": task_admission.read_local_repo_sha(root),
+        },
         priority=body.priority,
         item_type=body.type,
         risk=body.risk,
@@ -1055,6 +1073,7 @@ async def autopilot_add_task(body: TaskBody) -> JSONResponse:
         diff_sha=body.diff_sha,
         evidence_sha=body.evidence_sha,
         human_approved=body.human_approved,
+        contract=body.contract or None,
     )
     if task is None:
         return JSONResponse({"ok": False, "detail": "標題為空或已存在"}, status_code=400)
@@ -1409,6 +1428,53 @@ class TaskActionBody(BaseModel):
     note: str = ""
 
 
+class AdmissionOverrideBody(BaseModel):
+    scope_hash: str = ""
+    reason: str = ""
+
+
+@router.post(
+    "/api/autopilot/task/{task_id}/admission-override",
+    dependencies=WRITE_DEPS,
+)
+async def autopilot_admission_override(
+    task_id: int,
+    body: AdmissionOverrideBody,
+) -> JSONResponse:
+    """一次性 quality override；scope 綁 task+contract hash+repo SHA。"""
+    reason = (body.reason or "").strip()
+    scope_hash = (body.scope_hash or "").strip().lower()
+    if not reason or len(reason) > 500:
+        return JSONResponse(
+            {"ok": False, "detail": "reason 必填且不得超過 500 字"}, status_code=400
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", scope_hash):
+        return JSONResponse({"ok": False, "detail": "scope_hash 格式錯誤"}, status_code=400)
+    root = config.AUTOPILOT_DEPLOY_DIR
+    task, error = await asyncio.to_thread(
+        task_admission.apply_override,
+        task_id,
+        scope_hash,
+        reason,
+        repo_context={
+            "root": root,
+            "repo_sha": task_admission.read_local_repo_sha(root),
+        },
+    )
+    if task is None:
+        status = 404 if error == "not_found" else (400 if error == "invalid_reason" else 409)
+        return JSONResponse({"ok": False, "detail": error}, status_code=status)
+    interventions.record(
+        "admission_override",
+        "product_decision",
+        task_id=task_id,
+        detail=f"reason_sha256:{hashlib.sha256(reason.encode()).hexdigest()}",
+        project_id=autonomy.CORE_PROJECT_ID,
+        intervention_type="product_decision",
+    )
+    return JSONResponse({"ok": True, "task": task})
+
+
 @router.post("/api/autopilot/task/{task_id}/action", dependencies=WRITE_DEPS)
 async def autopilot_task_action(task_id: int, body: TaskActionBody) -> JSONResponse:
     """看板手動操作單一任務:retry/park/unpark/priority(護欄與語意見 backlog.apply_action)。"""
@@ -1451,6 +1517,19 @@ _ACTIVITY_FIELDS = (
     "merged_branch",
     "deploy_msg",
 )
+_ACTIVITY_ADMISSION_FIELDS = (
+    "outcome",
+    "reasons",
+    "missing_fields",
+    "needs_human",
+    "overridable",
+    "question",
+    "recommendation",
+    "scope_hash",
+    "timeout_default",
+    "model_error",
+    "released_by_mode",
+)
 
 
 def _activity_snapshot(limit: int) -> dict:
@@ -1460,6 +1539,11 @@ def _activity_snapshot(limit: int) -> dict:
     rows: list[dict] = []
     for t in tasks[:limit]:
         row = {k: t.get(k) for k in _ACTIVITY_FIELDS}
+        admission = t.get("admission")
+        if isinstance(admission, dict):
+            row["admission"] = {
+                key: admission.get(key) for key in _ACTIVITY_ADMISSION_FIELDS if key in admission
+            }
         sid = t.get("session_id")
         meta = history.get_meta(sid) if sid else None
         if meta:

@@ -25,4 +25,19 @@
 .tc-status.ok { color: var(--good); border-color: var(--good); }
 .tc-status.bad { color: var(--bad); border-color: var(--bad); }
 .tc-sub { font-size: var(--fs-1); }
+.tc-admission { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.tc-admission-chip {
+  flex: none;
+  font-size: var(--fs-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  padding: 1px 8px;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+.tc-admission-chip.ok { color: var(--good); border-color: rgba(45, 212, 167, .35); }
+.tc-admission-chip.run { color: var(--info); border-color: rgba(89, 183, 255, .35); }
+.tc-admission-chip.wait { color: var(--warn); border-color: rgba(255, 193, 94, .35); }
+.tc-admission-chip.bad { color: var(--bad); border-color: rgba(255, 107, 122, .35); }
+.tc-admission-summary { min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-0); }
 .tc-live { align-self: flex-start; font-size: var(--fs-1); }

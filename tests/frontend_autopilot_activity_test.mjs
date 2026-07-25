@@ -86,6 +86,7 @@ Object.assign(globalThis, {
                     title: "有 ttft_s",
                     status: "done",
                     updated_at: 1,
+                    admission: { outcome: "ready", reasons: [] },
                     token_usage: {
                       by_provider: { claude: { total: 12 } },
                       by_model: { "claude-opus-4-8": { total: 12 } },
@@ -114,6 +115,35 @@ Object.assign(globalThis, {
 });
 
 const mod = await import("../web/js/panels/autopilot.js");
+const held = mod.taskActionPolicy({
+  status: "parked",
+  admission: { outcome: "needs_clarification" },
+});
+if (held.retry || held.unpark) {
+  console.error("FAIL: admission-held parked task 不得顯示 generic retry/unpark");
+  process.exit(1);
+}
+const legacyParked = mod.taskActionPolicy({ status: "parked" });
+if (!legacyParked.retry || !legacyParked.unpark) {
+  console.error("FAIL: legacy parked task 必須保留 retry/unpark");
+  process.exit(1);
+}
+const killSwitchHeld = mod.taskActionPolicy({
+  status: "parked",
+  admission: { outcome: "blocked" },
+}, "off");
+if (!killSwitchHeld.retry || !killSwitchHeld.unpark) {
+  console.error("FAIL: off kill switch 必須恢復 admission-held 任務的 legacy 操作");
+  process.exit(1);
+}
+const releasedHeld = mod.taskActionPolicy({
+  status: "parked",
+  admission: { outcome: "blocked", released_by_mode: "off" },
+}, "enforce");
+if (!releasedHeld.retry || !releasedHeld.unpark) {
+  console.error("FAIL: 已由 kill switch 釋放的任務不可再被舊 admission 標記鎖住");
+  process.exit(1);
+}
 Date.now = () => 3_785_000;
 await mod.refreshApActivity({ current_expert: "engineer", turn_started_at: 3_600 });
 
@@ -126,6 +156,12 @@ function collectByClass(root, cls, out = []) {
 const ttftChips = collectByClass(activity, "ttft");
 if (ttftChips.length !== 1) {
   console.error(`FAIL: 只應渲染一個 TTFT chip，實際 ${ttftChips.length} 個`);
+  process.exit(1);
+}
+
+const allChipText = collectByClass(activity, "ap-chip").map((el) => el.textContent);
+if (!allChipText.includes("准入：可執行")) {
+  console.error(`FAIL: activity 應呈現 admission chip：${allChipText.join(" / ")}`);
   process.exit(1);
 }
 if (ttftChips[0].textContent !== "TTFT 0.123s") {
