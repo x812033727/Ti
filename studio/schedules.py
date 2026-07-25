@@ -86,7 +86,12 @@ def validate_recurrence(rec: dict) -> str:
         t = str(rec.get("time") or "")
         parts = t.split(":")
         try:
-            ok = len(parts) == 2 and 0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59
+            ok = (
+                len(parts) == 2
+                and all(len(part) == 2 and part.isdigit() for part in parts)
+                and 0 <= int(parts[0]) <= 23
+                and 0 <= int(parts[1]) <= 59
+            )
         except ValueError:
             ok = False
         if not ok:
