@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, secure_write
+from . import admission_mode, config, secure_write
 
 # 唯一 choke point：backlog.json 寫入經 secure_write.secure_write_root。
 # module-level alias 兼顧可被測試 monkeypatch。
@@ -114,9 +114,47 @@ def _is_core_state_dir(state_dir: Path | None) -> bool:
         return False
 
 
-def _dispatch_sort_key(task: dict, *, state_dir: Path | None = None) -> tuple:
+def _effective_admission_mode(state_dir: Path | None = None) -> str:
+    state = admission_mode.snapshot(
+        state_dir=state_dir,
+        fallback_mode=config.TASK_ADMISSION_MODE,
+    )
+    # 單元測試／首次啟動尚未 bootstrap 時沿用設定；已有但損壞的 control
+    # state 不得猜 enforce，worker 會在取件前 fail-safe 暫停。
+    if state.healthy or state.error == "not_initialized":
+        return state.effective
+    return "shadow"
+
+
+def _mode_generation_matches(
+    *,
+    expected_mode: str | None,
+    expected_generation: int | None,
+    state_dir: Path | None,
+) -> bool:
+    """呼叫端帶 token 時，提交只能發生在同一個穩態 effective generation。"""
+    if expected_generation is None:
+        return True
+    if expected_mode not in admission_mode.MODES:
+        return False
+    state = admission_mode.snapshot(state_dir=state_dir, fallback_mode="shadow")
+    return bool(
+        state.healthy
+        and not state.pending
+        and state.effective == expected_mode
+        and state.effective_generation == expected_generation
+    )
+
+
+def _dispatch_sort_key(
+    task: dict,
+    *,
+    state_dir: Path | None = None,
+    mode: str | None = None,
+) -> tuple:
     """只有 enforce 的核心 queue 使用來源順位；專案 backlog 永遠維持既有 FIFO。"""
-    if config.TASK_ADMISSION_MODE != "enforce" or not _is_core_state_dir(state_dir):
+    effective = mode if mode in admission_mode.MODES else _effective_admission_mode(state_dir)
+    if effective != "enforce" or not _is_core_state_dir(state_dir):
         return (
             _clamp_priority(task.get("priority", DEFAULT_PRIORITY)),
             float(task.get("created_at") or 0),
@@ -266,7 +304,8 @@ def pending_snapshots(*, state_dir: Path | None = None) -> list[dict]:
         for task in _load(state_dir)["tasks"]
         if task.get("status") == "pending" and _retry_ready(task)
     ]
-    rows.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir))
+    mode = _effective_admission_mode(state_dir)
+    rows.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir, mode=mode))
     return copy.deepcopy(rows)
 
 
@@ -279,6 +318,8 @@ def commit_admission(
     transition: str = "record",
     retry_after: float | None = None,
     state_dir: Path | None = None,
+    expected_mode: str | None = None,
+    expected_mode_generation: int | None = None,
 ) -> tuple[AdmissionCommit | None, str]:
     """CAS 寫入契約與裁決，並可在同一 flock 內 claim/park/complete。
 
@@ -290,6 +331,12 @@ def commit_admission(
     contract_copy = _json_object(contract, field_name="contract")
     admission_copy = _json_object(admission, field_name="admission")
     with _locked(state_dir):
+        if not _mode_generation_matches(
+            expected_mode=expected_mode,
+            expected_generation=expected_mode_generation,
+            state_dir=state_dir,
+        ):
+            return None, "mode_changed"
         data = _load(state_dir, mutable=True)
         for task in data["tasks"]:
             if task.get("id") != task_id:
@@ -324,9 +371,17 @@ def claim_if_unchanged(
     expected_fingerprint: str,
     *,
     state_dir: Path | None = None,
+    expected_mode: str | None = None,
+    expected_mode_generation: int | None = None,
 ) -> tuple[AdmissionCommit | None, str]:
     """shadow observer 寫入失敗時的 CAS-only 舊派工；不寫 contract/admission。"""
     with _locked(state_dir):
+        if not _mode_generation_matches(
+            expected_mode=expected_mode,
+            expected_generation=expected_mode_generation,
+            state_dir=state_dir,
+        ):
+            return None, "mode_changed"
         data = _load(state_dir, mutable=True)
         for task in data["tasks"]:
             if task.get("id") != task_id:
@@ -484,6 +539,16 @@ def release_admission_holds(
         if released:
             _save(data, state_dir)
     return released
+
+
+def admission_commit_barrier(*, state_dir: Path | None = None) -> None:
+    """等待既有 generation-aware backlog commit 結束；呼叫端須先持 mode lock。
+
+    barrier 返回後 control state 仍為 pending，新的 token commit 會在 backlog lock 內
+    驗證失敗，因此 mode ack 不會被舊 generation 寫入越過。
+    """
+    with _locked(state_dir):
+        return
 
 
 def apply_admission_override(
@@ -772,7 +837,13 @@ def get(task_id: int, *, state_dir: Path | None = None) -> dict | None:
     return None
 
 
-def claim_next(predicate, *, state_dir: Path | None = None) -> dict | None:
+def claim_next(
+    predicate,
+    *,
+    state_dir: Path | None = None,
+    expected_mode: str | None = None,
+    expected_mode_generation: int | None = None,
+) -> dict | None:
     """原子認領:單一 _locked() 內找第一筆滿足 predicate 的 pending 任務並就地標
     in_progress(attempts+1,與 set_status 語意一致),回傳任務或 None。
 
@@ -782,10 +853,17 @@ def claim_next(predicate, *, state_dir: Path | None = None) -> dict | None:
     排序與 next_pending 一致(priority、來源順位、同級 created_at);retry_after
     在未來者跳過(重試冷卻,見 _retry_ready)。
     """
+    mode = _effective_admission_mode(state_dir)
     with _locked(state_dir):
+        if not _mode_generation_matches(
+            expected_mode=expected_mode,
+            expected_generation=expected_mode_generation,
+            state_dir=state_dir,
+        ):
+            return None
         data = _load(state_dir, mutable=True)
         pend = [t for t in data["tasks"] if t["status"] == "pending" and _retry_ready(t)]
-        pend.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir))
+        pend.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir, mode=mode))
         for t in pend:
             if not predicate(t):
                 continue
@@ -814,7 +892,8 @@ def next_pending(*, state_dir: Path | None = None) -> dict | None:
     retry_after 在未來者跳過(重試冷卻,見 _retry_ready)。
     """
     pend = [t for t in _load(state_dir)["tasks"] if t["status"] == "pending" and _retry_ready(t)]
-    pend.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir))
+    mode = _effective_admission_mode(state_dir)
+    pend.sort(key=lambda task: _dispatch_sort_key(task, state_dir=state_dir, mode=mode))
     return pend[0] if pend else None
 
 

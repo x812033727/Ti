@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import autopilot, backlog, config
+from studio import admission_mode, autopilot, backlog, config
 
 
 @pytest.fixture
@@ -24,6 +24,11 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_FOLLOWUP_VALUE_GATE", True)
     # 隔離：去重防線不介入本測（聚焦扇出/血緣上限本身）
     monkeypatch.setattr(autopilot, "_recent_done_titles", lambda: set())
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 

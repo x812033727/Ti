@@ -13,7 +13,7 @@ import calendar
 
 import pytest
 
-from studio import backlog, config, schedules
+from studio import admission_mode, backlog, config, schedules
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +21,11 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
     (tmp_path / "ap").mkdir(parents=True)
     monkeypatch.setattr(backlog, "_read_cache", {}, raising=False)
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 
@@ -91,6 +96,20 @@ def test_disabled_and_bad_schedule_isolated():
     n = schedules.enqueue_due(_utc(2026, 7, 20, 1, 0))
     assert n == 1, "壞排程隔離,好排程照入列"
     assert backlog.list_tasks()[0]["title"] == "[排程] 好的"
+
+
+def test_missing_admission_control_does_not_consume_schedule_occurrence():
+    sched, _ = schedules.create(
+        "等待 worker 復原",
+        "",
+        {"kind": "daily", "time": "08:00"},
+    )
+    (config.AUTOPILOT_STATE_DIR / "admission_mode.json").unlink()
+
+    assert schedules.enqueue_due(_utc(2026, 7, 20, 8, 5)) == 0
+    assert backlog.list_tasks() == []
+    assert schedules.list_schedules()[0]["id"] == sched["id"]
+    assert schedules.list_schedules()[0]["last_fired_key"] == ""
 
 
 def test_crud_validation_and_delete():

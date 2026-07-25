@@ -1076,8 +1076,10 @@ AUTOPILOT_INVESTIGATION_REFUTE = os.getenv("TI_AUTOPILOT_INVESTIGATION_REFUTE", 
     "",
 )
 
-# 任務入口契約閘門：off=完全沿用舊流程；shadow=只判定/留痕、不改派工；
-# enforce=依判定分流或阻擋。非法值退回 shadow，避免拼錯字跳過觀測期或直接阻斷。
+# 任務入口契約閘門的冷啟動 bootstrap／UI desired 值：off=完全沿用舊流程；
+# shadow=只判定/留痕、不改派工；enforce=依判定分流或阻擋。已有 control state 時
+# shared desired/effective 皆由 admission_mode 掌管；不能拿本行程變數覆寫或宣稱已切換。
+# 非法值退回 shadow。
 TASK_ADMISSION_MODES = ("off", "shadow", "enforce")
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import autonomy, autopilot, config
+from studio import admission_mode, autonomy, autopilot, config
 
 _RESULT_OK = {
     "completed": True,
@@ -19,6 +19,12 @@ _RESULT_OK = {
 
 
 def _common_mocks(monkeypatch, tmp_path, statuses, *, merge_result, idle=True, deploy=None):
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     clone = tmp_path / "clone"
     clone.mkdir()
 

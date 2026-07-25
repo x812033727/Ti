@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import config, projects, providers
+from studio import admission_mode, config, projects, providers
 from studio.improver import ProjectImprover
 from studio.roles import Role
 
@@ -205,6 +205,11 @@ async def test_discovery_routes_core_changes_to_core_backlog(tmp_path, monkeypat
 
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "core")
     monkeypatch.setattr(config, "DISCOVER_ROLES", ["senior", "pm"])
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
 
     scripts = {
         "senior": "任務: 補上錯誤處理\n核心改動: [P0/bug] orchestrator 應支援核心同步發佈",

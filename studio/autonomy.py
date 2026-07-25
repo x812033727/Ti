@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import config, jsonl_log, secure_write
+from . import admission_mode, config, jsonl_log, secure_write
 from .repo_ident import repo_key
 
 SCHEMA_VERSION = 1
@@ -2734,13 +2734,23 @@ def write_weekly_improvements(
 
     enqueued: list[int] = []
     if enqueue:
+        mode_state = admission_mode.snapshot(
+            fallback_mode=config.TASK_ADMISSION_MODE,
+        )
+        if not mode_state.healthy:
+            raise AuditWriteError(
+                f"task admission mode state 異常，停止 weekly intake:{mode_state.error}"
+            )
+        effective_mode = mode_state.effective
+        mode_generation = mode_state.effective_generation
         for item in selected:
             root = config.AUTOPILOT_DEPLOY_DIR
             task = task_admission.enqueue_task(
                 item["title"],
                 f"驗收標準：{item['acceptance']}",
                 source="autonomy_weekly",
-                mode=config.TASK_ADMISSION_MODE,
+                mode=effective_mode,
+                mode_generation=mode_generation,
                 repo_context={
                     "root": root,
                     "repo_sha": task_admission.read_local_repo_sha(root),

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import autopilot, backlog, config, deploy
+from studio import admission_mode, autopilot, backlog, config, deploy
 
 
 class DeployStub:
@@ -52,6 +52,11 @@ def state(tmp_path, monkeypatch):
     # 重設模組級節流/退避（行程記憶體）
     monkeypatch.setattr(autopilot, "_last_deploy_check_at", 0.0)
     monkeypatch.setattr(autopilot, "_deploy_backoff_until", 0.0)
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 

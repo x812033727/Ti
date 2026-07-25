@@ -6,7 +6,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from studio import autonomy, autopilot, backlog, config, experts, improver, projects
+from studio import (
+    admission_mode,
+    autonomy,
+    autopilot,
+    backlog,
+    config,
+    experts,
+    improver,
+    projects,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +25,11 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "workspace", raising=False)
     monkeypatch.setattr(config, "AUTOPILOT_NORTH_STAR", "不得進入 Stage 4 prompt 的舊目標")
     monkeypatch.setattr(backlog, "_read_cache", {}, raising=False)
+    admission_mode.bootstrap_at_task_boundary(
+        config.TASK_ADMISSION_MODE,
+        initial_effective=config.TASK_ADMISSION_MODE,
+        release_holds=lambda _mode: 0,
+    )
     return tmp_path
 
 
