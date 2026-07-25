@@ -36,7 +36,7 @@ def qa_passed(text: str) -> bool:
     if verdict:
         return verdict.upper() == "PASS"
     # 後備：找不到標記時，看是否出現失敗字樣
-    return not re.search(r"\b(fail|failed|error|錯誤|失敗)\b", text, re.I)
+    return not re.search(r"\b(fail|failed|error)\b|錯誤|失敗", text, re.I)
 
 
 def senior_approved(text: str) -> bool:
