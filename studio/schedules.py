@@ -23,6 +23,7 @@ import contextlib
 import fcntl
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -86,7 +87,11 @@ def validate_recurrence(rec: dict) -> str:
         t = str(rec.get("time") or "")
         parts = t.split(":")
         try:
-            ok = len(parts) == 2 and 0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59
+            ok = (
+                re.fullmatch(r"\d{2}:\d{2}", t) is not None
+                and 0 <= int(parts[0]) <= 23
+                and 0 <= int(parts[1]) <= 59
+            )
         except ValueError:
             ok = False
         if not ok:
