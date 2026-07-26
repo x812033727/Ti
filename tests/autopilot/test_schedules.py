@@ -53,6 +53,10 @@ def test_occurrence_key_daily_weekly_interval():
 
 def test_validate_recurrence():
     assert schedules.validate_recurrence({"kind": "daily", "time": "23:59"}) == ""
+    assert schedules.validate_recurrence({"kind": "daily", "time": "08:00"}) == ""
+    assert schedules.validate_recurrence({"kind": "daily", "time": "8:00"})
+    assert schedules.validate_recurrence({"kind": "daily", "time": "08:0"})
+    assert schedules.validate_recurrence({"kind": "daily", "time": "008:00"})
     assert schedules.validate_recurrence({"kind": "daily", "time": "24:00"})
     assert schedules.validate_recurrence({"kind": "weekly", "time": "08:00", "weekday": 7})
     assert schedules.validate_recurrence({"kind": "interval_hours", "hours": 0})
