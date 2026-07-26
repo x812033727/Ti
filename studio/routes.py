@@ -32,6 +32,7 @@ from . import (
     insights,
     interventions,
     lessons,
+    netutil,
     notify,
     projects,
     provider_quota,
@@ -165,7 +166,7 @@ async def auth_status(request: Request) -> JSONResponse:
 async def login(request: Request, body: LoginBody) -> JSONResponse:
     if not config.auth_enabled():
         return JSONResponse({"ok": True, "detail": "門禁未啟用"})
-    client = request.client.host if request.client else "?"
+    client = netutil.client_ip(request) or "?"
     # 速率限制：連續失敗達上限即鎖定，期間直接拒絕（不比對密碼），擋暴力破解。
     wait = auth.login_lock_remaining(client)
     if wait > 0:
