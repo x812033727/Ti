@@ -145,8 +145,39 @@ def test_rate_limit_exhausted_outcome():
     assert out == "FALLBACK:half"
     assert metrics.outcome == "rate_limit_exhausted"
     assert metrics.retries == 2  # 退避兩次後耗盡
+    assert metrics.rate_limit_hits == 3  # 兩次重試 + 最後耗盡那次
     kinds = [e for e, _ in events]
     assert kinds == [lc.EV_RETRY, lc.EV_RETRY, lc.EV_RATE_LIMIT_EXHAUSTED]
+
+
+# ── 過載耗盡：共用退避但不得污染 429 限流 counter ─────────────────────────
+def test_overloaded_exhausted_does_not_count_rate_limit_hits():
+    events, observe = _recorder()
+    metrics = lc.RetryMetrics()
+
+    async def attempt():
+        raise lc.OverloadedSignal(
+            kind="overloaded_error", snippet="overloaded", partial_text="half"
+        )
+
+    out = _run(
+        lc.run_with_retries(
+            attempt,
+            max_retries=2,
+            on_rate_limit_exhausted=_exhausted,
+            on_api_error=_api_error,
+            backoff=lambda ra, a: 0.0,
+            sleep=_noop_sleep,
+            metrics=metrics,
+            observe=observe,
+        )
+    )
+    assert out == "APIERR:overloaded"
+    assert metrics.outcome == "overloaded_exhausted"
+    assert metrics.retries == 2
+    assert metrics.rate_limit_hits == 0
+    kinds = [e for e, _ in events]
+    assert kinds == [lc.EV_RETRY, lc.EV_RETRY, lc.EV_API_ERROR]
 
 
 # ── API 錯誤（非限流）：不重試，走 fallback ──────────────────────────────────
