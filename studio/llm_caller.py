@@ -468,7 +468,8 @@ class RetryMetrics:
 
     與 idle／hard timeout 正交：逾時走 passthrough，記為 `outcome="timeout"`，**不**計入
     `retries`／`total_delay`（退避迴圈與逾時互不吞沒）。`retries`＝實際發生的退避次數；
-    `total_delay`＝累計退避秒數；`rate_limit_hits`＝偵測到限流的總次數（含最後耗盡那次）。
+    `total_delay`＝累計退避秒數；`rate_limit_hits`＝偵測到 429 限流的總次數
+    （不含 529 overloaded，含最後耗盡那次）。
     """
 
     retries: int = 0
@@ -480,7 +481,6 @@ class RetryMetrics:
 
     def _record_retry(self, delay: float) -> None:
         self.retries += 1
-        self.rate_limit_hits += 1
         self.last_delay = delay
         self.total_delay += delay
 
@@ -656,6 +656,8 @@ async def run_with_retries(
                     ra = retry_after if kind == "rate_limit" else None
                     delay = backoff(ra, attempt)
                     metrics._record_retry(delay)
+                    if kind == "rate_limit":
+                        metrics.rate_limit_hits += 1
                     _emit(
                         observe,
                         EV_RETRY,
