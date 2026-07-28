@@ -126,6 +126,22 @@ def test_crud_validation_and_delete():
     assert schedules.list_schedules() == []
 
 
+def test_crud_rejects_invalid_priority_without_exception():
+    sched, err = schedules.create(
+        "壞優先度",
+        "",
+        {"kind": "daily", "time": "08:00"},
+        priority="high",
+    )
+    assert sched is None and "priority" in err
+
+    sched, err = schedules.create("好排程", "", {"kind": "daily", "time": "08:00"})
+    assert err == "" and sched is not None
+    got, err = schedules.update(sched["id"], {"priority": "high"})
+    assert got is None and "priority" in err
+    assert schedules.list_schedules()[0]["priority"] == 1
+
+
 def test_autopilot_hook_throttle_and_safety(monkeypatch):
     from studio import autopilot
 
