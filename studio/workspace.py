@@ -43,9 +43,8 @@ def safe_resolve(root: Path, rel: str, *, must_exist: bool = True) -> Path | Non
     3. `is_relative_to(root)` 確認仍落在 root 之內。
 
     讀取類呼叫端傳 `must_exist=True`（strict 解析，順帶擋不存在路徑與外部 symlink）。
-    `must_exist=False` 給「寫新檔」場景，避免尚未存在的目標被誤擋——注意此時 resolve
-    不對「不存在的尾段」展開 symlink，故「parent 為外部 symlink、往其中寫新檔」這條
-    逃逸路徑無法在此被完整擋下（已知缺口，見 tests）。
+    `must_exist=False` 給「寫新檔」場景，避免尚未存在的目標被誤擋；既有路徑前綴中的
+    symlink 仍會被展開，因此指向 root 外的 parent symlink 會在 is_relative_to 檢查被擋下。
     """
     try:
         p = Path(rel)
