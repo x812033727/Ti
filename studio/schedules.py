@@ -106,6 +106,14 @@ def validate_recurrence(rec: dict) -> str:
     return ""
 
 
+def _normalize_priority(value: object) -> tuple[int, str]:
+    try:
+        priority = int(1 if value is None else value)
+    except (TypeError, ValueError):
+        return 1, "priority 須為整數"
+    return max(0, min(2, priority)), ""
+
+
 def occurrence_key(sched: dict, now: float) -> str | None:
     """now 這一刻該排程「應已觸發」的 occurrence key;尚未到期回 None。"""
     rec = sched.get("recurrence") or {}
@@ -147,11 +155,14 @@ def create(
     err = validate_recurrence(recurrence)
     if err:
         return None, err
+    normalized_priority, err = _normalize_priority(priority)
+    if err:
+        return None, err
     sched = {
         "id": uuid.uuid4().hex[:12],
         "title": title,
         "detail": (detail or "").strip()[:_DETAIL_MAX],
-        "priority": max(0, min(2, int(1 if priority is None else priority))),  # 0 是合法值,勿用 or
+        "priority": normalized_priority,  # 0 是合法值,勿用 or
         "type": item_type if item_type in ("feature", "bug", "improvement") else "improvement",
         "recurrence": recurrence,
         "enabled": True,
@@ -186,9 +197,10 @@ def update(
             if "detail" in fields:
                 s["detail"] = str(fields["detail"] or "").strip()[:_DETAIL_MAX]
             if "priority" in fields:
-                s["priority"] = max(
-                    0, min(2, int(1 if fields["priority"] is None else fields["priority"]))
-                )
+                normalized_priority, err = _normalize_priority(fields["priority"])
+                if err:
+                    return None, err
+                s["priority"] = normalized_priority
             if "type" in fields and fields["type"] in ("feature", "bug", "improvement"):
                 s["type"] = fields["type"]
             if "recurrence" in fields:
