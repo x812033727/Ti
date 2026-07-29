@@ -29,7 +29,7 @@ def repo_key(value: str) -> str:
         remote_host, raw = raw.rsplit(":", 1)
         if (remote_host.rsplit("@", 1)[-1] or "").lower() != "github.com":
             return ""
-    elif raw.startswith("github.com/"):
+    elif raw.lower().startswith("github.com/"):
         raw = raw[len("github.com/") :]
     raw = raw.strip("/")
     if raw.endswith(".git"):
