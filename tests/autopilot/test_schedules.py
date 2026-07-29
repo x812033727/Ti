@@ -116,8 +116,7 @@ def test_crud_validation_and_delete():
     assert schedules.create("", "", {"kind": "daily", "time": "08:00"})[0] is None
     assert schedules.create("x", "", {"kind": "nope"})[0] is None
     assert (
-        schedules.create("x", "", {"kind": "interval_hours", "hours": 2}, priority="bad")[0]
-        is None
+        schedules.create("x", "", {"kind": "interval_hours", "hours": 2}, priority="bad")[0] is None
     )
     s, _ = schedules.create("x", "", {"kind": "interval_hours", "hours": 2})
     got, err = schedules.update(s["id"], {"recurrence": {"kind": "daily", "time": "99:00"}})
