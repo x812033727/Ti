@@ -28,6 +28,7 @@ def test_repo_owner_parses_bare_https_and_ssh():
     assert repo_ident.repo_owner("https://github.com/X812033727/Ti.git") == "x812033727"
     assert repo_ident.repo_owner("git@github.com:x812033727/Ti.git") == "x812033727"
     assert repo_ident.repo_owner("github.com/x812033727/Ti") == "x812033727"
+    assert repo_ident.repo_owner("GitHub.com/X812033727/Ti") == "x812033727"
 
 
 def test_repo_owner_fails_closed_on_non_github_or_garbage():
