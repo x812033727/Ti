@@ -10,15 +10,17 @@ ro-bind 在擋，而非整個沙箱寫不進」。
   * 全程真實 `subprocess.run` 實跑，不 mock；無 bwrap 時 skip。
   * NET 走 `monkeypatch.setattr(runner.config, "SANDBOX_NET", True)`（等同
     TI_SANDBOX_NET=1），繞開受限 runner 的 `--unshare-net` loopback EPERM。
-  * 「host 預置可寫檔」策略隔離變因：探針檔建在 repo 根（host 可寫、且不在
-    `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內被 ro-bind
-    蓋成唯讀。先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；
-    此前提下沙箱內出現 EROFS 即確證 ro-bind 生效。
+  * 「host 預置可寫檔」策略隔離變因：探針檔建在 `/tmp`、cwd、`~/.cache`
+    之外的 host 可寫區，避免被 `--tmpfs /tmp` 或 `--bind cwd cwd` 蓋掉。
+    先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；此前提下
+    沙箱內出現 EROFS 即確證 ro-bind 生效。
 """
 
 import os
+import shlex
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from _repo import REPO_ROOT
@@ -34,19 +36,50 @@ needs_bwrap = pytest.mark.skipif(
 )
 
 
+def _is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _ro_probe_dirs() -> list[Path]:
+    blocked = [
+        Path("/tmp").resolve(),
+        REPO.resolve(),
+        Path(os.path.expanduser("~/.cache")).resolve(),
+    ]
+    out = []
+    for raw in (Path("/var/tmp"), Path.home(), Path("/var")):
+        base = raw.expanduser().resolve()
+        if any(_is_under(base, parent) for parent in blocked):
+            continue
+        out.append(base)
+    return out
+
+
 @pytest.fixture
 def host_probe():
     """在 repo 根（host 可寫區）預置一個探針檔，帶唯一後綴；測試後清理。
 
-    刻意不放 `~/`、`~/.cache`、`/tmp`、cwd——前三者在沙箱內是 tmpfs/可寫，
-    cwd 是 `--bind` 可寫，都無法驗到唯讀。repo 根被 `--ro-bind / /` 蓋成唯讀。
+    刻意不放 `/tmp`、cwd、`~/.cache`：前兩者在沙箱內是 tmpfs/可寫 bind，
+    cache 也是 tmpfs，都無法驗到唯讀。探針需落在純 `--ro-bind / /` 覆蓋區。
     """
-    probe = REPO / f".ti_ro_bind_probe_{os.getpid()}.txt"
-    probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
-    try:
-        yield probe
-    finally:
-        probe.unlink(missing_ok=True)
+    for base in _ro_probe_dirs():
+        if not base.is_dir():
+            continue
+        probe = base / f".ti_ro_bind_probe_{os.getpid()}.txt"
+        try:
+            probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
+        except OSError:
+            continue
+        try:
+            yield probe
+        finally:
+            probe.unlink(missing_ok=True)
+        return
+    pytest.skip("找不到 /tmp、cwd、cache 之外的 host 可寫探針目錄")
 
 
 @needs_bwrap
@@ -60,7 +93,7 @@ def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
     # ② 沙箱內以繼承前綴寫同一絕對路徑——應被 ro-bind 擋下。
     prefix = runner._bwrap_prefix(tmp_path)
     r = subprocess.run(
-        prefix + ["bash", "-c", f"echo TAINT > {host_probe}"],
+        prefix + ["bash", "-c", f"echo TAINT > {shlex.quote(str(host_probe))}"],
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
@@ -83,7 +116,7 @@ def test_bind_allows_write_to_writable_area(tmp_path, monkeypatch):
     prefix = runner._bwrap_prefix(tmp_path)
     target = tmp_path / "ok.txt"
     r = subprocess.run(
-        prefix + ["bash", "-c", f"echo OK > {target}"],
+        prefix + ["bash", "-c", f"echo OK > {shlex.quote(str(target))}"],
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
