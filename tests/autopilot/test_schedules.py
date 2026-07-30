@@ -120,9 +120,16 @@ def test_crud_validation_and_delete():
     assert got is None and err
     got, _ = schedules.update(s["id"], {"priority": 9, "type": "bug"})
     assert got["priority"] == 2 and got["type"] == "bug", "priority 夾 0-2"
+    s2, _ = schedules.create(
+        "非法 priority", "", {"kind": "daily", "time": "08:00"}, priority="high"
+    )
+    assert s2["priority"] == 1, "非法 priority 回預設 P1"
+    got, _ = schedules.update(s2["id"], {"priority": "urgent"})
+    assert got["priority"] == 1, "update 非法 priority 也回預設 P1"
     assert schedules.update("nope", {"title": "y"})[0] is None
     assert schedules.delete(s["id"]) is True
     assert schedules.delete(s["id"]) is False
+    assert schedules.delete(s2["id"]) is True
     assert schedules.list_schedules() == []
 
 
