@@ -62,6 +62,22 @@ def test_config_reload_tolerates_empty_and_garbage(monkeypatch):
     assert config.AUTOPILOT_FOLLOWUP_MAX_PER_TASK == 3, "垃圾值退回預設"
 
 
+def test_config_reload_updates_rlimit_values(monkeypatch):
+    monkeypatch.setenv("TI_RLIMIT_MEM_MB", "256")
+    monkeypatch.setenv("TI_RLIMIT_CPU_S", "45")
+    monkeypatch.setenv("TI_RLIMIT_FSIZE_MB", "8")
+    try:
+        config.reload()
+        assert config.RLIMIT_MEM_MB == 256
+        assert config.RLIMIT_CPU_S == 45
+        assert config.RLIMIT_FSIZE_MB == 8
+    finally:
+        monkeypatch.delenv("TI_RLIMIT_MEM_MB", raising=False)
+        monkeypatch.delenv("TI_RLIMIT_CPU_S", raising=False)
+        monkeypatch.delenv("TI_RLIMIT_FSIZE_MB", raising=False)
+        config.reload()
+
+
 def test_config_no_bare_numeric_getenv():
     src = (ROOT / "studio" / "config.py").read_text(encoding="utf-8")
     assert "int(os.getenv(" not in src, "config.py 禁裸 int(os.getenv(——一律走 _env_int"
