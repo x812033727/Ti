@@ -478,9 +478,10 @@ class RetryMetrics:
     outcome: str = ""
     events: list[str] = field(default_factory=list)
 
-    def _record_retry(self, delay: float) -> None:
+    def _record_retry(self, delay: float, *, kind: str = "rate_limit") -> None:
         self.retries += 1
-        self.rate_limit_hits += 1
+        if kind == "rate_limit":
+            self.rate_limit_hits += 1
         self.last_delay = delay
         self.total_delay += delay
 
@@ -655,7 +656,7 @@ async def run_with_retries(
                     # 429 以 retry-after 為主；529 過載無 retry-after，強制走純指數退避。
                     ra = retry_after if kind == "rate_limit" else None
                     delay = backoff(ra, attempt)
-                    metrics._record_retry(delay)
+                    metrics._record_retry(delay, kind=kind)
                     _emit(
                         observe,
                         EV_RETRY,
