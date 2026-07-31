@@ -122,6 +122,38 @@ def test_retry_metrics_accumulate_and_before_sleep_events():
     assert events[1][1]["total_delay"] == pytest.approx(3.0)
 
 
+# ── 過載退避：529 retry 不污染限流 hit 計數 ────────────────────────────────
+def test_overloaded_retry_does_not_increment_rate_limit_hits():
+    events, observe = _recorder()
+    metrics = lc.RetryMetrics()
+    calls = {"n": 0}
+
+    async def attempt():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise lc.OverloadedSignal(kind="overloaded_error", snippet="overloaded_error")
+        return "done"
+
+    out = _run(
+        lc.run_with_retries(
+            attempt,
+            max_retries=3,
+            on_rate_limit_exhausted=_exhausted,
+            on_api_error=_api_error,
+            backoff=lambda ra, a: 0.25,
+            sleep=_noop_sleep,
+            metrics=metrics,
+            observe=observe,
+        )
+    )
+    assert out == "done"
+    assert metrics.outcome == "success"
+    assert metrics.retries == 1
+    assert metrics.rate_limit_hits == 0
+    assert [e for e, _ in events] == [lc.EV_RETRY, lc.EV_SUCCESS]
+    assert events[0][1]["kind"] == "overloaded"
+
+
 # ── 限流耗盡：outcome 與事件 ────────────────────────────────────────────────
 def test_rate_limit_exhausted_outcome():
     events, observe = _recorder()
