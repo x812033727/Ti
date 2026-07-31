@@ -95,7 +95,7 @@ VERDICTS: dict[str, object] = {
     "pm_done": flow.pm_done,
 }
 
-# 內建 workflow 的保留名稱：get_workflow 命中不到時回對應內建定義；不可被同名檔案覆蓋。
+# 內建 workflow 的名稱常數：get_workflow 命中不到時回對應內建定義；不可被同名檔案覆蓋。
 DEFAULT_WORKFLOW_NAME = "預設流程"  # 等價現有寫死骨架
 DYNAMIC_FIRST_NAME = "動態優先"  # dynamic-first：PM 運行時溝通/分派/招募為主（互動預設）
 FAST_TRACK_NAME = "快速模式"  # fast-track：動態討論分派→實作→QA 單審，砍三審與任務級 critic 求速度
@@ -103,8 +103,6 @@ QUICK_ANSWER_NAME = "快答"  # 單一資深專家直接回答/完成小事(Kimi
 IMPLEMENT_FAST_NAME = (
     "原生快車道"  # 軌 I3:單 engineer 直做(decompose+implement+demo+publish),零多專家儀式
 )
-# 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
-RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME, QUICK_ANSWER_NAME)
 
 WORKFLOWS_FILENAME = "workflows.yaml"
 
@@ -478,6 +476,8 @@ _BUILTIN_WORKFLOWS = {
     QUICK_ANSWER_NAME: quick_answer_workflow,
     IMPLEMENT_FAST_NAME: implement_fast_workflow,
 }
+# 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
+RESERVED_NAMES = tuple(_BUILTIN_WORKFLOWS)
 
 
 def coerce(workflow: dict | None) -> dict:

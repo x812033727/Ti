@@ -213,10 +213,25 @@ def test_create_duplicate_name_returns_none(roles_dir):
     assert [s["type"] for s in workflow.get_workflow("w")["stages"]] == ["demo"]
 
 
+def test_reserved_names_cover_all_builtin_workflows():
+    assert set(workflow._BUILTIN_WORKFLOWS) <= set(workflow.RESERVED_NAMES)
+
+
 def test_cannot_create_reserved_default_name(roles_dir):
-    # 全部保留名（預設流程／動態優先）不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    # 全部內建保留名不可被檔案覆蓋（避免遮蔽內建單一真相）。
     for name in workflow.RESERVED_NAMES:
         assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
+
+
+def test_create_rejects_implement_fast_reserved_name(roles_dir):
+    assert workflow.create_workflow("原生快車道", "", [{"type": "demo"}]) is None
+    assert workflow.list_workflows() == []
+
+
+def test_create_allows_non_reserved_workflow_name(roles_dir):
+    wf = workflow.create_workflow("自訂快車道", "", [{"type": "demo"}])
+    assert wf is not None
+    assert wf["name"] == "自訂快車道"
 
 
 def test_dynamic_first_validates_and_resolvable(roles_dir):
