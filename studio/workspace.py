@@ -43,9 +43,10 @@ def safe_resolve(root: Path, rel: str, *, must_exist: bool = True) -> Path | Non
     3. `is_relative_to(root)` 確認仍落在 root 之內。
 
     讀取類呼叫端傳 `must_exist=True`（strict 解析，順帶擋不存在路徑與外部 symlink）。
-    `must_exist=False` 給「寫新檔」場景，避免尚未存在的目標被誤擋——注意此時 resolve
-    不對「不存在的尾段」展開 symlink，故「parent 為外部 symlink、往其中寫新檔」這條
-    逃逸路徑無法在此被完整擋下（已知缺口，見 tests）。
+    `must_exist=False` 給「寫新檔」場景，避免尚未存在的目標被誤擋；此時
+    resolve(strict=False) 仍會展開「已存在」的前綴 symlink，因此外部目錄 symlink
+    會被 containment 擋下。只有尚未存在的尾段本身不會展開，寫入端若要防 TOCTOU
+    仍應搭配原子寫入／不跟隨 symlink 的檢查。
     """
     try:
         p = Path(rel)
