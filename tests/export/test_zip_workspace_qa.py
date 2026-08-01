@@ -133,7 +133,7 @@ def test_safe_resolve_target_equals_root(tmp_path):
 def test_safe_resolve_write_through_existing_parent_symlink_blocked(tmp_path):
     """root 下放指向外部的 symlink 目錄、往其中寫『新檔』，仍應回 None：
     resolve(strict=False) 會展開『已存在』的前綴 symlink，故此逃逸被擋。
-    （已知缺口僅限前綴 symlink『尚不存在』的尾段情形，見 safe_resolve docstring。）"""
+    尚未存在的尾段本身無 symlink 可展開；寫入端若需防 TOCTOU 應另加原子檢查。"""
     outside = tmp_path.parent / "outside_dir"
     outside.mkdir()
     ws = tmp_path / "ws"
