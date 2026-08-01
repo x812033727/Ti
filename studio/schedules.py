@@ -109,6 +109,8 @@ def validate_recurrence(rec: dict) -> str:
 def occurrence_key(sched: dict, now: float) -> str | None:
     """now 這一刻該排程「應已觸發」的 occurrence key;尚未到期回 None。"""
     rec = sched.get("recurrence") or {}
+    if validate_recurrence(rec):
+        return None
     kind = rec.get("kind")
     t = time.gmtime(now)
     if kind in ("daily", "weekly"):

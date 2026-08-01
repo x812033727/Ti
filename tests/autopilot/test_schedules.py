@@ -51,6 +51,23 @@ def test_occurrence_key_daily_weekly_interval():
     assert k1 == k2 and k1 != k3, "同桶同 key、跨桶換 key"
 
 
+def test_occurrence_key_invalid_recurrence_returns_none():
+    assert (
+        schedules.occurrence_key(
+            {"recurrence": {"kind": "daily", "time": "bad"}},
+            _utc(2026, 7, 20, 9, 0),
+        )
+        is None
+    )
+    assert (
+        schedules.occurrence_key(
+            {"recurrence": {"kind": "interval_hours", "hours": "bad"}},
+            _utc(2026, 7, 20, 9, 0),
+        )
+        is None
+    )
+
+
 def test_validate_recurrence():
     assert schedules.validate_recurrence({"kind": "daily", "time": "23:59"}) == ""
     assert schedules.validate_recurrence({"kind": "daily", "time": "24:00"})
