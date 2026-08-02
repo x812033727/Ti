@@ -2,5 +2,7 @@
 
 本次以「核心可用、帶已知限制」版本交付；以下項目尚未滿足,已留待後續改良:
 
-- [ ] 在 config.py 三處同步（頂層宣告、reload() global、reload() 賦值）新增 `NOTIFY_WEBHOOK`（`TI_NOTIFY_WEBHOOK`，預設空字串）與 `NOTIFY_TIMEOUT`（`TI_NOTIFY_TIMEOUT`，預設 10 秒）兩鍵
-- [ ] 更新 prompt 規則與文件：教 PM 輸出 `禁改:` 行、載明 marker 格式與比對語意
+- [ ] 調查 studio/ 原始碼，靜態選定一個明確、自我包含的小改進主題（真實 bug／邊界／錯字／過時文件／缺漏驗證），輸出檔案、行段、問題描述與最小修法
+- [ ] 依 #1 選定主題做最小修正，若新增行為補上對應 tests/ 測試（不執行），commit 後推分支並以 gh 開 PR（描述含動機與驗證方式）
+- [ ] qa 實讀 PR diff 複核範圍與正確性，逐字輸出 `驗證: PASS`
+- [ ] senior 實讀 PR diff 審查，逐字輸出 `決議: 核可`
