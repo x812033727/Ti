@@ -248,6 +248,15 @@ def test_fast_track_validates_and_resolvable(roles_dir):
     assert build["task_pipeline"][1]["gate"] == [{"role": "qa", "verdict": "qa_passed"}]
 
 
+def test_implement_fast_reserved_and_resolvable(roles_dir):
+    wf = workflow.implement_fast_workflow()
+    assert wf["name"] == workflow.IMPLEMENT_FAST_NAME
+    assert workflow.IMPLEMENT_FAST_NAME in workflow.RESERVED_NAMES
+    assert workflow.validate_workflow(wf["name"], wf["description"], wf["stages"]) == wf
+    assert workflow.get_workflow(workflow.IMPLEMENT_FAST_NAME) == wf
+    assert workflow.create_workflow(workflow.IMPLEMENT_FAST_NAME, "", [{"type": "demo"}]) is None
+
+
 def test_default_workflow_config_resolves(roles_dir):
     # 互動預設名（config.DEFAULT_WORKFLOW）能解析成內建動態優先流程。
     from studio import config
