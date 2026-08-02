@@ -113,6 +113,16 @@ def test_stall_rounds_env_parsing(monkeypatch):
     assert config.STALL_ROUNDS == 3
 
 
+def test_stall_rounds_config_reload_env_parsing(monkeypatch):
+    monkeypatch.setenv("TI_STALL_ROUNDS", "5")
+    try:
+        config.reload()
+        assert config.STALL_ROUNDS == 5
+    finally:
+        monkeypatch.delenv("TI_STALL_ROUNDS", raising=False)
+        config.reload()
+
+
 def test_defaults():
     """重載乾淨環境後的預設：huddle／notes 開（學習機制預設啟用）、critic 關（opt-in）。"""
     import os
