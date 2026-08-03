@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -70,3 +72,32 @@ def test_add_task_truncates_long_detail(client):
     data = client.get(f"/api/projects/{pid}").json()
     task = next(t for t in data["backlog"] if t["title"] == "長細節任務")
     assert len(task["detail"]) <= 4000
+
+
+def test_projects_skip_invalid_meta_shapes(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "PROJECTS_ROOT", tmp_path / "projects")
+    root = config.PROJECTS_ROOT
+    good = {
+        "id": "good",
+        "name": "正常專案",
+        "vision": "",
+        "created_at": 1,
+        "updated_at": 1,
+        "sessions": [],
+    }
+    samples = {
+        "not-dict": [],
+        "missing-id": {"name": "缺 id"},
+        "good": good,
+    }
+    for project_id, meta in samples.items():
+        project_dir = root / project_id
+        project_dir.mkdir(parents=True)
+        (project_dir / "meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+        )
+
+    assert projects.get("not-dict") is None
+    assert projects.get("missing-id") is None
+    assert projects.get("good") == good
+    assert projects.list_projects() == [good]
