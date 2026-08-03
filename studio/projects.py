@@ -36,6 +36,20 @@ def _meta_path(project_id: str) -> Path:
     return _dir(project_id) / "meta.json"
 
 
+def _load_meta(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    # meta.json 可能被手動改壞；只接受最小可辨識的專案摘要。
+    if not isinstance(data, dict):
+        return None
+    project_id = data.get("id")
+    if not isinstance(project_id, str) or not project_id.strip():
+        return None
+    return data
+
+
 def state_dir(project_id: str) -> Path:
     """該專案 backlog 的 state 目錄（傳給 backlog.* 的 state_dir）。"""
     return _dir(project_id)
@@ -90,10 +104,7 @@ def get(project_id: str) -> dict | None:
     p = _meta_path(project_id)
     if not p.is_file():
         return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    return _load_meta(p)
 
 
 def list_projects() -> list[dict]:
@@ -103,10 +114,10 @@ def list_projects() -> list[dict]:
         return []
     metas: list[dict] = []
     for p in root.glob("*/meta.json"):
-        try:
-            metas.append(json.loads(p.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
+        meta = _load_meta(p)
+        if meta is None:
             continue
+        metas.append(meta)
     metas.sort(key=lambda m: m.get("created_at", 0), reverse=True)
     return metas
 
