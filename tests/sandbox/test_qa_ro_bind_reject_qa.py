@@ -10,8 +10,8 @@ ro-bind 在擋，而非整個沙箱寫不進」。
   * 全程真實 `subprocess.run` 實跑，不 mock；無 bwrap 時 skip。
   * NET 走 `monkeypatch.setattr(runner.config, "SANDBOX_NET", True)`（等同
     TI_SANDBOX_NET=1），繞開受限 runner 的 `--unshare-net` loopback EPERM。
-  * 「host 預置可寫檔」策略隔離變因：探針檔建在 repo 根（host 可寫、且不在
-    `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內被 ro-bind
+  * 「host 預置可寫檔」策略隔離變因：探針檔建在 host 原生可寫、且不在
+    `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區的目錄，故沙箱內被 ro-bind
     蓋成唯讀。先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；
     此前提下沙箱內出現 EROFS 即確證 ro-bind 生效。
 """
@@ -19,6 +19,7 @@ ro-bind 在擋，而非整個沙箱寫不進」。
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from _repo import REPO_ROOT
@@ -36,13 +37,33 @@ needs_bwrap = pytest.mark.skipif(
 
 @pytest.fixture
 def host_probe():
-    """在 repo 根（host 可寫區）預置一個探針檔，帶唯一後綴；測試後清理。
+    """在 host 可寫、沙箱唯讀可見區預置一個探針檔，帶唯一後綴；測試後清理。
 
-    刻意不放 `~/`、`~/.cache`、`/tmp`、cwd——前三者在沙箱內是 tmpfs/可寫，
-    cwd 是 `--bind` 可寫，都無法驗到唯讀。repo 根被 `--ro-bind / /` 蓋成唯讀。
+    刻意不放 `~/.cache`、`/tmp`、cwd——前兩者在沙箱內是 tmpfs，cwd 是
+    `--bind` 可寫，都無法驗到唯讀。工作區本身可能位於 `/tmp`，所以不能拿
+    repo 根當探針位置。
     """
-    probe = REPO / f".ti_ro_bind_probe_{os.getpid()}.txt"
-    probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
+    candidates = [Path(os.path.expanduser("~")), Path("/var/tmp")]
+    cache = Path(os.path.expanduser("~")) / ".cache"
+    probe = None
+    for base in candidates:
+        try:
+            resolved = base.resolve()
+            if (
+                str(resolved).startswith("/tmp/")
+                or resolved == Path("/tmp")
+                or resolved == REPO.resolve()
+                or resolved.is_relative_to(cache.resolve())
+            ):
+                continue
+            candidate = resolved / f".ti_ro_bind_probe_{os.getpid()}.txt"
+            candidate.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
+            probe = candidate
+            break
+        except OSError:
+            continue
+    if probe is None:
+        pytest.skip("找不到可寫且不會被 bwrap tmpfs/bind 覆蓋的 host probe 目錄")
     try:
         yield probe
     finally:

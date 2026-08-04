@@ -13,13 +13,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from studio import config, experts, providers
+from studio import config, events, experts, providers
 from studio.roles import BY_KEY
 
 
-def _msg(content=None, tool_calls=None):
+def _msg(content=None, tool_calls=None, usage=None):
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=tool_calls))]
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=tool_calls))],
+        usage=usage,
     )
 
 
@@ -66,8 +67,10 @@ def _cfg(monkeypatch):
     monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_BACKOFF_JITTER", 0.0)
 
 
-def _expert(chat, tmp_path):
-    return providers.OpenAIExpert(BY_KEY["engineer"], "sess", tmp_path, chat=chat, model="m")
+def _expert(chat, tmp_path, provider="openai"):
+    return providers.OpenAIExpert(
+        BY_KEY["engineer"], "sess", tmp_path, chat=chat, model="m", provider=provider
+    )
 
 
 def _rate_limit_err():
@@ -97,6 +100,30 @@ async def test_speak_retry_replays_runbash_side_effect_once(_cfg, tmp_path):
     assert chat.calls == 4
     # 核心斷言：副作用只發生一次（去重層命中，未重跑 append）
     assert (tmp_path / "log.txt").read_text().splitlines() == ["hi"]
+
+
+@pytest.mark.parametrize("provider", ["minimax", "gemini"])
+@pytest.mark.asyncio
+async def test_compatible_provider_retry_replay_uses_same_dedup_contract(_cfg, tmp_path, provider):
+    """MiniMax/Gemini 走 OpenAI 相容工具迴圈時，retry 重放同樣不得重跑寫入副作用。"""
+    args_json = json.dumps({"command": f"echo {provider} >> compat.txt"})
+    usage = SimpleNamespace(prompt_tokens=7, completion_tokens=3, total_tokens=10)
+    chat = ScriptedChat(
+        [
+            _msg(tool_calls=[_tc("call_1", "run_bash", args_json)], usage=usage),
+            _rate_limit_err(),
+            _msg(tool_calls=[_tc("call_2", "run_bash", args_json)], usage=usage),
+            _msg(content="完成", usage=usage),
+        ]
+    )
+    bucket, broadcast = collect()
+
+    out = await _expert(chat, tmp_path, provider=provider).speak("做事", broadcast)
+
+    assert out == "完成"
+    assert (tmp_path / "compat.txt").read_text().splitlines() == [provider]
+    token_events = [ev for ev in bucket if ev.type == events.EventType.TOKEN_USAGE]
+    assert token_events and token_events[-1].payload["provider"] == provider
 
 
 @pytest.mark.asyncio
