@@ -23,6 +23,7 @@ import urllib.request
 
 import pytest
 from _repo import REPO_ROOT
+from _server_lock import settings_server_lock
 
 ROOT = REPO_ROOT
 HOST = "127.0.0.1"
@@ -38,50 +39,51 @@ def _get(path: str, timeout: float = 3.0):
 
 @pytest.fixture(scope="module")
 def fields():
-    env = dict(os.environ)
-    # 空字串遮罩而非 pop：config.py 的 load_dotenv() 不覆蓋「已存在」的環境變數，
-    # 設 "" 可同時擋掉 .env 補值（pop 掉的鍵視同不存在、會被 .env 讀回——在含 .env
-    # 的樹跑會門禁重新啟用→永遠 401 假性「服務未就緒」），且語意等同未設定
-    # （auth_enabled()=bool("")=False；settings 欄位 set=bool("")=False）。
-    # 因此不再需要暫時改寫真實 .env（舊作法若測試被硬殺，還原不會執行，
-    # 門禁密碼/GITHUB_TOKEN 會直接從部署環境消失）。
-    env["TI_ACCESS_PASSWORD"] = ""  # 門禁停用 → /api/settings 直接放行
-    for k in SECRET_ENVS:
-        env[k] = ""  # 秘密欄位「未設定」→ set=false
-    env["TI_HOST"] = HOST
-    env["TI_PORT"] = str(PORT)
+    with settings_server_lock(ROOT):
+        env = dict(os.environ)
+        # 空字串遮罩而非 pop：config.py 的 load_dotenv() 不覆蓋「已存在」的環境變數，
+        # 設 "" 可同時擋掉 .env 補值（pop 掉的鍵視同不存在、會被 .env 讀回——在含 .env
+        # 的樹跑會門禁重新啟用→永遠 401 假性「服務未就緒」），且語意等同未設定
+        # （auth_enabled()=bool("")=False；settings 欄位 set=bool("")=False）。
+        # 因此不再需要暫時改寫真實 .env（舊作法若測試被硬殺，還原不會執行，
+        # 門禁密碼/GITHUB_TOKEN 會直接從部署環境消失）。
+        env["TI_ACCESS_PASSWORD"] = ""  # 門禁停用 → /api/settings 直接放行
+        for k in SECRET_ENVS:
+            env[k] = ""  # 秘密欄位「未設定」→ set=false
+        env["TI_HOST"] = HOST
+        env["TI_PORT"] = str(PORT)
 
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "studio.server"],
-        cwd=str(ROOT),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    try:
-        deadline = time.time() + 30
-        data = None
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                break
-            try:
-                status, body = _get("/api/settings")
-                if status == 200:
-                    data = json.loads(body)["fields"]
-                    break
-            except Exception:
-                time.sleep(0.4)
-        if data is None:
-            out = proc.stdout.read() if proc.poll() is not None and proc.stdout else ""
-            pytest.fail(f"服務未就緒或 /api/settings 不可達。輸出：\n{out}")
-        yield data
-    finally:
-        proc.terminate()
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "studio.server"],
+            cwd=str(ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
         try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            deadline = time.time() + 30
+            data = None
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    break
+                try:
+                    status, body = _get("/api/settings")
+                    if status == 200:
+                        data = json.loads(body)["fields"]
+                        break
+                except Exception:
+                    time.sleep(0.4)
+            if data is None:
+                out = proc.stdout.read() if proc.poll() is not None and proc.stdout else ""
+                pytest.fail(f"服務未就緒或 /api/settings 不可達。輸出：\n{out}")
+            yield data
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 def _by_env(fields):

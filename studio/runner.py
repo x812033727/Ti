@@ -113,6 +113,53 @@ def _worktree_common_git_dir(cwd: Path | str) -> Path | None:
     return admin.parent.parent  # 後備：worktrees/<name> 往上兩層即共用 .git
 
 
+def _abs_lexical_path(path: Path | str) -> Path:
+    """絕對化但不解 symlink；mount visibility 看的是 argv 字面路徑。"""
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _tmpfs_hidden_ro_binds(cwd: Path | str, candidates: list[Path | str]) -> list[Path]:
+    """回傳需在 `--tmpfs /tmp` 後補回的唯讀主機路徑。
+
+    `--ro-bind / /` 之後再 `--tmpfs /tmp` 會把所有位在 /tmp 的唯讀 host 路徑蓋掉。
+    只把 repo/venv 這類執行所需路徑以 ro-bind 補回；cwd 仍由後續 --bind 掛為唯一可寫區。
+    """
+    cwd_path = _abs_lexical_path(cwd)
+    tmp_root = Path("/tmp")
+    paths: list[Path] = []
+    for raw in candidates:
+        path = _abs_lexical_path(raw)
+        if not _is_relative_to(path, tmp_root):
+            continue
+        if path == cwd_path or _is_relative_to(path, cwd_path):
+            continue
+        if not path.exists():
+            continue
+        if any(path == existing or _is_relative_to(path, existing) for existing in paths):
+            continue
+        paths = [existing for existing in paths if not _is_relative_to(existing, path)]
+        paths.append(path)
+    return paths
+
+
+def _sandbox_hidden_ro_bind_candidates() -> list[Path]:
+    repo_root = Path(__file__).resolve().parents[1]
+    executable = _abs_lexical_path(sys.executable)
+    if executable.parent.name == "bin":
+        executable_root = executable.parent.parent
+    else:
+        executable_root = executable.parent
+    return [repo_root, executable_root]
+
+
 def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
 
@@ -137,6 +184,10 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         "/tmp",
         "--tmpfs",
         cache,
+    ]
+    for path in _tmpfs_hidden_ro_binds(cwd, _sandbox_hidden_ro_bind_candidates()):
+        args += ["--ro-bind", str(path), str(path)]
+    args += [
         "--bind",
         cwd,
         cwd,

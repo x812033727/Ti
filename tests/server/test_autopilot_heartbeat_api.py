@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from studio import config
+from studio import admission_mode, config
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,6 +51,57 @@ def test_autopilot_status_includes_heartbeat(client, tmp_path):
     (tmp_path / "status.json").write_text(json.dumps(hb, ensure_ascii=False), encoding="utf-8")
     data = client.get("/api/autopilot").json()
     assert data["heartbeat"] == hb
+
+
+def test_autopilot_status_reports_effective_admission_mode_not_desired(client):
+    admission_mode.bootstrap_at_task_boundary(
+        "shadow",
+        initial_effective="shadow",
+        release_holds=lambda _mode: 0,
+    )
+    admission_mode.request("enforce")
+
+    data = client.get("/api/autopilot").json()
+
+    assert data["task_admission_mode"] == "shadow"
+    assert data["task_admission_mode_state"]["effective"] == "shadow"
+    assert data["task_admission_mode_state"]["desired"] == "enforce"
+    assert data["task_admission_mode_state"]["pending"] is True
+
+
+def test_autopilot_status_uses_worker_fault_heartbeat_over_healthy_file(client, tmp_path):
+    admission_mode.bootstrap_at_task_boundary(
+        "shadow",
+        initial_effective="shadow",
+        release_holds=lambda _mode: 0,
+    )
+    hb = {
+        "state": "admission_mode_fault",
+        "task_id": None,
+        "sleep_until": 1234.5,
+        "updated_at": 1000.0,
+        "admission_mode": {
+            "schema_version": 1,
+            "desired": "shadow",
+            "effective": "shadow",
+            "generation": 1,
+            "effective_generation": 1,
+            "pending": False,
+            "healthy": False,
+            "error": "hold_release_failed",
+            "requested_at": 10.0,
+            "applied_at": 10.0,
+            "released_holds": 0,
+        },
+    }
+    (tmp_path / "status.json").write_text(json.dumps(hb, ensure_ascii=False), encoding="utf-8")
+
+    data = client.get("/api/autopilot").json()
+
+    assert data["heartbeat"] == hb
+    assert data["task_admission_mode"] == "shadow"
+    assert data["task_admission_mode_state"]["healthy"] is False
+    assert data["task_admission_mode_state"]["error"] == "hold_release_failed"
 
 
 def test_autopilot_status_exposes_pr_budget(client, tmp_path):
