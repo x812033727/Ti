@@ -136,6 +136,14 @@ if (!killSwitchHeld.retry || !killSwitchHeld.unpark) {
   console.error("FAIL: off kill switch 必須恢復 admission-held 任務的 legacy 操作");
   process.exit(1);
 }
+const pendingDesiredEnforce = mod.taskActionPolicy({
+  status: "parked",
+  admission: { outcome: "needs_clarification" },
+}, "shadow");
+if (!pendingDesiredEnforce.retry || !pendingDesiredEnforce.unpark) {
+  console.error("FAIL: desired=enforce 等待 ack 時 UI 必須依 effective=shadow 保留 legacy 操作");
+  process.exit(1);
+}
 const releasedHeld = mod.taskActionPolicy({
   status: "parked",
   admission: { outcome: "blocked", released_by_mode: "off" },

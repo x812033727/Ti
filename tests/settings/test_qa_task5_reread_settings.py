@@ -24,6 +24,7 @@ import urllib.request
 
 import pytest
 from _repo import REPO_ROOT
+from _server_lock import settings_server_lock
 
 ROOT = REPO_ROOT
 ENV = ROOT / ".env"
@@ -57,60 +58,61 @@ def _post(path, body, timeout=3.0):
 @pytest.fixture(scope="module")
 def reread():
     """起服務 → POST 寫入秘密+非秘密 → 回傳 (raw_get_body, fields)。teardown 還原 .env。"""
-    backup = ENV.read_bytes() if ENV.exists() else None  # POST 會寫 .env，收尾還原
-    env = dict(os.environ)
-    # 空字串遮罩而非 pop：load_dotenv 不覆蓋已存在變數，"" 可擋 .env 補值
-    # （pop 掉的鍵會被 .env 讀回→門禁重啟→永遠 401 假性「服務未就緒」），
-    # 語意等同未設定（auth_enabled()/set 皆以 bool 判斷）。
-    env["TI_ACCESS_PASSWORD"] = ""
-    for k in SECRET_ENVS:
-        env[k] = ""
-    env["TI_HOST"] = HOST
-    env["TI_PORT"] = str(PORT)
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "studio.server"],
-        cwd=str(ROOT),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    try:
-        deadline = time.time() + 30
-        ready = False
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                break
-            try:
-                if _get("/api/settings")[0] == 200:
-                    ready = True
-                    break
-            except Exception:
-                time.sleep(0.4)
-        if not ready:
-            out = proc.stdout.read() if proc.poll() is not None and proc.stdout else ""
-            pytest.fail(f"服務未就緒。輸出：\n{out}")
-        # 寫入秘密 + 非秘密
-        _post(
-            "/api/settings",
-            {
-                "GITHUB_TOKEN": GH,
-                "ANTHROPIC_API_KEY": ANT,
-                "TI_MODEL_LEAD": LEAD,
-                "TI_PUBLISH_REPO": REPO,
-            },
+    with settings_server_lock(ROOT):
+        backup = ENV.read_bytes() if ENV.exists() else None  # POST 會寫 .env，收尾還原
+        env = dict(os.environ)
+        # 空字串遮罩而非 pop：load_dotenv 不覆蓋已存在變數，"" 可擋 .env 補值
+        # （pop 掉的鍵會被 .env 讀回→門禁重啟→永遠 401 假性「服務未就緒」），
+        # 語意等同未設定（auth_enabled()/set 皆以 bool 判斷）。
+        env["TI_ACCESS_PASSWORD"] = ""
+        for k in SECRET_ENVS:
+            env[k] = ""
+        env["TI_HOST"] = HOST
+        env["TI_PORT"] = str(PORT)
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "studio.server"],
+            cwd=str(ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
-        # 重新讀取
-        _, raw = _get("/api/settings")
-        yield raw, json.loads(raw)["fields"]
-    finally:
-        proc.terminate()
         try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        if backup is not None:
-            ENV.write_bytes(backup)
+            deadline = time.time() + 30
+            ready = False
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    break
+                try:
+                    if _get("/api/settings")[0] == 200:
+                        ready = True
+                        break
+                except Exception:
+                    time.sleep(0.4)
+            if not ready:
+                out = proc.stdout.read() if proc.poll() is not None and proc.stdout else ""
+                pytest.fail(f"服務未就緒。輸出：\n{out}")
+            # 寫入秘密 + 非秘密
+            _post(
+                "/api/settings",
+                {
+                    "GITHUB_TOKEN": GH,
+                    "ANTHROPIC_API_KEY": ANT,
+                    "TI_MODEL_LEAD": LEAD,
+                    "TI_PUBLISH_REPO": REPO,
+                },
+            )
+            # 重新讀取
+            _, raw = _get("/api/settings")
+            yield raw, json.loads(raw)["fields"]
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            if backup is not None:
+                ENV.write_bytes(backup)
 
 
 def _by_env(fields):
