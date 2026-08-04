@@ -54,6 +54,21 @@ def test_bwrap_prefix_binds_worktree_common_git_writable(tmp_path, monkeypatch):
     assert ["--bind", common, common] in triples, f"缺少共用 .git 的可寫 bind：{args}"
 
 
+def test_tmpfs_hidden_ro_binds_restore_tmp_repo_paths(tmp_path):
+    """repo/venv 位在 /tmp 時，tmpfs 後需唯讀補回；cwd 仍由後續 --bind 管可寫。"""
+    repo = tmp_path / "repo"
+    venv = repo / ".venv"
+    work = tmp_path / "work"
+    subdir = repo / "subdir"
+    venv.mkdir(parents=True)
+    work.mkdir()
+    subdir.mkdir()
+
+    assert runner._tmpfs_hidden_ro_binds(work, [repo, venv, work]) == [repo]
+    assert runner._tmpfs_hidden_ro_binds(subdir, [repo, venv, subdir]) == [repo]
+    assert runner._tmpfs_hidden_ro_binds(repo, [repo, venv]) == []
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(not config._sandbox_available(), reason="環境無 bwrap，無法驗沙箱路徑")
 async def test_sandboxed_lane_commit_and_merge_land_files(tmp_path, monkeypatch):
