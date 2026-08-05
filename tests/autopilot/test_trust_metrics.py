@@ -149,6 +149,18 @@ def test_jsonl_log_compaction(tmp_path, monkeypatch):
     assert '"kind": "old"' in archived
 
 
+def test_jsonl_log_read_window_tolerates_invalid_utf8_line(tmp_path):
+    path = tmp_path / "ap" / "bad-utf8.jsonl"
+    now = time.time()
+    before = json.dumps({"ts": now, "kind": "before"}, ensure_ascii=False).encode("utf-8")
+    after = json.dumps({"ts": now, "kind": "after"}, ensure_ascii=False).encode("utf-8")
+    path.write_bytes(before + b"\n\xff\xfe\n" + after + b"\n")
+
+    kinds = [r["kind"] for r in jsonl_log.read_window(path, 1)]
+
+    assert kinds == ["before", "after"], "非法 UTF-8 行應退化成壞行並被跳過"
+
+
 def test_trust_metrics_excludes_drill_events(tmp_path):
     """演練事件(drill=true)驗證告警管道,不得計入營運事件——否則做演練
     反而懲罰升階條件(deploy_verify_green 的 7 天失敗數)。"""
