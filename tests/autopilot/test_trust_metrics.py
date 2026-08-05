@@ -154,6 +154,7 @@ def test_jsonl_log_read_window_tolerates_invalid_utf8_line(tmp_path):
     now = time.time()
     before = json.dumps({"ts": now, "kind": "before"}, ensure_ascii=False).encode("utf-8")
     after = json.dumps({"ts": now, "kind": "after"}, ensure_ascii=False).encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(before + b"\n\xff\xfe\n" + after + b"\n")
 
     kinds = [r["kind"] for r in jsonl_log.read_window(path, 1)]
