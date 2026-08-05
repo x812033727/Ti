@@ -95,6 +95,11 @@ def _no_real_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
 
+    async def _smoke_ok():
+        return runner.RunOutput("import smoke", 0, "", False)
+
+    monkeypatch.setattr(redeploy, "import_smoke", _smoke_ok)
+
 
 def test_publish_config_exposes_merge(client, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
@@ -114,6 +119,22 @@ def test_redeploy_endpoint_contract(client, monkeypatch):
     body = client.post("/api/redeploy").json()
     # 前端 renderRedeploy 依賴 ok / detail
     assert "ok" in body and "detail" in body
+    assert body["ok"] is True
+
+
+def test_redeploy_endpoint_does_not_run_import_smoke_subprocess(client, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+
+    async def fake_pull():
+        return runner.RunOutput("git pull", 0, "Already up to date.", False)
+
+    async def fail_if_real_import_smoke_runs(*_args, **_kwargs):
+        raise AssertionError("endpoint success path should use mocked import_smoke")
+
+    monkeypatch.setattr(redeploy, "pull_main", fake_pull)
+    monkeypatch.setattr(runner, "run_command_exec", fail_if_real_import_smoke_runs)
+
+    body = client.post("/api/redeploy").json()
     assert body["ok"] is True
 
 

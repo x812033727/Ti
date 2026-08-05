@@ -35,6 +35,11 @@ def _no_real_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
 
+    async def _smoke_ok():
+        return runner.RunOutput("import smoke", 0, "", False)
+
+    monkeypatch.setattr(redeploy, "import_smoke", _smoke_ok)
+
 
 # --- pull_main ------------------------------------------------------
 @pytest.mark.asyncio
@@ -98,6 +103,21 @@ async def test_redeploy_dict_shape(monkeypatch):
     res = await redeploy.redeploy()
     assert set(res) == {"ok", "pulled", "restarting", "detail"}
     assert res["ok"] and res["pulled"] and res["restarting"]
+
+
+@pytest.mark.asyncio
+async def test_success_path_does_not_run_import_smoke_subprocess(monkeypatch):
+    async def fake_pull():
+        return runner.RunOutput("git pull", 0, "Already up to date.", False)
+
+    async def fail_if_real_import_smoke_runs(*_args, **_kwargs):
+        raise AssertionError("success path should use mocked import_smoke")
+
+    monkeypatch.setattr(redeploy, "pull_main", fake_pull)
+    monkeypatch.setattr(runner, "run_command_exec", fail_if_real_import_smoke_runs)
+
+    res = await redeploy.redeploy()
+    assert res["ok"] and res["restarting"]
 
 
 @pytest.mark.asyncio
