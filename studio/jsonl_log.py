@@ -52,7 +52,7 @@ def read_window(path: Path, days: int) -> list[dict]:
     cutoff = time.time() - days * 86400
     out: list[dict] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
     for line in lines:
@@ -76,7 +76,7 @@ def _maybe_compact(path: Path) -> None:
     cutoff = time.time() - KEEP_DAYS * 86400
     keep: list[str] = []
     old: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
             continue
