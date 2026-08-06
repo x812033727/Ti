@@ -54,6 +54,30 @@ async def test_pull_main_uses_project_root_ff_only(monkeypatch):
     assert captured["argv"] == ["git", "pull", "--ff-only"]
 
 
+@pytest.mark.asyncio
+async def test_import_smoke_uses_runner_without_real_subprocess(monkeypatch):
+    captured = {}
+
+    async def fake_run(cwd, argv, timeout=None, sandbox=None, label=None):
+        captured["cwd"] = cwd
+        captured["argv"] = argv
+        captured["timeout"] = timeout
+        captured["sandbox"] = sandbox
+        captured["label"] = label
+        return runner.RunOutput("import smoke", 0, "ok", False)
+
+    monkeypatch.setattr(runner, "run_command_exec", fake_run)
+    out = await redeploy.import_smoke()
+    assert out.ok
+    assert captured == {
+        "cwd": config.PROJECT_ROOT,
+        "argv": [sys.executable, "-c", "import studio.server"],
+        "timeout": 60,
+        "sandbox": False,
+        "label": "import smoke",
+    }
+
+
 # --- _do_restart / schedule_restart ---------------------------------
 def test_do_restart_reexecs_with_argv(monkeypatch):
     calls = {}

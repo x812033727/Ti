@@ -24,6 +24,38 @@ def test_old_bare_fetch_black_sample_is_rejected():
 
 
 @pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_uses_force_refspec(tmp_path, monkeypatch):
+    branch = "deploy/test"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot, "_git_cred_argv", lambda: [])
+    monkeypatch.setattr(autopilot, "_git_cred_env", lambda: None)
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if cmd[:3] == ["git", "fetch", "origin"]:
+            return 0, ""
+        if cmd in (
+            ["git", "reset", "--hard", "HEAD"],
+            ["git", "clean", "-fdq"],
+            ["git", "checkout", "-q", branch],
+            ["git", "reset", "--hard", f"origin/{branch}"],
+            ["git", "config", "user.email", "noreply@anthropic.com"],
+            ["git", "config", "user.name", "Ti Autopilot"],
+        ):
+            return 0, ""
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    assert await autopilot._prepare_clone(str(work)) == str(work)
+    _assert_force_fetch_seen(calls, branch)
+
+
+@pytest.mark.asyncio
 async def test_autodeploy_fetch_uses_force_refspec(tmp_path, monkeypatch):
     branch = "deploy/test"
     calls: list[list[str]] = []
