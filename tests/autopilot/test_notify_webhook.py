@@ -43,6 +43,7 @@ def _capture_urlopen(monkeypatch, *, boom=False):
                 "url": req.full_url,
                 "body": json.loads(req.data.decode("utf-8")),
                 "method": req.get_method(),
+                "timeout": timeout,
             }
         )
         return _Resp()
@@ -60,9 +61,11 @@ def test_send_noop_without_webhook(monkeypatch):
 
 def test_send_posts_json_payload(monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", 2.5)
     calls = _capture_urlopen(monkeypatch)
     assert notify.send("loop_stall", "主迴圈停滯", idle_for=900) is True
     assert calls[0]["url"] == "https://hook.example/ti" and calls[0]["method"] == "POST"
+    assert calls[0]["timeout"] == 2.5
     assert calls[0]["body"] == {
         "source": "ti",
         "kind": "loop_stall",
