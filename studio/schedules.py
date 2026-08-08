@@ -215,7 +215,7 @@ def delete(sched_id: str, *, state_dir: Path | None = None) -> bool:
 
 
 def enqueue_due(now: float | None = None, *, state_dir: Path | None = None) -> int:
-    """把到期且本 occurrence 未觸發過的排程插入 backlog;回入列數。
+    """把到期且本 occurrence 未觸發過的排程插入 backlog;回傳入列數。
 
     任何單一排程的錯誤只 log 不擴散;backlog.add 回 None(同標題已存在=前次未消化)
     視為本次跳過,但 key 照記——「跳過」也是這個 occurrence 的處置,下個 occurrence 再來。
