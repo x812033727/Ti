@@ -36,10 +36,15 @@ def _parse_ip(segment: str) -> _IPAddress | None:
         end = s.find("]")
         if end == -1:
             return None
+        suffix = s[end + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return None
         host = s[1:end]
     elif s.count(":") == 1:
         # 剛好一個冒號 → 視為 IPv4:port。
-        host = s.split(":", 1)[0]
+        host, port = s.split(":", 1)
+        if not port.isdigit():
+            return None
     else:
         # 無冒號（裸 IPv4）或多個冒號（裸 IPv6，無 port）。
         host = s
