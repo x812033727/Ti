@@ -290,6 +290,12 @@ def test_client_ip_malformed_ipv4_port_breaks_chain_fallback_peer(proxy):
     assert netutil.client_ip(req) == "127.0.0.1"
 
 
+def test_client_ip_unicode_digit_ipv4_port_breaks_chain_fallback_peer(proxy):
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="203.0.113.9:²")
+    assert netutil.client_ip(req) == "127.0.0.1"
+
+
 def test_client_ip_strips_ipv6_bracket_port(proxy):
     proxy(True)
     req = make_request(peer="127.0.0.1", xff="[2001:db8::1]:443")
