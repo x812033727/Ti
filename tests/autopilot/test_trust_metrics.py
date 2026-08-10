@@ -151,7 +151,7 @@ def test_jsonl_log_compaction(tmp_path, monkeypatch):
 
 def test_jsonl_log_compaction_archives_non_object_json_lines(tmp_path, monkeypatch):
     path = tmp_path / "ap" / "x.jsonl"
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("[]\n", encoding="utf-8")
     monkeypatch.setattr(jsonl_log, "MAX_BYTES", 1)  # 強制觸發壓實
 
