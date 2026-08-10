@@ -129,6 +129,12 @@ async def _run(
     except asyncio.TimeoutError:
         runner.kill_process_group(proc)
         return -1, f"(逾時 {timeout}s)"
+    except asyncio.CancelledError:
+        # 外層取消仍要清掉整組子程序，避免 autopilot 停機後命令繼續跑。
+        runner.kill_process_group(proc)
+        with contextlib.suppress(ProcessLookupError):
+            await proc.wait()
+        raise
     return proc.returncode if proc.returncode is not None else -1, out.decode("utf-8", "replace")
 
 
