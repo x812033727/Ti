@@ -609,7 +609,7 @@ def parse_demo_url(text: str) -> str | None:
     m = re.search(r"(?:Demo ?網址|demo ?url)\s*[:：]\s*(\S+)", text, re.I)
     if not m:
         return None
-    url = m.group(1).strip().strip("`")
+    url = m.group(1).strip().strip("`").rstrip("`.,，。；;）)]}")
     if re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?(/|$)", url):
         return url
     return None
