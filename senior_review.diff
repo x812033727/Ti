@@ -1,0 +1,154 @@
+diff --git a/docs/loopback-endpoint-audit.md b/docs/loopback-endpoint-audit.md
+index c4f82a1..944d2f8 100644
+--- a/docs/loopback-endpoint-audit.md
++++ b/docs/loopback-endpoint-audit.md
+@@ -33,6 +33,9 @@
+ | POST | `/api/autopilot/task/{task_id}/action` | admin（auth｜fail-safe loopback） | ✅ | 看板手動操作單一任務（retry/park/unpark/priority），改寫 backlog 狀態 |
+ | POST | `/api/autopilot/task/{task_id}/admission-override` | admin（auth｜fail-safe loopback） | ✅ | 一次性覆寫任務品質准入，scope 綁 task／contract hash／repo SHA；不繞過風險、CI、合併或部署治理 |
+ | POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
++| DELETE | `/api/history/{session_id}` | admin（auth｜fail-safe loopback） | ✅ | 刪除歷史紀錄，直接移除資料與相關 workspace 殘留；屬破壞性寫入 |
++| POST | `/api/history/cleanup/completed` | admin（auth｜fail-safe loopback） | ✅ | 清理已完成歷史，屬破壞性寫入 |
++| POST | `/api/history/cleanup/retention` | admin（auth｜fail-safe loopback） | ✅ | 依保留策略回收超量/過舊歷史，屬破壞性寫入 |
+ | POST | `/api/notify/test` | admin（auth｜fail-safe loopback） | ✅ | 發送測試推播（webhook/Telegram）＝觸發對外網路呼叫且間接證實已設憑證，管理面操作 |
+ | POST | `/api/notify/red-drills` | admin（auth｜fail-safe loopback） | ✅ | 安全送出全部紅色合成告警並記錄 delivery evidence；不執行真實部署或 rollback |
+ | POST | `/api/autonomy/preflight/snapshot` | admin（auth｜fail-safe loopback） | ✅ | 保存帶內容 hash 的觀察窗 preflight 證據並寫 audit；紅燈快照也保留 |
+@@ -97,9 +100,6 @@
+ 
+ | 方法 | 路徑 | 現況 deps | 理由 |
+ |------|------|-----------|------|
+-| DELETE | `/api/history/{session_id}` | auth | 刪除歷史紀錄，作用於資料而非機器控制面；門禁已足夠 |
+-| POST | `/api/history/cleanup/completed` | auth | 清理已完成歷史，同上 |
+-| POST | `/api/history/cleanup/retention` | auth | 依保留策略回收超量/過舊歷史，作用於資料面而非機器控制面；同上 |
+ | POST | `/api/projects` | auth | 建立專案（寫 meta 與空 workspace 目錄），純資料面；與 /ws 同屬核心產品操作，須對已登入外網使用者可用 |
+ | POST | `/api/projects/{project_id}/backlog` | auth | 往「專案」backlog 排改良任務。與 autopilot 的任務注入端點（納管）不同：專案任務僅在已登入使用者經 /ws 主動啟動持續改良時才執行，且專家 bash 走 bwrap 沙箱（與 /ws 同安全模型），非無人值守自動執行 |
+ | POST | `/api/projects/{project_id}/recover` | auth | 中斷恢復：把卡在 in_progress 的 backlog 任務重置回 pending、幽靈 running meta 標 error，皆冪等且僅作用於該專案的資料面；迴圈進行中回 409 防競爭，不啟動任何執行（重啟由前端走 /ws 既有流程） |
+diff --git a/studio/routes.py b/studio/routes.py
+index 25b2c28..a8053ed 100644
+--- a/studio/routes.py
++++ b/studio/routes.py
+@@ -508,18 +508,18 @@ async def history_events(session_id: str, offset: int = 0, limit: int = 0) -> JS
+     return JSONResponse({"meta": meta, "events": await asyncio.to_thread(_slice)})
+ 
+ 
+-@router.delete("/api/history/{session_id}", dependencies=[Depends(auth.require_auth)])
++@router.delete("/api/history/{session_id}", dependencies=WRITE_DEPS)
+ async def history_delete(session_id: str) -> JSONResponse:
+     ok = history.delete_session(session_id)
+     return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+ 
+ 
+-@router.post("/api/history/cleanup/completed", dependencies=[Depends(auth.require_auth)])
++@router.post("/api/history/cleanup/completed", dependencies=WRITE_DEPS)
+ async def history_cleanup_completed() -> JSONResponse:
+     return JSONResponse({"deleted": history.delete_completed_sessions()})
+ 
+ 
+-@router.post("/api/history/cleanup/retention", dependencies=[Depends(auth.require_auth)])
++@router.post("/api/history/cleanup/retention", dependencies=WRITE_DEPS)
+ async def history_cleanup_retention() -> JSONResponse:
+     """依保留策略（TI_HISTORY_MAX_COUNT / TI_HISTORY_MAX_AGE）手動觸發一次回收。"""
+     return JSONResponse({"deleted": history.enforce_retention()})
+diff --git a/tests/core/test_history_retention.py b/tests/core/test_history_retention.py
+index 3656e04..da5ca1e 100644
+--- a/tests/core/test_history_retention.py
++++ b/tests/core/test_history_retention.py
+@@ -114,12 +114,12 @@ def test_retention_endpoint(monkeypatch):
+ 
+     from studio.server import app
+ 
+-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → require_auth 放行
++    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → require_admin 走 loopback 放行
+     monkeypatch.setattr(config, "HISTORY_MAX_COUNT", 2)
+     monkeypatch.setattr(config, "HISTORY_MAX_AGE", 0)
+     for i in range(4):
+         _make(f"s{i}", started_at=float(i))
+-    client = TestClient(app)
++    client = TestClient(app, client=("127.0.0.1", 12345))
+     resp = client.post("/api/history/cleanup/retention")
+     assert resp.status_code == 200
+     assert resp.json() == {"deleted": 2}
+diff --git a/tests/server/test_history_cleanup.py b/tests/server/test_history_cleanup.py
+index 8f2e9e8..f3bfa51 100644
+--- a/tests/server/test_history_cleanup.py
++++ b/tests/server/test_history_cleanup.py
+@@ -1,8 +1,8 @@
+-"""POST /api/history/cleanup/completed 行為測試：只刪已完成場、保留其餘、空集合回 0。
++"""History 破壞性端點測試：清理/刪除行為與未設密碼時的本機限制。
+ 
+ cleanup/completed 委派 history.delete_completed_sessions（破壞性）。retention 端點已由
+-tests/core/test_history_retention.py 覆蓋，本檔專補 completed 這條原本零覆蓋的路徑。
+-端點走 require_auth；門禁停用（ACCESS_PASSWORD=""）即放行，無需 loopback peer。
++tests/core/test_history_retention.py 覆蓋，本檔專補 completed 這條原本零覆蓋的路徑，
++以及三個 history 破壞性端點在門禁停用時只允許 loopback peer。
+ """
+ 
+ from __future__ import annotations
+@@ -15,12 +15,22 @@ from studio import config, history
+ 
+ @pytest.fixture
+ def client(tmp_path, monkeypatch):
+-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # require_auth 放行
++    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # require_admin 放行 loopback
+     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "history")
+     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "workspaces")
+     from studio.server import app
+ 
+-    return TestClient(app)
++    return TestClient(app, client=("127.0.0.1", 12345))
++
++
++@pytest.fixture
++def public_client(tmp_path, monkeypatch):
++    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
++    monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "history")
++    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "workspaces")
++    from studio.server import app
++
++    return TestClient(app, client=("203.0.113.5", 40000))
+ 
+ 
+ def _make(sid: str, status: str) -> None:
+@@ -49,3 +59,28 @@ def test_cleanup_completed_empty_returns_zero(client):
+     assert res.status_code == 200
+     assert res.json() == {"deleted": 0}
+     assert _ids() == {"running1"}  # 無可清場次，原樣留存
++
++
++def test_public_peer_cannot_cleanup_completed(public_client):
++    _make("done1", "completed")
++    _make("running1", "running")
++    res = public_client.post("/api/history/cleanup/completed")
++    assert res.status_code == 403
++    assert _ids() == {"done1", "running1"}
++
++
++def test_public_peer_cannot_cleanup_retention(public_client, monkeypatch):
++    monkeypatch.setattr(config, "HISTORY_MAX_COUNT", 1)
++    monkeypatch.setattr(config, "HISTORY_MAX_AGE", 0)
++    _make("old1", "completed")
++    _make("old2", "completed")
++    res = public_client.post("/api/history/cleanup/retention")
++    assert res.status_code == 403
++    assert _ids() == {"old1", "old2"}
++
++
++def test_public_peer_cannot_delete_session(public_client):
++    _make("done1", "completed")
++    res = public_client.delete("/api/history/done1")
++    assert res.status_code == 403
++    assert _ids() == {"done1"}
+diff --git a/tests/test_qa_task5_audit_table.py b/tests/test_qa_task5_audit_table.py
+index 842d523..20db79a 100644
+--- a/tests/test_qa_task5_audit_table.py
++++ b/tests/test_qa_task5_audit_table.py
+@@ -134,6 +134,10 @@ def test_audit_managed_set_matches_decision():
+         # 排程任務(Kimi PR10):週期性注入 autopilot 任務,與 /api/autopilot/task 同級納管。
+         "/api/schedules",
+         "/api/schedules/{sched_id}",
++        # history 破壞性操作：刪除/清理/保留策略回收都會直接改資料面，已納管。
++        "/api/history/{session_id}",
++        "/api/history/cleanup/completed",
++        "/api/history/cleanup/retention",
+         # 看板手動操作(C1):改寫 backlog 狀態(retry/park/unpark/priority),與 triage 同級納管。
+         "/api/autopilot/task/{task_id}/action",
+         # Admission quality override:一次性 scope-bound 取回，仍不得繞過治理/CI。

@@ -134,6 +134,10 @@ def test_audit_managed_set_matches_decision():
         # 排程任務(Kimi PR10):週期性注入 autopilot 任務,與 /api/autopilot/task 同級納管。
         "/api/schedules",
         "/api/schedules/{sched_id}",
+        # history 破壞性操作：刪除/清理/保留策略回收都會直接改資料面，已納管。
+        "/api/history/{session_id}",
+        "/api/history/cleanup/completed",
+        "/api/history/cleanup/retention",
         # 看板手動操作(C1):改寫 backlog 狀態(retry/park/unpark/priority),與 triage 同級納管。
         "/api/autopilot/task/{task_id}/action",
         # Admission quality override:一次性 scope-bound 取回，仍不得繞過治理/CI。

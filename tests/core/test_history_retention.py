@@ -114,12 +114,12 @@ def test_retention_endpoint(monkeypatch):
 
     from studio.server import app
 
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → require_auth 放行
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # 門禁停用 → require_admin 走 loopback 放行
     monkeypatch.setattr(config, "HISTORY_MAX_COUNT", 2)
     monkeypatch.setattr(config, "HISTORY_MAX_AGE", 0)
     for i in range(4):
         _make(f"s{i}", started_at=float(i))
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 12345))
     resp = client.post("/api/history/cleanup/retention")
     assert resp.status_code == 200
     assert resp.json() == {"deleted": 2}
