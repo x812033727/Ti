@@ -33,6 +33,9 @@
 | POST | `/api/autopilot/task/{task_id}/action` | admin（auth｜fail-safe loopback） | ✅ | 看板手動操作單一任務（retry/park/unpark/priority），改寫 backlog 狀態 |
 | POST | `/api/autopilot/task/{task_id}/admission-override` | admin（auth｜fail-safe loopback） | ✅ | 一次性覆寫任務品質准入，scope 綁 task／contract hash／repo SHA；不繞過風險、CI、合併或部署治理 |
 | POST | `/api/autopilot/triage` | admin（auth｜fail-safe loopback） | ✅ | 分診 failed 任務（基礎設施型退回 pending 重試／陳年失敗歸檔 parked），改寫 backlog 狀態 |
+| DELETE | `/api/history/{session_id}` | admin（auth｜fail-safe loopback） | ✅ | 刪除歷史紀錄，直接移除資料與相關 workspace 殘留；屬破壞性寫入 |
+| POST | `/api/history/cleanup/completed` | admin（auth｜fail-safe loopback） | ✅ | 清理已完成歷史，屬破壞性寫入 |
+| POST | `/api/history/cleanup/retention` | admin（auth｜fail-safe loopback） | ✅ | 依保留策略回收超量/過舊歷史，屬破壞性寫入 |
 | POST | `/api/notify/test` | admin（auth｜fail-safe loopback） | ✅ | 發送測試推播（webhook/Telegram）＝觸發對外網路呼叫且間接證實已設憑證，管理面操作 |
 | POST | `/api/notify/red-drills` | admin（auth｜fail-safe loopback） | ✅ | 安全送出全部紅色合成告警並記錄 delivery evidence；不執行真實部署或 rollback |
 | POST | `/api/autonomy/preflight/snapshot` | admin（auth｜fail-safe loopback） | ✅ | 保存帶內容 hash 的觀察窗 preflight 證據並寫 audit；紅燈快照也保留 |
@@ -97,9 +100,6 @@
 
 | 方法 | 路徑 | 現況 deps | 理由 |
 |------|------|-----------|------|
-| DELETE | `/api/history/{session_id}` | auth | 刪除歷史紀錄，作用於資料而非機器控制面；門禁已足夠 |
-| POST | `/api/history/cleanup/completed` | auth | 清理已完成歷史，同上 |
-| POST | `/api/history/cleanup/retention` | auth | 依保留策略回收超量/過舊歷史，作用於資料面而非機器控制面；同上 |
 | POST | `/api/projects` | auth | 建立專案（寫 meta 與空 workspace 目錄），純資料面；與 /ws 同屬核心產品操作，須對已登入外網使用者可用 |
 | POST | `/api/projects/{project_id}/backlog` | auth | 往「專案」backlog 排改良任務。與 autopilot 的任務注入端點（納管）不同：專案任務僅在已登入使用者經 /ws 主動啟動持續改良時才執行，且專家 bash 走 bwrap 沙箱（與 /ws 同安全模型），非無人值守自動執行 |
 | POST | `/api/projects/{project_id}/recover` | auth | 中斷恢復：把卡在 in_progress 的 backlog 任務重置回 pending、幽靈 running meta 標 error，皆冪等且僅作用於該專案的資料面；迴圈進行中回 409 防競爭，不啟動任何執行（重啟由前端走 /ws 既有流程） |
