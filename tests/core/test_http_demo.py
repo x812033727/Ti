@@ -21,6 +21,12 @@ def test_parse_demo_url_localhost_only():
         runner.parse_demo_url("執行指令: python app.py\nDemo 網址: http://localhost:8123/")
         == "http://localhost:8123/"
     )
+    assert runner.parse_demo_url("Demo 網址: http://localhost:8123/。") == (
+        "http://localhost:8123/"
+    )
+    assert runner.parse_demo_url("Demo URL: `http://127.0.0.1:5000/health`.") == (
+        "http://127.0.0.1:5000/health"
+    )
     assert runner.parse_demo_url("Demo 網址: `http://127.0.0.1:5000/health`") == (
         "http://127.0.0.1:5000/health"
     )
