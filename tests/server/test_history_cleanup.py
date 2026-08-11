@@ -1,8 +1,8 @@
-"""POST /api/history/cleanup/completed 行為測試：只刪已完成場、保留其餘、空集合回 0。
+"""History 破壞性端點測試：清理/刪除行為與未設密碼時的本機限制。
 
 cleanup/completed 委派 history.delete_completed_sessions（破壞性）。retention 端點已由
-tests/core/test_history_retention.py 覆蓋，本檔專補 completed 這條原本零覆蓋的路徑。
-端點走 require_auth；門禁停用（ACCESS_PASSWORD=""）即放行，無需 loopback peer。
+tests/core/test_history_retention.py 覆蓋，本檔專補 completed 這條原本零覆蓋的路徑，
+以及三個 history 破壞性端點在門禁停用時只允許 loopback peer。
 """
 
 from __future__ import annotations
@@ -15,12 +15,22 @@ from studio import config, history
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # require_auth 放行
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")  # require_admin 放行 loopback
     monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "history")
     monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "workspaces")
     from studio.server import app
 
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 12345))
+
+
+@pytest.fixture
+def public_client(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+    monkeypatch.setattr(config, "HISTORY_ROOT", tmp_path / "history")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path / "workspaces")
+    from studio.server import app
+
+    return TestClient(app, client=("203.0.113.5", 40000))
 
 
 def _make(sid: str, status: str) -> None:
@@ -49,3 +59,28 @@ def test_cleanup_completed_empty_returns_zero(client):
     assert res.status_code == 200
     assert res.json() == {"deleted": 0}
     assert _ids() == {"running1"}  # 無可清場次，原樣留存
+
+
+def test_public_peer_cannot_cleanup_completed(public_client):
+    _make("done1", "completed")
+    _make("running1", "running")
+    res = public_client.post("/api/history/cleanup/completed")
+    assert res.status_code == 403
+    assert _ids() == {"done1", "running1"}
+
+
+def test_public_peer_cannot_cleanup_retention(public_client, monkeypatch):
+    monkeypatch.setattr(config, "HISTORY_MAX_COUNT", 1)
+    monkeypatch.setattr(config, "HISTORY_MAX_AGE", 0)
+    _make("old1", "completed")
+    _make("old2", "completed")
+    res = public_client.post("/api/history/cleanup/retention")
+    assert res.status_code == 403
+    assert _ids() == {"old1", "old2"}
+
+
+def test_public_peer_cannot_delete_session(public_client):
+    _make("done1", "completed")
+    res = public_client.delete("/api/history/done1")
+    assert res.status_code == 403
+    assert _ids() == {"done1"}

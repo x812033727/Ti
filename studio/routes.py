@@ -508,18 +508,18 @@ async def history_events(session_id: str, offset: int = 0, limit: int = 0) -> JS
     return JSONResponse({"meta": meta, "events": await asyncio.to_thread(_slice)})
 
 
-@router.delete("/api/history/{session_id}", dependencies=[Depends(auth.require_auth)])
+@router.delete("/api/history/{session_id}", dependencies=WRITE_DEPS)
 async def history_delete(session_id: str) -> JSONResponse:
     ok = history.delete_session(session_id)
     return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
 
 
-@router.post("/api/history/cleanup/completed", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/history/cleanup/completed", dependencies=WRITE_DEPS)
 async def history_cleanup_completed() -> JSONResponse:
     return JSONResponse({"deleted": history.delete_completed_sessions()})
 
 
-@router.post("/api/history/cleanup/retention", dependencies=[Depends(auth.require_auth)])
+@router.post("/api/history/cleanup/retention", dependencies=WRITE_DEPS)
 async def history_cleanup_retention() -> JSONResponse:
     """依保留策略（TI_HISTORY_MAX_COUNT / TI_HISTORY_MAX_AGE）手動觸發一次回收。"""
     return JSONResponse({"deleted": history.enforce_retention()})
