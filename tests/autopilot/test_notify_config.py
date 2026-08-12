@@ -73,6 +73,13 @@ def test_notify_config_defaults_and_reload_env_overrides(monkeypatch):
     config.reload()
 
 
+@pytest.mark.parametrize(("value", "expected"), [(2.5, 2.5), (0, 10.0), (-1, 10.0), (None, 10.0)])
+def test_notify_timeout_s_rejects_invalid_boundaries(monkeypatch, value, expected):
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", value)
+
+    assert notify._timeout_s() == expected
+
+
 def test_send_bg_without_webhook_is_noop(monkeypatch):
     with monkeypatch.context() as env:
         env.delenv("TI_NOTIFY_WEBHOOK", raising=False)
