@@ -39,8 +39,12 @@ log = logging.getLogger("ti.notify")
 
 
 def _timeout_s() -> float:
-    """送出 timeout（秒）：TI_NOTIFY_TIMEOUT 可調，reload 後即時生效。"""
-    return float(getattr(config, "NOTIFY_TIMEOUT", 10.0) or 10.0)
+    """送出 timeout（秒）：TI_NOTIFY_TIMEOUT 可調，reload 後即時生效；非正數或非法值回退 10.0。"""
+    try:
+        timeout = float(getattr(config, "NOTIFY_TIMEOUT", 10.0))
+    except (TypeError, ValueError):
+        return 10.0
+    return timeout if timeout > 0 else 10.0
 
 
 _SENSITIVE_KEY_MARKS = ("token", "secret", "password", "authorization", "webhook")
