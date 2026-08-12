@@ -32,6 +32,32 @@ def test_exposed_in_settings_panel():
     assert {"TI_HUDDLE", "TI_CRITIC", "TI_NOTES", "TI_LESSONS"} <= envs
 
 
+def test_reload_refreshes_rlimit_values(monkeypatch):
+    try:
+        with monkeypatch.context() as m:
+            m.setenv("TI_RLIMIT_MEM_MB", "2048")
+            m.setenv("TI_RLIMIT_CPU_S", "120")
+            m.setenv("TI_RLIMIT_FSIZE_MB", "64")
+            config.reload()
+            assert (config.RLIMIT_MEM_MB, config.RLIMIT_CPU_S, config.RLIMIT_FSIZE_MB) == (
+                2048,
+                120,
+                64,
+            )
+
+            m.setenv("TI_RLIMIT_MEM_MB", "")
+            m.setenv("TI_RLIMIT_CPU_S", "")
+            m.setenv("TI_RLIMIT_FSIZE_MB", "")
+            config.reload()
+            assert (config.RLIMIT_MEM_MB, config.RLIMIT_CPU_S, config.RLIMIT_FSIZE_MB) == (
+                4096,
+                300,
+                512,
+            )
+    finally:
+        config.reload()
+
+
 def test_stable_defaults_in_isolated_env(tmp_path):
     """乾淨環境（無 TI_* 覆寫、無 .env）下確認預設：A／B／C／D 全開（學習機制預設啟用）。"""
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
