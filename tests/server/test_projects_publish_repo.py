@@ -31,7 +31,20 @@ def test_set_and_clear_publish_repo(client):
     assert res.status_code == 200 and res.json()["project"]["publish_repo"] == ""
 
 
-@pytest.mark.parametrize("bad", ["noslash", "a/b/c", "a b/c", "owner/", "/repo", "a;b/c"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "noslash",
+        "a/b/c",
+        "a b/c",
+        "owner/",
+        "/repo",
+        "a;b/c",
+        "./repo",
+        "../repo",
+        "owner/.",
+    ],
+)
 def test_set_publish_repo_rejects_bad_format(client, bad):
     pid = projects.create("格式")["id"]
     res = client.post(f"/api/projects/{pid}/publish-repo", json={"repo": bad})
