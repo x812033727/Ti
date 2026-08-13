@@ -126,8 +126,10 @@ def set_publish_repo(project_id: str, repo: str) -> dict | None:
     if meta is None:
         return None
     repo = (repo or "").strip()
-    if repo and not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo):
-        return None
+    if repo:
+        m = re.fullmatch(r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", repo)
+        if not m or any(not part.strip(".") for part in m.groups()):
+            return None
     meta["publish_repo"] = repo
     meta["updated_at"] = time.time()
     _write_meta(project_id, meta)
