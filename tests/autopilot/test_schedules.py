@@ -115,9 +115,16 @@ def test_missing_admission_control_does_not_consume_schedule_occurrence():
 def test_crud_validation_and_delete():
     assert schedules.create("", "", {"kind": "daily", "time": "08:00"})[0] is None
     assert schedules.create("x", "", {"kind": "nope"})[0] is None
+    got, err = schedules.create(
+        "x", "", {"kind": "interval_hours", "hours": 2}, priority="urgent"
+    )
+    assert got is None and err == "priority 須為 0-2"
     s, _ = schedules.create("x", "", {"kind": "interval_hours", "hours": 2})
     got, err = schedules.update(s["id"], {"recurrence": {"kind": "daily", "time": "99:00"}})
     assert got is None and err
+    got, err = schedules.update(s["id"], {"priority": "urgent"})
+    assert got is None and err == "priority 須為 0-2"
+    assert schedules.list_schedules()[0]["priority"] == 1
     got, _ = schedules.update(s["id"], {"priority": 9, "type": "bug"})
     assert got["priority"] == 2 and got["type"] == "bug", "priority 夾 0-2"
     assert schedules.update("nope", {"title": "y"})[0] is None
