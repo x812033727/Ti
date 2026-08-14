@@ -56,8 +56,7 @@ def test_occurrence_key_ignores_malformed_recurrence():
     now = _utc(2026, 7, 20, 8, 30)
     assert schedules.occurrence_key({"recurrence": {"kind": "daily", "time": "bad"}}, now) is None
     assert (
-        schedules.occurrence_key({"recurrence": {"kind": "weekly", "time": "09:00"}}, now)
-        is None
+        schedules.occurrence_key({"recurrence": {"kind": "weekly", "time": "09:00"}}, now) is None
     )
     assert (
         schedules.occurrence_key({"recurrence": {"kind": "interval_hours", "hours": 0}}, now)
