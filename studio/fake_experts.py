@@ -55,8 +55,14 @@ def main(argv=None):
     if len(argv) != 3 or argv[0] not in OPS:
         print("用法: python main.py <add|sub|mul|div> <a> <b>")
         return 1
-    op, a, b = argv[0], float(argv[1]), float(argv[2])
-    print(OPS[op](a, b))
+    op = argv[0]
+    try:
+        a, b = float(argv[1]), float(argv[2])
+        result = OPS[op](a, b)
+    except ValueError as exc:
+        print(exc)
+        return 1
+    print(result)
     return 0
 
 
@@ -81,6 +87,7 @@ _TEST_PY = """\
 import pytest
 
 from calculator import add, sub, mul, div
+from main import main
 
 
 def test_basic_ops():
@@ -93,6 +100,11 @@ def test_basic_ops():
 def test_div_zero():
     with pytest.raises(ValueError):
         div(1, 0)
+
+
+def test_cli_div_zero(capsys):
+    assert main(["div", "1", "0"]) == 1
+    assert capsys.readouterr().out.strip() == "除數不可為 0"
 """
 
 
