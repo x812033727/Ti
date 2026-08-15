@@ -81,8 +81,9 @@ def _maybe_compact(path: Path) -> None:
         if not line:
             continue
         try:
-            ts = float(json.loads(line).get("ts", 0))
-        except (ValueError, TypeError):
+            rec = json.loads(line)
+            ts = float(rec.get("ts", 0)) if isinstance(rec, dict) else 0.0
+        except (json.JSONDecodeError, ValueError, TypeError):
             ts = 0.0  # 壞行視為舊紀錄歸檔
         (keep if ts >= cutoff else old).append(line)
     if not old:
