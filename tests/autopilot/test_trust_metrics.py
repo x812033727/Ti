@@ -149,6 +149,23 @@ def test_jsonl_log_compaction(tmp_path, monkeypatch):
     assert '"kind": "old"' in archived
 
 
+def test_jsonl_log_compaction_archives_malformed_lines(tmp_path, monkeypatch):
+    """壞 JSON 行要視為舊紀錄歸檔，不能讓壓實整段失敗。"""
+    path = tmp_path / "ap" / "bad.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fresh = json.dumps({"ts": time.time(), "kind": "fresh"}, ensure_ascii=False)
+    path.write_text("{broken json\n5\n" + fresh + "\n", encoding="utf-8")
+    monkeypatch.setattr(jsonl_log, "MAX_BYTES", 1)  # 強制觸發壓實
+
+    jsonl_log.append(path, {"kind": "fresh2"})
+
+    kinds = [r["kind"] for r in jsonl_log.read_window(path, 90)]
+    assert kinds == ["fresh", "fresh2"], "壞行歸檔後仍保留有效近期紀錄"
+    archived = (tmp_path / "ap" / "bad.jsonl.old").read_text(encoding="utf-8")
+    assert "{broken json" in archived
+    assert "\n5\n" in archived
+
+
 def test_trust_metrics_excludes_drill_events(tmp_path):
     """演練事件(drill=true)驗證告警管道,不得計入營運事件——否則做演練
     反而懲罰升階條件(deploy_verify_green 的 7 天失敗數)。"""
