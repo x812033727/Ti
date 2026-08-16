@@ -23,9 +23,7 @@ def run(args: list[str]) -> str:
     proc = subprocess.run(args, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         raise AssertionError(
-            f"command failed: {' '.join(args)}\n"
-            f"stdout:\n{proc.stdout}\n"
-            f"stderr:\n{proc.stderr}"
+            f"command failed: {' '.join(args)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
         )
     return proc.stdout.strip()
 
@@ -67,7 +65,9 @@ def main() -> int:
         record(failures, token in patch, f"patch missing expected token: {token}")
 
     record(failures, "studio/schedules.py" in stat, "git show --stat missing studio/schedules.py")
-    record(failures, "tests/autopilot/test_schedules.py" in stat, "git show --stat missing test file")
+    record(
+        failures, "tests/autopilot/test_schedules.py" in stat, "git show --stat missing test file"
+    )
     record(failures, "2 files changed" in stat, "PR head stat should remain limited to two files")
 
     record(failures, "驗證: PASS" in qa_text, "qa marker missing exact text")
@@ -76,7 +76,9 @@ def main() -> int:
     record(failures, EXPECTED_SHA in senior_text, "senior marker missing expected head sha")
 
     for token in FORBIDDEN_WORKFLOW_TOKENS:
-        record(failures, token not in workflow_log_text, f"forbidden workflow command found: {token}")
+        record(
+            failures, token not in workflow_log_text, f"forbidden workflow command found: {token}"
+        )
 
     if failures:
         for failure in failures:
