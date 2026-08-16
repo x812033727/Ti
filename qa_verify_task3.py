@@ -30,30 +30,31 @@ def run(args: list[str]) -> str:
     return proc.stdout.strip()
 
 
-def require(condition: bool, message: str) -> None:
+def record(failures: list[str], condition: bool, message: str) -> None:
     if not condition:
-        raise AssertionError(message)
+        failures.append(message)
 
 
 def main() -> int:
+    failures: list[str] = []
+    qa_text = os.environ.get("QA_REVIEW_TEXT", "")
     senior_text = os.environ.get("SENIOR_REVIEW_TEXT", "")
     workflow_log_text = os.environ.get("WORKFLOW_LOG_TEXT", "")
 
-    local_head = run(["git", "rev-parse", "HEAD"])
     pr_view_1 = json.loads(run(["gh", "pr", "view", PR_NUMBER, "--json", "headRefOid,url,body"]))
     pr_view_2 = json.loads(run(["gh", "pr", "view", PR_NUMBER, "--json", "headRefOid"]))
     files = run(["gh", "pr", "diff", PR_NUMBER, "--name-only"]).splitlines()
     patch = run(["gh", "pr", "diff", PR_NUMBER, "--patch"])
-    stat = run(["git", "show", "--stat", "HEAD"])
+    pr_head = pr_view_1["headRefOid"]
+    stat = run(["git", "show", "--stat", pr_head])
 
-    require(local_head == EXPECTED_SHA, f"local HEAD mismatch: {local_head}")
-    require(pr_view_1["headRefOid"] == EXPECTED_SHA, f"PR head mismatch: {pr_view_1['headRefOid']}")
-    require(pr_view_2["headRefOid"] == pr_view_1["headRefOid"], "PR head drifted between reads")
-    require(files == EXPECTED_FILES, f"unexpected diff files: {files}")
+    record(failures, pr_head == EXPECTED_SHA, f"PR head mismatch: {pr_head}")
+    record(failures, pr_view_2["headRefOid"] == pr_head, "PR head drifted between reads")
+    record(failures, files == EXPECTED_FILES, f"unexpected diff files: {files}")
 
     body = pr_view_1["body"]
-    require("## 動機" in body, "PR body missing 動機 section")
-    require("## 如何驗證" in body, "PR body missing 如何驗證 section")
+    record(failures, "## 動機" in body, "PR body missing 動機 section")
+    record(failures, "## 如何驗證" in body, "PR body missing 如何驗證 section")
 
     for token in [
         "len(t) == 5",
@@ -63,25 +64,29 @@ def main() -> int:
         'time": "8:30"',
         'time": "08:3"',
     ]:
-        require(token in patch, f"patch missing expected token: {token}")
+        record(failures, token in patch, f"patch missing expected token: {token}")
 
-    require("studio/schedules.py" in stat, "git show --stat missing studio/schedules.py")
-    require("tests/autopilot/test_schedules.py" in stat, "git show --stat missing test file")
-    require("2 files changed" in stat, "HEAD stat should remain limited to two files")
+    record(failures, "studio/schedules.py" in stat, "git show --stat missing studio/schedules.py")
+    record(failures, "tests/autopilot/test_schedules.py" in stat, "git show --stat missing test file")
+    record(failures, "2 files changed" in stat, "PR head stat should remain limited to two files")
 
-    require("決議: 核可" in senior_text, "senior marker missing exact text")
-    require(EXPECTED_SHA in senior_text, "senior marker missing expected head sha")
+    record(failures, "驗證: PASS" in qa_text, "qa marker missing exact text")
+    record(failures, EXPECTED_SHA in qa_text, "qa marker missing expected head sha")
+    record(failures, "決議: 核可" in senior_text, "senior marker missing exact text")
+    record(failures, EXPECTED_SHA in senior_text, "senior marker missing expected head sha")
 
     for token in FORBIDDEN_WORKFLOW_TOKENS:
-        require(token not in workflow_log_text, f"forbidden workflow command found: {token}")
+        record(failures, token not in workflow_log_text, f"forbidden workflow command found: {token}")
 
-    print(f"PASS pr={PR_NUMBER} head={EXPECTED_SHA} files={','.join(files)}")
+    if failures:
+        for failure in failures:
+            print(f"FAIL {failure}", file=sys.stderr)
+        print(f"checked pr={PR_NUMBER} head={pr_head} files={','.join(files)}")
+        return 1
+
+    print(f"PASS pr={PR_NUMBER} head={pr_head} files={','.join(files)}")
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except AssertionError as exc:
-        print(f"FAIL {exc}", file=sys.stderr)
-        raise SystemExit(1)
+    raise SystemExit(main())
