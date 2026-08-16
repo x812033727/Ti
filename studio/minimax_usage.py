@@ -97,9 +97,13 @@ def fetch_rate_limits(force: bool = False) -> dict:
         result = _empty("unreachable", now)
         _cache = (now, result)
         return result
+    if not isinstance(body, dict):
+        result = _empty("unreachable", now)
+        _cache = (now, result)
+        return result
 
     # base_resp.status_code != 0 代表業務層錯誤（1004=金鑰無效→unauthorized；其餘→unreachable）
-    status = ((body or {}).get("base_resp") or {}).get("status_code")
+    status = (body.get("base_resp") or {}).get("status_code")
     if status not in (0, None):
         err = "unauthorized" if status in (1004, 1008) else "unreachable"
         result = _empty(err, now)
