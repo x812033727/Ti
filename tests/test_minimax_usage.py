@@ -139,7 +139,7 @@ def test_base_resp_other_error_unreachable(monkeypatch):
 
 
 def test_json_body_must_be_object(monkeypatch):
-    _patch_get(monkeypatch, FakeResp(body=[]))
+    _patch_get(monkeypatch, FakeResp(body=[{"model_name": "x"}]))
     assert m.fetch_rate_limits()["error"] == "unreachable"
 
 
