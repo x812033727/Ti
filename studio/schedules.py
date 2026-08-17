@@ -107,6 +107,8 @@ def validate_recurrence(rec: dict) -> str:
 
 
 def _coerce_priority(value) -> tuple[int | None, str]:
+    if isinstance(value, float) and not value.is_integer():
+        return None, "priority 須為 0-2"
     try:
         priority = int(1 if value is None else value)
     except (TypeError, ValueError):

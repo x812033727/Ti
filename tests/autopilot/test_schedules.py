@@ -119,14 +119,23 @@ def test_crud_validation_and_delete():
         "x", "", {"kind": "interval_hours", "hours": 2}, priority="urgent"
     )
     assert got is None and err == "priority 須為 0-2"
+    got, err = schedules.create(
+        "x", "", {"kind": "interval_hours", "hours": 2}, priority=1.5
+    )
+    assert got is None and err == "priority 須為 0-2"
     s, _ = schedules.create("x", "", {"kind": "interval_hours", "hours": 2})
     got, err = schedules.update(s["id"], {"recurrence": {"kind": "daily", "time": "99:00"}})
     assert got is None and err
     got, err = schedules.update(s["id"], {"priority": "urgent"})
     assert got is None and err == "priority 須為 0-2"
     assert schedules.list_schedules()[0]["priority"] == 1
+    got, err = schedules.update(s["id"], {"priority": 1.5})
+    assert got is None and err == "priority 須為 0-2"
+    assert schedules.list_schedules()[0]["priority"] == 1
     got, _ = schedules.update(s["id"], {"priority": 9, "type": "bug"})
     assert got["priority"] == 2 and got["type"] == "bug", "priority 夾 0-2"
+    got, _ = schedules.update(s["id"], {"priority": -3})
+    assert got["priority"] == 0
     assert schedules.update("nope", {"title": "y"})[0] is None
     assert schedules.delete(s["id"]) is True
     assert schedules.delete(s["id"]) is False
