@@ -70,10 +70,32 @@ def test_parse_next_step_basic():
     }
 
 
-def test_parse_next_step_end_tokens():
-    for tok in ("結束", "完成", "END", "done", "stop"):
-        assert flow.parse_next_step(f"下一步: {tok}")["end"] is True
-        assert flow.parse_next_step(f"下一步: {tok}")["role"] == ""
+@pytest.mark.parametrize(
+    "tok",
+    (
+        "完成。",
+        "停止。",
+        "結束。",
+        "END.",
+        "Done.",
+        "完成",
+        "停止",
+        "結束",
+        "end",
+        "done",
+    ),
+)
+def test_parse_next_step_end_tokens(tok):
+    out = flow.parse_next_step(f"下一步: {tok}")
+    assert out["end"] is True
+    assert out["role"] == ""
+
+
+@pytest.mark.parametrize("role", ("engineer", "qa"))
+def test_parse_next_step_role_tokens_are_not_end_tokens(role):
+    out = flow.parse_next_step(f"下一步: {role}")
+    assert out["end"] is False
+    assert out["role"] == role
 
 
 def test_parse_next_step_fullwidth_colon_and_last_wins():
