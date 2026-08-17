@@ -520,8 +520,8 @@ def validate_assignees(
 
 # --- 動態 step：PM 運行時決定下一步（dynamic workflow stage 用）----------
 
-# 結束 token（大小寫不敏感）：PM 宣告動態流程收斂時用。
-_NEXT_STEP_END = {"結束", "結束。", "完成", "停止", "end", "done", "stop", "finish"}
+# 結束 token（大小寫不敏感）：PM 宣告動態流程收斂時用；尾隨句號由 rstrip 正規化。
+_NEXT_STEP_END = {"結束", "完成", "停止", "end", "done", "stop", "finish"}
 
 
 def parse_next_step(text: str) -> dict:
@@ -529,7 +529,8 @@ def parse_next_step(text: str) -> dict:
 
     格式（沿用本檔行前綴 parser 範式，全形冒號容錯）：
     - ``下一步: <role_key>`` —— 下一個發言角色（取最後一個 `下一步:` 行為準）。
-    - ``下一步: 結束``（或 完成／停止／end／done／stop／finish，大小寫不敏感）→ end=True、role 清空。
+    - ``下一步: 結束``（或 完成／停止／end／done／stop／finish，大小寫不敏感，容忍尾隨 。/.）
+      → end=True、role 清空。
     - ``指示: <要該角色做什麼>`` —— 選填，附給被選角色的指示（取最後一行）。
     - ``指示: <<TI_INSTRUCTION`` ... ``TI_INSTRUCTION`` —— 多行指示欄位；內容原樣送給被選角色。
     - ``招募: <key> | <名稱> | <一句專長>`` —— 選填，PM 現場液生一個新 persona（取最後一行）；
@@ -554,7 +555,8 @@ def parse_next_step(text: str) -> dict:
         m = re.match(r"^\s*下一步\s*[:：]\s*(.+?)\s*$", line)
         if m:
             val = m.group(1).strip()
-            if val.lower() in _NEXT_STEP_END or val in _NEXT_STEP_END:
+            norm = val.rstrip("。.")
+            if norm.lower() in _NEXT_STEP_END or norm in _NEXT_STEP_END:
                 role, end = "", True
             else:
                 tokens = val.split()
