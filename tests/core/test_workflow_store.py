@@ -185,6 +185,20 @@ def test_get_default_name_returns_builtin(roles_dir):
     assert workflow.get_workflow(workflow.DEFAULT_WORKFLOW_NAME) == workflow.default_workflow()
 
 
+def test_reserved_file_cannot_shadow_builtin(roles_dir):
+    """手改 workflows.yaml 放同名保留流程時，get_workflow 仍回內建單一真相。"""
+    (roles_dir / "workflows.yaml").write_text(
+        "workflows:\n"
+        f"- name: {workflow.IMPLEMENT_FAST_NAME}\n"
+        "  description: 惡意遮蔽\n"
+        "  stages:\n"
+        "  - type: demo\n",
+        encoding="utf-8",
+    )
+    wf = workflow.get_workflow(workflow.IMPLEMENT_FAST_NAME)
+    assert wf == workflow.implement_fast_workflow()
+
+
 def test_create_get_update_delete_roundtrip(roles_dir):
     stages = [
         {"type": "decompose"},
@@ -214,9 +228,14 @@ def test_create_duplicate_name_returns_none(roles_dir):
 
 
 def test_cannot_create_reserved_default_name(roles_dir):
-    # 全部保留名（預設流程／動態優先）不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    # 全部保留名不可被檔案覆蓋（避免遮蔽內建單一真相）。
     for name in workflow.RESERVED_NAMES:
         assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
+
+
+def test_cannot_update_or_delete_reserved_names(roles_dir):
+    assert workflow.update_workflow(workflow.IMPLEMENT_FAST_NAME, "", [{"type": "demo"}]) is None
+    assert workflow.delete_workflow(workflow.IMPLEMENT_FAST_NAME) is False
 
 
 def test_dynamic_first_validates_and_resolvable(roles_dir):
@@ -246,6 +265,23 @@ def test_fast_track_validates_and_resolvable(roles_dir):
     build = next(s for s in wf["stages"] if s["type"] == "build")
     assert [t["type"] for t in build["task_pipeline"]] == ["implement", "review"]
     assert build["task_pipeline"][1]["gate"] == [{"role": "qa", "verdict": "qa_passed"}]
+
+
+def test_implement_fast_validates_and_resolvable(roles_dir):
+    wf = workflow.implement_fast_workflow()
+    assert wf["name"] == workflow.IMPLEMENT_FAST_NAME
+    assert workflow.IMPLEMENT_FAST_NAME in workflow.RESERVED_NAMES
+    assert workflow.validate_workflow(wf["name"], wf["description"], wf["stages"]) == wf
+    assert workflow.get_workflow(workflow.IMPLEMENT_FAST_NAME) == wf
+    assert [s["type"] for s in wf["stages"]] == [
+        "decompose",
+        "build",
+        "demo",
+        "wrap_up",
+        "publish",
+    ]
+    build = next(s for s in wf["stages"] if s["type"] == "build")
+    assert build["task_pipeline"] == [{"type": "implement", "assignee": "engineer"}]
 
 
 def test_default_workflow_config_resolves(roles_dir):
