@@ -9,9 +9,10 @@
 - **流程面**只引用 ``flow.py`` 既有的收斂判定函式（白名單 ``VERDICTS``），workflow 不得注入
   任意程式碼；客觀閘門／stall guard／wind-down 等引擎不變式刻意不可被 workflow 配置掉。
 
-單一真相：``default_workflow()`` 是「等價於現有寫死骨架」的程式碼內建定義（不存檔）。
-``StudioSession(workflow=None)`` ＝載入它 → 走同一段直譯器、同一順序 → 與重構前等價，
-autopilot／improver／既有 session 行為不變。客製 workflow 僅改動順序／參與者／插 dynamic step。
+單一真相：內建保留 workflow 都是程式碼定義（不存檔），不可被 ``workflows.yaml`` 同名覆蓋。
+``StudioSession(workflow=None)`` ＝載入 ``default_workflow()`` → 走同一段直譯器、同一順序 →
+與重構前等價；autopilot／improver／既有 session 行為不變。客製 workflow 僅改動順序／
+參與者／插 dynamic step。
 
 Schema（兩層）
 --------------
@@ -44,9 +45,10 @@ Stage 欄位（pydantic ``extra="forbid"``，未知欄位明確報錯）：
 
 主要介面（鏡射 role_store 的 Group 區段）
 - ``default_workflow() -> dict``：內建預設（等價現有骨架，單一真相）。
-- ``list_workflows() -> list[dict]``：全部 workflow（檔案不存在＝[]；壞檔 raise WorkflowFileError）。
-- ``get_workflow(name) -> dict | None``：檔案優先；命中不到且 name 為預設名 → default_workflow()。
-- ``create_workflow / update_workflow / delete_workflow``：CRUD（同名→None→409、不存在→None/False→404）。
+- ``list_workflows() -> list[dict]``：檔案 workflow（檔案不存在＝[]；壞檔 raise WorkflowFileError）。
+- ``get_workflow(name) -> dict | None``：保留名回內建定義；非保留名查檔案；不存在回 None。
+- ``create_workflow / update_workflow / delete_workflow``：CRUD（同名/保留名→None→409、
+  不存在/保留名→None/False→404）。
 - ``validate_workflow(name, description, stages) -> dict``：驗證並正規化；不合法 raise WorkflowError。
 """
 
@@ -103,8 +105,14 @@ QUICK_ANSWER_NAME = "快答"  # 單一資深專家直接回答/完成小事(Kimi
 IMPLEMENT_FAST_NAME = (
     "原生快車道"  # 軌 I3:單 engineer 直做(decompose+implement+demo+publish),零多專家儀式
 )
-# 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
-RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME, QUICK_ANSWER_NAME)
+# 全部保留名（不可被使用者建立/覆寫；routes.list 一律前置供 UI 可選）。
+RESERVED_NAMES = (
+    DEFAULT_WORKFLOW_NAME,
+    DYNAMIC_FIRST_NAME,
+    FAST_TRACK_NAME,
+    QUICK_ANSWER_NAME,
+    IMPLEMENT_FAST_NAME,
+)
 
 WORKFLOWS_FILENAME = "workflows.yaml"
 
@@ -555,13 +563,13 @@ def _save_workflows(workflows: list[dict]) -> None:
 
 
 def get_workflow(name: str) -> dict | None:
-    """依名稱查 workflow；不存在回 None。保留名（無同名檔案）回對應內建定義。"""
+    """依名稱查 workflow；不存在回 None。保留名永遠回內建定義，不被檔案遮蔽。"""
     name = (name or "").strip()
+    if name in _BUILTIN_WORKFLOWS:
+        return _BUILTIN_WORKFLOWS[name]()
     for w in list_workflows():
         if w["name"] == name:
             return w
-    if name in _BUILTIN_WORKFLOWS:
-        return _BUILTIN_WORKFLOWS[name]()
     return None
 
 
@@ -579,6 +587,8 @@ def create_workflow(name: str, description: str, stages: list) -> dict | None:
 
 def update_workflow(name: str, description: str, stages: list) -> dict | None:
     """整筆替換同名 workflow（name 由路徑決定、不可改名）；不存在回 None（→404）。"""
+    if (name or "").strip() in RESERVED_NAMES:
+        return None
     wf = validate_workflow(name, description, stages)
     workflows = list_workflows()
     for i, w in enumerate(workflows):
@@ -593,6 +603,8 @@ def update_workflow(name: str, description: str, stages: list) -> dict | None:
 def delete_workflow(name: str) -> bool:
     """刪除 workflow；不存在回 False（→404）。"""
     name = (name or "").strip()
+    if name in RESERVED_NAMES:
+        return False
     workflows = list_workflows()
     kept = [w for w in workflows if w["name"] != name]
     if len(kept) == len(workflows):

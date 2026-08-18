@@ -1,5 +1,0 @@
-workflows:
-- name: 原生快車道
-  description: test
-  stages:
-  - type: decompose
