@@ -175,8 +175,10 @@ def test_overlong_name_rejected(roles_dir):
 # --- CRUD 落檔 roundtrip ------------------------------------------------------
 
 
-def test_missing_file_lists_empty(roles_dir):
-    assert workflow.list_workflows() == []
+def test_missing_file_lists_builtins(roles_dir):
+    listed = workflow.list_workflows()
+    assert [wf["name"] for wf in listed] == list(workflow.RESERVED_NAMES)
+    assert {wf["source"] for wf in listed} == {"builtin"}
     assert workflow.get_workflow("沒有") is None
 
 
@@ -195,6 +197,9 @@ def test_create_get_update_delete_roundtrip(roles_dir):
     assert wf is not None and wf["name"] == "快速原型"
     # 落檔可讀回（重新解析檔案，不是記憶體殘像）。
     assert workflow.get_workflow("快速原型") == wf
+    listed = workflow.list_workflows()
+    assert [item["name"] for item in listed] == [*workflow.RESERVED_NAMES, "快速原型"]
+    assert listed[-1]["source"] == "file"
     raw = yaml.safe_load((roles_dir / "workflows.yaml").read_text(encoding="utf-8"))
     assert raw == {"workflows": [wf]}
 
@@ -203,7 +208,7 @@ def test_create_get_update_delete_roundtrip(roles_dir):
     assert workflow.get_workflow("快速原型") == wf2
 
     assert workflow.delete_workflow("快速原型") is True
-    assert workflow.list_workflows() == []
+    assert [item["name"] for item in workflow.list_workflows()] == list(workflow.RESERVED_NAMES)
     assert workflow.delete_workflow("快速原型") is False
 
 
@@ -263,6 +268,17 @@ def test_implement_fast_reserved_and_resolvable(roles_dir):
     assert build["task_pipeline"][0]["assignee"] == "engineer"
 
 
+def test_implement_fast_is_listed_as_builtin_in_workflow_store(roles_dir):
+    assert workflow.create_workflow(workflow.IMPLEMENT_FAST_NAME, "", [{"type": "demo"}]) is None
+
+    listed = workflow.list_workflows()
+    names = [wf["name"] for wf in listed]
+
+    assert names[: len(workflow.RESERVED_NAMES)] == list(workflow.RESERVED_NAMES)
+    implement_fast = next(wf for wf in listed if wf["name"] == workflow.IMPLEMENT_FAST_NAME)
+    assert implement_fast.get("source") == "builtin"
+
+
 def test_default_workflow_config_resolves(roles_dir):
     # 互動預設名（config.DEFAULT_WORKFLOW）能解析成內建動態優先流程。
     from studio import config
@@ -299,9 +315,11 @@ def test_wrong_structure_raises_fileerror(roles_dir):
         workflow.list_workflows()
 
 
-def test_empty_file_lists_empty(roles_dir):
+def test_empty_file_lists_builtins(roles_dir):
     (roles_dir / "workflows.yaml").write_text("", encoding="utf-8")
-    assert workflow.list_workflows() == []
+    listed = workflow.list_workflows()
+    assert [wf["name"] for wf in listed] == list(workflow.RESERVED_NAMES)
+    assert {wf["source"] for wf in listed} == {"builtin"}
 
 
 # --- 與角色載入器互不干擾 -------------------------------------------------------
