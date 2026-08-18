@@ -214,7 +214,7 @@ def test_create_duplicate_name_returns_none(roles_dir):
 
 
 def test_cannot_create_reserved_default_name(roles_dir):
-    # 全部保留名（預設流程／動態優先）不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    # 全部保留名不可被檔案覆蓋（避免遮蔽內建單一真相）。
     for name in workflow.RESERVED_NAMES:
         assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
 
@@ -246,6 +246,21 @@ def test_fast_track_validates_and_resolvable(roles_dir):
     build = next(s for s in wf["stages"] if s["type"] == "build")
     assert [t["type"] for t in build["task_pipeline"]] == ["implement", "review"]
     assert build["task_pipeline"][1]["gate"] == [{"role": "qa", "verdict": "qa_passed"}]
+
+
+def test_implement_fast_reserved_and_resolvable(roles_dir):
+    wf = workflow.implement_fast_workflow()
+    assert wf["name"] == workflow.IMPLEMENT_FAST_NAME
+    assert workflow.IMPLEMENT_FAST_NAME in workflow.RESERVED_NAMES
+    assert workflow.validate_workflow(wf["name"], wf["description"], wf["stages"]) == wf
+    assert workflow.get_workflow(workflow.IMPLEMENT_FAST_NAME) == wf
+    assert workflow.create_workflow(workflow.IMPLEMENT_FAST_NAME, "", [{"type": "demo"}]) is None
+
+    types = [s["type"] for s in wf["stages"]]
+    assert types == ["decompose", "build", "demo", "wrap_up", "publish"]
+    build = next(s for s in wf["stages"] if s["type"] == "build")
+    assert [t["type"] for t in build["task_pipeline"]] == ["implement"]
+    assert build["task_pipeline"][0]["assignee"] == "engineer"
 
 
 def test_default_workflow_config_resolves(roles_dir):
