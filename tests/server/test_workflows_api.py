@@ -58,9 +58,11 @@ def test_crud_happy_path(client):
 
 
 def test_builtin_reserved_always_listed(client):
-    # 沒建任何 workflow 時，列表也含全部內建保留流程（預設流程＋動態優先，依序在最前）。
-    names = [w["name"] for w in client.get("/api/workflows").json()["workflows"]]
+    # 沒建任何 workflow 時，列表也含全部內建保留流程，且依 RESERVED_NAMES 前置。
+    items = client.get("/api/workflows").json()["workflows"]
+    names = [w["name"] for w in items]
     assert names == list(workflow.RESERVED_NAMES)
+    assert {w["source"] for w in items} == {"builtin"}
 
 
 def test_invalid_stage_type_422(client):

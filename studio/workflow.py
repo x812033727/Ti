@@ -44,8 +44,8 @@ Stage 欄位（pydantic ``extra="forbid"``，未知欄位明確報錯）：
 
 主要介面（鏡射 role_store 的 Group 區段）
 - ``default_workflow() -> dict``：內建預設（等價現有骨架，單一真相）。
-- ``list_workflows() -> list[dict]``：全部 workflow（檔案不存在＝[]；壞檔 raise WorkflowFileError）。
-- ``get_workflow(name) -> dict | None``：檔案優先；命中不到且 name 為預設名 → default_workflow()。
+- ``list_workflows() -> list[dict]``：內建 workflow 前置＋檔案 workflow（壞檔 raise WorkflowFileError）。
+- ``get_workflow(name) -> dict | None``：保留名回內建；其餘查檔案 workflow。
 - ``create_workflow / update_workflow / delete_workflow``：CRUD（同名→None→409、不存在→None/False→404）。
 - ``validate_workflow(name, description, stages) -> dict``：驗證並正規化；不合法 raise WorkflowError。
 """
@@ -104,7 +104,13 @@ IMPLEMENT_FAST_NAME = (
     "原生快車道"  # 軌 I3:單 engineer 直做(decompose+implement+demo+publish),零多專家儀式
 )
 # 全部保留名（不可被使用者建立/覆寫；list_workflows 一律前置供 UI 可選）。
-RESERVED_NAMES = (DEFAULT_WORKFLOW_NAME, DYNAMIC_FIRST_NAME, FAST_TRACK_NAME, QUICK_ANSWER_NAME)
+RESERVED_NAMES = (
+    DEFAULT_WORKFLOW_NAME,
+    DYNAMIC_FIRST_NAME,
+    FAST_TRACK_NAME,
+    QUICK_ANSWER_NAME,
+    IMPLEMENT_FAST_NAME,
+)
 
 WORKFLOWS_FILENAME = "workflows.yaml"
 
@@ -507,8 +513,8 @@ def workflows_path() -> Path:
     return Path(config.ROLES_DIR) / WORKFLOWS_FILENAME
 
 
-def list_workflows() -> list[dict]:
-    """讀取全部 workflow。檔案不存在＝[]；YAML 壞掉或結構不符 raise WorkflowFileError。
+def _read_file_workflows() -> list[dict]:
+    """讀取 workflows.yaml 內的使用者 workflow；檔案不存在/空檔＝[]。
 
     讀取端「不」重驗角色是否仍存在（角色檔可能事後被刪）——存在性只在寫入時強制，
     讀回忠實呈現檔案內容。
@@ -544,6 +550,24 @@ def list_workflows() -> list[dict]:
     return out
 
 
+def _builtin_list_item(name: str) -> dict:
+    """產生給列表使用的內建 workflow 項目，額外標記來源。"""
+    return {**_BUILTIN_WORKFLOWS[name](), "source": "builtin"}
+
+
+def list_workflows() -> list[dict]:
+    """列出全部 workflow：內建保留流程一律依 RESERVED_NAMES 前置，檔案項目接在後面。
+
+    檔案內若殘留保留名，列表仍以內建定義為準，避免舊檔案或手動編輯遮蔽內建流程。
+    """
+    file_items = _read_file_workflows()
+    builtins = [_builtin_list_item(name) for name in RESERVED_NAMES]
+    custom = [
+        {**item, "source": "file"} for item in file_items if item["name"] not in RESERVED_NAMES
+    ]
+    return builtins + custom
+
+
 def _save_workflows(workflows: list[dict]) -> None:
     """全量落檔（temp＋rename 原子寫；目錄不存在自動建立）。"""
     path = workflows_path()
@@ -555,20 +579,20 @@ def _save_workflows(workflows: list[dict]) -> None:
 
 
 def get_workflow(name: str) -> dict | None:
-    """依名稱查 workflow；不存在回 None。保留名（無同名檔案）回對應內建定義。"""
+    """依名稱查 workflow；不存在回 None。保留名固定回對應內建定義。"""
     name = (name or "").strip()
-    for w in list_workflows():
-        if w["name"] == name:
-            return w
     if name in _BUILTIN_WORKFLOWS:
         return _BUILTIN_WORKFLOWS[name]()
+    for w in _read_file_workflows():
+        if w["name"] == name:
+            return w
     return None
 
 
 def create_workflow(name: str, description: str, stages: list) -> dict | None:
     """驗證後新增 workflow 並落檔；驗證失敗 raise WorkflowError，同名/保留名已存在回 None（→409）。"""
     wf = validate_workflow(name, description, stages)
-    workflows = list_workflows()
+    workflows = _read_file_workflows()
     if any(w["name"] == wf["name"] for w in workflows) or wf["name"] in RESERVED_NAMES:
         return None
     workflows.append(wf)
@@ -580,7 +604,9 @@ def create_workflow(name: str, description: str, stages: list) -> dict | None:
 def update_workflow(name: str, description: str, stages: list) -> dict | None:
     """整筆替換同名 workflow（name 由路徑決定、不可改名）；不存在回 None（→404）。"""
     wf = validate_workflow(name, description, stages)
-    workflows = list_workflows()
+    if wf["name"] in RESERVED_NAMES:
+        return None
+    workflows = _read_file_workflows()
     for i, w in enumerate(workflows):
         if w["name"] == wf["name"]:
             workflows[i] = wf
@@ -593,7 +619,9 @@ def update_workflow(name: str, description: str, stages: list) -> dict | None:
 def delete_workflow(name: str) -> bool:
     """刪除 workflow；不存在回 False（→404）。"""
     name = (name or "").strip()
-    workflows = list_workflows()
+    if name in RESERVED_NAMES:
+        return False
+    workflows = _read_file_workflows()
     kept = [w for w in workflows if w["name"] != name]
     if len(kept) == len(workflows):
         return False

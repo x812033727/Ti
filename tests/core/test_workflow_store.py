@@ -175,8 +175,10 @@ def test_overlong_name_rejected(roles_dir):
 # --- CRUD 落檔 roundtrip ------------------------------------------------------
 
 
-def test_missing_file_lists_empty(roles_dir):
-    assert workflow.list_workflows() == []
+def test_missing_file_lists_builtins(roles_dir):
+    listed = workflow.list_workflows()
+    assert [wf["name"] for wf in listed] == list(workflow.RESERVED_NAMES)
+    assert {wf["source"] for wf in listed} == {"builtin"}
     assert workflow.get_workflow("沒有") is None
 
 
@@ -195,6 +197,9 @@ def test_create_get_update_delete_roundtrip(roles_dir):
     assert wf is not None and wf["name"] == "快速原型"
     # 落檔可讀回（重新解析檔案，不是記憶體殘像）。
     assert workflow.get_workflow("快速原型") == wf
+    listed = workflow.list_workflows()
+    assert [item["name"] for item in listed] == [*workflow.RESERVED_NAMES, "快速原型"]
+    assert listed[-1]["source"] == "file"
     raw = yaml.safe_load((roles_dir / "workflows.yaml").read_text(encoding="utf-8"))
     assert raw == {"workflows": [wf]}
 
@@ -203,7 +208,7 @@ def test_create_get_update_delete_roundtrip(roles_dir):
     assert workflow.get_workflow("快速原型") == wf2
 
     assert workflow.delete_workflow("快速原型") is True
-    assert workflow.list_workflows() == []
+    assert [item["name"] for item in workflow.list_workflows()] == list(workflow.RESERVED_NAMES)
     assert workflow.delete_workflow("快速原型") is False
 
 
@@ -214,7 +219,7 @@ def test_create_duplicate_name_returns_none(roles_dir):
 
 
 def test_cannot_create_reserved_default_name(roles_dir):
-    # 全部保留名（預設流程／動態優先）不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    # 全部保留名不可被檔案覆蓋（避免遮蔽內建單一真相）。
     for name in workflow.RESERVED_NAMES:
         assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
 
@@ -246,6 +251,32 @@ def test_fast_track_validates_and_resolvable(roles_dir):
     build = next(s for s in wf["stages"] if s["type"] == "build")
     assert [t["type"] for t in build["task_pipeline"]] == ["implement", "review"]
     assert build["task_pipeline"][1]["gate"] == [{"role": "qa", "verdict": "qa_passed"}]
+
+
+def test_implement_fast_reserved_and_resolvable(roles_dir):
+    wf = workflow.implement_fast_workflow()
+    assert wf["name"] == workflow.IMPLEMENT_FAST_NAME
+    assert workflow.IMPLEMENT_FAST_NAME in workflow.RESERVED_NAMES
+    assert workflow.validate_workflow(wf["name"], wf["description"], wf["stages"]) == wf
+    assert workflow.get_workflow(workflow.IMPLEMENT_FAST_NAME) == wf
+    assert workflow.create_workflow(workflow.IMPLEMENT_FAST_NAME, "", [{"type": "demo"}]) is None
+
+    types = [s["type"] for s in wf["stages"]]
+    assert types == ["decompose", "build", "demo", "wrap_up", "publish"]
+    build = next(s for s in wf["stages"] if s["type"] == "build")
+    assert [t["type"] for t in build["task_pipeline"]] == ["implement"]
+    assert build["task_pipeline"][0]["assignee"] == "engineer"
+
+
+def test_implement_fast_is_listed_as_builtin_in_workflow_store(roles_dir):
+    assert workflow.create_workflow(workflow.IMPLEMENT_FAST_NAME, "", [{"type": "demo"}]) is None
+
+    listed = workflow.list_workflows()
+    names = [wf["name"] for wf in listed]
+
+    assert names[: len(workflow.RESERVED_NAMES)] == list(workflow.RESERVED_NAMES)
+    implement_fast = next(wf for wf in listed if wf["name"] == workflow.IMPLEMENT_FAST_NAME)
+    assert implement_fast.get("source") == "builtin"
 
 
 def test_default_workflow_config_resolves(roles_dir):
@@ -284,9 +315,11 @@ def test_wrong_structure_raises_fileerror(roles_dir):
         workflow.list_workflows()
 
 
-def test_empty_file_lists_empty(roles_dir):
+def test_empty_file_lists_builtins(roles_dir):
     (roles_dir / "workflows.yaml").write_text("", encoding="utf-8")
-    assert workflow.list_workflows() == []
+    listed = workflow.list_workflows()
+    assert [wf["name"] for wf in listed] == list(workflow.RESERVED_NAMES)
+    assert {wf["source"] for wf in listed} == {"builtin"}
 
 
 # --- 與角色載入器互不干擾 -------------------------------------------------------
