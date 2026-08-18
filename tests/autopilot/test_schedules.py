@@ -53,6 +53,8 @@ def test_occurrence_key_daily_weekly_interval():
 
 def test_validate_recurrence():
     assert schedules.validate_recurrence({"kind": "daily", "time": "23:59"}) == ""
+    assert schedules.validate_recurrence({"kind": "daily", "time": "8:05"})
+    assert schedules.validate_recurrence({"kind": "weekly", "time": "08:5", "weekday": 0})
     assert schedules.validate_recurrence({"kind": "daily", "time": "24:00"})
     assert schedules.validate_recurrence({"kind": "weekly", "time": "08:00", "weekday": 7})
     assert schedules.validate_recurrence({"kind": "interval_hours", "hours": 0})
@@ -115,11 +117,24 @@ def test_missing_admission_control_does_not_consume_schedule_occurrence():
 def test_crud_validation_and_delete():
     assert schedules.create("", "", {"kind": "daily", "time": "08:00"})[0] is None
     assert schedules.create("x", "", {"kind": "nope"})[0] is None
+    assert schedules.create("x", "", {"kind": "daily", "time": "8:05"})[0] is None
+    got, err = schedules.create(
+        "bad priority",
+        "",
+        {"kind": "interval_hours", "hours": 2},
+        priority="not-an-int",
+    )
+    assert err == "" and got["priority"] == 1, "壞 priority 不應炸掉,回預設 P1"
+    assert schedules.delete(got["id"]) is True
     s, _ = schedules.create("x", "", {"kind": "interval_hours", "hours": 2})
     got, err = schedules.update(s["id"], {"recurrence": {"kind": "daily", "time": "99:00"}})
     assert got is None and err
     got, _ = schedules.update(s["id"], {"priority": 9, "type": "bug"})
     assert got["priority"] == 2 and got["type"] == "bug", "priority 夾 0-2"
+    got, err = schedules.update(s["id"], {"priority": None})
+    assert err == "" and got["priority"] == 1, "None priority 回預設 P1"
+    got, err = schedules.update(s["id"], {"priority": "nan"})
+    assert err == "" and got["priority"] == 1, "不可解析 priority 回預設 P1"
     assert schedules.update("nope", {"title": "y"})[0] is None
     assert schedules.delete(s["id"]) is True
     assert schedules.delete(s["id"]) is False

@@ -23,6 +23,7 @@ import contextlib
 import fcntl
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -35,6 +36,7 @@ log = logging.getLogger("ti.schedules")
 KINDS = ("daily", "weekly", "interval_hours")
 _TITLE_MAX = 200
 _DETAIL_MAX = 4000
+_TIME_RE = re.compile(r"\d{2}:\d{2}")
 
 
 def _dir(state_dir: Path | None) -> Path:
@@ -77,6 +79,13 @@ def _save(data: dict, state_dir: Path | None = None) -> None:
     )
 
 
+def _normalize_priority(priority) -> int:
+    try:
+        return max(0, min(2, int(priority)))
+    except (TypeError, ValueError):
+        return 1
+
+
 def validate_recurrence(rec: dict) -> str:
     """回錯誤訊息;合法回空字串。"""
     if not isinstance(rec, dict) or rec.get("kind") not in KINDS:
@@ -86,7 +95,12 @@ def validate_recurrence(rec: dict) -> str:
         t = str(rec.get("time") or "")
         parts = t.split(":")
         try:
-            ok = len(parts) == 2 and 0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59
+            ok = (
+                _TIME_RE.fullmatch(t) is not None
+                and len(parts) == 2
+                and 0 <= int(parts[0]) <= 23
+                and 0 <= int(parts[1]) <= 59
+            )
         except ValueError:
             ok = False
         if not ok:
@@ -151,7 +165,7 @@ def create(
         "id": uuid.uuid4().hex[:12],
         "title": title,
         "detail": (detail or "").strip()[:_DETAIL_MAX],
-        "priority": max(0, min(2, int(1 if priority is None else priority))),  # 0 是合法值,勿用 or
+        "priority": _normalize_priority(priority),  # 0 是合法值,勿用 or
         "type": item_type if item_type in ("feature", "bug", "improvement") else "improvement",
         "recurrence": recurrence,
         "enabled": True,
@@ -186,9 +200,7 @@ def update(
             if "detail" in fields:
                 s["detail"] = str(fields["detail"] or "").strip()[:_DETAIL_MAX]
             if "priority" in fields:
-                s["priority"] = max(
-                    0, min(2, int(1 if fields["priority"] is None else fields["priority"]))
-                )
+                s["priority"] = _normalize_priority(fields["priority"])
             if "type" in fields and fields["type"] in ("feature", "bug", "improvement"):
                 s["type"] = fields["type"]
             if "recurrence" in fields:
@@ -254,7 +266,7 @@ def enqueue_due(now: float | None = None, *, state_dir: Path | None = None) -> i
                         "root": root,
                         "repo_sha": task_admission.read_local_repo_sha(root),
                     },
-                    priority=int(s.get("priority", 1)),
+                    priority=_normalize_priority(s.get("priority", 1)),
                     item_type=s.get("type", "improvement"),
                 )
                 s["last_fired_key"] = key
