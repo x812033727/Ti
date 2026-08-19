@@ -134,6 +134,7 @@ def plan_preflight_rebind(
 
 def parse_tasks(pm_text: str) -> list[str]:
     """從 PM 的拆解文字抽出任務條目。優先 `任務: ...`，否則退回條列項目。"""
+    pm_text = pm_text or ""
     cap = config.MAX_TASKS
     explicit = [m.strip() for m in re.findall(r"^\s*任務\s*[:：]\s*(.+)$", pm_text, re.M)]
     if explicit:
