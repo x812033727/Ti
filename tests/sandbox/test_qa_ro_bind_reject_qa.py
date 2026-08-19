@@ -10,22 +10,23 @@ ro-bind 在擋，而非整個沙箱寫不進」。
   * 全程真實 `subprocess.run` 實跑，不 mock；無 bwrap 時 skip。
   * NET 走 `monkeypatch.setattr(runner.config, "SANDBOX_NET", True)`（等同
     TI_SANDBOX_NET=1），繞開受限 runner 的 `--unshare-net` loopback EPERM。
-  * 「host 預置可寫檔」策略隔離變因：探針檔建在 repo 根（host 可寫、且不在
-    `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內被 ro-bind
-    蓋成唯讀。先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；
-    此前提下沙箱內出現 EROFS 即確證 ro-bind 生效。
+  * 「host 預置可寫檔」策略隔離變因：探針檔建在沙箱內仍會被 `--ro-bind / /`
+    看見、且不被 `--tmpfs /tmp`、`~/.cache`、cwd bind 覆蓋的位置。先在 host 證其
+    可寫，排除「該路徑本來就不可寫（權限）」的假陽性；此前提下沙箱內出現 EROFS
+    即確證 ro-bind 生效。
 """
 
 import os
+import shlex
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
-from _repo import REPO_ROOT
 
 from studio import runner
 
-REPO = REPO_ROOT
 TIMEOUT = 30  # 秒；避免 bwrap 卡死拖垮 CI
 
 needs_bwrap = pytest.mark.skipif(
@@ -34,15 +35,41 @@ needs_bwrap = pytest.mark.skipif(
 )
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    return path == root or path.is_relative_to(root)
+
+
+def _visible_host_writable_dir() -> Path:
+    """找一個會被 ro-bind 看見、且 host 端可寫的 probe 目錄。"""
+    masked_roots = [Path("/tmp").resolve(), (Path.home() / ".cache").resolve()]
+    for candidate in (Path("/var/tmp"), Path.home()):
+        try:
+            root = candidate.resolve()
+        except OSError:
+            continue
+        if any(_is_relative_to(root, masked) for masked in masked_roots):
+            continue
+        if root.is_dir() and os.access(root, os.W_OK | os.X_OK):
+            return root
+    pytest.skip("找不到沙箱內可見且 host 端可寫的 ro-bind 探針目錄")
+
+
 @pytest.fixture
 def host_probe():
-    """在 repo 根（host 可寫區）預置一個探針檔，帶唯一後綴；測試後清理。
+    """在 ro-bind 可見的 host 可寫區預置探針檔，測試後清理。
 
-    刻意不放 `~/`、`~/.cache`、`/tmp`、cwd——前三者在沙箱內是 tmpfs/可寫，
-    cwd 是 `--bind` 可寫，都無法驗到唯讀。repo 根被 `--ro-bind / /` 蓋成唯讀。
+    刻意避開 `/tmp`、`~/.cache`、cwd——前兩者在沙箱內是 tmpfs，cwd 是 `--bind`
+    可寫，都無法驗到唯讀。
     """
-    probe = REPO / f".ti_ro_bind_probe_{os.getpid()}.txt"
-    probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
+    fd, name = tempfile.mkstemp(
+        prefix=f".ti_ro_bind_probe_{os.getpid()}_",
+        suffix=".txt",
+        dir=_visible_host_writable_dir(),
+        text=True,
+    )
+    probe = Path(name)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("ORIG")
     try:
         yield probe
     finally:
@@ -60,7 +87,7 @@ def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
     # ② 沙箱內以繼承前綴寫同一絕對路徑——應被 ro-bind 擋下。
     prefix = runner._bwrap_prefix(tmp_path)
     r = subprocess.run(
-        prefix + ["bash", "-c", f"echo TAINT > {host_probe}"],
+        prefix + ["bash", "-c", f"echo TAINT > {shlex.quote(str(host_probe))}"],
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
