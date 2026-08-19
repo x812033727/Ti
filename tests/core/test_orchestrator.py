@@ -154,6 +154,7 @@ def test_parse_tasks_bullets():
     assert "建立 CLI" in tasks
     assert "寫說明" in tasks
     assert parse_tasks("沒有條列") == ["實作需求"]
+    assert parse_tasks(None) == ["實作需求"]
 
 
 def test_parse_structured_tasks_tags():
@@ -179,6 +180,9 @@ def test_parse_structured_tasks_tags():
     fallback = parse_structured_tasks("- 做 A\n- 做 B")
     assert [t["title"] for t in fallback] == ["做 A", "做 B"]
     assert all(t["priority"] == 1 for t in fallback)
+    assert parse_structured_tasks(None) == [
+        {"title": "實作需求", "priority": 1, "type": "improvement"}
+    ]
     assert parse_structured_tasks("核心改動: 修核心", fallback=False) == []
     assert parse_structured_tasks("沒有符合格式的任務", fallback=False) == []
 
