@@ -32,8 +32,12 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _no_real_restart(monkeypatch, tmp_path):
+    async def fake_import_smoke():
+        return runner.RunOutput("import smoke", 0, "", False)
+
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
+    monkeypatch.setattr(redeploy, "import_smoke", fake_import_smoke)
 
 
 # --- pull_main ------------------------------------------------------
@@ -126,6 +130,22 @@ def test_redeploy_post_ok(client, monkeypatch):
         return runner.RunOutput("git pull", 0, "Already up to date.", False)
 
     monkeypatch.setattr(redeploy, "pull_main", fake_pull)
+    body = client.post("/api/redeploy").json()
+    assert body["ok"] and body["restarting"]
+
+
+def test_redeploy_post_ok_does_not_run_real_import_smoke_subprocess(client, monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
+
+    async def fake_pull():
+        return runner.RunOutput("git pull", 0, "Already up to date.", False)
+
+    async def fail_if_any_real_subprocess_runs(*_args, **_kwargs):
+        raise AssertionError("redeploy QA endpoint test must not run a real subprocess")
+
+    monkeypatch.setattr(redeploy, "pull_main", fake_pull)
+    monkeypatch.setattr(runner, "run_command_exec", fail_if_any_real_subprocess_runs)
+
     body = client.post("/api/redeploy").json()
     assert body["ok"] and body["restarting"]
 
