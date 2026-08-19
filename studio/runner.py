@@ -113,6 +113,37 @@ def _worktree_common_git_dir(cwd: Path | str) -> Path | None:
     return admin.parent.parent  # 後備：worktrees/<name> 往上兩層即共用 .git
 
 
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    with contextlib.suppress(ValueError):
+        path.relative_to(root)
+        return True
+    return False
+
+
+def _sandbox_hidden_ro_paths(cwd: Path | str, cache: str) -> list[str]:
+    """回傳被 tmpfs 蓋掉、但沙箱仍需唯讀看見的 host 路徑。"""
+    cwd_path = Path(cwd).resolve()
+    tmpfs_roots = [Path("/tmp").resolve(), Path(cache).resolve()]
+    candidates = [Path(__file__).resolve().parent.parent]
+    if sys.prefix != sys.base_prefix:
+        candidates.append(Path(sys.prefix))
+
+    paths: list[Path] = []
+    for candidate in candidates:
+        path = candidate.resolve()
+        if not path.exists():
+            continue
+        if _path_is_relative_to(path, cwd_path):
+            continue
+        if not any(_path_is_relative_to(path, root) for root in tmpfs_roots):
+            continue
+        if any(_path_is_relative_to(path, existing) for existing in paths):
+            continue
+        paths = [existing for existing in paths if not _path_is_relative_to(existing, path)]
+        paths.append(path)
+    return [str(path) for path in paths]
+
+
 def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
 
@@ -137,6 +168,10 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         "/tmp",
         "--tmpfs",
         cache,
+    ]
+    for path in _sandbox_hidden_ro_paths(cwd, cache):
+        args += ["--ro-bind", path, path]
+    args += [
         "--bind",
         cwd,
         cwd,
