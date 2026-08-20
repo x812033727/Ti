@@ -220,7 +220,7 @@ async def test_abort_turn_bounded_when_interrupt_hangs(fake_sdk, monkeypatch):
     exp, built = _make_expert(monkeypatch, first)
     rebuilt = _CtrlClient()
     built.append(rebuilt)  # _new_client 重建時拿到新 client
-    _, broadcast = collect()
+    bucket, broadcast = collect()
 
     exc = experts.ExpertTurnTimeout("idle", "逾時前片段")
     note = await asyncio.wait_for(exp._abort_turn(exc, broadcast), timeout=2)
@@ -228,7 +228,14 @@ async def test_abort_turn_bounded_when_interrupt_hangs(fake_sdk, monkeypatch):
     assert first.interrupts == 1
     assert first.disconnects == 1  # interrupt 逾時 → 落斷線分支
     assert "已重建" in note
-    assert "逾時前片段" in note
+    assert "逾時前片段" not in note
+    abort_events = [
+        ev
+        for ev in bucket
+        if ev.type == events.EventType.EXPERT_MESSAGE and ev.payload.get("aborted") is True
+    ]
+    assert len(abort_events) == 1
+    assert "逾時前片段" in abort_events[0].payload["text"]
     assert exp._client is rebuilt
     assert exp._connected is False
 
