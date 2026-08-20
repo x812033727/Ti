@@ -199,6 +199,7 @@ def test_implement_fast_workflow_validates():
     v = workflow.coerce(workflow.implement_fast_workflow())
     assert v["name"] == workflow.IMPLEMENT_FAST_NAME, "coerce 不得退回 default"
     assert workflow.IMPLEMENT_FAST_NAME in workflow._BUILTIN_WORKFLOWS
+    assert workflow.IMPLEMENT_FAST_NAME in workflow.RESERVED_NAMES
 
 
 # --- 軌 K:FAST 快審顧問 --------------------------------------------------------
