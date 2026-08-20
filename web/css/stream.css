@@ -57,6 +57,13 @@
   width: fit-content;
 }
 .msg .txt { font-size: var(--fs-3); line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.msg.aborted .body { border-color: rgba(245, 184, 95, .45); background: var(--warn-bg); }
+.msg-flag {
+  margin-left: 8px;
+  color: var(--warn);
+  font-size: var(--fs-0);
+  font-weight: 600;
+}
 
 /* 人類插話：靠右、綠色系，跟 AI 拉開視覺差 */
 .msg.human { flex-direction: row-reverse; align-self: flex-end; max-width: 100%; }

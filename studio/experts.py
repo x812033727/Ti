@@ -863,7 +863,17 @@ class Expert:
             self._connected = False
             self._client = self._new_client()  # 重建沿用同一模型覆寫（若有）
             note += "（會話無法中斷，已重建；此前脈絡遺失）"
+        safe_note = note
         if exc.partial_text:
             note += f"\n逾時前的部分輸出：\n{exc.partial_text}"
-        await broadcast(events.expert_message(self.session_id, r.key, r.name, r.avatar, note))
-        return note
+        await broadcast(
+            events.expert_message(
+                self.session_id,
+                r.key,
+                r.name,
+                r.avatar,
+                note,
+                aborted=True,
+            )
+        )
+        return safe_note

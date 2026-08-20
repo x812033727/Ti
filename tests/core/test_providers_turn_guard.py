@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from studio import config, providers, runner
+from studio import config, events, providers, runner
 from studio.roles import BY_KEY
 
 APPROVAL_HINTS = ("核可", "通過", "approve", "lgtm", "no objection")
@@ -61,12 +61,16 @@ async def test_openai_turn_guard_aborts_on_whole_loop_hard_timeout(monkeypatch, 
         return _msg(tool_calls=[_tc(f"c{calls['n']}", "read_file", '{"path": "x"}')])
 
     expert = providers.OpenAIExpert(BY_KEY["engineer"], "sess", tmp_path, chat=chat, model="m")
-    _bucket, broadcast = _collect()
+    bucket, broadcast = _collect()
 
     result = await asyncio.wait_for(expert.speak("做點事", broadcast), timeout=10)
 
     assert "逾時" in result and result.startswith("【系統】")
     assert not any(h.lower() in result.lower() for h in APPROVAL_HINTS)
+    assert any(
+        ev.type == events.EventType.EXPERT_MESSAGE and ev.payload.get("aborted") is True
+        for ev in bucket
+    )
     # 證明確實是「多步累加」觸發，而非單次 chat 逾時（單次會在第一/二步就被 per-chat 攔下）。
     assert calls["n"] >= 2
 

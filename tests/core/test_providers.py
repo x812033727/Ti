@@ -376,6 +376,34 @@ async def test_antigravity_auth_required_raises_provider_unavailable(monkeypatch
     assert bucket == []
 
 
+@pytest.mark.asyncio
+async def test_antigravity_turn_timeout_marks_message_aborted(monkeypatch, tmp_path):
+    """Antigravity 本端 watchdog 逾時也要標成 aborted，讓 UI/歷史可辨識為中止訊息。"""
+    expert = providers.AntigravityExpert(BY_KEY["engineer"], "t", tmp_path)
+    bucket, broadcast = collect()
+    proc = FakeCodexProcess()
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return proc
+
+    async def fake_wait_process_exit(*_args, **_kwargs):
+        return "閒置"
+
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0)
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0.5)
+    monkeypatch.setattr(providers.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(providers.runner, "wait_process_exit", fake_wait_process_exit)
+    monkeypatch.setattr(providers.runner, "reap_group", lambda _pgid: proc.finish(-9))
+
+    out = await expert._run_antigravity("請回覆", broadcast)
+
+    assert out.startswith("【系統】") and "逾時" in out
+    assert any(
+        e.type == events.EventType.EXPERT_MESSAGE and e.payload.get("aborted") is True
+        for e in bucket
+    )
+
+
 def test_antigravity_unavailable_delegates_to_llm_caller(monkeypatch):
     """Antigravity 不應保留本地 auth phrase 白名單；核心回 None 就不得自行判 unavailable。"""
     calls = []
@@ -1217,6 +1245,10 @@ async def test_codex_turn_timeout_soft_fails_without_pause(monkeypatch, tmp_path
 
     # 軟失敗：回系統 note（含「逾時」），略過本輪而非拋例外或卡死整場。
     assert result.startswith("【系統】") and "逾時" in result
+    assert any(
+        ev.type == events.EventType.EXPERT_MESSAGE and ev.payload.get("aborted") is True
+        for ev in bucket
+    )
     # 最後狀態回 idle（speak 的 finally 有廣播）。
     assert bucket[-1].payload["status"] == "idle"
 
