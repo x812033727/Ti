@@ -447,10 +447,11 @@ def parse_agenda(text: str, requirement: str = "") -> list[dict]:
                     log.warning("議程解析：子題行全段皆空，整行跳過: %r", line.strip())
                     cur = None  # 後續 `負責:` 不得附到上一個子題。
                     continue
-                log.warning("議程解析：子題標題為空，以描述補位: %r", line.strip())
                 if parts[1]:
+                    log.warning("議程解析：子題標題為空，以描述補位: %r", line.strip())
                     parts[0], parts[1] = parts[1], ""
                 else:
+                    log.warning("議程解析：子題標題與描述皆空，以準則補位: %r", line.strip())
                     parts[0], parts[2] = parts[2], ""
             cur = {
                 "title": parts[0],
