@@ -214,9 +214,25 @@ def test_create_duplicate_name_returns_none(roles_dir):
 
 
 def test_cannot_create_reserved_default_name(roles_dir):
-    # 全部保留名（預設流程／動態優先）不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    # 全部內建流程名不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    assert set(workflow.RESERVED_NAMES) == set(workflow._BUILTIN_WORKFLOWS)
     for name in workflow.RESERVED_NAMES:
         assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
+
+
+def test_cannot_shadow_implement_fast_builtin_with_user_workflow(roles_dir):
+    builtin = workflow.implement_fast_workflow()
+
+    assert (
+        workflow.create_workflow(
+            workflow.IMPLEMENT_FAST_NAME,
+            "shadow attempt",
+            [{"type": "demo"}],
+        )
+        is None
+    )
+    assert not (roles_dir / "workflows.yaml").exists()
+    assert workflow.get_workflow(workflow.IMPLEMENT_FAST_NAME) == builtin
 
 
 def test_dynamic_first_validates_and_resolvable(roles_dir):
