@@ -214,7 +214,8 @@ def test_create_duplicate_name_returns_none(roles_dir):
 
 
 def test_cannot_create_reserved_default_name(roles_dir):
-    # 全部保留名（預設流程／動態優先）不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    # 全部內建流程名不可被檔案覆蓋（避免遮蔽內建單一真相）。
+    assert set(workflow.RESERVED_NAMES) == set(workflow._BUILTIN_WORKFLOWS)
     for name in workflow.RESERVED_NAMES:
         assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
 
