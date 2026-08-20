@@ -35,6 +35,13 @@ PreWriteGuard = Callable[[], Awaitable[tuple[bool, str]]]
 
 _PR_NUM_RE = re.compile(r"/pull/(\d+)")
 _SHA_RE = re.compile(r"(?:merge sha=)?\b([0-9a-fA-F]{7,64})\b")
+_PR_BODY_FILE_LIMIT = 8
+_PR_REASON_RULES = (
+    ("未處理邊界", ("邊界", "空輸入", "空值", "逾時", "timeout", "edge", "未處理")),
+    ("錯字", ("錯字", "typo", "拼字")),
+    ("過時文件", ("過時", "文檔", "文件", "readme", "docs")),
+    ("bug", ("bug", "錯誤", "失敗", "error", "fail", "修正", "修復", "回歸")),
+)
 
 # 發佈目標 repo 的 per-session 覆寫（長期專案可設定自己的 publish_repo）。
 # 用 contextvar 而非函式參數逐層傳遞：publish 之後的 CI 驗證／自我修復迴圈
@@ -188,10 +195,68 @@ def redact(text: str, token: str | None = None) -> str:
     return text
 
 
-def pr_payload(requirement: str, branch: str, base: str) -> dict:
+def _format_pr_file_list(paths: list[str]) -> str:
+    shown = paths[:_PR_BODY_FILE_LIMIT]
+    text = "、".join(f"`{p}`" for p in shown)
+    extra = len(paths) - len(shown)
+    if extra > 0:
+        text += f" 等 {extra} 個檔案"
+    return text
+
+
+def _pr_validation_note(changed_files: list[str] | None = None) -> str:
+    paths = [p.strip() for p in (changed_files or []) if p and p.strip()]
+    tests = [p for p in paths if p.startswith("tests/")]
+    if tests:
+        return "對應測試：" + _format_pr_file_list(tests)
+    if paths:
+        return (
+            "靜態推理依據：本 PR 未偵測到 `tests/` 變更，請審查 diff 是否只影響 "
+            + _format_pr_file_list(paths)
+            + "。"
+        )
+    return "靜態推理依據：未取得 changed-files 摘要，請以 PR diff 與 CI 結果交叉確認。"
+
+
+def _pr_motivation_note(requirement: str) -> str:
+    text = (requirement or "").strip()
+    if not text:
+        return "- 類型：未明\n- 說明：未提供原始需求；請在合併前補明 bug、邊界、錯字或過時資訊。"
+    lowered = text.lower()
+    reason = "需求指出的改動原因"
+    for label, needles in _PR_REASON_RULES:
+        if any(needle in lowered for needle in needles):
+            reason = label
+            break
+    return f"- 類型：{reason}\n- 說明：{text}"
+
+
+async def _pr_changed_files(cwd, base: str) -> list[str]:
+    """Best-effort 取得 PR diff 檔名；失敗回空清單，不阻斷發佈。"""
+    specs = [f"origin/{base}...HEAD", "HEAD~1..HEAD"]
+    for spec in specs:
+        out = await runner.run_command_exec(
+            cwd,
+            ["git", "diff", "--name-only", spec],
+            timeout=30,
+            sandbox=False,
+            label=f"git diff --name-only {spec}",
+        )
+        if out.ok:
+            return [line.strip() for line in out.output.splitlines() if line.strip()]
+    return []
+
+
+def pr_payload(
+    requirement: str, branch: str, base: str, *, changed_files: list[str] | None = None
+) -> dict:
     title = "Ti Studio 成果：" + (requirement or "").strip()[:60]
     body = (
-        f"此 PR 由 Ti Studio AI 專家工作室自動產生。\n\n**原始需求**：{requirement or '(未提供)'}\n"
+        "此 PR 由 Ti Studio AI 專家工作室自動產生。\n\n"
+        f"## 動機\n{_pr_motivation_note(requirement)}\n\n"
+        "## 如何驗證\n"
+        f"- {_pr_validation_note(changed_files)}\n\n"
+        f"**原始需求**：{requirement or '(未提供)'}\n"
     )
     return {"title": title, "head": branch, "base": base, "body": body}
 
@@ -1127,7 +1192,10 @@ async def _publish_inner(
     if not make_pr:
         return PublishResult(True, "已 push", branch=branch, repo=repo, pushed=True)
 
-    ok, info = await _open_pr(pr_payload(requirement, branch, config.PUBLISH_BASE))
+    changed_files = await _pr_changed_files(cwd, config.PUBLISH_BASE)
+    ok, info = await _open_pr(
+        pr_payload(requirement, branch, config.PUBLISH_BASE, changed_files=changed_files)
+    )
     if not ok:
         return PublishResult(
             True, "已 push，但 " + redact(info), branch=branch, repo=repo, pushed=True
