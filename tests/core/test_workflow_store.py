@@ -220,6 +220,21 @@ def test_cannot_create_reserved_default_name(roles_dir):
         assert workflow.create_workflow(name, "", [{"type": "demo"}]) is None
 
 
+def test_cannot_shadow_implement_fast_builtin_with_user_workflow(roles_dir):
+    builtin = workflow.implement_fast_workflow()
+
+    assert (
+        workflow.create_workflow(
+            workflow.IMPLEMENT_FAST_NAME,
+            "shadow attempt",
+            [{"type": "demo"}],
+        )
+        is None
+    )
+    assert not (roles_dir / "workflows.yaml").exists()
+    assert workflow.get_workflow(workflow.IMPLEMENT_FAST_NAME) == builtin
+
+
 def test_dynamic_first_validates_and_resolvable(roles_dir):
     wf = workflow.dynamic_first_workflow()
     assert wf["name"] == workflow.DYNAMIC_FIRST_NAME
