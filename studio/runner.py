@@ -113,6 +113,41 @@ def _worktree_common_git_dir(cwd: Path | str) -> Path | None:
     return admin.parent.parent  # 後備：worktrees/<name> 往上兩層即共用 .git
 
 
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _sandbox_runtime_ro_binds(cwd: Path, cache: Path) -> list[Path]:
+    """補回會被 tmpfs 遮住、但執行 sandbox 指令仍需要讀取的 runtime 路徑。"""
+    masked_roots = [Path("/tmp").resolve(), cache.resolve()]
+    candidates = [
+        Path(__file__).resolve().parents[1],  # repo root：pytest 時常提供 .venv / 測試探針
+        Path(sys.prefix).resolve(),
+        Path(sys.executable).parent.parent.resolve(),
+    ]
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        candidates.append(Path(venv).resolve())
+
+    binds: list[Path] = []
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        if not any(_path_is_under(candidate, root) for root in masked_roots):
+            continue
+        if candidate == cwd or _path_is_under(candidate, cwd):
+            continue
+        if any(candidate == existing or _path_is_under(candidate, existing) for existing in binds):
+            continue
+        binds = [existing for existing in binds if not _path_is_under(existing, candidate)]
+        binds.append(candidate)
+    return binds
+
+
 def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
 
@@ -123,7 +158,9 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     額外把共用 git 目錄（主 repo 的 .git）綁為可寫，否則 worktree 內的 git 寫入會踩到唯讀面。
     """
     cwd = str(cwd)
-    cache = os.path.join(os.path.expanduser("~"), ".cache")
+    cwd_path = Path(cwd).resolve()
+    cache_path = Path(os.path.expanduser("~")) / ".cache"
+    cache = str(cache_path)
     args = [
         config.SANDBOX_BWRAP,
         "--ro-bind",
@@ -137,10 +174,10 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         "/tmp",
         "--tmpfs",
         cache,
-        "--bind",
-        cwd,
-        cwd,
     ]
+    for path in _sandbox_runtime_ro_binds(cwd_path, cache_path):
+        args += ["--ro-bind", str(path), str(path)]
+    args += ["--bind", cwd, cwd]
     common_git = _worktree_common_git_dir(cwd)
     if common_git is not None and common_git.exists():
         args += ["--bind", str(common_git), str(common_git)]
