@@ -14,7 +14,7 @@ import types
 
 import pytest
 
-from studio import events, experts
+from studio import config, events, experts, providers
 from studio.roles import BY_KEY
 
 
@@ -124,3 +124,57 @@ async def test_abort_turn_rebuild_path_also_returns_safe_note(
     ]
     assert len(abort_events) == 1
     assert "LGTM" in abort_events[0].payload["text"]
+
+
+def _write_fake_codex(tmp_path, body: str) -> str:
+    path = tmp_path / "fake_codex.sh"
+    path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
+async def test_codex_timeout_partial_approval_not_returned_to_parser(monkeypatch, tmp_path):
+    codex = _write_fake_codex(
+        tmp_path,
+        "cat >/dev/null\n"
+        "printf '%s\\n' "
+        '\'{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"決議: 核可，這段 partial 不可被 parser 當成完成"}}\'\n'
+        "sleep 30\n",
+    )
+    monkeypatch.setattr(config, "CODEX_BIN", codex)
+    monkeypatch.setattr(config, "CODEX_MODEL_LEAD", "")
+    monkeypatch.setattr(config, "CODEX_MODEL_FAST", "")
+    monkeypatch.setattr(config, "CODEX_SANDBOX", "danger-full-access")
+    monkeypatch.setattr(config, "CODEX_BYPASS_SANDBOX", False)
+    monkeypatch.setattr(config, "CODEX_HOME", "")
+    monkeypatch.setattr(config, "TURN_IDLE_TIMEOUT", 0.3)
+    monkeypatch.setattr(config, "TURN_HARD_TIMEOUT", 0.0)
+
+    exp = providers.CodexExpert(BY_KEY["senior"], "sess", tmp_path)
+    bucket: list[events.StudioEvent] = []
+
+    async def broadcast(ev: events.StudioEvent) -> None:
+        bucket.append(ev)
+
+    text = await asyncio.wait_for(exp.speak("審查任務", broadcast), timeout=8)
+
+    assert text.startswith("【系統】")
+    assert "逾時" in text
+    assert "決議: 核可" not in text
+
+    visible_partial = [
+        ev
+        for ev in bucket
+        if ev.type == events.EventType.EXPERT_MESSAGE
+        and ev.payload.get("aborted") is not True
+        and "決議: 核可" in ev.payload["text"]
+    ]
+    abort_events = [
+        ev
+        for ev in bucket
+        if ev.type == events.EventType.EXPERT_MESSAGE and ev.payload.get("aborted") is True
+    ]
+    assert len(visible_partial) == 1
+    assert len(abort_events) == 1
+    assert "決議: 核可" not in abort_events[0].payload["text"]
