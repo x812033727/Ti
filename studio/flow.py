@@ -32,7 +32,7 @@ def _last_match(text: str, pattern: str, flags: int = 0) -> str | None:
 
 
 def qa_passed(text: str) -> bool:
-    verdict = _last_match(text, r"驗證\s*[:：]\s*(PASS|FAIL)")
+    verdict = _last_match(text, r"驗證\s*[:：]\s*(PASS|FAIL)", re.I)
     if verdict:
         return verdict.upper() == "PASS"
     # 後備：找不到標記時，看是否出現失敗字樣
