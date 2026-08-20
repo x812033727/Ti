@@ -64,6 +64,7 @@ const known = [
   ev('phase_change', { phase: '實作', detail: 'x' }),
   ev('expert_status', { speaker: 'pm', status: 'thinking' }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi' }),
+  ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: '【系統】發言逾時中止', aborted: true }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi', duration_s: 1.23, provider: 'fake', model: 'gpt-4', role: 'engineer' }),
   ev('tool_use', { speaker: 'pm', tool: 'Write', summary: 'x' }),
   ev('board_update', { columns: { todo: [{ title: 'a' }], doing: [], review: [], done: [] } }),
@@ -105,6 +106,89 @@ const unknown = [
 for (const e of unknown) {
   try { handleEvent(e); pass++; }
   catch (err) { fail++; console.error(`FAIL 未知事件 ${e.type}:`, err.message); }
+}
+
+// 3) aborted 專家訊息要真的落成可辨識樣式，不只是不拋錯。
+class MiniEl {
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.children = [];
+    this.dataset = {};
+    this.style = {};
+    this.scrollTop = 0;
+    this.scrollHeight = 0;
+    this._className = '';
+    this._textContent = '';
+    this.classList = {
+      add: (...names) => {
+        const set = new Set(this._className.split(/\s+/).filter(Boolean));
+        for (const n of names) set.add(n);
+        this._className = [...set].join(' ');
+      },
+      remove: (...names) => {
+        const drop = new Set(names);
+        this._className = this._className.split(/\s+/).filter((n) => !drop.has(n)).join(' ');
+      },
+      contains: (name) => this._className.split(/\s+/).includes(name),
+      toggle: () => {},
+    };
+  }
+  set className(value) { this._className = String(value || ''); }
+  get className() { return this._className; }
+  set textContent(value) { this._textContent = String(value ?? ''); }
+  get textContent() { return this._textContent; }
+  set innerHTML(html) {
+    this.children = [];
+    const classes = String(html).matchAll(/class="([^"]+)"/g);
+    for (const match of classes) {
+      const child = new MiniEl('div');
+      child.className = match[1];
+      this.appendChild(child);
+    }
+  }
+  appendChild(child) {
+    this.children.push(child);
+    return child;
+  }
+  querySelector(selector) {
+    if (!selector.startsWith('.')) return null;
+    const wanted = selector.slice(1);
+    const stack = [...this.children];
+    while (stack.length) {
+      const child = stack.shift();
+      if (child.classList?.contains(wanted)) return child;
+      stack.push(...(child.children || []));
+    }
+    return null;
+  }
+  querySelectorAll() { return []; }
+  setAttribute() {}
+}
+
+const streamEl = new MiniEl('main');
+globalThis.document = {
+  querySelector: (sel) => (sel === '#stream' ? streamEl : new MiniEl()),
+  querySelectorAll: () => [],
+  createElement: (tag) => new MiniEl(tag),
+  createElementNS: (tag) => new MiniEl(tag),
+  createTextNode: (text) => {
+    const el = new MiniEl('#text');
+    el.textContent = text;
+    return el;
+  },
+  getElementById: () => new MiniEl(),
+  body: new MiniEl(),
+};
+try {
+  mod.addMessage({ speaker: 'pm', name: 'PM', avatar: 'P', text: '【系統】發言逾時中止', aborted: true });
+  const msg = streamEl.children.at(-1);
+  const flag = msg?.querySelector('.msg-flag');
+  if (!msg?.classList.contains('aborted')) throw new Error('aborted class missing');
+  if (flag?.textContent !== '因無進展被中止') throw new Error('aborted flag missing');
+  pass++;
+} catch (err) {
+  fail++;
+  console.error('FAIL aborted 訊息樣式:', err.message);
 }
 
 console.log(`handleEvent 測試：通過 ${pass} / 失敗 ${fail}`);

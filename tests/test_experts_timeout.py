@@ -182,6 +182,15 @@ def _fast_timeouts(monkeypatch):
 
 async def test_speak_timeout_interrupt_recovers(fake_sdk, monkeypatch, _fast_timeouts):
     client = _HangingClient(fake_sdk, interrupt_ok=True)
+
+    async def receive_then_hang():
+        if client._interrupted.is_set():
+            yield fake_sdk.ResultMessage()
+            return
+        yield fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("決議: 核可")])
+        await asyncio.Event().wait()
+
+    client.receive_response = receive_then_hang
     monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd: client)
     exp = experts.Expert(BY_KEY["engineer"], "sess", "/tmp/x")
     bucket, broadcast = collect()
@@ -189,10 +198,18 @@ async def test_speak_timeout_interrupt_recovers(fake_sdk, monkeypatch, _fast_tim
     text = await exp.speak("做點事", broadcast)
 
     assert "逾時中止" in text
+    assert "決議: 核可" not in text
     assert client.interrupts == 1
     assert client.disconnects == 0  # 溫和路徑：不需殺行程
-    # 系統說明有廣播給 UI，且最後回到 idle 狀態
-    assert any("逾時中止" in ev.payload.get("text", "") for ev in bucket)
+    # UI 仍看得到 partial_text，但 speak() 回傳給 orchestrator/parser 的是安全摘要。
+    abort_events = [
+        ev
+        for ev in bucket
+        if ev.type == events.EventType.EXPERT_MESSAGE and ev.payload.get("aborted") is True
+    ]
+    assert len(abort_events) == 1
+    assert "逾時中止" in abort_events[0].payload["text"]
+    assert "決議: 核可" in abort_events[0].payload["text"]
     assert bucket[-1].payload["status"] == "idle"
 
 

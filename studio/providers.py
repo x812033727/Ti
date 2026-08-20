@@ -359,7 +359,7 @@ class CodexExpert:
                 )
                 if stderr_tail:
                     note += "\n" + _clip(stderr_tail, 1200)
-                return await self._system_note(note, broadcast)
+                return await self._system_note(note, broadcast, aborted=True)
             # proc 已自行結束：reap 整組收掉殘留 sandbox 孫程序釋放 pipe，再有上限 join reader，
             # 避免孤兒孫程序握著 stdout/stderr 寫端使 async-for 永不 EOF（曾卡到外層 3600s）。
             stderr_tail = await _finish_readers()
@@ -464,10 +464,15 @@ class CodexExpert:
             return text
         return ""
 
-    async def _system_note(self, note: str, broadcast) -> str:
+    async def _system_note(self, note: str, broadcast, *, aborted: bool = False) -> str:
         await broadcast(
             events.expert_message(
-                self.session_id, self.role.key, self.role.name, self.role.avatar, note
+                self.session_id,
+                self.role.key,
+                self.role.name,
+                self.role.avatar,
+                note,
+                aborted=aborted,
             )
         )
         return note
@@ -751,7 +756,7 @@ class AntigravityExpert:
                 )
                 if stderr_tail:
                     note += "\n" + _clip(stderr_tail, 1200)
-                return await self._system_note(note, broadcast)
+                return await self._system_note(note, broadcast, aborted=True)
 
             # proc 已自行結束：reap 整組收掉殘留 sandbox 孫程序釋放 pipe，再有上限 join reader，
             # 避免孤兒孫程序握著 stdout/stderr 寫端使 async-for 永不 EOF（曾卡到外層 3600s）。
@@ -821,10 +826,15 @@ class AntigravityExpert:
             if self._proc is proc:
                 self._proc = None
 
-    async def _system_note(self, note: str, broadcast) -> str:
+    async def _system_note(self, note: str, broadcast, *, aborted: bool = False) -> str:
         await broadcast(
             events.expert_message(
-                self.session_id, self.role.key, self.role.name, self.role.avatar, note
+                self.session_id,
+                self.role.key,
+                self.role.name,
+                self.role.avatar,
+                note,
+                aborted=aborted,
             )
         )
         return note
@@ -1019,12 +1029,20 @@ class OpenAIExpert:
                 )
             if timed_out:
                 note = f"【系統】發言逾時中止（總時長上限 {hard_timeout:g} 秒）。"
+                safe_note = note
                 if collected:
                     note += "\n逾時前的部分輸出：\n" + "\n".join(collected)
                 await broadcast(
-                    events.expert_message(self.session_id, r.key, r.name, r.avatar, note)
+                    events.expert_message(
+                        self.session_id,
+                        r.key,
+                        r.name,
+                        r.avatar,
+                        note,
+                        aborted=True,
+                    )
                 )
-                return note
+                return safe_note
             return "\n".join(collected)
 
         async def _on_retry(attempt: int, limit: int, delay: float, snippet: str) -> None:

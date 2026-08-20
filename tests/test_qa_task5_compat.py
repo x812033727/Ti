@@ -63,6 +63,18 @@ def test_existing_event_payload_contracts_stable():
         "role",
     }
 
+    e3 = events.expert_message("s", "pm", "PM", "🧑", "hi", aborted=True)
+    assert e3.payload.get("aborted") is True
+    assert set(e3.payload) == {
+        "speaker",
+        "name",
+        "avatar",
+        "text",
+        "streaming",
+        "final",
+        "aborted",
+    }
+
 
 def test_new_events_have_stable_payload_shape():
     """新增事件 huddle / critic_review 的 to_dict 結構正確、可序列化。"""

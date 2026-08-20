@@ -103,10 +103,18 @@ export function setExpertStatus(key, status) {
 
 export function addMessage(p) {
   const el = document.createElement("div");
-  el.className = "msg" + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
+  el.className = "msg"
+    + (p.aborted ? " aborted" : "")
+    + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
   el.innerHTML = `
     <div class="av">${p.avatar}</div>
     <div class="body"><div class="who">${p.name}</div><div class="txt"></div></div>`;
+  if (p.aborted) {
+    const flag = document.createElement("span");
+    flag.className = "msg-flag";
+    flag.textContent = "因無進展被中止";
+    el.querySelector(".who").appendChild(flag);
+  }
   // 專家訊息走 sanitizing markdown(PR3):sanitizer 全程 createElement/textContent,
   // 原文 HTML 永遠是字面文字;任何解析意外退回純文字,渲染不得中斷討論串。
   const txt = el.querySelector(".txt");
