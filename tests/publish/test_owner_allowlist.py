@@ -42,6 +42,7 @@ def test_repo_owner_fails_closed_on_non_github_or_garbage():
 def test_repo_slug_normalizes_bare_https_scp_and_ssh_urls():
     expected = "x812033727/ti"
     assert repo_ident.repo_slug("x812033727/Ti") == expected
+    assert repo_ident.repo_slug("GitHub.com/X812033727/Ti.git") == expected
     assert repo_ident.repo_slug("https://github.com/x812033727/Ti.git") == expected
     assert repo_ident.repo_slug("git@github.com:x812033727/Ti.git") == expected
     assert repo_ident.repo_slug("ssh://git@github.com/x812033727/Ti.git") == expected
