@@ -106,6 +106,14 @@ def test_reserved_default_name_409(client):
     assert res.status_code == 409
 
 
+def test_reserved_implement_fast_name_409(client):
+    res = client.post(
+        "/api/workflows",
+        json={"name": workflow.IMPLEMENT_FAST_NAME, "stages": [{"type": "demo"}]},
+    )
+    assert res.status_code == 409
+
+
 def test_update_validates_and_404(client):
     client.post("/api/workflows", json={"name": "w", "stages": [{"type": "demo"}]})
     res = client.put("/api/workflows/w", json={"stages": [{"type": "teleport"}]})
