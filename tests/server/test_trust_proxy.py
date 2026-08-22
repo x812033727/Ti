@@ -290,6 +290,13 @@ def test_client_ip_strips_ipv6_bracket_port(proxy):
     assert netutil.client_ip(req) == "2001:db8::1"
 
 
+def test_client_ip_rejects_malformed_ipv6_bracket_suffix(proxy):
+    """`]` 後若不是空字串或數字 port，應視為斷鏈止點並回退 peer。"""
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="[2001:db8::1]garbage")
+    assert netutil.client_ip(req) == "127.0.0.1"
+
+
 def test_client_ip_strips_ipv6_zone(proxy):
     proxy(True)
     req = make_request(peer="127.0.0.1", xff="fe80::1%eth0")

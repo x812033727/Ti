@@ -24,7 +24,7 @@ _IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 def _parse_ip(segment: str) -> _IPAddress | None:
     """把單一 XFF 段（或 peer host）剝離 port 與 IPv6 zone 後解析為 ip_address。
 
-    可處理：`1.2.3.4`、`1.2.3.4:5678`、`[::1]:port`、`[2001:db8::1]`、
+    可處理：`1.2.3.4`、`1.2.3.4:5678`、`[::1]:443`、`[2001:db8::1]`、
     `::1`、`fe80::1%eth0`。無法乾淨解析者回 None（呼叫端視為斷鏈止點）。
     """
     s = segment.strip()
@@ -35,6 +35,9 @@ def _parse_ip(segment: str) -> _IPAddress | None:
         # 帶中括號的 IPv6，可能尾隨 :port —— 取中括號內內容。
         end = s.find("]")
         if end == -1:
+            return None
+        tail = s[end + 1 :]
+        if tail and not (tail.startswith(":") and tail[1:].isdigit()):
             return None
         host = s[1:end]
     elif s.count(":") == 1:
