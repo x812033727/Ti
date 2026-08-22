@@ -127,14 +127,19 @@ def test_crud_validation_and_delete():
 
 
 def test_crud_rejects_unparseable_priority_without_mutation():
+    before = schedules.list_schedules()
     got, err = schedules.create("x", "", {"kind": "daily", "time": "08:00"}, priority="bad")
+    after = schedules.list_schedules()
     assert got is None and "priority" in err, "不可解析 priority 應回驗證錯誤"
-    assert schedules.list_schedules() == [], "失敗建立不可寫入排程"
+    assert before == after == [], "失敗建立不可寫入排程"
 
     s, _ = schedules.create("x", "", {"kind": "interval_hours", "hours": 2})
+    before = schedules.list_schedules()
     got, err = schedules.update(s["id"], {"priority": "bad"})
+    after = schedules.list_schedules()
     assert got is None and "priority" in err, "更新也不得讓 ValueError 擴散"
-    assert schedules.list_schedules()[0]["priority"] == 1, "失敗更新不可污染既有排程"
+    assert before == after, "失敗更新不可污染既有排程"
+    assert after[0]["priority"] == 1, "失敗更新不可污染既有排程"
 
 
 def test_autopilot_hook_throttle_and_safety(monkeypatch):
