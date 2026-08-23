@@ -236,12 +236,12 @@ def test_clarify_timeout_reload_valid_value(sandbox, monkeypatch):
     assert config.CLARIFY_TIMEOUT == 90.0
 
 
-def test_update_accepts_clarify_timeout_numeric_value(sandbox):
-    settings.update({"TI_CLARIFY_TIMEOUT": "90"})
-    assert os.environ["TI_CLARIFY_TIMEOUT"] == "90"
-    assert config.CLARIFY_TIMEOUT == 90.0
+def test_update_accepts_clarify_timeout_float_value(sandbox):
+    settings.update({"TI_CLARIFY_TIMEOUT": "90.5"})
+    assert os.environ["TI_CLARIFY_TIMEOUT"] == "90.5"
+    assert config.CLARIFY_TIMEOUT == 90.5
     env_text = (sandbox / ".env").read_text()
-    assert "TI_CLARIFY_TIMEOUT" in env_text and "90" in env_text
+    assert "TI_CLARIFY_TIMEOUT" in env_text and "90.5" in env_text
 
 
 def test_update_rejects_bad_clarify_timeout_without_persisting(sandbox, monkeypatch):
@@ -251,6 +251,18 @@ def test_update_rejects_bad_clarify_timeout_without_persisting(sandbox, monkeypa
     assert config.CLARIFY_TIMEOUT == 180.0
     env_file = sandbox / ".env"
     assert not env_file.exists() or "TI_CLARIFY_TIMEOUT" not in env_file.read_text()
+
+
+def test_update_rejects_decimal_for_int_numeric_field(sandbox, monkeypatch):
+    monkeypatch.delenv("TI_AUTOPILOT_INVESTIGATION_TIMEOUT", raising=False)
+    settings.update({"TI_AUTOPILOT_INVESTIGATION_TIMEOUT": "90.5"})
+    assert "TI_AUTOPILOT_INVESTIGATION_TIMEOUT" not in os.environ
+    assert config.AUTOPILOT_INVESTIGATION_TIMEOUT == 1200
+    env_file = sandbox / ".env"
+    assert (
+        not env_file.exists()
+        or "TI_AUTOPILOT_INVESTIGATION_TIMEOUT" not in env_file.read_text()
+    )
 
 
 def test_update_rejects_bad_objective_gate(sandbox):
