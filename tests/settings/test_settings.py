@@ -259,10 +259,7 @@ def test_update_rejects_decimal_for_int_numeric_field(sandbox, monkeypatch):
     assert "TI_AUTOPILOT_INVESTIGATION_TIMEOUT" not in os.environ
     assert config.AUTOPILOT_INVESTIGATION_TIMEOUT == 1200
     env_file = sandbox / ".env"
-    assert (
-        not env_file.exists()
-        or "TI_AUTOPILOT_INVESTIGATION_TIMEOUT" not in env_file.read_text()
-    )
+    assert not env_file.exists() or "TI_AUTOPILOT_INVESTIGATION_TIMEOUT" not in env_file.read_text()
 
 
 def test_update_rejects_bad_objective_gate(sandbox):
