@@ -290,6 +290,12 @@ def test_client_ip_strips_ipv6_bracket_port(proxy):
     assert netutil.client_ip(req) == "2001:db8::1"
 
 
+def test_parse_ip_ipv6_bracket_rejects_non_port_tail():
+    assert netutil._parse_ip("[::1]junk") is None
+    assert netutil._parse_ip("[::1]") == ipaddress.ip_address("::1")
+    assert netutil._parse_ip("[::1]:8080") == ipaddress.ip_address("::1")
+
+
 def test_client_ip_strips_ipv6_zone(proxy):
     proxy(True)
     req = make_request(peer="127.0.0.1", xff="fe80::1%eth0")
