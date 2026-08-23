@@ -21,7 +21,7 @@ class Field:
     env: str
     label: str
     kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）| textarea
-    numeric: bool = False  # True＝非空值必須可 int() 解析,否則拒收(防 config.reload 的 int() 炸)
+    numeric: bool = False  # True＝非空值必須可解析為對應數字型別,否則拒收
     secret: bool = False
     options: tuple[str, ...] = ()
     placeholder: str = ""
@@ -660,6 +660,9 @@ FIELDS: tuple[Field, ...] = (
 
 ALLOWED = {f.env for f in FIELDS}
 _BY_ENV = {f.env: f for f in FIELDS}
+_FLOAT_NUMERIC_FIELDS = {
+    "TI_CLARIFY_TIMEOUT",
+}
 
 
 def env_path() -> str:
@@ -721,10 +724,11 @@ def update(payload: dict) -> dict:
                 remove_secret_key(path, key)
                 os.environ.pop(key, None)
                 continue
+            parser = float if key in _FLOAT_NUMERIC_FIELDS else int
             try:
-                int(val)
+                parser(val)
             except ValueError:
-                continue  # 非法數值不落檔:config.reload() 的 int(os.getenv(...)) 會炸
+                continue  # 非法數值不落檔，避免 config.reload() 解析數字欄時出錯
         if f.kind == "textarea":
             # .env 單行格式:多行文字摺成空白(北極星語意上一段話即可)
             val = " ".join(val.split())
