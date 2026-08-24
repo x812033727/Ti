@@ -84,11 +84,14 @@ def validate_recurrence(rec: dict) -> str:
     kind = rec["kind"]
     if kind in ("daily", "weekly"):
         t = str(rec.get("time") or "")
-        parts = t.split(":")
-        try:
-            ok = len(parts) == 2 and 0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59
-        except ValueError:
-            ok = False
+        ok = (
+            len(t) == 5
+            and t[2] == ":"
+            and t[:2].isdigit()
+            and t[3:].isdigit()
+            and 0 <= int(t[:2]) <= 23
+            and 0 <= int(t[3:]) <= 59
+        )
         if not ok:
             return "time 須為 HH:MM(UTC)"
     if kind == "weekly":
