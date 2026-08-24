@@ -3,7 +3,7 @@
 純驗證 flow.py 決策層，不碰 async / cwd / git：
 - parse_tasks_with_deps 對 `禁改: #<id> <pattern>, ...` 在對應 task dict 產生 forbidden_paths。
 - 舊輸入（無禁改行）forbidden_paths 為空清單，向後相容。
-- check_forbidden_paths 三類比對語意：單檔精確、目錄 `/` 前綴、fnmatch glob；不命中回空。
+- check_forbidden_paths 三類比對語意：單檔精確、目錄 `/` 前綴、PurePath.match glob；不命中回空。
 - 懸空 task id 的禁改行安全丟棄。
 """
 
@@ -70,10 +70,11 @@ def test_directory_prefix_does_not_match_sibling_prefix():
     assert check_forbidden_paths(staged, ["docs/"]) == ["docs/a.md"]
 
 
-def test_fnmatch_glob_hit():
-    staged = ["a.py", "src/x.js", "src/y.js", "readme.md"]
+def test_purepath_glob_hit():
+    staged = ["a.py", "src/x.js", "src/y.js", "readme.md", "docs/a/b.md"]
     assert check_forbidden_paths(staged, ["*.py"]) == ["a.py"]
     assert check_forbidden_paths(staged, ["src/*.js"]) == ["src/x.js", "src/y.js"]
+    assert check_forbidden_paths(staged, ["docs/*"]) == []
 
 
 def test_no_hit_returns_empty():
