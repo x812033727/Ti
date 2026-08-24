@@ -15,9 +15,9 @@ import ...`，且對 `studio.orchestrator.<fn>` 的 monkeypatch 仍有效（orch
 from __future__ import annotations
 
 import difflib
-import fnmatch
 import logging
 import re
+from pathlib import PurePosixPath
 
 from . import config, provider_quota
 
@@ -776,9 +776,8 @@ def check_forbidden_paths(staged: list[str], patterns: list[str]) -> list[str]:
 
     比對語意（stdlib，不引入新依賴）：
     - pattern 以 `/` 結尾 → 視為目錄前綴：`docs/` 命中 `docs/a.md`、`docs/x/y.md`。
-    - 其餘 → `fnmatch` glob：`studio/config.py` 精確命中；`*.py`／`src/*.js` 的 `*` **會跨 `/`**
-      （`fnmatch` 語意，非單層 glob），故 `*.py` 亦命中 `src/a.py`——對「禁改」防護是偏嚴、
-      不漏擋的安全方向。若接線端需嚴格單層再議。
+    - 其餘 → `PurePath.match` 語意：`studio/config.py` 精確命中；`*.py` 可命中任意層級
+      的 Python 檔名；`docs/*` 的 `*` 不跨 `/`，不會命中 `docs/a/b.md`。
     路徑一律以 `/` 正規化（相容 Windows 反斜線 staged 名）。命中保序去重；無命中回空清單。
     """
 
@@ -794,7 +793,7 @@ def check_forbidden_paths(staged: list[str], patterns: list[str]) -> list[str]:
         if not path:
             continue
         for pat in pats:
-            hit = path.startswith(pat) if pat.endswith("/") else fnmatch.fnmatch(path, pat)
+            hit = path.startswith(pat) if pat.endswith("/") else PurePosixPath(path).match(pat)
             if hit:
                 if path not in violations:
                     violations.append(path)
