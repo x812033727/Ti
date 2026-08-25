@@ -36,6 +36,9 @@ def _parse_ip(segment: str) -> _IPAddress | None:
         end = s.find("]")
         if end == -1:
             return None
+        tail = s[end + 1 :]
+        if tail and not tail.startswith(":"):
+            return None
         host = s[1:end]
     elif s.count(":") == 1:
         # 剛好一個冒號 → 視為 IPv4:port。
