@@ -102,8 +102,11 @@ AGENDA_PROMPT_RULES = (
 _REVIEW_PROMPTS = {
     "qa": ("請針對任務 #{id}：{title} 的程式碼撰寫並執行測試，驗證是否符合驗收標準：\n\n{plan}"),
     "senior": (
-        "請審查任務 #{id}：{title} 的程式碼（品質、設計、安全），"
-        "並給出決議（`決議: 核可` 或 `決議: 退回`）。"
+        "請審查任務 #{id}：{title} 的程式碼（品質、設計、安全）。\n"
+        "審查前先 `gh pr view --json headRefOid` 確認 PR head，實讀 diff 後，"
+        "在發言正文對同一 PR head sha 逐字輸出決議（`決議: 核可` 或 `決議: 退回`）；"
+        "若 head 在審查中漂移，須對新 head 重讀重報。\n\n"
+        "PM 計畫與硬約束（含 anchor head sha）：\n{plan}"
     ),
     "security": (
         "請對任務 #{id}：{title} 的程式碼做資安審查，"

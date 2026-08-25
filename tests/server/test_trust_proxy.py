@@ -290,6 +290,12 @@ def test_client_ip_strips_ipv6_bracket_port(proxy):
     assert netutil.client_ip(req) == "2001:db8::1"
 
 
+def test_client_ip_malformed_ipv6_bracket_tail_breaks_chain(proxy):
+    proxy(True)
+    req = make_request(peer="127.0.0.1", xff="[2001:db8::1]junk")
+    assert netutil.client_ip(req) == "127.0.0.1"
+
+
 def test_client_ip_strips_ipv6_zone(proxy):
     proxy(True)
     req = make_request(peer="127.0.0.1", xff="fe80::1%eth0")
