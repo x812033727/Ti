@@ -76,6 +76,16 @@ def test_parse_next_step_end_tokens():
         assert flow.parse_next_step(f"下一步: {tok}")["role"] == ""
 
 
+def test_parse_next_step_end_token_with_period():
+    # 帶句尾標點的收斂指令（PM 常寫 `完成。`／`停止。`）不應被誤判成角色名。
+    # 改前：`完成。`／`停止。` 不在 _NEXT_STEP_END，走 else 分支 → role="完成。", end=False（FAIL）。
+    # 改後：比對前 rstrip("。.") 命中 `完成`／`停止` → end=True、role 清空（PASS）。
+    for tok in ("完成。", "停止。", "結束。", "done."):
+        out = flow.parse_next_step(f"下一步: {tok}")
+        assert out["end"] is True
+        assert out["role"] == ""
+
+
 def test_parse_next_step_fullwidth_colon_and_last_wins():
     out = flow.parse_next_step("下一步：qa\n下一步: senior\n指示: 複審")
     assert out["role"] == "senior" and out["instruction"] == "複審"
