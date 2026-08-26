@@ -351,5 +351,6 @@ def test_token_roundtrip_and_tamper(monkeypatch):
     token = auth.make_token()
     assert auth.verify_token(token) is True
     assert auth.verify_token(token + "x") is False
+    assert auth.verify_token("a.sig") is False
     assert auth.verify_token("garbage") is False
     assert auth.verify_token(None) is False

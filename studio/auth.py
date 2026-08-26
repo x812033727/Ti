@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import logging
@@ -41,7 +42,7 @@ def verify_token(token: str | None) -> bool:
     try:
         payload = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
         issued = int(payload.decode())
-    except (ValueError, UnicodeDecodeError):
+    except (binascii.Error, ValueError, UnicodeDecodeError):
         return False
     if not hmac.compare_digest(sig, _sign(payload)):
         return False
