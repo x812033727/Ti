@@ -521,7 +521,7 @@ def validate_assignees(
 # --- 動態 step：PM 運行時決定下一步（dynamic workflow stage 用）----------
 
 # 結束 token（大小寫不敏感）：PM 宣告動態流程收斂時用。
-_NEXT_STEP_END = {"結束", "結束。", "完成", "停止", "end", "done", "stop", "finish"}
+_NEXT_STEP_END = {"結束", "完成", "停止", "end", "done", "stop", "finish"}
 
 
 def parse_next_step(text: str) -> dict:
@@ -554,7 +554,8 @@ def parse_next_step(text: str) -> dict:
         m = re.match(r"^\s*下一步\s*[:：]\s*(.+?)\s*$", line)
         if m:
             val = m.group(1).strip()
-            if val.lower() in _NEXT_STEP_END or val in _NEXT_STEP_END:
+            val_end = val.rstrip("。.")
+            if val_end.lower() in _NEXT_STEP_END or val_end in _NEXT_STEP_END:
                 role, end = "", True
             else:
                 tokens = val.split()
