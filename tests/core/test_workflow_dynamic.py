@@ -76,6 +76,12 @@ def test_parse_next_step_end_tokens():
         assert flow.parse_next_step(f"下一步: {tok}")["role"] == ""
 
 
+def test_parse_next_step_end_token_with_period():
+    for tok in ("結束。", "完成。", "停止。"):
+        assert flow.parse_next_step(f"下一步: {tok}")["end"] is True
+        assert flow.parse_next_step(f"下一步: {tok}")["role"] == ""
+
+
 def test_parse_next_step_fullwidth_colon_and_last_wins():
     out = flow.parse_next_step("下一步：qa\n下一步: senior\n指示: 複審")
     assert out["role"] == "senior" and out["instruction"] == "複審"
