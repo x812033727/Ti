@@ -287,6 +287,58 @@ async def test_run_command_exec_sandbox_writes_cwd(tmp_path):
     assert (tmp_path / "made.txt").read_text() == "ok"
 
 
+def test_bwrap_prefix_ro_binds_tmp_project_root_before_writable_cwd(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    cwd = tmp_path / "lane"
+    project_root.mkdir()
+    cwd.mkdir()
+    monkeypatch.setattr(runner, "_PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(cwd)
+
+    tmpfs_at = next(
+        i for i, value in enumerate(args[:-1]) if value == "--tmpfs" and args[i + 1] == "/tmp"
+    )
+    project_ro_at = next(
+        i
+        for i, value in enumerate(args[:-2])
+        if value == "--ro-bind"
+        and args[i + 1] == str(project_root)
+        and args[i + 2] == str(project_root)
+    )
+    cwd_bind_at = next(
+        i
+        for i, value in enumerate(args[:-2])
+        if value == "--bind" and args[i + 1] == str(cwd) and args[i + 2] == str(cwd)
+    )
+    assert tmpfs_at < project_ro_at < cwd_bind_at
+
+
+def test_bwrap_prefix_does_not_ro_bind_project_root_when_cwd_is_project_root(tmp_path, monkeypatch):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setattr(runner, "_PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(project_root)
+
+    project_ro_binds = [
+        i
+        for i, value in enumerate(args[:-2])
+        if value == "--ro-bind"
+        and args[i + 1] == str(project_root)
+        and args[i + 2] == str(project_root)
+    ]
+    project_writable_binds = [
+        i
+        for i, value in enumerate(args[:-2])
+        if value == "--bind"
+        and args[i + 1] == str(project_root)
+        and args[i + 2] == str(project_root)
+    ]
+    assert project_ro_binds == []
+    assert len(project_writable_binds) == 1
+
+
 @pytest.mark.asyncio
 async def test_run_command_exec_empty_argv_raises(tmp_path):
     with pytest.raises(ValueError):
