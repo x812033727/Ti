@@ -287,6 +287,25 @@ async def test_run_command_exec_sandbox_writes_cwd(tmp_path):
     assert (tmp_path / "made.txt").read_text() == "ok"
 
 
+def test_bwrap_prefix_restores_project_root_after_tmpfs(monkeypatch, tmp_path):
+    fake_tmp = tmp_path / "tmp"
+    project_root = fake_tmp / "repo"
+    cwd = fake_tmp / "work"
+    project_root.mkdir(parents=True)
+    cwd.mkdir()
+    monkeypatch.setattr(runner, "_BWRAP_TMP_ROOT", fake_tmp)
+    monkeypatch.setattr(runner, "_PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(cwd)
+    tmpfs_idx = args.index("--tmpfs")
+    ro_idx = args.index("--ro-bind", tmpfs_idx + 1)
+    bind_idx = args.index("--bind", ro_idx + 1)
+
+    assert args[ro_idx : ro_idx + 3] == ["--ro-bind", str(project_root), str(project_root)]
+    assert args[bind_idx : bind_idx + 3] == ["--bind", str(cwd), str(cwd)]
+    assert tmpfs_idx < ro_idx < bind_idx
+
+
 @pytest.mark.asyncio
 async def test_run_command_exec_empty_argv_raises(tmp_path):
     with pytest.raises(ValueError):

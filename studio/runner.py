@@ -32,6 +32,8 @@ log = logging.getLogger("ti.runner")
 # 涵蓋 clone 流程下 .git 已存在、git_init no-op 而 local identity 缺失的情形）。
 _GIT_USER_NAME = "Ti Studio"
 _GIT_USER_EMAIL = "studio@ti.local"
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_BWRAP_TMP_ROOT = Path("/tmp")
 
 # 解析「以 python 開頭」的指令用：把直譯器 token 換成實際可用的執行檔。
 _PY_PREFIX = re.compile(r"\s*(python3?|py)\b")
@@ -113,6 +115,17 @@ def _worktree_common_git_dir(cwd: Path | str) -> Path | None:
     return admin.parent.parent  # 後備：worktrees/<name> 往上兩層即共用 .git
 
 
+def _bwrap_project_ro_bind(cwd: Path | str) -> list[str]:
+    project_root = _PROJECT_ROOT.resolve()
+    cwd_path = Path(cwd).resolve()
+    tmp_root = _BWRAP_TMP_ROOT.resolve()
+    if not project_root.is_relative_to(tmp_root):
+        return []
+    if project_root == cwd_path or project_root.is_relative_to(cwd_path):
+        return []
+    return ["--ro-bind", str(project_root), str(project_root)]
+
+
 def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
 
@@ -121,6 +134,7 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     斷網（Demo 不需網路），設 TI_SANDBOX_NET=1 可放行；net 參數可逐次覆寫（HTTP Demo 須與
     host 共享 loopback 才探測得到，傳 net=True）。cwd 為並行 lane 的 linked worktree 時，
     額外把共用 git 目錄（主 repo 的 .git）綁為可寫，否則 worktree 內的 git 寫入會踩到唯讀面。
+    若 Ti checkout 本身在 /tmp，先把專案根重新 ro-bind，避免被 `--tmpfs /tmp` 蓋掉。
     """
     cwd = str(cwd)
     cache = os.path.join(os.path.expanduser("~"), ".cache")
@@ -137,6 +151,9 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         "/tmp",
         "--tmpfs",
         cache,
+    ]
+    args += _bwrap_project_ro_bind(cwd)
+    args += [
         "--bind",
         cwd,
         cwd,
