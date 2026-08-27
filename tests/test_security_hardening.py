@@ -58,6 +58,21 @@ def test_lock_expires(monkeypatch):
     assert auth.login_lock_remaining(c) == 0.0
 
 
+def test_expired_lock_resets_fail_count(monkeypatch):
+    c = "9.9.9.9"
+    now = [1000.0]
+    monkeypatch.setattr(auth.time, "time", lambda: now[0])
+    for _ in range(auth.LOGIN_MAX_FAILS):
+        auth.register_login_result(c, False)
+    assert auth.login_lock_remaining(c) > 0
+
+    now[0] += auth.LOGIN_LOCK_SECONDS + 1
+    assert auth.login_lock_remaining(c) == 0.0
+    auth.register_login_result(c, False)
+
+    assert auth._LOGIN_FAILS[c] == [1.0, 0.0]
+
+
 def test_login_endpoint_429_after_lock(monkeypatch):
     from studio.server import app
 
