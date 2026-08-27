@@ -27,6 +27,7 @@ from . import config, git_cred
 from .flow import check_forbidden_paths
 
 log = logging.getLogger("ti.runner")
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # workspace 內 git 身分（git_init 寫入 .git/config；commit 另帶 -c 兜底，
 # 涵蓋 clone 流程下 .git 已存在、git_init no-op 而 local identity 缺失的情形）。
@@ -124,6 +125,19 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """
     cwd = str(cwd)
     cache = os.path.join(os.path.expanduser("~"), ".cache")
+    tmp_root = Path("/tmp")
+    project_root_binds: list[str] = []
+    try:
+        cwd_path = Path(cwd).resolve()
+        project_root = _PROJECT_ROOT.resolve()
+        if (
+            project_root.exists()
+            and cwd_path != project_root
+            and project_root.is_relative_to(tmp_root)
+        ):
+            project_root_binds = ["--ro-bind", str(project_root), str(project_root)]
+    except OSError:
+        project_root_binds = []
     args = [
         config.SANDBOX_BWRAP,
         "--ro-bind",
@@ -137,6 +151,7 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         "/tmp",
         "--tmpfs",
         cache,
+        *project_root_binds,
         "--bind",
         cwd,
         cwd,
