@@ -83,7 +83,11 @@ def login_lock_remaining(client: str) -> float:
     if not rec:
         return 0.0
     remaining = rec[1] - time.time()
-    return remaining if remaining > 0 else 0.0
+    if remaining > 0:
+        return remaining
+    if rec[1] > 0:
+        _LOGIN_FAILS.pop(client, None)
+    return 0.0
 
 
 def register_login_result(client: str, ok: bool) -> None:
@@ -93,6 +97,9 @@ def register_login_result(client: str, ok: bool) -> None:
         return
     now = time.time()
     rec = _LOGIN_FAILS.get(client)
+    if rec and rec[1] > 0 and rec[1] <= now:
+        _LOGIN_FAILS.pop(client, None)
+        rec = None
     fails = int(rec[0]) + 1 if rec else 1
     locked_until = now + LOGIN_LOCK_SECONDS if fails >= LOGIN_MAX_FAILS else 0.0
     _LOGIN_FAILS[client] = [float(fails), locked_until]
