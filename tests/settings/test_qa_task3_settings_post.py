@@ -15,11 +15,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from types import SimpleNamespace
 
 import pytest
 from _repo import REPO_ROOT
@@ -27,21 +29,25 @@ from _repo import REPO_ROOT
 ROOT = REPO_ROOT
 ENV = ROOT / ".env"
 HOST = "127.0.0.1"
-PORT = 8012
-BASE = f"http://{HOST}:{PORT}"
 SECRET_ENVS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"}
 TEST_TOKEN = "ghp_TEST_post_0003"
 
 
-def _get(path: str, timeout: float = 3.0):
-    with urllib.request.urlopen(BASE + path, timeout=timeout) as resp:
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((HOST, 0))
+        return s.getsockname()[1]
+
+
+def _get(base: str, path: str, timeout: float = 3.0):
+    with urllib.request.urlopen(base + path, timeout=timeout) as resp:
         return resp.status, resp.read().decode("utf-8", "replace")
 
 
-def _post(path: str, body, timeout: float = 3.0):
+def _post(base: str, path: str, body, timeout: float = 3.0):
     data = body if isinstance(body, bytes | bytearray) else json.dumps(body).encode()
     req = urllib.request.Request(
-        BASE + path,
+        base + path,
         data=data,
         method="POST",
         headers={"Content-Type": "application/json"},
@@ -56,6 +62,8 @@ def _post(path: str, body, timeout: float = 3.0):
 @pytest.fixture(scope="module")
 def server():
     backup = ENV.read_bytes() if ENV.exists() else None  # POST 會寫 .env，收尾還原
+    port = _free_port()
+    base = f"http://{HOST}:{port}"
     env = dict(os.environ)
     # 空字串遮罩而非 pop：load_dotenv 不覆蓋已存在變數，"" 可擋 .env 補值
     # （pop 掉的鍵會被 .env 讀回→門禁重啟→永遠 401 假性「服務未就緒」），
@@ -64,7 +72,7 @@ def server():
     for k in SECRET_ENVS:
         env[k] = ""
     env["TI_HOST"] = HOST
-    env["TI_PORT"] = str(PORT)
+    env["TI_PORT"] = str(port)
     proc = subprocess.Popen(
         [sys.executable, "-m", "studio.server"],
         cwd=str(ROOT),
@@ -80,7 +88,7 @@ def server():
             if proc.poll() is not None:
                 break
             try:
-                if _get("/api/settings")[0] == 200:
+                if _get(base, "/api/settings")[0] == 200:
                     ready = True
                     break
             except Exception:
@@ -88,7 +96,7 @@ def server():
         if not ready:
             out = proc.stdout.read() if proc.poll() is not None and proc.stdout else ""
             pytest.fail(f"服務未就緒。輸出：\n{out}")
-        yield proc
+        yield SimpleNamespace(base=base, proc=proc)
     finally:
         proc.terminate()
         try:
@@ -101,14 +109,14 @@ def server():
 
 def test_post_token_returns_ok(server):
     """驗收 #3：POST 測試 token，回 {ok:true}。"""
-    status, data = _post("/api/settings", {"GITHUB_TOKEN": TEST_TOKEN})
+    status, data = _post(server.base, "/api/settings", {"GITHUB_TOKEN": TEST_TOKEN})
     assert status == 200
     assert data.get("ok") is True, data
 
 
 def test_post_response_includes_fields(server):
     """回應同時帶回最新 fields，供前端 re-render；秘密欄位仍不回明文。"""
-    status, data = _post("/api/settings", {"GITHUB_TOKEN": TEST_TOKEN})
+    status, data = _post(server.base, "/api/settings", {"GITHUB_TOKEN": TEST_TOKEN})
     assert status == 200 and data["ok"] is True
     by_env = {f["env"]: f for f in data["fields"]}
     assert by_env["GITHUB_TOKEN"]["value"] == ""  # 不回明文
@@ -117,7 +125,7 @@ def test_post_response_includes_fields(server):
 
 def test_post_non_dict_rejected(server):
     """壞 payload（非物件）回 400，不誤判為成功。"""
-    status, data = _post("/api/settings", json.dumps([1, 2, 3]).encode())
+    status, data = _post(server.base, "/api/settings", json.dumps([1, 2, 3]).encode())
     assert status == 400
     assert data.get("ok") is False
 
@@ -128,7 +136,7 @@ def test_frontend_fill_and_save(server, tmp_path):
     if node is None:
         pytest.skip("環境無 node，略過前端送出驗證")
     # 取後端真實 fields 當作前端渲染輸入
-    _, body = _get("/api/settings")
+    _, body = _get(server.base, "/api/settings")
     fields = json.loads(body)["fields"]
     fpath = tmp_path / "fields.json"
     fpath.write_text(json.dumps(fields), encoding="utf-8")
