@@ -685,7 +685,7 @@ async def projects_set_publish_repo(project_id: str, body: PublishRepoBody) -> J
     return JSONResponse({"project": meta, "base_state": state, "warning": warning})
 
 
-@router.delete("/api/projects/{project_id}", dependencies=[Depends(auth.require_auth)])
+@router.delete("/api/projects/{project_id}", dependencies=WRITE_DEPS)
 async def projects_delete(project_id: str) -> JSONResponse:
     """刪除專案：meta／改良待辦／藍圖與固定 workspace（含 .lanes 兜底）。
 
