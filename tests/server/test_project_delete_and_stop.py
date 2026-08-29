@@ -15,7 +15,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "WORKSPACE_ROOT", tmp_path / "ws")
     from studio.server import app
 
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 12345))
 
 
 # --- DELETE /api/projects/{pid} -----------------------------------------
@@ -38,6 +38,17 @@ def test_delete_project_removes_meta_workspace_and_lanes(client):
     # 列表與 detail 同步消失
     assert pid not in [p["id"] for p in client.get("/api/projects").json()["projects"]]
     assert client.get(f"/api/projects/{pid}").status_code == 404
+
+
+def test_delete_project_blocks_public_peer_when_auth_disabled(client):
+    """門禁停用時，刪專案仍是管理寫入，只允許本機來源。"""
+    pid = projects.create("公網不可刪")["id"]
+    public = TestClient(client.app, client=("203.0.113.7", 40000))
+
+    res = public.delete(f"/api/projects/{pid}")
+
+    assert res.status_code == 403
+    assert projects.get(pid) is not None
 
 
 def test_delete_unknown_project_404(client):
