@@ -35,9 +35,7 @@ async def test_self_test_updates_run_command_from_engineer_report(monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_self_test_keeps_existing_run_command_without_engineer_report(
-    monkeypatch, tmp_path
-):
+async def test_self_test_keeps_existing_run_command_without_engineer_report(monkeypatch, tmp_path):
     spy = RunCommandSpy()
     monkeypatch.setattr(runner, "run_command", spy)
     session = StudioSession("t", _broadcast, cwd=tmp_path)
