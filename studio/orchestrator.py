@@ -3832,9 +3832,10 @@ class StudioSession:
         impl_url = runner.parse_demo_url(impl_text)
         if impl_url:
             self._demo_url = impl_url
-        cmd = runner.parse_run_command(impl_text) or runner.resolve_demo_command(
-            ctx.cwd, self._run_command
-        )
+        impl_cmd = runner.parse_run_command(impl_text)
+        if impl_cmd:
+            self._run_command = impl_cmd
+        cmd = impl_cmd or runner.resolve_demo_command(ctx.cwd, self._run_command)
         if not cmd:
             return None
         # 刻意保留 shell（run_command，非 run_command_exec）：cmd 來自 PM/工程師宣告的
