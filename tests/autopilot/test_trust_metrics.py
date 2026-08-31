@@ -153,8 +153,7 @@ def test_jsonl_log_compaction_archives_non_dict_json(tmp_path, monkeypatch):
     path = tmp_path / "ap" / "x.jsonl"
     fresh = {"ts": time.time(), "kind": "fresh"}
     path.write_text(
-        "\n".join(["[]", "123", '"x"', json.dumps(fresh, ensure_ascii=False)])
-        + "\n",
+        "\n".join(["[]", "123", '"x"', json.dumps(fresh, ensure_ascii=False)]) + "\n",
         encoding="utf-8",
     )
 
