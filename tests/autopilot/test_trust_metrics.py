@@ -149,6 +149,35 @@ def test_jsonl_log_compaction(tmp_path, monkeypatch):
     assert '"kind": "old"' in archived
 
 
+def test_jsonl_log_compaction_archives_non_dict_json_lines(tmp_path, monkeypatch):
+    """合法 JSON 但非物件的壞行一律歸檔,不得讓壓實炸掉。"""
+    path = tmp_path / "ap" / "non_dict.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"ts": time.time(), "kind": "fresh"}, ensure_ascii=False),
+                "[]",
+                "123",
+                json.dumps("x", ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(jsonl_log, "MAX_BYTES", 1)  # 強制觸發壓實
+
+    jsonl_log._maybe_compact(path)
+
+    live = [
+        json.loads(x)
+        for x in path.read_text(encoding="utf-8").splitlines()
+        if x.strip()
+    ]
+    assert [r["kind"] for r in live] == ["fresh"]
+    archived = path.with_suffix(".jsonl.old").read_text(encoding="utf-8").splitlines()
+    assert archived == ["[]", "123", '"x"']
+
+
 def test_trust_metrics_excludes_drill_events(tmp_path):
     """演練事件(drill=true)驗證告警管道,不得計入營運事件——否則做演練
     反而懲罰升階條件(deploy_verify_green 的 7 天失敗數)。"""
