@@ -149,6 +149,24 @@ def test_jsonl_log_compaction(tmp_path, monkeypatch):
     assert '"kind": "old"' in archived
 
 
+def test_jsonl_log_compaction_archives_non_dict_json(tmp_path, monkeypatch):
+    path = tmp_path / "ap" / "x.jsonl"
+    fresh = {"ts": time.time(), "kind": "fresh"}
+    path.write_text(
+        "\n".join(["[]", "123", '"x"', json.dumps(fresh, ensure_ascii=False)])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(jsonl_log, "MAX_BYTES", 1)  # 強制觸發壓實
+    jsonl_log.append(path, {"kind": "fresh2"})
+
+    kinds = [r["kind"] for r in jsonl_log.read_window(path, 90)]
+    assert kinds == ["fresh", "fresh2"]
+    archived = (tmp_path / "ap" / "x.jsonl.old").read_text(encoding="utf-8")
+    assert archived.splitlines() == ["[]", "123", '"x"']
+
+
 def test_trust_metrics_excludes_drill_events(tmp_path):
     """演練事件(drill=true)驗證告警管道,不得計入營運事件——否則做演練
     反而懲罰升階條件(deploy_verify_green 的 7 天失敗數)。"""
