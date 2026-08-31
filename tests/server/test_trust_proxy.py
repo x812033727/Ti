@@ -73,6 +73,21 @@ def test_trust_proxy_unset_disabled(reload_config):
     assert cfg.trust_proxy_enabled() is False
 
 
+def test_config_reload_updates_trust_proxy(monkeypatch):
+    """TI_TRUST_PROXY 走 config.reload() 執行期生效，不需重啟程序。"""
+    try:
+        monkeypatch.setenv("TI_TRUST_PROXY", "0")
+        config.reload()
+        assert config.trust_proxy_enabled() is False
+
+        monkeypatch.setenv("TI_TRUST_PROXY", "1")
+        config.reload()
+        assert config.trust_proxy_enabled() is True
+    finally:
+        monkeypatch.delenv("TI_TRUST_PROXY", raising=False)
+        config.reload()
+
+
 # --- 驗收標準 5/6：TI_TRUSTED_PROXIES 預設 loopback、支援 IP/CIDR -------
 def test_trusted_proxies_default_is_loopback(reload_config):
     """預設僅含 loopback（127.0.0.0/8 與 ::1），涵蓋 IPv4 與 IPv6。"""
