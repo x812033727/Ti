@@ -62,6 +62,20 @@ def test_config_reload_tolerates_empty_and_garbage(monkeypatch):
     assert config.AUTOPILOT_FOLLOWUP_MAX_PER_TASK == 3, "垃圾值退回預設"
 
 
+def test_lessons_max_reloads_from_env(monkeypatch):
+    original_env = os.environ.get("TI_LESSONS_MAX")
+    try:
+        monkeypatch.setenv("TI_LESSONS_MAX", "4")
+        config.reload()
+        assert config.LESSONS_MAX == 4
+    finally:
+        if original_env is None:
+            monkeypatch.delenv("TI_LESSONS_MAX", raising=False)
+        else:
+            monkeypatch.setenv("TI_LESSONS_MAX", original_env)
+        config.reload()
+
+
 def test_config_no_bare_numeric_getenv():
     src = (ROOT / "studio" / "config.py").read_text(encoding="utf-8")
     assert "int(os.getenv(" not in src, "config.py 禁裸 int(os.getenv(——一律走 _env_int"
