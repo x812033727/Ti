@@ -253,6 +253,15 @@ def test_update_rejects_bad_clarify_timeout_without_persisting(sandbox, monkeypa
     assert not env_file.exists() or "TI_CLARIFY_TIMEOUT" not in env_file.read_text()
 
 
+def test_update_rejects_bad_task_help_max_without_persisting(sandbox, monkeypatch):
+    monkeypatch.delenv("TI_TASK_HELP_MAX", raising=False)
+    settings.update({"TI_TASK_HELP_MAX": "abc"})
+    assert "TI_TASK_HELP_MAX" not in os.environ
+    assert config.TASK_HELP_MAX == 1
+    env_file = sandbox / ".env"
+    assert not env_file.exists() or "TI_TASK_HELP_MAX" not in env_file.read_text()
+
+
 def test_update_rejects_bad_objective_gate(sandbox):
     """select 白名單：非法閘門值不被接受（維持原值）。"""
     settings.update({"TI_OBJECTIVE_GATE": "bogus"})
