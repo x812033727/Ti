@@ -409,6 +409,7 @@ FIELDS: tuple[Field, ...] = (
         "TI_TASK_HELP_MAX",
         "中途求助次數上限（每任務，空／非法＝1）",
         placeholder="1",
+        numeric=True,
         group="進階",
     ),
     Field(
