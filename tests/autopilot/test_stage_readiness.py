@@ -24,6 +24,8 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "")
     return tmp_path
 
 
@@ -57,6 +59,24 @@ def test_stage3_progress_and_condition_measurement(monkeypatch):
     assert conds["interventions"]["ok"] is True, "零 output_review 且 ≤2/週"
     assert conds["paging"]["ok"] is True, "sinks 已設"
     assert conds["slo_armed"]["ok"] is False, "門檻=0 未武裝"
+
+
+def test_email_sink_counts_as_paging_ready(monkeypatch):
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "ops@example.test")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(
+        insights,
+        "trust_metrics",
+        lambda days=7, state_dir=None: {
+            "merged": 0,
+            "zero_touch": 0,
+            "zero_touch_rate": None,
+            "interventions": {"per_week": 0.0, "by_category": {}},
+            "events": {},
+        },
+    )
+    out = insights.stage_readiness()
+    assert {c["key"]: c for c in out["conditions"]}["paging"]["ok"] is True
 
 
 def test_conditions_green_but_no_streak_stays_progress(monkeypatch):
