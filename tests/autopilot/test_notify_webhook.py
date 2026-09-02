@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import urllib.request
 
@@ -22,6 +23,9 @@ from studio import autopilot, backlog, config, notify
 def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", 10.0)
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
     return tmp_path
 
 
@@ -43,6 +47,7 @@ def _capture_urlopen(monkeypatch, *, boom=False):
                 "url": req.full_url,
                 "body": json.loads(req.data.decode("utf-8")),
                 "method": req.get_method(),
+                "timeout": timeout,
             }
         )
         return _Resp()
@@ -51,11 +56,40 @@ def _capture_urlopen(monkeypatch, *, boom=False):
     return calls
 
 
+def test_config_reload_reads_notify_webhook_and_timeout(monkeypatch):
+    """兩鍵同時守門：TI_NOTIFY_WEBHOOK / TI_NOTIFY_TIMEOUT reload 後都生效。"""
+    try:
+        monkeypatch.setenv("TI_NOTIFY_WEBHOOK", "https://hook.example/reload")
+        monkeypatch.setenv("TI_NOTIFY_TIMEOUT", "2.5")
+        config.reload()
+        assert config.NOTIFY_WEBHOOK == "https://hook.example/reload"
+        assert config.NOTIFY_TIMEOUT == 2.5
+    finally:
+        monkeypatch.delenv("TI_NOTIFY_WEBHOOK", raising=False)
+        monkeypatch.delenv("TI_NOTIFY_TIMEOUT", raising=False)
+        config.reload()
+
+
 def test_send_noop_without_webhook(monkeypatch):
     calls = _capture_urlopen(monkeypatch)
     assert notify.send("task_failed", "x") is False
     notify.send_bg("task_failed", "x")
     assert not calls, "未設 webhook 必須零網路"
+
+
+def test_send_bg_without_sink_does_not_start_thread(monkeypatch):
+    started: list[tuple] = []
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            started.append((args, kwargs))
+
+        def start(self):
+            started.append((("start",), {}))
+
+    monkeypatch.setattr(notify.threading, "Thread", FakeThread)
+    notify.send_bg("task_failed", "x", task_id="t1")
+    assert not started, "未設任何 sink 時不得開背景 thread"
 
 
 def test_send_posts_json_payload(monkeypatch):
@@ -71,10 +105,27 @@ def test_send_posts_json_payload(monkeypatch):
     }
 
 
+def test_send_passes_configured_timeout_to_urlopen(monkeypatch):
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", 1.25)
+    calls = _capture_urlopen(monkeypatch)
+    assert notify.send("loop_stall", "主迴圈停滯") is True
+    assert calls[0]["timeout"] == 1.25
+
+
 def test_send_swallows_network_failure(monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
     _capture_urlopen(monkeypatch, boom=True)
     assert notify.send("task_failed", "x") is False  # 不拋即通過
+
+
+def test_network_failure_log_does_not_leak_webhook_url(monkeypatch, caplog):
+    url = "https://hook.example/secret-token"
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", url)
+    _capture_urlopen(monkeypatch, boom=True)
+    with caplog.at_level(logging.DEBUG, logger="ti.notify"):
+        assert notify.send("task_failed", "x") is False
+    assert url not in caplog.text
 
 
 def _spy_send_bg(monkeypatch):
