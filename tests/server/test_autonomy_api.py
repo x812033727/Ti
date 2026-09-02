@@ -17,6 +17,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "")
     from studio.server import app
 
     return TestClient(app, client=("127.0.0.1", 12345))
