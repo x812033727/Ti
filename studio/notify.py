@@ -197,8 +197,14 @@ def _post_json(url: str, payload: dict, kind: str, title: str, sink: str) -> boo
         with urllib.request.urlopen(req, timeout=_timeout_s()):
             pass
         return True
-    except Exception:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 URL（Telegram URL 內嵌 token）
-        log.debug("%s 通知送出失敗（忽略）：%s %s", sink, kind, title, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 URL（Telegram URL 內嵌 token）
+        log.debug(
+            "%s 通知送出失敗（忽略）：%s %s error_type=%s",
+            sink,
+            kind,
+            _redact_text(title),
+            exc.__class__.__name__,
+        )
         return False
 
 

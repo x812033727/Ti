@@ -2418,34 +2418,39 @@
 - 時間：2026-07-20 07:19
 - 理由：與 `/opt/ti/studio/notify.py` line 37 範式完全對齊；真要可調另案，不在本輪
 
-## `notify.py` 新增 `_post_webhook(url: str, data: bytes) -> None`，urllib POST JSON，try/except 全吞任何例外，`log.debug` 只帶 event 名稱不含 URL
+## 更正：本輪維持 `NOTIFY_WEBHOOK` + `NOTIFY_TIMEOUT` 兩鍵並列，timeout 讀 `config.NOTIFY_TIMEOUT`
+- 時間：2026-07-20 07:19 更正版
+- 理由：工作目錄已實作並驗證兩鍵三段同步（頂層宣告、`reload() global`、`reload()` 賦值），改回單鍵會製造新風險；本案例外優先保留已落地合約
+- 取代上方「只開 `NOTIFY_WEBHOOK`」與「timeout 不進 config」兩項舊裁決；後續新 sink 不自動跟進新增 timeout config 旋鈕，需另案決定
+
+## `notify.py` 以 `_post_json(...)` 共用 webhook/Telegram 送出邏輯，urllib POST JSON，try/except 全吞任何例外，`log.debug` 不含 URL
 - 時間：2026-07-20 07:19
 - 理由：webhook URL 可能含 secret（query param token），不得出現在 log
 
-## `notify.py` 新增 `_deliver(event: str, message: str, extra: dict) -> None`，組 payload `{"source":"ti","event":...,"message":...,...extra}` 後呼叫 `_post_webhook`；docstring 明記「extra 不得挾帶 log 全文或憑證」
+## `notify.py` 新增 `_deliver(kind: str, title: str, extra: dict, alert=None) -> dict`，送所有已設定 sink 並回報各 sink 成敗；webhook payload 為 `{"source":"ti","kind":...,"title":...,...extra}`
 - 時間：2026-07-20 07:19
 - 否決方案：直接在 `send_bg` 裡組 payload 發送——抽出 `_deliver` 便於測試與後續多 sink 擴充
 
-## `send_bg(event, message, **payload)` 簽名不變（相容現有兩處 `autopilot.py` 呼叫端）；webhook 空時 early-return（零網路零 thread）；非空時 `threading.Thread(target=_deliver, daemon=True).start()`
+## `send_bg(kind, title, **extra)` 簽名不變；所有 sink 空時只落檔並 early-return（零網路零 thread）；任一 sink 設定時 `threading.Thread(target=_deliver, daemon=True).start()`
 - 時間：2026-07-20 07:19
 - 理由：daemon=True 確保行程退出不被未送完通知卡住
 
-## payload 欄位命名統一用 `event` / `message`，不用範式的 `kind` / `title`
+## payload 欄位命名統一沿用現行通知事件合約 `kind` / `title`
 - 時間：2026-07-20 07:19
-- 理由：工作目錄呼叫端與現有 `send_bg` 合約皆用 `event/message`；混用會造成消費端解析錯亂
-- 否決方案：改用 `kind/title` 對齊 `/opt/ti/studio/notify.py`——會 breaking 現有呼叫端，超出本輪範圍
+- 理由：`notify.py`、既有 `notify` 測試、events.jsonl 與 webhook payload 均使用 `kind/title`；改成 `event/message` 會 breaking 既有消費端
+- 否決方案：新增 `event/message` 同義欄位——多一套名稱只會讓下游解析分歧，沒有本輪收益
 
-## 測試檔 `tests/autopilot/test_notify_webhook.py` 五條精確樣本（增至五條）
+## 測試檔 `tests/autopilot/test_notify_webhook.py` 守門 webhook 基本合約、兩鍵 reload、timeout 直通、無 sink 零 thread、URL 不進 log
 - 時間：2026-07-20 07:19
 
-## 測試中 `threading.Thread` monkeypatch 為同步執行（呼叫 `target()` 再 return mock），不讓 daemon thread 帶來競態
+## 測試中同步送出路徑用 `send()` 驗證 HTTP payload/timeout；背景路徑用 `threading.Thread` spy 驗證無 sink 時不開 thread
 - 時間：2026-07-20 07:19
-- 理由：非同步 thread 下 `urlopen` 可能在 assert 前未執行，造成偶發假綠
+- 理由：避免 daemon thread 競態，同時釘住「零 sink 零 thread」合約
 
 ## 不新增任何第三方依賴，僅用 `urllib.request`、`threading`、`json`
 - 時間：2026-07-20 07:19
 
-## 跟進待辦（明列、不混入本輪）：email sink（SMTP）、Telegram sink、severity 分級、`send_bg` early-return 未來擴 sink 需同步更新判斷條件、`/opt/ti` 主版本 settings.py 接線
+## 跟進待辦（明列、不混入本輪）：email sink（SMTP）、更多外部 sink、`send_bg` early-return 未來擴 sink 需同步更新判斷條件
 - 時間：2026-07-20 07:19
 ## 本輪零改動原則——只做執行驗證，不寫新碼、不改介面、不補文件。
 - 時間：2026-07-04 01:32
@@ -3732,4 +3737,3 @@
 - 時間：2026-07-20 07:18
 - 理由：工程師確認架構已接近完整，最小修改風險最低；額外抽象增加複雜度但不帶新能力
 - 否決方案：獨立 watchdog class 包住 speak()——層次過多，否決
-
