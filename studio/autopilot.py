@@ -204,6 +204,8 @@ async def _prepare_clone(
         timeout=120,
         env=_git_cred_env(),
     )
+    if not expected_sha and fetch_rc != 0:
+        raise RuntimeError(f"git fetch 失敗：{fetch_out[-400:]}")
     if expected_sha:
         object_rc, object_out = await _run(
             ["git", "cat-file", "-e", f"{expected_sha}^{{commit}}"],
