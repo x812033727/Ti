@@ -19,6 +19,7 @@ ro-bind 在擋，而非整個沙箱寫不進」。
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from _repo import REPO_ROOT
@@ -32,6 +33,14 @@ needs_bwrap = pytest.mark.skipif(
     shutil.which("bwrap") is None,
     reason="本機/CI 無 bwrap，略過 ro-bind 實跑測試",
 )
+
+
+def _masked_by_tmpfs(path):
+    resolved = path.resolve()
+    for root in (Path("/tmp").resolve(), (Path.home() / ".cache").resolve()):
+        if resolved.is_relative_to(root):
+            return True
+    return False
 
 
 @pytest.fixture
@@ -57,7 +66,7 @@ def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
     # ① 前置：該路徑在 host 原生可寫（fixture 已寫入 ORIG），排除權限假陽性。
     assert host_probe.read_text() == "ORIG", "前置：host 探針應已預置且可讀"
 
-    # ② 沙箱內以繼承前綴寫同一絕對路徑——應被 ro-bind 擋下。
+    # ② 沙箱內以繼承前綴寫同一絕對路徑——應被 ro-bind 或 tmpfs 遮蔽擋下。
     prefix = runner._bwrap_prefix(tmp_path)
     r = subprocess.run(
         prefix + ["bash", "-c", f"echo TAINT > {host_probe}"],
@@ -66,9 +75,14 @@ def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
         timeout=TIMEOUT,
     )
     assert r.returncode != 0, f"寫唯讀區應失敗，實際 rc={r.returncode}\n{r.stderr}"
-    assert "Read-only file system" in r.stderr, (
-        f"應為 EROFS（ro-bind 生效），實際 stderr：{r.stderr!r}"
-    )
+    if _masked_by_tmpfs(host_probe):
+        assert "No such file or directory" in r.stderr, (
+            f"repo 位於 tmpfs 遮蔽區時應為 ENOENT，實際 stderr：{r.stderr!r}"
+        )
+    else:
+        assert "Read-only file system" in r.stderr, (
+            f"應為 EROFS（ro-bind 生效），實際 stderr：{r.stderr!r}"
+        )
 
     # ③ 雙重保險：回 host 確認內容維持 ORIG（確實沒寫進去）。
     assert host_probe.read_text() == "ORIG", "host 探針內容不應被沙箱竄改"
