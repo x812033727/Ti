@@ -64,8 +64,11 @@ async def test_prepare_clone_fetch_failure_does_not_reset_stale_origin(tmp_path,
 
     monkeypatch.setattr(autopilot, "_run", fake_run)
 
-    with pytest.raises(RuntimeError, match="fetch|同步|取得"):
+    with pytest.raises(RuntimeError) as excinfo:
         await autopilot._prepare_clone(str(work))
+    message = str(excinfo.value)
+    assert "git fetch 失敗" in message
+    assert "cannot lock ref" in message
 
     fetch_index = calls.index(
         [
