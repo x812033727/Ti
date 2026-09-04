@@ -2338,11 +2338,7 @@ def maturity_metrics(
             else 0.0,
             "red_drills_complete": bool(required_red_drill_kinds)
             and required_red_drill_kinds <= passed_red_drill_kinds,
-            "external_sink_configured": bool((config.NOTIFY_WEBHOOK or "").strip())
-            or bool(
-                (config.TELEGRAM_BOT_TOKEN or "").strip()
-                and (config.TELEGRAM_CHAT_ID or "").strip()
-            ),
+            "external_sink_configured": notify.sinks_configured(),
         },
         "cost": {
             "known_usd": round(sum(cost_by_day.values()), 4),
@@ -3197,6 +3193,9 @@ def status_snapshot(
                 "telegram_configured": bool(
                     (config.TELEGRAM_BOT_TOKEN or "").strip()
                     and (config.TELEGRAM_CHAT_ID or "").strip()
+                ),
+                "email_configured": bool(
+                    (config.ALERT_SMTP_HOST or "").strip() and (config.ALERT_EMAIL_TO or "").strip()
                 ),
             },
         },

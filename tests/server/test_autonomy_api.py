@@ -17,6 +17,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "")
     from studio.server import app
 
     return TestClient(app, client=("127.0.0.1", 12345))
@@ -33,6 +35,7 @@ def test_status_and_policy_roundtrip(client):
     assert row["stage"] == 2 and row["target_stage"] == 2
     assert data["platform"]["daily_cost_hard_limit_usd"] == 100.0
     assert "webhook_configured" in data["platform"]["notification"]
+    assert "email_configured" in data["platform"]["notification"]
 
     updated = client.put(
         f"/api/autonomy/policies/{project['id']}",

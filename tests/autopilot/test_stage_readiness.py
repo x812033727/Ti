@@ -24,6 +24,8 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "")
     return tmp_path
 
 
@@ -32,6 +34,26 @@ def test_stage2_when_all_off():
     assert out["stage"] == "2" and out["canaries_on"] == 0
     assert len(out["canaries"]) == 8 and len(out["conditions"]) == 4
     assert all(not c["on"] for c in out["canaries"])
+
+
+def test_paging_condition_accepts_email_only(monkeypatch):
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "ops@example.com")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(
+        insights,
+        "trust_metrics",
+        lambda days=7, state_dir=None: {
+            "merged": 0,
+            "zero_touch": 0,
+            "zero_touch_rate": None,
+            "interventions": {"per_week": 0.0, "by_category": {}},
+            "events": {},
+        },
+    )
+
+    conds = {c["key"]: c for c in insights.stage_readiness()["conditions"]}
+
+    assert conds["paging"]["ok"] is True
 
 
 def test_stage3_progress_and_condition_measurement(monkeypatch):

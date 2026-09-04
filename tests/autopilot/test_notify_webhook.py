@@ -1,7 +1,7 @@
 """主動通知 webhook（功能第五輪 F2）：studio/notify + autopilot 三個觸發點。
 
 守護不變量：
-- 未設 TI_NOTIFY_WEBHOOK（預設）→ send/send_bg 完全 no-op、零網路;
+- 未設任何通知 sink（預設）→ send/send_bg 完全 no-op、零網路;
 - send POST JSON（source/kind/title+extra）到設定端點;任何網路失敗吞掉回 False;
 - 觸發點:閘門重試用罄 failed、討論未收斂用罄 failed、主迴圈心跳停滯告警——
   皆走 send_bg(零阻塞),退回 pending 的中間重試不通知。
@@ -22,6 +22,10 @@ from studio import autopilot, backlog, config, notify
 def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "")
     return tmp_path
 
 

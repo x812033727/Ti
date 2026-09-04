@@ -373,10 +373,7 @@ def stage_readiness(*, state_dir: Path | None = None) -> dict:
         "deploy_verify_failed",
         "clarify_pending",
     )
-    sinks_ready = bool(
-        (config.NOTIFY_WEBHOOK or "").strip()
-        or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
-    )
+    sinks_ready = notify.sinks_configured()
     conditions = [
         {
             "key": "zero_touch",

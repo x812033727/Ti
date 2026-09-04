@@ -180,7 +180,7 @@ function createNotifyTestRow() {
       const parts = Object.entries(sinks).map(([k, ok]) => `${k}:${ok ? "✅ 已送達" : "❌ 失敗"}`);
       status.textContent = parts.length
         ? parts.join("・") + "(記得先按「儲存」再測)"
-        : "未設定任何通知管道:先填 webhook 或 Telegram 兩欄並按「儲存」。";
+        : "未設定任何通知管道:先填 webhook、Telegram 或 Email SMTP 設定並按「儲存」。";
     } catch {
       status.textContent = "測試請求失敗,請稍後再試。";
     }
