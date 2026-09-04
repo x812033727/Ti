@@ -19,6 +19,7 @@ ro-bind 在擋，而非整個沙箱寫不進」。
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from _repo import REPO_ROOT
@@ -41,6 +42,8 @@ def host_probe():
     刻意不放 `~/`、`~/.cache`、`/tmp`、cwd——前三者在沙箱內是 tmpfs/可寫，
     cwd 是 `--bind` 可寫，都無法驗到唯讀。repo 根被 `--ro-bind / /` 蓋成唯讀。
     """
+    if REPO.resolve().is_relative_to(Path("/tmp").resolve()):
+        pytest.skip("repo 位於 /tmp，會被 _bwrap_prefix 的 --tmpfs /tmp 遮住，無法驗 EROFS")
     probe = REPO / f".ti_ro_bind_probe_{os.getpid()}.txt"
     probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
     try:

@@ -1182,6 +1182,13 @@ DIGEST_PUSH = os.getenv("TI_DIGEST_PUSH", "0") not in ("0", "false", "False", ""
 # （各自獨立成敗）。向 @BotFather 建 bot 取 token；chat_id 可由 getUpdates 查得。
 TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()
+# Email 推播：SMTP host + 收件人皆非空才啟用，與 webhook/Telegram 並存。
+ALERT_EMAIL_TO = os.getenv("TI_ALERT_EMAIL_TO", "").strip()
+ALERT_SMTP_HOST = os.getenv("TI_ALERT_SMTP_HOST", "").strip()
+ALERT_SMTP_PORT = _env_int("TI_ALERT_SMTP_PORT", 587)
+ALERT_SMTP_USER = os.getenv("TI_ALERT_SMTP_USER", "").strip()
+ALERT_SMTP_PASS = os.getenv("TI_ALERT_SMTP_PASS", "").strip()
+ALERT_FROM = os.getenv("TI_ALERT_FROM", "Ti Studio <noreply>").strip()
 EXPERT_IDLE_STOP_S = _env_int("TI_EXPERT_IDLE_STOP_S", 0)
 EXPERT_IDLE_STOP_EXEMPT = frozenset(
     r.strip().lower() for r in os.getenv("TI_EXPERT_IDLE_STOP_EXEMPT", "pm").split(",") if r.strip()
@@ -1428,6 +1435,8 @@ def reload() -> None:
     global AUTOPILOT_LOOP_STALL_S, AUTOPILOT_RECONCILE_INTERVAL_S, NOTIFY_WEBHOOK
     global DEPLOY_VERIFY, DEFAULT_VIEW, DIGEST_PUSH
     global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    global ALERT_EMAIL_TO, ALERT_SMTP_HOST, ALERT_SMTP_PORT, ALERT_SMTP_USER, ALERT_SMTP_PASS
+    global ALERT_FROM
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
     global AUTOPILOT_FOLLOWUP_MAX_PER_TASK, AUTOPILOT_FOLLOWUP_MAX_GEN
     global AUTOPILOT_DISCOVERED_DAILY_CAP, AUTOPILOT_RETRY_COOLDOWN_S
@@ -1676,6 +1685,12 @@ def reload() -> None:
     DEPLOY_VERIFY = os.getenv("TI_DEPLOY_VERIFY", "0") not in ("0", "false", "False", "")
     TELEGRAM_BOT_TOKEN = os.getenv("TI_TELEGRAM_BOT_TOKEN", "").strip()
     TELEGRAM_CHAT_ID = os.getenv("TI_TELEGRAM_CHAT_ID", "").strip()
+    ALERT_EMAIL_TO = os.getenv("TI_ALERT_EMAIL_TO", "").strip()
+    ALERT_SMTP_HOST = os.getenv("TI_ALERT_SMTP_HOST", "").strip()
+    ALERT_SMTP_PORT = _env_int("TI_ALERT_SMTP_PORT", 587)
+    ALERT_SMTP_USER = os.getenv("TI_ALERT_SMTP_USER", "").strip()
+    ALERT_SMTP_PASS = os.getenv("TI_ALERT_SMTP_PASS", "").strip()
+    ALERT_FROM = os.getenv("TI_ALERT_FROM", "Ti Studio <noreply>").strip()
     EXPERT_IDLE_STOP_S = _env_int("TI_EXPERT_IDLE_STOP_S", 0)
     EXPERT_IDLE_STOP_EXEMPT = frozenset(
         r.strip().lower()
