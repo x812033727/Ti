@@ -1173,6 +1173,13 @@ AUTOPILOT_RECONCILE_INTERVAL_S = _env_int("TI_AUTOPILOT_RECONCILE_INTERVAL_S", 3
 # 主動通知 webhook（功能第五輪 F2）：異常事件（task_failed/loop_stall/quota_exhausted）
 # POST JSON 到此 URL。空＝關（預設）。實作在 studio/notify.py（零依賴、失敗吞掉）。
 NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
+# Email 通知 sink：SMTP host + 收件者皆非空即啟用，與 webhook/Telegram 並存。
+ALERT_EMAIL_TO = os.getenv("TI_ALERT_EMAIL_TO", "").strip()
+ALERT_SMTP_HOST = os.getenv("TI_ALERT_SMTP_HOST", "").strip()
+ALERT_SMTP_PORT = _env_int("TI_ALERT_SMTP_PORT", 587)
+ALERT_SMTP_USER = os.getenv("TI_ALERT_SMTP_USER", "").strip()
+ALERT_SMTP_PASS = os.getenv("TI_ALERT_SMTP_PASS", "").strip()
+ALERT_FROM = os.getenv("TI_ALERT_FROM", "Ti Studio <noreply>").strip()
 # 預設視圖(Kimi 化 PR7):home=助手首頁(消費級門面)、dash=監控、studio=工作室。
 # 回滾=設 dash + restart 或 revert PR。
 DEFAULT_VIEW = os.getenv("TI_DEFAULT_VIEW", "home").strip() or "home"
@@ -1426,6 +1433,8 @@ def reload() -> None:
     global EXPERT_EFFORT, EXPERT_EFFORT_MAP
     global EXPERT_IDLE_STOP_S, EXPERT_IDLE_STOP_EXEMPT
     global AUTOPILOT_LOOP_STALL_S, AUTOPILOT_RECONCILE_INTERVAL_S, NOTIFY_WEBHOOK
+    global ALERT_EMAIL_TO, ALERT_SMTP_HOST, ALERT_SMTP_PORT, ALERT_SMTP_USER
+    global ALERT_SMTP_PASS, ALERT_FROM
     global DEPLOY_VERIFY, DEFAULT_VIEW, DIGEST_PUSH
     global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     global AUTOPILOT_TIMEOUT_AUTOSPLIT, AUTOPILOT_SPLIT_MAX_DEPTH, AUTOPILOT_SPLIT_MAX_SUBTASKS
@@ -1671,6 +1680,12 @@ def reload() -> None:
     AUTOPILOT_LOOP_STALL_S = _env_int("TI_AUTOPILOT_LOOP_STALL_S", 900)
     AUTOPILOT_RECONCILE_INTERVAL_S = _env_int("TI_AUTOPILOT_RECONCILE_INTERVAL_S", 300)
     NOTIFY_WEBHOOK = os.getenv("TI_NOTIFY_WEBHOOK", "").strip()
+    ALERT_EMAIL_TO = os.getenv("TI_ALERT_EMAIL_TO", "").strip()
+    ALERT_SMTP_HOST = os.getenv("TI_ALERT_SMTP_HOST", "").strip()
+    ALERT_SMTP_PORT = _env_int("TI_ALERT_SMTP_PORT", 587)
+    ALERT_SMTP_USER = os.getenv("TI_ALERT_SMTP_USER", "").strip()
+    ALERT_SMTP_PASS = os.getenv("TI_ALERT_SMTP_PASS", "").strip()
+    ALERT_FROM = os.getenv("TI_ALERT_FROM", "Ti Studio <noreply>").strip()
     DEFAULT_VIEW = os.getenv("TI_DEFAULT_VIEW", "home").strip() or "home"
     DIGEST_PUSH = os.getenv("TI_DIGEST_PUSH", "0") not in ("0", "false", "False", "")
     DEPLOY_VERIFY = os.getenv("TI_DEPLOY_VERIFY", "0") not in ("0", "false", "False", "")

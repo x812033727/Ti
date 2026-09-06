@@ -27,9 +27,16 @@ from _repo import REPO_ROOT
 ROOT = REPO_ROOT
 ENV = ROOT / ".env"
 HOST = "127.0.0.1"
-PORT = 8012
+
+
+def _worker_port(base: int) -> int:
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "")
+    return base + int(worker[2:]) if worker.startswith("gw") and worker[2:].isdigit() else base
+
+
+PORT = _worker_port(8210)
 BASE = f"http://{HOST}:{PORT}"
-SECRET_ENVS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"}
+SECRET_ENVS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN", "TI_ALERT_SMTP_PASS"}
 TEST_TOKEN = "ghp_TEST_post_0003"
 
 

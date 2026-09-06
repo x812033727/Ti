@@ -159,7 +159,7 @@ const GROUP_NOTES = {
 };
 
 // 通知組尾端的「發送測試通知」列:POST /api/notify/test 同步發一則 test 事件,
-// 逐 sink(webhook/telegram)回報送達狀況——「手機真的收到」才算管道驗收完成。
+// 逐 sink(webhook/telegram/email)回報送達狀況——「外部真的收到」才算管道驗收完成。
 function createNotifyTestRow() {
   const wrap = document.createElement("div");
   wrap.className = "set-row";
@@ -180,7 +180,7 @@ function createNotifyTestRow() {
       const parts = Object.entries(sinks).map(([k, ok]) => `${k}:${ok ? "✅ 已送達" : "❌ 失敗"}`);
       status.textContent = parts.length
         ? parts.join("・") + "(記得先按「儲存」再測)"
-        : "未設定任何通知管道:先填 webhook 或 Telegram 兩欄並按「儲存」。";
+        : "未設定任何通知管道:先填 webhook、Telegram 或 Email 設定並按「儲存」。";
     } catch {
       status.textContent = "測試請求失敗,請稍後再試。";
     }

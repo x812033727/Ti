@@ -66,9 +66,12 @@ def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
         timeout=TIMEOUT,
     )
     assert r.returncode != 0, f"寫唯讀區應失敗，實際 rc={r.returncode}\n{r.stderr}"
-    assert "Read-only file system" in r.stderr, (
-        f"應為 EROFS（ro-bind 生效），實際 stderr：{r.stderr!r}"
-    )
+    # CI workspace 可能位於 /tmp；_bwrap_prefix 會把 /tmp 換成 tmpfs，repo 根探針會
+    # 變成不可見(ENOENT)而非只讀(EROFS)。兩者都必須維持 host 檔案未被竄改。
+    tmpfs_hidden = str(host_probe).startswith("/tmp/")
+    assert "Read-only file system" in r.stderr or (
+        tmpfs_hidden and "No such file or directory" in r.stderr
+    ), f"應為 EROFS 或 /tmp tmpfs 隔離下的 ENOENT，實際 stderr：{r.stderr!r}"
 
     # ③ 雙重保險：回 host 確認內容維持 ORIG（確實沒寫進去）。
     assert host_probe.read_text() == "ORIG", "host 探針內容不應被沙箱竄改"
