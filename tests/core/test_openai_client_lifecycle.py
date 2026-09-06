@@ -74,3 +74,31 @@ async def test_openai_client_close_error_does_not_mask_response(monkeypatch):
 
     assert response.choices[0].message.content == "ok"
     assert captured["clients"][0].close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_closes_client_when_close_is_sync(monkeypatch):
+    captured: dict = {"clients": []}
+
+    async def _create(**_kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))]
+        )
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **_kwargs):
+            self.close_calls = 0
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
+            captured["clients"].append(self)
+
+        def close(self):
+            self.close_calls += 1
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(AsyncOpenAI=FakeAsyncOpenAI))
+
+    response = await providers._openai_chat(
+        [{"role": "user", "content": "hi"}], None, "gpt-x", provider="openai"
+    )
+
+    assert response.choices[0].message.content == "ok"
+    assert captured["clients"][0].close_calls == 1

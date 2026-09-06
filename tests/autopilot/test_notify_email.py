@@ -133,6 +133,35 @@ def test_send_test_reports_email_sink(monkeypatch):
     assert notify.send_test() == {"ok": True, "sinks": {"email": True}}
 
 
+def test_email_success_keeps_send_ok_when_webhook_fails_and_redacts_secret(monkeypatch):
+    _enable_email(monkeypatch, port=587)
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hooks.example.test/notify")
+    calls: list[tuple[str, dict]] = []
+
+    def fake_webhook(_url, _kind, _title, extra):
+        calls.append(("webhook", extra))
+        return False
+
+    def fake_email(_kind, _title, extra):
+        calls.append(("email", extra))
+        return True
+
+    monkeypatch.setattr(notify, "_post_webhook", fake_webhook)
+    monkeypatch.setattr(notify, "_post_email", fake_email)
+
+    assert notify.send("task_failed", "失敗", task_id=42, smtp_pass="app-secret") is True
+
+    assert calls == [
+        ("webhook", {"task_id": 42, "smtp_pass": {"configured": True}}),
+        ("email", {"task_id": 42, "smtp_pass": {"configured": True}}),
+    ]
+    deliveries = notify.read_deliveries(1)
+    assert [(d["sink"], d["ok"], d["error"]) for d in deliveries] == [
+        ("webhook", False, "delivery_failed"),
+        ("email", True, ""),
+    ]
+
+
 def test_send_bg_email_only_starts_daemon_thread(monkeypatch):
     _enable_email(monkeypatch, port=587)
     calls = _capture_smtp(monkeypatch)
