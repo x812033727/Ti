@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -1158,6 +1159,18 @@ def _openai_client_args(provider: str | None = None) -> tuple[str, str | None]:
     return (config.OPENAI_API_KEY or "sk-none", config.OPENAI_BASE_URL or None)
 
 
+async def _close_openai_client(client) -> None:
+    close = getattr(client, "close", None)
+    if not callable(close):
+        return
+    try:
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        logger.debug("OpenAI 相容 client 關閉失敗（略過）", exc_info=True)
+
+
 async def _openai_chat(messages, tools_, model, provider=None):
     import openai
 
@@ -1167,9 +1180,12 @@ async def _openai_chat(messages, tools_, model, provider=None):
         base_url=base_url,
         max_retries=0,  # 讓位給 run_with_retries，避免 SDK 內建重試與外層退避雙層疊乘
     )
-    return await client.chat.completions.create(
-        model=model, messages=messages, tools=tools_ or None
-    )
+    try:
+        return await client.chat.completions.create(
+            model=model, messages=messages, tools=tools_ or None
+        )
+    finally:
+        await _close_openai_client(client)
 
 
 def _chat_for(provider: str):

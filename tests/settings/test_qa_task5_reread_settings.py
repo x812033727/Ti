@@ -28,9 +28,16 @@ from _repo import REPO_ROOT
 ROOT = REPO_ROOT
 ENV = ROOT / ".env"
 HOST = "127.0.0.1"
-PORT = 8014
+
+
+def _worker_port(base: int) -> int:
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "")
+    return base + int(worker[2:]) if worker.startswith("gw") and worker[2:].isdigit() else base
+
+
+PORT = _worker_port(8310)
 BASE = f"http://{HOST}:{PORT}"
-SECRET_ENVS = {"ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "GITHUB_TOKEN"}
+SECRET_ENVS = {"ANTHROPIC_API_KEY", "MINIMAX_API_KEY", "GITHUB_TOKEN", "TI_ALERT_SMTP_PASS"}
 
 GH = "ghp_TEST_reread_5"
 ANT = "sk-ant-TEST_reread_5"
@@ -142,11 +149,13 @@ def test_no_plaintext_leak_in_response(reread):
 
 
 def test_unset_secret_still_false(reread):
-    """未寫入的秘密欄位（MINIMAX_API_KEY）仍 set=False、value 空。"""
+    """未寫入的秘密欄位仍 set=False、value 空。"""
     _, fields = reread
     m = _by_env(fields)
     assert m["MINIMAX_API_KEY"]["value"] == ""
     assert m["MINIMAX_API_KEY"]["set"] is False
+    assert m["TI_ALERT_SMTP_PASS"]["value"] == ""
+    assert m["TI_ALERT_SMTP_PASS"]["set"] is False
 
 
 def test_frontend_renders_configured_secret(reread, tmp_path):

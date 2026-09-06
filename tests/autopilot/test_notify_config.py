@@ -12,7 +12,28 @@ import pytest
 
 from studio import config, notify
 
-REQUIRED_NOTIFY_CONFIG = {"NOTIFY_WEBHOOK", "NOTIFY_TIMEOUT"}
+REQUIRED_NOTIFY_CONFIG = {
+    "NOTIFY_WEBHOOK",
+    "NOTIFY_TIMEOUT",
+    "ALERT_EMAIL_TO",
+    "ALERT_SMTP_HOST",
+    "ALERT_SMTP_PORT",
+    "ALERT_SMTP_USER",
+    "ALERT_SMTP_PASS",
+    "ALERT_FROM",
+}
+NOTIFY_ENV_KEYS = (
+    "TI_NOTIFY_WEBHOOK",
+    "TI_NOTIFY_TIMEOUT",
+    "TI_TELEGRAM_BOT_TOKEN",
+    "TI_TELEGRAM_CHAT_ID",
+    "TI_ALERT_EMAIL_TO",
+    "TI_ALERT_SMTP_HOST",
+    "TI_ALERT_SMTP_PORT",
+    "TI_ALERT_SMTP_USER",
+    "TI_ALERT_SMTP_PASS",
+    "TI_ALERT_FROM",
+)
 
 
 def _assigned_names(statements: Iterable[ast.stmt]) -> set[str]:
@@ -56,38 +77,56 @@ def test_notify_config_is_synchronized_in_all_three_config_sections():
 
 def test_notify_config_defaults_and_reload_env_overrides(monkeypatch):
     with monkeypatch.context() as env:
-        env.delenv("TI_NOTIFY_WEBHOOK", raising=False)
-        env.delenv("TI_NOTIFY_TIMEOUT", raising=False)
+        for key in NOTIFY_ENV_KEYS:
+            env.delenv(key, raising=False)
         config.reload()
 
         assert config.NOTIFY_WEBHOOK == ""
         assert config.NOTIFY_TIMEOUT == 10.0
+        assert config.ALERT_EMAIL_TO == ""
+        assert config.ALERT_SMTP_HOST == ""
+        assert config.ALERT_SMTP_PORT == 587
+        assert config.ALERT_SMTP_USER == ""
+        assert config.ALERT_SMTP_PASS == ""
+        assert config.ALERT_FROM == "Ti Studio <noreply>"
 
         env.setenv("TI_NOTIFY_WEBHOOK", "  https://example.invalid/hook?secret=abc  ")
         env.setenv("TI_NOTIFY_TIMEOUT", "2.5")
+        env.setenv("TI_ALERT_EMAIL_TO", "  ops@example.test  ")
+        env.setenv("TI_ALERT_SMTP_HOST", "  smtp.example.test  ")
+        env.setenv("TI_ALERT_SMTP_PORT", "465")
+        env.setenv("TI_ALERT_SMTP_USER", "  user@example.test  ")
+        env.setenv("TI_ALERT_SMTP_PASS", "  app-pass  ")
+        env.setenv("TI_ALERT_FROM", "  Ti Alerts <alerts@example.test>  ")
         config.reload()
 
         assert config.NOTIFY_WEBHOOK == "https://example.invalid/hook?secret=abc"
         assert config.NOTIFY_TIMEOUT == 2.5
+        assert config.ALERT_EMAIL_TO == "ops@example.test"
+        assert config.ALERT_SMTP_HOST == "smtp.example.test"
+        assert config.ALERT_SMTP_PORT == 465
+        assert config.ALERT_SMTP_USER == "user@example.test"
+        assert config.ALERT_SMTP_PASS == "app-pass"
+        assert config.ALERT_FROM == "Ti Alerts <alerts@example.test>"
 
     config.reload()
 
 
 def test_send_bg_without_webhook_is_noop(monkeypatch):
     with monkeypatch.context() as env:
-        env.delenv("TI_NOTIFY_WEBHOOK", raising=False)
-        env.delenv("TI_NOTIFY_TIMEOUT", raising=False)
+        for key in NOTIFY_ENV_KEYS:
+            env.delenv(key, raising=False)
         config.reload()
 
         class NoThread:
             def __init__(self, *_args, **_kwargs):
-                pytest.fail("send_bg must not start a thread without webhook")
+                pytest.fail("send_bg must not start a thread without any notification sink")
 
         monkeypatch.setattr(notify.threading, "Thread", NoThread)
         monkeypatch.setattr(
             notify.urllib.request,
             "urlopen",
-            lambda *_args, **_kwargs: pytest.fail("send_bg must not hit network without webhook"),
+            lambda *_args, **_kwargs: pytest.fail("send_bg must not hit network without any sink"),
         )
 
         notify.send_bg("noop", "no webhook", task_id=1)
@@ -132,6 +171,8 @@ def test_send_bg_posts_json_in_background(monkeypatch, caplog):
         return _Response()
 
     with monkeypatch.context() as env:
+        for key in NOTIFY_ENV_KEYS:
+            env.delenv(key, raising=False)
         env.setenv("TI_NOTIFY_WEBHOOK", webhook)
         env.setenv("TI_NOTIFY_TIMEOUT", "3.5")
         config.reload()
@@ -139,7 +180,7 @@ def test_send_bg_posts_json_in_background(monkeypatch, caplog):
         monkeypatch.setattr(notify.threading, "Thread", FakeThread)
         monkeypatch.setattr(notify.urllib.request, "urlopen", fake_urlopen)
 
-        notify.send_bg("daily_pr_budget_pause", "reached", task_id=7, budget=2)
+        notify.send_bg("budget_trip", "reached", task_id=7, budget=2)
 
     assert len(threads) == 1
     assert threads[0].daemon is True
@@ -150,7 +191,7 @@ def test_send_bg_posts_json_in_background(monkeypatch, caplog):
             "timeout": 3.5,
             "body": {
                 "source": "ti",
-                "kind": "daily_pr_budget_pause",
+                "kind": "budget_trip",
                 "title": "reached",
                 "task_id": 7,
                 "budget": 2,
@@ -182,6 +223,8 @@ def test_send_bg_swallows_webhook_errors(monkeypatch):
         raise OSError("boom")
 
     with monkeypatch.context() as env:
+        for key in NOTIFY_ENV_KEYS:
+            env.delenv(key, raising=False)
         env.setenv("TI_NOTIFY_WEBHOOK", "https://hooks.example.test/notify")
         env.setenv("TI_NOTIFY_TIMEOUT", "1.0")
         config.reload()

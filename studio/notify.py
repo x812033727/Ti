@@ -9,6 +9,9 @@ Telegram sink（第 3 階 A1）：TI_TELEGRAM_BOT_TOKEN + TI_TELEGRAM_CHAT_ID �
 與 webhook 並存、各自獨立成敗——「按例外監控」的前提是推播真的到手機。端到端驗證走
 POST /api/notify/test（routes.py）。
 
+Email sink：TI_ALERT_SMTP_HOST + TI_ALERT_EMAIL_TO 皆非空即啟用；465 走 SMTP_SSL，
+其他 port 走 SMTP + STARTTLS。與 webhook/Telegram 並存，任何 SMTP 失敗只吞掉並記 debug。
+
 A0 起，每則事件（無論 webhook 是否設定）都先落檔 autopilot/events.jsonl
 （jsonl_log 範式）——quota_exhausted/loop_stall/task_failed 過去只有推播、不留痕，
 信任指標（insights.trust_metrics）需要無條件的結構化計數。
@@ -27,10 +30,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import smtplib
 import threading
 import time
 import urllib.request
 import uuid
+from email.message import EmailMessage
 from pathlib import Path
 
 from . import config, jsonl_log
@@ -43,7 +48,7 @@ def _timeout_s() -> float:
     return float(getattr(config, "NOTIFY_TIMEOUT", 10.0) or 10.0)
 
 
-_SENSITIVE_KEY_MARKS = ("token", "secret", "password", "authorization", "webhook")
+_SENSITIVE_KEY_MARKS = ("token", "secret", "password", "authorization", "webhook", "smtp_pass")
 _SENSITIVE_PATH_RE = re.compile(r"(?<![\w:/])/(?:root|home|opt|etc|var|tmp|srv)/[^\s,;]*")
 
 
@@ -53,6 +58,7 @@ def _redact_text(value: str) -> str:
         config.GITHUB_TOKEN,
         config.TELEGRAM_BOT_TOKEN,
         config.NOTIFY_WEBHOOK,
+        config.ALERT_SMTP_PASS,
     ):
         if secret:
             text = text.replace(secret, "***")
@@ -218,6 +224,48 @@ def _post_telegram(token: str, chat_id: str, kind: str, title: str, extra: dict)
     )
 
 
+def _email_enabled() -> bool:
+    return bool((config.ALERT_SMTP_HOST or "").strip() and (config.ALERT_EMAIL_TO or "").strip())
+
+
+def _post_email(kind: str, title: str, extra: dict) -> bool:
+    """SMTP email sink；失敗不外拋，且 log 不帶 host/user/password。"""
+    host = (config.ALERT_SMTP_HOST or "").strip()
+    to_addr = (config.ALERT_EMAIL_TO or "").strip()
+    if not (host and to_addr):
+        return False
+
+    port = int(config.ALERT_SMTP_PORT or 587)
+    user = (config.ALERT_SMTP_USER or "").strip()
+    password = config.ALERT_SMTP_PASS or ""
+    from_addr = (config.ALERT_FROM or "").strip() or user or "Ti Studio <noreply>"
+
+    msg = EmailMessage()
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+    msg["Subject"] = f"[ti] {kind}" + (f": {title}" if title else "")
+    lines = [f"[ti] {kind}" + (f": {title}" if title else "")]
+    lines += [f"{k}={v}" for k, v in extra.items()]
+    msg.set_content("\n".join(lines), subtype="plain", charset="utf-8")
+
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=_timeout_s()) as smtp:
+                if user and password:
+                    smtp.login(user, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=_timeout_s()) as smtp:
+                smtp.starttls()
+                if user and password:
+                    smtp.login(user, password)
+                smtp.send_message(msg)
+        return True
+    except Exception:  # noqa: BLE001 — 通知失敗不得影響呼叫端；避免把 SMTP 秘密寫入 log。
+        log.debug("email 通知送出失敗（忽略）：%s %s", kind, title)
+        return False
+
+
 def _deliver(kind: str, title: str, extra: dict, alert: dict | None = None) -> dict:
     """把事件推到所有已設定的 sink；回 {sink: 成敗}（未設定的 sink 不出現）。"""
     title, extra = _safe_payload(title, extra)
@@ -245,6 +293,16 @@ def _deliver(kind: str, title: str, extra: dict, alert: dict | None = None) -> d
             out["telegram"],
             time.monotonic() - started,
             "" if out["telegram"] else "delivery_failed",
+        )
+    if _email_enabled():
+        started = time.monotonic()
+        out["email"] = _post_email(kind, title, extra)
+        _persist_delivery(
+            alert,
+            "email",
+            out["email"],
+            time.monotonic() - started,
+            "" if out["email"] else "delivery_failed",
         )
     if not out:
         _persist_delivery(alert, "none", False, 0.0, "not_configured")
@@ -293,6 +351,7 @@ def send_bg(kind: str, title: str, **extra) -> None:
     if not (
         (config.NOTIFY_WEBHOOK or "").strip()
         or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
+        or _email_enabled()
     ):
         _persist_delivery(alert, "none", False, 0.0, "not_configured")
         return
