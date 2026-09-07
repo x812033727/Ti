@@ -14,6 +14,14 @@ def _force_fetch(branch: str) -> list[str]:
 def _assert_force_fetch_seen(calls: list[list[str]], branch: str) -> None:
     expected = _force_fetch(branch)
     assert expected in calls, f"missing force fetch argv {expected!r}; captured={calls!r}"
+    bare_fetches = [
+        cmd
+        for cmd in calls
+        if "fetch" in cmd
+        for fetch_i in [cmd.index("fetch")]
+        if cmd[fetch_i + 1 :] == ["origin", branch]
+    ]
+    assert not bare_fetches, f"bare branch fetch must not be used: {bare_fetches!r}"
 
 
 def test_old_bare_fetch_black_sample_is_rejected():
@@ -21,6 +29,13 @@ def test_old_bare_fetch_black_sample_is_rejected():
 
     with pytest.raises(AssertionError):
         _assert_force_fetch_seen([["git", "fetch", "origin", branch]], branch)
+
+
+def test_mixed_force_and_bare_fetch_black_sample_is_rejected():
+    branch = "deploy/test"
+
+    with pytest.raises(AssertionError):
+        _assert_force_fetch_seen([_force_fetch(branch), ["git", "fetch", "origin", branch]], branch)
 
 
 @pytest.mark.asyncio
