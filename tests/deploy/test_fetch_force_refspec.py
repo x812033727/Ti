@@ -106,5 +106,27 @@ async def test_boundary_redeploy_check_fetch_uses_force_refspec(tmp_path, monkey
     _assert_force_fetch_seen(calls, branch)
 
 
+@pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_uses_force_refspec(tmp_path, monkeypatch):
+    branch = "deploy/test"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot, "_git_cred_argv", lambda: [])
+    monkeypatch.setattr(autopilot, "_git_cred_env", lambda: None)
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return 0, "ok\n"
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    assert await autopilot._prepare_clone(str(work)) == str(work)
+    _assert_force_fetch_seen(calls, branch)
+    assert ["git", "fetch", "origin", branch] not in calls
+
+
 async def _async_value(value):
     return value
