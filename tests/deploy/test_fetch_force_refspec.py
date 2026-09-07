@@ -14,6 +14,14 @@ def _force_fetch(branch: str) -> list[str]:
 def _assert_force_fetch_seen(calls: list[list[str]], branch: str) -> None:
     expected = _force_fetch(branch)
     assert expected in calls, f"missing force fetch argv {expected!r}; captured={calls!r}"
+    bare_fetches = [
+        cmd
+        for cmd in calls
+        if "fetch" in cmd
+        for fetch_i in [cmd.index("fetch")]
+        if cmd[fetch_i + 1 :] == ["origin", branch]
+    ]
+    assert not bare_fetches, f"bare branch fetch must not be used: {bare_fetches!r}"
 
 
 def test_old_bare_fetch_black_sample_is_rejected():
@@ -21,6 +29,13 @@ def test_old_bare_fetch_black_sample_is_rejected():
 
     with pytest.raises(AssertionError):
         _assert_force_fetch_seen([["git", "fetch", "origin", branch]], branch)
+
+
+def test_mixed_force_and_bare_fetch_black_sample_is_rejected():
+    branch = "deploy/test"
+
+    with pytest.raises(AssertionError):
+        _assert_force_fetch_seen([_force_fetch(branch), ["git", "fetch", "origin", branch]], branch)
 
 
 @pytest.mark.asyncio
@@ -104,6 +119,28 @@ async def test_boundary_redeploy_check_fetch_uses_force_refspec(tmp_path, monkey
     await autopilot._maybe_boundary_redeploy()
 
     _assert_force_fetch_seen(calls, branch)
+
+
+@pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_uses_force_refspec(tmp_path, monkeypatch):
+    branch = "deploy/test"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot, "_git_cred_argv", lambda: [])
+    monkeypatch.setattr(autopilot, "_git_cred_env", lambda: None)
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return 0, "ok\n"
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    assert await autopilot._prepare_clone(str(work)) == str(work)
+    _assert_force_fetch_seen(calls, branch)
+    assert ["git", "fetch", "origin", branch] not in calls
 
 
 async def _async_value(value):

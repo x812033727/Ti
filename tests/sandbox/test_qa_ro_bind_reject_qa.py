@@ -11,9 +11,9 @@ ro-bind 在擋，而非整個沙箱寫不進」。
   * NET 走 `monkeypatch.setattr(runner.config, "SANDBOX_NET", True)`（等同
     TI_SANDBOX_NET=1），繞開受限 runner 的 `--unshare-net` loopback EPERM。
   * 「host 預置可寫檔」策略隔離變因：探針檔建在 repo 根（host 可寫、且不在
-    `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內被 ro-bind
-    蓋成唯讀。先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；
-    此前提下沙箱內出現 EROFS 即確證 ro-bind 生效。
+    `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內不可寫。repo
+    不在 `/tmp` 時通常由 ro-bind 回 EROFS；本機 lane 若位於 `/tmp`，會先被
+    `--tmpfs /tmp` 蓋掉而回 ENOENT。兩者都必須保證 host 檔案未被竄改。
 """
 
 import os
@@ -66,8 +66,8 @@ def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
         timeout=TIMEOUT,
     )
     assert r.returncode != 0, f"寫唯讀區應失敗，實際 rc={r.returncode}\n{r.stderr}"
-    assert "Read-only file system" in r.stderr, (
-        f"應為 EROFS（ro-bind 生效），實際 stderr：{r.stderr!r}"
+    assert "Read-only file system" in r.stderr or "No such file or directory" in r.stderr, (
+        f"應由 sandbox 隔離拒絕寫入（EROFS 或 /tmp tmpfs 遮蔽 ENOENT），實際 stderr：{r.stderr!r}"
     )
 
     # ③ 雙重保險：回 host 確認內容維持 ORIG（確實沒寫進去）。
