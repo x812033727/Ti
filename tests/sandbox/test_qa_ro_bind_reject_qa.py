@@ -115,3 +115,41 @@ def test_bind_allows_write_to_writable_area(tmp_path, monkeypatch):
     assert r.returncode == 0, f"可寫區寫入應成功，實際 rc={r.returncode}\n{r.stderr}"
     assert target.exists(), "寫入後 host 端應能看到該檔（--bind 連回主機）"
     assert target.read_text().strip() == "OK"
+
+
+@needs_bwrap
+def test_nested_workspace_under_project_root_keeps_parent_readonly(tmp_path, monkeypatch):
+    """邊界：workspace 是 repo 內 lane 時，lane 可寫但 repo 根仍不得被竄改。"""
+    monkeypatch.setattr(runner.config, "SANDBOX_NET", True)
+    project_root = tmp_path / "repo"
+    workspace = project_root / "workspaces" / "lane"
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(runner.config, "PROJECT_ROOT", project_root)
+
+    host_probe = project_root / "host_only.txt"
+    host_probe.write_text("ORIG")
+    writable = workspace / "ok.txt"
+    prefix = runner._bwrap_prefix(workspace)
+
+    ok = subprocess.run(
+        prefix + ["bash", "-c", 'printf OK > "$1"', "_", str(writable)],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT,
+    )
+    assert ok.returncode == 0, f"lane 可寫區應成功，實際 rc={ok.returncode}\n{ok.stderr}"
+    assert writable.read_text() == "OK"
+
+    denied = subprocess.run(
+        prefix + ["bash", "-c", 'printf TAINT > "$1"', "_", str(host_probe)],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT,
+    )
+    assert denied.returncode != 0, (
+        f"lane 外 repo 根應維持唯讀，實際 rc={denied.returncode}\n{denied.stderr}"
+    )
+    assert "Read-only file system" in denied.stderr, (
+        f"應為 EROFS（父層 ro-bind 生效），實際 stderr：{denied.stderr!r}"
+    )
+    assert host_probe.read_text() == "ORIG"
