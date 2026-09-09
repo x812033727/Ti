@@ -124,6 +124,7 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """
     cwd = str(cwd)
     cache = os.path.join(os.path.expanduser("~"), ".cache")
+    project_root = Path(getattr(config, "PROJECT_ROOT", Path(__file__).resolve().parent.parent))
     args = [
         config.SANDBOX_BWRAP,
         "--ro-bind",
@@ -137,6 +138,12 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         "/tmp",
         "--tmpfs",
         cache,
+    ]
+    if project_root.exists():
+        # /tmp 會被 tmpfs 遮蔽；本地 lane 放在 /tmp 時，補回唯讀專案根以維持
+        # 「host 可見但唯讀，只有 cwd 可寫」的沙箱語意。
+        args += ["--ro-bind", str(project_root), str(project_root)]
+    args += [
         "--bind",
         cwd,
         cwd,
