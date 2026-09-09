@@ -34,6 +34,30 @@ needs_bwrap = pytest.mark.skipif(
 )
 
 
+def test_bwrap_prefix_rebinds_project_root_after_tmpfs(tmp_path, monkeypatch):
+    """結構面守門：無 bwrap 環境也能驗 `/tmp` tmpfs 後補回 repo 根。"""
+    project_root = tmp_path / "repo"
+    workspace = tmp_path / "workspace"
+    project_root.mkdir()
+    workspace.mkdir()
+    monkeypatch.setattr(runner.config, "PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(workspace)
+    tmpfs_i = next(i for i in range(len(args) - 1) if args[i : i + 2] == ["--tmpfs", "/tmp"])
+    root_i = next(
+        i
+        for i in range(len(args) - 2)
+        if args[i : i + 3] == ["--ro-bind", str(project_root), str(project_root)]
+    )
+    cwd_i = next(
+        i
+        for i in range(len(args) - 2)
+        if args[i : i + 3] == ["--bind", str(workspace), str(workspace)]
+    )
+
+    assert tmpfs_i < root_i < cwd_i
+
+
 @pytest.fixture
 def host_probe():
     """在 repo 根（host 可寫區）預置一個探針檔，帶唯一後綴；測試後清理。
