@@ -14,6 +14,8 @@ ro-bind 在擋，而非整個沙箱寫不進」。
     `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內被 ro-bind
     蓋成唯讀。先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；
     此前提下沙箱內出現 EROFS 即確證 ro-bind 生效。
+  * 若 repo 本身位於 `/tmp`，探針會被 `_bwrap_prefix` 的 `--tmpfs /tmp` 遮蔽，沙箱內只會
+    看到 ENOENT；此時測不到 ro-bind，明確 skip，不把環境限制誤判成功能退化。
 """
 
 import os
@@ -41,6 +43,8 @@ def host_probe():
     刻意不放 `~/`、`~/.cache`、`/tmp`、cwd——前三者在沙箱內是 tmpfs/可寫，
     cwd 是 `--bind` 可寫，都無法驗到唯讀。repo 根被 `--ro-bind / /` 蓋成唯讀。
     """
+    if REPO.resolve().is_relative_to("/tmp"):
+        pytest.skip("repo 位於 /tmp，會被 bwrap 的 --tmpfs /tmp 遮蔽，無法觀測 ro-bind EROFS")
     probe = REPO / f".ti_ro_bind_probe_{os.getpid()}.txt"
     probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
     try:

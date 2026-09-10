@@ -38,6 +38,8 @@ class EventType(str, Enum):
     VOTE_RESULT = "vote_result"  # 3-AI 表決結果（PM 無法決定時跨 provider 多數決）
     APPRAISAL = "appraisal"  # 考核：收尾檢討時 PM 對參與 AI 的績效評分（1–5 分＋評語）
     TASK_RESULT = "task_result"  # 任務收尾結果事件
+    CORE_CHANGE_ROUTE = "core_change_route"  # 核心改動路由對帳（解析數/入列數）
+    CORE_CHANGE_PARSE_WARNING = "core_change_parse_warning"  # 疑似核心改動漏用結構化格式
 
 
 @dataclass
@@ -348,6 +350,51 @@ def provider_constrained(
             "reason": reason,
             "providers": providers or [],
             "snapshot": snapshot or {},
+        },
+    )
+
+
+def core_change_route(
+    session_id: str,
+    *,
+    source: str,
+    parsed_count: int,
+    routed_count: int,
+    core_repo: str,
+) -> StudioEvent:
+    """核心改動雙軌路由對帳：解析幾筆、實際入核心 backlog 幾筆。"""
+    parsed = max(0, int(parsed_count or 0))
+    routed = max(0, int(routed_count or 0))
+    return StudioEvent(
+        EventType.CORE_CHANGE_ROUTE,
+        session_id,
+        {
+            "source": source,
+            "parsed_count": parsed,
+            "routed_count": routed,
+            "skipped_count": max(0, parsed - routed),
+            "core_repo": core_repo,
+        },
+    )
+
+
+def core_change_parse_warning(
+    session_id: str,
+    *,
+    source: str,
+    reason: str,
+    snippet: str,
+    core_repo: str,
+) -> StudioEvent:
+    """核心改動疑似漏格式：只提示，不自動路由。"""
+    return StudioEvent(
+        EventType.CORE_CHANGE_PARSE_WARNING,
+        session_id,
+        {
+            "source": source,
+            "reason": reason,
+            "snippet": str(snippet or "")[:240],
+            "core_repo": core_repo,
         },
     )
 

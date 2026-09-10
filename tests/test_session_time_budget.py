@@ -75,6 +75,18 @@ def test_time_exceeded_disabled_without_budget(monkeypatch):
     assert s._deadline_hit is False
 
 
+def test_ws_interactive_time_budget_knob(monkeypatch):
+    """互動 WS 場次 opt-in 套時間預算；持續改良 umbrella 不吃此旋鈕。"""
+    from studio import ws
+
+    monkeypatch.setattr(config, "INTERACTIVE_SESSION_TIMEOUT", 0)
+    assert ws._interactive_session_time_budget(improve_mode=False) is None
+
+    monkeypatch.setattr(config, "INTERACTIVE_SESSION_TIMEOUT", 120.5)
+    assert ws._interactive_session_time_budget(improve_mode=False) == 120.5
+    assert ws._interactive_session_time_budget(improve_mode=True) is None
+
+
 # --- 整合：以可控時鐘驅動真實 _time_exceeded，測截斷後優雅收尾 ----------
 
 

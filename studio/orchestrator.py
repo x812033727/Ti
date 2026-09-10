@@ -3990,11 +3990,22 @@ class StudioSession:
         self._merge_followup_items(parse_followups_meta(retro), failed_titles=failed_titles)
         # 核心改動：判定需改 Ti 核心框架的項目，與後續任務分流——不進專案 backlog／PR，
         # 由消費端（improver／autopilot）路由到核心 backlog，autopilot 對核心 repo 開獨立 PR。
+        parsed_core_changes = parse_core_changes(retro)
         core_seen = {c["title"] for c in self._core_changes}
-        for item in parse_core_changes(retro):
+        for item in parsed_core_changes:
             if item["title"] not in core_seen:
                 core_seen.add(item["title"])
                 self._core_changes.append(item)
+        miss = flow.core_change_parse_miss(retro, parsed_count=len(parsed_core_changes))
+        if miss:
+            await self.broadcast(
+                events.core_change_parse_warning(
+                    self.session_id,
+                    source="retrospective",
+                    core_repo=config.CORE_REPO,
+                    **miss,
+                )
+            )
         if self._core_changes:
             await self.broadcast(
                 events.phase_change(

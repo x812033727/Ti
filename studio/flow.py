@@ -174,6 +174,15 @@ def parse_clarify(text: str) -> list[dict]:
 _RE_TAGGED_TASK = re.compile(r"^\s*任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
 _RE_TAGGED_FOLLOWUP = re.compile(r"^\s*後續任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
 _RE_CORE_CHANGE = re.compile(r"^\s*核心改動\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
+_RE_CORE_CHANGE_HINT = re.compile(
+    r"(?:Ti\s*(?:核心|框架|主核心)|核心\s*(?:repo|倉庫|框架|改動)|主核心\s*repo|x812033727/Ti)",
+    re.I,
+)
+_RE_CORE_CHANGE_NEGATION = re.compile(
+    r"(?:沒有|無|不需(?:要)?|不用).{0,16}(?:核心改動|Ti\s*核心|核心\s*(?:repo|倉庫|框架))|"
+    r"(?:核心改動|Ti\s*核心|核心\s*(?:repo|倉庫|框架)).{0,16}(?:沒有|無|不需(?:要)?|不用)",
+    re.I,
+)
 
 
 def _parse_item_tag(tag: str) -> dict:
@@ -273,6 +282,32 @@ def parse_core_changes(text: str) -> list[dict]:
         for tag, title in _RE_CORE_CHANGE.findall(text or "")
         if title.strip()
     ][:10]
+
+
+def core_change_parse_miss(text: str, *, parsed_count: int | None = None) -> dict | None:
+    """偵測疑似 Ti 核心改動漏用 `核心改動:` 格式的輸出，回傳稽核 payload 或 None。
+
+    這只是可觀測 guard，不做自動路由；避免 regex 猜錯後把專案工作污染到核心 backlog。
+    """
+    raw = str(text or "")
+    if parsed_count is None:
+        parsed_count = len(parse_core_changes(raw))
+    if parsed_count:
+        return None
+    if not _RE_CORE_CHANGE_HINT.search(raw):
+        return None
+    if _RE_CORE_CHANGE_NEGATION.search(raw):
+        return None
+    snippet = ""
+    for line in raw.splitlines():
+        clean = line.strip()
+        if clean and _RE_CORE_CHANGE_HINT.search(clean):
+            snippet = clean[:240]
+            break
+    return {
+        "reason": "core_hint_without_structured_line",
+        "snippet": snippet or raw.strip()[:240],
+    }
 
 
 def parse_lessons(text: str) -> list[str]:

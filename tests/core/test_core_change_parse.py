@@ -60,3 +60,23 @@ def test_parse_core_changes_caps_at_ten():
 
     text = "\n".join(f"核心改動: 第 {i} 項核心改動" for i in range(20))
     assert len(parse_core_changes(text)) == 10
+
+
+def test_core_change_parse_miss_detects_unstructured_core_hint():
+    from studio import flow
+
+    miss = flow.core_change_parse_miss(
+        "這次需求其實需要調整 Ti 核心框架的 orchestrator 收尾流程，但我忘了列格式。"
+    )
+
+    assert miss == {
+        "reason": "core_hint_without_structured_line",
+        "snippet": "這次需求其實需要調整 Ti 核心框架的 orchestrator 收尾流程，但我忘了列格式。",
+    }
+
+
+def test_core_change_parse_miss_ignores_structured_or_negative_text():
+    from studio import flow
+
+    assert flow.core_change_parse_miss("核心改動: 調整 runner") is None
+    assert flow.core_change_parse_miss("本次沒有核心改動，只需要改專案程式。") is None

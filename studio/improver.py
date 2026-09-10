@@ -29,6 +29,7 @@ from . import (
     blueprint,
     config,
     events,
+    flow,
     history,
     notify,
     project_health,
@@ -666,9 +667,20 @@ class ProjectImprover:
 
         completed = bool(result.get("completed"))
         # 一場討論結果分流回填：後續任務→專案 backlog；核心改動→核心 backlog（見雙軌路由）。
+        core_count = len(result.get("core_changes") or [])
         added, routed = drain_result_to_backlogs(result, sdir)
         if added:
             log.info("專案 %s 從討論回填 %d 個後續任務", pid, added)
+        if core_count:
+            await self.broadcast(
+                events.core_change_route(
+                    self.session_id,
+                    source="project_improver",
+                    parsed_count=core_count,
+                    routed_count=routed,
+                    core_repo=config.CORE_REPO,
+                )
+            )
         if routed:
             log.info(
                 "專案 %s 路由 %d 個核心改動到核心 backlog（%s）", pid, routed, config.CORE_REPO
@@ -1061,7 +1073,18 @@ class ProjectImprover:
             if key == "researcher" and config.KNOWLEDGE_ENABLED:
                 workspace.append_doc(projects.workspace_id(pid), "RESEARCH.md", text)
             # 單執行緒 asyncio：append 在 await 之後同步進行，視角間不會競態。
-            core_buf.extend(parse_core_changes(text))
+            core_items = parse_core_changes(text)
+            miss = flow.core_change_parse_miss(text, parsed_count=len(core_items))
+            if miss:
+                await self.broadcast(
+                    events.core_change_parse_warning(
+                        self.session_id,
+                        source=f"discovery:{key}",
+                        core_repo=config.CORE_REPO,
+                        **miss,
+                    )
+                )
+            core_buf.extend(core_items)
             return parse_structured_tasks(text)
 
         proposals = await asyncio.gather(*(_ask(k) for k in keys))
@@ -1075,8 +1098,16 @@ class ProjectImprover:
                     uniq.append(c)
             # 意圖驅動的核心改動蓋 source="intent":core 迴圈執行+audit 後,第 4 階
             # 「意圖→零人工交付」才量測得到(專案 backlog 的 intent 任務不進 core audit)。
-            routed = autopilot._route_core_changes(
-                uniq, source="intent" if self._intent_context() else "core"
+            from_intent = bool(self._intent_context())
+            routed = autopilot._route_core_changes(uniq, source="intent" if from_intent else "core")
+            await self.broadcast(
+                events.core_change_route(
+                    self.session_id,
+                    source="intent_discovery" if from_intent else "discovery",
+                    parsed_count=len(uniq),
+                    routed_count=routed,
+                    core_repo=config.CORE_REPO,
+                )
             )
             if routed:
                 log.info("找問題：路由 %d 個核心改動到核心 backlog（%s）", routed, config.CORE_REPO)

@@ -54,6 +54,14 @@ def _unregister_running(*keys: str) -> None:
         _running.pop(k, None)
 
 
+def _interactive_session_time_budget(*, improve_mode: bool) -> float | None:
+    """WS 互動單場的時間預算；0/負值或持續改良 umbrella 皆不套用。"""
+    if improve_mode:
+        return None
+    budget = float(config.INTERACTIVE_SESSION_TIMEOUT or 0)
+    return budget if budget > 0 else None
+
+
 # --- 斷線重掛（attach）：進行中 session 的事件 fan-out -----------------------
 #
 # 原 broadcast 是綁死單一 socket 的閉包；hub 讓「第二條 WS」能訂閱同一場討論的
@@ -601,6 +609,7 @@ async def ws(websocket: WebSocket) -> None:
             # 僅在 workspace 確實同步自目標 repo 時告知 session（prompt 不對專家說謊）。
             base_repo=base_repo if base_sync.based else None,
             group=group,
+            time_budget_s=_interactive_session_time_budget(improve_mode=improve_mode),
             workflow=wf,
         )
         if config.OFFLINE_MODE:
@@ -688,7 +697,18 @@ async def _run_project_session(session: StudioSession, requirement: str, project
     sdir = projects.state_dir(project["id"])
     # 結果分流回填（雙軌路由單一決策點）：後續任務→專案 backlog；核心改動→核心 backlog，
     # 由 autopilot 在主核心 repo 實作開獨立 PR。單場討論同樣參與——下次持續改良迴圈現成供給。
+    core_count = len(result.get("core_changes") or [])
     _added, routed = drain_result_to_backlogs(result, sdir)
+    if core_count:
+        await session.broadcast(
+            events.core_change_route(
+                session.session_id,
+                source="project_session",
+                parsed_count=core_count,
+                routed_count=routed,
+                core_repo=config.CORE_REPO,
+            )
+        )
     if routed:
         await session.broadcast(
             events.phase_change(
@@ -711,7 +731,18 @@ async def _run_plain_session(session: StudioSession, requirement: str) -> dict:
     """非專案的單場討論：無專案 backlog 可回填，但團隊判定的核心改動仍路由到主核心 repo
     （`核心改動:` 專指改 Ti 框架本身、與專案無關），由 autopilot 實作開獨立 PR。"""
     result = await session.run(requirement)
-    routed = backlog.route_core_changes(result.get("core_changes") or [])
+    core_changes = result.get("core_changes") or []
+    routed = backlog.route_core_changes(core_changes)
+    if core_changes:
+        await session.broadcast(
+            events.core_change_route(
+                session.session_id,
+                source="plain_session",
+                parsed_count=len(core_changes),
+                routed_count=routed,
+                core_repo=config.CORE_REPO,
+            )
+        )
     if routed:
         await session.broadcast(
             events.phase_change(
