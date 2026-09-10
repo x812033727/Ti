@@ -875,8 +875,11 @@ NOTIFY_TIMEOUT = _env_float("TI_NOTIFY_TIMEOUT", 10.0)
 # 軟性時間預算：session 在硬 timeout（AUTOPILOT_TASK_TIMEOUT，由 autopilot 的 wait_for 套用）的
 # 此比例處主動收斂——停止派發新任務、把已完成的走 Demo/出貨、未動的記 known-limit/followup，
 # 換取「優雅收尾並回傳結果」而非被 wait_for 硬砍、整場(含已完成任務)全丟成 timeout failed。
-# 預設 0.85（留 15% 給 Demo/發佈/wrap-up）。只在 autopilot 傳入 time_budget_s 時生效。
+# 預設 0.85（留 15% 給 Demo/發佈/wrap-up）。只在 session 傳入 time_budget_s 時生效。
 SESSION_SOFT_DEADLINE_FRAC = _env_float("TI_SESSION_SOFT_DEADLINE_FRAC", 0.85)
+# 互動 WS 場次的硬時間預算（秒）：0=關閉，維持舊行為。開啟後由 StudioSession 在
+# SESSION_SOFT_DEADLINE_FRAC 比例處優雅收斂；autopilot/improver 不讀此值。
+INTERACTIVE_SESSION_TIMEOUT = _env_float("TI_INTERACTIVE_SESSION_TIMEOUT", 0)
 # 每場用量預算（成本熔斷）：與時間預算同機制——session 累計用量達上限即停止派發新任務、優雅收尾
 # 出貨，治「失控場一路燒 token 到撞硬 timeout」。兩者皆 0＝不限（預設不啟用，維持既有行為）；
 # TOKEN 為單場 total token 上限、USD 為單場估算成本上限（採事件回報的 cost_usd 累計）。
@@ -1397,6 +1400,8 @@ def reload() -> None:
     global LESSONS_ENABLED
     global REFLEXION_ENABLED, OBJECTIVE_GATE, SELF_REFINE_ITERS, RLIMITS_ENABLED
     global TURN_IDLE_TIMEOUT, TURN_HARD_TIMEOUT, AUTOPILOT_STALL_TIMEOUT
+    global SESSION_SOFT_DEADLINE_FRAC, INTERACTIVE_SESSION_TIMEOUT
+    global SESSION_TOKEN_BUDGET, SESSION_USD_BUDGET
     global EXPERT_RATE_LIMIT_RETRIES, EXPERT_RATE_LIMIT_BACKOFF, EXPERT_RATE_LIMIT_BACKOFF_CAP
     global EXPERT_RATE_LIMIT_BACKOFF_JITTER
     global KNOWLEDGE_ENABLED, KNOWLEDGE_MAX_CHARS, CLARIFY_ENABLED, CLARIFY_TIMEOUT
@@ -1565,6 +1570,10 @@ def reload() -> None:
     RLIMITS_ENABLED = os.getenv("TI_RLIMITS", "1") not in ("0", "false", "False", "")
     TURN_IDLE_TIMEOUT = _env_float("TI_TURN_IDLE_TIMEOUT", 240)
     TURN_HARD_TIMEOUT = _env_float("TI_TURN_TIMEOUT", 1800)
+    SESSION_SOFT_DEADLINE_FRAC = _env_float("TI_SESSION_SOFT_DEADLINE_FRAC", 0.85)
+    INTERACTIVE_SESSION_TIMEOUT = _env_float("TI_INTERACTIVE_SESSION_TIMEOUT", 0)
+    SESSION_TOKEN_BUDGET = _env_int("TI_SESSION_TOKEN_BUDGET", 0)
+    SESSION_USD_BUDGET = _env_float("TI_SESSION_USD_BUDGET", 0)
     # 與 TURN_* 同組重載，使停滯門檻執行期可調（須維持 > TURN_HARD_TIMEOUT 的不變量）。
     AUTOPILOT_STALL_TIMEOUT = _env_int("TI_AUTOPILOT_STALL_TIMEOUT", 2400)
     EXPERT_RATE_LIMIT_RETRIES = _env_int("TI_RATELIMIT_RETRIES", 3)

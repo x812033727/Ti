@@ -447,6 +447,25 @@ export function handleEvent(ev) {
     case "provider_constrained":
       addSystem(`⚠️ Provider 額度受限：${p.role || "role"} 目前無可重綁後端（${p.provider || "unknown"}）`);
       break;
+    case "core_change_route": {
+      const skipped = p.skipped_count != null ? `，略過 ${p.skipped_count}` : "";
+      addSystem(
+        `核心改動路由：解析 ${p.parsed_count ?? 0}，入列 ${p.routed_count ?? 0}${skipped} → ${p.core_repo || "core repo"}`,
+        "",
+        "route",
+      );
+      break;
+    }
+    case "core_change_parse_warning": {
+      const where = p.source ? `（${p.source}）` : "";
+      const snippet = p.snippet ? `：${p.snippet}` : "";
+      addSystem(
+        `核心改動疑似漏格式${where}${snippet}。未自動入列，請改用「核心改動: <描述>」→ ${p.core_repo || "core repo"}`,
+        "",
+        "alert",
+      );
+      break;
+    }
     case "task_result": {
       // 任務結果 log-line：顯示實際用的 provider/模型與耗時/QA/費用（缺欄位一律省略不崩潰）。
       const who = (p.role || "") + "@" + (p.provider || "?") + (p.model ? "/" + p.model : "");

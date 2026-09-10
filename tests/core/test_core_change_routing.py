@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import admission_mode, backlog, config, flow
+from studio import admission_mode, backlog, config, events, flow
 from studio.backlog import route_core_changes
 from studio.improver import drain_result_to_backlogs
 
@@ -145,3 +145,79 @@ def test_route_core_changes_no_dedup_when_memory_zero(dirs, monkeypatch):
     # 記憶為 0＝不過濾近期完成，故 done 後同名可再排入。
     assert route_core_changes([item]) == 1
     assert len(backlog.list_tasks()) == 2
+
+
+def test_core_change_route_event_payload_counts_skips():
+    """核心改動路由對帳事件需保留 parse/route 差額，讓靜默漏件可回放。"""
+    ev = events.core_change_route(
+        "sid",
+        source="plain_session",
+        parsed_count=3,
+        routed_count=1,
+        core_repo="x812033727/Ti",
+    )
+
+    assert ev.type == events.EventType.CORE_CHANGE_ROUTE
+    assert ev.payload == {
+        "source": "plain_session",
+        "parsed_count": 3,
+        "routed_count": 1,
+        "skipped_count": 2,
+        "core_repo": "x812033727/Ti",
+    }
+
+
+def test_core_change_parse_warning_event_payload():
+    """疑似核心改動漏格式時，要留下可回放稽核事件但不自動路由。"""
+    ev = events.core_change_parse_warning(
+        "sid",
+        source="retrospective",
+        reason="core_hint_without_structured_line",
+        snippet="需要調整 Ti 核心框架的 runner",
+        core_repo="x812033727/Ti",
+    )
+
+    assert ev.type == events.EventType.CORE_CHANGE_PARSE_WARNING
+    assert ev.payload == {
+        "source": "retrospective",
+        "reason": "core_hint_without_structured_line",
+        "snippet": "需要調整 Ti 核心框架的 runner",
+        "core_repo": "x812033727/Ti",
+    }
+
+
+@pytest.mark.asyncio
+async def test_plain_session_broadcasts_core_change_route_event(dirs):
+    """非專案單場討論把核心改動入列後，需廣播 parse/route 對帳事件。"""
+    from studio import ws
+
+    class Session:
+        session_id = "sid"
+
+        def __init__(self):
+            self.events: list[events.StudioEvent] = []
+
+        async def run(self, requirement: str) -> dict:
+            return {
+                "completed": True,
+                "core_changes": [
+                    {"title": "改 runner", "priority": 1, "type": "improvement"},
+                    {"title": "改 ws 路由", "priority": 1, "type": "improvement"},
+                ],
+            }
+
+        async def broadcast(self, ev: events.StudioEvent) -> None:
+            self.events.append(ev)
+
+    session = Session()
+    await ws._run_plain_session(session, "需求")
+
+    route_events = [e for e in session.events if e.type == events.EventType.CORE_CHANGE_ROUTE]
+    assert len(route_events) == 1
+    assert route_events[0].payload == {
+        "source": "plain_session",
+        "parsed_count": 2,
+        "routed_count": 2,
+        "skipped_count": 0,
+        "core_repo": config.CORE_REPO,
+    }

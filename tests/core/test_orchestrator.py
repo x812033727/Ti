@@ -309,6 +309,29 @@ async def test_retro_captures_core_changes_into_result():
 
 
 @pytest.mark.asyncio
+async def test_retro_warns_when_core_hint_misses_structured_marker():
+    bucket, broadcast = collect()
+    experts = _experts(
+        pm=[
+            "任務: 實作 BMI",
+            "決議: 完成",
+            "檢討：這其實需要調整 Ti 核心框架的 orchestrator 收尾流程，但缺少固定格式。",
+        ],
+        eng=["已建立 bmi.py"],
+        qa=["測試全過\n驗證: PASS"],
+        senior=["品質良好\n決議: 核可"],
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=None)
+    result = await session.run("做一個 BMI CLI")
+
+    assert result["core_changes"] == []
+    warnings = [e for e in bucket if e.type == events.EventType.CORE_CHANGE_PARSE_WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].payload["source"] == "retrospective"
+    assert warnings[0].payload["reason"] == "core_hint_without_structured_line"
+
+
+@pytest.mark.asyncio
 async def test_happy_path_one_task_one_round():
     bucket, broadcast = collect()
     experts = _experts(

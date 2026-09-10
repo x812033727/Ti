@@ -78,6 +78,8 @@ const known = [
   ev('huddle', { task_id: 1, title: 'T', participants: [], conclusion: '', limitation: true }),
   ev('critic_review', { gate: 'pm', passed: true, text: '放行' }),
   ev('critic_review', { gate: 'senior', passed: false, text: '異議成立' }),
+  ev('core_change_route', { source: 'plain_session', parsed_count: 2, routed_count: 1, skipped_count: 1, core_repo: 'x812033727/Ti' }),
+  ev('core_change_parse_warning', { source: 'retrospective', reason: 'core_hint_without_structured_line', snippet: '需要調整 Ti 核心框架', core_repo: 'x812033727/Ti' }),
   ev('task_status', { id: 1, title: 'T', status: 'done' }),
   ev('retrospective', { text: '檢討' }),
   ev('publish_result', { ok: true, detail: 'done', branch: 'b', pr_url: 'http://x' }),
