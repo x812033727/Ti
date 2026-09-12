@@ -167,10 +167,50 @@ def test_email_failure_log_redacts_smtp_endpoint_and_password(monkeypatch, caplo
     monkeypatch.setattr(notify.smtplib, "SMTP", LeakySMTP)
     caplog.set_level(logging.DEBUG, logger="ti.notify")
 
-    assert notify.send("task_failed", "x smtp-secret") is False
+    assert notify.send("task_failed", "x smtp.example.test smtp-secret") is False
 
     assert "smtp-secret" not in caplog.text
     assert "smtp.example.test" not in caplog.text
+
+
+def test_all_sink_failure_logs_redact_endpoints_tokens_and_payload(monkeypatch, caplog):
+    _enable_email(monkeypatch)
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hooks.example.test/notify")
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "telegram-secret")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "ops-room")
+
+    class LeakySMTP(_FakeSMTP):
+        def send_message(self, msg):
+            raise OSError("smtp.example.test rejected smtp-secret payload-secret")
+
+    def leaky_urlopen(req, *_args, **_kwargs):
+        raise OSError(f"{req.full_url} rejected telegram-secret payload-secret")
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", LeakySMTP)
+    monkeypatch.setattr(notify.urllib.request, "urlopen", leaky_urlopen)
+    caplog.set_level(logging.DEBUG, logger="ti.notify")
+
+    assert (
+        notify.send(
+            "task_failed",
+            "x https://hooks.example.test smtp.example.test smtp-secret payload-secret",
+            detail="telegram-secret payload-secret",
+        )
+        is False
+    )
+
+    assert "webhook 通知送出失敗" in caplog.text
+    assert "telegram 通知送出失敗" in caplog.text
+    assert "email 通知送出失敗" in caplog.text
+    assert "OSError" in caplog.text
+    for leaked in (
+        "hooks.example.test",
+        "telegram-secret",
+        "smtp.example.test",
+        "smtp-secret",
+        "payload-secret",
+    ):
+        assert leaked not in caplog.text
 
 
 def test_send_bg_uses_thread_when_only_email_configured(monkeypatch):

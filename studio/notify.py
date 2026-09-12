@@ -88,14 +88,18 @@ def _safe_payload(title: str, extra: dict) -> tuple[str, dict]:
     return _redact_text(title), {str(k)[:80]: _safe_value(v, str(k)) for k, v in extra.items()}
 
 
-def _log_delivery_failure(sink: str, kind: str, title: str, exc: Exception) -> None:
+def _log_notify_failure(sink: str, kind: str, title: str, exc: Exception) -> None:
     log.debug(
-        "%s 通知送出失敗（忽略）：%s %s (%s)",
+        "%s 通知送出失敗（忽略）：kind=%s title_present=%s error_type=%s",
         sink,
         kind,
-        _redact_text(title),
+        bool(title),
         exc.__class__.__name__,
     )
+
+
+def _log_delivery_failure(sink: str, kind: str, title: str, exc: Exception) -> None:
+    _log_notify_failure(sink, kind, title, exc)
 
 
 # --- 例外分級(第 3/4 階 B5) -------------------------------------------------
@@ -221,7 +225,7 @@ def _post_json(url: str, payload: dict, kind: str, title: str, sink: str) -> boo
             pass
         return True
     except Exception as exc:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 URL/例外訊息
-        _log_delivery_failure(sink, kind, title, exc)
+        _log_notify_failure(sink, kind, title, exc)
         return False
 
 
@@ -277,7 +281,7 @@ def _post_email(
                 smtp.send_message(msg)
         return True
     except Exception as exc:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 SMTP 主機/密碼
-        _log_delivery_failure("email", kind, title, exc)
+        _log_notify_failure("email", kind, title, exc)
         return False
 
 
