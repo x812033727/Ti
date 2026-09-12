@@ -122,7 +122,9 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     host 共享 loopback 才探測得到，傳 net=True）。cwd 為並行 lane 的 linked worktree 時，
     額外把共用 git 目錄（主 repo 的 .git）綁為可寫，否則 worktree 內的 git 寫入會踩到唯讀面。
     """
-    cwd = str(cwd)
+    cwd_path = Path(cwd).resolve()
+    project_root = config.PROJECT_ROOT.resolve()
+    cwd = str(cwd_path)
     cache = os.path.join(os.path.expanduser("~"), ".cache")
     args = [
         config.SANDBOX_BWRAP,
@@ -141,6 +143,8 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         cwd,
         cwd,
     ]
+    if not cwd_path.is_relative_to(project_root) and not project_root.is_relative_to(cwd_path):
+        args += ["--ro-bind", str(project_root), str(project_root)]
     common_git = _worktree_common_git_dir(cwd)
     if common_git is not None and common_git.exists():
         args += ["--bind", str(common_git), str(common_git)]

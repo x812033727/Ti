@@ -34,6 +34,61 @@ needs_bwrap = pytest.mark.skipif(
 )
 
 
+def test_bwrap_prefix_ro_binds_project_root_when_cwd_is_elsewhere(tmp_path, monkeypatch):
+    """repo 在 /tmp 等被 tmpfs 蓋掉的位置時，cwd 外的專案根仍要補回唯讀掛載。"""
+    project_root = tmp_path / "repo"
+    cwd = tmp_path / "job-cwd"
+    project_root.mkdir()
+    cwd.mkdir()
+    monkeypatch.setattr(runner.config, "PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(cwd)
+    root = str(project_root.resolve())
+    triples = [args[i : i + 3] for i in range(len(args) - 2)]
+    assert ["--ro-bind", root, root] in triples, f"缺少專案根唯讀掛載：{args}"
+    assert args.index(root) > args.index("/tmp"), "專案根掛載必須晚於 --tmpfs /tmp，避免被遮蔽"
+
+
+def test_bwrap_prefix_does_not_ro_bind_project_root_over_writable_cwd(tmp_path, monkeypatch):
+    """cwd 已在專案根內時，不可再掛專案根成唯讀，否則會蓋掉 cwd 的可寫 bind。"""
+    project_root = tmp_path / "repo"
+    cwd = project_root / "lane"
+    cwd.mkdir(parents=True)
+    monkeypatch.setattr(runner.config, "PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(cwd)
+    root = str(project_root.resolve())
+    triples = [args[i : i + 3] for i in range(len(args) - 2)]
+    assert ["--ro-bind", root, root] not in triples, f"不應把 cwd 祖先掛回唯讀：{args}"
+
+
+@needs_bwrap
+def test_project_root_ro_bind_survives_tmpfs_when_cwd_is_elsewhere(tmp_path, monkeypatch):
+    """實跑回歸：cwd 外的專案根不能被 `--tmpfs /tmp` 蓋掉，且仍必須唯讀。"""
+    monkeypatch.setattr(runner.config, "SANDBOX_NET", True)
+    project_root = tmp_path / "repo"
+    cwd = tmp_path / "job-cwd"
+    project_root.mkdir()
+    cwd.mkdir()
+    probe = project_root / "probe.txt"
+    probe.write_text("ORIG")
+    monkeypatch.setattr(runner.config, "PROJECT_ROOT", project_root)
+
+    prefix = runner._bwrap_prefix(cwd)
+    r = subprocess.run(
+        prefix + ["bash", "-c", 'cat "$1"; echo TAINT > "$1"', "sh", str(probe)],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT,
+    )
+    assert r.stdout == "ORIG", f"專案根探針應在沙箱內可讀，實際 stdout={r.stdout!r}"
+    assert r.returncode != 0, f"專案根唯讀探針不應可寫，實際 rc={r.returncode}"
+    assert "Read-only file system" in r.stderr, (
+        f"寫入專案根應被 ro-bind 擋下，實際 stderr：{r.stderr!r}"
+    )
+    assert probe.read_text() == "ORIG", "host 探針內容不應被沙箱竄改"
+
+
 @pytest.fixture
 def host_probe():
     """在 repo 根（host 可寫區）預置一個探針檔，帶唯一後綴；測試後清理。
