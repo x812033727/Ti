@@ -141,6 +141,26 @@ def test_email_relay_without_credentials_skips_login(monkeypatch):
     assert send[1] == "ti@localhost"
 
 
+@pytest.mark.parametrize(
+    ("user", "password"),
+    [
+        ("bot@example.test", ""),
+        ("", "smtp-secret"),
+    ],
+)
+def test_email_relay_with_partial_credentials_skips_login(monkeypatch, user, password):
+    _enable_email(monkeypatch)
+    monkeypatch.setattr(config, "ALERT_SMTP_USER", user)
+    monkeypatch.setattr(config, "ALERT_SMTP_PASS", password)
+    _FakeSMTP.calls = []
+    monkeypatch.setattr(notify.smtplib, "SMTP", _FakeSMTP)
+
+    assert notify.send("loop_stall", "relay") is True
+
+    assert not any(call[0] == "login" for call in _FakeSMTP.calls)
+    assert any(call[0] == "send_message" for call in _FakeSMTP.calls)
+
+
 def test_email_failure_is_swallowed_and_recorded(monkeypatch):
     _enable_email(monkeypatch)
 
