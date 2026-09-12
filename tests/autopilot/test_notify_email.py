@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from studio import config, notify
@@ -124,6 +126,21 @@ def test_email_invalid_port_falls_back_to_starttls(monkeypatch):
     assert ("starttls", "smtp.example.test", 587) in _FakeSMTP.calls
 
 
+def test_email_relay_without_credentials_skips_login(monkeypatch):
+    _enable_email(monkeypatch)
+    monkeypatch.setattr(config, "ALERT_SMTP_USER", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_PASS", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_FROM", "")
+    _FakeSMTP.calls = []
+    monkeypatch.setattr(notify.smtplib, "SMTP", _FakeSMTP)
+
+    assert notify.send("loop_stall", "relay") is True
+
+    assert not any(call[0] == "login" for call in _FakeSMTP.calls)
+    send = next(call for call in _FakeSMTP.calls if call[0] == "send_message")
+    assert send[1] == "ti@localhost"
+
+
 def test_email_failure_is_swallowed_and_recorded(monkeypatch):
     _enable_email(monkeypatch)
 
@@ -138,6 +155,22 @@ def test_email_failure_is_swallowed_and_recorded(monkeypatch):
     assert row["sink"] == "email"
     assert row["ok"] is False
     assert row["error"] == "delivery_failed"
+
+
+def test_email_failure_log_redacts_smtp_endpoint_and_password(monkeypatch, caplog):
+    _enable_email(monkeypatch)
+
+    class LeakySMTP(_FakeSMTP):
+        def send_message(self, msg):
+            raise OSError("smtp.example.test rejected smtp-secret")
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", LeakySMTP)
+    caplog.set_level(logging.DEBUG, logger="ti.notify")
+
+    assert notify.send("task_failed", "x smtp-secret") is False
+
+    assert "smtp-secret" not in caplog.text
+    assert "smtp.example.test" not in caplog.text
 
 
 def test_send_bg_uses_thread_when_only_email_configured(monkeypatch):

@@ -88,6 +88,16 @@ def _safe_payload(title: str, extra: dict) -> tuple[str, dict]:
     return _redact_text(title), {str(k)[:80]: _safe_value(v, str(k)) for k, v in extra.items()}
 
 
+def _log_delivery_failure(sink: str, kind: str, title: str, exc: Exception) -> None:
+    log.debug(
+        "%s 通知送出失敗（忽略）：%s %s (%s)",
+        sink,
+        kind,
+        _redact_text(title),
+        exc.__class__.__name__,
+    )
+
+
 # --- 例外分級(第 3/4 階 B5) -------------------------------------------------
 # page   = 立即推播:需要人採取行動的異常(送所有已設定 sink)。
 # digest = 僅落檔:常態質量/回饋訊號,進 events.jsonl 由信任指標與 digest 彙整,推播只會是噪音。
@@ -210,8 +220,8 @@ def _post_json(url: str, payload: dict, kind: str, title: str, sink: str) -> boo
         with urllib.request.urlopen(req, timeout=_timeout_s()):
             pass
         return True
-    except Exception:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 URL（Telegram URL 內嵌 token）
-        log.debug("%s 通知送出失敗（忽略）：%s %s", sink, kind, title, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 URL/例外訊息
+        _log_delivery_failure(sink, kind, title, exc)
         return False
 
 
@@ -266,8 +276,8 @@ def _post_email(
                     smtp.login(user, password)
                 smtp.send_message(msg)
         return True
-    except Exception:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 SMTP 主機/密碼
-        log.debug("email 通知送出失敗（忽略）：%s %s", kind, title, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — 通知失敗不得影響呼叫端；log 不含 SMTP 主機/密碼
+        _log_delivery_failure("email", kind, title, exc)
         return False
 
 

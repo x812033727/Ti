@@ -211,7 +211,7 @@ def test_send_bg_posts_json_in_background(monkeypatch, caplog):
     config.reload()
 
 
-def test_send_bg_swallows_webhook_errors(monkeypatch):
+def test_send_bg_swallows_webhook_errors(monkeypatch, caplog):
     threads: list[object] = []
 
     class FakeThread:
@@ -228,7 +228,7 @@ def test_send_bg_swallows_webhook_errors(monkeypatch):
             self.target(*self.args, **self.kwargs)
 
     def fake_urlopen(*_args, **_kwargs):
-        raise OSError("boom")
+        raise OSError("https://hooks.example.test/notify rejected super-secret")
 
     with monkeypatch.context() as env:
         for key in ALERT_ENV_KEYS:
@@ -236,6 +236,7 @@ def test_send_bg_swallows_webhook_errors(monkeypatch):
         env.setenv("TI_NOTIFY_WEBHOOK", "https://hooks.example.test/notify")
         env.setenv("TI_NOTIFY_TIMEOUT", "1.0")
         config.reload()
+        caplog.set_level(logging.DEBUG, logger="ti.notify")
         monkeypatch.setattr(notify.threading, "Thread", FakeThread)
         monkeypatch.setattr(notify.urllib.request, "urlopen", fake_urlopen)
 
@@ -243,5 +244,9 @@ def test_send_bg_swallows_webhook_errors(monkeypatch):
 
     assert len(threads) == 1
     assert threads[0].started is True
+    assert "webhook 通知送出失敗" in caplog.text
+    assert "OSError" in caplog.text
+    assert "hooks.example.test" not in caplog.text
+    assert "super-secret" not in caplog.text
 
     config.reload()
