@@ -3198,6 +3198,9 @@ def status_snapshot(
                     (config.TELEGRAM_BOT_TOKEN or "").strip()
                     and (config.TELEGRAM_CHAT_ID or "").strip()
                 ),
+                "email_configured": bool(
+                    (config.ALERT_SMTP_HOST or "").strip() and (config.ALERT_EMAIL_TO or "").strip()
+                ),
             },
         },
         "projects": out,

@@ -1400,7 +1400,7 @@ async def autonomy_events(days: int = 30, include_legacy: bool = True) -> JSONRe
 
 @router.post("/api/notify/test", dependencies=WRITE_DEPS)
 async def notify_test() -> JSONResponse:
-    """端到端驗證推播管道:同步發一則 test 事件,回報各 sink(webhook/telegram)送達狀況。"""
+    """端到端驗證推播管道:同步發一則 test 事件,回報各 sink(webhook/telegram/email)送達狀況。"""
     return JSONResponse(await asyncio.to_thread(notify.send_test))
 
 
