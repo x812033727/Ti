@@ -17,6 +17,8 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "")
     return tmp_path
 
 

@@ -12,7 +12,16 @@ import pytest
 
 from studio import config, notify
 
-REQUIRED_NOTIFY_CONFIG = {"NOTIFY_WEBHOOK", "NOTIFY_TIMEOUT"}
+REQUIRED_NOTIFY_CONFIG = {
+    "NOTIFY_WEBHOOK",
+    "NOTIFY_TIMEOUT",
+    "ALERT_EMAIL_TO",
+    "ALERT_SMTP_HOST",
+    "ALERT_SMTP_PORT",
+    "ALERT_SMTP_USER",
+    "ALERT_SMTP_PASS",
+    "ALERT_FROM",
+}
 
 
 def _assigned_names(statements: Iterable[ast.stmt]) -> set[str]:
@@ -58,39 +67,69 @@ def test_notify_config_defaults_and_reload_env_overrides(monkeypatch):
     with monkeypatch.context() as env:
         env.delenv("TI_NOTIFY_WEBHOOK", raising=False)
         env.delenv("TI_NOTIFY_TIMEOUT", raising=False)
+        env.delenv("TI_ALERT_EMAIL_TO", raising=False)
+        env.delenv("TI_ALERT_SMTP_HOST", raising=False)
+        env.delenv("TI_ALERT_SMTP_PORT", raising=False)
+        env.delenv("TI_ALERT_SMTP_USER", raising=False)
+        env.delenv("TI_ALERT_SMTP_PASS", raising=False)
+        env.delenv("TI_ALERT_FROM", raising=False)
         config.reload()
 
         assert config.NOTIFY_WEBHOOK == ""
         assert config.NOTIFY_TIMEOUT == 10.0
+        assert config.ALERT_EMAIL_TO == ""
+        assert config.ALERT_SMTP_HOST == ""
+        assert config.ALERT_SMTP_PORT == 587
+        assert config.ALERT_SMTP_USER == ""
+        assert config.ALERT_SMTP_PASS == ""
+        assert config.ALERT_FROM == "Ti Studio <noreply@localhost>"
 
         env.setenv("TI_NOTIFY_WEBHOOK", "  https://example.invalid/hook?secret=abc  ")
         env.setenv("TI_NOTIFY_TIMEOUT", "2.5")
+        env.setenv("TI_ALERT_EMAIL_TO", "  ops@example.test,dev@example.test  ")
+        env.setenv("TI_ALERT_SMTP_HOST", "  smtp.example.test  ")
+        env.setenv("TI_ALERT_SMTP_PORT", "465")
+        env.setenv("TI_ALERT_SMTP_USER", "  smtp-user  ")
+        env.setenv("TI_ALERT_SMTP_PASS", "  smtp-pass  ")
+        env.setenv("TI_ALERT_FROM", "  Ti <ti@example.test>  ")
         config.reload()
 
         assert config.NOTIFY_WEBHOOK == "https://example.invalid/hook?secret=abc"
         assert config.NOTIFY_TIMEOUT == 2.5
+        assert config.ALERT_EMAIL_TO == "ops@example.test,dev@example.test"
+        assert config.ALERT_SMTP_HOST == "smtp.example.test"
+        assert config.ALERT_SMTP_PORT == 465
+        assert config.ALERT_SMTP_USER == "smtp-user"
+        assert config.ALERT_SMTP_PASS == "smtp-pass"
+        assert config.ALERT_FROM == "Ti <ti@example.test>"
 
     config.reload()
 
 
-def test_send_bg_without_webhook_is_noop(monkeypatch):
+def test_send_bg_without_sinks_is_noop(monkeypatch):
     with monkeypatch.context() as env:
         env.delenv("TI_NOTIFY_WEBHOOK", raising=False)
         env.delenv("TI_NOTIFY_TIMEOUT", raising=False)
+        env.delenv("TI_ALERT_EMAIL_TO", raising=False)
+        env.delenv("TI_ALERT_SMTP_HOST", raising=False)
+        env.delenv("TI_ALERT_SMTP_PORT", raising=False)
+        env.delenv("TI_ALERT_SMTP_USER", raising=False)
+        env.delenv("TI_ALERT_SMTP_PASS", raising=False)
+        env.delenv("TI_ALERT_FROM", raising=False)
         config.reload()
 
         class NoThread:
             def __init__(self, *_args, **_kwargs):
-                pytest.fail("send_bg must not start a thread without webhook")
+                pytest.fail("send_bg must not start a thread without sinks")
 
         monkeypatch.setattr(notify.threading, "Thread", NoThread)
         monkeypatch.setattr(
             notify.urllib.request,
             "urlopen",
-            lambda *_args, **_kwargs: pytest.fail("send_bg must not hit network without webhook"),
+            lambda *_args, **_kwargs: pytest.fail("send_bg must not hit network without sinks"),
         )
 
-        notify.send_bg("noop", "no webhook", task_id=1)
+        notify.send_bg("noop", "no sinks", task_id=1)
 
     config.reload()
 
