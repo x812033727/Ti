@@ -174,6 +174,68 @@ async def test_main_loop_budget_sleep_notifies_once_per_utc_day(monkeypatch, tmp
     assert status["state"] == "budget_sleep"
 
 
+@pytest.mark.asyncio
+async def test_main_loop_budget_sleep_notifies_again_after_utc_day_changes(monkeypatch, tmp_path):
+    """通知去重只限同一 UTC 日；跨日後仍要重新告警。"""
+
+    async def _admission_ok():
+        return True
+
+    async def _no_admission_circuit():
+        return False
+
+    async def _sleep_once(delay):
+        sleeps.append(delay)
+        raise StopLoop
+
+    sleeps: list[float] = []
+    sent: list[tuple[str, str, dict]] = []
+    day = [20]
+
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
+    monkeypatch.setattr(config, "AUTOPILOT_DAILY_PR_BUDGET", 1)
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_GATE", False)
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_MAX_SLEEP", 1800)
+    monkeypatch.setattr(config, "autopilot_paused", lambda: False)
+    monkeypatch.setattr(autopilot, "_shutdown_requested", False)
+    monkeypatch.setattr(autopilot, "_maybe_apply_pinned_account", lambda: None)
+    monkeypatch.setattr(autopilot, "_reconcile_admission_mode_boundary", _admission_ok)
+    monkeypatch.setattr(autopilot, "_note_resumed", lambda: None)
+    monkeypatch.setattr(autopilot, "_maybe_enqueue_schedules", lambda: None)
+    monkeypatch.setattr(autopilot, "_maybe_pause_for_admission_circuit", _no_admission_circuit)
+    monkeypatch.setattr(autopilot.autonomy, "policy_exists", lambda _project_id: False)
+    monkeypatch.setattr(autopilot, "_daily_pr_budget_exceeded", lambda: True)
+    monkeypatch.setattr(autopilot, "_todays_pr_count", lambda _now=None: 1)
+    monkeypatch.setattr(autopilot, "_next_utc_midnight", lambda now: now + 600)
+    monkeypatch.setattr(
+        autopilot.backlog,
+        "next_pending",
+        lambda: pytest.fail("budget_sleep 時不得取任務"),
+    )
+    monkeypatch.setattr(autopilot.asyncio, "sleep", _sleep_once)
+    monkeypatch.setattr(
+        autopilot.notify,
+        "send_bg",
+        lambda kind, title, **kw: sent.append((kind, title, kw)),
+    )
+    monkeypatch.setattr(
+        autopilot.time,
+        "gmtime",
+        lambda _now=None: (2026, 7, day[0], 1, 0, 0, 0, 0, 0),
+    )
+
+    for _ in range(2):
+        with pytest.raises(StopLoop):
+            await autopilot._main_loop(startup_sig=0.0)
+    day[0] = 21
+    with pytest.raises(StopLoop):
+        await autopilot._main_loop(startup_sig=0.0)
+
+    assert sleeps == [pytest.approx(600), pytest.approx(600), pytest.approx(600)]
+    assert [item[0] for item in sent] == ["budget_trip", "budget_trip"]
+
+
 # --- _commit_push_merge 兜底 guard（黑白樣本）--------------------------------
 
 
