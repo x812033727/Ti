@@ -285,6 +285,7 @@ class StudioSession:
         # 變數）。預設 workflow 走的 handler 與重構前同一段碼、同一順序，故與舊行為等價。
         self._clarify_note = ""
         self._research_notes = ""
+        self._feasibility_notes = ""
         self._pm_plan = ""
         self._design_note = ""
         self._all_ok = False
@@ -1104,13 +1105,33 @@ class StudioSession:
             + "\n\n請提出整體設計：技術選型、模組邊界、資料流與關鍵取捨。",
             self.broadcast,
         )
+        researcher = self._get_experts().get("researcher")
+        if researcher and not self._stop:
+            await self.broadcast(
+                events.phase_change(self.session_id, "可行性評估", "研究員檢視候選架構")
+            )
+            self._feasibility_notes = await researcher.speak(
+                adr.context(self.cwd)
+                + rnote
+                + "請針對以下候選架構做可行性評估，聚焦套件/API 成熟度、實作風險與常見坑。"
+                "先逐行 `重點: <事實/風險>`，再逐行 `建議: <具體調整>`，保持精簡。\n\n"
+                f"【需求與任務】\n{topic}\n\n【候選架構】\n{proposal}",
+                self.broadcast,
+            )
+        feasibility_note = (
+            f"研究員可行性評估供參考：\n{self._feasibility_notes}\n\n"
+            if self._feasibility_notes
+            else ""
+        )
         # 工程師與高級工程師對同一份提案各自給意見，互相獨立 → 並行以省時。
         eng_view, senior_view = await asyncio.gather(
             engineer.speak(
-                f"針對以下架構設計，從實作可行性給簡短意見：\n\n{proposal}", self.broadcast
+                feasibility_note + f"針對以下架構設計，從實作可行性給簡短意見：\n\n{proposal}",
+                self.broadcast,
             ),
             senior.speak(
-                f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}", self.broadcast
+                feasibility_note + f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}",
+                self.broadcast,
             ),
         )
         adr_note = (
@@ -1120,7 +1141,7 @@ class StudioSession:
         )
         decision = await architect.speak(
             f"綜合以下意見定案，逐行輸出 `設計決策: <決策>`。{adr_note}\n\n"
-            f"【工程師】{eng_view}\n\n【高級工程師】{senior_view}",
+            f"{feasibility_note}【工程師】{eng_view}\n\n【高級工程師】{senior_view}",
             self.broadcast,
         )
         if config.ADR_ENABLED and self.cwd:
@@ -1510,6 +1531,8 @@ class StudioSession:
             context += f"\n{self._clarify_note}"
         if self._research_notes:
             context += f"\n【研究員調研】\n{self._research_notes}\n"
+        if self._feasibility_notes:
+            context += f"\n【可行性評估】\n{self._feasibility_notes}\n"
         if self._design_note:
             context += f"\n【架構決策】\n{self._design_note}\n"
         self._all_ok = await self._run_waves(self._pm_plan + context)

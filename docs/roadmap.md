@@ -14,8 +14,9 @@
    `tools.research_url_check`（scheme 限 http/https、私網/loopback/link-local 位址永遠擋、
    DNS 解析後逐位址重驗、redirect 逐跳重驗）同時施加於 OpenAI 路徑（web_fetch）與 Claude
    路徑（`experts._auto_allow_tool` 攔 WebFetch）；逾時/無網路降級為「無調研續行」。
-3. **可行性評估階段（待辦）**：`_architecture_decision` 前插一輪 Researcher 對候選方案的
-   `重點:/建議:` 評估，結論餵入 ADR（與 `adr.record` 串接）。
+3. ✅ **可行性評估階段（已落地）**：架構師提出候選方案後，Researcher 對候選方案輸出
+   `重點:/建議:` 可行性評估；評估會餵給工程師、高級工程師與架構師定案 prompt，定案再由
+   `adr.record` 落盤。
 4. 接點：`studio/roles.py`、`studio/tools.py`、`studio/providers.py`、`studio/experts.py`、
    `studio/config.py`、`studio/settings.py`。
 
@@ -24,11 +25,12 @@
 1. ✅ **教訓庫語意去重與蒸餾（已落地）**：`lessons.distill()`——庫超門檻時於檢討後用一次
    LLM 把相近教訓合併、淘汰過時項（雙閘低頻；LLM 失敗/離線/壞輸出一律保留原庫，退回 FIFO）；
    教訓加 `scope`（global/project，`relevant`/`context` 按 scope 過濾）與 `use_count`（注入選中時 +1）。
-2. **記分卡回饋進流程**：`history._derive_scorecard` 按專案聚合（demo 通過率/退回率），
-   注入 improver 的「找問題」與 `_compose_requirement` 前綴（擴充 `_recent_outcomes_context`），
-   讓找問題對準弱項。
-3. **跨專案知識/模板**：高頻 ADR/藍圖模式蒸餾成全域模板庫，新專案藍圖生成時注入同類型
-   產品的既有結論。
+2. ✅ **記分卡回饋進流程（已落地）**：`history.aggregate_scorecard` 依專案近 N 場
+   `scorecard` 聚合完成率、QA 通過率、平均輪數與退回主因，注入 improver 的「找問題」與
+   `_compose_requirement` 前綴，讓找問題對準弱項。
+3. ✅ **跨專案知識/模板（已落地）**：`memory.refresh_project_template()` 從既有
+   `blueprint.json` 與 workspace `adr.json` 萃取可重用模式，寫入全域模板庫；新專案藍圖
+   生成前由 `memory.template_context()` 注入同類型產品的藍圖/ADR 參考。
 4. 接點：`studio/lessons.py`、`studio/history.py`、`studio/improver.py`、`studio/memory.py`。
 
 ## 階段四：驗證能力
