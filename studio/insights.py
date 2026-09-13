@@ -376,6 +376,10 @@ def stage_readiness(*, state_dir: Path | None = None) -> dict:
     sinks_ready = bool(
         (config.NOTIFY_WEBHOOK or "").strip()
         or ((config.TELEGRAM_BOT_TOKEN or "").strip() and (config.TELEGRAM_CHAT_ID or "").strip())
+        or (
+            (config.ALERT_SMTP_HOST or "").strip()
+            and any(r.strip() for r in (config.ALERT_EMAIL_TO or "").split(","))
+        )
     )
     conditions = [
         {

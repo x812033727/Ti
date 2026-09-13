@@ -10,6 +10,7 @@ _handle_gate_failure 會 +1 的黑樣本）。
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from unittest.mock import AsyncMock
 
@@ -45,6 +46,10 @@ class RunSpy:
         return any(fragment in j for j in self.joined())
 
 
+class StopLoop(BaseException):
+    """跳出 `_main_loop()` 無限迴圈用，避免被 `except Exception` 吃掉。"""
+
+
 @pytest.fixture(autouse=True)
 def _forbid_real_subprocess(monkeypatch):
     async def _boom(*args, **kwargs):
@@ -65,6 +70,7 @@ def _base_config(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "PUBLISH_REPO", "")
     monkeypatch.setattr(config, "PUBLISH_OWNER_ALLOWLIST", frozenset({"core"}))
     monkeypatch.setattr(config, "AUTOPILOT_DAILY_PR_BUDGET", 0)
+    monkeypatch.setattr(autopilot, "_daily_budget_notified_day", None)
 
 
 def _seed_audit(n: int, *, ts: float | None = None, pr: int | None = 1) -> None:
@@ -105,6 +111,67 @@ def test_corrupt_lines_skipped():
         f.write("{ 不是 JSON\n")
         f.write('{"ts": "not-a-number", "pr": 1}\n')
     assert autopilot._todays_pr_count() == 1  # 壞行跳過不炸
+
+
+@pytest.mark.asyncio
+async def test_main_loop_budget_sleep_notifies_once_per_utc_day(monkeypatch, tmp_path):
+    """主迴圈預算睡眠會送 webhook，且同一 UTC 日只送一次。"""
+
+    async def _admission_ok():
+        return True
+
+    async def _no_admission_circuit():
+        return False
+
+    async def _sleep_once(delay):
+        sleeps.append(delay)
+        raise StopLoop
+
+    sleeps: list[float] = []
+    sent: list[tuple[str, str, dict]] = []
+
+    monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(config, "AUTOPILOT_DRYRUN", False)
+    monkeypatch.setattr(config, "AUTOPILOT_DAILY_PR_BUDGET", 1)
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_GATE", False)
+    monkeypatch.setattr(config, "AUTOPILOT_QUOTA_MAX_SLEEP", 1800)
+    monkeypatch.setattr(config, "autopilot_paused", lambda: False)
+    monkeypatch.setattr(autopilot, "_shutdown_requested", False)
+    monkeypatch.setattr(autopilot, "_maybe_apply_pinned_account", lambda: None)
+    monkeypatch.setattr(autopilot, "_reconcile_admission_mode_boundary", _admission_ok)
+    monkeypatch.setattr(autopilot, "_note_resumed", lambda: None)
+    monkeypatch.setattr(autopilot, "_maybe_enqueue_schedules", lambda: None)
+    monkeypatch.setattr(autopilot, "_maybe_pause_for_admission_circuit", _no_admission_circuit)
+    monkeypatch.setattr(autopilot.autonomy, "policy_exists", lambda _project_id: False)
+    monkeypatch.setattr(autopilot, "_daily_pr_budget_exceeded", lambda: True)
+    monkeypatch.setattr(autopilot, "_todays_pr_count", lambda _now=None: 1)
+    monkeypatch.setattr(autopilot, "_next_utc_midnight", lambda now: now + 600)
+    monkeypatch.setattr(
+        autopilot.backlog,
+        "next_pending",
+        lambda: pytest.fail("budget_sleep 時不得取任務"),
+    )
+    monkeypatch.setattr(autopilot.asyncio, "sleep", _sleep_once)
+    monkeypatch.setattr(
+        autopilot.notify,
+        "send_bg",
+        lambda kind, title, **kw: sent.append((kind, title, kw)),
+    )
+    monkeypatch.setattr(
+        autopilot.time,
+        "gmtime",
+        lambda _now=None: (2026, 7, 20, 1, 0, 0, 0, 0, 0),
+    )
+
+    for _ in range(2):
+        with pytest.raises(StopLoop):
+            await autopilot._main_loop(startup_sig=0.0)
+
+    assert sleeps == [pytest.approx(600), pytest.approx(600)]
+    assert [item[0] for item in sent] == ["budget_trip"]
+    assert sent[0][2] == {"used": 1, "cap": 1}
+    status = json.loads((tmp_path / "state" / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "budget_sleep"
 
 
 # --- _commit_push_merge 兜底 guard（黑白樣本）--------------------------------
