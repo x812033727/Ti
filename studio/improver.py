@@ -30,6 +30,7 @@ from . import (
     config,
     events,
     history,
+    memory,
     notify,
     project_health,
     projects,
@@ -726,6 +727,8 @@ class ProjectImprover:
             evidence_sha=publish_state.get("evidence_sha", ""),
         )
         projects.record_session(pid, sid, task["title"], completed)
+        with contextlib.suppress(Exception):
+            memory.refresh_project_template(pid)
         meta = history.get_meta(sid) or {}
         cost = ((meta.get("token_usage") or {}).get("total") or {}).get("cost_usd", "unknown")
         if managed:
@@ -809,6 +812,8 @@ class ProjectImprover:
                 seeded = blueprint.seed_backlog(pid, data, config.BLUEPRINT_SEED_MAX)
                 blueprint.save(pid, data, session_id=sid)  # seed 後存，保住 seeded 標記
                 blueprint.write_md(pid, blueprint.render_md(data, name=name))
+                with contextlib.suppress(Exception):
+                    memory.refresh_project_template(pid)
                 cwd = projects.workspace_dir(pid)
                 await runner.git_init(cwd)  # 首輪 workspace 可能還沒 repo；冪等
                 await runner.git_commit(cwd, "產品藍圖：PM 展開願景")
@@ -834,10 +839,12 @@ class ProjectImprover:
         cwd = projects.workspace_dir(pid)
         expert = make_expert(PM, sid, cwd)
         vision = self.project.get("vision", "")
+        template_ctx = memory.template_context(self.project)
         prompt = (
             f"你要為長期產品專案「{self.project.get('name', '')}」制定產品藍圖"
             "（工作目錄是它的 workspace，首輪可能為空）。\n"
             + (f"產品願景：{vision}\n" if vision else "")
+            + template_ctx
             + "請把願景展開成結構化藍圖，逐行輸出、格式固定為：\n"
             "願景: <一句精煉的產品願景>\n"
             "用戶: <目標用戶與使用場景，一句>\n"

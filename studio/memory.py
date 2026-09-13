@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -27,6 +29,27 @@ from . import config
 _CHARS_PER_TOKEN = 2.5
 
 DEFAULT_HEADER = "【過往反思（本任務先前輪次蒸餾，請避免重蹈覆轍）】"
+
+_TEMPLATE_MAX_STORE = 50
+_TEMPLATE_CONTEXT_MAX = 3
+_TEMPLATE_FEATURE_MAX = 6
+_TEMPLATE_DECISION_MAX = 5
+_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*|[\u4e00-\u9fff]{2,}")
+_STOP_TOKENS = {
+    "產品",
+    "專案",
+    "功能",
+    "核心",
+    "使用",
+    "使用者",
+    "工具",
+    "系統",
+    "平台",
+    "管理",
+    "改良",
+    "體驗",
+    "支援",
+}
 
 
 def _safe_id(session_id: str) -> str:
@@ -40,6 +63,14 @@ def memory_path(session_id: str) -> Path:
 
 def _lock_path(session_id: str) -> Path:
     return config.HISTORY_ROOT / f"{_safe_id(session_id)}.memory.lock"
+
+
+def template_path() -> Path:
+    return config.PROJECTS_ROOT / "project_templates.json"
+
+
+def _template_lock_path() -> Path:
+    return config.PROJECTS_ROOT / "project_templates.lock"
 
 
 @contextlib.contextmanager
@@ -194,3 +225,192 @@ def delete(session_id: str) -> None:
         with contextlib.suppress(OSError):
             if p.exists():
                 p.unlink()
+
+
+@contextlib.contextmanager
+def _template_locked():
+    """序列化全域模板記憶寫入；讀取端容錯即可，不加鎖。"""
+    config.PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    lock = _template_lock_path().open("w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
+def _template_tokens(*parts: str) -> list[str]:
+    """粗略專案類型 token：英文詞＋中文 2/3-gram，供同類型模板比對。"""
+    tokens: set[str] = set()
+    for raw in _TOKEN_RE.findall(" ".join(p for p in parts if p).lower()):
+        if re.fullmatch(r"[\u4e00-\u9fff]{2,}", raw):
+            if raw not in _STOP_TOKENS:
+                tokens.add(raw)
+            for n in (2, 3):
+                for i in range(0, max(0, len(raw) - n + 1)):
+                    gram = raw[i : i + n]
+                    if gram not in _STOP_TOKENS:
+                        tokens.add(gram)
+        else:
+            token = raw.strip("-_")
+            if token and token not in _STOP_TOKENS:
+                tokens.add(token)
+    return sorted(tokens)
+
+
+def _load_templates() -> dict:
+    p = template_path()
+    if not p.is_file():
+        return {"version": 1, "templates": []}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("templates"), list):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"version": 1, "templates": []}
+
+
+def _save_templates(data: dict) -> None:
+    config.PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    tmp = template_path().with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(template_path())
+
+
+def _build_project_template(project: dict) -> dict | None:
+    """把單一專案既有 blueprint/ADR 摘成可注入其他專案的模板。"""
+    from . import adr, blueprint, projects
+
+    pid = str(project.get("id") or "")
+    if not pid:
+        return None
+    data = blueprint.load(pid)
+    if not data or data.get("raw") or not data.get("features"):
+        return None
+    features = sorted(data.get("features") or [], key=lambda f: f.get("priority", 1))[
+        :_TEMPLATE_FEATURE_MAX
+    ]
+    decisions = [
+        e.get("decision", "").strip()
+        for e in adr.all_entries(projects.workspace_dir(pid))[-_TEMPLATE_DECISION_MAX:]
+        if e.get("decision")
+    ]
+    tokens = _template_tokens(
+        str(project.get("name") or ""),
+        str(project.get("vision") or ""),
+        str(data.get("vision") or ""),
+        str(data.get("users") or ""),
+        " ".join(str(f.get("title") or "") for f in features),
+    )
+    if not tokens:
+        return None
+    body = json.dumps(
+        {
+            "project_id": pid,
+            "features": [f.get("title", "") for f in features],
+            "decisions": decisions,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return {
+        "id": hashlib.sha1(body.encode("utf-8")).hexdigest()[:12],
+        "project_id": pid,
+        "project_name": str(project.get("name") or pid),
+        "tokens": tokens,
+        "features": [
+            {
+                "title": str(f.get("title") or "").strip(),
+                "priority": f.get("priority", 1),
+                "detail": str(f.get("detail") or "").strip(),
+            }
+            for f in features
+            if str(f.get("title") or "").strip()
+        ],
+        "decisions": decisions,
+        "updated_at": time.time(),
+    }
+
+
+def refresh_project_template(project_id: str) -> bool:
+    """把專案目前 blueprint/ADR 更新進全域模板庫；缺資料時安靜跳過。"""
+    from . import projects
+
+    project = projects.get(project_id)
+    template = _build_project_template(project or {})
+    if template is None:
+        return False
+    with _template_locked():
+        data = _load_templates()
+        rows = [
+            r
+            for r in data.get("templates", [])
+            if isinstance(r, dict) and r.get("project_id") != template["project_id"]
+        ]
+        rows.append(template)
+        rows.sort(key=lambda r: r.get("updated_at", 0))
+        data = {"version": 1, "templates": rows[-_TEMPLATE_MAX_STORE:]}
+        _save_templates(data)
+    return True
+
+
+def refresh_all_project_templates() -> int:
+    """從既有專案回填模板庫；回傳成功萃取的專案數。"""
+    from . import projects
+
+    n = 0
+    for project in projects.list_projects():
+        if refresh_project_template(project.get("id", "")):
+            n += 1
+    return n
+
+
+def template_context(project: dict, *, limit: int = _TEMPLATE_CONTEXT_MAX) -> str:
+    """為新藍圖生成注入同類型專案模板；無相似樣本回空字串。"""
+    if not config.BLUEPRINT_ENABLED or limit <= 0:
+        return ""
+    target = set(
+        _template_tokens(
+            str(project.get("name") or ""),
+            str(project.get("vision") or ""),
+            str(project.get("intent") or ""),
+        )
+    )
+    if not target:
+        return ""
+    current_id = str(project.get("id") or "")
+    data = _load_templates()
+    if not data.get("templates"):
+        with contextlib.suppress(Exception):
+            refresh_all_project_templates()
+        data = _load_templates()
+    ranked: list[tuple[int, float, dict]] = []
+    for row in data.get("templates", []):
+        if not isinstance(row, dict) or row.get("project_id") == current_id:
+            continue
+        overlap = len(target & set(row.get("tokens") or []))
+        if overlap <= 0:
+            continue
+        ranked.append((overlap, float(row.get("updated_at") or 0), row))
+    if not ranked:
+        return ""
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    lines = ["【跨專案模板記憶（同類型產品既有藍圖/ADR，請復用可行模式，不要硬套）】"]
+    for _, _, row in ranked[:limit]:
+        lines.append(f"- 參考專案：{row.get('project_name') or row.get('project_id')}")
+        features = [
+            str(f.get("title") or "").strip()
+            for f in row.get("features") or []
+            if isinstance(f, dict) and str(f.get("title") or "").strip()
+        ][:3]
+        if features:
+            lines.append(f"  藍圖模式：{'；'.join(features)}")
+        decisions = [str(d).strip() for d in row.get("decisions") or [] if str(d).strip()][:3]
+        if decisions:
+            lines.append(f"  既有決策：{'；'.join(decisions)}")
+    text = "\n".join(lines)
+    if "任務:" in text or "核心改動:" in text:
+        text = text.replace("任務:", "工作項目:").replace("核心改動:", "框架改動:")
+    return text[:1200] + "\n\n"

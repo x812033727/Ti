@@ -185,7 +185,7 @@ async def _noop_broadcast(ev):
     pass
 
 
-def _experts(pm, eng, qa, senior, architect=None):
+def _experts(pm, eng, qa, senior, architect=None, researcher=None):
     experts = {
         "pm": StubExpert(BY_KEY["pm"], pm),
         "engineer": StubExpert(BY_KEY["engineer"], eng),
@@ -194,6 +194,8 @@ def _experts(pm, eng, qa, senior, architect=None):
     }
     if architect is not None:
         experts["architect"] = StubExpert(BY_KEY["architect"], architect)
+    if researcher is not None:
+        experts["researcher"] = StubExpert(BY_KEY["researcher"], researcher)
     return experts
 
 
@@ -222,6 +224,34 @@ async def test_architect_decision_recorded(tmp_path, flow):
     assert [e["decision"] for e in entries] == ["用 SQLite 存資料"]
     assert entries[0]["rationale"] == "零維運"
     assert (tmp_path / "DECISIONS.md").is_file()
+
+
+async def test_researcher_feasibility_review_feeds_architect_decision(tmp_path, flow):
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["工程師意見", "實作"],
+        qa=["驗證: PASS"],
+        senior=["高工意見", "決議: 核可"],
+        architect=[
+            "候選架構: SQLite + FastAPI",
+            "設計決策: 用 SQLite 起步\n理由: 研究員確認本機資料量可行",
+        ],
+        researcher=["重點: 官方文件足夠", "重點: SQLite 本機資料量可行\n建議: 先避免分散式資料庫"],
+    )
+    session = StudioSession("t", _noop_broadcast, experts=experts, cwd=tmp_path)
+    await session.run("需求")
+
+    assert experts["researcher"].calls == 2
+    feasibility_prompt = experts["researcher"].prompts[1]
+    assert "候選架構: SQLite + FastAPI" in feasibility_prompt
+    assert "重點:" in feasibility_prompt and "建議:" in feasibility_prompt
+    assert "SQLite 本機資料量可行" in experts["engineer"].prompts[0]
+    assert "SQLite 本機資料量可行" in experts["senior"].prompts[0]
+    assert "SQLite 本機資料量可行" in experts["architect"].prompts[1]
+    assert "SQLite 本機資料量可行" in experts["engineer"].prompts[-1]
+    entries = adr.all_entries(tmp_path)
+    assert entries[0]["decision"] == "用 SQLite 起步"
+    assert entries[0]["rationale"] == "研究員確認本機資料量可行"
 
 
 async def test_debate_distilled_to_adr(tmp_path, flow):
