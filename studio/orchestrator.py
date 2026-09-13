@@ -1096,6 +1096,7 @@ class StudioSession:
         research_notes: str,
     ) -> str:
         """架構師主導設計：提案 → 工程師/高級工程師給意見 → 架構師定案。回傳設計決策文字。"""
+        self._feasibility_notes = ""
         await self.broadcast(events.phase_change(self.session_id, "架構決策", "架構師主導設計決策"))
         rnote = f"研究員調研供參考：\n{research_notes}\n\n" if research_notes else ""
         proposal = await architect.speak(
@@ -1110,14 +1111,16 @@ class StudioSession:
             await self.broadcast(
                 events.phase_change(self.session_id, "可行性評估", "研究員檢視候選架構")
             )
-            self._feasibility_notes = await researcher.speak(
-                adr.context(self.cwd)
-                + rnote
-                + "請針對以下候選架構做可行性評估，聚焦套件/API 成熟度、實作風險與常見坑。"
-                "先逐行 `重點: <事實/風險>`，再逐行 `建議: <具體調整>`，保持精簡。\n\n"
-                f"【需求與任務】\n{topic}\n\n【候選架構】\n{proposal}",
-                self.broadcast,
-            )
+            self._feasibility_notes = (
+                await researcher.speak(
+                    adr.context(self.cwd)
+                    + rnote
+                    + "請針對以下候選架構做可行性評估，聚焦套件/API 成熟度、實作風險與常見坑。"
+                    "先逐行 `重點: <事實/風險>`，再逐行 `建議: <具體調整>`，保持精簡。\n\n"
+                    f"【需求與任務】\n{topic}\n\n【候選架構】\n{proposal}",
+                    self.broadcast,
+                )
+            ).strip()
         feasibility_note = (
             f"研究員可行性評估供參考：\n{self._feasibility_notes}\n\n"
             if self._feasibility_notes
