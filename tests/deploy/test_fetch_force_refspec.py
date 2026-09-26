@@ -2,9 +2,39 @@
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from studio import autodeploy, autopilot, deploy
+
+
+def _git(cwd: Path, *args: str) -> str:
+    out = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=T",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip()
+
+
+def _commit_readme(repo: Path, text: str, message: str) -> str:
+    (repo / "README.md").write_text(text, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
 
 
 def _force_fetch(branch: str) -> list[str]:
@@ -104,6 +134,58 @@ async def test_boundary_redeploy_check_fetch_uses_force_refspec(tmp_path, monkey
     await autopilot._maybe_boundary_redeploy()
 
     _assert_force_fetch_seen(calls, branch)
+
+
+@pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_uses_force_refspec(tmp_path, monkeypatch):
+    branch = "deploy/test"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot, "_git_cred_argv", lambda: [])
+    monkeypatch.setattr(autopilot, "_git_cred_env", lambda: None)
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return 0, ""
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    assert await autopilot._prepare_clone(str(work)) == str(work)
+    _assert_force_fetch_seen(calls, branch)
+
+
+@pytest.mark.realgit
+async def test_autopilot_prepare_clone_fetch_survives_remote_rewind(tmp_path, monkeypatch):
+    branch = "main"
+    seed = tmp_path / "seed"
+    work = tmp_path / "work"
+    bare = tmp_path / "bare.git"
+
+    seed.mkdir()
+    _git(seed, "init", "-q", "-b", branch)
+    first_sha = _commit_readme(seed, "v1\n", "v1")
+    _git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
+    _git(tmp_path, "clone", "-q", str(bare), str(work))
+
+    second_sha = _commit_readme(seed, "v2\n", "v2")
+    _git(seed, "push", "-q", str(bare), branch)
+    _git(work, "fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+    assert _git(work, "rev-parse", f"refs/remotes/origin/{branch}") == second_sha
+
+    _git(seed, "reset", "-q", "--hard", first_sha)
+    _git(seed, "push", "-q", "--force", str(bare), branch)
+    assert _git(work, "rev-parse", f"refs/remotes/origin/{branch}") != first_sha
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot, "_git_cred_argv", lambda: [])
+    monkeypatch.setattr(autopilot, "_git_cred_env", lambda: None)
+
+    assert await autopilot._prepare_clone(str(work)) == str(work)
+    assert _git(work, "rev-parse", f"refs/remotes/origin/{branch}") == first_sha
+    assert _git(work, "rev-parse", "HEAD") == first_sha
 
 
 async def _async_value(value):

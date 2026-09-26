@@ -173,7 +173,7 @@ async def sync_workspace(
     fetch_env = _auth_env(token, fetch_url)
     fetch = await _git(
         root,
-        ["git", "fetch", fetch_url, f"refs/heads/{base}"],
+        ["git", "fetch", fetch_url, f"+refs/heads/{base}"],
         "git fetch",
         120,
         env=fetch_env or None,

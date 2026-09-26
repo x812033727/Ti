@@ -166,6 +166,7 @@ async def test_fetch_label_and_detail_carry_no_token(spy, tmp_path):
     assert len(fetches) == 1
     assert fetches[0]["label"] == "git fetch"
     assert "https://github.com/me/product" in fetches[0]["argv"]
+    assert "+refs/heads/main" in fetches[0]["argv"]
     assert not any(TOKEN in p or "x-access-token:" in p for p in fetches[0]["argv"])
     assert fetches[0]["env"]["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
     assert TOKEN not in "".join(fetches[0]["env"].values())
@@ -391,6 +392,27 @@ async def test_real_local_ahead_kept(remote, tmp_path):
     r = await repo_base.sync_workspace(ws, remote["url"], "main")
     assert r.status == "local_ahead" and r.based
     assert _git(ws, "rev-parse", "HEAD") == head  # 完全沒動
+
+
+@pytest.mark.realgit
+async def test_real_remote_base_rewind_keeps_local_ahead(remote, tmp_path):
+    """遠端 base 被 force rewind：fetch 必須成功，本地較新的工作基底不可被倒回。"""
+    ws = tmp_path / "ws"
+    await repo_base.sync_workspace(ws, remote["url"], "main")
+    first = _git(ws, "rev-parse", "HEAD")
+    _advance_remote(remote, "v2\n")
+    r1 = await repo_base.sync_workspace(ws, remote["url"], "main")
+    assert r1.status == "fast_forwarded"
+    second = _git(ws, "rev-parse", "HEAD")
+    assert second != first
+
+    _git(remote["seed"], "reset", "-q", "--hard", first)
+    _git(remote["seed"], "push", "-q", "--force", str(remote["bare"]), "main")
+
+    r2 = await repo_base.sync_workspace(ws, remote["url"], "main")
+    assert r2.status == "local_ahead" and r2.based and not r2.fatal
+    assert _git(ws, "rev-parse", "HEAD") == second
+    assert (ws / "README.md").read_text(encoding="utf-8") == "v2\n"
 
 
 @pytest.mark.realgit
