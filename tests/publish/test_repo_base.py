@@ -166,6 +166,7 @@ async def test_fetch_label_and_detail_carry_no_token(spy, tmp_path):
     assert len(fetches) == 1
     assert fetches[0]["label"] == "git fetch"
     assert "https://github.com/me/product" in fetches[0]["argv"]
+    assert "+refs/heads/main" in fetches[0]["argv"]
     assert not any(TOKEN in p or "x-access-token:" in p for p in fetches[0]["argv"])
     assert fetches[0]["env"]["GIT_CONFIG_KEY_1"] == "http.https://github.com/.extraheader"
     assert TOKEN not in "".join(fetches[0]["env"].values())
