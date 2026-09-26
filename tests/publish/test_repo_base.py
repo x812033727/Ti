@@ -395,6 +395,27 @@ async def test_real_local_ahead_kept(remote, tmp_path):
 
 
 @pytest.mark.realgit
+async def test_real_remote_base_rewind_keeps_local_ahead(remote, tmp_path):
+    """遠端 base 被 force rewind：fetch 必須成功，本地較新的工作基底不可被倒回。"""
+    ws = tmp_path / "ws"
+    await repo_base.sync_workspace(ws, remote["url"], "main")
+    first = _git(ws, "rev-parse", "HEAD")
+    _advance_remote(remote, "v2\n")
+    r1 = await repo_base.sync_workspace(ws, remote["url"], "main")
+    assert r1.status == "fast_forwarded"
+    second = _git(ws, "rev-parse", "HEAD")
+    assert second != first
+
+    _git(remote["seed"], "reset", "-q", "--hard", first)
+    _git(remote["seed"], "push", "-q", "--force", str(remote["bare"]), "main")
+
+    r2 = await repo_base.sync_workspace(ws, remote["url"], "main")
+    assert r2.status == "local_ahead" and r2.based and not r2.fatal
+    assert _git(ws, "rev-parse", "HEAD") == second
+    assert (ws / "README.md").read_text(encoding="utf-8") == "v2\n"
+
+
+@pytest.mark.realgit
 async def test_real_dirty_leftover_committed_then_forked(remote, tmp_path):
     """上場中斷殘留（未提交變更）＋遠端已前進：先自動 commit 保住變更，
     判為 forked（仍同源、PR 開得成），絕不遺失任何東西。"""
