@@ -122,6 +122,28 @@ def test_route_core_changes_records_reconciliation_event(dirs):
     assert rec["titles"] == ["改 runner 沙箱", "改 runner 沙箱"]
 
 
+def test_route_core_changes_counts_blank_title_as_skipped(dirs):
+    routed = route_core_changes(
+        [
+            {"title": "   ", "priority": 0, "type": "bug"},
+            {"title": "補核心路由稽核", "priority": 0, "type": "bug"},
+        ],
+        source="qa",
+    )
+
+    assert routed == 1
+    core_tasks = backlog.list_tasks()
+    assert [task["title"] for task in core_tasks] == ["補核心路由稽核"]
+    rec = notify.read_events(1)[-1]
+    assert rec["kind"] == "core_change_routed"
+    assert rec["source"] == "qa"
+    assert rec["proposed"] == 2
+    assert rec["routed"] == 1
+    assert rec["skipped_done"] == 0
+    assert rec["skipped_existing_or_invalid"] == 1
+    assert rec["titles"] == ["補核心路由稽核"]
+
+
 def test_runner_exec_env_core_change_routes_only_to_core_backlog(dirs):
     _core_dir, project_dir = dirs
     text = (

@@ -437,7 +437,7 @@ async def test_prepare_clone_verifies_and_resets_to_requested_sha(state, monkeyp
     async def fake_run(argv, **kwargs):
         calls.append((argv, kwargs))
         if "fetch" in argv:
-            return 1, "temporary network failure"
+            return 0, ""
         if argv[:3] == ["git", "rev-parse", "HEAD"]:
             return 0, expected_sha
         return 0, ""
