@@ -193,11 +193,19 @@ async def _prepare_clone(
         if rc != 0:
             raise RuntimeError(f"clone 失敗：{out[-400:]}")
     fetch_rc, fetch_out = await _run(
-        ["git", *_git_cred_argv(), "fetch", "origin", branch],
+        [
+            "git",
+            *_git_cred_argv(),
+            "fetch",
+            "origin",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        ],
         cwd=work,
         timeout=120,
         env=_git_cred_env(),
     )
+    if fetch_rc != 0:
+        raise RuntimeError(f"fetch origin/{branch} 失敗：{fetch_out[-400:]}")
     if expected_sha:
         object_rc, object_out = await _run(
             ["git", "cat-file", "-e", f"{expected_sha}^{{commit}}"],
@@ -6322,9 +6330,18 @@ def _enqueue_core_items(items: list[dict], source: str = "discovered", *, gen: i
 
 def _route_core_changes(items: list[dict], *, source: str = "core") -> int:
     """保留既有近期完成去重，再讓所有 core change 經同一 admission ingest。"""
+    items = items or []
     done = backlog.recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
-    pending = [item for item in (items or []) if item.get("title", "").strip() not in done]
-    return _enqueue_core_items(pending, source=source) if pending else 0
+    pending = [item for item in items if item.get("title", "").strip() not in done]
+    routed = _enqueue_core_items(pending, source=source) if pending else 0
+    backlog.record_core_change_route(
+        items,
+        source=source,
+        routed=routed,
+        skipped_done=len(items) - len(pending),
+        skipped_existing_or_invalid=len(pending) - routed,
+    )
+    return routed
 
 
 _TASK_ADMISSION_RESOLVER_SYSTEM = """你是任務契約整理器。只把既有需求整理成 JSON contract：

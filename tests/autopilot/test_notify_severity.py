@@ -52,10 +52,12 @@ def test_digest_kind_never_pushes(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: calls.append(1))
     assert notify.send("critic_reject", "退回") is False
     notify.send_bg("gate_failure", "閘門失敗")
+    assert notify.send("core_change_routed", "核心改動路由對帳") is False
     assert not calls, "digest 級 kind 不得推播"
     assert [e["kind"] for e in notify.read_events(1)] == [
         "critic_reject",
         "gate_failure",
+        "core_change_routed",
     ], "照樣落檔"
 
 

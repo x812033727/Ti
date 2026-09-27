@@ -24,6 +24,59 @@ def test_old_bare_fetch_black_sample_is_rejected():
 
 
 @pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_uses_force_refspec(tmp_path, monkeypatch):
+    branch = "deploy/test"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot, "_git_cred_argv", lambda: [])
+    monkeypatch.setattr(autopilot, "_git_cred_env", lambda: None)
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return 0, ""
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    assert await autopilot._prepare_clone(str(work)) == str(work)
+    _assert_force_fetch_seen(calls, branch)
+
+
+@pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_failure_is_fatal_without_repo_sha(
+    tmp_path, monkeypatch
+):
+    branch = "main"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot, "_git_cred_argv", lambda: [])
+    monkeypatch.setattr(autopilot, "_git_cred_env", lambda: None)
+
+    async def fake_run(cmd, **_kwargs):
+        if cmd == _force_fetch(branch):
+            return 128, "fatal: cannot lock ref"
+        if cmd in (
+            ["git", "reset", "--hard", "HEAD"],
+            ["git", "clean", "-fdq"],
+            ["git", "checkout", "-q", branch],
+            ["git", "reset", "--hard", f"origin/{branch}"],
+            ["git", "config", "user.email", "noreply@anthropic.com"],
+            ["git", "config", "user.name", "Ti Autopilot"],
+        ):
+            return 0, ""
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    with pytest.raises(RuntimeError, match="fetch|origin|更新"):
+        await autopilot._prepare_clone(str(work))
+
+
+@pytest.mark.asyncio
 async def test_autodeploy_fetch_uses_force_refspec(tmp_path, monkeypatch):
     branch = "deploy/test"
     calls: list[list[str]] = []

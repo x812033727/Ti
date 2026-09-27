@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import admission_mode, config, secure_write
+from . import admission_mode, config, notify, secure_write
 
 # 唯一 choke point：backlog.json 寫入經 secure_write.secure_write_root。
 # module-level alias 兼顧可被測試 monkeypatch。
@@ -1012,6 +1012,31 @@ def recent_done_titles(limit: int, *, state_dir: Path | None = None) -> set[str]
     return {t["title"].strip() for t in done[:limit]}
 
 
+def record_core_change_route(
+    items: list[dict],
+    *,
+    source: str,
+    routed: int,
+    skipped_done: int = 0,
+    skipped_existing_or_invalid: int = 0,
+) -> None:
+    """核心改動路由對帳留痕；只記觀測事件，不影響 backlog 控制流。"""
+    items = items or []
+    if not items:
+        return
+    notify.record(
+        "core_change_routed",
+        "核心改動路由對帳",
+        source=source,
+        repo=config.CORE_REPO,
+        proposed=len(items),
+        routed=routed,
+        skipped_done=max(0, skipped_done),
+        skipped_existing_or_invalid=max(0, skipped_existing_or_invalid),
+        titles=[str(c.get("title", "")).strip()[:300] for c in items if c.get("title", "").strip()],
+    )
+
+
 def route_core_changes(items: list[dict], *, source: str = "core") -> int:
     """把判定的核心改動路由到核心 backlog（雙軌路由的單一收斂點），回傳實際路由數。
 
@@ -1028,11 +1053,20 @@ def route_core_changes(items: list[dict], *, source: str = "core") -> int:
     _discover 的去重一致）。AUTOPILOT_EVAL_MEMORY=0 時回空集合＝不過濾，向後相容。
     """
     items = items or []
+    proposed = len(items)
     if not items:
         return 0
     done = recent_done_titles(config.AUTOPILOT_EVAL_MEMORY)
-    items = [c for c in items if c.get("title", "").strip() not in done]
-    return add_items(items, source=source) if items else 0
+    pending = [c for c in items if c.get("title", "").strip() not in done]
+    routed = add_items(pending, source=source) if pending else 0
+    record_core_change_route(
+        items,
+        source=source,
+        routed=routed,
+        skipped_done=proposed - len(pending),
+        skipped_existing_or_invalid=len(pending) - routed,
+    )
+    return routed
 
 
 # --- failed 分診（確定性規則、無 LLM）--------------------------------------
