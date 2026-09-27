@@ -13,7 +13,9 @@ def _force_fetch(branch: str) -> list[str]:
 
 def _assert_force_fetch_seen(calls: list[list[str]], branch: str) -> None:
     expected = _force_fetch(branch)
-    assert expected in calls, f"missing force fetch argv {expected!r}; captured={calls!r}"
+    fetches = [cmd for cmd in calls if cmd[:3] == ["git", "fetch", "origin"]]
+    assert fetches, f"missing git fetch origin call; captured={calls!r}"
+    assert fetches == [expected], f"expected only force fetch argv {expected!r}; captured={calls!r}"
 
 
 def test_old_bare_fetch_black_sample_is_rejected():
@@ -103,6 +105,26 @@ async def test_boundary_redeploy_check_fetch_uses_force_refspec(tmp_path, monkey
 
     await autopilot._maybe_boundary_redeploy()
 
+    _assert_force_fetch_seen(calls, branch)
+
+
+@pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_uses_force_refspec(tmp_path, monkeypatch):
+    branch = "deploy/test"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_WORK_DIR", str(work))
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return 0, ""
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    assert await autopilot._prepare_clone() == str(work)
     _assert_force_fetch_seen(calls, branch)
 
 
