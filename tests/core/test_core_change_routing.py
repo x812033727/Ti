@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from studio import admission_mode, backlog, config, flow
+from studio import admission_mode, backlog, config, flow, notify
 from studio.backlog import route_core_changes
 from studio.improver import drain_result_to_backlogs
 
@@ -61,6 +61,11 @@ def test_routing_splits_followups_and_core_changes(dirs):
     # 核心項目以 source="core" 標記，供稽核。
     assert all(t["source"] == "core" for t in core_tasks)
     assert all(t["admission"]["mode"] == "shadow" for t in core_tasks)
+    rec = notify.read_events(1)[-1]
+    assert rec["kind"] == "core_change_routed"
+    assert rec["proposed"] == 1
+    assert rec["routed"] == 1
+    assert rec["source"] == "core"
 
 
 def test_routing_no_core_changes_leaves_core_backlog_empty(dirs):
@@ -94,6 +99,27 @@ def test_route_core_changes_standalone(dirs):
     core_tasks = backlog.list_tasks()  # 預設 state_dir＝核心 backlog
     assert {t["title"] for t in core_tasks} == {"改 runner 沙箱"}
     assert all(t["source"] == "core" for t in core_tasks)
+
+
+def test_route_core_changes_records_reconciliation_event(dirs):
+    routed = route_core_changes(
+        [
+            {"title": "改 runner 沙箱", "priority": 0, "type": "bug"},
+            {"title": "改 runner 沙箱", "priority": 0, "type": "bug"},
+        ]
+    )
+
+    assert routed == 1
+    events = notify.read_events(1)
+    rec = events[-1]
+    assert rec["kind"] == "core_change_routed"
+    assert rec["source"] == "core"
+    assert rec["repo"] == config.CORE_REPO
+    assert rec["proposed"] == 2
+    assert rec["routed"] == 1
+    assert rec["skipped_done"] == 0
+    assert rec["skipped_existing_or_invalid"] == 1
+    assert rec["titles"] == ["改 runner 沙箱", "改 runner 沙箱"]
 
 
 def test_runner_exec_env_core_change_routes_only_to_core_backlog(dirs):
@@ -133,6 +159,12 @@ def test_route_core_changes_skips_recently_done(dirs, monkeypatch):
     # 同一條再次被討論提出 → 因近期已完成被過濾，不重複排入。
     assert route_core_changes([item]) == 0
     assert len(backlog.list_tasks()) == 1
+    rec = notify.read_events(1)[-1]
+    assert rec["kind"] == "core_change_routed"
+    assert rec["proposed"] == 1
+    assert rec["routed"] == 0
+    assert rec["skipped_done"] == 1
+    assert rec["skipped_existing_or_invalid"] == 0
 
 
 def test_route_core_changes_no_dedup_when_memory_zero(dirs, monkeypatch):

@@ -103,6 +103,7 @@ SEVERITY: dict[str, str] = {
     "test": "page",
     "gate_failure": "digest",
     "critic_reject": "digest",
+    "core_change_routed": "digest",
 }
 
 # 安全的通知鏈演練：只送合成告警，不觸發對應的部署、rollback 或煞車動作。
