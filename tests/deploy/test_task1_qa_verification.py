@@ -67,6 +67,35 @@ async def test_prepare_clone_fetch_failure_is_not_ignored(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_prepare_clone_new_checkout_stops_when_post_clone_fetch_fails(tmp_path, monkeypatch):
+    branch = "feature/fresh-clone"
+    work = tmp_path / "work"
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot_mod.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot_mod.config, "GITHUB_TOKEN", "")
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        if "clone" in cmd:
+            return 0, "cloned"
+        if cmd[:3] == ["git", "fetch", "origin"]:
+            return 128, "fatal: cannot lock ref"
+        return 0, "ok"
+
+    monkeypatch.setattr(autopilot_mod, "_run", fake_run)
+
+    with pytest.raises(RuntimeError, match="fetch|clone|工作"):
+        await autopilot_mod._prepare_clone(str(work))
+
+    fetch_index = next(i for i, cmd in enumerate(calls) if cmd[:3] == ["git", "fetch", "origin"])
+    assert any("clone" in cmd for cmd in calls[:fetch_index])
+    assert all("checkout" not in cmd for cmd in calls[fetch_index + 1 :])
+    assert all(cmd[:2] != ["git", "config"] for cmd in calls[fetch_index + 1 :])
+    assert all(cmd[:3] != ["git", "reset", "--hard"] for cmd in calls[fetch_index + 1 :])
+
+
+@pytest.mark.asyncio
 async def test_redeploy_restart_path_mocks_import_smoke_without_real_subprocess(
     monkeypatch,
 ):
