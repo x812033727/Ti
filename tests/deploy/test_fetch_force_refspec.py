@@ -11,9 +11,21 @@ def _force_fetch(branch: str) -> list[str]:
     return ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"]
 
 
+def _origin_fetch_refspec(cmd: list[str]) -> list[str] | None:
+    if "fetch" not in cmd:
+        return None
+    fetch_index = cmd.index("fetch")
+    if cmd[fetch_index + 1 : fetch_index + 2] != ["origin"]:
+        return None
+    return cmd[fetch_index + 2 :]
+
+
 def _assert_force_fetch_seen(calls: list[list[str]], branch: str) -> None:
-    expected = _force_fetch(branch)
-    assert expected in calls, f"missing force fetch argv {expected!r}; captured={calls!r}"
+    expected_refspec = [f"+refs/heads/{branch}:refs/remotes/origin/{branch}"]
+    origin_fetches = [cmd for cmd in calls if _origin_fetch_refspec(cmd) is not None]
+    assert origin_fetches, f"missing origin fetch; captured={calls!r}"
+    bare_fetches = [cmd for cmd in origin_fetches if _origin_fetch_refspec(cmd) != expected_refspec]
+    assert not bare_fetches, f"origin fetch must use force refspec; captured={calls!r}"
 
 
 def test_old_bare_fetch_black_sample_is_rejected():
@@ -21,6 +33,13 @@ def test_old_bare_fetch_black_sample_is_rejected():
 
     with pytest.raises(AssertionError):
         _assert_force_fetch_seen([["git", "fetch", "origin", branch]], branch)
+
+
+def test_mixed_bare_fetch_black_sample_is_rejected():
+    branch = "deploy/test"
+
+    with pytest.raises(AssertionError):
+        _assert_force_fetch_seen([_force_fetch(branch), ["git", "fetch", "origin", branch]], branch)
 
 
 @pytest.mark.asyncio
@@ -103,6 +122,26 @@ async def test_boundary_redeploy_check_fetch_uses_force_refspec(tmp_path, monkey
 
     await autopilot._maybe_boundary_redeploy()
 
+    _assert_force_fetch_seen(calls, branch)
+
+
+@pytest.mark.asyncio
+async def test_autopilot_prepare_clone_fetch_uses_force_refspec(tmp_path, monkeypatch):
+    branch = "deploy/test"
+    work = tmp_path / "work"
+    (work / ".git").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(autopilot.config, "AUTOPILOT_BRANCH", branch)
+    monkeypatch.setattr(autopilot.config, "GITHUB_TOKEN", "")
+
+    async def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return 0, "ok"
+
+    monkeypatch.setattr(autopilot, "_run", fake_run)
+
+    assert await autopilot._prepare_clone(str(work)) == str(work)
     _assert_force_fetch_seen(calls, branch)
 
 
