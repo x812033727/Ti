@@ -2,6 +2,7 @@
 
 涵蓋既有 test_redeploy.py 未明確驗證的角度：
 - pull_main 在 PROJECT_ROOT 執行 `git pull --ff-only`。
+- import_smoke 透過 runner 執行固定 argv，不依賴真實子程序。
 - _do_restart 以 sys.executable + sys.argv re-exec（不真的 exec，攔截 os.execv）。
 - schedule_restart 透過 event loop call_later 排程 _do_restart。
 - redeploy() 回傳 dict 形狀正確、token 遮蔽。
@@ -20,6 +21,7 @@ from studio import config, redeploy, runner
 
 # 在 autouse fixture 之前（模組載入時）保存原始函式，供直接測試。
 _ORIG_SCHEDULE_RESTART = redeploy.schedule_restart
+_ORIG_IMPORT_SMOKE = redeploy.import_smoke
 
 
 @pytest.fixture
@@ -34,6 +36,11 @@ def client():
 def _no_real_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
+
+    async def _smoke_ok():
+        return runner.RunOutput("import smoke", 0, "", False)
+
+    monkeypatch.setattr(redeploy, "import_smoke", _smoke_ok)
 
 
 # --- pull_main ------------------------------------------------------
@@ -52,6 +59,30 @@ async def test_pull_main_uses_project_root_ff_only(monkeypatch):
     assert captured["cwd"] == config.PROJECT_ROOT
     # argv 式、fast-forward only，避免意外 merge commit
     assert captured["argv"] == ["git", "pull", "--ff-only"]
+
+
+@pytest.mark.asyncio
+async def test_import_smoke_uses_runner_exec(monkeypatch):
+    captured = {}
+
+    async def fake_run(cwd, argv, timeout=None, sandbox=None, label=None):
+        captured["cwd"] = cwd
+        captured["argv"] = argv
+        captured["timeout"] = timeout
+        captured["sandbox"] = sandbox
+        captured["label"] = label
+        return runner.RunOutput("import smoke", 0, "", False)
+
+    monkeypatch.setattr(runner, "run_command_exec", fake_run)
+    out = await _ORIG_IMPORT_SMOKE()
+    assert out.ok
+    assert captured == {
+        "cwd": config.PROJECT_ROOT,
+        "argv": [sys.executable, "-c", "import studio.server"],
+        "timeout": 60,
+        "sandbox": False,
+        "label": "import smoke",
+    }
 
 
 # --- _do_restart / schedule_restart ---------------------------------
