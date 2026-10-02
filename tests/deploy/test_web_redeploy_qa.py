@@ -95,6 +95,11 @@ def _no_real_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path)
     monkeypatch.setattr(redeploy, "schedule_restart", lambda *a, **k: None)
 
+    async def _smoke_ok():
+        return runner.RunOutput("import smoke", 0, "", False)
+
+    monkeypatch.setattr(redeploy, "import_smoke", _smoke_ok)
+
 
 def test_publish_config_exposes_merge(client, monkeypatch):
     monkeypatch.setattr(config, "ACCESS_PASSWORD", "")
