@@ -17,8 +17,10 @@ class StubSenior:
     def __init__(self, output: str):
         self.output = output
         self.prompt = None
+        self.calls = 0
 
     async def speak(self, prompt, broadcast):
+        self.calls += 1
         self.prompt = prompt
         return self.output
 
@@ -148,6 +150,19 @@ def test_第四條指令不被誤解析成結論():
     assert not any("逐條自我校驗" in it for it in flat)
     assert not any("查無骨架依據者一律刪除" in it for it in flat)
     # senior 真實輸出仍能被正確解析（端到端不破壞）已由 test_正常解析四前綴 覆蓋。
+
+
+def test_第四條自我校驗不新增_llm_call():
+    """第④條是單次 prompt 內自檢，不得為了自我校驗額外呼叫 senior（零新增 LLM 呼叫）。"""
+    senior = StubSenior(
+        "共識: engineer 與 senior 對齊混合範式 (R1 engineer)\n"
+        "分歧: qa 反對 engineer 的覆蓋率假設 (R2 qa)\n"
+        "未決: 上線時程未定 (R2 qa)\n"
+        "行動: 補測試覆蓋 (R1 engineer)"
+    )
+    asyncio.run(conclusion.summarize(senior, _summary(), _transcript(), _noop))
+    assert senior.calls == 1
+    assert "逐條自我校驗" in senior.prompt
 
 
 # ── 任務 #2：錨點程式化護欄 _guard_anchor ─────────────────────────────────────
