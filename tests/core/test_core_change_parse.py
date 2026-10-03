@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+
 
 def test_parse_core_changes_tags():
     from studio.orchestrator import parse_core_changes
@@ -53,6 +55,25 @@ def test_parse_core_changes_empty_and_whitespace():
     assert parse_core_changes("沒有任何標記行\n只是一段檢討文字") == []
     # 空白標題剔除（與其他解析器一致）。
     assert parse_core_changes("核心改動:    ") == []
+
+
+def test_parse_core_changes_warns_on_marker_like_miss(caplog):
+    from studio.orchestrator import parse_core_changes
+
+    with caplog.at_level(logging.WARNING, logger="ti.flow"):
+        assert parse_core_changes("核心改動 - orchestrator 應改成 schema 輸出") == []
+
+    assert "疑似核心改動標記未解析" in caplog.text
+    assert "核心改動 - orchestrator" in caplog.text
+
+
+def test_parse_core_changes_plain_text_does_not_warn(caplog):
+    from studio.orchestrator import parse_core_changes
+
+    with caplog.at_level(logging.WARNING, logger="ti.flow"):
+        assert parse_core_changes("沒有任何標記行\n只是一段檢討文字") == []
+
+    assert caplog.text == ""
 
 
 def test_parse_core_changes_caps_at_ten():

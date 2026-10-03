@@ -174,6 +174,7 @@ def parse_clarify(text: str) -> list[dict]:
 _RE_TAGGED_TASK = re.compile(r"^\s*任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
 _RE_TAGGED_FOLLOWUP = re.compile(r"^\s*後續任務\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
 _RE_CORE_CHANGE = re.compile(r"^\s*核心改動\s*[:：]\s*(?:\[([^\]]*)\]\s*)?(.+?)\s*$", re.M)
+_RE_CORE_CHANGE_LIKE = re.compile(r"^\s*(?:[-*•]|\d+[.)、])?\s*核心改動\b.*$", re.M)
 
 
 def _parse_item_tag(tag: str) -> dict:
@@ -268,11 +269,25 @@ def parse_core_changes(text: str) -> list[dict]:
     （config.CORE_REPO＝x812033727/Ti），由 autopilot 在核心 repo 的 working clone 實作、過閘門、
     開「獨立 PR」——絕不混入專案 repo。標籤缺省取預設（P1／improvement）。
     """
-    return [
+    items = [
         {"title": title.strip(), **_parse_item_tag(tag)}
         for tag, title in _RE_CORE_CHANGE.findall(text or "")
         if title.strip()
     ][:10]
+    if not items:
+        _warn_core_change_parse_miss(text)
+    return items
+
+
+def _warn_core_change_parse_miss(text: str) -> None:
+    """疑似核心改動格式寫偏時留稽核訊號，不猜測路由內容。"""
+    lines = [m.group(0).strip() for m in _RE_CORE_CHANGE_LIKE.finditer(text or "")]
+    if not lines:
+        return
+    log.warning(
+        "疑似核心改動標記未解析：需使用 `核心改動: <內容>` 格式；sample=%r",
+        lines[0][:200],
+    )
 
 
 def parse_lessons(text: str) -> list[str]:
