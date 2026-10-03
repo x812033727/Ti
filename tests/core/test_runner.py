@@ -287,6 +287,45 @@ async def test_run_command_exec_sandbox_writes_cwd(tmp_path):
     assert (tmp_path / "made.txt").read_text() == "ok"
 
 
+def test_bwrap_prefix_rebinds_project_root_after_tmpfs(monkeypatch, tmp_path):
+    """repo 若位在 /tmp 下，/tmp tmpfs 後須把 project root 唯讀掛回來。"""
+    project_root = tmp_path / "repo"
+    cwd = project_root / "lane"
+    cwd.mkdir(parents=True)
+    monkeypatch.setattr(runner.config, "PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(cwd)
+
+    tmpfs_tmp = next(i for i, arg in enumerate(args) if arg == "--tmpfs" and args[i + 1] == "/tmp")
+    project_bind = next(
+        i
+        for i, arg in enumerate(args)
+        if arg == "--ro-bind"
+        and args[i + 1] == str(project_root)
+        and args[i + 2] == str(project_root)
+    )
+    cwd_bind = next(
+        i
+        for i, arg in enumerate(args)
+        if arg == "--bind" and args[i + 1] == str(cwd) and args[i + 2] == str(cwd)
+    )
+
+    assert tmpfs_tmp < project_bind < cwd_bind
+
+
+def test_bwrap_prefix_skips_project_root_rebind_when_not_shadowed(monkeypatch):
+    """repo 不在 tmpfs 覆蓋範圍時，不額外加重複掛載。"""
+    project_root = runner.Path("/opt/ti")
+    monkeypatch.setattr(runner.config, "PROJECT_ROOT", project_root)
+
+    args = runner._bwrap_prefix(project_root / "lane")
+
+    assert not any(
+        arg == "--ro-bind" and args[i + 1] == str(project_root) and args[i + 2] == str(project_root)
+        for i, arg in enumerate(args[:-2])
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_command_exec_empty_argv_raises(tmp_path):
     with pytest.raises(ValueError):

@@ -113,6 +113,12 @@ def _worktree_common_git_dir(cwd: Path | str) -> Path | None:
     return admin.parent.parent  # 後備：worktrees/<name> 往上兩層即共用 .git
 
 
+def _path_under(path: Path | str, parent: Path | str) -> bool:
+    path = Path(path).resolve(strict=False)
+    parent = Path(parent).resolve(strict=False)
+    return path == parent or parent in path.parents
+
+
 def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """bubblewrap argv 前綴：整個 host 唯讀、只有 workspace 可寫、獨立 PID namespace。
 
@@ -124,6 +130,8 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
     """
     cwd = str(cwd)
     cache = os.path.join(os.path.expanduser("~"), ".cache")
+    project_root = Path(config.PROJECT_ROOT)
+    tmpfs_roots = [Path("/tmp"), Path(cache)]
     args = [
         config.SANDBOX_BWRAP,
         "--ro-bind",
@@ -137,6 +145,10 @@ def _bwrap_prefix(cwd: Path | str, net: bool | None = None) -> list[str]:
         "/tmp",
         "--tmpfs",
         cache,
+    ]
+    if any(_path_under(project_root, root) for root in tmpfs_roots):
+        args += ["--ro-bind", str(project_root), str(project_root)]
+    args += [
         "--bind",
         cwd,
         cwd,
