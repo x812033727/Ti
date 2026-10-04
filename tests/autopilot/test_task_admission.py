@@ -129,6 +129,85 @@ def test_legacy_task_is_normalized_and_missing_contract_fields_need_clarificatio
     assert decision.reasons == ("contract_fields_missing",)
 
 
+def test_generic_fallback_task_with_login_error_needs_scope_clarification():
+    task = {
+        "id": 420,
+        "title": "實作需求",
+        "detail": "Not logged in · Please run /login",
+        "source": "manual",
+        "risk": "low",
+    }
+
+    decision = evaluate(task, {"known_targets": set()}, "claim")
+    record = decision_record(decision, task, mode="enforce", phase="claim")
+
+    assert decision.outcome == "needs_clarification"
+    assert decision.reasons == ("task_scope_too_vague",)
+    assert decision.missing_fields == ("scope",)
+    assert record["overridable"] is False
+
+
+@pytest.mark.asyncio
+async def test_generic_login_error_does_not_spend_semantic_resolver(tmp_path: Path):
+    calls = 0
+
+    async def resolver(_payload):
+        nonlocal calls
+        calls += 1
+        return {
+            "contract": {
+                "version": 1,
+                "outcome": "不應被呼叫",
+                "kind": "implementation",
+                "targets": ["studio/task_admission.py"],
+                "acceptance": ["pytest tests pass", "reviewable diff"],
+            }
+        }
+
+    decision, meta = await evaluate_with_semantic_fallback(
+        {
+            "id": 421,
+            "title": "實作需求",
+            "detail": "Not logged in · Please run /login",
+            "source": "manual",
+            "risk": "low",
+        },
+        {"root": tmp_path, "repo_sha": "c" * 40},
+        "claim",
+        resolver=resolver,
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert decision.outcome == "needs_clarification"
+    assert decision.reasons == ("task_scope_too_vague",)
+    assert calls == 0
+    assert meta["model_calls"] == 0
+
+
+def test_generic_title_with_explicit_contract_is_still_actionable():
+    task = {
+        "id": 422,
+        "title": "實作需求",
+        "source": "manual",
+        "risk": "low",
+        "contract": {
+            "version": 1,
+            "outcome": "admission 擋掉登入錯誤頁保底任務",
+            "kind": "implementation",
+            "targets": ["studio/task_admission.py"],
+            "acceptance": [
+                "python3 -m pytest tests/autopilot/test_task_admission.py -q",
+                "reviewable diff",
+            ],
+        },
+    }
+
+    decision = evaluate(task, {"known_targets": {"studio/task_admission.py"}}, "claim")
+
+    assert decision.outcome == "ready"
+    assert decision.reasons == ()
+
+
 def test_pure_investigation_is_routed_without_becoming_implementation():
     task = {
         "id": 43,

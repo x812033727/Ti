@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import re
 import subprocess
 from pathlib import Path
@@ -37,6 +38,22 @@ PUBLISH_YML = ROOT / ".github" / "workflows" / "publish-release.yml"
 SMOKE_YML = ROOT / ".github" / "workflows" / "release-smoke.yml"
 SCRIPT = ROOT / "scripts" / "publish_release.py"
 BODY_MD = ROOT / "body.md"
+
+
+def _render_bodymd_for_test() -> str:
+    """Run the fixed-output release script without leaking shared body.md across xdist workers."""
+    with SCRIPT.open("rb") as lock_fh:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        try:
+            if BODY_MD.exists():
+                BODY_MD.unlink()
+            rc = subprocess.call(["python3", str(SCRIPT)], cwd=str(ROOT))
+            assert rc == 0, f"scripts/publish_release.py exit={rc}"
+            assert BODY_MD.exists(), "AC#2：body.md 未產出"
+            return BODY_MD.read_text(encoding="utf-8")
+        finally:
+            BODY_MD.unlink(missing_ok=True)
+            fcntl.flock(lock_fh, fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------------------
@@ -111,11 +128,8 @@ def test_audit_doc_marks_pat_not_github_token():
 
 def test_publish_release_script_runs_and_writes_bodymd():
     """執行入口腳本，必須寫出 body.md 且含 BREAKING_HEADING。"""
-    if BODY_MD.exists():
-        BODY_MD.unlink()
-    rc = subprocess.call(["python3", str(SCRIPT)])
-    assert rc == 0, f"scripts/publish_release.py exit={rc}"
-    assert BODY_MD.exists(), "AC#2：body.md 未產出"
+    body = _render_bodymd_for_test()
+    assert body.strip(), "AC#2：body.md 內容不可為空"
 
 
 def test_bodymd_contains_breaking_heading_and_pyproject_version():
@@ -134,7 +148,7 @@ def test_bodymd_contains_breaking_heading_and_pyproject_version():
         check=True,
     )
     heading, version = spec.stdout.strip().splitlines()
-    body = BODY_MD.read_text(encoding="utf-8")
+    body = _render_bodymd_for_test()
     assert heading in body, f"AC#2：body.md 缺 BREAKING_HEADING {heading!r}"
     assert version in body, f"AC#2：body.md 未帶 pyproject 版本 {version!r}"
 
@@ -197,8 +211,8 @@ def test_hardening_decision_recorded_not_silent_skip():
 
 # ---------------------------------------------------------------------------
 # AC#5：文件含 GH_PAT 設定指引 + 半閉環聲明（拆兩段）
-#   (a) 對照表必須誠實標記此缺口（屬任務 #1 範圍）→ 已達成驗收
-#   (b) 正式協作文件已補完指引（屬任務 #4 範圍）→ 缺口標記
+#   (a) 對照表必須同步目前狀態：協作文件缺口已關閉，但後續版本 E2E 仍需逐版驗證。
+#   (b) 正式協作文件已補完指引（任務 #4 範圍）。
 # ---------------------------------------------------------------------------
 
 
@@ -213,34 +227,40 @@ GH_PAT_REQUIRED_PHRASES = {
 }
 
 
-def test_audit_doc_marks_ac5_as_open_gap():
-    """AC#5 (a)：對照表必須把「GH_PAT 文件指引 / 半閉環聲明」列為缺口。
+def test_audit_doc_marks_ac5_docs_closed_and_e2e_boundary_open():
+    """AC#5 (a)：對照表必須把文件缺口標為已達成，且保留後續版本 E2E 邊界。
 
-    任務 #1 範圍 = 誠實標出此缺口（不是補文件）。補文件的動作屬任務 #4。
+    任務 #4 已補完 GH_PAT 文件與半閉環聲明；audit 不得停在舊缺口狀態。
+    但不能因此宣稱未來版本真實 tag-push E2E 自動閉環，仍須逐版生產驗證。
     """
     text = AUDIT.read_text(encoding="utf-8")
-    # 三個 AC#5 子項：① GH_PAT 設定/輪替文件 ② 半閉環聲明文件化 ③ 真實 tag-push 端到端
-    must_have_any_of = [
-        ("GH_PAT 文件", r"GH_PAT.*文件|GH_PAT.*設定"),
-        ("半閉環", r"半閉環"),
-        ("端到端", r"端到端"),
-        ("輪替", r"輪替"),
-    ]
-    found = [name for name, pat in must_have_any_of if re.search(pat, text)]
-    assert len(found) >= 3, (
-        f"AC#5 (a)：對照表未誠實標記 GH_PAT 文件／半閉環／端到端缺口（命中 {found}）"
-    )
-    # 必須以「缺口」狀態出現
-    gap_rows = [
+    table_rows = [
         ln
         for ln in text.splitlines()
-        if ln.startswith("|")
-        and re.search(r"\b缺口\b", ln)
-        and ln.count("|") >= 4
-        and not re.match(r"^\|\s*:?-+:?\s*\|", ln)
+        if ln.startswith("|") and ln.count("|") >= 4 and not re.match(r"^\|\s*:?-+:?\s*\|", ln)
     ]
-    assert any(any(k in row for k in ("GH_PAT", "半閉環", "端到端")) for row in gap_rows), (
-        f"AC#5 (a)：對照表未把 AC#5 缺口列為「缺口」狀態：{gap_rows}"
+
+    gh_pat_rows = [r for r in table_rows if "GH_PAT" in r and ("文件" in r or "設定" in r)]
+    assert gh_pat_rows, "AC#5 (a)：對照表缺 GH_PAT 文件/設定列"
+    assert any("已達成" in r for r in gh_pat_rows), (
+        f"AC#5 (a)：GH_PAT 文件缺口已關閉，audit 不應仍只列缺口：{gh_pat_rows}"
+    )
+    assert not any("缺口" in r for r in gh_pat_rows), (
+        f"AC#5 (a)：GH_PAT 文件仍被列成缺口，狀態過期：{gh_pat_rows}"
+    )
+
+    half_closed_rows = [r for r in table_rows if "半閉環聲明文件化" in r]
+    assert half_closed_rows, "AC#5 (a)：對照表缺半閉環聲明文件化列"
+    assert any("已達成" in r for r in half_closed_rows), (
+        f"AC#5 (a)：半閉環聲明文件化已關閉，audit 不應仍只列缺口：{half_closed_rows}"
+    )
+    assert not any("缺口" in r for r in half_closed_rows), (
+        f"AC#5 (a)：半閉環聲明文件化仍被列成缺口，狀態過期：{half_closed_rows}"
+    )
+
+    gap_rows = [r for r in table_rows if "缺口" in r]
+    assert any("後續版本" in r and "端到端" in r for r in gap_rows), (
+        f"AC#5 (a)：audit 必須保留後續版本真實 E2E 逐版驗證缺口：{gap_rows}"
     )
 
 
