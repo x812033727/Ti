@@ -43,6 +43,7 @@ def _capture_urlopen(monkeypatch, *, boom=False):
                 "url": req.full_url,
                 "body": json.loads(req.data.decode("utf-8")),
                 "method": req.get_method(),
+                "timeout": timeout,
             }
         )
         return _Resp()
@@ -51,11 +52,33 @@ def _capture_urlopen(monkeypatch, *, boom=False):
     return calls
 
 
+def test_config_reload_reads_webhook_and_timeout(monkeypatch):
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", config.NOTIFY_WEBHOOK)
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", config.NOTIFY_TIMEOUT)
+    monkeypatch.setenv("TI_NOTIFY_WEBHOOK", "https://hook.example/reload")
+    monkeypatch.setenv("TI_NOTIFY_TIMEOUT", "2.5")
+    config.reload()
+    assert config.NOTIFY_WEBHOOK == "https://hook.example/reload"
+    assert config.NOTIFY_TIMEOUT == 2.5
+
+
 def test_send_noop_without_webhook(monkeypatch):
     calls = _capture_urlopen(monkeypatch)
     assert notify.send("task_failed", "x") is False
     notify.send_bg("task_failed", "x")
     assert not calls, "未設 webhook 必須零網路"
+
+
+def test_send_bg_without_sink_does_not_start_thread(monkeypatch):
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "")
+
+    def fail_thread(*_args, **_kwargs):
+        raise AssertionError("未設通知 sink 時不應啟動背景 thread")
+
+    monkeypatch.setattr(notify.threading, "Thread", fail_thread)
+    notify.send_bg("task_failed", "x")
 
 
 def test_send_posts_json_payload(monkeypatch):
@@ -69,6 +92,14 @@ def test_send_posts_json_payload(monkeypatch):
         "title": "主迴圈停滯",
         "idle_for": 900,
     }
+
+
+def test_send_uses_configured_timeout(monkeypatch):
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", 3.5)
+    calls = _capture_urlopen(monkeypatch)
+    assert notify.send("loop_stall", "主迴圈停滯") is True
+    assert calls[0]["timeout"] == 3.5
 
 
 def test_send_swallows_network_failure(monkeypatch):
