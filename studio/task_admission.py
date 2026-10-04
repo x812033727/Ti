@@ -36,6 +36,14 @@ _QUALITY_RULES = frozenset(
 _ADMISSION_CIRCUIT_LATCH: dict[str, dict[str, Any]] = {}
 _SEMANTIC_MEMORY_CACHE: dict[str, dict[str, Any]] = {}
 _SEMANTIC_CACHE_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
+_GENERIC_TASK_TITLE_RE = re.compile(
+    r"^(?:實作需求|完成需求|處理需求|改善系統|改進系統|優化系統|修復問題|新增功能|待辦|todo|tbd)$",
+    re.I,
+)
+_NON_REQUIREMENT_DETAIL_RE = re.compile(
+    r"^(?:not\s+logged\s+in\s*(?:[·-]\s*)?please\s+run\s+/login|請先登入|尚未登入|未登入)$",
+    re.I,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +165,24 @@ def _legacy_kind(task: Mapping[str, Any]) -> str:
     if legacy_type in {"feature", "bug", "improvement"}:
         return "implementation"
     return ""
+
+
+def _normalized_task_title(title: Any) -> str:
+    clean = re.sub(r"\s+", " ", str(title or "")).strip()
+    return clean.strip(" 　\t.,;:!?。，、；：！？「」『』()（）[]【】-_\"'")
+
+
+def _scope_too_vague(task: Mapping[str, Any], contract: TaskContract) -> bool:
+    """拒絕 parser 保底或登入錯誤頁進入實作管線。"""
+    if not _GENERIC_TASK_TITLE_RE.fullmatch(_normalized_task_title(task.get("title"))):
+        return False
+    if contract.targets or contract.acceptance:
+        return False
+    detail = _normalized_task_title(task.get("detail"))
+    if not detail or _NON_REQUIREMENT_DETAIL_RE.fullmatch(detail):
+        return True
+    # 有實質 outcome/detail 時交給既有 contract_fields_missing/semantic fallback 處理。
+    return False
 
 
 def _contract(task: Mapping[str, Any]) -> TaskContract:
@@ -912,6 +938,16 @@ def evaluate(
             outcome="no_change",
             contract=contract,
             reasons=("already_done",),
+        )
+    if _scope_too_vague(task, contract):
+        return _decision(
+            task,
+            context,
+            phase,
+            outcome="needs_clarification",
+            contract=contract,
+            reasons=("task_scope_too_vague",),
+            missing_fields=("scope",),
         )
     if _has_unsafe_acceptance(contract):
         return _decision(

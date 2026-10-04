@@ -23,14 +23,15 @@
 | smoke 權限只需讀 release/body | 已達成 | `release-smoke.yml:10-11` 設 `contents: read`。 |
 | 避免 tag/ref 直接插入 shell `run:` | 已達成 | `publish-release.yml:81-89` 以 env `TAG` 傳入並在 shell 內 `"$TAG"` 引用。 |
 | publish workflow 內建 `GITHUB_TOKEN` 權限下修 | 已達成 | `publish-release.yml:20-21` 設 `contents: read`；建立 release 的寫入權限由 `publish-release.yml:84-89` 的 `secrets.GH_PAT` 提供。 |
+| `GH_PAT` 正式設定/輪替文件 | 已達成 | `CLAUDE.md:171-175` 與 `README.md:217-225` 已固定 Fine-grained PAT、本 repo only、`Contents: Read and write`、secret 名稱 `GH_PAT`，並寫明過期/撤銷 403 時更新同名 secret、不得改 workflow token 路由；`tests/autopilot/test_qa_task4_release_docs_dod.py` 守護。 |
+| 半閉環聲明文件化 | 已達成 | `CLAUDE.md:179-182`、`README.md:237-238`、`docs/release-e2e-handoff.md:7-12` 明文標註單元/守護測試為半閉環，後續 `v*` tag-push 仍須逐版生產驗證；`tests/autopilot/test_qa_task4_release_docs_dod.py` 守護。 |
+| `v0.2.0` release body 與 release-smoke 生產證據 | 已達成 | `docs/release-e2e-handoff.md:25-26` 勾稽 `docs/evidence/release-v0.2.0-online-body.json`、`docs/evidence/release-v0.2.0-body-structure-verdict.json`、`docs/evidence/release-smoke-v0.2.0-trigger.json`，證明該版線上 body 與 `release: published` smoke 已閉環。 |
 
 ## 缺口/待辦
 
 | 項目 | 判定 | 具體描述 |
 |---|---|---|
-| 真實 `v*` tag-push 端到端 | 缺口 | 三個檔案與守護測試能證明結構半閉環，但無法證明 GitHub 生產環境已實際跑過 `push tag -> gh release create -> release:published -> release-smoke`。正式發 release 時先照下方人工清單開 `body.md` 確認頂部 `## ⚠️ Breaking Changes`，再做真實 tag-push 驗證一次。 |
-| `GH_PAT` 正式設定/輪替文件 | 缺口 | `publish-release.yml:11-14` 有 workflow 註解，但 repo 協作文件尚未固定列出 fine-grained、本 repo only、`Contents: Read and write`、secret 名稱 `GH_PAT`、過期後 Step 5 會 403 與輪替方式。 |
-| 半閉環聲明文件化 | 缺口 | workflow 註解說明觸發鏈設計，但協作文件尚未明文標註「單元/守護測試為半閉環，真實 `v*` tag-push 端到端尚待生產驗證」。 |
+| 後續版本真實 `v*` tag-push 端到端 | 缺口 | `v0.2.0` 已有生產證據封口；但每個新版本仍要逐版確認 `push tag -> gh release create -> release:published -> release-smoke`，不得把上一版證據或單元/守護測試綠燈外推成未來版本 E2E 已通過。正式發 release 時照下方人工清單核對。 |
 | PAT 過期/撤銷 fail-fast | 缺口 | `publish-release.yml:36-44` 只檢查 secret 非空；`publish-release.yml:36-39` 已註明過期 PAT 仍會到 Create release 才以 403 失敗。這是運維缺口，不是目前程式碼功能缺口。 |
 | Actions 未以 commit SHA 鎖版 | 非阻塞待辦 | `publish-release.yml:29`、`publish-release.yml:32`、`release-smoke.yml:16`、`release-smoke.yml:19` 使用 `actions/checkout@v4` / `actions/setup-python@v5` 可移動標籤；本輪不補，因為不影響 release 驗收鏈，留待專門供應鏈硬化任務處理。 |
 | `--verify-tag` | 決策：不補 | `publish-release.yml:89` 目前未加 `--verify-tag`。在現行 `on.push.tags: v*` 與 `Assert tag matches version` 下，tag 已存在且版本有 fail-fast；本輪不需作為驗收必要硬化。若未來新增 `workflow_dispatch` 手動發佈，再重審。 |
@@ -42,4 +43,4 @@
 3. 確認該區塊內仍有四要素與 `TI_REQUIRE_CHOWN=warn/off` 逃生艙。
 4. 再做真實 `v*` tag-push 或 `gh release create "$TAG" -F body.md`，若 body 不對先停發。
 
-結論：三個核心檔的發佈鏈功能已大致達成；任務 #3 最小硬化只實作 `GITHUB_TOKEN` 權限下修，`--verify-tag` 與 actions commit SHA 鎖版明確不補並記錄理由。殘留缺口集中在生產端到端驗證與操作文件，不是 `gh release create`、body 注入或 `release-smoke` 觸發鏈的實作缺失。
+結論：三個核心檔的發佈鏈功能、`GH_PAT` 操作文件、半閉環聲明與 `v0.2.0` 生產證據皆已收斂；任務 #3 最小硬化只實作 `GITHUB_TOKEN` 權限下修，`--verify-tag` 與 actions commit SHA 鎖版明確不補並記錄理由。殘留缺口集中在後續版本逐版生產端到端驗證與 PAT 過期無法提前 fail-fast，不是 `gh release create`、body 注入、操作文件或 `release-smoke` 觸發鏈的實作缺失。
