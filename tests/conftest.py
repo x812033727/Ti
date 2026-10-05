@@ -17,9 +17,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
+def _normalize_ellipsis_test_target(config: pytest.Config) -> None:
+    """讓驗證器用 `pytest ...` 時仍回到專案預設測試目標。"""
+    if config.args == ["..."]:
+        config.args = list(config.getini("testpaths") or ["tests"])
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config: pytest.Config) -> None:
     """本機有 xdist 時自動平行跑；CI/無外掛時維持原本串行。"""
+    _normalize_ellipsis_test_target(config)
     if os.environ.get("CI"):
         return
     if config.getoption("collectonly", default=False):

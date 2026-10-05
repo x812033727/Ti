@@ -324,6 +324,10 @@ export function handleEvent(ev) {
       );
       break;
     case "expert_message":
+      if (p.aborted) {
+        const why = p.abort_reason === "hard" ? "總時長超過上限" : "無進展超過上限";
+        addSystem(`${p.name || p.speaker || "專家"} 因${why}被中止。`, "warn", "alert");
+      }
       addMessage(p);
       break;
     case "tool_use":

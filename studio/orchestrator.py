@@ -173,6 +173,16 @@ log = logging.getLogger("ti.orchestrator")
 # stop() 的內層 _CTRL_TIMEOUT(=30s)，純作兜底；測試以 monkeypatch 縮小此模組屬性即可秒級驗證。
 _TEARDOWN_LANE_TIMEOUT = 120.0
 
+_ABORTED_SPEAK_TEXT = (
+    "【系統】本次專家發言逾時中止，partial output 已忽略。\n"
+    "驗證: FAIL\n"
+    "決議: 退回\n"
+    "決議: 安全退回\n"
+    "異議: 成立\n"
+    "決議: 未完成\n"
+    "原因: 專家發言逾時中止"
+)
+
 
 def _build_experts(session_id: str, cwd: Path) -> dict[str, ExpertLike]:
     # 依設定的 provider 建立專家（延後 import，避免無 SDK 時就失敗）
@@ -484,7 +494,8 @@ class StudioSession:
         await self.broadcast(
             events.phase_change(self.session_id, "需求澄清", "PM 檢視需求是否足夠明確")
         )
-        text = await pm.speak(
+        text = await self._speak_with_abort_guard(
+            pm,
             f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請判斷此需求是否足夠明確、可直接拆解動工。若是，輸出一行 `澄清: 不需要`。\n"
             f"若否，向使用者反問最多 {config.CLARIFY_MAX_QUESTIONS} 個最關鍵的問題"
@@ -639,7 +650,8 @@ class StudioSession:
             return True, ""
         bc = broadcast or self.broadcast
         async with self._llm_semaphore():
-            text = await critic.speak(
+            text = await self._speak_with_abort_guard(
+                critic,
                 "你是獨立的異議檢查者，專挑『為何這還不算完成』，以防團隊形成錯誤共識。\n"
                 f"檢查標的：{subject}\n\n驗收標準：\n{acceptance}\n\n"
                 "請只根據標的與驗收標準判斷，提出具體、實質的反對；找不到實質問題就放行。\n"
@@ -845,7 +857,8 @@ class StudioSession:
         await self.broadcast(
             events.phase_change(self.session_id, "架構討論", "工程師與高級工程師對齊做法")
         )
-        proposal = await a.speak(
+        proposal = await self._speak_with_abort_guard(
+            a,
             adr.context(self.cwd) + f"{topic}\n請先簡短提出你打算採取的整體做法與檔案結構。",
             self.broadcast,
         )
@@ -853,17 +866,21 @@ class StudioSession:
         for i in range(rounds):
             if self._stop:
                 return
-            critique = await b.speak(
+            critique = await self._speak_with_abort_guard(
+                b,
                 f"針對以下做法給出贊成點、疑慮與（必要時）替代方案，簡短：\n\n{proposal}",
                 self.broadcast,
             )
             if i == rounds - 1:
                 break
-            proposal = await a.speak(
-                f"針對以下意見回應並調整你的做法，簡短：\n\n{critique}", self.broadcast
+            proposal = await self._speak_with_abort_guard(
+                a,
+                f"針對以下意見回應並調整你的做法，簡短：\n\n{critique}",
+                self.broadcast,
             )
         if config.ADR_ENABLED and self.cwd and not self._stop:
-            distilled = await b.speak(
+            distilled = await self._speak_with_abort_guard(
+                b,
                 "把剛才架構討論的共識蒸餾成決策記錄：每條獨立、逐行輸出 `決策: <結論>`，"
                 "重要取捨可緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行。"
                 "只輸出格式行。\n\n"
@@ -904,7 +921,8 @@ class StudioSession:
         last_texts = "\n\n".join(
             f"@{u.speaker}：{u.text}" for u in result.transcript if u.round == last_round
         )
-        distilled = await b.speak(
+        distilled = await self._speak_with_abort_guard(
+            b,
             "把剛才架構討論的共識蒸餾成決策記錄：每條獨立、逐行輸出 `決策: <結論>`，"
             "重要取捨可緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行。"
             "只輸出格式行。\n\n"
@@ -1046,7 +1064,8 @@ class StudioSession:
         await self._record_conclusion(senior, all_transcript)
         if not (config.ADR_ENABLED and self.cwd and not self._stop):
             return merged
-        distilled = await senior.speak(
+        distilled = await self._speak_with_abort_guard(
+            senior,
             "把剛才各子題架構討論的共識蒸餾成決策記錄：每條獨立、逐行輸出 `決策: <結論>`，"
             "重要取捨可緊接補 `理由: <為何>` 與 `否決: <被否決的替代方案>` 行。"
             "只輸出格式行。\n\n" + merged,
@@ -1073,7 +1092,14 @@ class StudioSession:
             events.phase_change(self.session_id, "結論彙整", "彙整討論結論並產出 CONCLUSION.md")
         )
         summary = build_summary(transcript)
-        result = await conclusion.summarize(senior, summary, transcript, self.broadcast)
+
+        class _GuardedExpert:
+            role = senior.role
+
+            async def speak(_self, prompt: str, broadcast: Broadcast) -> str:
+                return await self._speak_with_abort_guard(senior, prompt, broadcast)
+
+        result = await conclusion.summarize(_GuardedExpert(), summary, transcript, self.broadcast)
         # 帶入真實輪數供 sidecar 機讀（設計決策 #4）：取整場 transcript 的末輪 round。
         path = conclusion.record(
             self.cwd,
@@ -1097,7 +1123,8 @@ class StudioSession:
         """架構師主導設計：提案 → 工程師/高級工程師給意見 → 架構師定案。回傳設計決策文字。"""
         await self.broadcast(events.phase_change(self.session_id, "架構決策", "架構師主導設計決策"))
         rnote = f"研究員調研供參考：\n{research_notes}\n\n" if research_notes else ""
-        proposal = await architect.speak(
+        proposal = await self._speak_with_abort_guard(
+            architect,
             adr.context(self.cwd)
             + rnote
             + topic
@@ -1106,11 +1133,15 @@ class StudioSession:
         )
         # 工程師與高級工程師對同一份提案各自給意見，互相獨立 → 並行以省時。
         eng_view, senior_view = await asyncio.gather(
-            engineer.speak(
-                f"針對以下架構設計，從實作可行性給簡短意見：\n\n{proposal}", self.broadcast
+            self._speak_with_abort_guard(
+                engineer,
+                f"針對以下架構設計，從實作可行性給簡短意見：\n\n{proposal}",
+                self.broadcast,
             ),
-            senior.speak(
-                f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}", self.broadcast
+            self._speak_with_abort_guard(
+                senior,
+                f"針對以下架構設計，從品質/維護/風險給簡短意見：\n\n{proposal}",
+                self.broadcast,
             ),
         )
         adr_note = (
@@ -1118,7 +1149,8 @@ class StudioSession:
             if config.ADR_ENABLED
             else ""
         )
-        decision = await architect.speak(
+        decision = await self._speak_with_abort_guard(
+            architect,
             f"綜合以下意見定案，逐行輸出 `設計決策: <決策>`。{adr_note}\n\n"
             f"【工程師】{eng_view}\n\n【高級工程師】{senior_view}",
             self.broadcast,
@@ -1339,7 +1371,8 @@ class StudioSession:
             if prior_research
             else ""
         )
-        self._research_notes = await researcher.speak(
+        self._research_notes = await self._speak_with_abort_guard(
+            researcher,
             self._clarify_note
             + prior_note
             + f"團隊即將開發以下需求，請先上網調研以提供決策依據：\n\n{requirement}\n\n"
@@ -1424,7 +1457,8 @@ class StudioSession:
                 + "；model 可省略＝該家預設模型），依上方額度把任務分散到各 provider、避開受限者；"
                 "未標派工的任務由系統依額度自動分派。\n"
             )
-        pm_plan = await pm.speak(
+        pm_plan = await self._speak_with_abort_guard(
+            pm,
             (await self._human_prefix())
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
             + adr.context(self.cwd)  # 既有架構決策（停用/無 cwd/空白時為空字串）
@@ -1536,7 +1570,8 @@ class StudioSession:
         await self.broadcast(
             events.phase_change(self.session_id, "整合驗證", "維運工程師驗證整合與環境")
         )
-        await devops.speak(
+        await self._speak_with_abort_guard(
+            devops,
             "請確保整體成果能在乾淨環境跑起來：安裝相依、設定必要環境、實際啟動或跑整合測試，"
             f"並回報結果。整體計畫供參考：\n{self._pm_plan}",
             self.broadcast,
@@ -2182,6 +2217,8 @@ class StudioSession:
                 None,
             )
             decisions.append(decision)
+            if self._speak_was_aborted(decision):
+                break
             # 停滯：PM 連續輸出高相似決策（無實質進展）即收斂（重用既有偵測）。
             if flow.is_stalled(decisions, config.STALL_ROUNDS):
                 break
@@ -2345,6 +2382,8 @@ class StudioSession:
                 token_usage_task_id=task["id"],
             )
             decisions.append(decision)
+            if self._speak_was_aborted(decision):
+                break
             if flow.is_stalled(decisions, config.STALL_ROUNDS):
                 break
             # 表決 hook（在 parse_next_step 之前攔截）：命中→舉行表決，結果注入下一 hop。
@@ -2493,7 +2532,8 @@ class StudioSession:
                             role, f"{self.session_id}:vote:{prov}", ctx.cwd, provider=prov
                         )
                     async with self._llm_semaphore():
-                        text = await expert.speak(
+                        text = await self._speak_with_abort_guard(
+                            expert,
                             ballot_prompt,
                             self._tagged_broadcast(tag, token_usage_task_id=token_usage_task_id),
                         )
@@ -2571,6 +2611,32 @@ class StudioSession:
 
         return _bc
 
+    async def _speak_with_abort_guard(
+        self, expert: ExpertLike, prompt: str, broadcast: Broadcast
+    ) -> str:
+        """呼叫 expert.speak；若該次發言被標成 aborted，回傳不含 partial marker 的系統文。
+
+        事件仍照常 broadcast 給前端/歷史；只阻止 orchestrator 後續把逾時 partial_text
+        交給 marker parser / ADR / 結論沉澱當成合法 `下一步:` / `驗證:` / `決策:`。
+        """
+        aborted = False
+        role_key = getattr(getattr(expert, "role", None), "key", "")
+
+        async def _guarded(ev: events.StudioEvent) -> None:
+            nonlocal aborted
+            if ev.type == events.EventType.EXPERT_MESSAGE:
+                payload = ev.payload or {}
+                speaker = payload.get("speaker")
+                if payload.get("aborted") and (not speaker or speaker == role_key):
+                    aborted = True
+            await broadcast(ev)
+
+        text = await expert.speak(prompt, _guarded)
+        return _ABORTED_SPEAK_TEXT if aborted else text
+
+    def _speak_was_aborted(self, text: str) -> bool:
+        return text == _ABORTED_SPEAK_TEXT
+
     async def _speak(
         self,
         ctx: LaneContext,
@@ -2583,7 +2649,8 @@ class StudioSession:
         """經號誌節流 + 標籤化 broadcast 呼叫某 lane 的專家發言。"""
         async with self._llm_semaphore():
             try:
-                return await ctx.experts[role_key].speak(
+                return await self._speak_with_abort_guard(
+                    ctx.experts[role_key],
                     prompt,
                     self._tagged_broadcast(task_id, token_usage_task_id=token_usage_task_id),
                 )
@@ -3926,7 +3993,8 @@ class StudioSession:
 
     async def _wrap_up(self, pm: ExpertLike, all_ok: bool, demo_veto: bool = False) -> bool:
         await self.broadcast(events.phase_change(self.session_id, "驗收", "PM 確認驗收標準"))
-        verdict = await pm.speak(
+        verdict = await self._speak_with_abort_guard(
+            pm,
             (await self._human_prefix()) + "請依驗收標準檢查目前工作目錄的成果，判斷是否完成"
             "（輸出 `決議: 完成` 或 `決議: 未完成`；若判未完成，緊接一行 `原因: <一句根因>`，"
             "講清楚卡在哪個具體環節）。",
@@ -3980,7 +4048,7 @@ class StudioSession:
                 + ("；本場參與 provider：" + "、".join(provs) if provs else "")
                 + "）。"
             )
-        retro = await pm.speak(retro_prompt, self.broadcast)
+        retro = await self._speak_with_abort_guard(pm, retro_prompt, self.broadcast)
         # 考核：PM 的 `考核:` 主觀評分與本場客觀指標合併入庫＋逐筆廣播（停用/無考核行＝no-op）。
         if config.APPRAISAL_ENABLED:
             await self._record_appraisals(retro)
@@ -4259,7 +4327,8 @@ class StudioSession:
             await self.broadcast(
                 events.phase_change(self.session_id, "CI 修正", f"第 {attempt}/{rounds} 輪")
             )
-            await engineer.speak(
+            await self._speak_with_abort_guard(
+                engineer,
                 await self._human_prefix()
                 + "發佈後的 CI/CD 檢查未通過，請依下列失敗日誌修正程式碼，"
                 "讓所有測試／檢查都能通過：\n\n" + logs,

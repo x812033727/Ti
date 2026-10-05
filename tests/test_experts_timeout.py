@@ -196,6 +196,34 @@ async def test_speak_timeout_interrupt_recovers(fake_sdk, monkeypatch, _fast_tim
     assert bucket[-1].payload["status"] == "idle"
 
 
+async def test_speak_timeout_does_not_enter_retry_backoff(fake_sdk, monkeypatch, _fast_timeouts):
+    """ExpertTurnTimeout 走 passthrough，不進 llm_caller 的限流退避重試。"""
+    client = _HangingClient(fake_sdk, interrupt_ok=True)
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd: client)
+    monkeypatch.setattr(config, "EXPERT_RATE_LIMIT_RETRIES", 3)
+    slept: list[float] = []
+    observed: list[str] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(experts, "_sleep", _record_sleep)
+    monkeypatch.setattr(
+        experts,
+        "_make_retry_observer",
+        lambda _role_key: lambda event, _fields: observed.append(event),
+    )
+    exp = experts.Expert(BY_KEY["engineer"], "sess", "/tmp/x")
+    _, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert "逾時中止" in text
+    assert slept == []
+    assert observed == [experts.llm_caller.EV_TIMEOUT]
+    assert client.interrupts == 1
+
+
 async def test_speak_timeout_interrupt_fails_rebuilds_client(fake_sdk, monkeypatch, _fast_timeouts):
     first = _HangingClient(fake_sdk, interrupt_ok=False)
     built = [first]
