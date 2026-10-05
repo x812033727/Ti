@@ -72,6 +72,8 @@ def expert_message(
     provider: str | None = None,
     model: str | None = None,
     role: str | None = None,
+    aborted: bool = False,
+    abort_reason: str | None = None,
 ) -> StudioEvent:
     payload = {
         "speaker": speaker_key,
@@ -89,6 +91,10 @@ def expert_message(
         payload["model"] = model
     if role is not None:
         payload["role"] = role
+    if aborted:
+        payload["aborted"] = True
+    if abort_reason is not None:
+        payload["abort_reason"] = abort_reason
     return StudioEvent(
         EventType.EXPERT_MESSAGE,
         session_id,

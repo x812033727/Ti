@@ -37,6 +37,25 @@ class StubExpert:
         pass
 
 
+class AbortingStubExpert(StubExpert):
+    async def speak(self, prompt: str, broadcast) -> str:
+        self.prompts.append(prompt)
+        text = self._scripts[min(self.calls, len(self._scripts) - 1)]
+        self.calls += 1
+        await broadcast(
+            events.expert_message(
+                "t",
+                self.role.key,
+                self.role.name,
+                self.role.avatar,
+                text,
+                aborted=True,
+                abort_reason="idle",
+            )
+        )
+        return text
+
+
 def _session(pm_scripts):
     bucket: list[events.StudioEvent] = []
 
@@ -187,6 +206,23 @@ async def test_dynamic_stop_breaks_immediately():
     s._stop = True
     await s._stage_dynamic({"type": "dynamic", "budget": 5})
     assert experts["pm"].calls == 0  # 一開始就被中止，不發任何言
+
+
+@pytest.mark.asyncio
+async def test_dynamic_ignores_aborted_partial_next_step():
+    s, experts, bucket = _session(["下一步: engineer\n指示: 不該被執行"])
+    experts["pm"] = AbortingStubExpert(BY_KEY["pm"], ["下一步: engineer\n指示: 不該被執行"])
+
+    await s._stage_dynamic({"type": "dynamic", "budget": 5, "fallback": "engineer"})
+
+    assert experts["pm"].calls == 1
+    assert experts["engineer"].calls == 0
+    assert any(
+        e.type == events.EventType.EXPERT_MESSAGE
+        and e.payload.get("aborted") is True
+        and "下一步: engineer" in e.payload.get("text", "")
+        for e in bucket
+    )
 
 
 # --- 額度感知分派 (PR-B) ----------------------------------------------------

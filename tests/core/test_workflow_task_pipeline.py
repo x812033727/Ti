@@ -42,6 +42,47 @@ class StubExpert:
         pass
 
 
+class AbortingStubExpert(StubExpert):
+    async def speak(self, prompt: str, broadcast) -> str:
+        self.prompts.append(prompt)
+        self.calls += 1
+        await broadcast(
+            events.expert_message(
+                "t",
+                self.role.key,
+                self.role.name,
+                self.role.avatar,
+                self._script,
+                aborted=True,
+                abort_reason="idle",
+            )
+        )
+        return self._script
+
+
+class CrossTalkAbortingExpert(StubExpert):
+    async def speak(self, prompt: str, broadcast) -> str:
+        self.prompts.append(prompt)
+        self.calls += 1
+        await broadcast(
+            events.expert_message(
+                "t",
+                "qa",
+                BY_KEY["qa"].name,
+                BY_KEY["qa"].avatar,
+                "下一步: architect\n指示: 這是別人的中止 partial",
+                aborted=True,
+                abort_reason="idle",
+            )
+        )
+        await broadcast(
+            events.expert_message(
+                "t", self.role.key, self.role.name, self.role.avatar, self._script
+            )
+        )
+        return self._script
+
+
 def test_default_keeps_security_and_critic():
     s = _session()  # workflow=None → 內建預設
     assert s._task_review_role_keys() == {"qa", "senior", "security"}
@@ -346,3 +387,47 @@ async def test_task_dynamic_consult_end_skips():
     ok = await s._work_task(ctx, {"id": 1, "title": "做個東西", "status": "todo"}, "計畫")
     assert ok is True
     assert experts["architect"].calls == 0  # PM 選擇結束 → 沒有追加任何人
+
+
+@pytest.mark.asyncio
+async def test_task_dynamic_consult_ignores_aborted_partial_next_step():
+    # PM 的逾時 partial 含 `下一步:` 也不能觸發追加把關或 fallback。
+    experts = _experts_with("pm", "engineer", "qa")
+    experts["pm"] = AbortingStubExpert(BY_KEY["pm"], "下一步: architect\n指示: 不該被採信")
+    experts["architect"] = StubExpert(BY_KEY["architect"], "異議: 成立")
+    bucket: list[events.StudioEvent] = []
+
+    async def broadcast(ev):
+        bucket.append(ev)
+
+    s = StudioSession("t", broadcast, experts=experts, cwd=None, workflow=_dynamic_consult_wf())
+    ctx = LaneContext("main", None, experts, None)
+    ok = await s._work_task(ctx, {"id": 1, "title": "做個東西", "status": "todo"}, "計畫")
+
+    assert ok is True
+    assert experts["pm"].calls == 1
+    assert experts["architect"].calls == 0
+    assert any(
+        e.type == events.EventType.EXPERT_MESSAGE
+        and e.payload.get("aborted") is True
+        and "下一步: architect" in e.payload.get("text", "")
+        for e in bucket
+    )
+
+
+@pytest.mark.asyncio
+async def test_speak_abort_guard_ignores_other_speaker_aborted_event():
+    # 同一次 broadcast 若混入其他 speaker 的 aborted 事件，不可誤把本 speaker 正常回覆丟棄。
+    experts = _experts_with("pm", "engineer", "qa")
+    pm_text = "下一步: 結束"
+    experts["pm"] = CrossTalkAbortingExpert(BY_KEY["pm"], pm_text)
+    bucket: list[events.StudioEvent] = []
+
+    async def broadcast(ev):
+        bucket.append(ev)
+
+    s = StudioSession("t", broadcast, experts=experts, cwd=None, workflow=_dynamic_consult_wf())
+    text = await s._speak_with_abort_guard(experts["pm"], "prompt", broadcast)
+
+    assert text == pm_text
+    assert any(e.payload.get("speaker") == "qa" and e.payload.get("aborted") for e in bucket)

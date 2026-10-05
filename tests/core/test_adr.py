@@ -181,6 +181,25 @@ class StubExpert:
         pass
 
 
+class AbortingStubExpert(StubExpert):
+    async def speak(self, prompt: str, broadcast) -> str:
+        self.prompts.append(prompt)
+        text = self._scripts[min(self.calls, len(self._scripts) - 1)]
+        self.calls += 1
+        await broadcast(
+            events.expert_message(
+                "t",
+                self.role.key,
+                self.role.name,
+                self.role.avatar,
+                text,
+                aborted=True,
+                abort_reason="idle",
+            )
+        )
+        return text
+
+
 async def _noop_broadcast(ev):
     pass
 
@@ -222,6 +241,36 @@ async def test_architect_decision_recorded(tmp_path, flow):
     assert [e["decision"] for e in entries] == ["用 SQLite 存資料"]
     assert entries[0]["rationale"] == "零維運"
     assert (tmp_path / "DECISIONS.md").is_file()
+
+
+async def test_aborted_architect_partial_decision_not_recorded(tmp_path, flow):
+    bucket: list[events.StudioEvent] = []
+
+    async def broadcast(ev):
+        bucket.append(ev)
+
+    experts = _experts(
+        pm=["任務: 實作", "決議: 完成", "檢討"],
+        eng=["意見", "實作"],
+        qa=["驗證: PASS"],
+        senior=["意見", "決議: 核可"],
+        architect=[],
+    )
+    experts["architect"] = AbortingStubExpert(
+        BY_KEY["architect"], ["提案", "設計決策: 不該落盤\n理由: partial"]
+    )
+    session = StudioSession("t", broadcast, experts=experts, cwd=tmp_path)
+
+    await session.run("需求")
+
+    assert adr.all_entries(tmp_path) == []
+    assert not (tmp_path / "DECISIONS.md").exists()
+    assert any(
+        e.type == events.EventType.EXPERT_MESSAGE
+        and e.payload.get("aborted") is True
+        and "設計決策: 不該落盤" in e.payload.get("text", "")
+        for e in bucket
+    )
 
 
 async def test_debate_distilled_to_adr(tmp_path, flow):

@@ -236,6 +236,14 @@ def test_clarify_timeout_reload_valid_value(sandbox, monkeypatch):
     assert config.CLARIFY_TIMEOUT == 90.0
 
 
+def test_turn_timeouts_reload_from_env(sandbox, monkeypatch):
+    monkeypatch.setenv("TI_TURN_IDLE_TIMEOUT", "12.5")
+    monkeypatch.setenv("TI_TURN_TIMEOUT", "45")
+    config.reload()
+    assert config.TURN_IDLE_TIMEOUT == 12.5
+    assert config.TURN_HARD_TIMEOUT == 45.0
+
+
 def test_update_accepts_clarify_timeout_numeric_value(sandbox):
     settings.update({"TI_CLARIFY_TIMEOUT": "90"})
     assert os.environ["TI_CLARIFY_TIMEOUT"] == "90"

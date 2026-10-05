@@ -510,6 +510,34 @@ async def test_stream_to_events_no_usage_no_event(fake_sdk):
     assert not [e for e in bucket if e.type == EventType.TOKEN_USAGE]
 
 
+@pytest.mark.asyncio
+async def test_claude_abort_turn_emits_aborted_expert_message(fake_sdk, monkeypatch, tmp_path):
+    class FakeClient:
+        async def connect(self):
+            return None
+
+        async def interrupt(self):
+            return None
+
+        async def receive_response(self):
+            yield fake_sdk.ResultMessage()
+
+        async def disconnect(self):
+            return None
+
+    monkeypatch.setattr(experts, "_build_client", lambda *_args, **_kwargs: FakeClient())
+    expert = experts.Expert(BY_KEY["engineer"], "s", tmp_path)
+    bucket, broadcast = collect()
+
+    out = await expert._abort_turn(experts.ExpertTurnTimeout("idle", "partial"), broadcast)
+
+    assert "逾時" in out
+    msg = [e for e in bucket if e.type == EventType.EXPERT_MESSAGE][-1]
+    assert msg.payload["aborted"] is True
+    assert msg.payload["abort_reason"] == "idle"
+    assert "partial" in msg.payload["text"]
+
+
 # --- providers.OpenAIExpert（OpenAI/MiniMax 路徑）------------------------
 
 
@@ -583,6 +611,9 @@ async def test_speak_timeout_token_usage_includes_duration_ms(tmp_path, monkeypa
     assert isinstance(p["duration_ms"], int)
     assert p["duration_ms"] >= 0
     assert "逾時" in out
+    msg = [e for e in bucket if e.type == EventType.EXPERT_MESSAGE][-1]
+    assert msg.payload["aborted"] is True
+    assert msg.payload["abort_reason"] == "hard"
 
 
 @pytest.mark.asyncio
