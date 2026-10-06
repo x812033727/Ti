@@ -5825,6 +5825,16 @@ async def main() -> None:
         if _read_status().get("state") != "stopped":
             _write_status("stopped")
         log.warning("autopilot 已優雅停機（任務已重排，服務重啟後自動續跑）")
+    except Exception as exc:  # noqa: BLE001 — 頂層崩潰必須可觀測；仍重新拋出交外部重啟
+        log.exception("autopilot 主迴圈例外退出")
+        with contextlib.suppress(Exception):
+            notify.send_bg(
+                "loop_crash",
+                "Autopilot 主迴圈例外退出",
+                exception_type=type(exc).__name__,
+                error=str(exc),
+            )
+        raise
     finally:
         # 先收尾旁路調查再 cancel:sideline 的 finally 會清掉 _sideline_task_info。
         _requeue_sideline_task("優雅停機")

@@ -22,6 +22,9 @@ from studio import autopilot, backlog, config, notify
 def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
+    monkeypatch.setattr(config, "ALERT_EMAIL_TO", "")
+    monkeypatch.setattr(config, "ALERT_SMTP_HOST", "")
+    monkeypatch.setattr(config, "ALERT_FROM", "")
     return tmp_path
 
 

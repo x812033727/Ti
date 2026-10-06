@@ -656,6 +656,45 @@ FIELDS: tuple[Field, ...] = (
         placeholder="1234567890",
         group="通知",
     ),
+    Field(
+        "TI_ALERT_EMAIL_TO",
+        "Email 告警收件人（逗號分隔多人;空=關）",
+        placeholder="ops@example.com",
+        group="通知",
+    ),
+    Field(
+        "TI_ALERT_SMTP_HOST",
+        "Email 告警 SMTP host（與寄件人/收件人皆填才啟用）",
+        placeholder="smtp.example.com",
+        group="通知",
+    ),
+    Field(
+        "TI_ALERT_SMTP_PORT",
+        "Email 告警 SMTP port（465=SSL;其他=STARTTLS;空=587）",
+        placeholder="587",
+        numeric=True,
+        group="通知",
+    ),
+    Field(
+        "TI_ALERT_SMTP_USER",
+        "Email 告警 SMTP 帳號",
+        placeholder="user@example.com",
+        group="通知",
+    ),
+    Field(
+        "TI_ALERT_SMTP_PASS",
+        "Email 告警 SMTP 密碼/App Password",
+        kind="password",
+        secret=True,
+        placeholder="••••••••",
+        group="通知",
+    ),
+    Field(
+        "TI_ALERT_FROM",
+        "Email 告警寄件人",
+        placeholder="Ti Alerts <alerts@example.com>",
+        group="通知",
+    ),
 )
 
 ALLOWED = {f.env for f in FIELDS}
