@@ -193,7 +193,13 @@ async def _prepare_clone(
         if rc != 0:
             raise RuntimeError(f"clone 失敗：{out[-400:]}")
     fetch_rc, fetch_out = await _run(
-        ["git", *_git_cred_argv(), "fetch", "origin", branch],
+        [
+            "git",
+            *_git_cred_argv(),
+            "fetch",
+            "origin",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+        ],
         cwd=work,
         timeout=120,
         env=_git_cred_env(),
