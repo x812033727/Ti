@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from email import message_from_string
+from email.header import decode_header, make_header
 
 import pytest
 
@@ -104,3 +106,50 @@ def test_smtp_password_never_appears_in_debug_logs(monkeypatch, caplog):
     assert notify.send("task_failed", "smtp auth rejected") is False
 
     assert secret not in caplog.text
+
+
+def test_smtp_password_is_redacted_from_email_payload(monkeypatch):
+    secret = "smtp-secret-value"
+    _enable_email(monkeypatch, password=secret)
+    sent_messages: list[str] = []
+
+    class _CapturingSMTP:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, _user, _password):
+            pass
+
+        def sendmail(self, _sender, _recipients, message):
+            sent_messages.append(message)
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", _CapturingSMTP)
+
+    assert (
+        notify.send(
+            "task_failed",
+            f"operator pasted {secret}",
+            note=f"body leaked {secret}",
+            smtp_password=secret,
+        )
+        is True
+    )
+
+    assert len(sent_messages) == 1
+    msg = message_from_string(sent_messages[0])
+    subject = str(make_header(decode_header(msg["Subject"])))
+    body = msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8")
+
+    assert secret not in subject
+    assert secret not in body
+    assert "***" in subject
+    assert "***" in body
