@@ -258,8 +258,8 @@ def _post_email(kind: str, title: str, extra: dict) -> bool:
                 smtp.login(user, password)
             smtp.sendmail(sender, recipients, msg.as_string())
         return True
-    except Exception:  # noqa: BLE001 — email 告警失敗不得影響呼叫端；log 不含 SMTP 設定值
-        log.debug("email 通知送出失敗（忽略）：%s %s", kind, title, exc_info=True)
+    except Exception:  # noqa: BLE001 — email 告警失敗不得影響呼叫端；不記 exception，避免 SMTP 實作把密碼塞進訊息
+        log.debug("email 通知送出失敗（忽略）：%s %s", kind, title)
         return False
 
 
