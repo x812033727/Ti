@@ -10,22 +10,21 @@ ro-bind 在擋，而非整個沙箱寫不進」。
   * 全程真實 `subprocess.run` 實跑，不 mock；無 bwrap 時 skip。
   * NET 走 `monkeypatch.setattr(runner.config, "SANDBOX_NET", True)`（等同
     TI_SANDBOX_NET=1），繞開受限 runner 的 `--unshare-net` loopback EPERM。
-  * 「host 預置可寫檔」策略隔離變因：探針檔建在 repo 根（host 可寫、且不在
-    `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內被 ro-bind
-    蓋成唯讀。先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；
-    此前提下沙箱內出現 EROFS 即確證 ro-bind 生效。
+  * ro-bind 反例寫入 `/etc/.ti_ro_bind_probe_*`：該路徑在沙箱內由
+    `--ro-bind / /` 提供，可避免 workspace 位於 `/tmp` 時被 `--tmpfs /tmp`
+    遮住而變成 ENOENT。此路徑出現 EROFS 即確證 ro-bind 生效。
 """
 
+import errno
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
-from _repo import REPO_ROOT
 
 from studio import runner
 
-REPO = REPO_ROOT
 TIMEOUT = 30  # 秒；避免 bwrap 卡死拖垮 CI
 
 needs_bwrap = pytest.mark.skipif(
@@ -35,32 +34,29 @@ needs_bwrap = pytest.mark.skipif(
 
 
 @pytest.fixture
-def host_probe():
-    """在 repo 根（host 可寫區）預置一個探針檔，帶唯一後綴；測試後清理。
-
-    刻意不放 `~/`、`~/.cache`、`/tmp`、cwd——前三者在沙箱內是 tmpfs/可寫，
-    cwd 是 `--bind` 可寫，都無法驗到唯讀。repo 根被 `--ro-bind / /` 蓋成唯讀。
-    """
-    probe = REPO / f".ti_ro_bind_probe_{os.getpid()}.txt"
-    probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
+def ro_probe_path():
+    """挑一個沙箱內由 ro-bind 可見、且不會被 `/tmp` tmpfs 遮掉的探針路徑。"""
+    probe = Path(f"/etc/.ti_ro_bind_probe_{os.getpid()}.txt")
+    assert not probe.exists(), f"測試探針路徑不應已存在：{probe}"
     try:
         yield probe
     finally:
-        probe.unlink(missing_ok=True)
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError as exc:
+            if exc.errno != errno.EROFS:
+                raise
 
 
 @needs_bwrap
-def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
+def test_ro_bind_rejects_write_to_host_path(ro_probe_path, tmp_path, monkeypatch):
     """反例：沙箱內寫 host 唯讀路徑應被拒，且 host 檔案未被竄改。"""
     monkeypatch.setattr(runner.config, "SANDBOX_NET", True)
 
-    # ① 前置：該路徑在 host 原生可寫（fixture 已寫入 ORIG），排除權限假陽性。
-    assert host_probe.read_text() == "ORIG", "前置：host 探針應已預置且可讀"
-
-    # ② 沙箱內以繼承前綴寫同一絕對路徑——應被 ro-bind 擋下。
+    # 沙箱內以繼承前綴寫 host rootfs 路徑——應被 ro-bind 擋下。
     prefix = runner._bwrap_prefix(tmp_path)
     r = subprocess.run(
-        prefix + ["bash", "-c", f"echo TAINT > {host_probe}"],
+        prefix + ["bash", "-c", f"echo TAINT > {ro_probe_path}"],
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
@@ -70,8 +66,8 @@ def test_ro_bind_rejects_write_to_host_path(host_probe, tmp_path, monkeypatch):
         f"應為 EROFS（ro-bind 生效），實際 stderr：{r.stderr!r}"
     )
 
-    # ③ 雙重保險：回 host 確認內容維持 ORIG（確實沒寫進去）。
-    assert host_probe.read_text() == "ORIG", "host 探針內容不應被沙箱竄改"
+    # 雙重保險：回 host 確認沒有產生探針檔（確實沒寫進去）。
+    assert not ro_probe_path.exists(), "host rootfs 不應被沙箱寫入探針檔"
 
 
 @needs_bwrap

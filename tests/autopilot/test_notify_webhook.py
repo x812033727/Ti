@@ -22,6 +22,7 @@ from studio import autopilot, backlog, config, notify
 def _state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUTOPILOT_STATE_DIR", tmp_path / "ap")
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", 10.0)
     return tmp_path
 
 
@@ -43,6 +44,7 @@ def _capture_urlopen(monkeypatch, *, boom=False):
                 "url": req.full_url,
                 "body": json.loads(req.data.decode("utf-8")),
                 "method": req.get_method(),
+                "timeout": timeout,
             }
         )
         return _Resp()
@@ -60,15 +62,25 @@ def test_send_noop_without_webhook(monkeypatch):
 
 def test_send_posts_json_payload(monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", 4.25)
     calls = _capture_urlopen(monkeypatch)
     assert notify.send("loop_stall", "主迴圈停滯", idle_for=900) is True
     assert calls[0]["url"] == "https://hook.example/ti" and calls[0]["method"] == "POST"
+    assert calls[0]["timeout"] == 4.25
     assert calls[0]["body"] == {
         "source": "ti",
         "kind": "loop_stall",
         "title": "主迴圈停滯",
         "idle_for": 900,
     }
+
+
+def test_send_uses_safe_default_for_invalid_timeout(monkeypatch):
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", float("nan"))
+    calls = _capture_urlopen(monkeypatch)
+    assert notify.send("loop_stall", "主迴圈停滯") is True
+    assert calls[0]["timeout"] == 10.0
 
 
 def test_send_swallows_network_failure(monkeypatch):
