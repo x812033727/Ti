@@ -15,6 +15,7 @@ ro-bind 在擋，而非整個沙箱寫不進」。
     遮住而變成 ENOENT。此路徑出現 EROFS 即確證 ro-bind 生效。
 """
 
+import errno
 import os
 import shutil
 import subprocess
@@ -40,7 +41,11 @@ def ro_probe_path():
     try:
         yield probe
     finally:
-        probe.unlink(missing_ok=True)
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError as exc:
+            if exc.errno != errno.EROFS:
+                raise
 
 
 @needs_bwrap
