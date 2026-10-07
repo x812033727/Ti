@@ -345,6 +345,7 @@ TI_OFFLINE=1 .venv/bin/python3 -m studio.server
 | `TI_TASK_ADMISSION` | 核心 autopilot 任務契約閘門：`off` 完整沿用舊流程；`shadow` 在正常流程只補契約、裁決與去敏 audit；`enforce` 才依五向結果分流。`.env` 是冷啟動預設；UI 設定先成為 shared desired，獨立 worker 在安全任務邊界才 ack 為 effective；從 `enforce` 降級時會先釋放既有 admission hold 再 ack | shadow |
 | `TI_AUTOPILOT_FORCE_PUSH` | Autopilot 推送策略：預設非強制（`git push`），遠端已存在同名分支時中止；設 `1` 才略過中止並改用 `--force-with-lease --force-if-includes` 覆寫殘留分支（絕不用裸 `-f`） | 0（安全側） |
 | `TI_AUTOPILOT_PROTECTION_CHECK` | 第二道防線：squash-merge 前主動查「合併目標分支（`TI_AUTOPILOT_BRANCH`，預設 `main`）」的保護狀態。優先打 Rulesets 端點（classic token 即可讀、**多半不需 `Administration:read`**），舊 branch protection 端點為輔。三態 fail-safe——受保護/無保護皆放行，唯「無法確認」（403 無權／網路／逾時）一律**中止**並回含「無法確認保護狀態」字樣的訊息，絕不誤判為無保護而放行。讀舊 protection 端點才需 `Administration:read`；無此權限而持續卡「無法確認」的環境，設 `0` 整段跳過（明確逃生口） | 1（啟用） |
+| `TI_NOTIFY_WEBHOOK` / `TI_NOTIFY_TIMEOUT` | 主動通知 webhook URL（空=關）與送出逾時秒數；任務失敗、額度耗盡、主迴圈停滯等 page 級事件會 POST JSON，通知失敗不影響主迴圈 | 空 / 10 |
 | `TI_AUTOPILOT_EVAL_MEMORY` | 自我評估（backlog 空時找改善點）回饋給專家的「近期成敗」筆數（done/failed 各取最新 N 筆，附失敗原因）。讓迴圈記取自身成績單——避免重提已完成、避開已知失敗做法；越跑越聚焦。0=停用（無狀態評估） | 20 |
 | `TI_PROJECTS_ROOT` | 專案（長期產品）meta 與專屬 backlog 的存放根目錄 | `projects/` |
 | `TI_IMPROVE_MAX_CYCLES` | 持續改良迴圈單次連線最多跑幾輪（每輪＝一場完整討論）；0=不限（直到找不到新改善點） | 5 |

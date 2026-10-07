@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -22,6 +23,7 @@ class Field:
     label: str
     kind: str = "text"  # text | password | select | combo（有建議選項但接受任意輸入）| textarea
     numeric: bool = False  # True＝非空值必須可 int() 解析,否則拒收(防 config.reload 的 int() 炸)
+    numeric_float: bool = False  # True＝非空值必須可 float() 解析,供秒數等浮點旋鈕
     secret: bool = False
     options: tuple[str, ...] = ()
     placeholder: str = ""
@@ -643,6 +645,13 @@ FIELDS: tuple[Field, ...] = (
         group="通知",
     ),
     Field(
+        "TI_NOTIFY_TIMEOUT",
+        "通知送出逾時秒數（空=10;可用小數）",
+        placeholder="10",
+        numeric_float=True,
+        group="通知",
+    ),
+    Field(
         "TI_TELEGRAM_BOT_TOKEN",
         "Telegram bot token（@BotFather 建 bot 取得;與 chat id 皆填才啟用）",
         kind="password",
@@ -713,7 +722,7 @@ def update(payload: dict) -> dict:
             continue  # 秘密留空＝不變更
         if f.kind == "select" and f.options and val not in f.options:
             continue  # 不接受非法選項
-        if f.numeric:
+        if f.numeric or f.numeric_float:
             if not val:
                 # 數字欄清空＝「回到程式預設」:必須真移除而非寫空值——空字串會蓋掉
                 # os.getenv 的預設(2026-07-19 事故:INVESTIGATION_TIMEOUT='' 落檔後
@@ -722,9 +731,11 @@ def update(payload: dict) -> dict:
                 os.environ.pop(key, None)
                 continue
             try:
-                int(val)
+                parsed = float(val) if f.numeric_float else int(val)
             except ValueError:
                 continue  # 非法數值不落檔:config.reload() 的 int(os.getenv(...)) 會炸
+            if f.numeric_float and (not math.isfinite(parsed) or parsed <= 0):
+                continue
         if f.kind == "textarea":
             # .env 單行格式:多行文字摺成空白(北極星語意上一段話即可)
             val = " ".join(val.split())
