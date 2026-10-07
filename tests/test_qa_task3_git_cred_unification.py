@@ -95,7 +95,12 @@ async def test_prepare_clone_and_fetch_keep_argv_clean_and_auth_in_env(monkeypat
         "https://github.com/owner/repo.git",
         str(work),
     ]
-    assert fetch["cmd"] == ["git", "fetch", "origin", "main"]
+    assert fetch["cmd"] == [
+        "git",
+        "fetch",
+        "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
+    ]
 
     for call in (clone, fetch):
         _assert_no_cred_argv(call["cmd"])
