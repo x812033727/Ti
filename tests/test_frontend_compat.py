@@ -53,6 +53,14 @@ def test_every_event_type_has_frontend_case():
     assert not missing, f"前端 handleEvent 缺少這些事件的 case：{missing}"
 
 
+def test_aborted_expert_message_gets_visible_state():
+    src = _APP_JS.read_text(encoding="utf-8")
+    css = (_ROOT / "web" / "css" / "stream.css").read_text(encoding="utf-8")
+    assert "p.aborted" in src
+    assert 'classList.add("aborted")' in src
+    assert ".msg.aborted .body" in css
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="需要 node 執行前端 smoke")
 def test_handleevent_does_not_crash_on_unknown_and_new_events():
     result = subprocess.run(

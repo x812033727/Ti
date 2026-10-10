@@ -1217,6 +1217,8 @@ async def test_codex_turn_timeout_soft_fails_without_pause(monkeypatch, tmp_path
 
     # 軟失敗：回系統 note（含「逾時」），略過本輪而非拋例外或卡死整場。
     assert result.startswith("【系統】") and "逾時" in result
+    timeout_msgs = [e for e in bucket if "逾時" in e.payload.get("text", "")]
+    assert timeout_msgs[-1].payload["aborted"] is True
     # 最後狀態回 idle（speak 的 finally 有廣播）。
     assert bucket[-1].payload["status"] == "idle"
 

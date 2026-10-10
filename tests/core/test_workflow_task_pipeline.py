@@ -42,6 +42,23 @@ class StubExpert:
         pass
 
 
+class AbortingStubExpert(StubExpert):
+    async def speak(self, prompt: str, broadcast) -> str:
+        self.prompts.append(prompt)
+        self.calls += 1
+        await broadcast(
+            events.expert_message(
+                "t",
+                self.role.key,
+                self.role.name,
+                self.role.avatar,
+                self._script,
+                aborted=True,
+            )
+        )
+        return self._script
+
+
 def test_default_keeps_security_and_critic():
     s = _session()  # workflow=None → 內建預設
     assert s._task_review_role_keys() == {"qa", "senior", "security"}
@@ -221,6 +238,33 @@ async def test_work_task_runs_custom_reviewer_and_drops_core_senior():
     assert experts["qa"].calls >= 1  # reviewer
     assert experts["architect"].calls >= 1  # 客製 reviewer 有審
     assert experts["senior"].calls == 0  # 不在 review gate → 不審
+
+
+@pytest.mark.asyncio
+async def test_aborted_reviewer_partial_verdict_does_not_pass():
+    wf = {
+        "name": "單 QA",
+        "stages": [
+            {
+                "type": "build",
+                "task_pipeline": [
+                    {"type": "implement", "assignee": "engineer"},
+                    {
+                        "type": "review",
+                        "max_rounds": 1,
+                        "gate": [{"role": "qa", "verdict": "qa_passed"}],
+                    },
+                ],
+            }
+        ],
+    }
+    experts = _experts_with("pm", "engineer", "qa")
+    experts["qa"] = AbortingStubExpert(BY_KEY["qa"], "驗證: PASS")
+    s = StudioSession("t", _noop, experts=experts, cwd=None, workflow=wf)
+    ctx = LaneContext("main", None, experts, None)
+    ok = await s._work_task(ctx, {"id": 1, "title": "做個東西", "status": "todo"}, "計畫")
+    assert ok is False
+    assert experts["qa"].calls == 1
 
 
 @pytest.mark.asyncio

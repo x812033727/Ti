@@ -219,6 +219,8 @@ async def test_turn_timeout_soft_fails_without_pause(monkeypatch, tmp_path, _ant
     # 軟失敗：回系統 note（不含核可關鍵詞），而非拋 ProviderUnavailable 暫停整場。
     assert result.startswith("【系統】") and "逾時" in result
     assert not any(h in result.lower() for h in ("核可", "通過", "approve", "lgtm"))
+    timeout_msgs = [e for e in bucket if "逾時" in e.payload.get("text", "")]
+    assert timeout_msgs[-1].payload["aborted"] is True
     # 最後狀態回 idle（speak 的 finally 有廣播）。
     assert bucket[-1].payload["status"] == "idle"
 

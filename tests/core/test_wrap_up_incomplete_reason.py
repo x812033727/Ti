@@ -34,6 +34,23 @@ class StubExpert:
         pass
 
 
+class AbortingStubExpert(StubExpert):
+    async def speak(self, prompt: str, broadcast) -> str:
+        text = self._scripts[min(self.calls, len(self._scripts) - 1)]
+        self.calls += 1
+        await broadcast(
+            events.expert_message(
+                "t",
+                self.role.key,
+                self.role.name,
+                self.role.avatar,
+                text,
+                aborted=True,
+            )
+        )
+        return text
+
+
 def collect():
     bucket: list[events.StudioEvent] = []
 
@@ -81,6 +98,17 @@ async def test_missing_reason_synthesized_from_objective_state(monkeypatch):
     pm2 = StubExpert(BY_KEY["pm"], ["決議: 未完成", "檢討 ok"])
     await session2._wrap_up(pm2, all_ok=False)
     assert "三審" in session2._incomplete_reason
+
+
+@pytest.mark.asyncio
+async def test_aborted_pm_completion_does_not_leave_empty_reason(monkeypatch):
+    session = _session(monkeypatch)
+    pm = AbortingStubExpert(BY_KEY["pm"], ["決議: 完成", "檢討 ok"])
+
+    done = await session._wrap_up(pm, all_ok=True)
+
+    assert not done
+    assert session._incomplete_reason == "PM 驗收逾時中止"
 
 
 @pytest.mark.asyncio

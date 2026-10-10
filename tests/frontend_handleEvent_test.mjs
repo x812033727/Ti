@@ -3,12 +3,13 @@
 // critic_review）不拋錯，且未知事件不崩潰。
 
 // --- 最小 DOM stub：任何元素都是可鏈式呼叫、吸收任意操作的 Proxy ---
+const classAdds = [];
 function makeEl() {
   const fn = function () { return makeEl(); };
   return new Proxy(fn, {
     get(t, prop) {
       if (prop === 'dataset') return {};
-      if (prop === 'classList') return { add() {}, remove() {}, toggle() {}, contains() { return false; } };
+      if (prop === 'classList') return { add(...names) { classAdds.push(...names); }, remove() {}, toggle() {}, contains() { return false; } };
       if (prop === 'style') return {};
       if (prop === 'value') return '';
       if (prop === 'textContent') return '';
@@ -64,6 +65,7 @@ const known = [
   ev('phase_change', { phase: '實作', detail: 'x' }),
   ev('expert_status', { speaker: 'pm', status: 'thinking' }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi' }),
+  ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: '因無進展被中止', aborted: true }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi', duration_s: 1.23, provider: 'fake', model: 'gpt-4', role: 'engineer' }),
   ev('tool_use', { speaker: 'pm', tool: 'Write', summary: 'x' }),
   ev('board_update', { columns: { todo: [{ title: 'a' }], doing: [], review: [], done: [] } }),
@@ -91,6 +93,10 @@ let pass = 0, fail = 0;
 for (const e of known) {
   try { handleEvent(e); pass++; }
   catch (err) { fail++; console.error(`FAIL 已知事件 ${e.type}:`, err.message); }
+}
+if (!classAdds.includes('aborted')) {
+  fail++;
+  console.error('FAIL: aborted expert_message 未套用 aborted class');
 }
 
 // 2) 未知/異常事件：handleEvent 必須不崩潰（switch 無 default 分支）
