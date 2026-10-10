@@ -104,6 +104,7 @@ export function setExpertStatus(key, status) {
 export function addMessage(p) {
   const el = document.createElement("div");
   el.className = "msg" + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
+  if (p.aborted) el.classList.add("aborted");
   el.innerHTML = `
     <div class="av">${p.avatar}</div>
     <div class="body"><div class="who">${p.name}</div><div class="txt"></div></div>`;

@@ -73,6 +73,17 @@ Broadcast = Callable[[events.StudioEvent], Awaitable[None]]
 PublishGuard = Callable[[str, dict], Awaitable[tuple[bool, str]]]
 PostPublishVerifier = Callable[[dict], Awaitable[tuple[bool, str]]]
 
+
+@dataclass(slots=True)
+class SpeakResult:
+    text: str
+    aborted: bool = False
+
+    @property
+    def parser_text(self) -> str:
+        return "" if self.aborted else self.text
+
+
 # 拆解 prompt 的議程格式與粒度守則（micro-rules，字面可 grep 驗證）。{keys}＝本場實際
 # 出席角色的 role_key 清單；prompt 的「2–5 個」只是建議不是防線——解析端有
 # flow.MAX_AGENDA_ITEMS 硬截斷、分派端有 flow.validate_assignees 硬驗證兜底。
@@ -484,7 +495,8 @@ class StudioSession:
         await self.broadcast(
             events.phase_change(self.session_id, "需求澄清", "PM 檢視需求是否足夠明確")
         )
-        text = await pm.speak(
+        result = await self._expert_speak_result(
+            pm,
             f"使用者的產品需求如下：\n\n{requirement}\n\n"
             "請判斷此需求是否足夠明確、可直接拆解動工。若是，輸出一行 `澄清: 不需要`。\n"
             f"若否，向使用者反問最多 {config.CLARIFY_MAX_QUESTIONS} 個最關鍵的問題"
@@ -494,6 +506,7 @@ class StudioSession:
             "無論是否需要澄清，最後都補一行 `願景: <一句產品願景>`（給長期專案定方向用）。",
             self.broadcast,
         )
+        text = result.parser_text
         # 願景回填：抽出一句產品願景（專案 meta 為空時由 ws 回填，給後續場次定方向）。
         self._vision = parse_vision(text)
         questions = parse_clarify(text)[: config.CLARIFY_MAX_QUESTIONS]
@@ -638,15 +651,16 @@ class StudioSession:
         if critic is None:
             return True, ""
         bc = broadcast or self.broadcast
-        async with self._llm_semaphore():
-            text = await critic.speak(
-                "你是獨立的異議檢查者，專挑『為何這還不算完成』，以防團隊形成錯誤共識。\n"
-                f"檢查標的：{subject}\n\n驗收標準：\n{acceptance}\n\n"
-                "請只根據標的與驗收標準判斷，提出具體、實質的反對；找不到實質問題就放行。\n"
-                "最後一行明確輸出：`異議: 成立`（需退回）或 `異議: 不成立`（放行）。",
-                bc,
-            )
-        blocks = critic_blocks(text)
+        result = await self._expert_speak_result(
+            critic,
+            "你是獨立的異議檢查者，專挑『為何這還不算完成』，以防團隊形成錯誤共識。\n"
+            f"檢查標的：{subject}\n\n驗收標準：\n{acceptance}\n\n"
+            "請只根據標的與驗收標準判斷，提出具體、實質的反對；找不到實質問題就放行。\n"
+            "最後一行明確輸出：`異議: 成立`（需退回）或 `異議: 不成立`（放行）。",
+            bc,
+        )
+        text = result.text
+        blocks = True if result.aborted else critic_blocks(text)
         await bc(events.critic_review(self.session_id, role_key, not blocks, text))
         return (not blocks), text
 
@@ -1424,7 +1438,8 @@ class StudioSession:
                 + "；model 可省略＝該家預設模型），依上方額度把任務分散到各 provider、避開受限者；"
                 "未標派工的任務由系統依額度自動分派。\n"
             )
-        pm_plan = await pm.speak(
+        pm_plan_result = await self._expert_speak_result(
+            pm,
             (await self._human_prefix())
             + lessons.context(requirement=requirement)  # 教訓庫（按需求相關性挑選；停用時空字串）
             + adr.context(self.cwd)  # 既有架構決策（停用/無 cwd/空白時為空字串）
@@ -1438,6 +1453,7 @@ class StudioSession:
             + dispatch_note,
             self.broadcast,
         )
+        pm_plan = pm_plan_result.parser_text
         self._pm_plan = pm_plan
         self._run_command = runner.parse_run_command(pm_plan)
         self._demo_url = runner.parse_demo_url(pm_plan)
@@ -2158,7 +2174,7 @@ class StudioSession:
                 if planning
                 else ""
             )
-            decision = await self._speak(
+            decision_result = await self._speak_result(
                 ctx,
                 "pm",
                 f"目前進度摘要：\n{self._dynamic_blackboard()}\n\n"
@@ -2181,6 +2197,9 @@ class StudioSession:
                 + "若已無需再推進，輸出一行 `下一步: 結束`。",
                 None,
             )
+            if decision_result.aborted:
+                break
+            decision = decision_result.text
             decisions.append(decision)
             # 停滯：PM 連續輸出高相似決策（無實質進展）即收斂（重用既有偵測）。
             if flow.is_stalled(decisions, config.STALL_ROUNDS):
@@ -2199,9 +2218,9 @@ class StudioSession:
             if not role:
                 break  # 無任何在場角色（理論上不會發生，pm 必在場）——保底結束。
             instruction = step["instruction"] or "請依目前進度推進這個需求。"
-            spoke = await self._speak(ctx, role, instruction, None)
-            if (spoke or "").strip():
-                planning.append(f"【{ctx.experts[role].role.name}】{spoke.strip()}")
+            spoke = await self._speak_result(ctx, role, instruction, None)
+            if not spoke.aborted and (spoke.text or "").strip():
+                planning.append(f"【{ctx.experts[role].role.name}】{spoke.text.strip()}")
         # 把本階段的動態規劃沉澱進 design_note，讓 build 的逐任務脈絡帶得到——否則 dynamic-first
         # 用 dynamic 取代 discuss 後，PM 的運行時溝通/分派討論會對任務執行「失聯」。累加不覆寫。
         if planning:
@@ -2329,7 +2348,7 @@ class StudioSession:
                 f"- {k}: {ex.role.name}（{ex.role.description or ex.role.title}）"
                 for k, ex in ctx.experts.items()
             )
-            decision = await self._speak(
+            decision_result = await self._speak_result(
                 ctx,
                 "pm",
                 f"任務 #{task['id']}：{task['title']} 已通過標準審查。審查摘要：\n{review_section}\n\n"
@@ -2344,6 +2363,9 @@ class StudioSession:
                 tag,
                 token_usage_task_id=task["id"],
             )
+            if decision_result.aborted:
+                break
+            decision = decision_result.text
             decisions.append(decision)
             if flow.is_stalled(decisions, config.STALL_ROUNDS):
                 break
@@ -2359,7 +2381,7 @@ class StudioSession:
             if not role:
                 break
             instruction = step["instruction"] or "請追加把關這個任務的成果。"
-            opinion = await self._speak(
+            opinion_result = await self._speak_result(
                 ctx,
                 role,
                 f"{instruction}\n\n若發現會阻擋交付的實質問題，最後一行輸出 `異議: 成立` 並說明；"
@@ -2367,6 +2389,10 @@ class StudioSession:
                 tag,
                 token_usage_task_id=task["id"],
             )
+            opinion = opinion_result.text
+            if opinion_result.aborted:
+                await bc(events.critic_review(self.session_id, role, False, opinion))
+                return True, f"【追加把關（{ctx.experts[role].role.name}）逾時中止】\n{opinion}"
             blocks = critic_blocks(opinion)
             await bc(events.critic_review(self.session_id, role, not blocks, opinion))
             if blocks:
@@ -2474,10 +2500,10 @@ class StudioSession:
             "請獨立判斷並投票：簡短說明理由，最後一行輸出 `投票: <選項原文>`。"
         )
         ballots: list[dict] = []
-        pm_text = await self._speak(
+        pm_result = await self._speak_result(
             ctx, "pm", ballot_prompt, tag, token_usage_task_id=token_usage_task_id
         )
-        pm_choice = flow.parse_ballot(pm_text or "", options)
+        pm_choice = "" if pm_result.aborted else flow.parse_ballot(pm_result.text or "", options)
         ballots.append({"voter": "pm", "provider": pm_provider, "choice": pm_choice})
         if not degraded:
             for prov in voters:
@@ -2492,12 +2518,12 @@ class StudioSession:
                         expert = make_expert(
                             role, f"{self.session_id}:vote:{prov}", ctx.cwd, provider=prov
                         )
-                    async with self._llm_semaphore():
-                        text = await expert.speak(
-                            ballot_prompt,
-                            self._tagged_broadcast(tag, token_usage_task_id=token_usage_task_id),
-                        )
-                    choice = flow.parse_ballot(text or "", options)
+                    result = await self._expert_speak_result(
+                        expert,
+                        ballot_prompt,
+                        self._tagged_broadcast(tag, token_usage_task_id=token_usage_task_id),
+                    )
+                    choice = "" if result.aborted else flow.parse_ballot(result.text or "", options)
                 except Exception:  # noqa: BLE001 — 單一投票員失敗＝棄權，表決不得拖垮流程
                     log.exception("表決投票員 %s 失敗，視為棄權（議題：%s）", prov, topic)
                     choice = ""
@@ -2571,6 +2597,27 @@ class StudioSession:
 
         return _bc
 
+    async def _expert_speak_result(
+        self, expert: ExpertLike, prompt: str, broadcast: Broadcast
+    ) -> SpeakResult:
+        """直接呼叫指定 expert，並回傳是否送出 aborted expert_message。"""
+        aborted = False
+        role_key = expert.role.key
+
+        async def _capture(ev: events.StudioEvent) -> None:
+            nonlocal aborted
+            if (
+                ev.type == events.EventType.EXPERT_MESSAGE
+                and ev.payload.get("speaker") == role_key
+                and ev.payload.get("aborted")
+            ):
+                aborted = True
+            await broadcast(ev)
+
+        async with self._llm_semaphore():
+            text = await expert.speak(prompt, _capture)
+        return SpeakResult(text, aborted=aborted)
+
     async def _speak(
         self,
         ctx: LaneContext,
@@ -2581,16 +2628,32 @@ class StudioSession:
         token_usage_task_id: int | None = None,
     ) -> str:
         """經號誌節流 + 標籤化 broadcast 呼叫某 lane 的專家發言。"""
-        async with self._llm_semaphore():
-            try:
-                return await ctx.experts[role_key].speak(
-                    prompt,
-                    self._tagged_broadcast(task_id, token_usage_task_id=token_usage_task_id),
-                )
-            except Exception as exc:  # noqa: BLE001 — provider-unavailable 要穿透，其餘維持既有路徑
-                if getattr(exc, "provider", ""):
-                    self._stop = True
-                raise
+        return (
+            await self._speak_result(
+                ctx, role_key, prompt, task_id, token_usage_task_id=token_usage_task_id
+            )
+        ).text
+
+    async def _speak_result(
+        self,
+        ctx: LaneContext,
+        role_key: str,
+        prompt: str,
+        task_id: int | None,
+        *,
+        token_usage_task_id: int | None = None,
+    ) -> SpeakResult:
+        """呼叫專家發言並捕捉該 turn 是否被逾時中止；partial 不再進 marker parser。"""
+        try:
+            return await self._expert_speak_result(
+                ctx.experts[role_key],
+                prompt,
+                self._tagged_broadcast(task_id, token_usage_task_id=token_usage_task_id),
+            )
+        except Exception as exc:  # noqa: BLE001 — provider-unavailable 要穿透，其餘維持既有路徑
+            if getattr(exc, "provider", ""):
+                self._stop = True
+            raise
 
     def _lane_tag(self, ctx: LaneContext, task: dict) -> int | None:
         """只有並行 lane 事件需要 task_id 分流；main lane 維持原主時間軸。"""
@@ -3209,41 +3272,46 @@ class StudioSession:
                 help_used=help_used,
                 human=human,
             )
-            impl_text = await self._speak(
+            impl_result = await self._speak_result(
                 ctx, impl_role, impl_prompt, tag, token_usage_task_id=task["id"]
             )
+            impl_text = impl_result.text
 
             # --- 中途求助 PM：工程師輸出 `求助: <問題>` 時就地問 PM 拿指示、續作後覆蓋 impl_text ---
-            impl_text, help_used = await self._mid_task_help(
+            impl_result, help_used = await self._mid_task_help(
                 ctx,
                 task,
                 pm_plan,
                 impl_role,
-                impl_text,
+                impl_result,
                 help_used=help_used,
                 human=human,
                 tag=tag,
                 bc=bc,
             )
+            impl_text = impl_result.text
+            impl_parser_text = impl_result.parser_text
 
             # --- 交付前自測（確定性 smoke-run）---
-            smoke = await self._self_test(ctx, impl_text, bc)
+            smoke = await self._self_test(ctx, impl_parser_text, bc)
             # 自測指令是否為工程師「本輪自己宣告」：宣告者代表工程師聲稱此指令能展示本任務，
             # 實敗才適用硬性閘門/就地精修；fallback 到 PM 的整體執行指令時只回報不硬退——
             # 多任務場景下整體指令在前期任務本來就跑不起來，硬退回會誤殺（strict 模式除外）。
-            own_cmd = runner.parse_run_command(impl_text) is not None
+            own_cmd = runner.parse_run_command(impl_parser_text) is not None
             # --- (D) 單輪內自我精修：自測「實際執行」未通過時，讓同一工程師就地依執行紀錄再修 ---
-            impl_text, smoke = await self._self_refine(
+            impl_result, smoke = await self._self_refine(
                 ctx,
                 task,
                 impl_role,
-                impl_text,
+                impl_result,
                 smoke,
                 own_cmd=own_cmd,
                 human=human,
                 tag=tag,
                 bc=bc,
             )
+            impl_text = impl_result.text
+            impl_parser_text = impl_result.parser_text
             commit_violations = (
                 await self._commit(
                     ctx,
@@ -3255,7 +3323,7 @@ class StudioSession:
             )
 
             # --- 停滯守門：連續多輪只重述且無檔案變動 → 提早收斂，不再燒後續 token ---
-            impl_history.append(impl_text)
+            impl_history.append(impl_parser_text)
             committed_change = ctx.last_commit != prev_commit
             prev_commit = ctx.last_commit
             if self._stalled(ctx, impl_history, committed_change):
@@ -3505,13 +3573,13 @@ class StudioSession:
         task: dict,
         pm_plan: str,
         impl_role: str,
-        impl_text: str,
+        impl_result: SpeakResult,
         *,
         help_used: int,
         human: str,
         tag: int | None,
         bc: Broadcast,
-    ) -> tuple[str, int]:
+    ) -> tuple[SpeakResult, int]:
         """中途求助 PM 迴圈：解析 `求助:` 標記 → 問 PM → 續作覆蓋 impl_text。
 
         每任務至多 TASK_HELP_MAX 次（help_used 跨輪累計）；續作再含標記由上限自然擋下。
@@ -3525,7 +3593,7 @@ class StudioSession:
             and "pm" in ctx.experts
             and not self._stop
         ):
-            question = parse_help_request(impl_text)
+            question = parse_help_request(impl_result.parser_text)
             if not question:
                 break
             help_used += 1
@@ -3536,7 +3604,7 @@ class StudioSession:
                     f"任務 #{task['id']} 工程師中途求助（{help_used}/{config.TASK_HELP_MAX}）",
                 )
             )
-            pm_reply = await self._speak(
+            pm_reply = await self._speak_result(
                 ctx,
                 "pm",
                 f"{human}工程師實作任務 #{task['id']}：{task['title']} 時中途卡關求助：\n"
@@ -3545,29 +3613,31 @@ class StudioSession:
                 tag,
                 token_usage_task_id=task["id"],
             )
-            impl_text = await self._speak(
+            if pm_reply.aborted:
+                break
+            impl_result = await self._speak_result(
                 ctx,
                 impl_role,
-                f"{human}PM 對你的求助給出指示：\n{pm_reply}\n\n"
+                f"{human}PM 對你的求助給出指示：\n{pm_reply.text}\n\n"
                 "請依指示繼續完成本任務，完成後照常總結交付（含 `執行指令:`）。",
                 tag,
                 token_usage_task_id=task["id"],
             )
-        return impl_text, help_used
+        return impl_result, help_used
 
     async def _self_refine(
         self,
         ctx: LaneContext,
         task: dict,
         impl_role: str,
-        impl_text: str,
+        impl_result: SpeakResult,
         smoke: runner.RunOutput | None,
         *,
         own_cmd: bool,
         human: str,
         tag: int | None,
         bc: Broadcast,
-    ) -> tuple[str, runner.RunOutput | None]:
+    ) -> tuple[SpeakResult, runner.RunOutput | None]:
         """(D) 單輪內自我精修：自測「實際執行」未通過時，讓同一工程師就地依執行紀錄再修。
 
         訊號是 runner 的確定性 exit code（非 LLM 自評），裁決權仍在 QA/高工/客觀閘門；同一
@@ -3596,17 +3666,17 @@ class StudioSession:
                     f"自測指令 `{smoke.command}` 實際執行未通過，紀錄如下：\n{smoke.output}\n\n"
                     "請直接修正程式碼讓它能跑過，修好後簡述改了什麼即可。"
                 )
-                impl_text = await self._speak(
+                impl_result = await self._speak_result(
                     ctx,
                     impl_role,
                     refine_prompt,
                     tag,
                     token_usage_task_id=task["id"],
                 )
-                smoke = await self._self_test(ctx, impl_text, bc)
+                smoke = await self._self_test(ctx, impl_result.parser_text, bc)
                 if smoke is None or smoke.ok:
                     break
-        return impl_text, smoke
+        return impl_result, smoke
 
     async def _run_reviews(
         self,
@@ -3636,7 +3706,7 @@ class StudioSession:
         # reviewer 資料驅動：依 workflow review gate（過濾在場）並行發言。預設 qa/senior(+security
         # 在場) 用專屬 prompt → 與重構前逐字等價；客製可增刪 reviewer（含非核心角色＋verdict）。
         review_calls = [
-            self._speak(
+            self._speak_result(
                 ctx,
                 rk,
                 self._review_prompt(rk, vn, task, pm_plan),
@@ -3645,16 +3715,16 @@ class StudioSession:
             )
             for rk, vn in reviewers
         ]
-        texts = await asyncio.gather(*review_calls)
+        results = await asyncio.gather(*review_calls)
         # 每個 reviewer 的裁決＋feedback 區段標籤（未知角色用其顯示名）；裁決函式取自白名單。
         reviews = [
             {
                 "role": rk,
-                "ok": workflow_mod.VERDICTS[vn](txt),
-                "text": txt,
+                "ok": (False if res.aborted else workflow_mod.VERDICTS[vn](res.text)),
+                "text": res.text,
                 "label": _REVIEW_LABELS.get(rk, f"{ctx.experts[rk].role.name}意見"),
             }
-            for (rk, vn), txt in zip(reviewers, texts, strict=True)
+            for (rk, vn), res in zip(reviewers, results, strict=True)
         ]
         all_review_ok = all(r["ok"] for r in reviews)
         # 客觀閘門退回 / 改進回饋共用的 reviewer 區段文字（保預設逐字：依序 \n\n 分隔各標籤段）。
@@ -3926,19 +3996,28 @@ class StudioSession:
 
     async def _wrap_up(self, pm: ExpertLike, all_ok: bool, demo_veto: bool = False) -> bool:
         await self.broadcast(events.phase_change(self.session_id, "驗收", "PM 確認驗收標準"))
-        verdict = await pm.speak(
+        verdict_result = await self._expert_speak_result(
+            pm,
             (await self._human_prefix()) + "請依驗收標準檢查目前工作目錄的成果，判斷是否完成"
             "（輸出 `決議: 完成` 或 `決議: 未完成`；若判未完成，緊接一行 `原因: <一句根因>`，"
             "講清楚卡在哪個具體環節）。",
             self.broadcast,
         )
-        done = pm_done(verdict) and all_ok and not self._stop
+        verdict_for_parse = verdict_result.parser_text
+        done = (
+            (not verdict_result.aborted)
+            and pm_done(verdict_for_parse)
+            and all_ok
+            and not self._stop
+        )
         # 裁決原因（(a)-lite）：未完成時抽 PM 的 `原因:` 供 autopilot 落 note；PM 沒給時，
         # 以客觀狀態合成一句兜底（all_ok/demo_veto 是機器已知的根因，不該回報空白）。
         if not done:
-            reason = parse_incomplete_reason(verdict)
+            reason = parse_incomplete_reason(verdict_for_parse)
             if not reason:
-                if demo_veto:
+                if verdict_result.aborted:
+                    reason = "PM 驗收逾時中止"
+                elif demo_veto:
                     reason = "最終 Demo 實跑失敗（demo veto）"
                 elif not all_ok:
                     reason = "有子任務未過三審（all_ok=False）"
@@ -3980,7 +4059,8 @@ class StudioSession:
                 + ("；本場參與 provider：" + "、".join(provs) if provs else "")
                 + "）。"
             )
-        retro = await pm.speak(retro_prompt, self.broadcast)
+        retro_result = await self._expert_speak_result(pm, retro_prompt, self.broadcast)
+        retro = retro_result.parser_text
         # 考核：PM 的 `考核:` 主觀評分與本場客觀指標合併入庫＋逐筆廣播（停用/無考核行＝no-op）。
         if config.APPRAISAL_ENABLED:
             await self._record_appraisals(retro)

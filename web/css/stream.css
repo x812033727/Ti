@@ -44,6 +44,16 @@
   max-width: 88%;
   min-width: 0;
 }
+.msg.aborted .body {
+  background: var(--warn-bg);
+  border-color: rgba(245, 184, 95, .35);
+}
+.msg.aborted .who {
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  color: var(--warn);
+}
 .msg .who {
   font-size: var(--fs-0);
   font-weight: 700;

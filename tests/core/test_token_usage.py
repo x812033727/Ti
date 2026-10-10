@@ -583,6 +583,10 @@ async def test_speak_timeout_token_usage_includes_duration_ms(tmp_path, monkeypa
     assert isinstance(p["duration_ms"], int)
     assert p["duration_ms"] >= 0
     assert "逾時" in out
+    timeout_msgs = [
+        e for e in bucket if e.type == EventType.EXPERT_MESSAGE and "逾時" in e.payload["text"]
+    ]
+    assert timeout_msgs[-1].payload["aborted"] is True
 
 
 @pytest.mark.asyncio

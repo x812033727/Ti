@@ -92,13 +92,13 @@ async def test_idle_timeout_resets_on_progress(fake_sdk):
     _, broadcast = collect()
 
     async def gen():
-        for t in ("a", "b", "c", "d"):
-            await asyncio.sleep(0.04)  # 4 × 0.04 = 0.16 > idle_timeout
+        for t in ("a", "b", "c", "d", "e", "f"):
+            await asyncio.sleep(0.02)  # 6 × 0.02 = 0.12 > idle_timeout
             yield fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(t)])
         yield fake_sdk.ResultMessage()
 
     text = await experts.stream_to_events(gen(), "s", role, broadcast, idle_timeout=0.1)
-    assert text == "a\nb\nc\nd"
+    assert text == "a\nb\nc\nd\ne\nf"
 
 
 async def test_hard_timeout_caps_total_duration(fake_sdk):
@@ -192,7 +192,9 @@ async def test_speak_timeout_interrupt_recovers(fake_sdk, monkeypatch, _fast_tim
     assert client.interrupts == 1
     assert client.disconnects == 0  # 溫和路徑：不需殺行程
     # 系統說明有廣播給 UI，且最後回到 idle 狀態
-    assert any("逾時中止" in ev.payload.get("text", "") for ev in bucket)
+    timeout_msgs = [ev for ev in bucket if "逾時中止" in ev.payload.get("text", "")]
+    assert timeout_msgs
+    assert timeout_msgs[-1].payload["aborted"] is True
     assert bucket[-1].payload["status"] == "idle"
 
 
