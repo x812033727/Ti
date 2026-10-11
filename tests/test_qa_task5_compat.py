@@ -63,6 +63,20 @@ def test_existing_event_payload_contracts_stable():
         "role",
     }
 
+    e3 = events.expert_message(
+        "s",
+        "pm",
+        "PM",
+        "🧑",
+        "【系統】發言逾時中止（閒置上限）。",
+        aborted=True,
+        abort_reason="idle",
+        partial_text="任務: 半截輸出",
+    )
+    assert e3.payload["aborted"] is True
+    assert e3.payload["abort_reason"] == "idle"
+    assert e3.payload["partial_text"] == "任務: 半截輸出"
+
 
 def test_new_events_have_stable_payload_shape():
     """新增事件 huddle / critic_review 的 to_dict 結構正確、可序列化。"""

@@ -103,7 +103,10 @@ export function setExpertStatus(key, status) {
 
 export function addMessage(p) {
   const el = document.createElement("div");
-  el.className = "msg" + (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
+  el.className =
+    "msg" +
+    (p.aborted ? " aborted" : "") +
+    (p.task_id != null ? " lane lane-" + (p.task_id % 6) : "");
   el.innerHTML = `
     <div class="av">${p.avatar}</div>
     <div class="body"><div class="who">${p.name}</div><div class="txt"></div></div>`;
@@ -115,6 +118,22 @@ export function addMessage(p) {
     renderMarkdownInto(txt, p.text);
   } catch {
     txt.textContent = p.text;
+  }
+  if (p.aborted) {
+    const reason = p.abort_reason === "hard" ? "總時長達上限" : "因無進展被中止";
+    const note = document.createElement("div");
+    note.className = "abort-note";
+    note.textContent = reason;
+    el.querySelector(".body").appendChild(note);
+    if (p.partial_text) {
+      const det = document.createElement("details");
+      det.className = "abort-partial";
+      det.innerHTML = "<summary>查看中止前片段</summary>";
+      const pre = document.createElement("pre");
+      pre.textContent = p.partial_text;
+      det.appendChild(pre);
+      el.querySelector(".body").appendChild(det);
+    }
   }
   sink(p).appendChild(el);
   scrollStream();
