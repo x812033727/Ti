@@ -66,7 +66,10 @@ async def test_openai_turn_guard_aborts_on_whole_loop_hard_timeout(monkeypatch, 
     result = await asyncio.wait_for(expert.speak("做點事", broadcast), timeout=10)
 
     assert "逾時" in result and result.startswith("【系統】")
+    assert "任務:" not in result
     assert not any(h.lower() in result.lower() for h in APPROVAL_HINTS)
+    aborted = [ev for ev in _bucket if getattr(ev, "payload", {}).get("aborted")]
+    assert aborted and aborted[-1].payload["abort_reason"] == "hard"
     # 證明確實是「多步累加」觸發，而非單次 chat 逾時（單次會在第一/二步就被 per-chat 攔下）。
     assert calls["n"] >= 2
 

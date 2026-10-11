@@ -57,6 +57,20 @@
   width: fit-content;
 }
 .msg .txt { font-size: var(--fs-3); line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.msg.aborted .body { border-color: rgba(255, 107, 107, .35); background: var(--bad-bg); }
+.msg .abort-note { margin-top: 8px; color: var(--bad); font-size: var(--fs-1); font-weight: 700; }
+.msg .abort-partial { margin-top: 8px; color: var(--muted); font-size: var(--fs-1); }
+.msg .abort-partial summary { cursor: pointer; }
+.msg .abort-partial pre {
+  margin: 6px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: var(--fs-0);
+  color: var(--code-text);
+}
 
 /* 人類插話：靠右、綠色系，跟 AI 拉開視覺差 */
 .msg.human { flex-direction: row-reverse; align-self: flex-end; max-width: 100%; }

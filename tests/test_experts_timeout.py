@@ -92,13 +92,13 @@ async def test_idle_timeout_resets_on_progress(fake_sdk):
     _, broadcast = collect()
 
     async def gen():
-        for t in ("a", "b", "c", "d"):
-            await asyncio.sleep(0.04)  # 4 × 0.04 = 0.16 > idle_timeout
+        for t in ("a", "b", "c", "d", "e", "f", "g", "h"):
+            await asyncio.sleep(0.03)  # 8 × 0.03 = 0.24 > idle_timeout
             yield fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(t)])
         yield fake_sdk.ResultMessage()
 
-    text = await experts.stream_to_events(gen(), "s", role, broadcast, idle_timeout=0.1)
-    assert text == "a\nb\nc\nd"
+    text = await experts.stream_to_events(gen(), "s", role, broadcast, idle_timeout=0.2)
+    assert text == "a\nb\nc\nd\ne\nf\ng\nh"
 
 
 async def test_hard_timeout_caps_total_duration(fake_sdk):
@@ -194,6 +194,40 @@ async def test_speak_timeout_interrupt_recovers(fake_sdk, monkeypatch, _fast_tim
     # 系統說明有廣播給 UI，且最後回到 idle 狀態
     assert any("逾時中止" in ev.payload.get("text", "") for ev in bucket)
     assert bucket[-1].payload["status"] == "idle"
+
+
+async def test_speak_timeout_event_carries_partial_without_returning_markers(
+    fake_sdk, monkeypatch, _fast_timeouts
+):
+    """partial_text 只進 aborted payload，speak 回傳不得讓 marker parser 誤吃半截輸出。"""
+
+    class _PartialThenHangClient(_HangingClient):
+        def receive_response(self):
+            async def gen():
+                if self._interrupted.is_set():
+                    yield self._sdk.ResultMessage()
+                    return
+                yield self._sdk.AssistantMessage(
+                    content=[self._sdk.TextBlock("任務: 不該被解析的半截任務")]
+                )
+                await asyncio.Event().wait()
+                yield  # pragma: no cover
+
+            return gen()
+
+    client = _PartialThenHangClient(fake_sdk, interrupt_ok=True)
+    monkeypatch.setattr(experts, "_build_client", lambda role, sid, cwd: client)
+    exp = experts.Expert(BY_KEY["engineer"], "sess", "/tmp/x")
+    bucket, broadcast = collect()
+
+    text = await exp.speak("做點事", broadcast)
+
+    assert "逾時中止" in text
+    assert "任務:" not in text
+    aborted = [ev for ev in bucket if ev.payload.get("aborted")]
+    assert aborted
+    assert aborted[-1].payload["abort_reason"] == "idle"
+    assert aborted[-1].payload["partial_text"] == "任務: 不該被解析的半截任務"
 
 
 async def test_speak_timeout_interrupt_fails_rebuilds_client(fake_sdk, monkeypatch, _fast_timeouts):

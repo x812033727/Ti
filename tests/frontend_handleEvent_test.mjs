@@ -65,6 +65,7 @@ const known = [
   ev('expert_status', { speaker: 'pm', status: 'thinking' }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi' }),
   ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: 'hi', duration_s: 1.23, provider: 'fake', model: 'gpt-4', role: 'engineer' }),
+  ev('expert_message', { speaker: 'pm', name: 'PM', avatar: '🧑', text: '【系統】發言逾時中止（閒置上限）。', aborted: true, abort_reason: 'idle', partial_text: '任務: 半截輸出' }),
   ev('tool_use', { speaker: 'pm', tool: 'Write', summary: 'x' }),
   ev('board_update', { columns: { todo: [{ title: 'a' }], doing: [], review: [], done: [] } }),
   ev('run_result', { passed: true, detail: 'ok', log: 'log' }),
