@@ -509,7 +509,7 @@ def events_mtime(session_id: str) -> float | None:
     分辨「長任務仍在動」與「真的卡死」）。
     """
     try:
-        return _events_path(session_id).stat().st_mtime
+        return _events_path(session_id).stat().st_mtime_ns / 1_000_000_000
     except OSError:
         return None
 

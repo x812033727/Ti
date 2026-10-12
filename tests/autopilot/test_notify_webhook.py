@@ -43,12 +43,27 @@ def _capture_urlopen(monkeypatch, *, boom=False):
                 "url": req.full_url,
                 "body": json.loads(req.data.decode("utf-8")),
                 "method": req.get_method(),
+                "timeout": timeout,
             }
         )
         return _Resp()
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     return calls
+
+
+def test_notify_config_reload_reads_webhook_and_timeout(monkeypatch):
+    """守門：兩個 config 鍵都必須經 reload 從 env 生效，避免規格再漂移成單鍵。"""
+    try:
+        monkeypatch.setenv("TI_NOTIFY_WEBHOOK", "https://hook.example/reload")
+        monkeypatch.setenv("TI_NOTIFY_TIMEOUT", "2.5")
+        config.reload()
+        assert config.NOTIFY_WEBHOOK == "https://hook.example/reload"
+        assert config.NOTIFY_TIMEOUT == 2.5
+    finally:
+        monkeypatch.delenv("TI_NOTIFY_WEBHOOK", raising=False)
+        monkeypatch.delenv("TI_NOTIFY_TIMEOUT", raising=False)
+        config.reload()
 
 
 def test_send_noop_without_webhook(monkeypatch):
@@ -71,10 +86,33 @@ def test_send_posts_json_payload(monkeypatch):
     }
 
 
+def test_send_uses_configured_timeout(monkeypatch):
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
+    monkeypatch.setattr(config, "NOTIFY_TIMEOUT", 3.25)
+    calls = _capture_urlopen(monkeypatch)
+    assert notify.send("loop_stall", "主迴圈停滯") is True
+    assert calls[0]["timeout"] == 3.25
+
+
 def test_send_swallows_network_failure(monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_WEBHOOK", "https://hook.example/ti")
     _capture_urlopen(monkeypatch, boom=True)
     assert notify.send("task_failed", "x") is False  # 不拋即通過
+
+
+def test_failure_log_does_not_leak_webhook_url(monkeypatch, caplog):
+    url = "https://hook.example/secret-token"
+    monkeypatch.setattr(config, "NOTIFY_WEBHOOK", url)
+    _capture_urlopen(monkeypatch, boom=True)
+    with caplog.at_level("DEBUG", logger="ti.notify"):
+        assert notify.send("task_failed", "含敏感通知端點") is False
+    assert url not in caplog.text
+
+
+def test_send_bg_accepts_extra_without_webhook(monkeypatch):
+    calls = _capture_urlopen(monkeypatch)
+    notify.send_bg("task_failed", "x", task_id="t1", detail={"attempt": 2})
+    assert not calls
 
 
 def _spy_send_bg(monkeypatch):

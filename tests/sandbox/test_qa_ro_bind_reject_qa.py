@@ -10,22 +10,21 @@ ro-bind 在擋，而非整個沙箱寫不進」。
   * 全程真實 `subprocess.run` 實跑，不 mock；無 bwrap 時 skip。
   * NET 走 `monkeypatch.setattr(runner.config, "SANDBOX_NET", True)`（等同
     TI_SANDBOX_NET=1），繞開受限 runner 的 `--unshare-net` loopback EPERM。
-  * 「host 預置可寫檔」策略隔離變因：探針檔建在 repo 根（host 可寫、且不在
+  * 「host 預置可寫檔」策略隔離變因：探針檔建在非 /tmp 的 host 可寫區（且不在
     `--bind ws`、`--tmpfs /tmp`、`~/.cache` 等可寫區），故沙箱內被 ro-bind
     蓋成唯讀。先在 host 證其可寫，排除「該路徑本來就不可寫（權限）」的假陽性；
     此前提下沙箱內出現 EROFS 即確證 ro-bind 生效。
 """
 
-import os
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
-from _repo import REPO_ROOT
 
 from studio import runner
 
-REPO = REPO_ROOT
 TIMEOUT = 30  # 秒；避免 bwrap 卡死拖垮 CI
 
 needs_bwrap = pytest.mark.skipif(
@@ -36,13 +35,30 @@ needs_bwrap = pytest.mark.skipif(
 
 @pytest.fixture
 def host_probe():
-    """在 repo 根（host 可寫區）預置一個探針檔，帶唯一後綴；測試後清理。
+    """在 host 可寫、且不會被 sandbox tmpfs 覆蓋的位置預置探針檔；測試後清理。
 
     刻意不放 `~/`、`~/.cache`、`/tmp`、cwd——前三者在沙箱內是 tmpfs/可寫，
-    cwd 是 `--bind` 可寫，都無法驗到唯讀。repo 根被 `--ro-bind / /` 蓋成唯讀。
+    cwd 是 `--bind` 可寫，都無法驗到唯讀。CI 的 repo 可能本身就在 `/tmp`，
+    因此不能用 repo 根當探針；優先用 `/var/tmp` 這類仍由 `--ro-bind / /`
+    暴露的 host 路徑。
     """
-    probe = REPO / f".ti_ro_bind_probe_{os.getpid()}.txt"
-    probe.write_text("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
+    probe_dir = next((p for p in (Path("/var/tmp"), Path("/var")) if p.is_dir()), None)
+    if probe_dir is None:
+        pytest.skip("找不到可用的非 /tmp host 探針目錄")
+    try:
+        fh = tempfile.NamedTemporaryFile(
+            prefix="ti_ro_bind_probe_",
+            suffix=".txt",
+            dir=probe_dir,
+            mode="w",
+            encoding="utf-8",
+            delete=False,
+        )
+    except OSError as exc:
+        pytest.skip(f"無法建立非 /tmp host 探針檔：{exc}")
+    with fh:
+        fh.write("ORIG")  # 預置即證明 host 原生可寫（非權限問題）
+    probe = Path(fh.name)
     try:
         yield probe
     finally:

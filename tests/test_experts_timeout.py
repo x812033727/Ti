@@ -1,8 +1,8 @@
 """發言層 watchdog（experts.py timeout）單元測試。
 
 沿用 test_experts.py 的注入縫：stream_to_events 以 sys.modules 注入假 claude_agent_sdk、
-Expert 以 monkeypatch experts._build_client；全程不需真 SDK、不連線。timeout 取小值
-（0.05~0.3s）讓測試快速且不依賴牆鐘精度。
+Expert 以 monkeypatch experts._build_client；全程不需真 SDK、不連線。timeout 取短值
+讓測試快速；重置語意測試保留足夠時間邊界，避免 xdist 壓力下假紅。
 """
 
 from __future__ import annotations
@@ -92,13 +92,13 @@ async def test_idle_timeout_resets_on_progress(fake_sdk):
     _, broadcast = collect()
 
     async def gen():
-        for t in ("a", "b", "c", "d"):
-            await asyncio.sleep(0.04)  # 4 × 0.04 = 0.16 > idle_timeout
+        for t in ("a", "b", "c", "d", "e", "f"):
+            await asyncio.sleep(0.2)  # 6 × 0.2 = 1.2 > idle_timeout
             yield fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock(t)])
         yield fake_sdk.ResultMessage()
 
-    text = await experts.stream_to_events(gen(), "s", role, broadcast, idle_timeout=0.1)
-    assert text == "a\nb\nc\nd"
+    text = await experts.stream_to_events(gen(), "s", role, broadcast, idle_timeout=1.0)
+    assert text == "a\nb\nc\nd\ne\nf"
 
 
 async def test_hard_timeout_caps_total_duration(fake_sdk):
@@ -107,6 +107,7 @@ async def test_hard_timeout_caps_total_duration(fake_sdk):
     _, broadcast = collect()
 
     async def gen():
+        yield fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("x")])
         while True:
             await asyncio.sleep(0.02)
             yield fake_sdk.AssistantMessage(content=[fake_sdk.TextBlock("x")])
