@@ -437,16 +437,17 @@ async def test_supervisor_detects_stall_raises_stalled(state_dir, monkeypatch):
 async def test_supervisor_lets_active_session_complete(state_dir, monkeypatch):
     """白樣本（合法長任務）：持續產生事件（mtime 不斷前進）的長任務即使總時長超過停滯門檻，
     也不得被誤殺——supervisor 正常回傳其結果。"""
-    _fast_supervisor(monkeypatch, stall=0.15, task_timeout=100, poll=0.02)
+    _fast_supervisor(monkeypatch, stall=1.0, task_timeout=100, poll=0.05)
     sid = "ap-active-1"
     history.start_session(sid, "req")
 
     class ActiveSession:
         async def run(self, requirement):
-            # 每 0.03s 產一則事件、共 ~0.45s（> stall 0.15）→ 全程持續有活動。
-            for i in range(15):
+            # 每 0.1s 產一則事件、共 ~1.2s（> stall 1.0）→ 全程持續有活動。
+            # 門檻保留足夠餘裕，避免 xdist 高負載下排程延遲造成假紅。
+            for i in range(12):
                 _record(sid, i)
-                await real_asyncio.sleep(0.03)
+                await real_asyncio.sleep(0.1)
             return {"completed": True, "followups": []}
 
     result = await real_asyncio.wait_for(
